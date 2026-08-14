@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 165 passing, 8 suites |
+| Tests | 178 passing, 9 suites |
 | Typecheck | clean |
 | Backend | 50 TypeScript files, ~15.7k lines |
 | Application | 21 ES modules, ~4.5k lines |
-| API routes | 105 |
-| Event types | 135, closed catalogue |
-| Entity types | 90, all classified for access |
+| API routes | 110 |
+| Event types | 140, closed catalogue |
+| Entity types | 92, all classified for access |
 | Runtime dependencies | none |
 
 Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`).
@@ -69,6 +69,22 @@ refuses for the reason the platform would. Command surfaces on field, cost,
 design, programme, change and handover. Daily site record. Canonical enum
 dropdowns. Evidence hashed with SHA-256 in the browser. Denials are shown as
 denials, never as empty records.
+
+**Agent runtime — autopilot with a human gate.** Eight agents, one per engine,
+each with a mandate naming what it may read, what it may propose in, and which
+roles may decide. They run over materialised state, raise findings that name the
+records they were read from, and propose the command they want run. Then they
+stop.
+
+Three rules hold it: an agent never writes project state; an agent cannot
+propose outside its mandate, checked by the runtime rather than by the agent;
+and an agent cannot decide. Approval needs both the capability the command
+exercises *and* standing as a nominated approver — reading is not authorising.
+The event catalogue refuses an AI actor authoring an approval, so the guard
+holds even if the runtime one were bypassed. Approved commands run as the
+approving human through the same engine path any manual command takes. A
+rejection needs a reason and stays in the record. Repeat findings are suppressed
+rather than raised again.
 
 **Offline field sync.** Device timestamps preserved, operation-id idempotency,
 deterministic conflict resolution, monotonic cursors, governance actions refused
@@ -139,7 +155,10 @@ Re-opening these is what caused churn before.
 6. **The interface never holds a rule the API does not publish.** Permission
    matrix and phase gates are fetched, not duplicated.
 7. **A denial is displayed as a denial.** Never as zero, never as empty.
-8. **Screenshots are gitignored.** Regenerate with
+8. **No agent acts unattended.** Every mandate caps at `PROPOSE`. The `ACT`
+   level exists in the model but granting it to an agent is a product decision
+   that must be made explicitly; a test fails if one grants it to itself.
+9. **Screenshots are gitignored.** Regenerate with
    `node tools/walk.mjs "<role>" "" shots`.
 
 ---

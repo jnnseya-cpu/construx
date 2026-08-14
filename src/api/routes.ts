@@ -1,4 +1,6 @@
 import { ask } from '../ai/conversation.ts';
+import * as agents from '../agents/runtime.ts';
+import { fleetManifest } from '../agents/runtime.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
 import { seatEconomics, TIERS } from '../billing/subscription.ts';
 import { config } from '../config.ts';
@@ -68,6 +70,21 @@ function sourceOf(ctx: RequestContext): 'WEB' | 'ANDROID' | 'IOS' | 'SYSTEM' {
 }
 
 const stringField = { type: 'string', minLength: 1 } as const;
+
+/**
+ * Commands an approved proposal may run.
+ *
+ * An explicit allow-list, not a lookup by name into the engines: an agent can
+ * only ever cause one of these to happen, and adding to this map is a
+ * deliberate act rather than a side effect of naming a function.
+ */
+const AGENT_COMMANDS: Record<string, (ctx: ReturnType<typeof projectContext>, input: Record<string, unknown>) => Promise<unknown>> = {
+  'planning:forecastDelay': (ctx, input) => planning.forecastDelay(ctx, input as never),
+  'cost:publishCVR': (ctx, input) => cost.publishCVR(ctx, input as never),
+  'safety:assessContingency': (ctx) => Promise.resolve(safety.assessContingency(ctx)),
+  'claims:assessDelayClaim': (ctx, input) => claims.assessDelayClaim(ctx, input as never),
+  'handover:forecastMaintenance': (ctx, input) => handover.forecastMaintenance(ctx, input as never),
+};
 
 /**
  * The console's demonstration session. Seeding is expensive and must happen
@@ -1010,6 +1027,70 @@ export const ROUTES: Route[] = [
   },
 
   // ---------------------------------------------------------------- copilot
+  // ------------------------------------------------------------------ agents
+  {
+    method: 'GET',
+    pattern: '/v1/agents',
+    description: 'The agent fleet, each with the mandate it can never exceed',
+    handler: () => ({ agents: fleetManifest() }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/agents/run',
+    description: 'Run the agent fleet over current project state and raise proposals',
+    schema: {
+      type: 'object',
+      properties: { only: { type: 'array', items: { type: 'string' } } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => agents.runAgents(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/proposals',
+    description: 'Proposals awaiting a human decision, most urgent first',
+    handler: (platform, ctx) => ({ proposals: agents.pendingProposals(projectContext(platform, ctx)) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/proposals/:proposalId/approve',
+    description: 'Approve a proposal and run its command as the approver',
+    schema: { type: 'object', properties: { note: { type: 'string' } }, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      const context = projectContext(platform, ctx);
+      const { note } = body<{ note?: string }>(ctx);
+
+      // Approval is recorded before the command runs, so a failed execution
+      // still leaves a record of who authorised the attempt.
+      const { proposal, execute } = agents.approveProposal(context, ctx.params.proposalId as string, note);
+      if (!execute) return { proposal, executed: false };
+
+      const command = AGENT_COMMANDS[execute.command];
+      if (!command) {
+        throw new DomainError('UNKNOWN_COMMAND', `No dispatcher for ${execute.command}`, 500);
+      }
+
+      // Runs as the approver, through the same engine path any human command
+      // takes — there is no second, weaker route into the engines.
+      const result = await command(context, execute.input);
+      agents.markExecuted(context, proposal.id, result as Record<string, unknown>);
+      return { proposal, executed: true, result };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/proposals/:proposalId/reject',
+    description: 'Reject a proposal, with the reason that becomes part of the record',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      agents.rejectProposal(projectContext(platform, ctx), ctx.params.proposalId as string, body<{ reason: string }>(ctx).reason),
+  },
+
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/ask',

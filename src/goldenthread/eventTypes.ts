@@ -165,6 +165,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('APPLICATION_CERTIFIED', 'PaymentApplication', 'APPROVE', 'COMMERCIAL'),
   def('LEDGER_ENTRY_POSTED', 'LedgerEntry', 'CREATE', 'COMMERCIAL'),
 
+  // --- Agent runtime --------------------------------------------------------
+  def('AGENT_RUN_COMPLETED', 'AgentRun', 'EXECUTE', 'AI_BILLING', { aiAllowed: true, creates: true }),
+  def('AGENT_PROPOSAL_RAISED', 'AgentProposal', 'CREATE', 'AI_BILLING', { aiAllowed: true, creates: true }),
+  // Decisions are human by definition — an AI actor committing one is refused
+  // by the ledger, which is what stops an agent approving its own proposal.
+  def('AGENT_PROPOSAL_APPROVED', 'AgentProposal', 'APPROVE', 'AI_BILLING'),
+  def('AGENT_PROPOSAL_REJECTED', 'AgentProposal', 'APPROVE', 'AI_BILLING'),
+  def('AGENT_PROPOSAL_EXECUTED', 'AgentProposal', 'UPDATE', 'AI_BILLING'),
+
   // --- Change, variation, claims -------------------------------------------
   def('CHANGE_REQUEST_SUBMITTED', 'ChangeRequest', 'CREATE', 'CONTRACTS_CLAIMS', { requiresEvidence: true }),
   def('IMPACT_ASSESSED', 'ImpactAssessment', 'AI_EXECUTE', 'CONTRACTS_CLAIMS', { aiAllowed: true, requiresEvidence: true }),

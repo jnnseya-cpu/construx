@@ -975,6 +975,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
       planner: { id: planner.id, auth: authOf(platform, planner.id) },
       safety: { id: safetyLead.id, auth: authOf(platform, safetyLead.id) },
       bim: { id: bimLead.id, auth: authOf(platform, bimLead.id) },
+      qaqc: { id: qaqc.id, auth: authOf(platform, qaqc.id) },
       fm: { id: fm.id, auth: authOf(platform, fm.id) },
       regulator: { id: regulator.id, auth: authOf(platform, regulator.id) },
     },

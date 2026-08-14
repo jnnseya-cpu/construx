@@ -132,6 +132,8 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   Export: { area: 'EVIDENCE_AUDIT' },
   ReplaySnapshot: { area: 'EVIDENCE_AUDIT' },
   AIExecution: { area: 'AI_EXECUTION' },
+  AgentRun: { area: 'AI_EXECUTION' },
+  AgentProposal: { area: 'AI_EXECUTION' },
 };
 
 export function classifyEntity(refType: string): EntityClassification | undefined {
