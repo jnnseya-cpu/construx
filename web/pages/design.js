@@ -1,6 +1,8 @@
 import { entityBundle } from '../lib/api.js';
+import { command, commandBar } from '../lib/command.js';
+import { DISCIPLINE } from '../lib/enums.js';
 import { badge, date, html, humanise, pct, raw, render, statusTone, table } from '../lib/ui.js';
-import { state } from '../app.js';
+import { blockedReason, can, draw, state } from '../app.js';
 
 /**
  * Design & BIM.
@@ -40,6 +42,12 @@ export async function design(root) {
         <div>
           <h1>Design &amp; BIM</h1>
           <p>Drawing control, model ingestion, clash triage by rework cost, and a twin fed by what the site actually looks like.</p>
+        </div>
+        <div class="actions cmd-bar">
+          ${raw(commandBar([
+            { id: 'drawing', label: 'Register drawing', tone: '', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
+            { id: 'markup', label: 'Add markup', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
+          ]))}
         </div>
       </div>
 
@@ -173,4 +181,54 @@ export async function design(root) {
       </div>
     `,
   );
+
+  const COMMANDS = {
+    drawing: {
+      title: 'Register drawing',
+      intent: 'Registering a revision supersedes the previous one automatically. Marking up a superseded drawing is then refused.',
+      path: `/v1/projects/${projectId}/bim/drawings`,
+      submitLabel: 'Register',
+      fields: [
+        { name: 'fileHash', label: 'Drawing file', type: 'file', hint: 'Hashed in your browser' },
+        { name: 'drawingNumber', label: 'Drawing number', type: 'text', placeholder: 'C-1002' },
+        { name: 'title', label: 'Title', type: 'text' },
+        { name: 'revision', label: 'Revision', type: 'text', placeholder: 'P01' },
+        { name: 'discipline', label: 'Discipline', type: 'select', options: DISCIPLINE },
+      ],
+      transform: (v) => ({
+        fileHash: v.fileHash,
+        titleBlock: {
+          drawingNumber: v.drawingNumber,
+          title: v.title,
+          revision: v.revision,
+          discipline: v.discipline,
+        },
+      }),
+    },
+    markup: {
+      title: 'Add markup',
+      intent: 'A markup can be converted to an RFI or an instruction as it is raised, so the question and the drawing stay linked.',
+      path: `/v1/projects/${projectId}/bim/markups`,
+      submitLabel: 'Add',
+      fields: [
+        { name: 'drawingId', label: 'Drawing', type: 'select',
+          options: b.Drawing.filter((d) => d.status === 'CURRENT').map((d) => ({ value: d._refId, label: `${d.drawingNumber} rev ${d.revision} · ${d.title}` })) },
+        { name: 'note', label: 'Markup', type: 'textarea' },
+        { name: 'author', label: 'Author', type: 'text', value: state.session.user.name },
+        { name: 'convertTo', label: 'Convert to', type: 'select', options: [
+          { value: 'NONE', label: 'Leave as a markup' },
+          { value: 'RFI', label: 'Raise as an RFI' },
+          { value: 'INSTRUCTION', label: 'Raise as an instruction' },
+        ] },
+      ],
+    },
+  };
+
+  root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-command]');
+    if (!button) return;
+    const spec = COMMANDS[button.dataset.command];
+    if (!spec) return;
+    if (await command(spec)) await draw();
+  });
 }

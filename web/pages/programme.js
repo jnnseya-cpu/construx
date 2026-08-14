@@ -1,6 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
+import { command, commandBar } from '../lib/command.js';
 import { badge, date, days, html, humanise, modal, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
-import { can, refreshContext, state } from '../app.js';
+import { blockedReason, can, draw, state } from '../app.js';
 
 /**
  * Programme.
@@ -15,7 +16,7 @@ export async function programme(root) {
 
   const [calc, bundle] = await Promise.all([
     api.get(`/v1/projects/${projectId}/programme?contractualDurationDays=400`).catch((error) => ({ error })),
-    entityBundle(projectId, ['Task', 'ProgrammeBaseline', 'DelayRiskSnapshot', 'Dependency', 'Constraint']),
+    entityBundle(projectId, ['Task', 'ProgrammeBaseline', 'DelayRiskSnapshot', 'Dependency', 'Constraint', 'WorkPackage', 'ScopePackage']),
   ]);
 
   const tasks = bundle.Task;
@@ -34,7 +35,10 @@ export async function programme(root) {
           <h1>Programme</h1>
           <p>Computed from ${tasks.length} activities and ${bundle.Dependency.length} logic links. Every figure below is derived, not entered.</p>
         </div>
-        <div class="actions">
+        <div class="actions cmd-bar">
+          ${raw(commandBar([
+            { id: 'task', label: 'Create activity', tone: '', permitted: can('WORKPACKAGES_TASKS', 'C'), reason: blockedReason('WORKPACKAGES_TASKS', 'C') },
+          ]))}
           ${can('PROGRAMME_BASELINES', 'X') ? html`<button class="btn ghost" id="forecast">Run delay forecast</button>` : ''}
           ${can('PROGRAMME_BASELINES', 'R') ? html`<button class="btn quiet" id="whatif">What-if analysis</button>` : ''}
         </div>
@@ -205,4 +209,33 @@ export async function programme(root) {
 
 function moneyOf(minor) {
   return `£${(Number(minor ?? 0) / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+
+  const COMMANDS = {
+    task: {
+      title: 'Create activity',
+      intent: 'Duration drives the critical path. Optimistic and pessimistic durations are what make the P80 forecast meaningful rather than a single guess.',
+      path: `/v1/projects/${projectId}/programme/tasks`,
+      submitLabel: 'Create',
+      fields: [
+        { name: 'workPackageId', label: 'Work package', type: 'select',
+          options: (bundle.WorkPackage ?? []).map((w) => ({ value: w._refId, label: w.name })) },
+        { name: 'activityCode', label: 'Activity code', type: 'text', placeholder: 'A900' },
+        { name: 'name', label: 'Activity', type: 'text' },
+        { name: 'durationDays', label: 'Duration (days)', type: 'number', min: 1 },
+        { name: 'costCode', label: 'Cost code', type: 'text', placeholder: 'CIV.001' },
+        { name: 'optimisticDays', label: 'Optimistic duration', type: 'number', required: false, hint: 'Leave blank to treat the duration as certain' },
+        { name: 'pessimisticDays', label: 'Pessimistic duration', type: 'number', required: false },
+      ],
+      // The endpoint takes a batch; a single activity is a batch of one.
+      transform: (v) => ({ tasks: [v] }),
+    },
+  };
+
+  root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-command]');
+    if (!button) return;
+    const spec = COMMANDS[button.dataset.command];
+    if (!spec) return;
+    if (await command(spec)) await draw();
+  });
 }

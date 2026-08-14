@@ -1,6 +1,8 @@
 import { api, entityBundle } from '../lib/api.js';
+import { command, commandBar } from '../lib/command.js';
+import { today } from '../lib/enums.js';
 import { badge, date, exact, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
-import { can, refreshContext, state } from '../app.js';
+import { blockedReason, can, draw, refreshContext, state } from '../app.js';
 
 /**
  * Cost & Value.
@@ -61,7 +63,11 @@ export async function commercial(root) {
           <h1>Cost &amp; Value</h1>
           <p>Cost value reconciliation wired to the contract, commitments, variations and certified payments — not a spreadsheet assembled monthly.</p>
         </div>
-        <div class="actions">
+        <div class="actions cmd-bar">
+          ${raw(commandBar([
+            { id: 'actual', label: 'Post actual cost', tone: '', permitted: can('BUDGET_COST', 'C'), reason: blockedReason('BUDGET_COST', 'C') },
+            { id: 'application', label: 'Submit application', permitted: can('PAYMENT_APPLICATIONS', 'C'), reason: blockedReason('PAYMENT_APPLICATIONS', 'C') },
+          ]))}
           ${can('BUDGET_COST', 'X') ? html`<button class="btn ghost" id="publish-cvr">Publish CVR</button>` : ''}
           ${can('BUDGET_COST', 'R') ? html`<button class="btn quiet" id="evm">Take EVM snapshot</button>` : ''}
         </div>
@@ -267,5 +273,45 @@ export async function commercial(root) {
       toast('Snapshot failed', error.message, 'err');
       button.disabled = false;
     }
+  });
+
+  const COMMANDS = {
+    actual: {
+      title: 'Post actual cost',
+      intent: 'Against a cost code on the approved baseline, so budget-against-actual moves the moment the spend is known.',
+      path: `/v1/projects/${projectId}/cost/actuals`,
+      submitLabel: 'Post',
+      fields: [
+        { name: 'costCode', label: 'Cost code', type: 'select',
+          options: (budget?.byCostCode ?? []).map((l) => ({ value: l.costCode, label: `${l.costCode} · ${l.description}` })) },
+        { name: 'amountMinor', label: 'Amount', type: 'number', money: true, hint: 'In pounds' },
+        { name: 'date', label: 'Date', type: 'date', value: today() },
+        { name: 'sourceSystem', label: 'Source system', type: 'text', value: 'ERP' },
+        { name: 'description', label: 'Description', type: 'text' },
+      ],
+    },
+    application: {
+      title: 'Submit payment application',
+      intent: 'The net applied figure is computed from gross, variations, previously certified and retention — it is not typed in.',
+      path: `/v1/projects/${projectId}/cost/application`,
+      submitLabel: 'Submit',
+      fields: [
+        { name: 'cycleId', label: 'Payment cycle', type: 'hidden', value: cycle?._refId ?? '' },
+        { name: 'cycleNumber', label: 'Cycle number', type: 'number', min: 1 },
+        { name: 'grossValuationMinor', label: 'Gross valuation', type: 'number', money: true },
+        { name: 'variationsIncludedMinor', label: 'Variations included', type: 'number', money: true },
+        { name: 'previouslyCertifiedMinor', label: 'Previously certified', type: 'number', money: true },
+        { name: 'retentionMinor', label: 'Retention', type: 'number', money: true },
+        { name: 'supportingEvidenceHash', label: 'Supporting valuation', type: 'file' },
+      ],
+    },
+  };
+
+  root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-command]');
+    if (!button) return;
+    const spec = COMMANDS[button.dataset.command];
+    if (!spec) return;
+    if (await command(spec)) await draw();
   });
 }
