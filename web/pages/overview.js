@@ -1,4 +1,4 @@
-import { api, entityBundle } from '../lib/api.js';
+import { api, entityBundle, isWithheld } from '../lib/api.js';
 import { badge, date, days, html, money, pct, raw, render, statusTone, table, time, humanise } from '../lib/ui.js';
 import { state } from '../app.js';
 
@@ -70,6 +70,10 @@ export async function overview(root) {
 
   const aiEvents = events.events.filter((e) => e.actor.refType === 'AI').length;
 
+  // "Nothing outstanding" is only true if the reader could have seen an
+  // exception in the first place.
+  const exceptionSourcesWithheld = ['CVR', 'Claim', 'DelayRiskSnapshot', 'SafetyForecast', 'Clash'].some(isWithheld);
+
   render(
     root,
     html`
@@ -106,7 +110,13 @@ export async function overview(root) {
             ${cvr ? pct(cvr.forecastMarginPercent, 2) : '—'}
           </div>
           <div class="metric-sub">
-            ${cvr ? `${cvr.marginErosionPercent > 0 ? 'eroded' : 'ahead'} ${Math.abs(cvr.marginErosionPercent).toFixed(2)} pts vs tender` : 'no CVR published'}
+            ${
+              cvr
+                ? `${cvr.marginErosionPercent > 0 ? 'eroded' : 'ahead'} ${Math.abs(cvr.marginErosionPercent).toFixed(2)} pts vs tender`
+                : isWithheld('CVR')
+                  ? 'commercial position is not visible to your role'
+                  : 'no CVR published'
+            }
           </div>
         </div>
         <div class="card">
@@ -128,7 +138,14 @@ export async function overview(root) {
           <h3>Requires attention</h3>
           ${
             exceptions.length === 0
-              ? html`<div class="empty"><b>Nothing outstanding</b>No commercial, programme or safety exception is currently raised.</div>`
+              ? html`<div class="empty">
+                  <b>${exceptionSourcesWithheld ? 'Nothing outstanding that you can see' : 'Nothing outstanding'}</b>
+                  ${
+                    exceptionSourcesWithheld
+                      ? 'Commercial and contractual records are withheld from your role, so exceptions raised against them are not shown here.'
+                      : 'No commercial, programme or safety exception is currently raised.'
+                  }
+                </div>`
               : html`<div class="split-list">
                   ${exceptions.map(
                     (item) => html`<div class="row">
