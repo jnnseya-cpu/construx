@@ -90,13 +90,6 @@ export function shortHash(hash) {
   return value.startsWith('sha256:') ? `${value.slice(7, 19)}…` : value.slice(0, 12);
 }
 
-/** Title Case from an EVENT_TYPE or SNAKE_CASE token. */
-/**
- * Turn a platform token into a readable phrase. Handles both vocabularies the
- * system uses: SCREAMING_SNAKE for capability areas and event types, CamelCase
- * for entity types — "SupplierSubmission" has to read as "Supplier submission",
- * not "Suppliersubmission".
- */
 /** Tokens whose readable form is not derivable — mostly acronyms in the middle. */
 const DISPLAY_NAMES = {
   BoQItem: 'BoQ item',
@@ -105,6 +98,9 @@ const DISPLAY_NAMES = {
   AIExecution: 'AI execution',
   AIRequest: 'AI request',
   BIM_TWIN: 'BIM and twin',
+  RISK_SAFETY: 'Risk and safety',
+  CONTRACTS_CLAIMS: 'Contracts and claims',
+  RESOURCE_COST: 'Resource and cost',
   BOQ_TAKEOFF: 'BoQ and take-off',
   SAFETY_RAMS: 'Safety and RAMS',
   BILLING_ACU: 'Billing and ACU',
@@ -112,11 +108,22 @@ const DISPLAY_NAMES = {
   HANDOVER_OM: 'Handover and O&M',
 };
 
+/** Left alone, because sentence-casing them makes them harder to read. */
+const ACRONYMS = new Set([
+  'CVR', 'RFQ', 'RFI', 'NCR', 'RAMS', 'BIM', 'ACU', 'AI', 'BOQ', 'EVM', 'CPI', 'SPI',
+  'PM', 'QS', 'FM', 'HSE', 'EPC', 'QAQC', 'API', 'MEP', 'WBS', 'CPM',
+]);
+
+/**
+ * Turn a platform token into a readable phrase. Handles both vocabularies the
+ * system uses: SCREAMING_SNAKE for capability areas, engines and event types,
+ * CamelCase for entity types — "SupplierSubmission" has to read as "Supplier
+ * submission", not "Suppliersubmission".
+ */
 export function humanise(token) {
   const raw = String(token ?? '');
   if (DISPLAY_NAMES[raw]) return DISPLAY_NAMES[raw];
-  // A bare acronym is already as readable as it gets.
-  if (/^[A-Z0-9]+$/.test(raw)) return raw;
+  if (ACRONYMS.has(raw)) return raw;
 
   const spaced = raw.includes('_') ? raw.replace(/_/g, ' ') : raw.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
   return spaced.toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
