@@ -1,5 +1,10 @@
 # Requirement traceability
 
+> Requirement-by-requirement detail. For the short answer on what exists, read
+> [`STATE.md`](STATE.md) first — it is the source of truth and this document is
+> the long form of it.
+
+
 Every requirement drawn from the CONSTRUX specification set, mapped to where it
 lives in the build. Status is one of:
 

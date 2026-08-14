@@ -10,6 +10,11 @@ One data spine, seven AI engines, one set of governance rules — for building
 construction, civil infrastructure and specialised works alike. No sector
 verticals, no duplicated logic.
 
+**Before changing anything, read [`docs/STATE.md`](docs/STATE.md).** It is the
+single source of truth for what is built, what is partial, what is deliberately
+absent, and which decisions are settled. Keep it current in the same commit as
+the change it describes.
+
 ## Running it
 
 Node 22.18 or later. There is nothing to build and no runtime dependencies.
@@ -18,7 +23,7 @@ Node 22.18 or later. There is nothing to build and no runtime dependencies.
 npm install          # dev-only: TypeScript and @types/node
 npm run demo         # takes one asset from concept to operations, then verifies itself
 npm start            # gateway + application on http://localhost:8080
-npm test             # 157 tests
+npm test             # see docs/STATE.md for the current count
 npm run typecheck
 ```
 
@@ -150,7 +155,7 @@ web/
   pages/         one module per screen, each reading live endpoints
 docs/            architecture and requirement traceability
 tools/           browser walker used to verify every page renders
-tests/           157 tests
+tests/           unit and integration suites
 ```
 
 The application is plain ES modules with no build step and no framework: the
