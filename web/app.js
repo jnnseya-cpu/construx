@@ -1,5 +1,5 @@
-import { api, ApiError, session } from './lib/api.js';
-import { html, initials, money, raw, render, toast } from './lib/ui.js';
+import { api, ApiError, resetWithheld, session, withheldRecords } from './lib/api.js';
+import { esc, html, humanise, initials, money, raw, render, toast } from './lib/ui.js';
 import { PAGES } from './pages/index.js';
 
 /**
@@ -340,7 +340,19 @@ async function draw() {
       return;
     }
 
+    resetWithheld();
     await view(document.getElementById('view'), params);
+
+    // Say what was withheld rather than letting a denial read as an empty
+    // record. "You may not see this" and "there is nothing here" are different
+    // answers, and on a construction record the difference matters.
+    const denied = withheldRecords();
+    if (denied.length > 0) {
+      document.getElementById('view')?.insertAdjacentHTML(
+        'afterbegin',
+        resolveNotice(denied),
+      );
+    }
   } catch (error) {
     const detail = error instanceof ApiError ? error.message : String(error);
     render(
@@ -349,6 +361,14 @@ async function draw() {
     );
     if (error instanceof ApiError && error.status === 401) signOut();
   }
+}
+
+function resolveNotice(denied) {
+  const reasons = [...new Set(denied.map((d) => d.reason))];
+  const types = denied.map((d) => humanise(d.refType)).join(', ');
+  return `<div class="notice info" style="margin-bottom:14px"><div><b>${denied.length} record type${
+    denied.length === 1 ? '' : 's'
+  } withheld from your role: ${esc(types)}.</b><br>${esc(reasons.join(' · '))}</div></div>`;
 }
 
 /** Refresh cached project context — called by pages after a command. */

@@ -800,7 +800,7 @@ weight as a site supervisor recording a pour.
 | Phase | Scope | Status |
 |---|---|---|
 | **0 — Foundations** | Ledger, hashing, patches, catalogue, replay, identity, RBAC/ABAC, ACU wallet, gateway | **Complete** `[BUILT]` |
-| **1 — Domain MVP** | Seven engines, lifecycle gates, procurement, offline sync, branded exports, fifteen-screen web application, 144 tests | **Complete** `[BUILT]` |
+| **1 — Domain MVP** | Seven engines, lifecycle gates, procurement, offline sync, branded exports, fifteen-screen web application, 147 tests | **Complete** `[BUILT]` |
 | **2 — Persistence & scale** | Postgres ledger with RLS and append-only rules, Kafka, read-model projections, object storage, Terraform | 6–8 weeks |
 | **3 — Agent runtime** | Agent contract, memory layers, vector store, per-role command centres, bounded autonomy, governance agent | 8–10 weeks |
 | **4 — Payments** | BitriPay gateway, merchant onboarding with KYB, settlement, reconciliation, disputes | 8 weeks |
@@ -854,7 +854,7 @@ and the value of the record to owners, insurers and regulators compounds.
 
 ```bash
 npm run demo    # full lifecycle, replay verification, deliberate tamper detection
-npm test        # 144 tests
+npm test        # 147 tests
 npm start       # gateway, landing page, application at /app, API at /v1/routes
 ```
 

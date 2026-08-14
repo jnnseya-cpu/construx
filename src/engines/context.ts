@@ -30,11 +30,14 @@ export type EngineContext = {
   projectId: string;
 };
 
-const authzOptions = {
+/** The switches every access decision is evaluated under, wherever it is made. */
+export const AUTHZ_OPTIONS = {
   rbacEnabled: config.authz.rbac,
   scopesEnabled: config.authz.scopes,
   abacEnabled: config.authz.abac,
 };
+
+const authzOptions = AUTHZ_OPTIONS;
 
 export function authorise(
   ctx: EngineContext,

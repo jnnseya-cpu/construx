@@ -14,7 +14,7 @@ const WEB_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'web');
 
 /** A response object that records what was written without needing a socket. */
 function capture(): ServerResponse & { statusCode: number; headers: Record<string, unknown>; body: Buffer } {
-  const res = new ServerResponse({ method: 'GET', url: '/', headers: {} } as never) as ServerResponse & {
+  const res = new ServerResponse({ method: 'GET', url: '/', headers: {} } as never) as unknown as ServerResponse & {
     headers: Record<string, unknown>;
     body: Buffer;
   };

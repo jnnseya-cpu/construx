@@ -112,6 +112,23 @@ export const api = {
 
 // --- domain helpers ---------------------------------------------------------
 
+/**
+ * Records withheld from the current role during this render.
+ *
+ * A denial is not the same as an empty record, and showing "nothing recorded
+ * yet" when the real answer is "you may not see this" would misrepresent the
+ * project. The shell reads this after a view renders and says so.
+ */
+const withheld = new Map();
+
+export function resetWithheld() {
+  withheld.clear();
+}
+
+export function withheldRecords() {
+  return [...withheld.entries()].map(([refType, reason]) => ({ refType, reason }));
+}
+
 /** Materialised entities of a type within a project. */
 export async function entities(projectId, refType) {
   const result = await api.get(`/v1/projects/${projectId}/entities/${refType}`);
@@ -124,8 +141,21 @@ export async function latest(projectId, refType) {
   return list[list.length - 1];
 }
 
-/** Several entity types in one round of requests. */
+/**
+ * Several entity types in one round of requests. A type the role may not read
+ * comes back empty and is recorded as withheld rather than failing the page —
+ * most screens are legitimately partial for some roles.
+ */
 export async function entityBundle(projectId, refTypes) {
-  const results = await Promise.all(refTypes.map((t) => entities(projectId, t).catch(() => [])));
+  const results = await Promise.all(
+    refTypes.map((refType) =>
+      entities(projectId, refType).catch((error) => {
+        if (error instanceof ApiError && error.status === 403) {
+          withheld.set(refType, error.message);
+        }
+        return [];
+      }),
+    ),
+  );
   return Object.fromEntries(refTypes.map((t, i) => [t, results[i]]));
 }

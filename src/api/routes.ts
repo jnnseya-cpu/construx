@@ -13,8 +13,11 @@ import * as planning from '../engines/planning.ts';
 import * as safety from '../engines/safety.ts';
 import * as tender from '../engines/tender.ts';
 import { replayProject, replayTimeline } from '../goldenthread/replay.ts';
+import { evaluateAccess } from '../identity/abac.ts';
 import { createMfaChallenge, refreshTokens, shapeMfaResponse, verifyMfaChallenge } from '../identity/auth.ts';
+import { classifyEntity } from '../identity/entityAccess.ts';
 import { PERMISSION_MATRIX } from '../identity/roles.ts';
+import { AUTHZ_OPTIONS } from '../engines/context.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import type { Platform } from '../platform.ts';
 import type { ExportAudience, ExportFormat } from '../export/exporter.ts';
@@ -461,12 +464,41 @@ export const ROUTES: Route[] = [
     method: 'GET',
     pattern: '/v1/projects/:projectId/entities/:refType',
     description: 'List materialised entities of a type within a project',
-    handler: (platform, ctx) => ({
-      entities: platform.ledger
-        .list(ctx.params.projectId as string, ctx.params.refType as string)
-        .filter((r) => r.tenantId === auth(ctx).tenantId)
-        .map((r) => ({ refId: r.refId, version: r.version, stateHash: r.stateHash, state: r.state })),
-    }),
+    handler: (platform, ctx) => {
+      // This endpoint can return any record in the system, so it has to apply
+      // the same capability and sensitivity rules the typed endpoints do —
+      // otherwise it is a way around every one of them.
+      const actor = auth(ctx);
+      const projectId = ctx.params.projectId as string;
+      const refType = ctx.params.refType as string;
+
+      const classification = classifyEntity(refType);
+      if (!classification) {
+        throw new NotFoundError(`No entity type named ${refType}`);
+      }
+
+      const decision = evaluateAccess(
+        actor,
+        classification.area,
+        'R',
+        { tenantId: actor.tenantId, projectId, dataSensitivity: classification.sensitivity },
+        AUTHZ_OPTIONS,
+      );
+
+      // A REDACT verdict is a refusal here: there is no partial view of a list
+      // of commercial records worth returning, and returning the shells would
+      // still leak how many exist.
+      if (decision.decision !== 'ALLOW') {
+        throw new ForbiddenError(decision.reason ?? 'Not permitted', 'ACCESS_DENIED');
+      }
+
+      return {
+        entities: platform.ledger
+          .list(projectId, refType)
+          .filter((r) => r.tenantId === actor.tenantId)
+          .map((r) => ({ refId: r.refId, version: r.version, stateHash: r.stateHash, state: r.state })),
+      };
+    },
   },
 
   // ----------------------------------------------------------------- engines

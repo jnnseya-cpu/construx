@@ -112,6 +112,27 @@ These are not configuration defaults. They are in the permission matrix, and the
 seeded demo had to be rewritten to satisfy them — which is the point: the system
 refused to let one role do the whole lifecycle.
 
+## Why the generic entity read is classified
+
+`GET /v1/projects/:id/entities/:refType` can return any record in the system.
+Enforcing only tenant isolation there would have made every capability boundary
+elsewhere decorative: a safety manager barred from the estimate could simply
+read `entities/Estimate` instead.
+
+Each entity type therefore declares its capability area and data sensitivity in
+one map, and the read is evaluated against the same ABAC call the typed
+endpoints use. An unmapped type is refused rather than served, so a new entity
+has to say where it belongs before it can leave the system.
+
+A `REDACT` verdict is a refusal on this endpoint. There is no useful partial
+view of a list of commercial records, and returning empty shells would still
+disclose how many exist.
+
+The interface distinguishes "withheld" from "empty". A denial recorded during a
+render is stated at the top of the screen with its reason, because on a
+construction record "you may not see this" and "there is nothing here" are
+different answers.
+
 ## Why the operator layer is a different product
 
 A platform operator signs into the same application and gets a different one:

@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import { evaluateAccess, assertAccess, type AccessAttributes } from '../src/identity/abac.ts';
 import type { AuthContext } from '../src/identity/auth.ts';
+import { ENTITY_ACCESS, classifyEntity } from '../src/identity/entityAccess.ts';
 import { accountLayerFor, PERMISSION_MATRIX, rolesAllow, type Role } from '../src/identity/roles.ts';
 import { scopesForRoles } from '../src/identity/scopes.ts';
 import { Platform, PLATFORM_TENANT_ID } from '../src/platform.ts';
@@ -171,6 +172,49 @@ describe('scopes are enforced independently of roles', () => {
     const decision = evaluateAccess(stripped, 'PROGRAMME_BASELINES', 'R', attrs(), ON);
     assert.equal(decision.decision, 'DENY');
     assert.match(decision.reason ?? '', /missing scope/);
+  });
+});
+
+describe('entity classification', () => {
+  it('gives every entity type a capability area, so none is readable by default', () => {
+    // The generic entity read consults this map. A type that is absent is
+    // refused, which is why the map has to stay complete rather than correct
+    // only for the types someone remembered.
+    for (const [refType, classification] of Object.entries(ENTITY_ACCESS)) {
+      assert.ok(classification.area, `${refType} has no capability area`);
+    }
+    assert.equal(classifyEntity('NotAThing'), undefined);
+  });
+
+  it('puts commercial and legal records behind the right sensitivity', () => {
+    assert.equal(classifyEntity('CVR')?.sensitivity, 'COMMERCIAL_L3');
+    assert.equal(classifyEntity('Estimate')?.sensitivity, 'COMMERCIAL_L3');
+    assert.equal(classifyEntity('Contract')?.sensitivity, 'LEGAL_L4');
+    assert.equal(classifyEntity('Claim')?.sensitivity, 'LEGAL_L4');
+    assert.equal(classifyEntity('Task')?.sensitivity, undefined);
+  });
+
+  it('stops a role reading through the generic endpoint what it cannot read directly', () => {
+    const read = (roles: Role[], refType: string) => {
+      const classification = classifyEntity(refType);
+      assert.ok(classification, `${refType} is unclassified`);
+      return evaluateAccess(actor(roles), classification.area, 'R', attrs({ dataSensitivity: classification.sensitivity }), ON)
+        .decision;
+    };
+
+    // Safety runs the risk register and has no business in the cost book.
+    assert.equal(read(['SAFETY'], 'RiskRegisterItem'), 'ALLOW');
+    assert.notEqual(read(['SAFETY'], 'CVR'), 'ALLOW');
+    assert.notEqual(read(['SAFETY'], 'Estimate'), 'ALLOW');
+
+    // The regulator sees safety and quality, not margins.
+    assert.equal(read(['REGULATOR'], 'CommissioningTest'), 'ALLOW');
+    assert.notEqual(read(['REGULATOR'], 'CVR'), 'ALLOW');
+    assert.notEqual(read(['REGULATOR'], 'BidEvaluation'), 'ALLOW');
+
+    // The QS owns the commercial record.
+    assert.equal(read(['QS'], 'CVR'), 'ALLOW');
+    assert.equal(read(['QS'], 'Estimate'), 'ALLOW');
   });
 });
 
