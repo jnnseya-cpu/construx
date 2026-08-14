@@ -1,0 +1,206 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { throwsCode } from './helpers.ts';
+import { ACUWallet, effectiveMultiplier } from '../src/billing/acu.ts';
+import { assignIdentity, revokeIdentity, SeatLimitError, TIERS, type Subscription } from '../src/billing/subscription.ts';
+import { buildInvoice, formatContractValue } from '../src/billing/invoice.ts';
+import { config } from '../src/config.ts';
+
+function wallet(balanceMinor = 10_000): ACUWallet {
+  const w = new ACUWallet('tenant-1');
+  w.topUp(balanceMinor);
+  return w;
+}
+
+describe('ACU wallet', () => {
+  it('charges the fixed multiplier over raw provider cost', () => {
+    const w = wallet();
+    const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
+    const entry = w.settle(hold.holdId, 100, 'OPENAI');
+    assert.equal(entry.rawCostMinor, 100);
+    assert.equal(entry.billedMinor, 100 * config.billing.markupMultiplier);
+  });
+
+  it('never allows the balance to go negative', () => {
+    const w = wallet(100);
+    throwsCode(() => w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 1_000 }), 'ACU_EXHAUSTED');
+    assert.equal(w.snapshot().balanceMinor, 100);
+  });
+
+  it('halts AI execution once credit is exhausted', () => {
+    const w = wallet(300);
+    const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
+    w.settle(hold.holdId, 100, 'OPENAI');
+    assert.equal(w.snapshot().availableMinor, 0);
+    assert.equal(w.snapshot().aiHalted, true);
+    assert.throws(() => w.reserve({ aiRequestId: 'req-2', estimatedRawCostMinor: 1 }), /halted/);
+  });
+
+  it('ring-fences held funds so a second call cannot spend them', () => {
+    const w = wallet(600);
+    w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
+    assert.equal(w.snapshot().heldMinor, 300);
+    assert.equal(w.snapshot().availableMinor, 300);
+    throwsCode(() => w.reserve({ aiRequestId: 'req-2', estimatedRawCostMinor: 200 }), 'ACU_EXHAUSTED');
+  });
+
+  it('charges nothing when an execution fails and its hold is released', () => {
+    const w = wallet();
+    const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
+    w.release(hold.holdId, 'provider timeout');
+    assert.equal(w.snapshot().balanceMinor, 10_000);
+    assert.equal(w.snapshot().heldMinor, 0);
+  });
+
+  it('caps the charge at the amount reserved when an execution overruns its estimate', () => {
+    const w = wallet();
+    const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
+    const entry = w.settle(hold.holdId, 500, 'OPENAI');
+    assert.equal(entry.billedMinor, hold.heldMinor, 'the customer is never charged beyond the disclosed hold');
+  });
+
+  it('refuses to settle the same hold twice', () => {
+    const w = wallet();
+    const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
+    w.settle(hold.holdId, 100, 'OPENAI');
+    throwsCode(() => w.settle(hold.holdId, 100, 'OPENAI'), 'ACU_HOLD_NOT_FOUND');
+  });
+
+  it('enforces a monthly cap before contacting a provider', () => {
+    const w = wallet(100_000);
+    w.setCaps({ monthlyMinor: 500 });
+    const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
+    w.settle(hold.holdId, 100, 'OPENAI');
+    assert.throws(() => w.reserve({ aiRequestId: 'req-2', estimatedRawCostMinor: 100 }), /Monthly AI cap/);
+  });
+
+  it('enforces per-project caps independently', () => {
+    const w = wallet(100_000);
+    w.setCaps({ perProjectMinor: { 'project-a': 400 } });
+    const first = w.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 100, projectId: 'project-a' });
+    w.settle(first.holdId, 100, 'OPENAI');
+    assert.throws(() => w.reserve({ aiRequestId: 'r2', estimatedRawCostMinor: 100, projectId: 'project-a' }), /Project AI cap/);
+    // A different project is unaffected.
+    assert.ok(w.reserve({ aiRequestId: 'r3', estimatedRawCostMinor: 100, projectId: 'project-b' }));
+  });
+
+  it('raises alerts once per threshold', () => {
+    const w = wallet(100_000);
+    w.setCaps({ monthlyMinor: 1_000 });
+    for (const request of ['r1', 'r2', 'r3']) {
+      const hold = w.reserve({ aiRequestId: request, estimatedRawCostMinor: 100 });
+      w.settle(hold.holdId, 100, 'OPENAI');
+    }
+    const thresholds = w.alerts().map((a) => a.threshold);
+    assert.deepEqual(thresholds, [...new Set(thresholds)], 'alerts must not repeat for the same threshold');
+    assert.ok(thresholds.includes(50));
+    assert.ok(thresholds.includes(80));
+  });
+
+  it('attributes cost to the engine that spent it', () => {
+    const w = wallet(100_000);
+    for (const [request, module] of [['r1', 'PLANNING'], ['r2', 'PLANNING'], ['r3', 'TENDER']] as const) {
+      const hold = w.reserve({ aiRequestId: request, estimatedRawCostMinor: 100, module });
+      w.settle(hold.holdId, 100, 'OPENAI');
+    }
+    const attribution = w.attributionByModule();
+    assert.equal(attribution.find((a) => a.module === 'PLANNING')?.calls, 2);
+    assert.equal(attribution.find((a) => a.module === 'TENDER')?.calls, 1);
+  });
+
+  it('grants the free trial credit without a payment method', () => {
+    const w = new ACUWallet('tenant-trial');
+    w.grantTrialCredit();
+    assert.equal(w.snapshot().availableMinor, config.billing.freeTrialGrantMinor);
+    assert.equal(w.snapshot().aiHalted, false);
+  });
+});
+
+describe('volume incentive', () => {
+  it('holds the full multiplier at low monthly spend', () => {
+    assert.equal(effectiveMultiplier(100_000, true), 3.0);
+  });
+
+  it('steps down for larger consumers while staying above cost', () => {
+    assert.equal(effectiveMultiplier(500_000, true), 2.7);
+    assert.equal(effectiveMultiplier(5_000_000, true), 2.5);
+  });
+
+  it('is off unless enabled for the tenant', () => {
+    assert.equal(effectiveMultiplier(5_000_000, false), config.billing.markupMultiplier);
+  });
+});
+
+describe('subscription seats', () => {
+  const subscription: Subscription = {
+    id: 'sub-1',
+    tenantId: 'tenant-1',
+    tier: 'SOLO',
+    status: 'ACTIVE',
+    assignedIdentities: [],
+    startedAt: new Date().toISOString(),
+    renewsAt: new Date().toISOString(),
+  };
+
+  it('enforces the tier seat limit', () => {
+    let current = subscription;
+    for (const user of ['u1', 'u2', 'u3']) current = assignIdentity(current, user);
+    assert.throws(() => assignIdentity(current, 'u4'), SeatLimitError);
+  });
+
+  it('treats seats as reusable once revoked', () => {
+    let current = subscription;
+    for (const user of ['u1', 'u2', 'u3']) current = assignIdentity(current, user);
+    current = revokeIdentity(current, 'u2');
+    assert.doesNotThrow(() => assignIdentity(current, 'u4'));
+  });
+
+  it('places no seat limit on enterprise and sovereign tiers', () => {
+    assert.equal(TIERS.ENTERPRISE.includedIdentities, null);
+    assert.equal(TIERS.SOVEREIGN.includedIdentities, null);
+    assert.equal(TIERS.SOVEREIGN.isolatedTenancy, true);
+  });
+
+  it('is idempotent when the same identity is assigned twice', () => {
+    const once = assignIdentity(subscription, 'u1');
+    assert.deepEqual(assignIdentity(once, 'u1').assignedIdentities, ['u1']);
+  });
+});
+
+describe('invoicing', () => {
+  it('separates the subscription line from AI usage and states the multiplier', () => {
+    const w = wallet(100_000);
+    const hold = w.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 100, module: 'PLANNING' });
+    w.settle(hold.holdId, 100, 'OPENAI');
+
+    const subscription: Subscription = {
+      id: 'sub-1',
+      tenantId: 'tenant-1',
+      tier: 'BUSINESS',
+      status: 'ACTIVE',
+      assignedIdentities: ['u1'],
+      startedAt: new Date().toISOString(),
+      renewsAt: new Date().toISOString(),
+    };
+
+    const invoice = buildInvoice(subscription, w, new Date().toISOString().slice(0, 7));
+    assert.equal(invoice.subscriptionMinor, TIERS.BUSINESS.monthlyPriceUsd * 100);
+    assert.equal(invoice.aiUsageMinor, 300);
+    assert.equal(invoice.aiRawCostMinor, 100);
+    assert.equal(invoice.effectiveMultiplier, 3);
+    assert.equal(invoice.totalMinor, invoice.subscriptionMinor + invoice.aiUsageMinor);
+    assert.ok(invoice.commercialTerms.some((t) => t.includes('no AI usage entitlement')));
+  });
+});
+
+describe('value formatting', () => {
+  it('renders zero at portfolio level as $0.0M rather than $0.0B', () => {
+    assert.equal(formatContractValue(0), '$0.0M');
+  });
+
+  it('picks the unit from the magnitude', () => {
+    assert.equal(formatContractValue(50_000_000), '$0.5M');
+    assert.equal(formatContractValue(240_000_000_000), '$2.4B');
+    assert.equal(formatContractValue(50_000), '$0.5K');
+  });
+});

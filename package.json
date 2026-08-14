@@ -1,0 +1,21 @@
+{
+  "name": "construx-os",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CONSTRUX.AI \u2014 AI-agent Construction Operating System covering the full asset lifecycle: Concept to 30+ year O&M.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "start": "node src/main.ts",
+    "demo": "node src/cli/demo.ts",
+    "ask": "node src/cli/ask.ts",
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^5.9.3"
+  }
+}

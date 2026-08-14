@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CONSTRUX Command Centre</title>
+<style>
+  /* CONSTRUX brand system. Dark-first: this is a control room, not a website. */
+  :root {
+    --core-black: rgba(12, 12, 14, 1);
+    --carbon: rgba(24, 26, 30, 1);
+    --structural-grey: rgba(38, 42, 48, 1);
+    --signal-orange: rgba(255, 102, 0, 1);
+    --orange-glow: rgba(255, 120, 25, 1);
+    --orange-pressed: rgba(220, 85, 0, 1);
+    --text-primary: rgba(245, 247, 250, 1);
+    --text-secondary: rgba(180, 186, 196, 1);
+    --text-disabled: rgba(110, 118, 130, 1);
+    --success: rgba(34, 197, 94, 1);
+    --warning: rgba(255, 166, 0, 1);
+    --critical: rgba(220, 38, 38, 1);
+    --info: rgba(59, 130, 246, 1);
+    --radius: 8px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--core-black);
+    color: var(--text-primary);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 24px;
+    background: var(--carbon);
+    border-bottom: 1px solid var(--structural-grey);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .wordmark { font-size: 20px; font-weight: 800; letter-spacing: 0.5px; }
+  .wordmark .x { color: var(--signal-orange); }
+  .breadcrumb { color: var(--text-secondary); font-size: 13px; }
+  .spacer { flex: 1; }
+
+  .pill {
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--structural-grey);
+    color: var(--text-secondary);
+  }
+  .pill.live { color: var(--success); }
+  .pill.halted { color: var(--critical); }
+
+  nav {
+    display: flex;
+    gap: 4px;
+    padding: 0 24px;
+    background: var(--carbon);
+    border-bottom: 1px solid var(--structural-grey);
+    overflow-x: auto;
+  }
+  nav button {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    padding: 12px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  nav button:hover { color: var(--text-primary); background: rgba(255, 102, 0, 0.08); }
+  nav button.active { color: var(--signal-orange); border-bottom-color: var(--signal-orange); }
+
+  main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+  section { display: none; }
+  section.active { display: block; }
+
+  h2 { font-size: 16px; margin: 0 0 4px; }
+  .sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; }
+
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+
+  .card {
+    background: var(--carbon);
+    border: 1px solid var(--structural-grey);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .card h3 { margin: 0 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-secondary); }
+
+  .metric { font-size: 26px; font-weight: 700; }
+  .metric.value { color: var(--signal-orange); }
+  .metric.good { color: var(--success); }
+  .metric.warn { color: var(--warning); }
+  .metric.bad { color: var(--critical); }
+  .metric-note { color: var(--text-secondary); font-size: 12px; margin-top: 4px; }
+
+  .table-scroll { overflow-x: auto; border: 1px solid var(--structural-grey); border-radius: var(--radius); }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 640px; }
+  thead th {
+    background: var(--structural-grey);
+    text-align: left;
+    padding: 10px 12px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    position: sticky;
+    top: 0;
+  }
+  tbody td { padding: 10px 12px; border-top: 1px solid var(--structural-grey); font-size: 13px; vertical-align: top; word-break: break-word; }
+  tbody tr:hover { background: rgba(255, 102, 0, 0.05); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-secondary); }
+
+  button.primary {
+    background: var(--signal-orange);
+    color: var(--core-black);
+    border: none;
+    border-radius: 6px;
+    padding: 9px 16px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button.primary:hover { background: var(--orange-glow); }
+  button.primary:active { background: var(--orange-pressed); }
+  button.secondary {
+    background: var(--structural-grey);
+    border: 1px solid rgba(255, 102, 0, 0.6);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 8px 14px;
+    cursor: pointer;
+  }
+  button.secondary:hover { background: rgba(255, 102, 0, 0.15); }
+
+  input, textarea, select {
+    width: 100%;
+    background: var(--structural-grey);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 9px 12px;
+    font: inherit;
+  }
+  input:focus, textarea:focus { outline: 2px solid var(--signal-orange); outline-offset: -1px; }
+
+  .phase-rail { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 20px; }
+  .phase {
+    flex: 1 1 120px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: var(--structural-grey);
+    border-left: 3px solid var(--text-disabled);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-disabled);
+  }
+  .phase.done { border-left-color: var(--success); color: var(--text-secondary); }
+  .phase.current { border-left-color: var(--signal-orange); color: var(--signal-orange); background: rgba(255, 102, 0, 0.1); }
+
+  .chat { display: flex; flex-direction: column; gap: 12px; max-width: 900px; }
+  .bubble { padding: 12px 14px; border-radius: var(--radius); white-space: pre-wrap; }
+  .bubble.user { background: var(--structural-grey); align-self: flex-end; max-width: 75%; }
+  .bubble.agent { background: var(--carbon); border: 1px solid var(--structural-grey); border-left: 3px solid var(--signal-orange); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .action-chip {
+    font-size: 12px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: rgba(255, 102, 0, 0.12);
+    color: var(--signal-orange);
+    border: 1px solid rgba(255, 102, 0, 0.35);
+  }
+  .action-chip.denied { background: rgba(220, 38, 38, 0.1); color: var(--critical); border-color: rgba(220, 38, 38, 0.3); }
+
+  .status-ok { color: var(--success); font-weight: 600; }
+  .status-bad { color: var(--critical); font-weight: 600; }
+  .empty { color: var(--text-disabled); padding: 32px; text-align: center; }
+  .row { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wordmark">CONSTRU<span class="x">X</span></div>
+  <div class="breadcrumb" id="breadcrumb">Loading…</div>
+  <div class="spacer"></div>
+  <div class="pill" id="acu-pill">ACU —</div>
+  <div class="pill" id="ai-pill">AI —</div>
+</header>
+
+<nav>
+  <button class="active" data-view="overview">Command Centre</button>
+  <button data-view="copilot">Copilot</button>
+  <button data-view="programme">Programme</button>
+  <button data-view="commercial">Commercial</button>
+  <button data-view="risk">Risk &amp; Safety</button>
+  <button data-view="contracts">Change &amp; Claims</button>
+  <button data-view="assets">Handover &amp; O&amp;M</button>
+  <button data-view="audit">Golden Thread</button>
+  <button data-view="billing">ACU &amp; Billing</button>
+</nav>
+
+<main>
+  <section id="overview" class="active">
+    <h2>Project Command Centre</h2>
+    <p class="sub">Live position across the full asset lifecycle, read from the Golden Thread.</p>
+    <div class="phase-rail" id="phase-rail"></div>
+    <div class="grid" id="overview-cards"></div>
+    <div class="card" style="margin-top:16px">
+      <h3>Phase gate</h3>
+      <div id="gate-status"></div>
+    </div>
+  </section>
+
+  <section id="copilot">
+    <h2>Copilot</h2>
+    <p class="sub">Ask about this project. Answers are read from project state — the copilot proposes actions, it never runs them for you.</p>
+    <div class="row">
+      <input id="question" placeholder="e.g. what is our delay exposure and how do we recover it?" style="flex:1;min-width:280px">
+      <button class="primary" id="ask">Ask</button>
+    </div>
+    <div class="chat" id="chat"></div>
+  </section>
+
+  <section id="programme">
+    <h2>Programme</h2>
+    <p class="sub">Critical path computed from the activity network. Dates are an output, never an input.</p>
+    <div class="grid" id="programme-cards"></div>
+    <div class="table-scroll" style="margin-top:16px"><table id="programme-table"></table></div>
+  </section>
+
+  <section id="commercial">
+    <h2>Commercial</h2>
+    <p class="sub">Cost value reconciliation, earned value and the payment position.</p>
+    <div class="grid" id="commercial-cards"></div>
+    <div class="table-scroll" style="margin-top:16px"><table id="commercial-table"></table></div>
+  </section>
+
+  <section id="risk">
+    <h2>Risk &amp; Safety</h2>
+    <p class="sub">Quantified risk exposure and predictive safety indicators.</p>
+    <div class="grid" id="risk-cards"></div>
+    <div class="table-scroll" style="margin-top:16px"><table id="risk-table"></table></div>
+  </section>
+
+  <section id="contracts">
+    <h2>Change &amp; Claims</h2>
+    <p class="sub">Variations, delay events and assessed entitlement.</p>
+    <div class="grid" id="contracts-cards"></div>
+    <div class="table-scroll" style="margin-top:16px"><table id="contracts-table"></table></div>
+  </section>
+
+  <section id="assets">
+    <h2>Handover &amp; O&amp;M</h2>
+    <p class="sub">The asset register and its operational position, on the same data spine as construction.</p>
+    <div class="grid" id="assets-cards"></div>
+    <div class="table-scroll" style="margin-top:16px"><table id="assets-table"></table></div>
+  </section>
+
+  <section id="audit">
+    <h2>Golden Thread</h2>
+    <p class="sub">Every event, hash-chained. Replay recomputes state from the log and reports any break.</p>
+    <div class="row">
+      <button class="primary" id="replay">Run verification replay</button>
+      <div id="replay-summary"></div>
+    </div>
+    <div class="table-scroll"><table id="audit-table"></table></div>
+  </section>
+
+  <section id="billing">
+    <h2>ACU &amp; Billing</h2>
+    <p class="sub">Prepaid AI credit, cost attribution by engine, and the subscription position.</p>
+    <div class="grid" id="billing-cards"></div>
+    <div class="table-scroll" style="margin-top:16px"><table id="billing-table"></table></div>
+  </section>
+</main>
+
+<script>
+// The console talks to the same public API as any other client. Nothing here
+// has privileged access; it authenticates and is subject to the same RBAC.
+const state = { token: null, projectId: null, project: null };
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+      ...(options.headers || {}),
+    },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.detail || payload.title || `Request failed (${response.status})`);
+  return payload;
+}
+
+async function bootstrap() {
+  const session = await api('/v1/console/session', { method: 'POST' });
+  state.token = session.accessToken;
+  state.projectId = session.projectId;
+  state.project = session.project;
+
+  document.getElementById('breadcrumb').textContent =
+    `${session.enterprise} › ${session.portfolio} › ${session.project.name}`;
+
+  await Promise.all([refreshHeader(), renderOverview()]);
+}
+
+async function refreshHeader() {
+  const [wallet, plane] = await Promise.all([api('/v1/billing/wallet'), api('/v1/ai/control-plane')]);
+  const acuPill = document.getElementById('acu-pill');
+  acuPill.textContent = `ACU ${(wallet.availableMinor / 100).toFixed(2)} available`;
+  acuPill.className = `pill ${wallet.aiHalted ? 'halted' : 'live'}`;
+  document.getElementById('ai-pill').textContent =
+    `AI ${plane.mode} · ${plane.reasoning.provider}+${plane.perception.provider}`;
+}
+
+const money = (minor) => {
+  if (minor === 0) return '$0.0M';
+  const major = minor / 100;
+  const abs = Math.abs(major);
+  if (abs < 1e6) return `$${(major / 1e3).toFixed(1)}K`;
+  if (abs < 1e9) return `$${(major / 1e6).toFixed(1)}M`;
+  return `$${(major / 1e9).toFixed(1)}B`;
+};
+
+const card = (title, value, note, tone = '') =>
+  `<div class="card"><h3>${title}</h3><div class="metric ${tone}">${value}</div><div class="metric-note">${note || ''}</div></div>`;
+
+const table = (headers, rows) =>
+  rows.length === 0
+    ? '<tbody><tr><td class="empty">Nothing recorded yet</td></tr></tbody>'
+    : `<thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead>` +
+      `<tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody>`;
+
+const entities = (type) => api(`/v1/projects/${state.projectId}/entities/${type}`).then((r) => r.entities.map((e) => e.state));
+
+const PHASES = ['CONCEPT', 'DESIGN', 'TENDER', 'CONSTRUCTION', 'COMMISSIONING', 'HANDOVER', 'OPERATIONS'];
+
+async function renderOverview() {
+  const detail = await api(`/v1/projects/${state.projectId}`);
+  const project = detail.project;
+  const current = PHASES.indexOf(project.phase);
+
+  document.getElementById('phase-rail').innerHTML = PHASES.map(
+    (p, i) => `<div class="phase ${i < current ? 'done' : i === current ? 'current' : ''}">${p}</div>`,
+  ).join('');
+
+  const [risks, variations, events, cvrs] = await Promise.all([
+    entities('RiskRegisterItem'), entities('Variation'),
+    api(`/v1/projects/${state.projectId}/audit/events`), entities('CVR'),
+  ]);
+  const cvr = cvrs[cvrs.length - 1];
+
+  document.getElementById('overview-cards').innerHTML = [
+    card('Contract value', money(project.contractValueMinor), `${project.sectorType} · ${project.assetType}`, 'value'),
+    card('Lifecycle phase', project.phase, `${project.location.city}, ${project.location.countryCode}`),
+    card('Forecast margin', cvr ? `${cvr.forecastMarginPercent}%` : '—',
+      cvr ? `${cvr.marginErosionPercent > 0 ? 'eroded' : 'ahead'} ${Math.abs(cvr.marginErosionPercent)} pts vs tender` : 'no CVR published',
+      cvr ? (cvr.forecastMarginPercent < 0 ? 'bad' : cvr.marginErosionPercent > 2 ? 'warn' : 'good') : ''),
+    card('Open risks', risks.filter((r) => r.status === 'OPEN').length, 'quantified in the register'),
+    card('Variations', variations.length, 'instructed and claimed'),
+    card('Golden Thread events', events.events.length, 'immutable, hash-chained'),
+  ].join('');
+
+  document.getElementById('gate-status').innerHTML = detail.gate.criteria.length === 0
+    ? '<span class="status-ok">Final phase — no exit gate</span>'
+    : detail.gate.criteria.map((c) =>
+        `<div style="padding:6px 0">${c.satisfied ? '<span class="status-ok">✓</span>' : '<span class="status-bad">✗</span>'} ${c.description} <code>(${c.found}/${c.required})</code></div>`
+      ).join('') + `<div style="margin-top:10px" class="${detail.gate.passed ? 'status-ok' : 'status-bad'}">${detail.gate.passed ? `Gate passed — may advance to ${detail.gate.nextPhase}` : 'Gate not met — cannot advance'}</div>`;
+}
+
+async function renderProgramme() {
+  const [programme, tasks] = await Promise.all([
+    api(`/v1/projects/${state.projectId}/programme`).catch(() => null),
+    entities('Task'),
+  ]);
+
+  document.getElementById('programme-cards').innerHTML = programme
+    ? [
+        card('Programme duration', `${programme.projectDurationDays}d`, 'from the activity network', 'value'),
+        card('P80 duration', `${programme.p80DurationDays}d`, 'aggregated PERT variance on the critical path', 'warn'),
+        card('Critical activities', programme.criticalPath.length, 'zero or negative total float', 'bad'),
+        card('Near critical', programme.nearCritical.length, 'five days float or less', 'warn'),
+      ].join('')
+    : '<div class="card"><div class="empty">No activities scheduled</div></div>';
+
+  document.getElementById('programme-table').innerHTML = table(
+    ['Activity', 'Duration', 'Complete', 'Slippage', 'Status'],
+    tasks.map((t) => [t.name, `${t.durationDays}d`, `${t.percentComplete || 0}%`, `${t.slippageDays || 0}d`, t.status]),
+  );
+}
+
+async function renderCommercial() {
+  const [cvrs, evms, budgets] = await Promise.all([entities('CVR'), entities('EarnedValueSnapshot'), entities('Budget')]);
+  const cvr = cvrs[cvrs.length - 1];
+  const evm = evms[evms.length - 1];
+  const budget = budgets[budgets.length - 1];
+
+  document.getElementById('commercial-cards').innerHTML = [
+    card('Budget at completion', budget ? money(budget.totalMinor) : '—', budget ? `baseline ${budget.version}` : 'no baseline', 'value'),
+    card('Forecast final cost', cvr ? money(cvr.forecastFinalCostMinor) : '—', cvr ? `value ${money(cvr.forecastFinalValueMinor)}` : ''),
+    card('CPI', evm ? evm.costPerformanceIndex : '—', evm ? `SPI ${evm.schedulePerformanceIndex}` : 'no snapshot',
+      evm ? (evm.costPerformanceIndex >= 1 ? 'good' : 'bad') : ''),
+    card('Unapproved exposure', cvr ? money(cvr.unapprovedExposureMinor) : '—', 'variations not yet agreed', 'warn'),
+  ].join('');
+
+  document.getElementById('commercial-table').innerHTML = table(
+    ['Alert'],
+    (cvr ? cvr.alerts : []).map((a) => [a]),
+  );
+}
+
+async function renderRisk() {
+  const [risks, forecasts, rams] = await Promise.all([entities('RiskRegisterItem'), entities('SafetyForecast'), entities('RAMS')]);
+  const forecast = forecasts[forecasts.length - 1];
+  const contingency = await api(`/v1/projects/${state.projectId}/risk/contingency`).catch(() => null);
+
+  document.getElementById('risk-cards').innerHTML = [
+    card('Expected risk cost', contingency ? money(contingency.expectedMinor) : '—', 'probability-weighted', 'warn'),
+    card('P80 contingency', contingency ? money(contingency.p80Minor) : '—', 'defensible contingency figure', 'value'),
+    card('Safety risk index', forecast ? forecast.riskIndex : '—', forecast ? forecast.severity : 'no forecast',
+      forecast ? (forecast.severity === 'LOW' ? 'good' : forecast.severity === 'CRITICAL' ? 'bad' : 'warn') : ''),
+    card('Approved RAMS', rams.filter((r) => r.status === 'APPROVED').length, `${rams.length} total`),
+  ].join('');
+
+  document.getElementById('risk-table').innerHTML = table(
+    ['Risk', 'Category', 'Severity', 'Expected cost', 'Mitigation'],
+    risks.map((r) => [r.title, r.category, r.severity, money(r.expectedCostMinor),
+      r.residual && r.residual.recommended ? '<span class="status-ok">worth mitigating</span>' : 'accept / monitor']),
+  );
+}
+
+async function renderContracts() {
+  const [variations, delays, claims] = await Promise.all([entities('Variation'), entities('DelayEvent'), entities('Claim')]);
+  const claim = claims[claims.length - 1];
+
+  document.getElementById('contracts-cards').innerHTML = [
+    card('Variations', variations.length, `${variations.filter((v) => v.isDomestic).length} domestic`, 'value'),
+    card('Delay events', delays.length, `${delays.filter((d) => d.responsibility === 'EMPLOYER').length} employer risk`),
+    card('Assessed entitlement', claim ? `${claim.assessedDays}d` : '—', claim ? `claimed ${claim.claimedDays}d` : 'no claim', 'warn'),
+    card('Entitlement score', claim ? claim.entitlementScore : '—', claim ? claim.recommendation.slice(0, 60) : '',
+      claim ? (claim.entitlementScore >= 0.7 ? 'good' : claim.entitlementScore >= 0.4 ? 'warn' : 'bad') : ''),
+  ].join('');
+
+  document.getElementById('contracts-table').innerHTML = table(
+    ['Ref', 'Description / cause', 'Origin', 'Value', 'Status'],
+    [
+      ...variations.map((v) => [v.reference, v.description || v.valuationMethod, v.origin, money(v.valuedAmountMinor || 0), v.status]),
+      ...delays.map((d) => [d.id.slice(-6), d.description, d.cause, `${d.criticalDelayDays}d`, d.responsibility]),
+    ],
+  );
+}
+
+async function renderAssets() {
+  const [assets, defects, orders, packs] = await Promise.all([
+    entities('AssetRegisterItem'), entities('Defect'), entities('WorkOrder'), entities('HandoverPack'),
+  ]);
+  const pack = packs[packs.length - 1];
+
+  document.getElementById('assets-cards').innerHTML = [
+    card('Registered assets', assets.length, 'carried into operations', 'value'),
+    card('Handover completeness', pack ? `${Math.round(pack.completeness * 100)}%` : '—',
+      pack && pack.gaps.length ? `${pack.gaps.length} gap(s)` : 'no gaps', pack && pack.gaps.length ? 'warn' : 'good'),
+    card('Open defects', defects.filter((d) => d.status !== 'CLOSED').length,
+      `${defects.filter((d) => d.warrantyCovered).length} warranty covered`),
+    card('Work orders', orders.length, `${orders.filter((o) => o.status === 'OPEN').length} open`),
+  ].join('');
+
+  document.getElementById('assets-table').innerHTML = table(
+    ['Tag', 'Description', 'Class', 'Installed', 'Replacement due'],
+    assets.map((a) => [a.assetTag, a.description, a.assetClass, a.installedAt.slice(0, 10), a.expectedReplacementDate]),
+  );
+}
+
+async function renderAudit() {
+  const data = await api(`/v1/projects/${state.projectId}/audit/events`);
+  document.getElementById('audit-table').innerHTML = table(
+    ['Time', 'Event', 'Entity', 'Actor', 'Chain hash'],
+    data.events.slice(-100).reverse().map((e) => [
+      e.timestamp.slice(11, 19),
+      e.eventType,
+      `${e.entity.refType} <code>${e.entity.refId.slice(-6)}</code>`,
+      `${e.actor.refType}${e.actor.refType === 'AI' ? ` <code>${e.actor.refId}</code>` : ''}`,
+      `<code>${(e.chainHash || '').slice(7, 19)}…</code>`,
+    ]),
+  );
+}
+
+async function renderBilling() {
+  const [wallet, attribution] = await Promise.all([api('/v1/billing/wallet'), api('/v1/billing/attribution')]);
+
+  document.getElementById('billing-cards').innerHTML = [
+    card('Available ACU', money(wallet.availableMinor), wallet.aiHalted ? 'AI execution halted' : 'AI execution enabled',
+      wallet.aiHalted ? 'bad' : 'good'),
+    card('Held', money(wallet.heldMinor), 'reserved against running executions', 'warn'),
+    card('Billed this month', money(wallet.monthBilledMinor), `raw provider cost ${money(wallet.monthRawSpendMinor)}`, 'value'),
+    card('Effective multiplier', wallet.monthRawSpendMinor ? (wallet.monthBilledMinor / wallet.monthRawSpendMinor).toFixed(2) + '×' : '—',
+      'charged over underlying compute cost'),
+  ].join('');
+
+  document.getElementById('billing-table').innerHTML = table(
+    ['Engine', 'Executions', 'Provider cost', 'Billed'],
+    attribution.attribution.map((a) => [a.module, a.calls, money(a.rawCostMinor), money(a.billedMinor)]),
+  );
+}
+
+const RENDERERS = {
+  overview: renderOverview, programme: renderProgramme, commercial: renderCommercial,
+  risk: renderRisk, contracts: renderContracts, assets: renderAssets,
+  audit: renderAudit, billing: renderBilling, copilot: async () => {},
+};
+
+document.querySelectorAll('nav button').forEach((button) => {
+  button.addEventListener('click', async () => {
+    document.querySelectorAll('nav button').forEach((b) => b.classList.remove('active'));
+    document.querySelectorAll('section').forEach((s) => s.classList.remove('active'));
+    button.classList.add('active');
+    document.getElementById(button.dataset.view).classList.add('active');
+    try { await RENDERERS[button.dataset.view](); } catch (error) { console.error(error); }
+  });
+});
+
+async function askCopilot() {
+  const input = document.getElementById('question');
+  const question = input.value.trim();
+  if (!question) return;
+  input.value = '';
+
+  const chat = document.getElementById('chat');
+  chat.insertAdjacentHTML('beforeend', `<div class="bubble user">${question}</div>`);
+
+  try {
+    const answer = await api(`/v1/projects/${state.projectId}/ask`, {
+      method: 'POST',
+      body: JSON.stringify({ question }),
+    });
+    const chips = answer.suggestedActions
+      .map((a) => `<span class="action-chip ${a.permitted ? '' : 'denied'}" title="${a.permitted ? a.description : a.reason}">${a.command}</span>`)
+      .join('');
+    chat.insertAdjacentHTML(
+      'beforeend',
+      `<div class="bubble agent">${answer.answer}${chips ? `<div class="actions">${chips}</div>` : ''}</div>`,
+    );
+  } catch (error) {
+    chat.insertAdjacentHTML('beforeend', `<div class="bubble agent status-bad">${error.message}</div>`);
+  }
+  chat.scrollIntoView({ block: 'end' });
+}
+
+document.getElementById('ask').addEventListener('click', askCopilot);
+document.getElementById('question').addEventListener('keydown', (e) => { if (e.key === 'Enter') askCopilot(); });
+
+document.getElementById('replay').addEventListener('click', async () => {
+  const summary = document.getElementById('replay-summary');
+  summary.textContent = 'Replaying…';
+  try {
+    const report = await api(`/v1/projects/${state.projectId}/audit/replay`, { method: 'POST', body: JSON.stringify({}) });
+    summary.innerHTML = report.verificationStatus === 'VERIFIED'
+      ? `<span class="status-ok">VERIFIED</span> — ${report.eventsReplayed} events, root <code>${report.rootHash.slice(7, 23)}…</code>`
+      : `<span class="status-bad">FAILED</span> — ${report.failures.length} integrity failure(s)`;
+  } catch (error) {
+    summary.innerHTML = `<span class="status-bad">${error.message}</span>`;
+  }
+});
+
+bootstrap().catch((error) => {
+  document.getElementById('breadcrumb').textContent = `Bootstrap failed: ${error.message}`;
+});
+</script>
+</body>
+</html>
