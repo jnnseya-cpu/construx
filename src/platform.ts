@@ -1,4 +1,6 @@
 import { AIOrchestrator } from './ai/orchestrator.ts';
+import { ExportService } from './export/exporter.ts';
+import { SyncEngine } from './field/sync.ts';
 import { ACUWallet } from './billing/acu.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
 import { assignIdentity, revokeIdentity, TIERS, type Subscription, type SubscriptionTier } from './billing/subscription.ts';
@@ -40,6 +42,10 @@ export type PlatformUser = {
 export class Platform {
   readonly ledger = new GoldenThreadLedger();
   readonly orchestrator: AIOrchestrator;
+  /** Offline-first field sync. Devices push batches and pull by cursor. */
+  readonly sync: SyncEngine;
+  /** Every document that leaves the platform is branded, hashed and recorded. */
+  readonly exports: ExportService;
 
   readonly #wallets = new Map<string, ACUWallet>();
   readonly #subscriptions = new Map<string, Subscription>();
@@ -48,6 +54,8 @@ export class Platform {
 
   constructor(orchestrator = new AIOrchestrator()) {
     this.orchestrator = orchestrator;
+    this.sync = new SyncEngine(this.ledger);
+    this.exports = new ExportService(this.ledger);
   }
 
   // --- Tenancy ---------------------------------------------------------------
@@ -160,6 +168,20 @@ export class Platform {
         balanceMinor: wallet.snapshot().balanceMinor,
         openedAt: new Date().toISOString(),
       },
+    });
+
+    // Exports carry the client's identity, so branding is established at
+    // onboarding rather than discovered missing at the moment of export.
+    this.exports.setBranding(tenantId, {
+      clientName: input.legalName,
+      primaryColour: 'rgba(255, 102, 0, 1)',
+      legalFooter: `${input.legalName} · registered in ${input.jurisdiction}`,
+      documentReferencePrefix: input.legalName
+        .split(/\s+/)
+        .map((word) => word[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 4),
     });
 
     return { tenant, subscription, wallet };

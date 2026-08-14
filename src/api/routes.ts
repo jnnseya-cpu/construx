@@ -16,6 +16,7 @@ import { createMfaChallenge, refreshTokens, shapeMfaResponse, verifyMfaChallenge
 import { PERMISSION_MATRIX } from '../identity/roles.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import type { Platform } from '../platform.ts';
+import type { ExportAudience, ExportFormat } from '../export/exporter.ts';
 import { metrics, recentLogs, type RequestContext } from './middleware.ts';
 
 /**
@@ -841,6 +842,102 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => ask(projectContext(platform, ctx), body<{ question: string }>(ctx).question),
+  },
+
+  // ------------------------------------------------- offline field execution
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/sync/push',
+    description: 'Push a batch of offline field operations',
+    schema: {
+      type: 'object',
+      required: ['operations'],
+      properties: { operations: { type: 'array', minItems: 1, items: { type: 'object' } } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      platform.sync.push(
+        auth(ctx),
+        ctx.params.projectId as string,
+        body<{ operations: Parameters<Platform['sync']['push']>[2] }>(ctx).operations,
+        ctx.correlationId,
+      ),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/sync/pull',
+    description: 'Pull events since a cursor',
+    handler: (platform, ctx) =>
+      platform.sync.pull(
+        auth(ctx),
+        ctx.params.projectId as string,
+        ctx.query.get('deviceId') ?? 'unknown',
+        ctx.query.get('since') ?? undefined,
+        ctx.query.get('limit') ? Number(ctx.query.get('limit')) : undefined,
+      ),
+  },
+
+  // ---------------------------------------------------------------- exports
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/exports/report',
+    description: 'Branded project status report, hashed and recorded',
+    schema: {
+      type: 'object',
+      properties: {
+        audience: { type: 'string', enum: ['INTERNAL', 'CLIENT', 'SUPPLIER', 'REGULATOR', 'INSURER', 'ADJUDICATOR', 'COURT'] },
+        format: { type: 'string', enum: ['PDF', 'JSON_BUNDLE', 'CSV', 'HTML'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const { audience, format } = body<{ audience?: ExportAudience; format?: ExportFormat }>(ctx);
+      const actor = auth(ctx);
+      const document = platform.exports.projectReport(actor, ctx.params.projectId as string, {
+        // A regulator always receives the regulator copy, whatever is requested.
+        audience: actor.roles.includes('REGULATOR') ? 'REGULATOR' : (audience ?? 'CLIENT'),
+        format,
+        correlationId: ctx.correlationId,
+      });
+      return format === 'HTML' ? { ...document, html: platform.exports.toHtml(document) } : document;
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/exports/audit',
+    description: 'Verifiable Golden Thread audit export with attestation',
+    handler: (platform, ctx) => {
+      const { audience, from, to, format } = body<{ audience?: ExportAudience; from?: string; to?: string; format?: ExportFormat }>(ctx);
+      const actor = auth(ctx);
+      return platform.exports.auditExport(actor, ctx.params.projectId as string, {
+        audience: actor.roles.includes('REGULATOR') ? 'REGULATOR' : (audience ?? 'INTERNAL'),
+        from: from ?? '1970-01-01T00:00:00.000Z',
+        to: to ?? new Date().toISOString(),
+        format,
+        correlationId: ctx.correlationId,
+      });
+    },
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/branding',
+    description: 'Configure the client identity applied to every export',
+    schema: {
+      type: 'object',
+      required: ['clientName', 'primaryColour', 'legalFooter', 'documentReferencePrefix'],
+      properties: {
+        clientName: stringField,
+        logoRef: { type: 'string' },
+        primaryColour: stringField,
+        legalFooter: stringField,
+        documentReferencePrefix: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      platform.exports.setBranding(auth(ctx).tenantId, body(ctx));
+      return platform.exports.branding(auth(ctx).tenantId);
+    },
   },
 
   // ------------------------------------------------------------------- audit
