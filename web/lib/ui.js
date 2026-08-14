@@ -91,11 +91,35 @@ export function shortHash(hash) {
 }
 
 /** Title Case from an EVENT_TYPE or SNAKE_CASE token. */
+/**
+ * Turn a platform token into a readable phrase. Handles both vocabularies the
+ * system uses: SCREAMING_SNAKE for capability areas and event types, CamelCase
+ * for entity types — "SupplierSubmission" has to read as "Supplier submission",
+ * not "Suppliersubmission".
+ */
+/** Tokens whose readable form is not derivable — mostly acronyms in the middle. */
+const DISPLAY_NAMES = {
+  BoQItem: 'BoQ item',
+  OMManual: 'O&M manual',
+  ACUWallet: 'ACU wallet',
+  AIExecution: 'AI execution',
+  AIRequest: 'AI request',
+  BIM_TWIN: 'BIM and twin',
+  BOQ_TAKEOFF: 'BoQ and take-off',
+  SAFETY_RAMS: 'Safety and RAMS',
+  BILLING_ACU: 'Billing and ACU',
+  AI_EXECUTION: 'AI execution',
+  HANDOVER_OM: 'Handover and O&M',
+};
+
 export function humanise(token) {
-  return String(token ?? '')
-    .toLowerCase()
-    .replace(/_/g, ' ')
-    .replace(/^\w/, (c) => c.toUpperCase());
+  const raw = String(token ?? '');
+  if (DISPLAY_NAMES[raw]) return DISPLAY_NAMES[raw];
+  // A bare acronym is already as readable as it gets.
+  if (/^[A-Z0-9]+$/.test(raw)) return raw;
+
+  const spaced = raw.includes('_') ? raw.replace(/_/g, ' ') : raw.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+  return spaced.toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 }
 
 // --- components -------------------------------------------------------------

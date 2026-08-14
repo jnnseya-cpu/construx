@@ -129,6 +129,11 @@ export function withheldRecords() {
   return [...withheld.entries()].map(([refType, reason]) => ({ refType, reason }));
 }
 
+/** Was this record type refused during the current render? */
+export function isWithheld(refType) {
+  return withheld.has(refType);
+}
+
 /** Materialised entities of a type within a project. */
 export async function entities(projectId, refType) {
   const result = await api.get(`/v1/projects/${projectId}/entities/${refType}`);

@@ -1,4 +1,4 @@
-import { entityBundle } from '../lib/api.js';
+import { entityBundle, isWithheld } from '../lib/api.js';
 import { badge, date, days, exact, html, humanise, money, pct, raw, render, statusTone, table } from '../lib/ui.js';
 import { state } from '../app.js';
 
@@ -38,6 +38,11 @@ export async function procurement(root) {
 
   const scores = evaluation?.scores ?? [];
   const winner = scores[0];
+
+  // Supplier submissions live in the suppliers' own lane, so most delivery
+  // roles cannot read them. Reporting the empty list as "0 returns" would be a
+  // different — and wrong — statement from "you cannot see them".
+  const returnsCount = isWithheld('SupplierSubmission') ? null : b.SupplierSubmission.length;
   const cheapest = [...scores].sort((x, y) => x.priceMinor - y.priceMinor)[0];
   const cheapestIsNotWinner = cheapest && winner && cheapest.submissionId !== winner.submissionId;
 
@@ -64,8 +69,14 @@ export async function procurement(root) {
         </div>
         <div class="card">
           <h3>Returns received</h3>
-          <div class="metric">${b.SupplierSubmission.length}</div>
-          <div class="metric-sub">${rfq ? `${rfq.reference} · ${humanise(rfq.status)}` : 'no RFQ issued'}</div>
+          <div class="metric">${returnsCount ?? '—'}</div>
+          <div class="metric-sub">${
+            returnsCount === null
+              ? 'submissions are not visible to your role'
+              : rfq
+                ? `${rfq.reference} · ${humanise(rfq.status)}`
+                : 'no RFQ issued'
+          }</div>
         </div>
         <div class="card">
           <h3>Buyout against target</h3>
