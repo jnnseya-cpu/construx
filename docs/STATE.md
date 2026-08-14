@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 178 passing, 9 suites |
+| Tests | 178 passing, 0 failing, across 9 files |
 | Typecheck | clean |
 | Backend | 50 TypeScript files, ~15.7k lines |
 | Application | 24 ES modules, ~5.3k lines |
