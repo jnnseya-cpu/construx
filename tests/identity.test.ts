@@ -220,6 +220,30 @@ describe('entity classification', () => {
   });
 });
 
+describe('the audit trail is not a way round the capability boundary', () => {
+  it('withholds the patch for entities the caller cannot read, and keeps the envelope', () => {
+    // The envelope proves the record is complete and untampered; the patch is
+    // entity content. A reader entitled to the first is not thereby entitled
+    // to the second.
+    const decide = (roles: Role[], refType: string) => {
+      const classification = classifyEntity(refType);
+      assert.ok(classification);
+      return evaluateAccess(actor(roles), classification.area, 'R', attrs({ dataSensitivity: classification.sensitivity }), ON)
+        .decision;
+    };
+
+    // A regulator reads the audit trail, and must not read the cost book
+    // through it.
+    assert.equal(evaluateAccess(actor(['REGULATOR']), 'EVIDENCE_AUDIT', 'R', attrs(), ON).decision, 'ALLOW');
+    assert.notEqual(decide(['REGULATOR'], 'CVR'), 'ALLOW');
+    assert.notEqual(decide(['REGULATOR'], 'PaymentCertificate'), 'ALLOW');
+
+    // The same reader keeps the events they are entitled to read in full.
+    assert.equal(decide(['REGULATOR'], 'CommissioningTest'), 'ALLOW');
+    assert.equal(decide(['REGULATOR'], 'RiskRegisterItem'), 'ALLOW');
+  });
+});
+
 describe('platform operator accounts', () => {
   it('belongs to no customer tenant and consumes no subscription seat', () => {
     const platform = new Platform();

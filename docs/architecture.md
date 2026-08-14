@@ -128,6 +128,15 @@ A `REDACT` verdict is a refusal on this endpoint. There is no useful partial
 view of a list of commercial records, and returning empty shells would still
 disclose how many exist.
 
+The same rule applies to the audit trail, which would otherwise be the way
+round every capability boundary in the system: the raw event feed used to
+return each event's full JSON patch, so a regulator refused `entities/CVR`
+could read the same margins out of the CVR's `diff`. An audit trail has two
+jobs and they separate cleanly — proving the record is complete and untampered
+needs the envelope (actor, time, event type, hashes, chain), while reading what
+changed needs the patch, and the patch is entity content. Events the caller
+cannot read keep their envelope and lose their `diff`.
+
 The interface distinguishes "withheld" from "empty". A denial recorded during a
 render is stated at the top of the screen with its reason, because on a
 construction record "you may not see this" and "there is nothing here" are

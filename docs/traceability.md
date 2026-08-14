@@ -184,6 +184,7 @@ not pretend to have done.
 | Decision order: authenticate → RBAC → scopes → ABAC | Built | `evaluateAccess()` |
 | Fail-closed on missing attribute or evaluation error | Built | `evaluateAccess()`, covered in `tests/identity.test.ts` |
 | Entity reads carry their own capability area and sensitivity | Built | `src/identity/entityAccess.ts`; the generic entity endpoint evaluates it |
+| The audit trail cannot be used to read around a capability boundary | Built | Event envelopes stay; the patch is withheld for entities the caller cannot read |
 | Tenant isolation | Built | Enforced in ABAC and again in the ledger |
 | Phase gating on writes | Built | `WRITE_PHASE_GATES` |
 | OAuth2-style scopes | Built | `src/identity/scopes.ts` |

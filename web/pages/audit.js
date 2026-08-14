@@ -40,6 +40,17 @@ export async function audit(root) {
 
       <div id="replay-result"></div>
 
+      ${
+        data.withheldCount > 0
+          ? html`<div class="notice info">
+              <div><b>${data.withheldCount} of ${events.length} events have their content withheld from your role.</b><br>
+              The envelope stays — actor, time, event type and the hashes that chain it — so you can still verify the record is
+              complete and untampered. What changed inside those events is entity content, and the same rules apply to it here
+              as anywhere else.</div>
+            </div>`
+          : ''
+      }
+
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">
           <h3>Events recorded</h3>

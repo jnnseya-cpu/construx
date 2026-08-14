@@ -1130,11 +1130,39 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/projects/:projectId/audit/events',
-    description: 'Raw Golden Thread events for the project',
-    handler: (platform, ctx) => ({
-      chainHead: platform.ledger.chainHead(ctx.params.projectId as string),
-      events: platform.ledger.events({ tenantId: auth(ctx).tenantId, projectId: ctx.params.projectId as string }),
-    }),
+    description: 'Golden Thread events for the project, with content the caller may not read withheld',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const projectId = ctx.params.projectId as string;
+
+      // An audit trail has two jobs, and they need separating. Proving the
+      // record is complete and untampered needs the envelope — who, when, what
+      // type, and the hashes that chain it. Reading what actually changed needs
+      // the patch, and that is entity content: withholding it here is the same
+      // decision the entity read makes, or the audit feed becomes the way round
+      // every capability boundary in the system.
+      const events = platform.ledger.events({ tenantId: actor.tenantId, projectId }).map((event) => {
+        const classification = classifyEntity(event.entity.refType);
+        const decision = classification
+          ? evaluateAccess(
+              actor,
+              classification.area,
+              'R',
+              { tenantId: actor.tenantId, projectId, dataSensitivity: classification.sensitivity },
+              AUTHZ_OPTIONS,
+            ).decision
+          : 'DENY';
+
+        if (decision === 'ALLOW') return event;
+        return { ...event, diff: undefined, contentWithheld: true };
+      });
+
+      return {
+        chainHead: platform.ledger.chainHead(projectId),
+        events,
+        withheldCount: events.filter((e) => 'contentWithheld' in e).length,
+      };
+    },
   },
 
   // ----------------------------------------------------------------- billing
