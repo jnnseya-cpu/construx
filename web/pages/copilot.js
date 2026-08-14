@@ -76,9 +76,13 @@ export async function copilot(root) {
 
       const engine = answer.intent ? `<div class="src" style="margin-bottom:7px">${escapeHtml(answer.intent.engine)} engine · match ${answer.intent.match}</div>` : '';
 
+      // The answer text already lists the grounding facts as bullets, and they
+      // are rendered again below with their sources. Keep the prose, drop the
+      // duplicate bullets.
       const body = String(answer.answer ?? '')
         .split('\n')
-        .filter((line) => line.trim())
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith('•'))
         .map((line) => `<div>${escapeHtml(line)}</div>`)
         .join('');
 
