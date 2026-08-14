@@ -15,6 +15,9 @@ single source of truth for what is built, what is partial, what is deliberately
 absent, and which decisions are settled. Keep it current in the same commit as
 the change it describes.
 
+[`CLAUDE.md`](CLAUDE.md) is the standing engineering directive — how work is
+done here, and which existing mechanism to reuse rather than rebuild.
+
 ## Running it
 
 Node 22.18 or later. There is nothing to build and no runtime dependencies.
