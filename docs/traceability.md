@@ -282,6 +282,12 @@ not pretend to have done.
 | Role-aware navigation that matches enforcement | Built | Nav entries declare a capability area and resolve it against the live matrix; refused screens show the reason |
 | Three account layers visible in the product | Built | Signing in as the Platform Operator produces a different application with no delivery data |
 | Denials distinguished from empty records | Built | `withheldRecords()` in `web/lib/api.js`, surfaced by the shell |
+| Command surfaces on every relevant screen | Built | `web/lib/command.js`; commands on field, cost, design, programme, change and handover |
+| Field input zones (labour, plant, weather, progress) | Built | Daily site record on `web/pages/field.js`, submitted as an evidenced progress measurement |
+| Canonical enum dropdowns shared across pickers | Built | `web/lib/enums.js`; every value matches the enum the API validates |
+| Dates via picker, stored UTC | Built | Date controls in the command layer; ISO conversion on submit |
+| Evidence attached at the point of capture | Partial | The file is hashed with SHA-256 in the browser and the hash is recorded; there is no object store for the file itself |
+| Project profile input with canonical enums at creation | Design only | Projects are created through the API; the guided creation form is not built |
 | Native Android and iOS clients | Design only | The sync and source model supports them; no native client written |
 
 ---
