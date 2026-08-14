@@ -180,7 +180,8 @@ not pretend to have done.
 | FM controls post-handover, cannot alter tender baselines | Built | Matrix plus phase gating |
 | Supplier confined to its own submissions | Built | ABAC party check; procurement commands verify identity |
 | Decision order: authenticate → RBAC → scopes → ABAC | Built | `evaluateAccess()` |
-| Fail-closed on missing attribute or evaluation error | Built | Tested implicitly through denials |
+| Fail-closed on missing attribute or evaluation error | Built | `evaluateAccess()`, covered in `tests/identity.test.ts` |
+| Entity reads carry their own capability area and sensitivity | Built | `src/identity/entityAccess.ts`; the generic entity endpoint evaluates it |
 | Tenant isolation | Built | Enforced in ABAC and again in the ledger |
 | Phase gating on writes | Built | `WRITE_PHASE_GATES` |
 | OAuth2-style scopes | Built | `src/identity/scopes.ts` |
@@ -275,6 +276,9 @@ not pretend to have done.
 | Region filters as ISO codes | Built | `continentCode` / `countryCode` on portfolios and projects |
 | AI insights never look broken | Built | The copilot states when the record is empty rather than failing |
 | Web application across the lifecycle | Built | Fifteen screens in `web/pages/`, each reading live endpoints |
+| Role-aware navigation that matches enforcement | Built | Nav entries declare a capability area and resolve it against the live matrix; refused screens show the reason |
+| Three account layers visible in the product | Built | Signing in as the Platform Operator produces a different application with no delivery data |
+| Denials distinguished from empty records | Built | `withheldRecords()` in `web/lib/api.js`, surfaced by the shell |
 | Native Android and iOS clients | Design only | The sync and source model supports them; no native client written |
 
 ---
