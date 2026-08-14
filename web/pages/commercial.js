@@ -22,6 +22,8 @@ export async function commercial(root) {
       'CashflowForecast',
       'PaymentCycle',
       'PaymentApplication',
+      'PaymentCertificate',
+      'LedgerEntry',
       'Variation',
     ]),
     api.get(`/v1/projects/${projectId}/cost/ledger`).catch(() => null),
@@ -41,6 +43,14 @@ export async function commercial(root) {
   const notices = cycle
     ? await api.get(`/v1/projects/${projectId}/cost/notices/${cycle._refId}`).catch(() => null)
     : null;
+
+  // Payments are separate records from certificates, so a certificate with
+  // nothing against it is visibly outstanding rather than silently assumed paid.
+  const paidByCertificate = new Map();
+  for (const entry of bundle.LedgerEntry ?? []) {
+    if (entry.type !== 'PAYMENT') continue;
+    paidByCertificate.set(entry.certificateId, (paidByCertificate.get(entry.certificateId) ?? 0) + Number(entry.amountMinor ?? 0));
+  }
   const atRisk = (notices?.position ?? []).filter((p) => p.checks.some((c) => c.status === 'OVERDUE' || c.status === 'LATE'));
 
   render(
@@ -192,6 +202,33 @@ export async function commercial(root) {
               : html`<div class="empty"><b>No forecast</b>Generate a cashflow forecast to see the S-curve.</div>`
           }
         </div>
+      </div>
+
+      <div class="card pad0" style="margin-top:14px">
+        <h3 style="padding:15px 17px 0">Applications and certificates</h3>
+        ${table({
+          headers: ['Cycle', 'Applied', 'Certified', 'Withheld', 'Retention', 'Paid', 'Final date', 'Reason'],
+          align: ['', 'num', 'num', 'num', 'num', 'num', '', ''],
+          rows: bundle.PaymentApplication.map((application) => {
+            const certificate = bundle.PaymentCertificate.find((c) => c.applicationId === application._refId);
+            const paid = certificate ? paidByCertificate.get(certificate._refId) ?? 0 : 0;
+            return [
+              `#${application.cycleNumber}`,
+              money(application.netAppliedMinor),
+              certificate ? money(certificate.certifiedMinor) : badge('awaiting certificate', 'warn'),
+              certificate && certificate.withheldMinor > 0 ? money(certificate.withheldMinor) : '—',
+              certificate ? money(certificate.retentionMinor) : '—',
+              paid > 0 ? money(paid) : certificate ? badge('outstanding', 'bad') : '—',
+              certificate ? date(certificate.finalDateForPayment) : '—',
+              certificate?.reason ?? '—',
+            ];
+          }),
+          empty: 'No applications submitted',
+        })}
+        <div style="padding:12px 17px 15px"><div class="metric-sub">
+          Certification is where a valuation becomes a debt, so it is a separate approval from the application —
+          the quantity surveyor who applies cannot certify, and every certificate names the payment notice that carries it.
+        </div></div>
       </div>
     `,
   );

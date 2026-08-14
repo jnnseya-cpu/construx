@@ -701,6 +701,48 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => cost.submitApplication(projectContext(platform, ctx), body(ctx)),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/cost/application/:applicationId/certify',
+    description: 'Engine C — certify an application and issue the payment notice',
+    schema: {
+      type: 'object',
+      required: ['certifiedMinor', 'retentionMinor', 'issuedDate', 'certificateHash'],
+      properties: {
+        certifiedMinor: { type: 'number', minimum: 0 },
+        retentionMinor: { type: 'number', minimum: 0 },
+        issuedDate: stringField,
+        certificateHash: stringField,
+        reason: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      cost.certifyApplication(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof cost.certifyApplication>[1], 'applicationId'>>(ctx),
+        applicationId: ctx.params.applicationId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/cost/certificate/:certificateId/payment',
+    description: 'Engine C — post a payment against a certificate',
+    schema: {
+      type: 'object',
+      required: ['amountMinor', 'paidDate', 'reference'],
+      properties: {
+        amountMinor: { type: 'number', minimum: 1 },
+        paidDate: stringField,
+        reference: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      cost.postPayment(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof cost.postPayment>[1], 'certificateId'>>(ctx),
+        certificateId: ctx.params.certificateId as string,
+      }),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/cost/notices/:cycleId',
     description: 'Engine C — notice compliance position',

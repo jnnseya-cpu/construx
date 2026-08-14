@@ -343,6 +343,145 @@ export function submitApplication(
   return { applicationId, netAppliedMinor: netApplied };
 }
 
+/**
+ * Certify an application, with the payment notice the certification depends on.
+ *
+ * Certification is the point where a valuation becomes a debt, so it is an
+ * approval rather than an update, it carries the certificate evidence, and it
+ * is separated from whoever submitted the application. The payment notice is
+ * written in the same command because a certificate without the notice that
+ * carries it is what statutory payment disputes are made of.
+ */
+export function certifyApplication(
+  ctx: EngineContext,
+  input: {
+    applicationId: string;
+    certifiedMinor: number;
+    retentionMinor: number;
+    issuedDate: string;
+    certificateHash: string;
+    reason?: string;
+  },
+): { certificateId: string; certifiedMinor: number; withheldMinor: number } {
+  authorise(ctx, 'PAYMENT_APPLICATIONS', 'A', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const application = ctx.ledger.require({ refType: 'PaymentApplication', refId: input.applicationId });
+  if (application.state.status !== 'SUBMITTED') {
+    throw new DomainError('APPLICATION_NOT_SUBMITTED', 'Only a submitted application can be certified');
+  }
+
+  const applied = Number(application.state.netAppliedMinor);
+  if (input.certifiedMinor > applied) {
+    throw new DomainError(
+      'OVERCERTIFICATION',
+      'Certifying more than was applied for requires a new application, not a larger certificate',
+    );
+  }
+
+  const period = application.state.period as { cycleNumber: number; paymentNoticeDeadline: string; finalDateForPayment: string };
+  const evidence = registerEvidence(ctx, {
+    type: 'PAYMENT_CERTIFICATE',
+    hash: input.certificateHash,
+    description: `Payment certificate for application ${period.cycleNumber}`,
+  });
+
+  const noticeId = ulid();
+  write(ctx, {
+    eventType: 'PAYMENT_NOTICE_ISSUED',
+    entity: { refType: 'PaymentNotice', refId: noticeId },
+    nextState: {
+      id: noticeId,
+      projectId: ctx.projectId,
+      applicationId: input.applicationId,
+      cycleNumber: period.cycleNumber,
+      issuedDate: input.issuedDate,
+      noticedSumMinor: input.certifiedMinor,
+      deadline: period.paymentNoticeDeadline,
+      // Whether this was in time is computed by checkNoticeCompliance rather
+      // than asserted here — the record states when, the maths states whether.
+    },
+    evidenceRefs: [evidence],
+  });
+
+  const certificateId = ulid();
+  write(ctx, {
+    eventType: 'PAYMENT_CERTIFIED',
+    entity: { refType: 'PaymentCertificate', refId: certificateId },
+    nextState: {
+      id: certificateId,
+      projectId: ctx.projectId,
+      applicationId: input.applicationId,
+      noticeId,
+      cycleNumber: period.cycleNumber,
+      appliedMinor: applied,
+      certifiedMinor: input.certifiedMinor,
+      retentionMinor: input.retentionMinor,
+      withheldMinor: applied - input.certifiedMinor,
+      reason: input.reason,
+      finalDateForPayment: period.finalDateForPayment,
+      certifiedAt: new Date().toISOString(),
+      certifiedBy: ctx.auth.actorId,
+    },
+    evidenceRefs: [evidence],
+  });
+
+  write(ctx, {
+    eventType: 'APPLICATION_CERTIFIED',
+    entity: { refType: 'PaymentApplication', refId: input.applicationId },
+    nextState: {
+      ...application.state,
+      status: 'CERTIFIED',
+      certificateId,
+      certifiedMinor: input.certifiedMinor,
+    },
+  });
+
+  return { certificateId, certifiedMinor: input.certifiedMinor, withheldMinor: applied - input.certifiedMinor };
+}
+
+/**
+ * Post a payment against a certificate. Until this exists the commercial ledger
+ * can only report what was certified, and the unpaid-certificate exception —
+ * the whole point of the bridge between the QS and finance — never fires.
+ */
+export function postPayment(
+  ctx: EngineContext,
+  input: { certificateId: string; amountMinor: number; paidDate: string; reference: string },
+): { entryId: string } {
+  // The paying party posts the payment, not the party that applied for it —
+  // the same separation that keeps certification away from the applicant.
+  authorise(ctx, 'PAYMENT_APPLICATIONS', 'A', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const certificate = ctx.ledger.require({ refType: 'PaymentCertificate', refId: input.certificateId });
+  const certified = Number(certificate.state.certifiedMinor);
+  const alreadyPaid = ctx.ledger
+    .list(ctx.projectId, 'LedgerEntry')
+    .filter((e) => e.state.certificateId === input.certificateId && e.state.type === 'PAYMENT')
+    .reduce((sum, e) => sum + Number(e.state.amountMinor ?? 0), 0);
+
+  if (alreadyPaid + input.amountMinor > certified) {
+    throw new DomainError('OVERPAYMENT', 'Payments against a certificate cannot exceed the certified sum');
+  }
+
+  const entryId = ulid();
+  write(ctx, {
+    eventType: 'LEDGER_ENTRY_POSTED',
+    entity: { refType: 'LedgerEntry', refId: entryId },
+    nextState: {
+      id: entryId,
+      projectId: ctx.projectId,
+      type: 'PAYMENT',
+      certificateId: input.certificateId,
+      amountMinor: input.amountMinor,
+      paidDate: input.paidDate,
+      reference: input.reference,
+      postedAt: new Date().toISOString(),
+    },
+  });
+
+  return { entryId };
+}
+
 /** Notice position across a payment cycle — what is overdue and what it costs. */
 export function noticePosition(
   ctx: EngineContext,

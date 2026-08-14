@@ -162,6 +162,7 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PAYMENT_NOTICE_ISSUED', 'PaymentNotice', 'ISSUE', 'COMMERCIAL', { requiresEvidence: true, creates: true }),
   def('PAY_LESS_NOTICE_ISSUED', 'PayLessNotice', 'ISSUE', 'COMMERCIAL', { requiresEvidence: true, creates: true }),
   def('PAYMENT_CERTIFIED', 'PaymentCertificate', 'APPROVE', 'COMMERCIAL', { requiresEvidence: true, creates: true }),
+  def('APPLICATION_CERTIFIED', 'PaymentApplication', 'APPROVE', 'COMMERCIAL'),
   def('LEDGER_ENTRY_POSTED', 'LedgerEntry', 'CREATE', 'COMMERCIAL'),
 
   // --- Change, variation, claims -------------------------------------------

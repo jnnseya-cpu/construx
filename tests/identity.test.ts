@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import { evaluateAccess, assertAccess, type AccessAttributes } from '../src/identity/abac.ts';
 import type { AuthContext } from '../src/identity/auth.ts';
+import { EVENT_TYPES } from '../src/goldenthread/eventTypes.ts';
 import { ENTITY_ACCESS, classifyEntity } from '../src/identity/entityAccess.ts';
 import { accountLayerFor, PERMISSION_MATRIX, rolesAllow, type Role } from '../src/identity/roles.ts';
 import { scopesForRoles } from '../src/identity/scopes.ts';
@@ -176,13 +177,14 @@ describe('scopes are enforced independently of roles', () => {
 });
 
 describe('entity classification', () => {
-  it('gives every entity type a capability area, so none is readable by default', () => {
-    // The generic entity read consults this map. A type that is absent is
-    // refused, which is why the map has to stay complete rather than correct
-    // only for the types someone remembered.
-    for (const [refType, classification] of Object.entries(ENTITY_ACCESS)) {
-      assert.ok(classification.area, `${refType} has no capability area`);
-    }
+  it('classifies every entity type the event catalogue can produce', () => {
+    // The generic entity read consults this map, and an unmapped type is
+    // refused. Deriving the expectation from the catalogue means a new event
+    // type cannot ship an unreachable entity by omission.
+    const produced = new Set(Object.values(EVENT_TYPES).map((definition) => definition.entity));
+    const unclassified = [...produced].filter((entity) => !ENTITY_ACCESS[entity]).sort();
+
+    assert.deepEqual(unclassified, [], `unclassified entity types: ${unclassified.join(', ')}`);
     assert.equal(classifyEntity('NotAThing'), undefined);
   });
 

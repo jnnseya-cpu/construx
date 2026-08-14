@@ -717,7 +717,56 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     terms: { applicationDayOfMonth: 25, paymentNoticeDays: 5, payLessNoticeDaysBeforeFinal: 7, finalDateDays: 30 },
   });
 
-  cost.submitApplication(qsCtx, {
+  // Three cycles, so the commercial ledger has a real certified and paid
+  // position rather than an application asserting a certification history that
+  // nothing in the record supports.
+  const application1 = cost.submitApplication(qsCtx, {
+    cycleId: paymentCycle.cycleId,
+    cycleNumber: 1,
+    grossValuationMinor: 180_000_000,
+    variationsIncludedMinor: 0,
+    previouslyCertifiedMinor: 0,
+    retentionMinor: 5_400_000,
+    supportingEvidenceHash: hash('application-1-valuation'),
+  });
+  const certificate1 = cost.certifyApplication(ownerCtx, {
+    applicationId: application1.applicationId,
+    certifiedMinor: application1.netAppliedMinor,
+    retentionMinor: 5_400_000,
+    issuedDate: '2026-07-30',
+    certificateHash: hash('certificate-1'),
+  });
+  cost.postPayment(ownerCtx, {
+    certificateId: certificate1.certificateId,
+    amountMinor: certificate1.certifiedMinor,
+    paidDate: '2026-08-24',
+    reference: 'BACS-2026-08-0417',
+  });
+
+  const application2 = cost.submitApplication(qsCtx, {
+    cycleId: paymentCycle.cycleId,
+    cycleNumber: 2,
+    grossValuationMinor: 410_000_000,
+    variationsIncludedMinor: 15_000_000,
+    previouslyCertifiedMinor: 180_000_000,
+    retentionMinor: 12_750_000,
+    supportingEvidenceHash: hash('application-2-valuation'),
+  });
+  const certificate2 = cost.certifyApplication(ownerCtx, {
+    applicationId: application2.applicationId,
+    certifiedMinor: application2.netAppliedMinor,
+    retentionMinor: 12_750_000,
+    issuedDate: '2026-08-29',
+    certificateHash: hash('certificate-2'),
+  });
+  cost.postPayment(ownerCtx, {
+    certificateId: certificate2.certificateId,
+    amountMinor: certificate2.certifiedMinor,
+    paidDate: '2026-09-23',
+    reference: 'BACS-2026-09-0562',
+  });
+
+  const application3 = cost.submitApplication(qsCtx, {
     cycleId: paymentCycle.cycleId,
     cycleNumber: 3,
     grossValuationMinor: 620_000_000,
@@ -726,7 +775,18 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     retentionMinor: 19_635_000,
     supportingEvidenceHash: hash('application-3-valuation'),
   });
-  step(`Payment cycle generated with statutory notice dates; application 3 submitted`);
+  // Certified short and left unpaid, so the ledger bridge has something real to
+  // report: a withheld sum with a stated reason, and an unpaid certificate in
+  // the exception queue.
+  cost.certifyApplication(ownerCtx, {
+    applicationId: application3.applicationId,
+    certifiedMinor: 212_900_000,
+    retentionMinor: 19_635_000,
+    issuedDate: '2026-10-29',
+    certificateHash: hash('certificate-3'),
+    reason: 'Handrail terminations not to detail and dewatering rates not agreed',
+  });
+  step('Three payment cycles run: two certified and paid, the third certified short and outstanding');
 
   claimsEngine.flagDomesticVariation(qsCtx, {
     applicationId: 'SUB-APP-003',
