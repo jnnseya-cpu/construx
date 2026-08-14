@@ -1,4 +1,5 @@
 import { ask } from '../ai/conversation.ts';
+import { TIERS } from '../billing/subscription.ts';
 import { config } from '../config.ts';
 import { DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
 import type { Schema } from '../core/validate.ts';
@@ -49,6 +50,11 @@ function auth(ctx: RequestContext) {
 function projectContext(platform: Platform, ctx: RequestContext) {
   const projectId = ctx.params.projectId;
   if (!projectId) throw new NotFoundError('Project id missing from path');
+  // Refuse the operator layer here rather than letting it fail later on a
+  // missing wallet: the answer is "you are not allowed", not "not found".
+  if (auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+    throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+  }
   return platform.context(auth(ctx), projectId, { correlationId: ctx.correlationId, source: sourceOf(ctx) });
 }
 
@@ -182,6 +188,39 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'GET',
+    pattern: '/v1/admin/tenants',
+    description: 'Tenancy, seats and prepaid balance across the estate (platform operator only)',
+    handler: (platform, ctx) => {
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may see the tenant estate', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      // Tenancy, commercial terms and credit — and nothing about what any of
+      // these tenants is building. That is the whole point of the layer.
+      return {
+        tenants: platform.tenants().map((tenant) => {
+          const subscription = platform.subscription(tenant.id);
+          const definition = TIERS[subscription.tier];
+          return {
+            id: tenant.id,
+            legalName: tenant.legalName,
+            jurisdiction: tenant.jurisdiction,
+            currency: tenant.defaultCurrency,
+            createdAt: tenant.createdAt,
+            tier: subscription.tier,
+            status: subscription.status,
+            renewsAt: subscription.renewsAt,
+            seatsUsed: subscription.assignedIdentities.length,
+            seatsIncluded: definition.includedIdentities,
+            monthlyPriceUsd: definition.monthlyPriceUsd,
+            isolatedTenancy: definition.isolatedTenancy,
+            wallet: platform.wallet(tenant.id).snapshot(),
+          };
+        }),
+      };
+    },
+  },
+  {
+    method: 'GET',
     pattern: '/v1/admin/logs',
     description: 'Recent gateway request logs',
     handler: (_platform, ctx) => {
@@ -212,6 +251,38 @@ export const ROUTES: Route[] = [
         throw new ForbiddenError('Only an enterprise admin may create users', 'ENTERPRISE_ADMIN_REQUIRED');
       }
       return platform.createUser({ ...body<{ name: string; email: string; roles: Parameters<typeof platform.createUser>[0]['roles']; partyId?: string }>(ctx), tenantId: actor.tenantId });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/console/identities',
+    public: true,
+    description: 'List the seeded demonstration identities so any role can be signed into',
+    handler: async (platform) => {
+      if (config.env === 'production') {
+        throw new ForbiddenError('Demonstration identities are not available in production', 'DEMO_DISABLED');
+      }
+      const session = await getOrCreateConsoleSession(platform);
+      const users = platform.users(platform.ledger.require({ refType: 'Project', refId: session.projectId }).tenantId);
+      // Operators are listed alongside the delivery team but marked as a
+      // different account layer, because signing in as one shows a deliberately
+      // different — and much narrower — product.
+      const shape = (u: { id: string; name: string; email: string; roles: readonly string[] }, layer: string) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        roles: u.roles,
+        layer,
+      });
+      return {
+        projectId: session.projectId,
+        enterprise: session.enterpriseName,
+        portfolio: session.portfolioName,
+        identities: [
+          ...users.map((u) => shape(u, u.roles.includes('ENTERPRISE_ADMIN') ? 'ENTERPRISE_ADMIN' : 'TENANT_USER')),
+          ...platform.operators().map((u) => shape(u, 'PLATFORM_ADMIN')),
+        ],
+      };
     },
   },
   {

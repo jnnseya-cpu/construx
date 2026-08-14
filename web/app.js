@@ -1,0 +1,369 @@
+import { api, ApiError, session } from './lib/api.js';
+import { html, initials, money, raw, render, toast } from './lib/ui.js';
+import { PAGES } from './pages/index.js';
+
+/**
+ * Application shell: routing, session, and the role-aware navigation that makes
+ * the permission model visible. A route the current role cannot reach is shown
+ * locked with the reason, rather than hidden — people need to know a capability
+ * exists and who to ask, not wonder whether the product has it.
+ */
+
+const root = document.getElementById('root');
+
+export const state = {
+  session: null,     // { accessToken, user, projectId, enterprise, portfolio }
+  project: null,     // materialised project state
+  gate: null,        // current phase gate evaluation
+  wallet: null,      // ACU snapshot
+};
+
+// --- navigation model -------------------------------------------------------
+
+/**
+ * Each entry declares the capability area it reads. The sidebar checks that
+ * against the live permission matrix, so navigation and enforcement can never
+ * drift apart.
+ */
+export const NAV = [
+  {
+    group: 'Command',
+    items: [
+      { id: 'overview', label: 'Project Command Centre', area: 'PROJECT_SETUP', icon: 'grid' },
+      { id: 'copilot', label: 'Copilot', area: 'PROJECT_SETUP', icon: 'chat' },
+      { id: 'enterprise', label: 'Enterprise & Portfolio', area: 'PROJECT_SETUP', icon: 'layers' },
+    ],
+  },
+  {
+    group: 'Deliver',
+    items: [
+      { id: 'programme', label: 'Programme', area: 'PROGRAMME_BASELINES', icon: 'chart' },
+      { id: 'field', label: 'Field Execution', area: 'FIELD_EXECUTION', icon: 'clipboard' },
+      { id: 'design', label: 'Design & BIM', area: 'BIM_TWIN', icon: 'cube' },
+    ],
+  },
+  {
+    group: 'Commercial',
+    items: [
+      { id: 'commercial', label: 'Cost & Value', area: 'BUDGET_COST', icon: 'coins' },
+      { id: 'procurement', label: 'Tender & Procurement', area: 'PROCUREMENT_AWARD', icon: 'gavel' },
+      { id: 'contracts', label: 'Change & Claims', area: 'CONTRACTS_CLAIMS', icon: 'scale' },
+    ],
+  },
+  {
+    group: 'Assure',
+    items: [
+      { id: 'risk', label: 'Risk & Safety', area: 'RISK_REGISTER', icon: 'shield' },
+      { id: 'handover', label: 'Handover & O&M', area: 'HANDOVER_OM', icon: 'key' },
+      { id: 'audit', label: 'Golden Thread', area: 'EVIDENCE_AUDIT', icon: 'link' },
+    ],
+  },
+  {
+    group: 'Platform',
+    items: [
+      { id: 'billing', label: 'ACU & Billing', area: 'BILLING_ACU', icon: 'meter' },
+      { id: 'admin', label: 'Platform Admin', area: 'PLATFORM_ADMINISTRATION', icon: 'cog' },
+    ],
+  },
+];
+
+const ICONS = {
+  grid: 'M3 3h7v7H3zM11 3h7v7h-7zM3 11h7v7H3zM11 11h7v7h-7z',
+  chat: 'M3 4h15v10H8l-5 4z',
+  layers: 'M10 2 2 7l8 5 8-5zM2 12l8 5 8-5',
+  chart: 'M3 17V7M8 17V3M13 17v-7M18 17v-4',
+  clipboard: 'M6 3h8v3H6zM4 6h12v12H4z',
+  cube: 'M10 2 3 6v8l7 4 7-4V6zM3 6l7 4 7-4M10 10v8',
+  coins: 'M10 3c4 0 7 1.3 7 3s-3 3-7 3-7-1.3-7-3 3-3 7-3zM3 9c0 1.7 3 3 7 3s7-1.3 7-3M3 13c0 1.7 3 3 7 3s7-1.3 7-3',
+  gavel: 'M3 16h8M5 12l6-6M8 3l6 6M4 9l4 4',
+  scale: 'M10 3v14M4 7h12M4 7 2 13h4zM16 7l-2 6h4z',
+  shield: 'M10 2 3 5v5c0 4 3 7 7 8 4-1 7-4 7-8V5z',
+  key: 'M13 3a4 4 0 1 0-3.5 6L4 14.5V17h3l6-6a4 4 0 0 0 0-8z',
+  link: 'M8 11a4 4 0 0 0 6 0l2-2a4 4 0 0 0-6-6L9 4M12 9a4 4 0 0 0-6 0l-2 2a4 4 0 0 0 6 6l1-1',
+  meter: 'M3 15a7 7 0 1 1 14 0M10 15l4-5',
+  cog: 'M10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM10 2v2M10 16v2M2 10h2M16 10h2M4.5 4.5 6 6M14 14l1.5 1.5M15.5 4.5 14 6M6 14l-1.5 1.5',
+};
+
+export function icon(name) {
+  return raw(
+    `<svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="${ICONS[name] ?? ICONS.grid}"/></svg>`,
+  );
+}
+
+// --- permissions ------------------------------------------------------------
+
+let matrix = null;
+
+async function loadMatrix() {
+  if (matrix) return matrix;
+  const result = await api.get('/v1/permissions/matrix');
+  matrix = result.matrix;
+  return matrix;
+}
+
+/** Does any role held by the current user have this code in this area? */
+export function can(area, code = 'R') {
+  const roles = state.session?.user?.roles ?? [];
+  if (!matrix) return true;
+  return roles.some((role) => (matrix[role]?.[area] ?? []).includes(code));
+}
+
+/**
+ * Platform operators are a different account layer, not a senior customer role:
+ * they run tenancy, billing and system health and are barred from delivery data
+ * altogether. The shell has to know that, because an operator has no project to
+ * load a context for.
+ */
+export function isOperator() {
+  return (state.session?.user?.roles ?? []).includes('PLATFORM_ADMIN');
+}
+
+// --- routing ----------------------------------------------------------------
+
+function currentRoute() {
+  const path = location.pathname.replace(/^\/app\/?/, '');
+  const [page, ...rest] = path.split('/').filter(Boolean);
+  return { page: page || (isOperator() ? 'admin' : 'overview'), params: rest };
+}
+
+export function navigate(page, params = []) {
+  const path = ['/app', page, ...params].join('/').replace(/\/+$/, '');
+  history.pushState({}, '', path);
+  void draw();
+}
+
+window.addEventListener('popstate', () => void draw());
+
+document.addEventListener('click', (event) => {
+  const link = event.target.closest('[data-nav]');
+  if (!link) return;
+  event.preventDefault();
+  navigate(link.dataset.nav);
+});
+
+// --- session ----------------------------------------------------------------
+
+export async function signIn(identity) {
+  const challenge = await api.post('/v1/auth/login', { email: identity.email }, { anonymous: true });
+  // Outside production the challenge code is returned so the demonstration does
+  // not depend on an SMS gateway. The MFA step itself is real.
+  const verified = await api.post(
+    '/v1/auth/mfa/verify',
+    { actorId: challenge.actorId, challengeId: challenge.challengeId, code: challenge.devCode },
+    { anonymous: true },
+  );
+
+  const bootstrap = await api.post('/v1/console/identities', {}, { anonymous: true });
+
+  session.set({
+    accessToken: verified.accessToken,
+    refreshToken: verified.refreshToken,
+    user: verified.user,
+    projectId: bootstrap.projectId,
+    enterprise: bootstrap.enterprise,
+    portfolio: bootstrap.portfolio,
+  });
+  state.session = session.get();
+  state.project = null;
+  state.gate = null;
+  state.wallet = null;
+  matrix = null;
+  navigate(isOperator() ? 'admin' : 'overview');
+}
+
+export function signOut() {
+  session.clear();
+  state.session = null;
+  state.project = null;
+  navigate('login');
+}
+
+// --- shell ------------------------------------------------------------------
+
+function sidebar(active) {
+  return html`<aside class="sidebar">
+    <div class="sidebar-mark">
+      <svg width="19" height="19" viewBox="0 0 32 32" fill="none">
+        <path d="M4 27 L11 27 L11 12 L16 9 L16 27 L21 27 L21 5 L25 5 L25 27 L28 27" stroke="#8a9099" stroke-width="2.2" stroke-linejoin="round"/>
+        <path d="M14 28 L28 6" stroke="#ff6600" stroke-width="4.4" stroke-linecap="square"/>
+      </svg>
+      <span>CONSTRU<span class="x">X</span></span>
+    </div>
+
+    ${NAV.map((group) => {
+      const visible = group.items.filter((item) => reachable(item));
+      if (visible.length === 0) return '';
+      return html`<div class="nav-group">
+        <div class="nav-group-label">${group.group}</div>
+        ${group.items.map((item) => {
+          if (!reachable(item)) {
+            return html`<button class="nav-item locked" title="${lockReason(item)}">
+              ${icon(item.icon)}<span>${item.label}</span><span class="lock">🔒</span>
+            </button>`;
+          }
+          return html`<button class="nav-item ${raw(active === item.id ? 'active' : '')}" data-nav="${item.id}">
+            ${icon(item.icon)}<span>${item.label}</span>
+          </button>`;
+        })}
+      </div>`;
+    })}
+
+    <div class="sidebar-foot">
+      ${
+        isOperator()
+          ? html`<div class="acu-mini"><div class="l">Account layer</div><div class="v">Platform operator</div></div>`
+          : html`<div class="acu-mini">
+              <div class="l">ACU available</div>
+              <div class="v">${state.wallet ? money(state.wallet.availableMinor) : '—'}</div>
+              <div class="acu-bar"><i style="width:${raw(walletPercent())}%"></i></div>
+            </div>`
+      }
+    </div>
+  </aside>`;
+}
+
+/**
+ * Navigation mirrors enforcement rather than restating it. Overview and Copilot
+ * are open to any customer role because both are grounded reads of a project
+ * the user is already on; everything else asks the live permission matrix.
+ */
+function reachable(item) {
+  // An operator holds billing and audit rights at the platform level, but every
+  // billing and audit *screen* in this product is scoped to a tenant's project —
+  // and an operator has none. So the Platform page is the whole operator app.
+  if (isOperator()) return item.area === 'PLATFORM_ADMINISTRATION';
+  if (item.area === 'PLATFORM_ADMINISTRATION') return false;
+  return can(item.area, 'R') || item.id === 'overview' || item.id === 'copilot';
+}
+
+function lockReason(item) {
+  if (isOperator()) {
+    return item.area === 'BILLING_ACU' || item.area === 'EVIDENCE_AUDIT'
+      ? 'Operator billing and audit are estate-wide and shown on the Platform page'
+      : 'Platform operators are barred from customer delivery data';
+  }
+  if (item.area === 'PLATFORM_ADMINISTRATION') return 'Platform administration is not visible to customer accounts';
+  return `Your role has no read access to ${item.area}`;
+}
+
+function walletPercent() {
+  if (!state.wallet) return 0;
+  const total = state.wallet.balanceMinor || 1;
+  return Math.max(2, Math.min(100, Math.round((state.wallet.availableMinor / total) * 100)));
+}
+
+function topbar() {
+  const user = state.session?.user;
+  return html`<div class="topbar">
+    <div class="crumb">
+      ${
+        isOperator()
+          ? html`CONSTRUX <span style="opacity:.4">›</span> <b>Platform operations</b>`
+          : html`${state.session?.enterprise} <span style="opacity:.4">›</span> ${state.session?.portfolio}
+              <span style="opacity:.4">›</span> <b>${state.project?.name ?? 'Loading…'}</b>`
+      }
+    </div>
+    <div class="spacer"></div>
+    ${isOperator() ? html`<span class="phase-tag">OPERATOR</span>` : state.project ? html`<span class="phase-tag">${state.project.phase}</span>` : ''}
+    <button class="user-chip" id="user-chip">
+      <span class="avatar">${initials(user?.name)}</span>
+      <span><span class="nm">${user?.name}</span><br><span class="rl">${(user?.roles ?? []).join(', ')}</span></span>
+    </button>
+  </div>`;
+}
+
+async function loadContext() {
+  // An operator has no project context to load — asking for one would be denied,
+  // correctly, by the same rule that hides delivery navigation from them.
+  if (isOperator()) return;
+
+  const { projectId } = state.session;
+  const [detail, wallet] = await Promise.all([
+    api.get(`/v1/projects/${projectId}`),
+    api.get('/v1/billing/wallet').catch(() => null),
+  ]);
+  state.project = detail.project;
+  state.gate = detail.gate;
+  state.wallet = wallet;
+}
+
+async function draw() {
+  state.session = session.get();
+  const { page, params } = currentRoute();
+
+  if (!state.session) {
+    await PAGES.login(root);
+    return;
+  }
+
+  await loadMatrix();
+
+  const view = PAGES[page] ?? PAGES.overview;
+
+  render(
+    root,
+    html`<div class="shell">
+      ${sidebar(page)}
+      <div class="main">
+        ${topbar()}
+        <div class="view" id="view"><div class="grid g4">
+          <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+        </div></div>
+      </div>
+    </div>`,
+  );
+
+  document.getElementById('user-chip')?.addEventListener('click', () => {
+    if (confirm('Sign out and choose a different identity?')) signOut();
+  });
+
+  try {
+    if (!state.project) await loadContext();
+    // Redraw the shell now that project and wallet context exist.
+    render(
+      root,
+      html`<div class="shell">
+        ${sidebar(page)}
+        <div class="main">${topbar()}<div class="view" id="view"></div></div>
+      </div>`,
+    );
+    document.getElementById('user-chip')?.addEventListener('click', () => {
+      if (confirm('Sign out and choose a different identity?')) signOut();
+    });
+
+    const navEntry = NAV.flatMap((group) => group.items).find((item) => item.id === page);
+    if (navEntry && !reachable(navEntry)) {
+      render(
+        document.getElementById('view'),
+        html`<div class="notice err"><div><b>Not authorised</b><br>${lockReason(navEntry)}.</div></div>`,
+      );
+      return;
+    }
+
+    await view(document.getElementById('view'), params);
+  } catch (error) {
+    const detail = error instanceof ApiError ? error.message : String(error);
+    render(
+      document.getElementById('view') ?? root,
+      html`<div class="notice err"><div><b>${error instanceof ApiError ? error.code : 'Error'}</b><br>${detail}</div></div>`,
+    );
+    if (error instanceof ApiError && error.status === 401) signOut();
+  }
+}
+
+/** Refresh cached project context — called by pages after a command. */
+export async function refreshContext() {
+  await loadContext();
+}
+
+export { draw };
+
+void draw();
+
+window.addEventListener('unhandledrejection', (event) => {
+  const error = event.reason;
+  if (error instanceof ApiError) {
+    toast(error.code ?? 'Request failed', error.message, 'err');
+    event.preventDefault();
+  }
+});

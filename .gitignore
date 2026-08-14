@@ -7,5 +7,6 @@ dist/
 data/*.jsonl
 .DS_Store
 
-# Large full-page captures are regenerated on demand
+# Captures are regenerated on demand by tools/walk.mjs
 web/landing-full.*
+web/shots/

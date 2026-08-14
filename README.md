@@ -17,10 +17,16 @@ Node 22.18 or later. There is nothing to build and no runtime dependencies.
 ```bash
 npm install          # dev-only: TypeScript and @types/node
 npm run demo         # takes one asset from concept to operations, then verifies itself
-npm start            # gateway + command centre on http://localhost:8080
-npm test             # 101 tests
+npm start            # gateway + application on http://localhost:8080
+npm test             # 144 tests
 npm run typecheck
 ```
+
+`http://localhost:8080/` is the landing page, `/app` is the application. The
+sign-in screen lists the seeded identities: choose the Project Manager to see
+delivery, the Building Safety Regulator to watch write controls disappear, or
+the Platform Operator to see the operator layer — a different product with no
+access to project data at all.
 
 `npm run demo` is the fastest way to see what the system does. It onboards a
 tenant, assigns ten identities, runs a water-treatment project through every
@@ -136,10 +142,20 @@ src/
   lifecycle/     phase definitions and gate evaluation
   api/           gateway, middleware, routing table
   cli/           demo
-web/             command centre
+web/
+  landing.html   marketing page
+  index.html     application shell
+  app.js         router, session, role-aware navigation
+  lib/           API client and the HTML/escaping helpers
+  pages/         one module per screen, each reading live endpoints
 docs/            architecture and requirement traceability
-tests/           101 tests
+tools/           browser walker used to verify every page renders
+tests/           144 tests
 ```
+
+The application is plain ES modules with no build step and no framework: the
+same constraint as the backend, for the same reason — nothing to compile means
+nothing that can drift from what is actually served.
 
 ## API
 

@@ -19,6 +19,7 @@ import {
   type RequestContext,
 } from './middleware.ts';
 import { matchRoute, ROUTES } from './routes.ts';
+import { serveStatic } from './static.ts';
 
 /**
  * The single internet-facing component. Order of operations is fixed:
@@ -30,7 +31,9 @@ import { matchRoute, ROUTES } from './routes.ts';
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const CONSOLE_PATH = join(HERE, '..', '..', 'web', 'console.html');
+const WEB_ROOT = join(HERE, '..', '..', 'web');
+const APP_SHELL = join(WEB_ROOT, 'index.html');
+const LANDING = join(WEB_ROOT, 'landing.html');
 
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
 
@@ -78,14 +81,32 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
   };
 
   try {
-    // The console is a static asset served by the gateway itself so a single
-    // process is all that is needed to see the platform working.
-    if (ctx.method === 'GET' && (ctx.path === '/' || ctx.path === '/console')) {
-      const html = await readFile(CONSOLE_PATH, 'utf8');
+    // The marketing page is the front door; the application lives at /app.
+    if (ctx.method === 'GET' && (ctx.path === '/' || ctx.path === '/landing')) {
+      const html = await readFile(LANDING, 'utf8');
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'x-trace-id': traceId });
       res.end(html);
       logRequest(ctx, 200);
       return;
+    }
+
+    // The application is a single-page shell: every /app route serves the same
+    // document and the client router resolves the view.
+    if (ctx.method === 'GET' && (ctx.path === '/app' || ctx.path.startsWith('/app/'))) {
+      const html = await readFile(APP_SHELL, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'x-trace-id': traceId, 'Cache-Control': 'no-cache' });
+      res.end(html);
+      logRequest(ctx, 200);
+      return;
+    }
+
+    // Static assets: stylesheets, client modules, images.
+    if (ctx.method === 'GET' && !ctx.path.startsWith('/v1/')) {
+      const result = await serveStatic(WEB_ROOT, ctx.path, res, traceId);
+      if (result.served) {
+        logRequest(ctx, 200);
+        return;
+      }
     }
 
     if (ctx.method === 'GET' && ctx.path === '/v1/routes') {

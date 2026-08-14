@@ -112,6 +112,33 @@ These are not configuration defaults. They are in the permission matrix, and the
 seeded demo had to be rewritten to satisfy them — which is the point: the system
 refused to let one role do the whole lifecycle.
 
+## Why the operator layer is a different product
+
+A platform operator signs into the same application and gets a different one:
+tenancy, subscription tier, seat usage and prepaid credit — and no project, no
+package, no daily log. That is not the navigation hiding things. `projectContext`
+refuses an operator token outright, and ABAC denies every delivery capability
+area independently of the permission matrix, so removing the matrix entry would
+not open the door.
+
+The reverse holds too: no customer account, including the enterprise admin,
+reaches platform administration.
+
+The cost of this is that operator support cannot look at a customer's data to
+help them. That is the intended trade — an operator who can read a project can
+be compelled to.
+
+## Why the interface mirrors enforcement instead of restating it
+
+Every navigation entry declares the capability area it reads, and the sidebar
+resolves that against the permission matrix fetched from the live API. A screen
+the current role cannot open is shown locked with the reason rather than hidden,
+because a user needs to know a capability exists and who to ask for it.
+
+Nothing in the interface is the control. Deleting the lock would reveal the
+entry and the request behind it would still be denied — the API is where access
+is decided, and the interface is a rendering of that decision.
+
 ## Why phase gates read from state
 
 A gate that is a flag someone sets is a gate someone forgets. Each phase's exit

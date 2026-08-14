@@ -20,6 +20,13 @@ import type { Role } from './identity/roles.ts';
  * contexts. Everything else in the system depends on interfaces, not on this.
  */
 
+/**
+ * Operator accounts are filed under this reserved tenancy so that "which tenant
+ * is this identity in" always has an answer, and so no customer tenant can ever
+ * collide with it — tenant ids are ULIDs.
+ */
+export const PLATFORM_TENANT_ID = 'platform';
+
 export type Tenant = {
   id: string;
   legalName: string;
@@ -185,6 +192,51 @@ export class Platform {
     });
 
     return { tenant, subscription, wallet };
+  }
+
+  /**
+   * Create a platform operator. Operators belong to no customer tenant, take no
+   * seat against any subscription, and are barred by ABAC from every delivery
+   * capability area — the separation between running the platform and seeing
+   * what customers build on it is structural, not a setting someone can relax.
+   */
+  createOperator(input: { name: string; email: string }): PlatformUser {
+    const userId = ulid();
+
+    const user: PlatformUser = {
+      id: userId,
+      tenantId: PLATFORM_TENANT_ID,
+      name: input.name,
+      email: input.email,
+      roles: ['PLATFORM_ADMIN'],
+      status: 'ACTIVE',
+    };
+    this.#users.set(userId, user);
+
+    this.ledger.commit({
+      tenantId: PLATFORM_TENANT_ID,
+      projectId: `${PLATFORM_TENANT_ID}-governance`,
+      actor: { refType: 'System', refId: 'platform' },
+      source: 'SYSTEM',
+      correlationId: ulid(),
+      eventType: 'USER_CREATED',
+      entity: { refType: 'User', refId: userId },
+      nextState: {
+        id: userId,
+        tenantId: PLATFORM_TENANT_ID,
+        name: input.name,
+        email: input.email,
+        roles: ['PLATFORM_ADMIN'],
+        status: 'ACTIVE',
+      },
+    });
+
+    return user;
+  }
+
+  /** Every operator account on the platform. */
+  operators(): PlatformUser[] {
+    return [...this.#users.values()].filter((u) => u.tenantId === PLATFORM_TENANT_ID);
   }
 
   createUser(input: { tenantId: string; name: string; email: string; roles: Role[]; partyId?: string }): PlatformUser {

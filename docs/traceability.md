@@ -263,18 +263,19 @@ not pretend to have done.
 | Kong / Redis / Terraform deployment topology | Design only | Specified in the source documents; this build runs as a single Node process |
 | Kafka topics, AsyncAPI contracts, webhooks | Design only | The ledger publishes to subscribers in-process; no broker wired |
 
-## 12. Brand and console
+## 12. Brand and application
 
 | Requirement | Status | Where |
 |---|---|---|
-| Core Black, Carbon, Structural Grey, Signal Orange palette | Built | `web/console.html` |
-| Status colours (success, warning, critical, info) | Built | Console tokens |
+| Core Black, Carbon, Structural Grey, Signal Orange palette | Built | `web/app.css`, `web/landing.html` |
+| Status colours (success, warning, critical, info) | Built | `web/app.css` tone tokens |
 | Portfolio value formatter (zero as `$0.0M`) | Built | `formatContractValue()`, tested |
-| Enterprise → Portfolio → Project drill-down | Built | Console breadcrumb and command centre |
-| Single scroll container, sticky headers, no overlap | Built | Console table styling |
+| Enterprise → Portfolio → Project drill-down | Built | Topbar breadcrumb and `web/pages/enterprise.js` |
+| Single scroll container, sticky headers, no overlap | Built | `.table-scroll` in `web/app.css` |
 | Region filters as ISO codes | Built | `continentCode` / `countryCode` on portfolios and projects |
 | AI insights never look broken | Built | The copilot states when the record is empty rather than failing |
-| Full native UI blueprint | Design only | One console demonstrating the model; not the full specified UI surface |
+| Web application across the lifecycle | Built | Fifteen screens in `web/pages/`, each reading live endpoints |
+| Native Android and iOS clients | Design only | The sync and source model supports them; no native client written |
 
 ---
 

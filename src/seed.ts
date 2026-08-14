@@ -72,6 +72,12 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   };
 
   // --- Platform operator onboards the tenant --------------------------------
+  const operator = platform.createOperator({
+    name: 'Platform Operator',
+    email: 'operator@construx.example',
+  });
+  step(`Platform operator account created: ${operator.name}`);
+
   const { tenant, subscription } = platform.createTenant({
     legalName: 'Meridian Infrastructure Group Ltd',
     jurisdiction: 'GB',
@@ -700,8 +706,8 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   step('Court-ready evidence pack built from the hash-chained record');
 
   // Commercial cycle.
-  cost.postActualCost(qsCtx, { costCode: 'CIV.001', amountMinor: 212_000_000, date: '2026-09-30', sourceSystem: 'ERP', description: 'Enabling and earthworks to date' });
-  cost.postActualCost(qsCtx, { costCode: 'CIV.002', amountMinor: 341_000_000, date: '2026-09-30', sourceSystem: 'ERP', description: 'Concrete structures to date' });
+  cost.postActualCost(qsCtx, { costCode: 'CIV.001', amountMinor: 168_000_000, date: '2026-09-30', sourceSystem: 'ERP', description: 'Enabling and earthworks to date' });
+  cost.postActualCost(qsCtx, { costCode: 'CIV.002', amountMinor: 66_000_000, date: '2026-09-30', sourceSystem: 'ERP', description: 'Concrete structures to date' });
 
   const paymentCycle = cost.generatePaymentSchedule(qsCtx, {
     contractId: mainContract.contractId,
@@ -732,10 +738,13 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   });
   step('Domestic variation caught inside a trade application — early warning raised');
 
-  cost.takeEVMSnapshot(qsCtx, { period: '2026-09', plannedValueMinor: 590_000_000 });
+  // Planned value at the September data date. Physical progress is 13.6% of
+  // the baselined duration against 15.5% planned, which is where the schedule
+  // performance index below comes from.
+  cost.takeEVMSnapshot(qsCtx, { period: '2026-09', plannedValueMinor: 226_600_000 });
   const cvr = await cost.publishCVR(qsCtx, {
     period: '2026-09',
-    costToCompleteMinor: 1_193_000_000,
+    costToCompleteMinor: 1_512_000_000,
     accrualsMinor: 47_000_000,
   });
   step(`CVR published: forecast margin ${cvr.cvr.forecastMarginPercent}% (${cvr.cvr.marginErosionPercent} points against tender)`);
@@ -743,11 +752,25 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   cost.forecastCashflow(qsCtx, { totalValueMinor: 1_760_000_000, periods: 27, paymentLagDays: 30, retentionPercent: 3 });
 
   // --- COMMISSIONING ---------------------------------------------------------
-  for (const taskId of taskIds.slice(2)) {
+  // Each activity closes out against its own planned duration, some over and
+  // some under. A flat number here would produce nonsense slippage — a 21-day
+  // test showing 39 days late and a 90-day pour finishing a month early.
+  const CLOSE_OUT_DAYS: Record<string, number> = {
+    A200: 82, // bulk excavation — 60d planned, the productivity problem carried through
+    A300: 52, // blinding and base slabs — 45d planned, late off the back of excavation
+    A400: 96, // clarifier walls — 90d planned
+    A500: 68, // filter gallery substructure — 70d planned, recovered two days
+    A600: 61, // process pipework — 55d planned
+    A700: 24, // watertightness testing — 21d planned
+    A800: 30, // reinstatement and handover — 30d planned, to plan
+  };
+
+  for (const [index, taskId] of taskIds.slice(1).entries()) {
+    const activityCode = `A${index + 2}00`;
     planning.recordProgress(pmCtx, {
       taskId,
       percentComplete: 100,
-      elapsedDays: 60,
+      elapsedDays: CLOSE_OUT_DAYS[activityCode] ?? 60,
       evidenceDescription: 'Works complete and inspected',
       evidenceHash: hash(`completion-${taskId}`),
     });

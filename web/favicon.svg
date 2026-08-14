@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="CONSTRUX">
+  <rect width="64" height="64" rx="14" fill="rgb(12,12,14)"/>
+  <path d="M20 18 L32 32 L20 46" fill="none" stroke="rgb(255,255,255)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M44 18 L32 32 L44 46" fill="none" stroke="rgb(255,102,0)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

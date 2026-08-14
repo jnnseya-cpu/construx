@@ -254,7 +254,7 @@ tombstone event. The chain stays intact, the personal data does not. `[NEW]`
 | Branded, hashed exports | `[BUILT]` | `src/export/exporter.ts` |
 | Gateway, rate limiting, validation, problem+json | `[BUILT]` | `src/api/` |
 | Conversational copilot | `[BUILT]` | `src/ai/conversation.ts` |
-| Command centre UI | `[BUILT]` (one) / `[EXTEND]` (per role) | `web/console.html` |
+| Command centre UI | `[BUILT]` (fifteen screens) / `[EXTEND]` (per role) | `web/pages/` |
 | Agent runtime and memory | `[NEW]` | §5.1, §9 |
 | Vector store and knowledge graph | `[NEW]` | §8 |
 | Notification and webhook engine | `[NEW]` | §11 |
@@ -777,11 +777,17 @@ Two distinct surfaces, matching the account-layer separation that already exists
 **Platform operator console** — tenants, subscriptions, ACU consumption and
 margin by tenant, provider health and spend, incidents, error budgets, agent
 governance (suspend a misbehaving agent globally), feature flags, connector
-health. Explicitly excludes project delivery data. `[BUILT — restriction]`
+health. Explicitly excludes project delivery data.
+`[BUILT — the tenant estate, API surface, permission matrix and gateway
+activity; provider health, incidents and feature flags are EXTEND]`
+
+Signing in as the seeded Platform Operator shows this surface and nothing else:
+the delivery navigation is locked, `projectContext` refuses the token, and ABAC
+denies every delivery capability area independently of the permission matrix.
 
 **Enterprise admin console** — users and seats, roles and policy, portfolio and
 project structure, AI budget allocation per project, export history, audit
-replay, compliance status. `[BUILT — partially, in the console]`
+replay, compliance status. `[BUILT — partially, in the application]`
 
 Every administrative action is itself a Golden Thread event. There is no
 back door: an operator who changes a tenant's cap leaves a record with the same
@@ -794,7 +800,7 @@ weight as a site supervisor recording a pour.
 | Phase | Scope | Status |
 |---|---|---|
 | **0 — Foundations** | Ledger, hashing, patches, catalogue, replay, identity, RBAC/ABAC, ACU wallet, gateway | **Complete** `[BUILT]` |
-| **1 — Domain MVP** | Seven engines, lifecycle gates, procurement, offline sync, branded exports, console, 115 tests | **Complete** `[BUILT]` |
+| **1 — Domain MVP** | Seven engines, lifecycle gates, procurement, offline sync, branded exports, fifteen-screen web application, 144 tests | **Complete** `[BUILT]` |
 | **2 — Persistence & scale** | Postgres ledger with RLS and append-only rules, Kafka, read-model projections, object storage, Terraform | 6–8 weeks |
 | **3 — Agent runtime** | Agent contract, memory layers, vector store, per-role command centres, bounded autonomy, governance agent | 8–10 weeks |
 | **4 — Payments** | BitriPay gateway, merchant onboarding with KYB, settlement, reconciliation, disputes | 8 weeks |
@@ -848,8 +854,8 @@ and the value of the record to owners, insurers and regulators compounds.
 
 ```bash
 npm run demo    # full lifecycle, replay verification, deliberate tamper detection
-npm test        # 115 tests
-npm start       # gateway, console, self-describing API at /v1/routes
+npm test        # 144 tests
+npm start       # gateway, landing page, application at /app, API at /v1/routes
 ```
 
 Requirement-by-requirement mapping, including what is deliberately not built:

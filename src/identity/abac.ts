@@ -103,7 +103,11 @@ export function evaluateAccess(
 
   // --- Regulator restrictions ------------------------------------------------
   if (auth.roles.includes('REGULATOR')) {
-    if (WRITE_CODES.has(code)) {
+    // Read-only means "may not change the record". Taking a Golden Thread
+    // export is the one write code a regulator holds, and it is the entire
+    // point of regulator access — refusing it here would contradict the
+    // permission matrix, which grants EVIDENCE_AUDIT:I explicitly.
+    if (WRITE_CODES.has(code) && code !== 'I') {
       return { decision: 'DENY', policyId, reason: 'Regulator access is read-only' };
     }
     if (code === 'X' && !auth.regulatorAiEnabled) {
