@@ -6,3 +6,6 @@ dist/
 !.env.example
 data/*.jsonl
 .DS_Store
+
+# Large full-page captures are regenerated on demand
+web/landing-full.*
