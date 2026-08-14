@@ -71,7 +71,7 @@ not pretend to have done.
 | Engine | Status | Where |
 |---|---|---|
 | A — Tender & Commercial Intelligence | Built | `src/engines/tender.ts` |
-| Vision-based 2D and BIM take-off | Built | `runTakeoff()` — perception capability, quantities traced to sheet and revision |
+| Vision-based 2D and BIM take-off | Partial | `runTakeoff()` governs, evidences and prices measured items and traces each to a sheet and revision; the quantities are supplied by the caller, not extracted from a drawing |
 | Auto-generated BoQ with confidence per item | Built | `BOQITEM_CREATED_FROM_TAKEOFF` carries `confidenceScore` |
 | Bottom-up estimating (labour, plant, material, prelims, O&P) | Built | `buildEstimate()` |
 | Explicit risk pricing, not buried in a percentage | Built | `riskAllowanceMinor` is a distinct line |
@@ -105,12 +105,12 @@ not pretend to have done.
 | Weather-driven hazard forecasting | Partial | Adverse weather days are an input; no weather feed connected |
 | Competency and training register | Built | `recordCompetency()` |
 | E — BIM & Digital Twin | Built | `src/engines/bim.ts` |
-| Title block OCR and drawing register | Built | `registerDrawing()` |
+| Drawing register with title-block structuring | Partial | `registerDrawing()` structures a title block from raw text; the OCR that produces that text is not implemented |
 | Revision supersession engine | Built | Automatic; marking up a superseded drawing is refused |
 | Markup → RFI / instruction conversion | Built | `addMarkup({ convertTo })` with auto-numbering |
-| Model ingestion (IFC and others) | Built | `ingestModel()` |
+| Model ingestion (IFC and others) | Partial | `ingestModel()` records the model, its hash, discipline, LOD and element count as a governed event; no IFC schema parser, no geometry hash, no model diffing |
 | Clash detection with cost-aware triage | Built | `detectClashes()` weighted by discipline rework cost |
-| Live twin fed by drones, IoT, site capture | Built | `updateTwinFromSite()`, `ingestSensorReading()` |
+| Live twin fed by drones, IoT, site capture | Partial | `updateTwinFromSite()` and `ingestSensorReading()` reconcile observed against expected element status; the observations are supplied as structured input, not derived from imagery |
 | Automated as-built generation | Built | `generateAsBuilt()` reconciling captures against the model |
 | ISO 19650 CDE | Partial | Revision control, status and supersession built; full CDE state model not |
 | F — Contracts, Change & Claims | Built | `src/engines/claims.ts` |
@@ -283,6 +283,44 @@ not pretend to have done.
 | Three account layers visible in the product | Built | Signing in as the Platform Operator produces a different application with no delivery data |
 | Denials distinguished from empty records | Built | `withheldRecords()` in `web/lib/api.js`, surfaced by the shell |
 | Native Android and iOS clients | Design only | The sync and source model supports them; no native client written |
+
+---
+
+## 13. Ingestion and perception pipeline
+
+The specification describes a full intake stack in front of the engines. The
+platform is built to receive its output — every command takes structured input,
+carries an evidence hash and writes a governed event — but the stack itself is
+not implemented. This is the largest gap in the build and it is stated plainly
+rather than implied by a "Built" row elsewhere.
+
+| Requirement | Status | Where |
+|---|---|---|
+| Presigned upload, SHA-256, virus scan, MIME validation | Design only | Evidence is referenced by hash and URI; no upload service |
+| ML file classifier (contract, ITT, spec, drawing, BoQ, invoice, claim, method statement, risk register, QA/QC, safety report) with confidence | Design only | Not implemented |
+| OCR, table extraction, clause extraction, entity extraction | Partial | Clause extraction from supplied text is built (`extractContractIntelligence()`); OCR and table extraction are not |
+| Vector embedding and semantic retrieval | Design only | Not implemented |
+| `FILE_EXTRACTED` event | Design only | Not in the catalogue |
+| IFC schema parsing, quantity computation, element→WBS mapping | Design only | `ingestModel()` records the model as an event; it does not parse it |
+| Geometry hash, model version diffing, change detection | Design only | Not implemented |
+| Vision: progress estimation, PPE compliance, equipment recognition, defect detection | Design only | `updateTwinFromSite()` consumes structured observations; no vision model |
+| `PROGRESS_EXTRACTED_FROM_IMAGES` event | Design only | Not in the catalogue |
+| Audio: transcription, commitment and deadline extraction | Design only | Not implemented |
+| `COMMITMENT_REGISTERED`, `DEADLINE_TRACKED` events | Design only | Not in the catalogue |
+| Knowledge graph with typed edges and traversal | Partial | Entities cross-reference by id and the ledger reconstructs the lineage; there is no graph store or traversal API |
+
+## 14. Commercial packaging
+
+`CONSTRUX__REVIEW_05` supersedes the earlier tier model with role-based seat
+pricing. The build still carries the earlier model.
+
+| Requirement | Status | Where |
+|---|---|---|
+| Subscription separated from AI consumption | Built | `src/billing/subscription.ts` and `src/billing/acu.ts` are independent |
+| Trial granted automatically on tenant creation, no manual override | Built | `grantTrialCredit()` in `createTenant()`; no operator path adds trial credit |
+| Seat model with per-role prices (£25–£180) | Design only | Seats are counted and capped by tier; they carry no role price |
+| Packages: Core Project £950, Professional Delivery £2,200, Enterprise £6,500 | Design only | Tiers are SOLO/TEAM/BUSINESS/ENTERPRISE/SOVEREIGN at the earlier prices |
+| ACU bundles: Starter £300, Growth £1,000, Scale £2,500 | Design only | Top-ups are an arbitrary amount, not a bundle |
 
 ---
 

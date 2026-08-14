@@ -1,5 +1,6 @@
 import { ask } from '../ai/conversation.ts';
-import { TIERS } from '../billing/subscription.ts';
+import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
+import { seatEconomics, TIERS } from '../billing/subscription.ts';
 import { config } from '../config.ts';
 import { DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
 import type { Schema } from '../core/validate.ts';
@@ -285,6 +286,33 @@ export const ROUTES: Route[] = [
           ...users.map((u) => shape(u, u.roles.includes('ENTERPRISE_ADMIN') ? 'ENTERPRISE_ADMIN' : 'TENANT_USER')),
           ...platform.operators().map((u) => shape(u, 'PLATFORM_ADMIN')),
         ],
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/billing/catalogue',
+    description: 'Seat prices, packages and ACU bundles',
+    handler: () => ({
+      seats: Object.values(SEATS),
+      packages: Object.values(PACKAGES),
+      bundles: Object.values(ACU_BUNDLES),
+      currency: 'GBP',
+      note: 'A package is charged, not the sum of its seats. No package includes AI — ACUs are bought separately.',
+    }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/billing/seats',
+    description: 'Seats held by this tenant against what the package charges',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const subscription = platform.subscription(actor.tenantId);
+      const rolesByUser = new Map(platform.users(actor.tenantId).map((u) => [u.id, u.roles]));
+      return {
+        package: PACKAGES[subscription.package],
+        seatsUsed: subscription.assignedIdentities.length,
+        ...seatEconomics(subscription, rolesByUser),
       };
     },
   },

@@ -42,7 +42,9 @@ export function buildInvoice(
   currency = 'USD',
 ): Invoice {
   const tier = TIERS[subscription.tier];
-  const subscriptionMinor = Math.round(monthlySubscriptionCharge(subscription) * 100);
+  // The package charge is already in minor units — the whole billing path works
+  // in pence so nothing rounds twice.
+  const subscriptionMinor = monthlySubscriptionCharge(subscription);
 
   const lines: InvoiceLine[] = [
     {

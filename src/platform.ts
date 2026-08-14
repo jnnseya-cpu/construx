@@ -3,7 +3,8 @@ import { ExportService } from './export/exporter.ts';
 import { SyncEngine } from './field/sync.ts';
 import { ACUWallet } from './billing/acu.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
-import { assignIdentity, revokeIdentity, TIERS, type Subscription, type SubscriptionTier } from './billing/subscription.ts';
+import { assignIdentity, packageForTier, revokeIdentity, TIERS, type Subscription, type SubscriptionTier } from './billing/subscription.ts';
+import { PACKAGES, type PackageTier } from './billing/seats.ts';
 import { config } from './config.ts';
 import { DomainError, NotFoundError } from './core/errors.ts';
 import { ulid } from './core/ids.ts';
@@ -77,6 +78,8 @@ export class Platform {
     jurisdiction: string;
     defaultCurrency: string;
     tier: SubscriptionTier;
+    /** Commercial package. Defaults from the tier so existing callers keep working. */
+    package?: PackageTier;
     enterpriseName: string;
   }): { tenant: Tenant; subscription: Subscription; wallet: ACUWallet } {
     const tenantId = ulid();
@@ -96,6 +99,7 @@ export class Platform {
       id: ulid(),
       tenantId,
       tier: input.tier,
+      package: input.package ?? packageForTier(input.tier),
       status: 'ACTIVE',
       assignedIdentities: [],
       startedAt: new Date().toISOString(),
@@ -152,8 +156,9 @@ export class Platform {
         id: subscription.id,
         tenantId,
         tier: subscription.tier,
-        includedIdentities: TIERS[subscription.tier].includedIdentities,
-        monthlyPriceUsd: TIERS[subscription.tier].monthlyPriceUsd,
+        package: subscription.package,
+        includedSeats: PACKAGES[subscription.package].includedSeats,
+        monthlyPriceMinor: PACKAGES[subscription.package].monthlyPriceMinor,
         status: 'ACTIVE',
         assignedIdentities: [],
       },
@@ -254,7 +259,7 @@ export class Platform {
     };
 
     // Seat assignment can fail on a tier limit; the user is not created if so.
-    const updated = assignIdentity(subscription, userId);
+    const updated = assignIdentity(subscription, userId, input.roles);
     this.#subscriptions.set(input.tenantId, updated);
     this.#users.set(userId, user);
 
@@ -277,24 +282,30 @@ export class Platform {
       },
     });
 
-    this.ledger.commit({
-      tenantId: input.tenantId,
-      projectId: `${input.tenantId}-governance`,
-      actor: { refType: 'System', refId: 'platform' },
-      source: 'SYSTEM',
-      correlationId: ulid(),
-      eventType: 'IDENTITY_SEAT_ASSIGNED',
-      entity: { refType: 'Subscription', refId: updated.id },
-      nextState: {
-        id: updated.id,
-        tenantId: updated.tenantId,
-        tier: updated.tier,
-        includedIdentities: TIERS[updated.tier].includedIdentities,
-        monthlyPriceUsd: TIERS[updated.tier].monthlyPriceUsd,
-        status: updated.status,
-        assignedIdentities: updated.assignedIdentities,
-      },
-    });
+    // Roles that consume no seat produce no seat event. A regulator whose
+    // access the asset owner is obliged to provide is not a billable identity,
+    // and recording an unchanged subscription would be a no-op in the ledger.
+    if (updated !== subscription) {
+      this.ledger.commit({
+        tenantId: input.tenantId,
+        projectId: `${input.tenantId}-governance`,
+        actor: { refType: 'System', refId: 'platform' },
+        source: 'SYSTEM',
+        correlationId: ulid(),
+        eventType: 'IDENTITY_SEAT_ASSIGNED',
+        entity: { refType: 'Subscription', refId: updated.id },
+        nextState: {
+          id: updated.id,
+          tenantId: updated.tenantId,
+          tier: updated.tier,
+          package: updated.package,
+          includedSeats: PACKAGES[updated.package].includedSeats,
+          monthlyPriceMinor: PACKAGES[updated.package].monthlyPriceMinor,
+          status: updated.status,
+          assignedIdentities: updated.assignedIdentities,
+        },
+      });
+    }
 
     return user;
   }

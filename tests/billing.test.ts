@@ -4,6 +4,7 @@ import { throwsCode } from './helpers.ts';
 import { ACUWallet, effectiveMultiplier } from '../src/billing/acu.ts';
 import { assignIdentity, revokeIdentity, SeatLimitError, TIERS, type Subscription } from '../src/billing/subscription.ts';
 import { buildInvoice, formatContractValue } from '../src/billing/invoice.ts';
+import { ACU_BUNDLES, PACKAGES, SEATS, seatForRole } from '../src/billing/seats.ts';
 import { config } from '../src/config.ts';
 
 function wallet(balanceMinor = 10_000): ACUWallet {
@@ -136,34 +137,105 @@ describe('subscription seats', () => {
     id: 'sub-1',
     tenantId: 'tenant-1',
     tier: 'SOLO',
+    package: 'CORE_PROJECT',
     status: 'ACTIVE',
     assignedIdentities: [],
     startedAt: new Date().toISOString(),
     renewsAt: new Date().toISOString(),
   };
 
-  it('enforces the tier seat limit', () => {
+  const fill = (count: number) => {
     let current = subscription;
-    for (const user of ['u1', 'u2', 'u3']) current = assignIdentity(current, user);
-    assert.throws(() => assignIdentity(current, 'u4'), SeatLimitError);
+    for (let i = 0; i < count; i += 1) current = assignIdentity(current, `u${i}`);
+    return current;
+  };
+
+  it('enforces the package seat cap', () => {
+    const cap = PACKAGES.CORE_PROJECT.includedSeats as number;
+    const current = fill(cap);
+    assert.throws(() => assignIdentity(current, 'one-too-many'), SeatLimitError);
   });
 
   it('treats seats as reusable once revoked', () => {
-    let current = subscription;
-    for (const user of ['u1', 'u2', 'u3']) current = assignIdentity(current, user);
+    let current = fill(PACKAGES.CORE_PROJECT.includedSeats as number);
     current = revokeIdentity(current, 'u2');
-    assert.doesNotThrow(() => assignIdentity(current, 'u4'));
+    assert.doesNotThrow(() => assignIdentity(current, 'replacement'));
   });
 
-  it('places no seat limit on enterprise and sovereign tiers', () => {
-    assert.equal(TIERS.ENTERPRISE.includedIdentities, null);
-    assert.equal(TIERS.SOVEREIGN.includedIdentities, null);
-    assert.equal(TIERS.SOVEREIGN.isolatedTenancy, true);
+  it('places no seat cap on the enterprise package', () => {
+    assert.equal(PACKAGES.ENTERPRISE.includedSeats, null);
+    assert.equal(PACKAGES.ENTERPRISE.isolatedTenancy, true);
+    assert.equal(PACKAGES.ENTERPRISE.apiAccess, true);
+  });
+
+  it('does not charge a seat for the regulator or the platform operator', () => {
+    // The asset owner is obliged to give the regulator access; selling them a
+    // seat would make a statutory duty a line item.
+    const withRegulator = assignIdentity(subscription, 'bsr-1', ['REGULATOR']);
+    assert.deepEqual(withRegulator.assignedIdentities, []);
+    assert.equal(withRegulator, subscription, 'an uncharged role leaves the subscription untouched');
   });
 
   it('is idempotent when the same identity is assigned twice', () => {
     const once = assignIdentity(subscription, 'u1');
     assert.deepEqual(assignIdentity(once, 'u1').assignedIdentities, ['u1']);
+  });
+});
+
+describe('seat pricing', () => {
+  it('prices every seat the review specifies', () => {
+    const prices = Object.fromEntries(Object.values(SEATS).map((s) => [s.seat, s.monthlyPriceMinor]));
+    assert.deepEqual(prices, {
+      CONSTRUCTION_MANAGER: 18_000,
+      PROJECT_MANAGER: 14_000,
+      COMMERCIAL_MANAGER: 15_000,
+      PLANNER: 11_000,
+      DOCUMENT_CONTROLLER: 9_000,
+      SITE_SUPERVISOR: 7_000,
+      SUBCONTRACTOR: 2_500,
+      EXECUTIVE: 12_000,
+    });
+  });
+
+  it('prices authority above headcount', () => {
+    // The whole point of role-based seats: the seat that can commit the job
+    // costs more than the seat that reports on it.
+    assert.ok(SEATS.CONSTRUCTION_MANAGER.monthlyPriceMinor > SEATS.PROJECT_MANAGER.monthlyPriceMinor);
+    assert.ok(SEATS.PROJECT_MANAGER.monthlyPriceMinor > SEATS.SITE_SUPERVISOR.monthlyPriceMinor);
+    assert.ok(SEATS.SITE_SUPERVISOR.monthlyPriceMinor > SEATS.SUBCONTRACTOR.monthlyPriceMinor);
+  });
+
+  it('maps every delivery role to a seat', () => {
+    for (const role of ['EPC', 'PM', 'QS', 'PLANNER', 'BIM', 'DESIGNER', 'SUPERVISOR', 'QAQC', 'SAFETY', 'FM', 'SUPPLIER', 'OWNER'] as const) {
+      assert.ok(seatForRole(role), `${role} has no seat price`);
+    }
+  });
+
+  it('leaves the operator and the regulator unpriced', () => {
+    assert.equal(seatForRole('PLATFORM_ADMIN'), undefined);
+    assert.equal(seatForRole('REGULATOR'), undefined);
+  });
+
+  it('prices the three packages the review specifies', () => {
+    assert.equal(PACKAGES.CORE_PROJECT.monthlyPriceMinor, 95_000);
+    assert.equal(PACKAGES.PROFESSIONAL_DELIVERY.monthlyPriceMinor, 220_000);
+    assert.equal(PACKAGES.ENTERPRISE.monthlyPriceMinor, 650_000);
+    assert.equal(PACKAGES.CORE_PROJECT.includedSeats, 10);
+    assert.equal(PACKAGES.PROFESSIONAL_DELIVERY.includedSeats, 25);
+  });
+
+  it('offers the three ACU bundles, each better value than the last', () => {
+    const rate = (b: { priceMinor: number; usableAcus: number }) => b.usableAcus / b.priceMinor;
+    assert.ok(rate(ACU_BUNDLES.GROWTH) > rate(ACU_BUNDLES.STARTER));
+    assert.ok(rate(ACU_BUNDLES.SCALE) > rate(ACU_BUNDLES.GROWTH));
+  });
+
+  it('keeps AI out of the package, whatever the package', () => {
+    // No package includes ACUs. If one ever did, the commercial promise that
+    // AI is metered strictly by consumption would be false.
+    for (const definition of Object.values(PACKAGES)) {
+      assert.ok(!('includedAcus' in definition), `${definition.label} must not bundle AI`);
+    }
   });
 });
 
@@ -177,6 +249,7 @@ describe('invoicing', () => {
       id: 'sub-1',
       tenantId: 'tenant-1',
       tier: 'BUSINESS',
+      package: 'PROFESSIONAL_DELIVERY',
       status: 'ACTIVE',
       assignedIdentities: ['u1'],
       startedAt: new Date().toISOString(),
@@ -184,7 +257,7 @@ describe('invoicing', () => {
     };
 
     const invoice = buildInvoice(subscription, w, new Date().toISOString().slice(0, 7));
-    assert.equal(invoice.subscriptionMinor, TIERS.BUSINESS.monthlyPriceUsd * 100);
+    assert.equal(invoice.subscriptionMinor, PACKAGES.PROFESSIONAL_DELIVERY.monthlyPriceMinor);
     assert.equal(invoice.aiUsageMinor, 300);
     assert.equal(invoice.aiRawCostMinor, 100);
     assert.equal(invoice.effectiveMultiplier, 3);
