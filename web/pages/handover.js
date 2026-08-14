@@ -1,6 +1,8 @@
 import { api, entityBundle } from '../lib/api.js';
+import { command, commandBar } from '../lib/command.js';
+import { today as todayIso } from '../lib/enums.js';
 import { badge, date, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
-import { can, state } from '../app.js';
+import { blockedReason, can, draw, state } from '../app.js';
 
 /**
  * Handover & O&M.
@@ -43,7 +45,11 @@ export async function handover(root) {
           <h1>Handover &amp; O&amp;M</h1>
           <p>The same spine that ran the build now runs the asset — no migration, because there is nothing to migrate to.</p>
         </div>
-        <div class="actions">
+        <div class="actions cmd-bar">
+          ${raw(commandBar([
+            { id: 'defect', label: 'Raise defect', tone: '', permitted: can('HANDOVER_OM', 'C'), reason: blockedReason('HANDOVER_OM', 'C') },
+            { id: 'asset', label: 'Register asset', permitted: can('HANDOVER_OM', 'C'), reason: blockedReason('HANDOVER_OM', 'C') },
+          ]))}
           ${can('HANDOVER_OM', 'X') ? html`<button class="btn ghost" id="maintenance">Forecast maintenance</button>` : ''}
         </div>
       </div>
@@ -212,5 +218,51 @@ export async function handover(root) {
       button.disabled = false;
       button.textContent = 'Forecast maintenance';
     }
+  });
+
+  const COMMANDS = {
+    defect: {
+      title: 'Raise defect',
+      intent: 'Warranty cover is checked as the defect is raised, so who pays is settled before anyone argues about it.',
+      path: `/v1/projects/${projectId}/defects`,
+      submitLabel: 'Raise',
+      fields: [
+        { name: 'assetId', label: 'Asset', type: 'select', required: false, placeholder: 'Not asset-specific',
+          options: b.AssetRegisterItem.map((a) => ({ value: a._refId, label: `${a.assetTag} · ${a.description}` })) },
+        { name: 'location', label: 'Location', type: 'text' },
+        { name: 'description', label: 'Defect', type: 'textarea' },
+        { name: 'severity', label: 'Severity', type: 'select', options: [
+          { value: 'MINOR', label: 'Minor' }, { value: 'MAJOR', label: 'Major' }, { value: 'CRITICAL', label: 'Critical' },
+        ] },
+        { name: 'reportedBy', label: 'Reported by', type: 'text', value: state.session.user.name },
+        { name: 'evidenceHash', label: 'Evidence', type: 'file' },
+      ],
+    },
+    asset: {
+      title: 'Register asset',
+      intent: 'Registered against the same spine that built it, so the maintenance forecast reads the installation record rather than a re-keyed copy.',
+      path: `/v1/projects/${projectId}/assets`,
+      submitLabel: 'Register',
+      fields: [
+        { name: 'assetTag', label: 'Asset tag', type: 'text', placeholder: 'AST-CLR-002' },
+        { name: 'description', label: 'Description', type: 'text' },
+        { name: 'assetClass', label: 'Class', type: 'text', placeholder: 'Rotating plant' },
+        { name: 'manufacturer', label: 'Manufacturer', type: 'text' },
+        { name: 'modelNumber', label: 'Model', type: 'text' },
+        { name: 'serialNumber', label: 'Serial number', type: 'text', required: false },
+        { name: 'installedAt', label: 'Installed', type: 'date', value: todayIso() },
+        { name: 'location', label: 'Location', type: 'text' },
+        { name: 'expectedLifeYears', label: 'Expected life (years)', type: 'number', min: 1 },
+        { name: 'replacementCostMinor', label: 'Replacement cost', type: 'number', money: true, hint: 'In pounds' },
+      ],
+    },
+  };
+
+  root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-command]');
+    if (!button) return;
+    const spec = COMMANDS[button.dataset.command];
+    if (!spec) return;
+    if (await command(spec)) await draw();
   });
 }

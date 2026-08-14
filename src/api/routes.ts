@@ -14,7 +14,7 @@ import * as planning from '../engines/planning.ts';
 import * as safety from '../engines/safety.ts';
 import * as tender from '../engines/tender.ts';
 import { replayProject, replayTimeline } from '../goldenthread/replay.ts';
-import { evaluateAccess } from '../identity/abac.ts';
+import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { createMfaChallenge, refreshTokens, shapeMfaResponse, verifyMfaChallenge } from '../identity/auth.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
 import { PERMISSION_MATRIX } from '../identity/roles.ts';
@@ -319,8 +319,14 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/permissions/matrix',
-    description: 'The enforceable permission matrix',
-    handler: () => ({ matrix: PERMISSION_MATRIX }),
+    description: 'The enforceable permission matrix and the phases each area may be written in',
+    handler: () => ({
+      matrix: PERMISSION_MATRIX,
+      // Published so a client can show a command as unavailable for the reason
+      // it will actually be refused, rather than duplicating the rule and
+      // drifting from it.
+      writePhaseGates: WRITE_PHASE_GATES,
+    }),
   },
 
   // ----------------------------------------------------------------- console

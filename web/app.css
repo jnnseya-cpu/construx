@@ -333,6 +333,28 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--orange); ou
 .field { margin-bottom: 13px; }
 .field label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--text-3); margin-bottom: 5px; }
 
+/* --- command surfaces ---------------------------------------------------- */
+.modal header { align-items: flex-start; }
+.modal header h3 { margin-bottom: 3px; }
+.field input, .field select, .field textarea {
+  width: 100%; background: var(--core); border: 1px solid var(--line-strong); border-radius: 7px;
+  color: var(--text-1); font: inherit; font-size: 13px; padding: 9px 11px; outline: none;
+}
+.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--orange); }
+.field textarea { resize: vertical; min-height: 62px; }
+.field label .opt { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-3); opacity: .8; }
+.field-error, .cmd-error {
+  margin-top: 6px; font-size: 12px; color: var(--critical);
+  background: rgba(255,77,79,.08); border: 1px solid rgba(255,77,79,.3); border-radius: 6px; padding: 8px 10px;
+}
+.cmd-error { margin: 0 0 14px; }
+.btn.locked { opacity: .42; cursor: not-allowed; }
+
+.cmd-bar { display: flex; flex-wrap: wrap; gap: 8px; }
+.input-zone { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); align-items: end; }
+.input-zone .field { margin-bottom: 0; }
+.input-zone .actions { display: flex; gap: 8px; }
+
 .split-list { display: flex; flex-direction: column; }
 .split-list .row { display: flex; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 12.5px; align-items: center; }
 .split-list .row:first-child { border-top: none; }

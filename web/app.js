@@ -93,19 +93,47 @@ export function icon(name) {
 // --- permissions ------------------------------------------------------------
 
 let matrix = null;
+let writePhaseGates = {};
 
 async function loadMatrix() {
   if (matrix) return matrix;
   const result = await api.get('/v1/permissions/matrix');
   matrix = result.matrix;
+  writePhaseGates = result.writePhaseGates ?? {};
   return matrix;
 }
 
-/** Does any role held by the current user have this code in this area? */
-export function can(area, code = 'R') {
+const WRITE_CODES = new Set(['C', 'U', 'A', 'I', 'G']);
+
+/**
+ * Why a command is unavailable, or null if it is available.
+ *
+ * Both halves come from the API — the permission matrix and the phase gates —
+ * so the interface cannot offer a command the platform will refuse, and cannot
+ * hide one it would accept. Duplicating either rule here is how the two drift.
+ */
+export function blockedReason(area, code = 'R') {
   const roles = state.session?.user?.roles ?? [];
+  if (matrix && !roles.some((role) => (matrix[role]?.[area] ?? []).includes(code))) {
+    return `No role of ${roles.join('/')} holds "${code}" on ${area}`;
+  }
+
+  const phase = state.project?.phase;
+  const allowed = writePhaseGates[area];
+  if (WRITE_CODES.has(code) && phase && allowed && !allowed.includes(phase)) {
+    return `${humanise(area)} cannot be written during the ${humanise(phase)} phase`;
+  }
+
+  return null;
+}
+
+/**
+ * Can the current identity run this, here, now? Reads are role-only; writes are
+ * additionally gated by the lifecycle phase, exactly as the platform gates them.
+ */
+export function can(area, code = 'R') {
   if (!matrix) return true;
-  return roles.some((role) => (matrix[role]?.[area] ?? []).includes(code));
+  return blockedReason(area, code) === null;
 }
 
 /**

@@ -43,7 +43,7 @@ const COMMERCIAL_L3_ROLES = new Set<Role>(['OWNER', 'EPC', 'QS', 'PM', 'ENTERPRI
  * Phases in which a capability area may be written. Writing a tender estimate
  * during O&M, or field progress before award, indicates a process error.
  */
-const WRITE_PHASE_GATES: Partial<Record<CapabilityArea, LifecyclePhase[]>> = {
+export const WRITE_PHASE_GATES: Partial<Record<CapabilityArea, LifecyclePhase[]>> = {
   BOQ_TAKEOFF: ['CONCEPT', 'DESIGN', 'TENDER'],
   ESTIMATE_TENDER: ['CONCEPT', 'DESIGN', 'TENDER'],
   PROCUREMENT_AWARD: ['TENDER', 'CONSTRUCTION'],

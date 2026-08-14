@@ -1,6 +1,8 @@
 import { api, entityBundle } from '../lib/api.js';
+import { command, commandBar } from '../lib/command.js';
+import { OBSERVATION_TYPE, RISK_CATEGORY } from '../lib/enums.js';
 import { badge, date, days, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
-import { can, state } from '../app.js';
+import { blockedReason, can, draw, state } from '../app.js';
 
 /**
  * Risk & Safety.
@@ -35,7 +37,11 @@ export async function risk(root) {
           <h1>Risk &amp; Safety</h1>
           <p>Quantified exposure and predictive safety indicators, both computed from the register and the field record rather than assessed by feel.</p>
         </div>
-        <div class="actions">
+        <div class="actions cmd-bar">
+          ${raw(commandBar([
+            { id: 'risk', label: 'Register risk', tone: '', permitted: can('RISK_REGISTER', 'C'), reason: blockedReason('RISK_REGISTER', 'C') },
+            { id: 'observation', label: 'Log observation', permitted: can('SAFETY_RAMS', 'C'), reason: blockedReason('SAFETY_RAMS', 'C') },
+          ]))}
           ${can('SAFETY_RAMS', 'X') ? html`<button class="btn ghost" id="forecast-safety">Run safety forecast</button>` : ''}
         </div>
       </div>
@@ -213,4 +219,56 @@ export async function risk(root) {
       button.textContent = 'Run safety forecast';
     }
   });
+
+  const COMMANDS = {
+    risk: {
+      title: 'Register risk',
+      intent: 'Three-point impact in money and days. The platform computes expected value and the P80 contingency — neither is entered.',
+      path: `/v1/projects/${projectId}/risk`,
+      submitLabel: 'Register',
+      fields: [
+        { name: 'title', label: 'Risk', type: 'text', placeholder: 'What could happen, stated as an event' },
+        { name: 'category', label: 'Category', type: 'select', options: RISK_CATEGORY },
+        { name: 'probability', label: 'Probability', type: 'number', step: '0.05', min: 0, hint: 'Between 0 and 1' },
+        { name: 'costOptimistic', label: 'Cost impact — best case', type: 'number', money: true, hint: 'In pounds' },
+        { name: 'costMostLikely', label: 'Cost impact — most likely', type: 'number', money: true },
+        { name: 'costPessimistic', label: 'Cost impact — worst case', type: 'number', money: true },
+        { name: 'daysOptimistic', label: 'Delay — best case (days)', type: 'number' },
+        { name: 'daysMostLikely', label: 'Delay — most likely (days)', type: 'number' },
+        { name: 'daysPessimistic', label: 'Delay — worst case (days)', type: 'number' },
+      ],
+      transform: (v) => ({
+        id: '',
+        title: v.title,
+        category: v.category,
+        probability: v.probability,
+        costImpact: { optimistic: v.costOptimistic, mostLikely: v.costMostLikely, pessimistic: v.costPessimistic },
+        scheduleImpactDays: { optimistic: v.daysOptimistic, mostLikely: v.daysMostLikely, pessimistic: v.daysPessimistic },
+        projectValueMinor: Number(state.project?.contractValueMinor ?? 0),
+        projectDurationDays: 400,
+      }),
+    },
+    observation: {
+      title: 'Log safety observation',
+      intent: 'Severity is assessed against the hazard library, not chosen by the reporter.',
+      path: `/v1/projects/${projectId}/safety/observations`,
+      submitLabel: 'Log',
+      fields: [
+        { name: 'observationType', label: 'Type', type: 'select', options: OBSERVATION_TYPE },
+        { name: 'location', label: 'Location', type: 'text' },
+        { name: 'description', label: 'What was observed', type: 'textarea' },
+        { name: 'reportedBy', label: 'Reported by', type: 'text', value: state.session.user.name },
+        { name: 'mediaHash', label: 'Photograph', type: 'file' },
+      ],
+    },
+  };
+
+  root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-command]');
+    if (!button) return;
+    const spec = COMMANDS[button.dataset.command];
+    if (!spec) return;
+    if (await command(spec)) await draw();
+  });
+
 }

@@ -1,6 +1,8 @@
 import { api, entityBundle } from '../lib/api.js';
+import { command, commandBar } from '../lib/command.js';
+import { CHANGE_ORIGIN, DELAY_CAUSE, NOTICE_TYPE, today } from '../lib/enums.js';
 import { badge, date, days, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
-import { can, state } from '../app.js';
+import { blockedReason, can, draw, state } from '../app.js';
 
 /**
  * Change & Claims.
@@ -45,7 +47,12 @@ export async function contracts(root) {
           <h1>Change &amp; Claims</h1>
           <p>${contract ? contractLabel(contract) : 'No contract'} · every change traced from origin to downstream effect.</p>
         </div>
-        <div class="actions">
+        <div class="actions cmd-bar">
+          ${raw(commandBar([
+            { id: 'change', label: 'Raise change request', tone: '', permitted: can('CHANGE_VARIATION', 'C'), reason: blockedReason('CHANGE_VARIATION', 'C') },
+            { id: 'delay', label: 'Record delay event', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
+            { id: 'notice', label: 'Serve notice', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
+          ]))}
           ${can('CONTRACTS_CLAIMS', 'X') ? html`<button class="btn ghost" id="assess">Reassess claim</button>` : ''}
           ${can('CONTRACTS_CLAIMS', 'I') ? html`<button class="btn quiet" id="pack">Build evidence pack</button>` : ''}
         </div>
@@ -277,4 +284,68 @@ function contractLabel(contract) {
   const form = String(contract.form ?? '').trim();
   if (!form) return suite || 'Contract';
   return form.startsWith(suite) ? form : `${suite} ${form}`.trim();
+
+  const COMMANDS = {
+    change: {
+      title: 'Raise change request',
+      intent: 'Origin and notice type are the start of the chain a claim is later argued from. Both are recorded now, not reconstructed later.',
+      path: `/v1/projects/${projectId}/changes`,
+      submitLabel: 'Raise',
+      fields: [
+        { name: 'description', label: 'What has changed', type: 'textarea' },
+        { name: 'origin', label: 'Origin', type: 'select', options: CHANGE_ORIGIN },
+        { name: 'noticeType', label: 'Notice type', type: 'select', options: NOTICE_TYPE },
+        { name: 'reason', label: 'Why it is a change', type: 'textarea' },
+        { name: 'supportingEvidenceHash', label: 'Supporting evidence', type: 'file' },
+      ],
+      transform: (v) => ({ ...v, impactedPackageIds: [], affectedSubcontractIds: [] }),
+    },
+    delay: {
+      title: 'Record delay event',
+      intent: 'Serve the notice before the time bar. An unserved notice is recorded as unserved — the platform will not pretend otherwise.',
+      path: `/v1/projects/${projectId}/delay-events`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'cause', label: 'Cause', type: 'select', options: DELAY_CAUSE },
+        { name: 'description', label: 'What happened', type: 'textarea' },
+        { name: 'start', label: 'Start', type: 'date', value: today() },
+        { name: 'end', label: 'End', type: 'date', value: today() },
+        { name: 'criticalDelayDays', label: 'Critical delay (days)', type: 'number', min: 0 },
+        { name: 'noticeDate', label: 'Notice served on', type: 'date', required: false, hint: 'Leave blank if no notice has been served' },
+        { name: 'evidenceHash', label: 'Evidence', type: 'file' },
+      ],
+      transform: (v) => ({
+        cause: v.cause,
+        description: v.description,
+        start: v.start,
+        end: v.end,
+        criticalDelayDays: v.criticalDelayDays,
+        affectedTaskIds: [],
+        noticeServed: Boolean(v.noticeDate),
+        noticeDate: v.noticeDate,
+        evidenceHashes: [v.evidenceHash],
+      }),
+    },
+    notice: {
+      title: 'Serve contractual notice',
+      intent: 'The platform checks the notice against the contract time bar and records whether it was in time. It does not refuse a late notice — it records that it was late.',
+      path: `/v1/projects/${projectId}/notices`,
+      submitLabel: 'Serve',
+      fields: [
+        { name: 'noticeType', label: 'Notice type', type: 'select', options: NOTICE_TYPE },
+        { name: 'subject', label: 'Subject', type: 'text' },
+        { name: 'body', label: 'Notice', type: 'textarea', rows: 4 },
+        { name: 'servedDate', label: 'Served on', type: 'date', value: today() },
+        { name: 'triggerDate', label: 'Trigger event date', type: 'date', hint: 'The date the time bar runs from' },
+      ],
+    },
+  };
+
+  root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-command]');
+    if (!button) return;
+    const spec = COMMANDS[button.dataset.command];
+    if (!spec) return;
+    if (await command(spec)) await draw();
+  });
 }
