@@ -18,7 +18,7 @@ Node 22.18 or later. There is nothing to build and no runtime dependencies.
 npm install          # dev-only: TypeScript and @types/node
 npm run demo         # takes one asset from concept to operations, then verifies itself
 npm start            # gateway + application on http://localhost:8080
-npm test             # 147 tests
+npm test             # 156 tests
 npm run typecheck
 ```
 
@@ -150,7 +150,7 @@ web/
   pages/         one module per screen, each reading live endpoints
 docs/            architecture and requirement traceability
 tools/           browser walker used to verify every page renders
-tests/           147 tests
+tests/           156 tests
 ```
 
 The application is plain ES modules with no build step and no framework: the
@@ -168,6 +168,7 @@ POST /v1/projects/:id/tender/evaluate       score bids deterministically
 GET  /v1/projects/:id/programme             recalculate from the activity network
 POST /v1/projects/:id/programme/delay-forecast
 POST /v1/projects/:id/cost/cvr              publish the live CVR
+POST /v1/projects/:id/cost/application/:id/certify   certify and issue the payment notice
 POST /v1/projects/:id/claims                assess a delay claim with concurrency
 POST /v1/projects/:id/audit/replay          verify the record
 POST /v1/projects/:id/ask                   conversational copilot

@@ -90,6 +90,8 @@ not pretend to have done.
 | Margin erosion alerts | Built | CVR alerts |
 | Cashflow S-curve | Built | `sCurveDistribution()` |
 | Payment cycle with statutory notice dates | Built | `generatePaymentSchedule()`, `checkNoticeCompliance()` |
+| Application → certification → payment notice → settlement | Built | `submitApplication()`, `certifyApplication()`, `postPayment()`; the applicant cannot certify |
+| Withheld sums recorded with a reason | Built | `withheldMinor` and `reason` on every certificate |
 | Commercial ledger bridge (committed / certified / paid, exception queue) | Built | `ledgerPosition()` |
 | Trade-level labour productivity analytics | Partial | Productivity factor derived per task from earned vs elapsed; no trade-level rollup |
 | D — Risk, Safety & Compliance | Built | `src/engines/safety.ts` |
