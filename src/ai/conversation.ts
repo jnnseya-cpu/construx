@@ -271,6 +271,20 @@ function gatherGrounding(
     facts.push({ label: 'Lifecycle phase', value: phase ?? 'unknown', source: 'Project' });
   }
 
+  const currency = String(project?.state.currency ?? 'GBP');
+
+  /**
+   * Money in the project's currency. The copilot quotes figures a person will
+   * repeat in a meeting, and "224865000 minor units" is not one of them.
+   */
+  const gbp = (minor: number): string => {
+    const symbol = currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : currency === 'USD' ? '$' : `${currency} `;
+    const major = minor / 100;
+    if (Math.abs(major) >= 1_000_000) return `${symbol}${(major / 1_000_000).toFixed(2)}M`;
+    if (Math.abs(major) >= 1_000) return `${symbol}${(major / 1_000).toFixed(1)}K`;
+    return `${symbol}${major.toFixed(2)}`;
+  };
+
   const count = (refType: string): number => ctx.ledger.list(ctx.projectId, refType).length;
   const latest = (refType: string): Record<string, unknown> | undefined => {
     const records = ctx.ledger.list(ctx.projectId, refType);
@@ -281,7 +295,7 @@ function gatherGrounding(
     case 'TENDER': {
       const estimate = latest('Estimate');
       if (estimate) {
-        facts.push({ label: 'Latest estimate', value: `${estimate.totalMinor} minor units (${String(estimate.status)})`, source: 'Estimate' });
+        facts.push({ label: 'Latest estimate', value: `${gbp(Number(estimate.totalMinor))} (${String(estimate.status)})`, source: 'Estimate' });
       }
       facts.push({ label: 'BoQ items', value: String(count('BoQItem')), source: 'BoQItem' });
       facts.push({ label: 'Supplier submissions', value: String(count('SupplierSubmission')), source: 'SupplierSubmission' });
@@ -314,6 +328,28 @@ function gatherGrounding(
       const evm = latest('EarnedValueSnapshot');
       if (evm) {
         facts.push({ label: 'CPI / SPI', value: `${String(evm.costPerformanceIndex)} / ${String(evm.schedulePerformanceIndex)}`, source: 'EarnedValueSnapshot' });
+      }
+
+      // Certified and paid come from the certificates and ledger entries, not
+      // from what an application asked for — the difference is the answer to
+      // "are we actually getting paid".
+      const certificates = ctx.ledger.list(ctx.projectId, 'PaymentCertificate');
+      if (certificates.length > 0) {
+        const certified = certificates.reduce((sum, c) => sum + Number(c.state.certifiedMinor ?? 0), 0);
+        const paid = ctx.ledger
+          .list(ctx.projectId, 'LedgerEntry')
+          .filter((e) => e.state.type === 'PAYMENT')
+          .reduce((sum, e) => sum + Number(e.state.amountMinor ?? 0), 0);
+        const withheld = certificates.reduce((sum, c) => sum + Number(c.state.withheldMinor ?? 0), 0);
+
+        facts.push({ label: 'Certified to date', value: gbp(certified), source: 'PaymentCertificate' });
+        facts.push({ label: 'Paid to date', value: gbp(paid), source: 'LedgerEntry' });
+        if (certified > paid) {
+          facts.push({ label: 'Outstanding against certificates', value: gbp(certified - paid), source: 'PaymentCertificate' });
+        }
+        if (withheld > 0) {
+          facts.push({ label: 'Withheld on certification', value: gbp(withheld), source: 'PaymentCertificate' });
+        }
       }
       break;
     }
