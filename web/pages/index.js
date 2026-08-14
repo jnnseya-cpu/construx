@@ -1,5 +1,6 @@
 import { admin } from './admin.js';
 import { audit } from './audit.js';
+import { autopilot } from './autopilot.js';
 import { billing } from './billing.js';
 import { commercial } from './commercial.js';
 import { contracts } from './contracts.js';
@@ -19,6 +20,7 @@ export const PAGES = {
   login,
   overview,
   copilot,
+  autopilot,
   enterprise,
   programme,
   field,

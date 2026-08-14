@@ -18,7 +18,7 @@ and claims of completion that did not hold.
 | Tests | 178 passing, 9 suites |
 | Typecheck | clean |
 | Backend | 50 TypeScript files, ~15.7k lines |
-| Application | 21 ES modules, ~4.5k lines |
+| Application | 24 ES modules, ~5.3k lines |
 | API routes | 110 |
 | Event types | 140, closed catalogue |
 | Entity types | 92, all classified for access |
@@ -63,7 +63,7 @@ no charge without a ledger write.
 **Commercial packaging.** Eight role-priced seats, three packages, three ACU
 bundles. The operator and the regulator consume no seat.
 
-**Application.** Fifteen screens against live endpoints. Role-aware navigation
+**Application.** Sixteen screens against live endpoints, including Autopilot — the queue where a person approves or declines what the agents propose. Role-aware navigation
 resolved from the API's permission matrix and phase gates, so the interface
 refuses for the reason the platform would. Command surfaces on field, cost,
 design, programme, change and handover. Daily site record. Canonical enum
