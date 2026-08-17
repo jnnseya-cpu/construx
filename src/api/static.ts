@@ -17,6 +17,10 @@ const CONTENT_TYPES: Record<string, string> = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  // Served with its own type, not as JSON. A browser that receives the manifest
+  // as application/json ignores it, and the application silently stops being
+  // installable with nothing in the console to say why.
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',

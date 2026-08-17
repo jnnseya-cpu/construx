@@ -37,11 +37,48 @@ body {
 a { color: inherit; }
 button { font: inherit; }
 
-/* ------------------------------------------------------------------ boot */
-.boot { height: 100vh; display: grid; place-content: center; text-align: center; gap: 10px; }
-.boot-mark { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; }
-.boot-mark span { color: var(--orange); }
-.boot-note { color: var(--text-3); font-size: 13px; }
+/* ---------------------------------------------------------------- splash */
+/*
+ * Takes over from the operating system's launch screen. The background is the
+ * literal value from manifest.webmanifest rather than var(--core-black), so a
+ * change to the token cannot silently desynchronise the two and introduce a
+ * flash at launch — they are the same colour by construction here.
+ *
+ * `100dvh` keeps it full height on a phone where the browser chrome collapses;
+ * the safe-area padding keeps the mark clear of a notch in standalone mode.
+ */
+.splash {
+  position: fixed; inset: 0; z-index: 999;
+  background: #0c0c0e;
+  display: grid; place-content: center; justify-items: center;
+  gap: 14px; text-align: center;
+  height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  transition: opacity .28s ease;
+}
+.splash-mark { width: 76px; height: 76px; }
+.splash-word { font-size: 19px; font-weight: 800; letter-spacing: 1.5px; }
+.splash-word span { color: var(--orange); }
+.splash-note { color: var(--text-3); font-size: 12.5px; max-width: 300px; }
+.splash-note.failed { color: var(--critical); }
+
+/* An indeterminate bar: the platform does not know how long sign-in will take,
+   and a percentage that is not measuring anything is an invented number. */
+.splash-bar { width: 132px; height: 2px; background: var(--line-strong); border-radius: 2px; overflow: hidden; }
+.splash-bar i { display: block; width: 40%; height: 100%; background: var(--orange); border-radius: 2px;
+  animation: splash-sweep 1.15s ease-in-out infinite; }
+@keyframes splash-sweep {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(360%); }
+}
+
+/* Fading out, then gone. `hidden` alone would skip the transition. */
+.splash.done { opacity: 0; pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .splash { transition: none; }
+  .splash-bar i { animation: none; width: 100%; opacity: .5; }
+}
 
 /* ----------------------------------------------------------------- login */
 .login-page {

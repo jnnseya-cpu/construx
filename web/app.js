@@ -410,7 +410,63 @@ export async function refreshContext() {
 
 export { draw };
 
-void draw();
+// --- splash and installation ------------------------------------------------
+
+/**
+ * Take the splash down once a real screen is behind it.
+ *
+ * The splash is markup in index.html, so it is on screen before this file has
+ * parsed — which is what makes the handover from the operating system's launch
+ * screen invisible. It comes down here rather than on `load` because `load`
+ * fires when assets have arrived, not when the application has something to
+ * show, and dropping it early would reveal an empty page.
+ */
+function dismissSplash() {
+  const splash = document.getElementById('splash');
+  if (!splash || splash.classList.contains('done')) return;
+  splash.classList.add('done');
+  splash.addEventListener('transitionend', () => splash.remove(), { once: true });
+  // A transition that never fires — reduced motion, a backgrounded tab — must
+  // not leave the splash covering the application for ever.
+  setTimeout(() => splash.remove(), 600);
+}
+
+/** Say so on the splash when the first draw fails, rather than spinning. */
+function splashFailed(message) {
+  const note = document.getElementById('splash-note');
+  if (!note) return;
+  note.textContent = message;
+  note.classList.add('failed');
+}
+
+void draw()
+  .then(dismissSplash)
+  .catch((error) => {
+    // draw() handles its own errors, so reaching here means the shell itself
+    // failed. Leaving the splash up with its progress bar sweeping would imply
+    // the application is still starting when it has already given up.
+    splashFailed(
+      error instanceof ApiError
+        ? `${error.code ?? 'Error'} — ${error.message}`
+        : 'The application could not start. Reload to try again.',
+    );
+  });
+
+/**
+ * Register the service worker.
+ *
+ * It is what makes the application installable, and installation is what makes
+ * the operating system show a launch screen. It caches the shell and nothing
+ * else — see the rule at the top of sw.js about /v1/.
+ *
+ * Registration failing is not an error worth showing anybody: the application
+ * runs identically without it, minus the home-screen icon.
+ */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/app' }).catch(() => {});
+  });
+}
 
 window.addEventListener('unhandledrejection', (event) => {
   const error = event.reason;

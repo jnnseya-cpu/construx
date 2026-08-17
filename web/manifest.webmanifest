@@ -1,0 +1,44 @@
+{
+  "id": "/app",
+  "name": "CONSTRUX.AI — Construction Operating System",
+  "short_name": "CONSTRUX",
+  "description": "One data spine from concept to thirty years of operation. Programme, cost, risk, field execution and handover under one governed record.",
+  "start_url": "/app",
+  "scope": "/app",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0c0c0e",
+  "theme_color": "#0c0c0e",
+  "lang": "en-GB",
+  "dir": "ltr",
+  "categories": ["business", "productivity", "utilities"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Autopilot",
+      "short_name": "Autopilot",
+      "description": "Approve or decline what the agents propose",
+      "url": "/app/autopilot",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Field execution",
+      "short_name": "Field",
+      "description": "Today's site record",
+      "url": "/app/field",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Programme",
+      "short_name": "Programme",
+      "description": "Critical path and float",
+      "url": "/app/programme",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}

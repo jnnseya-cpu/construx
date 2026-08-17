@@ -44,8 +44,17 @@ for (const page of PAGES) {
     await p.waitForTimeout(page === 'copilot' ? 2200 : 1100);
   }
 
-  const h1 = (await p.locator('.view-head h1').first().textContent().catch(() => '')) || '';
-  const err = await p.locator('.notice.err').first().textContent().catch(() => null);
+  // Read through count() first. `locator.textContent()` auto-waits for the
+  // element and only rejects at the default 30s timeout, so probing for
+  // something that is legitimately absent — an error notice on a page that
+  // worked — used to cost 30 seconds per page and made a full walk look hung.
+  const text = async (selector) =>
+    (await p.locator(selector).count()) > 0
+      ? ((await p.locator(selector).first().textContent({ timeout: 2000 }).catch(() => '')) ?? '')
+      : null;
+
+  const h1 = (await text('.view-head h1')) ?? '';
+  const err = await text('.notice.err');
   const cards = await p.locator('.card').count();
   const tables = await p.locator('table').count();
   const empties = await p.locator('.empty').count();

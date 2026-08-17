@@ -15,10 +15,10 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 201 passing, 0 failing, across 10 files |
+| Tests | 212 passing, 0 failing, across 11 files |
 | Typecheck | clean |
 | Backend | 58 TypeScript files, 18,563 lines |
-| Application | 23 ES modules, 5,024 lines |
+| Application | 24 ES modules, 5,205 lines (plus a service worker) |
 | API routes | 117 |
 | Event types | 143, closed catalogue |
 | Entity types | 95, all classified for access |
@@ -100,6 +100,24 @@ Delivery is recorded per recipient with what actually happened: a message
 composed but not transmitted is `RECORDED`, never `SENT`. SMTP is spoken
 directly over `node:net`/`node:tls` — verified in the suite against a real
 socket, including STARTTLS refusal and dot-stuffing.
+
+**Installable application with a launch screen.** Web app manifest, generated
+icon set (standard and maskable), twelve exactly-sized iOS launch images, and an
+in-document splash that paints before `app.js` parses so the handover from the
+operating system's own launch screen is invisible. One background colour is
+asserted across the manifest, the `theme-color` meta and the CSS, because a
+mismatch shows as a flash.
+
+The service worker exists to make the application installable, which is what
+makes a launch screen appear at all. **It never touches `/v1/`** — caching an
+authorised response would put one identity's project data outside the platform's
+access control and serve it to whoever opens the app on that device next.
+Offline field work is the sync protocol's job, not a cache's. Shell only,
+network-first for navigation, verified by test and in a browser.
+
+Regenerate the assets with `node tools/icons.mjs` after any brand change. The
+PNG encoder is in that file: `node:zlib` is built in, so it was shorter than the
+argument for a dependency.
 
 **Offline field sync.** Device timestamps preserved, operation-id idempotency,
 deterministic conflict resolution, monotonic cursors, governance actions refused
@@ -194,6 +212,10 @@ Re-opening these is what caused churn before.
   `POST /v1/console/identities`. Restarting reseeds and changes all ids.
 - `tools/walk.mjs` verifies every page renders for a role. `tools/inputs.mjs`
   counts command surfaces per page.
+- `tools/walk.mjs` used to take ~30s per page: `locator.textContent()` auto-waits
+  and only rejects at the 30s default, so probing for an error notice that was
+  legitimately absent cost the full timeout on every healthy page. It reads
+  through `count()` now. A full walk is well under a minute.
 - The newsletter's weekly timer polls hourly rather than computing a delay, so
   a restart cannot skip a send. Week-keyed campaigns make the polling safe.
 - With no `SMTP_HOST`, the Newsletter screen states plainly that nothing is
