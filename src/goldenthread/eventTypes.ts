@@ -174,6 +174,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('AGENT_PROPOSAL_REJECTED', 'AgentProposal', 'APPROVE', 'AI_BILLING'),
   def('AGENT_PROPOSAL_EXECUTED', 'AgentProposal', 'UPDATE', 'AI_BILLING'),
 
+  // --- Platform-to-person messaging -----------------------------------------
+  // Consent is a data-protection record: what a person decided, when, and
+  // through which route. It is governance rather than marketing, which is why
+  // it lives here and why no AI actor may author it — an agent must never be
+  // able to opt somebody into being written to.
+  def('MARKETING_CONSENT_SET', 'MarketingConsent', 'UPDATE', 'GOVERNANCE', { creates: true }),
+  def('NEWSLETTER_CAMPAIGN_ISSUED', 'NewsletterCampaign', 'ISSUE', 'GOVERNANCE', { creates: true }),
+  def('NEWSLETTER_DELIVERY_RECORDED', 'NewsletterDelivery', 'CREATE', 'GOVERNANCE'),
+
   // --- Change, variation, claims -------------------------------------------
   def('CHANGE_REQUEST_SUBMITTED', 'ChangeRequest', 'CREATE', 'CONTRACTS_CLAIMS', { requiresEvidence: true }),
   def('IMPACT_ASSESSED', 'ImpactAssessment', 'AI_EXECUTE', 'CONTRACTS_CLAIMS', { aiAllowed: true, requiresEvidence: true }),

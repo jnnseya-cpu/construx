@@ -16,6 +16,15 @@ import * as planning from '../engines/planning.ts';
 import * as safety from '../engines/safety.ts';
 import * as tender from '../engines/tender.ts';
 import { replayProject, replayTimeline } from '../goldenthread/replay.ts';
+import { readConsent, resolveAudience, resolveUnsubscribe, setConsent } from '../messaging/audience.ts';
+import {
+  deliveriesFor,
+  isoWeek,
+  issueNewsletter,
+  listCampaigns,
+  previewFor,
+} from '../messaging/newsletter.ts';
+import { unsubscribePage } from '../messaging/render.ts';
 import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { createMfaChallenge, refreshTokens, shapeMfaResponse, verifyMfaChallenge } from '../identity/auth.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
@@ -40,6 +49,8 @@ export type Route = {
   pattern: string;
   handler: RouteHandler;
   public?: boolean;
+  /** Handler returns a complete HTML page rather than a JSON payload. */
+  html?: boolean;
   schema?: Schema;
   description: string;
 };
@@ -51,6 +62,13 @@ function body<T>(ctx: RequestContext): T {
 function auth(ctx: RequestContext) {
   if (!ctx.auth) throw new ForbiddenError('Authenticated context required');
   return ctx.auth;
+}
+
+/** The operator layer, stated as a refusal rather than a 404. */
+function operatorOnly(ctx: RequestContext, action: string): void {
+  if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+    throw new ForbiddenError(`Only the platform operator may ${action}`, 'PLATFORM_ADMIN_REQUIRED');
+  }
 }
 
 function projectContext(platform: Platform, ctx: RequestContext) {
@@ -247,6 +265,163 @@ export const ROUTES: Route[] = [
     handler: (_platform, ctx) => {
       if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Operator access required');
       return { logs: recentLogs(200), metrics: metrics() };
+    },
+  },
+
+  // -------------------------------------------------------------- newsletter
+  {
+    method: 'GET',
+    pattern: '/unsubscribe',
+    public: true,
+    html: true,
+    description: 'Unsubscribe confirmation page reached from a signed link in an email',
+    handler: (platform, ctx) => {
+      const u = ctx.query.get('u') ?? '';
+      const t = ctx.query.get('t') ?? '';
+      const user = resolveUnsubscribe(platform, u, t);
+      const consent = readConsent(platform, user.id);
+      return unsubscribePage({ state: consent?.subscribed === false ? 'ALREADY_OUT' : 'CONFIRM', user, u, t });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/unsubscribe',
+    public: true,
+    html: true,
+    description: 'Act on an unsubscribe link — the form button and RFC 8058 one-click both arrive here',
+    handler: (platform, ctx) => {
+      const u = ctx.query.get('u') ?? '';
+      const t = ctx.query.get('t') ?? '';
+      const user = resolveUnsubscribe(platform, u, t);
+      // The body is ignored on purpose. A mail provider posting one-click sends
+      // `List-Unsubscribe=One-Click`; the browser form sends nothing. The proof
+      // of intent is the signed token in the URL, which both of them carry.
+      setConsent(platform, { user, subscribed: false, source: 'UNSUBSCRIBE_LINK', actorId: user.id });
+      return unsubscribePage({ state: 'DONE', user, u, t });
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/me/newsletter',
+    description: 'My own email preference and what the next issue would say',
+    handler: (platform, ctx) => {
+      const user = platform.user(auth(ctx).actorId);
+      const consent = readConsent(platform, user.id);
+      return {
+        subscribed: consent ? consent.subscribed : config.newsletter.defaultSubscribed,
+        decidedAt: consent?.decidedAt ?? null,
+        source: consent?.source ?? 'DEFAULT',
+        // Stated rather than implied: a role can be excluded while consent says yes.
+        excludedByRole: user.roles.some((role) => config.newsletter.excludedRoles.includes(role)),
+        preview: previewFor({
+          userId: user.id,
+          tenantId: user.tenantId,
+          name: user.name,
+          email: user.email,
+          roles: user.roles,
+        }),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/me/newsletter',
+    description: 'Set my own email preference',
+    schema: {
+      type: 'object',
+      required: ['subscribed'],
+      properties: { subscribed: { type: 'boolean' }, note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const { subscribed, note } = body<{ subscribed: boolean; note?: string }>(ctx);
+      const user = platform.user(auth(ctx).actorId);
+      return setConsent(platform, {
+        user,
+        subscribed,
+        source: 'PREFERENCE_PAGE',
+        actorId: user.id,
+        ...(note ? { note } : {}),
+      });
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/newsletter/audience',
+    description: 'Who the next issue would reach, and who it would not (platform operator only)',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'see the newsletter audience');
+      const { recipients, excluded } = resolveAudience(platform);
+      return {
+        week: isoWeek(new Date()),
+        enabled: config.newsletter.enabled,
+        channel: config.smtp.host ? 'SMTP' : 'RECORD_ONLY',
+        sendDayUtc: config.newsletter.sendDayUtc,
+        sendHourUtc: config.newsletter.sendHourUtc,
+        defaultSubscribed: config.newsletter.defaultSubscribed,
+        excludedRoles: config.newsletter.excludedRoles,
+        // Addresses are withheld from the summary; the delivery log is where a
+        // named list belongs, behind its own read.
+        recipientCount: recipients.length,
+        byRole: recipients.reduce<Record<string, number>>((counts, recipient) => {
+          for (const role of recipient.roles) counts[role] = (counts[role] ?? 0) + 1;
+          return counts;
+        }, {}),
+        excluded,
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/newsletter/campaigns',
+    description: 'Issues sent so far, newest first (platform operator only)',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'see newsletter campaigns');
+      return {
+        campaigns: listCampaigns(platform).map((campaign) => {
+          const deliveries = deliveriesFor(platform, campaign.id);
+          return {
+            ...campaign,
+            sent: deliveries.filter((d) => d.status === 'SENT').length,
+            recorded: deliveries.filter((d) => d.status === 'RECORDED').length,
+            failed: deliveries.filter((d) => d.status === 'FAILED').length,
+          };
+        }),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/newsletter/campaigns',
+    description: 'Issue this week now rather than waiting for the schedule (platform operator only)',
+    schema: {
+      type: 'object',
+      properties: { week: { type: 'string' }, force: { type: 'boolean' } },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      operatorOnly(ctx, 'issue the newsletter');
+      const { week, force } = body<{ week?: string; force?: boolean }>(ctx);
+      const report = await issueNewsletter(platform, {
+        issuedBy: auth(ctx).actorId,
+        ...(week ? { week } : {}),
+        ...(force ? { force } : {}),
+      });
+      // The deliveries carry every recipient's address; the summary does not
+      // need them and the campaign screen reads them through their own route.
+      const { deliveries: _deliveries, ...summary } = report;
+      return summary;
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/newsletter/campaigns/:campaignId/deliveries',
+    description: 'Per-recipient outcome for one issue (platform operator only)',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'see newsletter deliveries');
+      const campaignId = ctx.params.campaignId;
+      if (!campaignId) throw new NotFoundError('Campaign id missing from path');
+      return { deliveries: deliveriesFor(platform, campaignId) };
     },
   },
 

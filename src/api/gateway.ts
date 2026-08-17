@@ -12,6 +12,7 @@ import {
   header,
   logRequest,
   readIdempotent,
+  sendHtml,
   sendJson,
   sendProblem,
   storeIdempotent,
@@ -50,6 +51,13 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   if (chunks.length === 0) return undefined;
   const text = Buffer.concat(chunks).toString('utf8');
   if (text.trim() === '') return undefined;
+
+  // One-click unsubscribe (RFC 8058) is posted by the recipient's mail provider
+  // as a form, not as JSON. Refusing it would leave the header advertising a
+  // control that fails, which is worse than not advertising it at all.
+  if ((req.headers['content-type'] ?? '').includes('application/x-www-form-urlencoded')) {
+    return Object.fromEntries(new URLSearchParams(text));
+  }
 
   try {
     return JSON.parse(text);
@@ -146,6 +154,17 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
 
     const result = await matched.route.handler(platform, ctx);
     const status = ctx.method === 'POST' ? 201 : 200;
+
+    // A handful of routes answer a browser rather than the application. They
+    // are marked on the route, never inferred from the shape of the result.
+    if (matched.route.html) {
+      // A page is 200 even when it is the result of a POST — 201 Created would
+      // describe a resource, and there is no resource here to point at.
+      sendHtml(res, ctx, 200, String(result));
+      logRequest(ctx, 200);
+      return;
+    }
+
     const payload = result ?? { ok: true };
 
     storeIdempotent(ctx.idempotencyKey, status, payload);

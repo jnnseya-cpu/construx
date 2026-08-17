@@ -88,6 +88,54 @@ export const config = {
     acuUnitMinor: num('ACU_UNIT_MINOR', 1),
     freeTrialGrantMinor: num('FREE_TRIAL_GRANT_MINOR', 500),
   },
+
+  /** Absolute origin used in email links. Email cannot resolve a relative path. */
+  publicBaseUrl: str('PUBLIC_BASE_URL', `http://localhost:${num('PORT', 8080)}`),
+
+  newsletter: {
+    /**
+     * Off unless switched on. A marketing sender that arms itself at boot would
+     * send from a laptop, a CI run and a restored backup — the switch has to be
+     * a deliberate act in one environment, not a default everywhere.
+     */
+    enabled: bool('NEWSLETTER_ENABLED', false),
+    /** UTC day-of-week and hour the weekly issue goes out. 1 = Monday. */
+    sendDayUtc: num('NEWSLETTER_SEND_DAY_UTC', 2),
+    sendHourUtc: num('NEWSLETTER_SEND_HOUR_UTC', 9),
+    fromName: str('NEWSLETTER_FROM_NAME', 'CONSTRUX.AI'),
+    fromAddress: str('NEWSLETTER_FROM_ADDRESS', 'hello@construx.ai'),
+    replyTo: str('NEWSLETTER_REPLY_TO', ''),
+    /**
+     * Whether a registered user is in the audience before they have expressed a
+     * preference. True treats product mail to an existing business customer as
+     * the soft opt-in it is; false requires an explicit yes first. Either way a
+     * withdrawal is permanent until the person re-subscribes.
+     */
+    defaultSubscribed: bool('NEWSLETTER_DEFAULT_SUBSCRIBED', true),
+    /**
+     * Roles never marketed to regardless of consent. A Building Safety
+     * Regulator holds an oversight identity, not a customer relationship, and
+     * selling to it would be inappropriate rather than merely unwanted.
+     */
+    excludedRoles: str('NEWSLETTER_EXCLUDED_ROLES', 'REGULATOR')
+      .split(',')
+      .map((role) => role.trim())
+      .filter(Boolean),
+    /** Pause between sends, so a large audience does not arrive as a burst. */
+    throttleMs: num('NEWSLETTER_THROTTLE_MS', 120),
+  },
+
+  smtp: {
+    host: str('SMTP_HOST', ''),
+    port: num('SMTP_PORT', 587),
+    /** True for implicit TLS on 465. False starts plaintext and issues STARTTLS. */
+    secure: bool('SMTP_SECURE', false),
+    /** Refuse to continue in cleartext if STARTTLS is unavailable. */
+    requireTls: bool('SMTP_REQUIRE_TLS', true),
+    user: str('SMTP_USER', ''),
+    pass: str('SMTP_PASS', ''),
+    timeoutMs: num('SMTP_TIMEOUT_MS', 15_000),
+  },
 } as const;
 
 /** Warn loudly rather than fail silently when production is misconfigured. */
@@ -101,6 +149,17 @@ export function assertProductionSafety(): string[] {
       warnings.push(`AI_MODE is "${config.ai.mode}" in a production environment`);
     }
     if (!config.auth.required) warnings.push('GATEWAY_REQUIRE_AUTH is disabled in production');
+    if (config.newsletter.enabled && !config.smtp.host) {
+      warnings.push('NEWSLETTER_ENABLED is on but SMTP_HOST is unset — issues will be recorded, not delivered');
+    }
+    if (config.newsletter.enabled && config.publicBaseUrl.startsWith('http://')) {
+      // Unsubscribe links carry a signed token. Over http they are readable in
+      // transit, and a mail client following one leaks it to every hop.
+      warnings.push('PUBLIC_BASE_URL is not https — unsubscribe links would be sent over cleartext');
+    }
+  }
+  if (config.smtp.host && config.smtp.pass === '' && config.smtp.user !== '') {
+    warnings.push('SMTP_USER is set without SMTP_PASS — authentication will fail');
   }
   return warnings;
 }

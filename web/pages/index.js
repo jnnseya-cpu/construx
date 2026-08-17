@@ -10,6 +10,7 @@ import { enterprise } from './enterprise.js';
 import { field } from './field.js';
 import { handover } from './handover.js';
 import { login } from './login.js';
+import { newsletter } from './newsletter.js';
 import { overview } from './overview.js';
 import { procurement } from './procurement.js';
 import { programme } from './programme.js';
@@ -33,4 +34,7 @@ export const PAGES = {
   audit,
   billing,
   admin,
+  // Reachable by every signed-in user through the link in the email footer,
+  // not only by the operators who see it in the sidebar.
+  newsletter,
 };

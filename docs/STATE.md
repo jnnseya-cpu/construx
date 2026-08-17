@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 178 passing, 0 failing, across 9 files |
+| Tests | 201 passing, 0 failing, across 10 files |
 | Typecheck | clean |
-| Backend | 50 TypeScript files, ~15.7k lines |
-| Application | 24 ES modules, ~5.3k lines |
-| API routes | 110 |
-| Event types | 140, closed catalogue |
-| Entity types | 92, all classified for access |
+| Backend | 58 TypeScript files, 18,563 lines |
+| Application | 23 ES modules, 5,024 lines |
+| API routes | 117 |
+| Event types | 143, closed catalogue |
+| Entity types | 95, all classified for access |
 | Runtime dependencies | none |
 
 Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`).
@@ -63,7 +63,7 @@ no charge without a ledger write.
 **Commercial packaging.** Eight role-priced seats, three packages, three ACU
 bundles. The operator and the regulator consume no seat.
 
-**Application.** Sixteen screens against live endpoints, including Autopilot — the queue where a person approves or declines what the agents propose. Role-aware navigation
+**Application.** Seventeen screens against live endpoints, including Autopilot — the queue where a person approves or declines what the agents propose. Role-aware navigation
 resolved from the API's permission matrix and phase gates, so the interface
 refuses for the reason the platform would. Command surfaces on field, cost,
 design, programme, change and handover. Daily site record. Canonical enum
@@ -85,6 +85,21 @@ holds even if the runtime one were bypassed. Approved commands run as the
 approving human through the same engine path any manual command takes. A
 rejection needs a reason and stays in the record. Repeat findings are suppressed
 rather than raised again.
+
+**Weekly newsletter.** A role-targeted issue about what the platform does,
+composed from the real feature set and linking only to screens that exist — a
+test fails if a link resolves to no page. Consent is a ledger record rather than
+a flag, so what a person decided and through which route survives. Unsubscribe
+links are HMAC-signed, work without signing in, and are refused when forged; the
+GET only ever shows the confirmation, so a mail scanner prefetching links cannot
+unsubscribe anybody. One-click unsubscribe (RFC 8058) is honoured.
+
+Campaigns are keyed by ISO week, so a scheduler firing twice, a restart inside
+the send window and an operator pressing the button all resolve to one issue.
+Delivery is recorded per recipient with what actually happened: a message
+composed but not transmitted is `RECORDED`, never `SENT`. SMTP is spoken
+directly over `node:net`/`node:tls` — verified in the suite against a real
+socket, including STARTTLS refusal and dot-stuffing.
 
 **Offline field sync.** Device timestamps preserved, operation-id idempotency,
 deterministic conflict resolution, monotonic cursors, governance actions refused
@@ -112,6 +127,7 @@ named so it is not mistaken for finished.
 | Lookahead planning | Entities in the catalogue | PPC metrics not computed |
 | 4D scheduling | Twin states link to task ids | No visualisation |
 | PDF export | Structured document model and HTML rendering | PDF rendering |
+| Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded | No bounce processing or suppression list; DKIM belongs at the relay, where the key should live |
 
 ---
 
@@ -159,7 +175,13 @@ Re-opening these is what caused churn before.
    level exists in the model but granting it to an agent is a product decision
    that must be made explicitly; a test fails if one grants it to itself.
 9. **Screenshots are gitignored.** Regenerate with
-   `node tools/walk.mjs "<role>" "" shots`.
+   `node tools/walk.mjs "<role>" "" shots` (`WALK_BASE` overrides the origin).
+10. **The newsletter carries no project data.** It is role-targeted, not
+    data-personalised. An email leaves the platform's access controls behind
+    the moment it is sent, so it contains capability descriptions and links —
+    never figures, never commercial or safety content.
+11. **The newsletter sender is off by default.** `NEWSLETTER_ENABLED=false`
+    everywhere until an operator arms it in one environment deliberately.
 
 ---
 
@@ -172,3 +194,7 @@ Re-opening these is what caused churn before.
   `POST /v1/console/identities`. Restarting reseeds and changes all ids.
 - `tools/walk.mjs` verifies every page renders for a role. `tools/inputs.mjs`
   counts command surfaces per page.
+- The newsletter's weekly timer polls hourly rather than computing a delay, so
+  a restart cannot skip a send. Week-keyed campaigns make the polling safe.
+- With no `SMTP_HOST`, the Newsletter screen states plainly that nothing is
+  being transmitted. That is the configured state in development, not a fault.

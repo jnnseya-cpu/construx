@@ -184,6 +184,30 @@ export function sendJson(res: ServerResponse, ctx: RequestContext, status: numbe
   res.end(payload);
 }
 
+/**
+ * Send an HTML page from a route handler.
+ *
+ * Only one surface needs this: the unsubscribe link, which is followed by a
+ * mail client rather than by the application. It has to render for someone who
+ * is not signed in and may have scripting disabled, so the page is self
+ * contained and the content-security-policy forbids everything except the
+ * inline styling it carries.
+ */
+export function sendHtml(res: ServerResponse, ctx: RequestContext, status: number, html: string): void {
+  res.writeHead(status, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(html),
+    'x-trace-id': ctx.traceId,
+    'x-correlation-id': ctx.correlationId,
+    'Cache-Control': 'no-store',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  });
+  res.end(html);
+}
+
 export function sendProblem(res: ServerResponse, ctx: RequestContext, error: unknown): void {
   const problem = toProblem(error, ctx.path, ctx.traceId, ctx.correlationId);
   const payload = JSON.stringify(problem);

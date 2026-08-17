@@ -364,6 +364,18 @@ export class Platform {
     return [...this.#users.values()].filter((u) => u.tenantId === tenantId);
   }
 
+  /**
+   * Every registered identity, across every tenancy.
+   *
+   * Only the platform layer has any business calling this — it crosses the
+   * tenant boundary that every other read respects. It exists for the two
+   * platform-to-person concerns that are genuinely global: who is registered,
+   * and who may be written to.
+   */
+  allUsers(): PlatformUser[] {
+    return [...this.#users.values()];
+  }
+
   wallet(tenantId: string): ACUWallet {
     const wallet = this.#wallets.get(tenantId);
     if (!wallet) throw new NotFoundError(`No ACU wallet for tenant ${tenantId}`);

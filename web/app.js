@@ -64,6 +64,7 @@ export const NAV = [
     items: [
       { id: 'billing', label: 'ACU & Billing', area: 'BILLING_ACU', icon: 'meter' },
       { id: 'admin', label: 'Platform Admin', area: 'PLATFORM_ADMINISTRATION', icon: 'cog' },
+      { id: 'newsletter', label: 'Newsletter', area: 'PLATFORM_ADMINISTRATION', icon: 'mail' },
     ],
   },
 ];
@@ -84,6 +85,7 @@ const ICONS = {
   meter: 'M3 15a7 7 0 1 1 14 0M10 15l4-5',
   radar: 'M10 2a8 8 0 1 0 8 8M10 6a4 4 0 1 0 4 4M10 10l6-5',
   cog: 'M10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM10 2v2M10 16v2M2 10h2M16 10h2M4.5 4.5 6 6M14 14l1.5 1.5M15.5 4.5 14 6M6 14l-1.5 1.5',
+  mail: 'M2 5h16v10H2zM2 5l8 6 8-6',
 };
 
 export function icon(name) {

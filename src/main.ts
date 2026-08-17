@@ -1,5 +1,6 @@
 import { startGateway } from './api/gateway.ts';
 import { assertProductionSafety, config } from './config.ts';
+import { startNewsletterSchedule } from './messaging/newsletter.ts';
 import { Platform } from './platform.ts';
 
 /**
@@ -15,6 +16,12 @@ for (const warning of assertProductionSafety()) {
 
 const server = await startGateway(platform, config.port);
 
+const newsletter = startNewsletterSchedule(platform, (report) => {
+  process.stdout.write(
+    `[newsletter] ${report.campaign.week} issued — ${report.sent} sent, ${report.recorded} recorded, ${report.failed} failed\n`,
+  );
+});
+
 process.stdout.write(
   [
     '',
@@ -23,12 +30,18 @@ process.stdout.write(
     `  API routes   http://localhost:${config.port}/v1/routes`,
     `  Health       http://localhost:${config.port}/readyz`,
     `  AI mode      ${config.ai.mode}${config.ai.mode === 'local' ? ' (deterministic engines, no provider spend)' : ''}`,
+    `  Newsletter   ${
+      config.newsletter.enabled
+        ? `weekly, day ${config.newsletter.sendDayUtc} at ${config.newsletter.sendHourUtc}:00 UTC via ${config.smtp.host || 'no SMTP host — will record, not send'}`
+        : 'disabled (set NEWSLETTER_ENABLED=true to arm the weekly send)'
+    }`,
     '',
   ].join('\n'),
 );
 
 const shutdown = (signal: string): void => {
   process.stdout.write(`\nReceived ${signal}, shutting down.\n`);
+  newsletter.stop();
   server.close(() => process.exit(0));
 };
 

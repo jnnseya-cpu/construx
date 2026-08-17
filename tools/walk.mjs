@@ -1,7 +1,8 @@
 import { chromium } from 'playwright-core';
 const log = (...a) => process.stdout.write(a.join(' ') + '\n');
 
-const ALL = ['overview','copilot','enterprise','programme','field','design','commercial','procurement','contracts','risk','handover','audit','billing','admin'];
+const ALL = ['overview','copilot','autopilot','enterprise','programme','field','design','commercial','procurement','contracts','risk','handover','audit','billing','admin','newsletter'];
+const BASE = process.env.WALK_BASE ?? 'http://localhost:8123';
 const ROLE = process.argv[2] ?? 'Project Manager';
 const PAGES = process.argv[3] ? process.argv[3].split(',') : ALL;
 const SHOT = process.argv[4] === 'shots';
@@ -17,7 +18,7 @@ const errors = [];
 p.on('pageerror', e => errors.push(`PAGEERROR ${e.message}`));
 p.on('console', m => { if (m.type()==='error' && !m.text().includes('favicon')) errors.push(`CONSOLE ${m.text()}`); });
 
-await p.goto('http://localhost:8123/app', { waitUntil: 'domcontentloaded' });
+await p.goto(`${BASE}/app`, { waitUntil: 'domcontentloaded' });
 await p.waitForSelector('.identity', { timeout: 40000 });
 if (SHOT) await p.screenshot({ path: `web/shots/${PREFIX}00-login.png` });
 await p.locator('.identity', { hasText: ROLE }).first().click();

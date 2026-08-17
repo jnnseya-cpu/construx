@@ -134,6 +134,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   AIExecution: { area: 'AI_EXECUTION' },
   AgentRun: { area: 'AI_EXECUTION' },
   AgentProposal: { area: 'AI_EXECUTION' },
+
+  // Platform-to-person messaging. These records hold email addresses and the
+  // consent decisions behind them, so they sit with the operator layer and are
+  // marked personal — a delivery log is a list of who was contacted and when.
+  MarketingConsent: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
+  NewsletterCampaign: { area: 'PLATFORM_ADMINISTRATION' },
+  NewsletterDelivery: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
 };
 
 export function classifyEntity(refType: string): EntityClassification | undefined {
