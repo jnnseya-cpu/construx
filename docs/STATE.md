@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 260 passing, 0 failing, across 14 files |
+| Tests | 286 passing, 0 failing, across 15 files |
 | Typecheck | clean |
-| Backend | 58 TypeScript files, 18,580 lines |
+| Backend | 61 TypeScript files, 20,490 lines |
 | Application | 24 ES modules, 5,205 lines (plus a service worker) |
-| API routes | 117 |
-| Event types | 143, closed catalogue |
-| Entity types | 95, all classified for access |
+| API routes | 134 |
+| Event types | 153, closed catalogue |
+| Entity types | 98, all classified for access |
 | Runtime dependencies | none |
 
 Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`).
@@ -126,6 +126,38 @@ network-first for navigation, verified by test and in a browser.
 Regenerate the assets with `node tools/icons.mjs` after any brand change. The
 PNG encoder is in that file: `node:zlib` is built in, so it was shorter than the
 argument for a dependency.
+
+**The contractor's delivery chain.** Business development → estimating →
+preconstruction → contract → project management → commercial → HSEQ →
+subcontract procurement → programme → quality → handover, walked end to end by
+`tests/chain.test.ts`.
+
+*Business development* was entirely absent — the platform began at a project
+that already existed. Opportunities are now registered, scored against six
+weighted criteria, and decided by a person; a decision taken against the
+platform's own recommendation is flagged as an override, because that is the
+finding a post-mortem needs. A converted project carries its opportunity id, so
+a variation argued about in year three traces back to the decision to chase the
+job at all.
+
+*Quality* had three catalogue events and no command able to emit any of them: a
+snag could be raised and never closed. There is now an inspection and test plan
+with enforced hold points — the platform refuses to release work past a stage
+the ITP says must stop — inspections that raise a non-conformance in the same
+breath as a failure, and NCR closure with a disposition somebody owns.
+
+*HSEQ* could not record that anyone had been hurt. Incidents now escalate on
+category, the RIDDOR question must be answered either way, and training carries
+an expiry, because a lapsed competency reads the same as one nobody held.
+
+*Subcontract procurement* could send an enquiry to anybody at all —
+`invitedSupplierIds` was free text. It now runs off a prequalified register of
+80+ trades. An expired employers' liability policy is a bar rather than a
+deduction; life-safety trades require third-party accreditation; approval
+expires; suspension is immediate; and nobody is invited beyond their assessed
+package capacity. The enquiry is refused whole rather than quietly dropping the
+ineligible, because an RFQ that went to four of the six you selected produces a
+comparison you cannot trust.
 
 **Offline field sync.** Device timestamps preserved, operation-id idempotency,
 deterministic conflict resolution, monotonic cursors, governance actions refused

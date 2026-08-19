@@ -399,3 +399,259 @@ export function recordCompetency(
   });
   return id;
 }
+
+// --- Incidents, training and mitigation ---------------------------------------
+//
+// Four events for this stage sat in the closed catalogue with nothing emitting
+// them: INCIDENT_RECORDED, TRAINING_COMPLETED, RISK_SCORED and
+// RISK_MITIGATION_SET. The platform could register a risk and never revise it,
+// and could not record that anyone was hurt or that anybody was trained.
+
+export type IncidentCategory =
+  | 'NEAR_MISS'
+  | 'FIRST_AID'
+  | 'MINOR_INJURY'
+  | 'LOST_TIME'
+  | 'RIDDOR_REPORTABLE'
+  | 'ENVIRONMENTAL'
+  | 'DANGEROUS_OCCURRENCE';
+
+/**
+ * Record an incident.
+ *
+ * Evidence is mandatory and the event is immutable once written, because an
+ * incident record that can be quietly amended afterwards is worthless to the
+ * investigation it exists for.
+ *
+ * `riddorReportable` is asked rather than inferred: whether an incident meets
+ * the statutory reporting threshold is a judgement for a competent person, and
+ * a platform that guesses it either creates a false report or suppresses a real
+ * one. What the platform does is refuse to let the answer go unrecorded.
+ */
+export function recordIncident(
+  ctx: EngineContext,
+  input: {
+    occurredAt: string;
+    location: string;
+    category: IncidentCategory;
+    description: string;
+    immediateAction: string;
+    /** Nobody is named in the record; a person is referenced by their identity. */
+    personsInvolved: string[];
+    riddorReportable: boolean;
+    lostTimeDays?: number;
+    evidenceHash: string;
+  },
+): { incidentId: string; reference: string; escalated: boolean } {
+  authorise(ctx, 'SAFETY_RAMS', 'C', { lifecyclePhase: currentPhase(ctx) });
+
+  if (typeof input.riddorReportable !== 'boolean') {
+    throw new DomainError(
+      'RIDDOR_DECISION_REQUIRED',
+      'Whether the incident is reportable under RIDDOR must be answered, either way',
+    );
+  }
+  if (!input.immediateAction?.trim()) {
+    throw new DomainError('IMMEDIATE_ACTION_REQUIRED', 'An incident record must state what was done about it');
+  }
+
+  const evidence = registerEvidence(ctx, {
+    type: 'INCIDENT_RECORD',
+    hash: input.evidenceHash,
+    description: `${input.category}: ${input.description.slice(0, 80)}`,
+  });
+
+  const sequence = ctx.ledger.list(ctx.projectId, 'Incident').length + 1;
+  const reference = `INC-${String(sequence).padStart(5, '0')}`;
+  const incidentId = ulid();
+
+  // These categories stop being a site matter the moment they happen.
+  const escalated =
+    input.riddorReportable ||
+    input.category === 'RIDDOR_REPORTABLE' ||
+    input.category === 'LOST_TIME' ||
+    input.category === 'DANGEROUS_OCCURRENCE';
+
+  write(ctx, {
+    eventType: 'INCIDENT_RECORDED',
+    entity: { refType: 'Incident', refId: incidentId },
+    evidenceRefs: [evidence],
+    nextState: {
+      id: incidentId,
+      projectId: ctx.projectId,
+      reference,
+      occurredAt: input.occurredAt,
+      location: input.location,
+      category: input.category,
+      description: input.description,
+      immediateAction: input.immediateAction,
+      personsInvolved: input.personsInvolved,
+      riddorReportable: input.riddorReportable,
+      lostTimeDays: input.lostTimeDays ?? 0,
+      escalated,
+      status: 'OPEN',
+      recordedBy: ctx.auth.actorId,
+      recordedAt: new Date().toISOString(),
+    },
+  });
+
+  return { incidentId, reference, escalated };
+}
+
+/**
+ * Record completed training against a competency.
+ *
+ * Expiry is the point: a competency that expired last month is the same as one
+ * nobody ever held, and only a dated record can tell you which people on site
+ * today are actually qualified.
+ */
+export function recordTraining(
+  ctx: EngineContext,
+  input: {
+    personId: string;
+    competency: string;
+    provider: string;
+    completedOn: string;
+    expiresOn?: string;
+    certificateHash: string;
+  },
+): { trainingId: string; expired: boolean } {
+  authorise(ctx, 'SAFETY_RAMS', 'C');
+
+  const evidence = registerEvidence(ctx, {
+    type: 'TRAINING_CERTIFICATE',
+    hash: input.certificateHash,
+    description: `${input.competency} — ${input.provider}`,
+  });
+
+  const trainingId = ulid();
+  const expired = Boolean(input.expiresOn && input.expiresOn < new Date().toISOString().slice(0, 10));
+
+  write(ctx, {
+    eventType: 'TRAINING_COMPLETED',
+    entity: { refType: 'TrainingRecord', refId: trainingId },
+    evidenceRefs: [evidence],
+    nextState: {
+      id: trainingId,
+      projectId: ctx.projectId,
+      personId: input.personId,
+      competency: input.competency,
+      provider: input.provider,
+      completedOn: input.completedOn,
+      expiresOn: input.expiresOn,
+      expired,
+      recordedBy: ctx.auth.actorId,
+      recordedAt: new Date().toISOString(),
+    },
+  });
+
+  return { trainingId, expired };
+}
+
+/**
+ * Add a mitigation to a registered risk and re-score it.
+ *
+ * The scoring model already understands mitigation — probability reduction,
+ * impact reduction, what the control costs, and whether it pays for itself.
+ * Nothing here recomputes any of that; it records the control and asks the
+ * same engine for the new position, so the register and the contingency
+ * calculation cannot disagree.
+ *
+ * The pre-mitigation figure is kept alongside. A register showing only the
+ * residual position cannot answer "what did the control actually buy us",
+ * which is the question asked when it is time to pay for it.
+ */
+export function setRiskMitigation(
+  ctx: EngineContext,
+  riskId: string,
+  input: {
+    description: string;
+    owner: string;
+    dueBy: string;
+    costMinor: number;
+    /** Both are proportions in [0,1] — how much of the risk this control removes. */
+    probabilityReduction: number;
+    impactReduction: number;
+    projectValueMinor: number;
+    projectDurationDays: number;
+  },
+): { expectedCostBeforeMinor: number; residualCostMinor: number; netBenefitMinor: number; worthDoing: boolean } {
+  authorise(ctx, 'RISK_REGISTER', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const record = ctx.ledger.get({ refType: 'RiskRegisterItem', refId: riskId });
+  if (!record) throw new DomainError('RISK_NOT_FOUND', `No risk ${riskId}`, 404);
+
+  for (const [label, value] of [
+    ['Probability reduction', input.probabilityReduction],
+    ['Impact reduction', input.impactReduction],
+  ] as const) {
+    if (value < 0 || value > 1) {
+      throw new DomainError('REDUCTION_OUT_OF_RANGE', `${label} is a proportion between 0 and 1`);
+    }
+  }
+  if (!input.description?.trim()) {
+    throw new DomainError('MITIGATION_REQUIRED', 'A mitigation must say what the control actually is');
+  }
+
+  const existing = record.state as unknown as RiskInput;
+  const mitigations = [
+    ...(existing.mitigations ?? []),
+    {
+      description: input.description.trim(),
+      costMinor: input.costMinor,
+      probabilityReduction: input.probabilityReduction,
+      impactReduction: input.impactReduction,
+    },
+  ];
+
+  const rescored = scoreRisk({ ...existing, mitigations }, input.projectValueMinor, input.projectDurationDays);
+
+  write(ctx, {
+    eventType: 'RISK_MITIGATION_SET',
+    entity: { refType: 'RiskRegisterItem', refId: riskId },
+    nextState: {
+      ...record.state,
+      ...rescored,
+      id: riskId,
+      mitigationOwner: input.owner,
+      mitigationDueBy: input.dueBy,
+      mitigatedBy: ctx.auth.actorId,
+      mitigatedAt: new Date().toISOString(),
+    },
+  });
+
+  return {
+    expectedCostBeforeMinor: rescored.expectedCostMinor,
+    residualCostMinor: rescored.residual.expectedCostMinor,
+    netBenefitMinor: rescored.residual.netBenefitMinor,
+    worthDoing: rescored.residual.recommended,
+  };
+}
+
+/** Safety position for the HSEQ dashboard: what happened, and who is qualified. */
+export function safetyPosition(ctx: EngineContext): {
+  incidents: { total: number; escalated: number; lostTimeDays: number; byCategory: Record<string, number> };
+  training: { records: number; expired: number };
+  ramsApproved: number;
+} {
+  authorise(ctx, 'SAFETY_RAMS', 'R');
+
+  const incidents = ctx.ledger.list(ctx.projectId, 'Incident').map((r) => r.state);
+  const training = ctx.ledger.list(ctx.projectId, 'TrainingRecord').map((r) => r.state);
+  const byCategory: Record<string, number> = {};
+  for (const incident of incidents) {
+    const category = String(incident.category);
+    byCategory[category] = (byCategory[category] ?? 0) + 1;
+  }
+
+  return {
+    incidents: {
+      total: incidents.length,
+      escalated: incidents.filter((i) => i.escalated).length,
+      lostTimeDays: incidents.reduce((sum, i) => sum + Number(i.lostTimeDays ?? 0), 0),
+      byCategory,
+    },
+    training: { records: training.length, expired: training.filter((t) => t.expired).length },
+    ramsApproved: ctx.ledger.list(ctx.projectId, 'RAMS').filter((r) => r.state.status === 'APPROVED').length,
+  };
+}

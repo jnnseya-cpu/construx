@@ -131,6 +131,12 @@ export function createProject(
     currency: string;
     plannedStart: string;
     plannedCompletion: string;
+    /**
+     * The opportunity this project came from, when it came from one. Carrying
+     * it here is what lets a variation argued about in year three trace back
+     * to the decision to chase the job at all.
+     */
+    originOpportunityId?: string;
   },
 ): { projectId: string; phase: LifecyclePhase } {
   authorise(ctx, 'PROJECT_SETUP', 'C');
@@ -155,6 +161,7 @@ export function createProject(
       currency: input.currency,
       plannedStart: input.plannedStart,
       plannedCompletion: input.plannedCompletion,
+      originOpportunityId: input.originOpportunityId,
       // Every project starts at the beginning of the lifecycle and moves
       // forward only through governed gates.
       phase: 'CONCEPT',

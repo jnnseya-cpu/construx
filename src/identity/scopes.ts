@@ -41,6 +41,9 @@ export type Scope =
 
 /** Which scope pair guards each capability area. */
 const AREA_SCOPES: Record<CapabilityArea, { read: Scope; write: Scope }> = {
+  // The pipeline is commercial information before it is anything else: what a
+  // contractor is chasing, at what value, is exactly what a competitor wants.
+  BUSINESS_DEVELOPMENT: { read: 'commercial:read', write: 'commercial:write' },
   PLATFORM_ADMINISTRATION: { read: 'admin:*', write: 'admin:*' },
   ENTERPRISE_STRUCTURE: { read: 'projects:read', write: 'projects:write' },
   PROJECT_SETUP: { read: 'projects:read', write: 'projects:write' },

@@ -1,6 +1,7 @@
 import { hashEvidence } from './core/canonical.ts';
 import * as procurement from './domain/procurement.ts';
 import * as structure from './domain/structure.ts';
+import * as supplychain from './domain/supplychain.ts';
 import type { EngineContext } from './engines/context.ts';
 import * as bim from './engines/bim.ts';
 import * as claimsEngine from './engines/claims.ts';
@@ -291,12 +292,52 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   });
   step(`Tender package composed, completeness ${(tenderPackage.completenessScore * 100).toFixed(0)}%`);
 
+  // The supply chain comes before the enquiry. Three civils firms are
+  // registered and prequalified; the RFQ can then only go to them.
+  const supplyChain = [
+    { legalName: 'Northstone Civils Ltd', trades: ['GROUNDWORKS', 'CIVIL_ENGINEERING', 'CONCRETE_WORKS'], years: 18, riddor: 0 },
+    { legalName: 'Calder Construction Ltd', trades: ['GROUNDWORKS', 'CIVIL_ENGINEERING', 'DRAINAGE'], years: 12, riddor: 0 },
+    { legalName: 'Pennine Groundworks Ltd', trades: ['GROUNDWORKS', 'EARTHWORKS'], years: 7, riddor: 1 },
+  ].map((firm) => {
+    const { supplierId } = supplychain.registerSupplier(qsCtx, {
+      legalName: firm.legalName,
+      trades: firm.trades,
+      contactName: 'Commercial Manager',
+      contactEmail: `enquiries@${firm.legalName.split(' ')[0]!.toLowerCase()}.example`,
+      countryCode: 'GB',
+      regionsCovered: ['North West', 'Yorkshire'],
+    });
+    // The QS puts a firm forward; approving it is somebody else's signature.
+    // The permission matrix enforces that split, so the seed follows it.
+    const result = supplychain.prequalifySupplier(pmCtx, supplierId, {
+      annualTurnoverMinor: 4_500_000_00,
+      yearsTrading: firm.years,
+      accountsFiledUpToDate: true,
+      insurances: [
+        { type: 'PUBLIC_LIABILITY', insurer: 'Aviva', limitMinor: 1_000_000_000, expiresOn: '2027-06-30' },
+        { type: 'EMPLOYERS_LIABILITY', insurer: 'Aviva', limitMinor: 1_000_000_000, expiresOn: '2027-06-30' },
+        { type: 'PROFESSIONAL_INDEMNITY', insurer: 'Hiscox', limitMinor: 500_000_000, expiresOn: '2027-06-30' },
+      ],
+      safetyAccreditations: ['CHAS', 'Constructionline Gold'],
+      qualityAccreditations: ['ISO 9001', 'ISO 14001', 'ISO 45001'],
+      riddorLastThreeYears: firm.riddor,
+      references: 3,
+      maxPackageValueMinor: 12_000_000_00,
+      complianceConfirmed: true,
+      evidenceHash: hashEvidence(`pqq-${firm.legalName}`),
+    });
+    return { supplierId, name: firm.legalName, status: result.status };
+  });
+  step(`Supply chain prequalified: ${supplyChain.map((s) => `${s.name} (${s.status})`).join(', ')}`);
+
   const rfq = procurement.createRFQ(qsCtx, {
     packageId,
     title: 'Civils and process structures — Ashworth WTW Phase 2',
     pricingBasis: 'REMEASURABLE',
     returnDeadline: new Date(Date.now() + 21 * 86_400_000).toISOString(),
-    invitedSupplierIds: ['SUP-NORTHSTONE', 'SUP-CALDER', 'SUP-PENNINE'],
+    invitedSupplierIds: supplyChain.map((s) => s.supplierId),
+    trade: 'GROUNDWORKS',
+    packageValueMinor: 8_000_000_00,
     requiredInsurances: ['PUBLIC_LIABILITY', 'EMPLOYERS_LIABILITY', 'PROFESSIONAL_INDEMNITY'],
     contractSuite: 'NEC4',
   });

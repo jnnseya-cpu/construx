@@ -36,6 +36,7 @@ export type EventTypeDefinition = {
 };
 
 export type EventGroup =
+  | 'BUSINESS_DEVELOPMENT'
   | 'GOVERNANCE'
   | 'PROJECT_CONTROL'
   | 'DESIGN'
@@ -69,6 +70,17 @@ function def(
 }
 
 export const EVENT_TYPES: EventTypeDefinition[] = [
+  // --- Business development -------------------------------------------------
+  // The head of the chain. A project that came from an opportunity carries its
+  // id, so a variation argued about in year three traces back to the decision
+  // to chase the job at all.
+  def('OPPORTUNITY_REGISTERED', 'Opportunity', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  def('OPPORTUNITY_QUALIFIED', 'Opportunity', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  // Deciding what the business chases is a governance act. An AI actor may
+  // score an opportunity; it may not decide to pursue one.
+  def('BID_NO_BID_DECIDED', 'Opportunity', 'APPROVE', 'BUSINESS_DEVELOPMENT'),
+  def('OPPORTUNITY_CONVERTED', 'Opportunity', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+
   // --- Governance & identity ------------------------------------------------
   def('TENANT_CREATED', 'Tenant', 'CREATE', 'GOVERNANCE'),
   def('ENTERPRISE_CREATED', 'Enterprise', 'CREATE', 'GOVERNANCE'),
@@ -106,6 +118,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SCHEDULE_ROUTE_ASSIGNED', 'PricingSchedule', 'UPDATE', 'PROCUREMENT'),
   def('ESTIMATE_CREATED', 'Estimate', 'CREATE', 'PROCUREMENT', { aiAllowed: true }),
   def('ESTIMATE_FROZEN', 'Estimate', 'FREEZE', 'PROCUREMENT', { requiresEvidence: true }),
+  // The supply chain register sits in front of every enquiry: an RFQ cannot be
+  // issued to a firm that is not on it and currently prequalified.
+  def('SUPPLIER_REGISTERED', 'Supplier', 'CREATE', 'PROCUREMENT'),
+  def('SUPPLIER_PREQUALIFIED', 'Supplier', 'APPROVE', 'PROCUREMENT', { requiresEvidence: true }),
+  def('SUPPLIER_SUSPENDED', 'Supplier', 'UPDATE', 'PROCUREMENT'),
   def('RFQ_CREATED', 'RFQ', 'CREATE', 'PROCUREMENT'),
   def('TENDER_PACKAGE_COMPOSED', 'TenderPackage', 'CREATE', 'PROCUREMENT', { aiAllowed: true }),
   def('RFQ_ISSUED', 'RFQ', 'ISSUE', 'PROCUREMENT', { requiresEvidence: true }),
@@ -143,11 +160,17 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PROGRESS_RECORDED', 'ProgressMeasurement', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
   def('SITE_DIARY_RECORDED', 'SiteDiary', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
   def('SITE_OBSERVATION_CAPTURED', 'SiteObservation', 'CREATE', 'DELIVERY', { aiAllowed: true, requiresEvidence: true }),
+  // Quality assurance: the plan, the hold points, and the record against them.
+  def('ITP_CREATED', 'InspectionPlan', 'CREATE', 'DELIVERY', { creates: true }),
+  def('ITP_STAGE_UPDATED', 'InspectionPlan', 'UPDATE', 'DELIVERY'),
   def('INSPECTION_COMPLETED', 'QualityInspection', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
   def('SNAG_RAISED', 'Snag', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
   def('SNAG_DISPATCHED', 'Snag', 'UPDATE', 'DELIVERY'),
   def('SNAG_CLOSED', 'Snag', 'APPROVE', 'DELIVERY', { requiresEvidence: true }),
   def('NCR_RAISED', 'NCR', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
+  // Accepting work that does not meet specification is a decision with a name
+  // against it, so closure is an approval and carries its own evidence.
+  def('NCR_CLOSED', 'NCR', 'APPROVE', 'DELIVERY', { requiresEvidence: true }),
   def('DELAY_RISK_FORECAST', 'DelayRiskSnapshot', 'AI_EXECUTE', 'DELIVERY', { aiAllowed: true }),
   def('DELAYEVENT_RECORDED', 'DelayEvent', 'CREATE', 'DELIVERY', { aiAllowed: true, requiresEvidence: true }),
 

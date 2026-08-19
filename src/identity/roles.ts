@@ -45,6 +45,7 @@ export type PermissionCode =
 
 export type CapabilityArea =
   | 'PLATFORM_ADMINISTRATION'
+  | 'BUSINESS_DEVELOPMENT'
   | 'ENTERPRISE_STRUCTURE'
   | 'PROJECT_SETUP'
   | 'DESIGN_INFORMATION'
@@ -102,6 +103,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
   },
 
   ENTERPRISE_ADMIN: {
+    BUSINESS_DEVELOPMENT: ['R', 'C', 'U', 'A'],
     ENTERPRISE_STRUCTURE: ['R', 'C', 'U', 'A', 'G'],
     PROJECT_SETUP: ['R', 'C', 'U', 'A'],
     DESIGN_INFORMATION: ['R'],
@@ -125,6 +127,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
   },
 
   OWNER: {
+    BUSINESS_DEVELOPMENT: ['R', 'C', 'U', 'A'],
     PROJECT_SETUP: ['R', 'A'],
     DESIGN_INFORMATION: ['R'],
     WORKPACKAGES_TASKS: ['R'],
@@ -148,6 +151,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
   },
 
   EPC: {
+    BUSINESS_DEVELOPMENT: ['R', 'C', 'U', 'A'],
     PROJECT_SETUP: ['R'],
     DESIGN_INFORMATION: ['R', 'C', 'U', 'I'],
     WORKPACKAGES_TASKS: ['R', 'C', 'U'],
@@ -174,6 +178,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
   // QS authors commercial documents but must not approve the budget baseline
   // they authored — separation of duties is enforced, not advisory.
   QS: {
+    BUSINESS_DEVELOPMENT: ['R', 'C', 'U'],
     PROJECT_SETUP: ['R'],
     DESIGN_INFORMATION: ['R'],
     WORKPACKAGES_TASKS: ['R'],
@@ -196,6 +201,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
   },
 
   PM: {
+    BUSINESS_DEVELOPMENT: ['R'],
     PROJECT_SETUP: ['R', 'U'],
     DESIGN_INFORMATION: ['R', 'C', 'U'],
     WORKPACKAGES_TASKS: ['R', 'C', 'U', 'A'],

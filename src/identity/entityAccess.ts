@@ -19,6 +19,9 @@ export type EntityClassification = {
 };
 
 export const ENTITY_ACCESS: Record<string, EntityClassification> = {
+  // Business development — the pipeline, before a project exists
+  Opportunity: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+
   // Tenancy and platform — the operator layer, never delivery
   Tenant: { area: 'PLATFORM_ADMINISTRATION' },
   Subscription: { area: 'PLATFORM_ADMINISTRATION' },
@@ -65,6 +68,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   Estimate: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   MasterPricing: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   PricingSchedule: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
+  Supplier: { area: 'PROCUREMENT_AWARD' },
   TenderPackage: { area: 'PROCUREMENT_AWARD' },
   RFQ: { area: 'PROCUREMENT_AWARD' },
   SupplierSubmission: { area: 'SUPPLIER_SUBMISSION', sensitivity: 'COMMERCIAL_L3' },
@@ -117,6 +121,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   Snag: { area: 'QUALITY_COMMISSIONING' },
   Defect: { area: 'QUALITY_COMMISSIONING' },
   CommissioningTest: { area: 'QUALITY_COMMISSIONING' },
+  InspectionPlan: { area: 'QUALITY_COMMISSIONING' },
   QualityInspection: { area: 'QUALITY_COMMISSIONING' },
   NCR: { area: 'QUALITY_COMMISSIONING' },
 

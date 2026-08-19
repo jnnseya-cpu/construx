@@ -2,6 +2,7 @@ import { hashEvidence } from '../core/canonical.ts';
 import { DomainError, ForbiddenError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, currentPhase, registerEvidence, write, type EngineContext } from '../engines/context.ts';
+import { assertEligibleForEnquiry } from './supplychain.ts';
 
 /**
  * Procurement: RFQ issue, supplier returns, award, and the subcontract that
@@ -29,9 +30,22 @@ export function createRFQ(
     invitedSupplierIds: string[];
     requiredInsurances: string[];
     contractSuite: string;
+    /** The trade being bought, so eligibility is checked against it. */
+    trade?: string;
+    /** Package value, so nobody is invited beyond their assessed capacity. */
+    packageValueMinor?: number;
   },
 ): { rfqId: string; reference: string } {
   authorise(ctx, 'PROCUREMENT_AWARD', 'C', { lifecyclePhase: currentPhase(ctx) });
+
+  // Everyone invited must be on the register and currently prequalified. This
+  // refuses the whole enquiry rather than dropping the ineligible firms: an
+  // RFQ that silently went to four of the six you selected produces a
+  // comparison you cannot trust.
+  assertEligibleForEnquiry(ctx, input.invitedSupplierIds, {
+    trade: input.trade,
+    packageValueMinor: input.packageValueMinor,
+  });
 
   // Design maturity governs the pricing basis. Asking for a lump sum against
   // immature design is the single most reliable way to buy a variation.

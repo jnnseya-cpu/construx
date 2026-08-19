@@ -6,6 +6,7 @@ import { seatEconomics, TIERS } from '../billing/subscription.ts';
 import { config } from '../config.ts';
 import { DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
 import type { Schema } from '../core/validate.ts';
+import * as business from '../domain/business.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as structure from '../domain/structure.ts';
 import * as bim from '../engines/bim.ts';
@@ -13,6 +14,7 @@ import * as claims from '../engines/claims.ts';
 import * as cost from '../engines/cost.ts';
 import * as handover from '../engines/handover.ts';
 import * as planning from '../engines/planning.ts';
+import * as quality from '../engines/quality.ts';
 import * as safety from '../engines/safety.ts';
 import * as tender from '../engines/tender.ts';
 import { replayProject, replayTimeline } from '../goldenthread/replay.ts';
@@ -69,6 +71,21 @@ function operatorOnly(ctx: RequestContext, action: string): void {
   if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
     throw new ForbiddenError(`Only the platform operator may ${action}`, 'PLATFORM_ADMIN_REQUIRED');
   }
+}
+
+/**
+ * A context for work that happens before a project exists — the pipeline.
+ * Bound to the tenant's governance chain rather than to a project id.
+ */
+function tenantContext(platform: Platform, ctx: RequestContext) {
+  const actor = auth(ctx);
+  if (actor.roles.includes('PLATFORM_ADMIN')) {
+    throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+  }
+  return platform.context(actor, `${actor.tenantId}-governance`, {
+    correlationId: ctx.correlationId,
+    source: sourceOf(ctx),
+  });
 }
 
 function projectContext(platform: Platform, ctx: RequestContext) {
@@ -423,6 +440,126 @@ export const ROUTES: Route[] = [
       if (!campaignId) throw new NotFoundError('Campaign id missing from path');
       return { deliveries: deliveriesFor(platform, campaignId) };
     },
+  },
+
+  // ------------------------------------------------ business development
+  {
+    method: 'GET',
+    pattern: '/v1/pipeline',
+    description: 'The opportunity pipeline: what the business is chasing and what it is worth',
+    handler: (platform, ctx) => business.pipeline(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/pipeline/criteria',
+    description: 'The weighted criteria an opportunity is qualified against',
+    handler: () => ({ criteria: business.QUALIFICATION_CRITERIA }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/opportunities',
+    description: 'Register an opportunity — the head of the delivery chain',
+    handler: (platform, ctx) => business.registerOpportunity(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/opportunities/:opportunityId/qualify',
+    description: 'Score an opportunity against the six weighted criteria',
+    handler: (platform, ctx) =>
+      business.qualifyOpportunity(tenantContext(platform, ctx), ctx.params.opportunityId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/opportunities/:opportunityId/decide',
+    description: 'Record the bid / no-bid decision, with its rationale',
+    schema: {
+      type: 'object',
+      required: ['bid', 'rationale'],
+      properties: { bid: { type: 'boolean' }, rationale: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      business.decideBidNoBid(tenantContext(platform, ctx), ctx.params.opportunityId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/opportunities/:opportunityId/convert',
+    description: 'Turn a won opportunity into a project, carrying the thread forward',
+    handler: (platform, ctx) =>
+      business.convertToProject(tenantContext(platform, ctx), ctx.params.opportunityId as string, body(ctx)),
+  },
+
+  // ----------------------------------------------------------------- quality
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/quality',
+    description: 'Quality position: conformance, open hold points, NCRs and snags',
+    handler: (platform, ctx) => quality.qualityPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/quality/hold-points',
+    description: 'Hold points that have not been released',
+    handler: (platform, ctx) => ({ holdPoints: quality.openHoldPoints(projectContext(platform, ctx)) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/quality/plans',
+    description: 'Create an inspection and test plan for a work package',
+    handler: (platform, ctx) => quality.createInspectionPlan(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/quality/inspections',
+    description: 'Record an inspection against an ITP stage; a failure raises an NCR',
+    handler: (platform, ctx) => quality.recordInspection(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/quality/ncrs',
+    description: 'Raise a non-conformance',
+    handler: (platform, ctx) => quality.raiseNCR(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/quality/ncrs/:ncrId/close',
+    description: 'Close a non-conformance with a disposition and a justification',
+    handler: (platform, ctx) =>
+      quality.closeNCR(projectContext(platform, ctx), ctx.params.ncrId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/quality/snags/:snagId/close',
+    description: 'Close a snag with photographic evidence',
+    handler: (platform, ctx) =>
+      quality.closeSnag(projectContext(platform, ctx), ctx.params.snagId as string, body(ctx)),
+  },
+
+  // -------------------------------------------------------------------- HSEQ
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/safety/position',
+    description: 'Safety position: incidents, escalations, lost time and training currency',
+    handler: (platform, ctx) => safety.safetyPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/safety/incidents',
+    description: 'Record an incident, including whether it is RIDDOR reportable',
+    handler: (platform, ctx) => safety.recordIncident(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/safety/training',
+    description: 'Record completed training against a competency, with its expiry',
+    handler: (platform, ctx) => safety.recordTraining(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/risks/:riskId/mitigation',
+    description: 'Add a mitigation to a risk and re-score the residual position',
+    handler: (platform, ctx) =>
+      safety.setRiskMitigation(projectContext(platform, ctx), ctx.params.riskId as string, body(ctx)),
   },
 
   // ------------------------------------------------------------------ people
