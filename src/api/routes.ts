@@ -11,6 +11,7 @@ import * as cdm from '../domain/cdm.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
+import * as radar from '../domain/radar.ts';
 import * as framework from '../domain/framework.ts';
 import * as lifecycleControl from '../lifecycle/control.ts';
 import * as costModel from '../engines/maths/costModel.ts';
@@ -479,6 +480,30 @@ export const ROUTES: Route[] = [
     pattern: '/v1/pipeline/criteria',
     description: 'The ten weighted factors and the bid/no-bid thresholds',
     handler: () => ({ criteria: business.QUALIFICATION_CRITERIA, thresholds: business.BID_THRESHOLDS }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/company/profile',
+    description: "The company's own verified facts — everything the radar is allowed to assert",
+    handler: (platform, ctx) => radar.companyProfile(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/company/profile',
+    description: 'Record the company profile the radar screens against',
+    handler: (platform, ctx) => radar.setCompanyProfile(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/radar/run',
+    description: 'Screen a batch of tender notices against the company profile',
+    handler: (platform, ctx) => radar.runRadar(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/radar/latest',
+    description: 'The most recent radar run, with why each opportunity was filtered out',
+    handler: (platform, ctx) => ({ run: radar.latestRadarRun(tenantContext(platform, ctx)) ?? null }),
   },
   {
     method: 'GET',

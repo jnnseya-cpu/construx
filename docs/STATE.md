@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 398 passing, 0 failing, across 17 files |
+| Tests | 417 passing, 0 failing, across 18 files |
 | Typecheck | clean |
-| Backend | 66 TypeScript files, 24,572 lines |
-| Application | 26 ES modules, 5,714 lines (plus a service worker) |
-| API routes | 163 |
-| Event types | 162, closed catalogue |
-| Entity types | 104, all classified for access |
+| Backend | 68 TypeScript files, 25,829 lines |
+| Application | 26 ES modules, 5,823 lines (plus a service worker) |
+| API routes | 168 |
+| Event types | 165, closed catalogue |
+| Entity types | 107, all classified for access |
 | Runtime dependencies | none |
 
 Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`).
@@ -172,6 +172,35 @@ subcontract procurement → programme → quality → handover, walked end to en
 that already existed. Opportunities are now registered, scored, and decided by a
 person. A converted project carries its opportunity id, so a variation argued
 about in year three traces back to the decision to chase the job at all.
+
+**Tender radar.** The value is not in finding more opportunities — it is in not
+reading the ones that were never winnable, which is where most of a small
+contractor's bid time goes. Notices are screened against a recorded company
+profile: turnover, net assets, working capital, regions, sectors, CPV codes,
+value band, insurance limits, accreditations, verified references, self-delivered
+trades, target margin and spare delivery capacity.
+
+Mandatory requirements fail outright rather than costing points, because a
+turnover threshold or a missing accreditation makes an opportunity unwinnable
+however attractive it is. **The radar never asserts a capability the profile
+does not record**, and an unverified reference is never counted as one — that
+is the claim a bid gets disqualified for. Where there is a real route round a
+gap it says so: partner the package and offer named personnel experience where
+the ITT permits, or ask whether the buyer accepts an equivalent accreditation.
+
+It does not score. There is one scoring model, and a radar with its own would be
+a second opinion that quietly disagrees, so it produces *suggested* factor
+scores from evidence and hands them to `qualify()`. Two factors a portal notice
+cannot answer — client attractiveness and cash-flow risk — are left neutral for
+a person rather than guessed. The margin target moves with the competition
+against the company's own band rather than being invented.
+
+The batch run keeps every assessment, not just the shortlist, because "why did
+we not bid that one" is asked months later. It also names the requirement that
+keeps disqualifying the business: failing the same accreditation on four notices
+is a decision about the company, not about any one bid, and only the batch view
+can see it. Nothing is registered as an opportunity automatically — the radar
+decides what is worth reading, a person decides what is worth chasing.
 
 **The bid/no-bid algorithm.** Ten factors weighted to 100 — relevant experience
 15, client attractiveness 10, contract size 10, geography 10, supply-chain

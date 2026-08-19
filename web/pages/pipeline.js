@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { badge, date, html, money, pct, raw, render, table } from '../lib/ui.js';
+import { badge, date, html, humanise, money, pct, raw, render, table } from '../lib/ui.js';
 
 /**
  * Business development — the pipeline, and the discipline of refusing work.
@@ -27,11 +27,14 @@ const STAGE_TONE = {
 };
 
 export async function pipeline(root) {
-  const [criteria, summary, discipline] = await Promise.all([
+  const [criteria, summary, discipline, radar] = await Promise.all([
     api.get('/v1/pipeline/criteria'),
     api.get('/v1/pipeline'),
     api.get('/v1/pipeline/discipline'),
+    api.get('/v1/radar/latest').catch(() => ({ run: null })),
   ]);
+
+  const run = radar?.run ?? null;
 
   const thresholds = criteria.thresholds;
   const opportunities = summary.opportunities ?? [];
@@ -81,6 +84,59 @@ export async function pipeline(root) {
                 ${discipline.observations.map((o) => html`<div style="margin-bottom:4px">${o}</div>`)}
               </div>
             </div>`
+          : ''
+      }
+
+      ${
+        run
+          ? html`
+            <div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">
+                Tender radar — ${run.ranOn}
+                ${badge(`${run.shortlisted} of ${run.screened} worth reading`, run.shortlisted > 0 ? 'ok' : '')}
+              </h3>
+              <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                Screened against the company's own recorded facts. It never claims a capability that is not on file — an
+                invented reference is what a bid gets disqualified for.
+              </p>
+              ${table({
+                headers: ['Opportunity', 'Value', 'Region', 'Closes', 'Competition', 'Score', 'Verdict'],
+                align: ['', 'num', '', 'num', '', 'num', ''],
+                rows: (run.results ?? []).map((r) => [
+                  html`${r.title}<br><span style="font-size:11.5px;color:var(--text-3)">${r.reference} · ${r.clientName}</span>`,
+                  money(r.estimatedValueMinor),
+                  r.region,
+                  html`<span style="${raw(r.daysToDeadline <= 14 ? 'color:var(--orange)' : '')}">${r.daysToDeadline}d</span>`,
+                  badge(humanise(r.competition), r.competition === 'LOW' ? 'ok' : r.competition === 'HIGH' ? 'bad' : ''),
+                  r.qualification.score,
+                  r.eligible
+                    ? badge(BAND_LABEL[r.qualification.recommendation], BAND_TONE[r.qualification.recommendation])
+                    : badge('INELIGIBLE', 'bad'),
+                ]),
+                empty: 'Nothing screened',
+              })}
+              <div class="split-list" style="padding:0 17px 15px">
+                ${(run.observations ?? []).map((o) => html`<div class="row"><span class="lbl">${o}</span></div>`)}
+              </div>
+            </div>
+
+            ${(run.results ?? [])
+              .filter((r) => !r.eligible || r.mitigations.length > 0)
+              .map(
+                (r) => html`<div class="card" style="margin-bottom:14px">
+                  <h3>${r.title} ${r.eligible ? '' : badge('ineligible', 'bad')}</h3>
+                  <div class="split-list">
+                    ${r.eligibilityFailures.map(
+                      (f) => html`<div class="row"><span class="lbl">✗ ${f.requirement}</span><span class="val">${f.reason}</span></div>`,
+                    )}
+                    ${r.strengths.map((x) => html`<div class="row"><span class="lbl">+ ${x}</span></div>`)}
+                    ${r.risks.map((x) => html`<div class="row"><span class="lbl">! ${x}</span></div>`)}
+                    ${r.mitigations.map((x) => html`<div class="row"><span class="lbl">→ ${x}</span></div>`)}
+                    <div class="row"><span class="lbl">Margin target</span><span class="val">${r.marginTargetPercent.min}–${r.marginTargetPercent.max}%</span></div>
+                  </div>
+                </div>`,
+              )}
+          `
           : ''
       }
 

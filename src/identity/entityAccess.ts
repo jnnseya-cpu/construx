@@ -22,6 +22,8 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // Business development — the pipeline, before a project exists
   Opportunity: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
   LessonLearned: { area: 'RISK_REGISTER' },
+  CompanyProfile: { area: 'BUSINESS_DEVELOPMENT' },
+  RadarRun: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
 
   // Tenancy and platform — the operator layer, never delivery
   Tenant: { area: 'PLATFORM_ADMINISTRATION' },

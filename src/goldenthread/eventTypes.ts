@@ -83,6 +83,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // Corporate memory. Captured on the project that produced it and read across
   // the business, because a lesson only pays for itself on a different job.
   def('LESSON_CAPTURED', 'LessonLearned', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),
+  // The company's own verified facts. Everything the radar and the bid library
+  // assert traces here, so a claim about the business enters the system once,
+  // as a governed event with an author.
+  def('COMPANY_PROFILE_SET', 'CompanyProfile', 'UPDATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  def('RADAR_RUN_COMPLETED', 'RadarRun', 'CREATE', 'BUSINESS_DEVELOPMENT'),
 
   // --- Governance & identity ------------------------------------------------
   def('TENANT_CREATED', 'Tenant', 'CREATE', 'GOVERNANCE'),

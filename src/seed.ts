@@ -2,6 +2,7 @@ import { hashEvidence } from './core/canonical.ts';
 import * as business from './domain/business.ts';
 import * as control from './domain/control.ts';
 import * as procurement from './domain/procurement.ts';
+import * as radar from './domain/radar.ts';
 import * as structure from './domain/structure.ts';
 import * as supplychain from './domain/supplychain.ts';
 import type { EngineContext } from './engines/context.ts';
@@ -226,6 +227,137 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     `Pipeline qualified: ${opportunities.length} opportunities scored, ${declined} declined ` +
       `(${discipline.noBidRatePercent}%), ${discipline.overrides.length} override recorded`,
   );
+
+  // --- THE COMPANY'S OWN FACTS -----------------------------------------------
+  // Everything the radar asserts traces here. Without it the radar refuses to
+  // screen anything rather than inventing what the business can claim.
+  radar.setCompanyProfile(governanceCtx, {
+    legalName: 'Meridian Infrastructure Group Ltd',
+    turnoverMinorByYear: [8_400_000_000, 7_100_000_000, 6_300_000_000],
+    netAssetsMinor: 1_950_000_000,
+    workingCapitalMinor: 900_000_000,
+    regions: ['Manchester', 'Leeds', 'Liverpool', 'Sheffield', 'Hexham'],
+    sectors: ['INFRASTRUCTURE', 'BUILDING'],
+    cpvCodes: ['45232400', '45252100', '45231300'],
+    valueBandMinor: { min: 500_000_00, max: 4_000_000_000 },
+    insurances: [
+      { type: 'Public liability', limitMinor: 1_000_000_000, expiresOn: '2027-03-31' },
+      { type: 'Employers liability', limitMinor: 1_000_000_000, expiresOn: '2027-03-31' },
+      { type: 'Professional indemnity', limitMinor: 500_000_000, expiresOn: '2027-03-31' },
+    ],
+    accreditations: ['CHAS', 'Constructionline Gold', 'ISO 9001', 'ISO 45001'],
+    references: [
+      { clientName: 'Northern Water Authority', projectName: 'Ashworth WTW Phase 1', sector: 'INFRASTRUCTURE', valueMinor: 1_400_000_000, completedYear: 2024, verified: true },
+      { clientName: 'Coastal Drainage Board', projectName: 'Seaton pumping station', sector: 'INFRASTRUCTURE', valueMinor: 620_000_000, completedYear: 2023, verified: true },
+      { clientName: 'Pennine Councils', projectName: 'Depot rationalisation', sector: 'BUILDING', valueMinor: 310_000_000, completedYear: 2023, verified: true },
+    ],
+    selfDeliveredTrades: ['GROUNDWORKS', 'CONCRETE', 'DRAINAGE'],
+    targetMarginPercent: { min: 8, max: 12 },
+    capacity: { concurrentProjects: 8, committedProjects: 6 },
+  });
+
+  const radarRun = radar.runRadar(governanceCtx, {
+    today: '2026-03-02',
+    notices: [
+      {
+        reference: 'FTS-2026-11842',
+        title: 'Reservoir spillway strengthening, Kielder',
+        clientName: 'Northern Water Authority',
+        region: 'Hexham',
+        sector: 'INFRASTRUCTURE',
+        cpvCodes: ['45232400'],
+        estimatedValueMinor: 940_000_000,
+        durationWeeks: 74,
+        deadline: '2026-04-17',
+        scope: 'Strengthening of the existing spillway chute and stilling basin, including anchor installation',
+        requirements: {
+          minimumTurnoverMinor: 5_000_000_000,
+          insurances: [{ type: 'Public liability', minimumLimitMinor: 1_000_000_000 }],
+          accreditations: ['CHAS'],
+          experience: [{ sector: 'INFRASTRUCTURE', minimumProjects: 2, minimumValueMinor: 500_000_000 }],
+        },
+        estimatedBidders: 4,
+        source: 'Find a Tender',
+      },
+      {
+        reference: 'FTS-2026-11903',
+        title: 'Secondary school refurbishment, Birmingham',
+        clientName: 'Midlands Education Trust',
+        region: 'Birmingham',
+        sector: 'BUILDING',
+        estimatedValueMinor: 38_000_000,
+        durationWeeks: 14,
+        deadline: '2026-03-27',
+        scope: 'Refurbishment of teaching blocks including M&E replacement and fire compartmentation',
+        requirements: {
+          minimumTurnoverMinor: 1_000_000_000,
+          accreditations: ['CHAS'],
+          experience: [{ sector: 'BUILDING', minimumProjects: 3 }],
+        },
+        estimatedBidders: 6,
+        source: 'Contracts Finder',
+      },
+      {
+        reference: 'FTS-2026-11855',
+        title: 'Trunk road widening, M62 J20-22',
+        clientName: 'National Highways',
+        region: 'Rochdale',
+        sector: 'INFRASTRUCTURE',
+        estimatedValueMinor: 18_000_000_000,
+        durationWeeks: 156,
+        deadline: '2026-05-08',
+        scope: 'Widening and structures renewal across three junctions',
+        requirements: {
+          minimumTurnoverMinor: 40_000_000_000,
+          accreditations: ['CHAS', 'ISO 14001'],
+        },
+        estimatedBidders: 5,
+        source: 'Find a Tender',
+      },
+      {
+        reference: 'LOC-2026-0442',
+        title: 'Water treatment inlet works, Liverpool',
+        clientName: 'Mersey Water',
+        region: 'Liverpool',
+        sector: 'INFRASTRUCTURE',
+        cpvCodes: ['45252100'],
+        estimatedValueMinor: 2_100_000_000,
+        durationWeeks: 88,
+        deadline: '2026-03-09',
+        scope: 'New inlet works, screening and flow control',
+        requirements: {
+          minimumTurnoverMinor: 6_000_000_000,
+          insurances: [{ type: 'Professional indemnity', minimumLimitMinor: 500_000_000 }],
+          experience: [{ sector: 'INFRASTRUCTURE', minimumProjects: 2 }],
+        },
+        estimatedBidders: 12,
+        source: 'Client framework',
+      },
+      {
+        reference: 'FTS-2026-11720',
+        title: 'Hospital energy centre, Norwich',
+        clientName: 'East Anglia NHS Trust',
+        region: 'Norwich',
+        sector: 'BUILDING',
+        estimatedValueMinor: 620_000_000,
+        durationWeeks: 62,
+        deadline: '2026-04-30',
+        scope: 'New energy centre including CHP and district heating connections',
+        requirements: {
+          minimumTurnoverMinor: 3_000_000_000,
+          accreditations: ['CHAS', 'ISO 14001'],
+          experience: [{ sector: 'BUILDING', minimumProjects: 2, minimumValueMinor: 400_000_000 }],
+        },
+        estimatedBidders: 8,
+        source: 'Find a Tender',
+      },
+    ],
+  });
+  step(
+    `Radar screened ${radarRun.screened} notices: ${radarRun.shortlist.length} worth reading, ` +
+      `${radarRun.filteredOut} filtered out before anybody opened them`,
+  );
+  for (const observation of radarRun.observations.slice(1)) step(`  ${observation}`);
 
   // --- CONCEPT ---------------------------------------------------------------
   const { portfolioId } = structure.createPortfolio(governanceCtx, {
