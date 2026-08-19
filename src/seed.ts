@@ -295,9 +295,12 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   // The supply chain comes before the enquiry. Three civils firms are
   // registered and prequalified; the RFQ can then only go to them.
   const supplyChain = [
-    { legalName: 'Northstone Civils Ltd', trades: ['GROUNDWORKS', 'CIVIL_ENGINEERING', 'CONCRETE_WORKS'], years: 18, riddor: 0 },
-    { legalName: 'Calder Construction Ltd', trades: ['GROUNDWORKS', 'CIVIL_ENGINEERING', 'DRAINAGE'], years: 12, riddor: 0 },
-    { legalName: 'Pennine Groundworks Ltd', trades: ['GROUNDWORKS', 'EARTHWORKS'], years: 7, riddor: 1 },
+    // Three firms, three outcomes. Northstone has delivered for this business
+    // before and comes out strategic; Calder is clean but unproven here;
+    // Pennine carries a RIDDOR and lands conditional.
+    { legalName: 'Northstone Civils Ltd', trades: ['GROUNDWORKS', 'CIVIL_ENGINEERING', 'CONCRETE_WORKS'], incorporated: '2008-03-14', riddor: 0, packagesCompleted: 6, disputes: 0, onTime: 92 },
+    { legalName: 'Calder Construction Ltd', trades: ['GROUNDWORKS', 'CIVIL_ENGINEERING', 'DRAINAGE'], incorporated: '2014-09-02', riddor: 0, packagesCompleted: 1, disputes: 0, onTime: 88 },
+    { legalName: 'Pennine Groundworks Ltd', trades: ['GROUNDWORKS', 'EARTHWORKS'], incorporated: '2019-06-20', riddor: 1, packagesCompleted: 2, disputes: 0, onTime: 78 },
   ].map((firm) => {
     const { supplierId } = supplychain.registerSupplier(qsCtx, {
       legalName: firm.legalName,
@@ -310,9 +313,25 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     // The QS puts a firm forward; approving it is somebody else's signature.
     // The permission matrix enforces that split, so the seed follows it.
     const result = supplychain.prequalifySupplier(pmCtx, supplierId, {
-      annualTurnoverMinor: 4_500_000_00,
-      yearsTrading: firm.years,
-      accountsFiledUpToDate: true,
+      packageValueMinor: 8_000_000_00,
+      identity: {
+        companyNumber: `0${Math.floor(1_000_000 + Math.random() * 8_999_999)}`,
+        companyStatus: 'active',
+        incorporatedOn: firm.incorporated,
+        registeredAddress: 'Manchester, United Kingdom',
+        sicCodes: ['42990'],
+        vatNumber: `GB${Math.floor(100_000_000 + Math.random() * 899_999_999)}`,
+        utr: `${Math.floor(1_000_000_000 + Math.random() * 8_999_999_999)}`,
+        cisStatus: 'GROSS',
+      },
+      financial: {
+        turnoverMinorByYear: [24_000_000_00, 22_000_000_00, 20_500_000_00],
+        netAssetsMinor: 6_400_000_00,
+        creditScore: 78,
+        creditAgency: 'Creditsafe',
+        accountsFiledUpToDate: true,
+        accountsMadeUpTo: '2026-03-31',
+      },
       insurances: [
         { type: 'PUBLIC_LIABILITY', insurer: 'Aviva', limitMinor: 1_000_000_000, expiresOn: '2027-06-30' },
         { type: 'EMPLOYERS_LIABILITY', insurer: 'Aviva', limitMinor: 1_000_000_000, expiresOn: '2027-06-30' },
@@ -321,8 +340,37 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
       safetyAccreditations: ['CHAS', 'Constructionline Gold'],
       qualityAccreditations: ['ISO 9001', 'ISO 14001', 'ISO 45001'],
       riddorLastThreeYears: firm.riddor,
-      references: 3,
-      maxPackageValueMinor: 12_000_000_00,
+      ramsCapability: { producesInHouse: true, sampleReviewed: true, sampleAcceptable: true },
+      competenceCards: [
+        { scheme: 'CSCS', holders: 42, earliestExpiry: '2028-01-31' },
+        { scheme: 'CPCS', holders: 11, earliestExpiry: '2027-11-30' },
+      ],
+      training: [
+        { qualification: 'SMSTS', holders: 4, earliestExpiry: '2029-04-30' },
+        { qualification: 'First Aid at Work', holders: 6, earliestExpiry: '2028-08-31' },
+      ],
+      references: [
+        { clientName: 'United Utilities', projectName: 'Davyhulme inlet works', valueMinor: 6_400_000_00, verified: true, rating: 5, completedOn: '2025-11-14' },
+        { clientName: 'Manchester City Council', projectName: 'Ancoats public realm', valueMinor: 2_100_000_00, verified: true, rating: 4, completedOn: '2025-06-02' },
+      ],
+      capacity: {
+        maxPackageValueMinor: 9_000_000_00,
+        maxConcurrentPackages: 4,
+        labourByTrade: { GROUNDWORKS: 38, CONCRETE_WORKS: 12 },
+        subcontractedLabourPercent: 15,
+        plant: [
+          { description: '13t excavator', quantity: 4, ownedOrHired: 'OWNED' },
+          { description: 'Dumper 9t', quantity: 6, ownedOrHired: 'OWNED' },
+        ],
+        mobilisationDays: 10,
+      },
+      dayRates: [
+        { role: 'Groundworker', rateMinor: 220_00, quotedOn: '2026-07-01', basis: 'DAY' },
+        { role: 'Ganger', rateMinor: 285_00, quotedOn: '2026-07-01', basis: 'DAY' },
+        { role: '360 operator (CPCS)', rateMinor: 310_00, quotedOn: '2026-07-01', basis: 'DAY', inclusions: ['Machine'] },
+      ],
+      coverage: { regions: ['North West', 'Yorkshire'], countryCodes: ['GB'], maxTravelMiles: 60, officeLocations: ['Manchester'] },
+      performance: { packagesCompleted: firm.packagesCompleted, onTimePercent: firm.onTime, defectsPerPackage: 0.4, disputes: firm.disputes },
       complianceConfirmed: true,
       evidenceHash: hashEvidence(`pqq-${firm.legalName}`),
     });

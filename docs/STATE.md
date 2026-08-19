@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 296 passing, 0 failing, across 15 files |
+| Tests | 305 passing, 0 failing, across 15 files |
 | Typecheck | clean |
 | Backend | 62 TypeScript files, 21,072 lines |
 | Application | 24 ES modules, 5,205 lines (plus a service worker) |
-| API routes | 140 |
+| API routes | 146 |
 | Event types | 157, closed catalogue |
 | Entity types | 101, all classified for access |
 | Runtime dependencies | none |
@@ -149,6 +149,29 @@ breath as a failure, and NCR closure with a disposition somebody owns.
 *HSEQ* could not record that anyone had been hurt. Incidents now escalate on
 category, the RIDDOR question must be answered either way, and training carries
 an expiry, because a lapsed competency reads the same as one nobody held.
+
+*The supply chain register* collects Companies House identity, VAT, UTR and CIS
+status, insurance, H&S and quality accreditation, RAMS capability, competence
+cards, training, references, financial standing, geographic coverage, turnover,
+package capacity, day rates, labour availability and plant — and classifies each
+firm **Strategic / Approved / Conditional / Do Not Use**.
+
+Three things make it more than a form. **Scrutiny is proportionate**: a £15k
+package asks for identity, insurance, tax status and safety, and nothing else;
+a £900k package asks for three years of turnover, net assets, a credit
+reference and a reviewed RAMS sample. Demanding audited accounts from a
+two-person firm for a small package is not diligence, it is an obstacle that
+pushes good small firms away. **Strategic is earned on delivery** — three
+completed packages with no dispute and 85%+ on time — because anybody can
+assemble a good-looking pack. And **bars, missing information and conditions
+are reported separately**: "we have not seen your accounts" is a different
+conversation from "your insurance has expired".
+
+The rules that bite: a lapsed employers' liability policy, a dissolved company
+or an unresolved HSE prohibition notice is a bar, not a deduction; a package
+worth more than 40% of last year's turnover raises a condition, because one
+job should not be a firm's survival; an unverified reference is a claim; and a
+day rate quoted over a year ago is re-confirmed rather than trusted.
 
 *Subcontract procurement* could send an enquiry to anybody at all —
 `invitedSupplierIds` was free text. It now runs off a prequalified register of

@@ -179,7 +179,21 @@ export function tradeByCode(code: string): TradeDefinition | undefined {
 
 // --- Prequalification model ---------------------------------------------------
 
-export type SupplierStatus = 'REGISTERED' | 'APPROVED' | 'CONDITIONAL' | 'REJECTED' | 'SUSPENDED';
+/**
+ * The four tiers a firm sits in.
+ *
+ *   STRATEGIC   — earned, not scored. A firm you want to keep: proven delivery
+ *                 on this business's own work, capacity to take more, and a
+ *                 relationship worth protecting. Paperwork alone never gets
+ *                 anybody here.
+ *   APPROVED    — cleared to be invited to anything within their capacity.
+ *   CONDITIONAL — cleared, with something to watch. Invitable, but the
+ *                 condition travels with them to the award.
+ *   DO_NOT_USE  — barred. Distinct from "failed the questionnaire": a bar is a
+ *                 decision the business made and it does not clear itself by
+ *                 re-running the assessment.
+ */
+export type SupplierStatus = 'REGISTERED' | 'STRATEGIC' | 'APPROVED' | 'CONDITIONAL' | 'DO_NOT_USE' | 'SUSPENDED';
 
 export type InsurancePolicy = {
   type: 'PUBLIC_LIABILITY' | 'EMPLOYERS_LIABILITY' | 'PROFESSIONAL_INDEMNITY' | 'CONTRACT_WORKS';
@@ -189,16 +203,125 @@ export type InsurancePolicy = {
 };
 
 /**
- * How long an approval lasts. Twelve months is the industry norm and, more to
- * the point, is roughly how long insurance and accounts stay current.
+ * How deeply a firm is examined, set by the value of what they might be asked
+ * to do. This is what "financial information where proportionate" means in
+ * practice: demanding three years of audited accounts from a two-person
+ * decorating firm for a fifteen-thousand-pound package is not diligence, it is
+ * an obstacle that pushes good small firms away and tells you nothing.
  */
-export const PREQUALIFICATION_VALID_MONTHS = 12;
+export type ScrutinyLevel = 'LIGHT' | 'STANDARD' | 'ENHANCED';
 
+export const SCRUTINY_THRESHOLDS = {
+  /** Below this, identity, insurance, tax status and safety only. */
+  lightCeilingMinor: 25_000_00,
+  /** Above this, full financial standing and evidenced capacity. */
+  enhancedFloorMinor: 250_000_00,
+} as const;
+
+export function scrutinyFor(packageValueMinor: number): ScrutinyLevel {
+  if (packageValueMinor <= SCRUTINY_THRESHOLDS.lightCeilingMinor) return 'LIGHT';
+  if (packageValueMinor >= SCRUTINY_THRESHOLDS.enhancedFloorMinor) return 'ENHANCED';
+  return 'STANDARD';
+}
+
+/** Companies House and tax identity. */
+export type IdentityRecord = {
+  companyNumber?: string;
+  /** As returned by Companies House: active, dissolved, liquidation. */
+  companyStatus?: string;
+  incorporatedOn?: string;
+  registeredAddress?: string;
+  sicCodes?: string[];
+  vatNumber?: string;
+  /** Unique Taxpayer Reference. */
+  utr?: string;
+  /** CIS deduction status. UNREGISTERED means 30% and a conversation. */
+  cisStatus?: 'GROSS' | 'NET_20' | 'NET_30' | 'UNREGISTERED' | 'NOT_APPLICABLE';
+  cisVerificationNumber?: string;
+  /** Sole traders and partnerships are legitimate; they just have no number. */
+  soleTrader?: boolean;
+};
+
+/** Financial standing. What is required of it depends on the scrutiny level. */
+export type FinancialRecord = {
+  /** Most recent first. One year is enough at STANDARD; three at ENHANCED. */
+  turnoverMinorByYear?: number[];
+  netAssetsMinor?: number;
+  /** Whatever agency the business uses; the scale is theirs. */
+  creditScore?: number;
+  creditAgency?: string;
+  accountsFiledUpToDate?: boolean;
+  accountsMadeUpTo?: string;
+  /** Declared, so a firm carrying an unaffordable book is visible. */
+  currentOrderBookMinor?: number;
+};
+
+export type CompetenceCard = {
+  /** CSCS, CPCS, CISRS, JIB/ECS, Gas Safe, NICEIC, IPAF, PASMA. */
+  scheme: string;
+  /** How many operatives hold it. */
+  holders: number;
+  /** Soonest expiry across those holders — the one that matters. */
+  earliestExpiry?: string;
+};
+
+export type TrainingRecordSummary = {
+  /** SMSTS, SSSTS, First Aid at Work, Fire Marshal, Appointed Person, Temporary Works Supervisor. */
+  qualification: string;
+  holders: number;
+  earliestExpiry?: string;
+};
+
+export type SuppliedReference = {
+  clientName: string;
+  projectName: string;
+  valueMinor: number;
+  completedOn?: string;
+  contactName?: string;
+  contactEmail?: string;
+  /** True only when somebody actually rang them. An unchecked reference is a claim. */
+  verified: boolean;
+  /** 1–5 where the referee gave one. */
+  rating?: number;
+};
+
+export type CapacityRecord = {
+  /** Largest single package assessed as carryable. */
+  maxPackageValueMinor: number;
+  /** How many packages at once before quality starts to go. */
+  maxConcurrentPackages?: number;
+  /** Directly employed operatives, by trade code. */
+  labourByTrade?: Record<string, number>;
+  /** Proportion of labour that is subcontracted on rather than employed. */
+  subcontractedLabourPercent?: number;
+  /** Owned or long-term hired plant that comes with them. */
+  plant?: Array<{ description: string; quantity: number; ownedOrHired: 'OWNED' | 'HIRED' }>;
+  /** Notice needed to mobilise, in working days. */
+  mobilisationDays?: number;
+};
+
+export type DayRate = {
+  /** Role or trade the rate applies to. */
+  role: string;
+  rateMinor: number;
+  /** Rates go stale. A rate with no date is a rate from an unknown year. */
+  quotedOn: string;
+  basis: 'DAY' | 'HOUR' | 'WEEK';
+  /** Whether the rate already includes supervision, plant, consumables. */
+  inclusions?: string[];
+};
+
+export type CoverageRecord = {
+  regions: string[];
+  countryCodes?: string[];
+  maxTravelMiles?: number;
+  officeLocations?: string[];
+};
+
+/** Everything the business asks a firm for. Most of it is optional at LIGHT. */
 export type PrequalificationInput = {
-  /** Financial standing. */
-  annualTurnoverMinor: number;
-  yearsTrading: number;
-  accountsFiledUpToDate: boolean;
+  identity?: IdentityRecord;
+  financial?: FinancialRecord;
   /** Cover held, with expiry dates that are checked rather than stored. */
   insurances: InsurancePolicy[];
   /** CHAS, SafeContractor, SMAS, Constructionline, or a trade body scheme. */
@@ -208,25 +331,51 @@ export type PrequalificationInput = {
   /** Accident frequency rate, per 100,000 hours. */
   accidentFrequencyRate?: number;
   riddorLastThreeYears: number;
-  /** Contactable references for comparable work. */
-  references: number;
-  /** The largest single package they were assessed as able to carry. */
-  maxPackageValueMinor: number;
-  /** Right-to-work, CIS registration and modern slavery position confirmed. */
+  /** HSE improvement or prohibition notices. A prohibition notice is a bar. */
+  enforcementNotices?: Array<{ type: 'IMPROVEMENT' | 'PROHIBITION'; issuedOn: string; resolved: boolean }>;
+  /**
+   * Can they produce their own risk assessments and method statements, and has
+   * one been read? A firm that outsources every RAMS and cannot discuss it is
+   * a firm whose method statements nobody on site will follow.
+   */
+  ramsCapability?: { producesInHouse: boolean; sampleReviewed: boolean; sampleAcceptable?: boolean };
+  competenceCards?: CompetenceCard[];
+  training?: TrainingRecordSummary[];
+  references?: SuppliedReference[];
+  capacity: CapacityRecord;
+  dayRates?: DayRate[];
+  coverage?: CoverageRecord;
+  /** Right to work, modern slavery statement and equal opportunities confirmed. */
   complianceConfirmed: boolean;
+  /**
+   * Delivery history with this business specifically. Nobody becomes strategic
+   * on paperwork; they become strategic by having done the work.
+   */
+  performance?: { packagesCompleted: number; onTimePercent?: number; defectsPerPackage?: number; disputes: number };
 };
 
 export type PrequalificationResult = {
   status: SupplierStatus;
   score: number;
+  scrutiny: ScrutinyLevel;
   /** Anything that bars approval outright, regardless of score. */
   bars: string[];
   /** Anything that permits approval but with a condition attached. */
   conditions: string[];
+  /** Information the scrutiny level required and the submission did not carry. */
+  missing: string[];
   approvedTrades: string[];
   expiresOn: string;
   maxPackageValueMinor: number;
+  /** Why the tier came out as it did, in words somebody can put in an email. */
+  rationale: string;
 };
+
+/**
+ * How long an approval lasts. Twelve months is the industry norm and, more to
+ * the point, is roughly how long insurance and accounts stay current.
+ */
+export const PREQUALIFICATION_VALID_MONTHS = 12;
 
 function addMonths(iso: string, months: number): string {
   const date = new Date(`${iso.slice(0, 10)}T00:00:00.000Z`);
@@ -235,21 +384,32 @@ function addMonths(iso: string, months: number): string {
 }
 
 /**
- * Assess a supplier.
+ * Assess a firm.
  *
- * Bars and score are deliberately separate. A firm can score well on turnover,
- * references and accreditation and still be un-appointable because its
- * employers' liability policy lapsed last week — that is not a deduction of a
- * few points, it is a refusal. Scoring an absolute requirement is how a
- * prequalification system ends up approving somebody it should not have.
+ * Three separate outputs, deliberately not blended into one number.
+ *
+ * BARS are absolute. A firm can score well on turnover, references and
+ * accreditation and still be un-appointable because its employers' liability
+ * lapsed last week. That is not a deduction of a few points; it is a refusal.
+ * Scoring an absolute requirement is how a prequalification system ends up
+ * approving somebody it should not have.
+ *
+ * MISSING is what the scrutiny level asked for and the submission did not
+ * carry. It is reported separately from bars because "we have not seen your
+ * accounts" is a different conversation from "your insurance has expired", and
+ * a system that conflates them teaches people to send everything or nothing.
+ *
+ * CONDITIONS permit approval and travel with the firm to the award.
  */
 export function assessPrequalification(
   input: PrequalificationInput,
   trades: string[],
-  today = new Date().toISOString().slice(0, 10),
+  options: { today?: string; packageValueMinor?: number } = {},
 ): PrequalificationResult {
-  const bars: string[] = [];
-  const conditions: string[] = [];
+  const today = options.today ?? new Date().toISOString().slice(0, 10);
+  // Scrutiny is set by what they might be asked to do, defaulting to whatever
+  // capacity they claim — a firm offering to carry £2m is examined like it.
+  const scrutiny = scrutinyFor(options.packageValueMinor ?? input.capacity.maxPackageValueMinor);
 
   for (const trade of trades) {
     if (!TRADE_CODES.has(trade)) {
@@ -257,19 +417,32 @@ export function assessPrequalification(
     }
   }
 
-  // --- Bars: absolute requirements ---
-  const required: InsurancePolicy['type'][] = ['PUBLIC_LIABILITY', 'EMPLOYERS_LIABILITY'];
-  for (const type of required) {
+  const bars: string[] = [];
+  const conditions: string[] = [];
+  const missing: string[] = [];
+
+  // ── Bars: absolute, at every scrutiny level ────────────────────────────────
+  for (const type of ['PUBLIC_LIABILITY', 'EMPLOYERS_LIABILITY'] as const) {
     const policy = input.insurances.find((i) => i.type === type);
-    if (!policy) bars.push(`No ${type.replace(/_/g, ' ').toLowerCase()} cover held`);
-    else if (policy.expiresOn < today) {
-      bars.push(`${type.replace(/_/g, ' ').toLowerCase()} expired on ${policy.expiresOn}`);
-    }
+    const label = type.replace(/_/g, ' ').toLowerCase();
+    if (!policy) bars.push(`No ${label} cover held`);
+    else if (policy.expiresOn < today) bars.push(`${label} expired on ${policy.expiresOn}`);
   }
 
   if (!input.complianceConfirmed) {
-    bars.push('Right to work, CIS and modern slavery position not confirmed');
+    bars.push('Right to work, modern slavery and equal opportunities position not confirmed');
   }
+
+  // A dissolved or liquidating company cannot be contracted with, whatever the
+  // rest of the pack says.
+  const companyStatus = input.identity?.companyStatus?.toLowerCase();
+  if (companyStatus && !['active', 'registered'].includes(companyStatus)) {
+    bars.push(`Companies House status is "${input.identity!.companyStatus}"`);
+  }
+
+  // An unresolved prohibition notice means the regulator stopped them working.
+  const prohibition = (input.enforcementNotices ?? []).find((n) => n.type === 'PROHIBITION' && !n.resolved);
+  if (prohibition) bars.push(`Unresolved HSE prohibition notice issued ${prohibition.issuedOn}`);
 
   // Concealed and life-safety trades need third-party accreditation. This is
   // the Building Safety Act lesson written as a rule: the trades where failure
@@ -277,53 +450,149 @@ export function assessPrequalification(
   const needsAccreditation = trades.filter((code) => tradeByCode(code)?.accreditationRequired);
   if (needsAccreditation.length > 0 && input.safetyAccreditations.length === 0) {
     bars.push(
-      `No safety accreditation held, which is required for ${needsAccreditation
-        .map((c) => tradeByCode(c)?.label ?? c)
-        .join(', ')}`,
+      `No safety accreditation held, required for ${needsAccreditation.map((c) => tradeByCode(c)?.label ?? c).join(', ')}`,
     );
   }
 
-  // --- Score: judgement within the bars ---
-  let score = 0;
-  score += Math.min(25, input.yearsTrading * 2.5);
-  score += input.accountsFiledUpToDate ? 10 : 0;
-  score += Math.min(20, input.safetyAccreditations.length * 10);
-  score += Math.min(15, input.qualityAccreditations.length * 5);
-  score += Math.min(15, input.references * 5);
-  score += input.riddorLastThreeYears === 0 ? 15 : Math.max(0, 15 - input.riddorLastThreeYears * 5);
+  // ── Missing: proportionate to the scrutiny level ───────────────────────────
+  const identity = input.identity ?? {};
+  if (!identity.companyNumber && !identity.soleTrader) missing.push('Companies House number');
+  if (!identity.cisStatus) missing.push('CIS deduction status');
+  if (identity.cisStatus === 'UNREGISTERED') {
+    conditions.push('Not CIS registered — deductions at the higher rate until verified');
+  }
 
-  score = Math.round(Math.min(100, score) * 100) / 100;
+  if (scrutiny !== 'LIGHT') {
+    if (!identity.vatNumber) missing.push('VAT registration number');
+    if (!identity.utr) missing.push('UTR');
+    if ((input.references ?? []).length === 0) missing.push('References');
+    if ((input.competenceCards ?? []).length === 0) missing.push('Competence cards');
+    const turnover = input.financial?.turnoverMinorByYear ?? [];
+    if (turnover.length === 0) missing.push('Annual turnover');
+  }
 
-  // --- Conditions: approve, but watch ---
-  if (input.yearsTrading < 3) conditions.push('Under three years trading — review after first package');
+  if (scrutiny === 'ENHANCED') {
+    const turnover = input.financial?.turnoverMinorByYear ?? [];
+    if (turnover.length < 3) missing.push('Three years of turnover');
+    if (input.financial?.netAssetsMinor === undefined) missing.push('Net assets');
+    if (input.financial?.creditScore === undefined) missing.push('Credit reference');
+    if (input.financial?.accountsFiledUpToDate === undefined) missing.push('Accounts filing position');
+    if (!input.ramsCapability?.sampleReviewed) missing.push('RAMS sample review');
+    if ((input.training ?? []).length === 0) missing.push('Training records');
+  }
+
+  // ── Conditions: approve, but watch ─────────────────────────────────────────
+  const turnover = input.financial?.turnoverMinorByYear ?? [];
+  const latestTurnover = turnover[0];
+  const cap = input.capacity.maxPackageValueMinor;
+
+  // The rule of thumb every commercial manager uses: one package should not be
+  // most of a firm's year. If it is, their survival depends on this job.
+  if (latestTurnover && cap > latestTurnover * 0.4) {
+    conditions.push(
+      `Assessed package capacity is more than 40% of last year's turnover — payment terms and bonding should reflect it`,
+    );
+  }
+  if (input.financial?.accountsFiledUpToDate === false) {
+    conditions.push('Accounts are not filed up to date at Companies House');
+  }
   if (input.riddorLastThreeYears > 0) {
     conditions.push(`${input.riddorLastThreeYears} RIDDOR-reportable incident(s) in three years — safety review required`);
   }
-  if (input.references < 2) conditions.push('Fewer than two references — obtain a second before award');
+  if ((input.enforcementNotices ?? []).some((n) => n.type === 'IMPROVEMENT')) {
+    conditions.push('HSE improvement notice on record — confirm the actions were closed out');
+  }
   if (input.accidentFrequencyRate !== undefined && input.accidentFrequencyRate > 0.5) {
     conditions.push(`Accident frequency rate ${input.accidentFrequencyRate} is above the acceptable threshold`);
+  }
+  if (input.ramsCapability && input.ramsCapability.sampleReviewed && input.ramsCapability.sampleAcceptable === false) {
+    conditions.push('RAMS sample was not acceptable — method statements to be reviewed before each package');
+  }
+  if (input.ramsCapability && !input.ramsCapability.producesInHouse) {
+    conditions.push('RAMS are outsourced — confirm site supervision can discuss and vary the method');
+  }
+  const verified = (input.references ?? []).filter((r) => r.verified);
+  if ((input.references ?? []).length > 0 && verified.length === 0) {
+    conditions.push('References supplied but none verified — an unchecked reference is a claim');
   }
   for (const policy of input.insurances) {
     if (policy.expiresOn >= today && policy.expiresOn < addMonths(today, 3)) {
       conditions.push(`${policy.type.replace(/_/g, ' ').toLowerCase()} expires ${policy.expiresOn} — renewal needed`);
     }
   }
+  for (const card of input.competenceCards ?? []) {
+    if (card.earliestExpiry && card.earliestExpiry < today) {
+      conditions.push(`${card.scheme} cards have lapsed for at least one operative`);
+    }
+  }
+  for (const rate of input.dayRates ?? []) {
+    if (rate.quotedOn < addMonths(today, -12)) {
+      conditions.push(`Day rate for ${rate.role} was quoted ${rate.quotedOn} and should be re-confirmed`);
+    }
+  }
 
-  const status: SupplierStatus =
-    bars.length > 0 ? 'REJECTED' : score >= 70 && conditions.length === 0 ? 'APPROVED' : score >= 50 ? 'CONDITIONAL' : 'REJECTED';
+  // ── Score: judgement within the bars ───────────────────────────────────────
+  const yearsTrading = identity.incorporatedOn
+    ? Math.max(0, Math.floor((Date.parse(today) - Date.parse(identity.incorporatedOn)) / (365.25 * 86_400_000)))
+    : 0;
+
+  let score = 0;
+  score += Math.min(20, yearsTrading * 2);
+  score += input.financial?.accountsFiledUpToDate ? 8 : 0;
+  score += Math.min(20, input.safetyAccreditations.length * 10);
+  score += Math.min(12, input.qualityAccreditations.length * 4);
+  score += Math.min(15, verified.length * 5);
+  score += input.riddorLastThreeYears === 0 ? 15 : Math.max(0, 15 - input.riddorLastThreeYears * 5);
+  score += Math.min(10, (input.competenceCards ?? []).reduce((sum, c) => sum + (c.holders > 0 ? 5 : 0), 0));
+  score = Math.round(Math.min(100, score) * 100) / 100;
+
+  // ── Tier ───────────────────────────────────────────────────────────────────
+  const performance = input.performance;
+  // Strategic is earned on delivery, not on paperwork. Three completed packages
+  // with no dispute is the floor; anybody can assemble a good-looking pack.
+  const strategic =
+    bars.length === 0 &&
+    missing.length === 0 &&
+    conditions.length === 0 &&
+    score >= 80 &&
+    Boolean(performance) &&
+    performance!.packagesCompleted >= 3 &&
+    performance!.disputes === 0 &&
+    (performance!.onTimePercent ?? 0) >= 85;
+
+  const status: SupplierStatus = bars.length > 0
+    ? 'DO_NOT_USE'
+    : strategic
+      ? 'STRATEGIC'
+      : missing.length > 0 || conditions.length > 0
+        ? 'CONDITIONAL'
+        : score >= 60
+          ? 'APPROVED'
+          : 'CONDITIONAL';
+
+  const rationale = bars.length > 0
+    ? `Barred: ${bars.join('; ')}`
+    : strategic
+      ? `Strategic on ${performance!.packagesCompleted} completed packages, no disputes, score ${score}`
+      : missing.length > 0
+        ? `Conditional pending ${missing.join(', ')} at ${scrutiny.toLowerCase()} scrutiny`
+        : conditions.length > 0
+          ? `Conditional: ${conditions.length} condition(s) attached`
+          : `Approved on a score of ${score} at ${scrutiny.toLowerCase()} scrutiny`;
 
   return {
     status,
     score,
+    scrutiny,
     bars,
     conditions,
+    missing,
     approvedTrades: bars.length > 0 ? [] : trades,
     expiresOn: addMonths(today, PREQUALIFICATION_VALID_MONTHS),
-    maxPackageValueMinor: input.maxPackageValueMinor,
+    maxPackageValueMinor: cap,
+    rationale,
   };
 }
-
-// --- Register -----------------------------------------------------------------
 
 function registerProject(ctx: EngineContext): string {
   // The supply chain belongs to the business, not to one project.
@@ -380,7 +649,7 @@ export function registerSupplier(
 export function prequalifySupplier(
   ctx: EngineContext,
   supplierId: string,
-  input: PrequalificationInput & { evidenceHash: string },
+  input: PrequalificationInput & { evidenceHash: string; packageValueMinor?: number },
 ): PrequalificationResult {
   authorise(ctx, 'PROCUREMENT_AWARD', 'A');
 
@@ -390,7 +659,9 @@ export function prequalifySupplier(
     throw new DomainError('SUPPLIER_SUSPENDED', 'A suspended supplier must be reinstated before reassessment');
   }
 
-  const result = assessPrequalification(input, record.state.trades as string[]);
+  const result = assessPrequalification(input, record.state.trades as string[], {
+    ...(input.packageValueMinor === undefined ? {} : { packageValueMinor: input.packageValueMinor }),
+  });
 
   const evidence = registerEvidence(ctx, {
     type: 'PREQUALIFICATION_PACK',
@@ -408,13 +679,35 @@ export function prequalifySupplier(
       status: result.status,
       prequalification: {
         ...result,
-        insurances: input.insurances,
-        safetyAccreditations: input.safetyAccreditations,
-        qualityAccreditations: input.qualityAccreditations,
-        annualTurnoverMinor: input.annualTurnoverMinor,
+        // The whole submission is kept, not just the verdict. "What did they
+        // tell us, and when" is the question asked after something goes wrong.
+        submitted: {
+          identity: input.identity,
+          financial: input.financial,
+          insurances: input.insurances,
+          safetyAccreditations: input.safetyAccreditations,
+          qualityAccreditations: input.qualityAccreditations,
+          accidentFrequencyRate: input.accidentFrequencyRate,
+          riddorLastThreeYears: input.riddorLastThreeYears,
+          enforcementNotices: input.enforcementNotices,
+          ramsCapability: input.ramsCapability,
+          competenceCards: input.competenceCards,
+          training: input.training,
+          references: input.references,
+          capacity: input.capacity,
+          dayRates: input.dayRates,
+          coverage: input.coverage,
+          performance: input.performance,
+        },
         assessedBy: ctx.auth.actorId,
         assessedAt: new Date().toISOString(),
       },
+      // Surfaced on the supplier itself so a search can filter on them without
+      // reading the whole assessment.
+      dayRates: input.dayRates ?? [],
+      coverage: input.coverage,
+      labourByTrade: input.capacity.labourByTrade ?? {},
+      plant: input.capacity.plant ?? [],
       maxPackageValueMinor: result.maxPackageValueMinor,
       prequalifiedUntil: result.expiresOn,
     },
@@ -468,7 +761,7 @@ export function eligibilityProblem(
 
   if (status === 'SUSPENDED') return 'Suspended';
   if (status === 'REGISTERED') return 'Registered but never prequalified';
-  if (status === 'REJECTED') return 'Prequalification rejected';
+  if (status === 'DO_NOT_USE') return 'Do not use — barred';
 
   const until = supplier.prequalifiedUntil as string | undefined;
   if (!until) return 'No prequalification on record';
@@ -547,9 +840,9 @@ export function findSuppliers(
 
 /** Coverage across the trade catalogue: where the supply chain has gaps. */
 export function supplyChainCoverage(ctx: EngineContext): {
-  trades: Array<{ code: string; label: string; group: TradeGroup; eligible: number; registered: number }>;
+  trades: Array<{ code: string; label: string; group: TradeGroup; eligible: number; strategic: number; registered: number }>;
   gaps: string[];
-  totals: { suppliers: number; approved: number; conditional: number; expired: number; suspended: number };
+  totals: { suppliers: number; strategic: number; approved: number; conditional: number; expired: number; suspended: number; doNotUse: number };
 } {
   authorise(ctx, 'PROCUREMENT_AWARD', 'R');
 
@@ -567,6 +860,7 @@ export function supplyChainCoverage(ctx: EngineContext): {
       group: trade.group,
       registered: registered.length,
       eligible: registered.filter((s) => !eligibilityProblem(s, { trade: trade.code, today })).length,
+      strategic: registered.filter((s) => s.status === 'STRATEGIC').length,
     };
   });
 
@@ -577,10 +871,12 @@ export function supplyChainCoverage(ctx: EngineContext): {
     gaps: trades.filter((t) => t.eligible < 3).map((t) => t.label),
     totals: {
       suppliers: suppliers.length,
+      strategic: suppliers.filter((s) => s.status === 'STRATEGIC').length,
       approved: suppliers.filter((s) => s.status === 'APPROVED').length,
       conditional: suppliers.filter((s) => s.status === 'CONDITIONAL').length,
       expired: suppliers.filter((s) => (s.prequalifiedUntil as string | undefined) && String(s.prequalifiedUntil) < today).length,
       suspended: suppliers.filter((s) => s.status === 'SUSPENDED').length,
+      doNotUse: suppliers.filter((s) => s.status === 'DO_NOT_USE').length,
     },
   };
 }

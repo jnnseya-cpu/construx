@@ -219,9 +219,8 @@ describe('8 · Subcontract procurement runs off a prequalified register', () => 
     // prequalification system approves somebody it should not have.
     const result = supplychain.assessPrequalification(
       {
-        annualTurnoverMinor: 20_000_000_00,
-        yearsTrading: 25,
-        accountsFiledUpToDate: true,
+        identity: { companyNumber: '01234567', companyStatus: 'active', incorporatedOn: '2001-01-01', cisStatus: 'GROSS' },
+        financial: { turnoverMinorByYear: [20_000_000_00], accountsFiledUpToDate: true },
         insurances: [
           { type: 'PUBLIC_LIABILITY', insurer: 'A', limitMinor: 1_000_000_000, expiresOn: '2030-01-01' },
           { type: 'EMPLOYERS_LIABILITY', insurer: 'A', limitMinor: 1_000_000_000, expiresOn: '2020-01-01' },
@@ -229,24 +228,23 @@ describe('8 · Subcontract procurement runs off a prequalified register', () => 
         safetyAccreditations: ['CHAS'],
         qualityAccreditations: ['ISO 9001', 'ISO 45001'],
         riddorLastThreeYears: 0,
-        references: 5,
-        maxPackageValueMinor: 10_000_000_00,
+        references: [{ clientName: 'C', projectName: 'P', valueMinor: 1_000_00, verified: true }],
+        capacity: { maxPackageValueMinor: 10_000_000_00 },
         complianceConfirmed: true,
       },
       ['GROUNDWORKS'],
-      '2026-08-19',
+      { today: '2026-08-19' },
     );
 
-    assert.equal(result.status, 'REJECTED');
+    assert.equal(result.status, 'DO_NOT_USE');
     assert.ok(result.bars.some((b) => b.includes('expired')), 'the lapsed policy was not treated as a bar');
     assert.deepEqual(result.approvedTrades, [], 'a rejected firm was still approved for a trade');
   });
 
   it('bars an unaccredited firm from a life-safety trade', () => {
     const base = {
-      annualTurnoverMinor: 5_000_000_00,
-      yearsTrading: 10,
-      accountsFiledUpToDate: true,
+      identity: { companyNumber: '02345678', companyStatus: 'active', incorporatedOn: '2016-01-01', cisStatus: 'GROSS' as const },
+      financial: { turnoverMinorByYear: [5_000_000_00], accountsFiledUpToDate: true },
       insurances: [
         { type: 'PUBLIC_LIABILITY' as const, insurer: 'A', limitMinor: 1_000_000_000, expiresOn: '2030-01-01' },
         { type: 'EMPLOYERS_LIABILITY' as const, insurer: 'A', limitMinor: 1_000_000_000, expiresOn: '2030-01-01' },
@@ -254,16 +252,16 @@ describe('8 · Subcontract procurement runs off a prequalified register', () => 
       safetyAccreditations: [],
       qualityAccreditations: ['ISO 9001'],
       riddorLastThreeYears: 0,
-      references: 3,
-      maxPackageValueMinor: 5_000_000_00,
+      references: [{ clientName: 'C', projectName: 'P', valueMinor: 1_000_00, verified: true }],
+      capacity: { maxPackageValueMinor: 5_000_000_00 },
       complianceConfirmed: true,
     };
 
-    const fireStopping = supplychain.assessPrequalification(base, ['FIRE_STOPPING'], '2026-08-19');
-    const decorating = supplychain.assessPrequalification(base, ['DECORATING'], '2026-08-19');
+    const fireStopping = supplychain.assessPrequalification(base, ['FIRE_STOPPING'], { today: '2026-08-19' });
+    const decorating = supplychain.assessPrequalification(base, ['DECORATING'], { today: '2026-08-19' });
 
-    assert.equal(fireStopping.status, 'REJECTED', 'an unaccredited firm was approved for fire-stopping');
-    assert.notEqual(decorating.status, 'REJECTED', 'decorating does not need third-party accreditation');
+    assert.equal(fireStopping.status, 'DO_NOT_USE', 'an unaccredited firm was approved for fire-stopping');
+    assert.notEqual(decorating.status, 'DO_NOT_USE', 'decorating does not need third-party accreditation');
   });
 
   it('refuses an enquiry to anyone not on the register, and names them', async () => {
@@ -286,9 +284,8 @@ describe('8 · Subcontract procurement runs off a prequalified register', () => 
       contactEmail: 'a@b.example',
     });
     supplychain.prequalifySupplier(pmCtx, supplierId, {
-      annualTurnoverMinor: 2_000_000_00,
-      yearsTrading: 9,
-      accountsFiledUpToDate: true,
+      identity: { companyNumber: '03456789', companyStatus: 'active', incorporatedOn: '2017-01-01', vatNumber: 'GB123', utr: '1234567890', cisStatus: 'GROSS' },
+      financial: { turnoverMinorByYear: [2_000_000_00], accountsFiledUpToDate: true },
       insurances: [
         { type: 'PUBLIC_LIABILITY', insurer: 'A', limitMinor: 1_000_000_000, expiresOn: '2030-01-01' },
         { type: 'EMPLOYERS_LIABILITY', insurer: 'A', limitMinor: 1_000_000_000, expiresOn: '2030-01-01' },
@@ -296,8 +293,9 @@ describe('8 · Subcontract procurement runs off a prequalified register', () => 
       safetyAccreditations: ['CHAS'],
       qualityAccreditations: ['ISO 45001'],
       riddorLastThreeYears: 0,
-      references: 3,
-      maxPackageValueMinor: 1_000_000_00,
+      competenceCards: [{ scheme: 'CISRS', holders: 8 }],
+      references: [{ clientName: 'C', projectName: 'P', valueMinor: 500_00, verified: true }],
+      capacity: { maxPackageValueMinor: 1_000_000_00 },
       complianceConfirmed: true,
       evidenceHash: hashEvidence('pqq-suspended'),
     });
@@ -692,5 +690,168 @@ describe('7 · CDM duties are enforced, not documented', () => {
       position.breaches.some((b) => b.includes('unfilled required section')),
       'a document with holes in it did not appear as a breach',
     );
+  });
+});
+
+// ── 8 · Classification ──────────────────────────────────────────────────────
+
+describe('8 · Strategic / Approved / Conditional / Do Not Use', () => {
+  /** A clean submission at ENHANCED scrutiny, varied per test. */
+  const submission = (over: Partial<supplychain.PrequalificationInput> = {}): supplychain.PrequalificationInput => ({
+    identity: {
+      companyNumber: '01234567', companyStatus: 'active', incorporatedOn: '2006-04-01',
+      vatNumber: 'GB123456789', utr: '1234567890', cisStatus: 'GROSS',
+    },
+    financial: {
+      turnoverMinorByYear: [8_000_000_00, 7_400_000_00, 6_900_000_00],
+      netAssetsMinor: 2_100_000_00, creditScore: 82, creditAgency: 'Creditsafe',
+      accountsFiledUpToDate: true, accountsMadeUpTo: '2026-03-31',
+    },
+    insurances: [
+      { type: 'PUBLIC_LIABILITY', insurer: 'Aviva', limitMinor: 1_000_000_000, expiresOn: '2029-01-01' },
+      { type: 'EMPLOYERS_LIABILITY', insurer: 'Aviva', limitMinor: 1_000_000_000, expiresOn: '2029-01-01' },
+    ],
+    safetyAccreditations: ['CHAS', 'Constructionline Gold'],
+    qualityAccreditations: ['ISO 9001', 'ISO 45001', 'ISO 14001'],
+    riddorLastThreeYears: 0,
+    ramsCapability: { producesInHouse: true, sampleReviewed: true, sampleAcceptable: true },
+    competenceCards: [{ scheme: 'CSCS', holders: 30, earliestExpiry: '2029-01-01' }],
+    training: [{ qualification: 'SMSTS', holders: 3, earliestExpiry: '2030-01-01' }],
+    references: [
+      { clientName: 'A', projectName: 'P1', valueMinor: 2_000_000_00, verified: true, rating: 5 },
+      { clientName: 'B', projectName: 'P2', valueMinor: 1_500_000_00, verified: true, rating: 4 },
+      { clientName: 'C', projectName: 'P3', valueMinor: 900_000_00, verified: true, rating: 5 },
+    ],
+    capacity: { maxPackageValueMinor: 1_000_000_00, maxConcurrentPackages: 3, mobilisationDays: 10 },
+    dayRates: [{ role: 'Groundworker', rateMinor: 220_00, quotedOn: '2026-06-01', basis: 'DAY' }],
+    coverage: { regions: ['North West'], maxTravelMiles: 50 },
+    performance: { packagesCompleted: 6, onTimePercent: 94, disputes: 0 },
+    complianceConfirmed: true,
+    ...over,
+  });
+
+  const assess = (over: Partial<supplychain.PrequalificationInput> = {}, packageValueMinor?: number) =>
+    supplychain.assessPrequalification(submission(over), ['GROUNDWORKS'], {
+      today: '2026-08-19',
+      ...(packageValueMinor === undefined ? {} : { packageValueMinor }),
+    });
+
+  it('scales what it demands to the size of the package', () => {
+    // The whole point of "where proportionate": a two-person firm bidding a
+    // £15k package is not asked for three years of audited accounts.
+    assert.equal(supplychain.scrutinyFor(15_000_00), 'LIGHT');
+    assert.equal(supplychain.scrutinyFor(120_000_00), 'STANDARD');
+    assert.equal(supplychain.scrutinyFor(900_000_00), 'ENHANCED');
+
+    const bare: Partial<supplychain.PrequalificationInput> = {
+      financial: {}, references: [], competenceCards: [], training: [],
+      identity: { companyNumber: '09999999', companyStatus: 'active', incorporatedOn: '2020-01-01', cisStatus: 'GROSS' },
+      capacity: { maxPackageValueMinor: 20_000_00 },
+    };
+
+    const small = assess(bare, 15_000_00);
+    const large = assess(bare, 900_000_00);
+
+    assert.equal(small.scrutiny, 'LIGHT');
+    assert.deepEqual(small.missing, [], 'a small package demanded paperwork it has no business asking for');
+    assert.equal(large.scrutiny, 'ENHANCED');
+    assert.ok(large.missing.length > 5, 'a large package accepted a submission with nothing in it');
+    assert.ok(large.missing.includes('Three years of turnover'));
+    assert.ok(large.missing.includes('Credit reference'));
+  });
+
+  it('earns STRATEGIC on delivery rather than on paperwork', () => {
+    const proven = assess();
+    assert.equal(proven.status, 'STRATEGIC');
+    assert.match(proven.rationale, /completed packages/);
+
+    // Identical pack, no history with this business. Cannot be strategic.
+    const unproven = assess({ performance: { packagesCompleted: 1, onTimePercent: 95, disputes: 0 } });
+    assert.equal(unproven.status, 'APPROVED', 'a firm became strategic on paperwork alone');
+
+    // Proven volume, but a dispute. Strategic is a relationship, not a count.
+    const disputed = assess({ performance: { packagesCompleted: 9, onTimePercent: 95, disputes: 1 } });
+    assert.notEqual(disputed.status, 'STRATEGIC');
+  });
+
+  it('drops to CONDITIONAL for anything worth watching, and says what', () => {
+    const riddor = assess({ riddorLastThreeYears: 1 });
+    assert.equal(riddor.status, 'CONDITIONAL');
+    assert.ok(riddor.conditions.some((c) => c.includes('RIDDOR')));
+
+    const outsourced = assess({ ramsCapability: { producesInHouse: false, sampleReviewed: true, sampleAcceptable: true } });
+    assert.equal(outsourced.status, 'CONDITIONAL');
+    assert.ok(outsourced.conditions.some((c) => c.includes('outsourced')));
+
+    const unverified = assess({
+      references: [{ clientName: 'A', projectName: 'P', valueMinor: 100_00, verified: false }],
+    });
+    assert.ok(unverified.conditions.some((c) => c.includes('none verified')));
+  });
+
+  it('flags a firm whose capacity is most of its year', () => {
+    // One package should not be a firm's survival. Turnover £8m, capacity £5m.
+    const stretched = assess({ capacity: { maxPackageValueMinor: 5_000_000_00 } });
+    assert.ok(
+      stretched.conditions.some((c) => c.includes('40%')),
+      'a package worth most of the firm\'s turnover passed without comment',
+    );
+  });
+
+  it('bars a dissolved company and an unresolved prohibition notice', () => {
+    const dissolved = assess({
+      identity: { companyNumber: '01234567', companyStatus: 'dissolved', incorporatedOn: '2006-04-01', cisStatus: 'GROSS' },
+    });
+    assert.equal(dissolved.status, 'DO_NOT_USE');
+    assert.ok(dissolved.bars.some((b) => b.includes('dissolved')));
+
+    const prohibited = assess({
+      enforcementNotices: [{ type: 'PROHIBITION', issuedOn: '2026-05-01', resolved: false }],
+    });
+    assert.equal(prohibited.status, 'DO_NOT_USE');
+    assert.ok(prohibited.bars.some((b) => b.includes('prohibition')));
+
+    // A resolved improvement notice is a condition, not a bar.
+    const improved = assess({ enforcementNotices: [{ type: 'IMPROVEMENT', issuedOn: '2025-01-01', resolved: true }] });
+    assert.equal(improved.status, 'CONDITIONAL');
+  });
+
+  it('notices a CIS position that costs the subcontractor money', () => {
+    const unregistered = assess({
+      identity: { companyNumber: '01234567', companyStatus: 'active', incorporatedOn: '2006-04-01', vatNumber: 'GB1', utr: '1', cisStatus: 'UNREGISTERED' },
+    });
+    assert.ok(unregistered.conditions.some((c) => c.includes('higher rate')));
+  });
+
+  it('treats a stale day rate as a condition rather than a price', () => {
+    const stale = assess({
+      dayRates: [{ role: 'Groundworker', rateMinor: 180_00, quotedOn: '2024-01-01', basis: 'DAY' }],
+    });
+    assert.ok(stale.conditions.some((c) => c.includes('re-confirmed')));
+  });
+
+  it('keeps the whole submission, not just the verdict', () => {
+    const qsCtx = ctxFor('qs');
+    const suppliers = supplychain.findSuppliers(qsCtx, { trade: 'GROUNDWORKS' });
+    const northstone = suppliers.find((s) => String(s.legalName).includes('Northstone'))!;
+
+    // Searchable without reading the whole assessment.
+    assert.ok(Array.isArray(northstone.dayRates) && (northstone.dayRates as unknown[]).length > 0);
+    assert.ok(((northstone.labourByTrade as Record<string, number>).GROUNDWORKS ?? 0) > 0);
+    assert.ok(Array.isArray(northstone.plant) && (northstone.plant as unknown[]).length > 0);
+
+    // And the submission itself is on the record: what were we told, and when.
+    const submitted = (northstone.prequalification as { submitted: Record<string, unknown> }).submitted;
+    assert.ok(submitted.identity, 'the Companies House and tax identity was not kept');
+    assert.ok(submitted.financial, 'the financial submission was not kept');
+    assert.ok(submitted.references, 'the references were not kept');
+  });
+
+  it('classifies the seeded supply chain into three different tiers', () => {
+    const coverage = supplychain.supplyChainCoverage(ctxFor('qs'));
+
+    assert.equal(coverage.totals.strategic, 1, 'the proven firm should be strategic');
+    assert.equal(coverage.totals.conditional, 1, 'the firm carrying a RIDDOR should be conditional');
+    assert.ok(coverage.totals.approved >= 1);
   });
 });

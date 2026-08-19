@@ -9,6 +9,7 @@ import type { Schema } from '../core/validate.ts';
 import * as business from '../domain/business.ts';
 import * as cdm from '../domain/cdm.ts';
 import * as procurement from '../domain/procurement.ts';
+import * as supplychain from '../domain/supplychain.ts';
 import * as structure from '../domain/structure.ts';
 import * as bim from '../engines/bim.ts';
 import * as claims from '../engines/claims.ts';
@@ -534,6 +535,50 @@ export const ROUTES: Route[] = [
     description: 'Close a snag with photographic evidence',
     handler: (platform, ctx) =>
       quality.closeSnag(projectContext(platform, ctx), ctx.params.snagId as string, body(ctx)),
+  },
+
+  // -------------------------------------------------------- supply chain
+  {
+    method: 'GET',
+    pattern: '/v1/supply-chain/trades',
+    description: 'The trade catalogue, and which trades require third-party accreditation',
+    handler: () => ({ trades: supplychain.TRADES, scrutiny: supplychain.SCRUTINY_THRESHOLDS }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/supply-chain',
+    description: 'Registered suppliers, with why any of them cannot be invited',
+    handler: (platform, ctx) =>
+      ({ suppliers: supplychain.findSuppliers(tenantContext(platform, ctx), {
+        ...(ctx.query.get('trade') ? { trade: ctx.query.get('trade') as string } : {}),
+        includeIneligible: ctx.query.get('all') === 'true',
+      }) }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/supply-chain/coverage',
+    description: 'Coverage across the trade catalogue, and where it is too thin to compete',
+    handler: (platform, ctx) => supplychain.supplyChainCoverage(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/supply-chain/suppliers',
+    description: 'Register a supplier against one or more trades',
+    handler: (platform, ctx) => supplychain.registerSupplier(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/supply-chain/suppliers/:supplierId/prequalify',
+    description: 'Assess a supplier and classify them Strategic, Approved, Conditional or Do Not Use',
+    handler: (platform, ctx) =>
+      supplychain.prequalifySupplier(tenantContext(platform, ctx), ctx.params.supplierId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/supply-chain/suppliers/:supplierId/suspend',
+    description: 'Suspend a supplier immediately, with a reason',
+    handler: (platform, ctx) =>
+      supplychain.suspendSupplier(tenantContext(platform, ctx), ctx.params.supplierId as string, body(ctx)),
   },
 
   // --------------------------------------------------------------------- CDM
