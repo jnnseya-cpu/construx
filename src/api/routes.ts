@@ -12,6 +12,9 @@ import * as procurement from '../domain/procurement.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
+import { morningBriefing } from '../agents/briefing.ts';
+import { AGENT_DIVISIONS, type AgentDivision } from '../agents/types.ts';
+import { AGENTS } from '../agents/registry.ts';
 import * as framework from '../domain/framework.ts';
 import * as lifecycleControl from '../lifecycle/control.ts';
 import * as costModel from '../engines/maths/costModel.ts';
@@ -498,6 +501,31 @@ export const ROUTES: Route[] = [
     pattern: '/v1/radar/run',
     description: 'Screen a batch of tender notices against the company profile',
     handler: (platform, ctx) => radar.runRadar(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/briefing',
+    description: 'The morning briefing — what needs a decision today, across the whole business',
+    handler: (platform, ctx) =>
+      morningBriefing(tenantContext(platform, ctx), {
+        ...(ctx.query.get('name') ? { name: ctx.query.get('name') as string } : {}),
+        ...(ctx.query.get('today') ? { today: ctx.query.get('today') as string } : {}),
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/agents/fleet',
+    description: 'The agent fleet by division, with each mandate',
+    handler: () => ({
+      divisions: AGENT_DIVISIONS.map((d) => ({
+        ...d,
+        agents: AGENTS.filter((a) => a.division === (d.division as AgentDivision)).map((a) => ({
+          name: a.name,
+          purpose: a.purpose,
+          mandate: a.mandate,
+        })),
+      })),
+    }),
   },
   {
     method: 'GET',

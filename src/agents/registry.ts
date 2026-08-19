@@ -32,6 +32,7 @@ const empty: AgentOutput = { findings: [], proposals: [] };
 
 const programmeAgent: AgentDefinition = {
   name: 'programme',
+  division: 'DELIVERY',
   purpose: 'Watches the critical path and the delay forecast, and proposes the cheapest recovery that is actually applicable.',
   mandate: {
     reads: ['PROGRAMME_BASELINES', 'WORKPACKAGES_TASKS', 'FIELD_EXECUTION'],
@@ -108,6 +109,7 @@ const programmeAgent: AgentDefinition = {
 
 const commercialAgent: AgentDefinition = {
   name: 'commercial',
+  division: 'DELIVERY',
   purpose: 'Watches margin, cost against budget and the certified-versus-paid position, and proposes a CVR refresh when the picture has moved.',
   mandate: {
     reads: ['BUDGET_COST', 'PAYMENT_APPLICATIONS', 'CHANGE_VARIATION'],
@@ -189,6 +191,7 @@ const commercialAgent: AgentDefinition = {
 
 const riskAgent: AgentDefinition = {
   name: 'risk',
+  division: 'DELIVERY',
   purpose: 'Watches the risk register and the leading safety indicators, and proposes a contingency reassessment when exposure moves.',
   mandate: {
     reads: ['RISK_REGISTER', 'SAFETY_RAMS'],
@@ -267,6 +270,7 @@ const riskAgent: AgentDefinition = {
 
 const contractsAgent: AgentDefinition = {
   name: 'contracts',
+  division: 'DELIVERY',
   purpose: 'Watches notices against their time bars and change against its downstream effect. A missed time bar cannot be recovered by argument.',
   mandate: {
     reads: ['CONTRACTS_CLAIMS', 'CHANGE_VARIATION', 'PAYMENT_APPLICATIONS'],
@@ -346,6 +350,7 @@ const contractsAgent: AgentDefinition = {
 
 const designAgent: AgentDefinition = {
   name: 'design',
+  division: 'DELIVERY',
   purpose: 'Watches clashes and design maturity, and keeps the cost of fixing something once built in front of whoever can still avoid it.',
   mandate: {
     reads: ['BIM_TWIN', 'DESIGN_INFORMATION'],
@@ -391,6 +396,7 @@ const designAgent: AgentDefinition = {
 
 const fieldAgent: AgentDefinition = {
   name: 'field',
+  division: 'DELIVERY',
   purpose: 'Watches measurement coverage and open snags, because a forecast built on thin data is a guess wearing a number.',
   mandate: {
     reads: ['FIELD_EXECUTION', 'WORKPACKAGES_TASKS', 'QUALITY_COMMISSIONING'],
@@ -436,6 +442,7 @@ const fieldAgent: AgentDefinition = {
 
 const handoverAgent: AgentDefinition = {
   name: 'handover',
+  division: 'DELIVERY',
   purpose: 'Watches handover completeness, defects under warranty and the maintenance forecast across the operating life.',
   mandate: {
     reads: ['HANDOVER_OM', 'QUALITY_COMMISSIONING'],
@@ -507,6 +514,7 @@ const handoverAgent: AgentDefinition = {
 
 const tenderAgent: AgentDefinition = {
   name: 'tender',
+  division: 'BID',
   purpose: 'Watches the tender position — estimate currency, return variance and award conditions that were never closed out.',
   mandate: {
     reads: ['ESTIMATE_TENDER', 'PROCUREMENT_AWARD', 'BOQ_TAKEOFF'],
@@ -565,7 +573,251 @@ const tenderAgent: AgentDefinition = {
   },
 };
 
+
+// ------------------------------------------------------------- market intel
+
+/**
+ * Watches the last radar run for opportunities running out of time.
+ *
+ * Screening finds what is worth reading; this notices when something worth
+ * reading has been sat on. The commonest way a small contractor loses a job it
+ * should have won is not losing it — it is failing to return it.
+ */
+const radarAgent: AgentDefinition = {
+  name: 'radar',
+  division: 'MARKET_INTEL',
+  purpose: 'Watches shortlisted opportunities against their return dates, and the requirements that keep disqualifying the business.',
+  mandate: {
+    reads: ['BUSINESS_DEVELOPMENT'],
+    proposes: ['BUSINESS_DEVELOPMENT'],
+    approvers: ['OWNER', 'EPC', 'PM'],
+    maxUnattended: 'OBSERVE',
+  },
+  evaluate(ctx) {
+    const findings: Finding[] = [];
+    const run = ctx.ledger
+      .list(`${ctx.tenantId}-governance`, 'RadarRun')
+      .filter((r) => r.tenantId === ctx.tenantId)
+      .at(-1);
+    if (!run) return empty;
+
+    type Screened = { reference: string; title: string; daysToDeadline: number; eligible: boolean; estimatedValueMinor: number; qualification: { score: number; recommendation: string } };
+    const results = (run.state.results ?? []) as Screened[];
+
+    const closing = results.filter((r) => r.eligible && r.qualification.recommendation !== 'NO_BID' && r.daysToDeadline >= 0 && r.daysToDeadline <= 14);
+    for (const item of closing) {
+      findings.push({
+        key: `radar:closing:${item.reference}`,
+        severity: item.daysToDeadline <= 7 ? 'URGENT' : 'ATTENTION',
+        summary: `${item.title} closes in ${item.daysToDeadline} day${item.daysToDeadline === 1 ? '' : 's'} and scored ${item.qualification.score}`,
+        consequence: `${money(item.estimatedValueMinor)} of work the screening said was worth reading. A bid not returned is a bid lost without the courtesy of losing it.`,
+        evidence: [{ refType: 'RadarRun', refId: run.refId, note: `${item.reference} — ${item.daysToDeadline} days to the deadline` }],
+      });
+    }
+
+    // The same requirement disqualifying the business repeatedly is a decision
+    // about the company, not about any one bid, and it belongs in front of
+    // whoever can actually change it.
+    const reasons = new Map<string, number>();
+    for (const item of results.filter((r) => !r.eligible)) {
+      for (const failure of (item as unknown as { eligibilityFailures: Array<{ requirement: string }> }).eligibilityFailures ?? []) {
+        reasons.set(failure.requirement, (reasons.get(failure.requirement) ?? 0) + 1);
+      }
+    }
+    for (const [requirement, count] of reasons) {
+      if (count < 2) continue;
+      findings.push({
+        key: `radar:systemic:${requirement}`,
+        severity: 'ATTENTION',
+        summary: `${requirement} disqualified the business from ${count} opportunities in one run`,
+        consequence: 'Closing this gap changes what the business can chase at all. Nothing on any single bid will fix it.',
+        evidence: [{ refType: 'RadarRun', refId: run.refId, note: `${count} of ${results.length} screened` }],
+      });
+    }
+
+    return { findings, proposals: [] };
+  },
+};
+
+// ---------------------------------------------------------------- bid engine
+
+/**
+ * Watches the pipeline for decisions nobody has taken.
+ *
+ * An opportunity scored and left is worse than one never looked at: the work of
+ * qualifying it has been spent and none of the benefit collected.
+ */
+const pipelineAgent: AgentDefinition = {
+  name: 'pipeline',
+  division: 'BID',
+  purpose: 'Watches qualified opportunities awaiting a bid decision, and bids taken against the algorithm.',
+  mandate: {
+    reads: ['BUSINESS_DEVELOPMENT'],
+    proposes: ['BUSINESS_DEVELOPMENT'],
+    approvers: ['OWNER', 'EPC'],
+    maxUnattended: 'OBSERVE',
+  },
+  evaluate(ctx) {
+    const findings: Finding[] = [];
+    const opportunities = ctx.ledger
+      .list(`${ctx.tenantId}-governance`, 'Opportunity')
+      .filter((r) => r.tenantId === ctx.tenantId);
+
+    for (const record of opportunities) {
+      const state = record.state;
+      if (state.stage !== 'QUALIFIED') continue;
+      const qualification = state.qualification as { score: number; recommendation: string } | undefined;
+      if (!qualification) continue;
+
+      findings.push({
+        key: `pipeline:undecided:${record.refId}`,
+        severity: qualification.recommendation === 'BID' ? 'ATTENTION' : 'INFO',
+        summary: `${String(state.title)} scored ${qualification.score} and has no bid decision`,
+        consequence: `The cost of qualifying it has been spent. ${qualification.recommendation === 'BID' ? 'The algorithm says chase it.' : 'Deciding not to is still a decision worth recording.'}`,
+        evidence: [{ refType: 'Opportunity', refId: record.refId, note: `${qualification.recommendation} at ${qualification.score}/100` }],
+      });
+    }
+
+    return { findings, proposals: [] };
+  },
+};
+
+// -------------------------------------------------------------- supply chain
+
+/**
+ * Watches whether the business can still buy what it sells.
+ *
+ * Expiries are the quiet failure. A supplier whose insurance lapsed is still on
+ * the register, still looks approved, and cannot lawfully be sent an enquiry —
+ * and nobody finds out until the enquiry is refused on the day it was needed.
+ */
+const supplyChainAgent: AgentDefinition = {
+  name: 'supply-chain',
+  division: 'SUPPLY_CHAIN',
+  purpose: 'Watches supplier eligibility, trades too thin to compete, and frameworks running out of term.',
+  mandate: {
+    reads: ['PROCUREMENT_AWARD'],
+    proposes: ['PROCUREMENT_AWARD'],
+    approvers: ['OWNER', 'EPC', 'QS', 'PM'],
+    maxUnattended: 'OBSERVE',
+  },
+  evaluate(ctx) {
+    const findings: Finding[] = [];
+    const register = `${ctx.tenantId}-governance`;
+    const today = new Date().toISOString().slice(0, 10);
+
+    const suppliers = ctx.ledger.list(register, 'Supplier').filter((r) => r.tenantId === ctx.tenantId);
+    for (const supplier of suppliers) {
+      const expiry = supplier.state.prequalificationExpiresOn;
+      if (typeof expiry !== 'string') continue;
+      const daysLeft = Math.ceil((Date.parse(expiry) - Date.parse(today)) / 86_400_000);
+      if (daysLeft > 60 || daysLeft < 0) continue;
+      findings.push({
+        key: `supply-chain:lapsing:${supplier.refId}`,
+        severity: daysLeft <= 30 ? 'ATTENTION' : 'INFO',
+        summary: `${String(supplier.state.legalName)} lapses in ${daysLeft} days`,
+        consequence: 'A lapsed firm cannot be sent an enquiry, and it will be found out on the day the enquiry was needed.',
+        evidence: [{ refType: 'Supplier', refId: supplier.refId, note: `Prequalification expires ${expiry}` }],
+      });
+    }
+
+    const frameworks = ctx.ledger.list(register, 'Framework').filter((r) => r.tenantId === ctx.tenantId);
+    for (const framework of frameworks) {
+      const endsOn = String(framework.state.endsOn ?? '');
+      if (!endsOn) continue;
+      const daysLeft = Math.ceil((Date.parse(endsOn) - Date.parse(today)) / 86_400_000);
+      if (daysLeft > 180 || daysLeft < 0) continue;
+      findings.push({
+        key: `supply-chain:framework-expiry:${framework.refId}`,
+        severity: daysLeft <= 90 ? 'ATTENTION' : 'INFO',
+        summary: `${String(framework.state.reference)} expires in ${daysLeft} days`,
+        consequence: 'Re-tendering a framework takes longer than people expect, and the gap is bought at spot rates.',
+        evidence: [{ refType: 'Framework', refId: framework.refId, note: `Term ends ${endsOn}` }],
+      });
+    }
+
+    return { findings, proposals: [] };
+  },
+};
+
+// ---------------------------------------------------------------------- HSEQ
+
+/**
+ * Watches the duties that are legal obligations rather than good practice.
+ *
+ * Everything else an agent finds costs money. These cost prosecutions, so they
+ * are raised as urgent whatever else is on the list.
+ */
+const hseqAgent: AgentDefinition = {
+  name: 'hseq',
+  division: 'DELIVERY',
+  purpose: 'Watches the Construction Phase Plan, RIDDOR answers and competency expiry — the duties that are law rather than preference.',
+  mandate: {
+    reads: ['SAFETY_RAMS', 'QUALITY_COMMISSIONING'],
+    proposes: ['SAFETY_RAMS'],
+    approvers: ['OWNER', 'EPC', 'PM', 'SAFETY'],
+    maxUnattended: 'OBSERVE',
+  },
+  evaluate(ctx) {
+    const findings: Finding[] = [];
+    const phase = latest(ctx, 'Project');
+
+    // No construction work without an approved Construction Phase Plan. This is
+    // a CDM duty, not a preference, and the platform already refuses the work —
+    // the agent's job is to say so before somebody is standing on site.
+    const plans = list(ctx, 'CDMDocument').filter(
+      (d) => d.state.type === 'CONSTRUCTION_PHASE_PLAN' && d.state.status === 'APPROVED',
+    );
+    const projectPhase = String((phase as Record<string, unknown> | undefined)?.phase ?? '');
+    if (plans.length === 0 && ['CONSTRUCTION', 'COMMISSIONING'].includes(projectPhase)) {
+      findings.push({
+        key: 'hseq:no-cpp',
+        severity: 'URGENT',
+        summary: 'No approved Construction Phase Plan on a project in construction',
+        consequence: 'Construction work and site inductions are both refused without one, and the duty sits with the Principal Contractor personally.',
+        evidence: [{ refType: 'Project', refId: ctx.projectId, note: `Project is in ${projectPhase}` }],
+      });
+    }
+
+    // An incident where the RIDDOR question was never answered is an incident
+    // that may be an unreported one.
+    for (const incident of list(ctx, 'Incident')) {
+      if (incident.state.riddorReportable !== undefined) continue;
+      findings.push({
+        key: `hseq:riddor-unanswered:${incident.refId}`,
+        severity: 'URGENT',
+        summary: `Incident ${String(incident.state.reference ?? incident.refId)} has no RIDDOR determination`,
+        consequence: 'A reportable incident not reported inside the statutory period is an offence in itself.',
+        evidence: [{ refType: 'Incident', refId: incident.refId, note: 'RIDDOR question unanswered' }],
+      });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    for (const training of list(ctx, 'TrainingRecord')) {
+      const expiry = training.state.expiresOn;
+      if (typeof expiry !== 'string') continue;
+      const daysLeft = Math.ceil((Date.parse(expiry) - Date.parse(today)) / 86_400_000);
+      if (daysLeft > 45) continue;
+      findings.push({
+        key: `hseq:training-expiry:${training.refId}`,
+        severity: daysLeft < 0 ? 'URGENT' : 'ATTENTION',
+        summary: `${String(training.state.competency ?? 'A competency')} for ${String(training.state.personName ?? 'an operative')} ${daysLeft < 0 ? 'has expired' : `expires in ${daysLeft} days`}`,
+        consequence: 'A lapsed competency reads exactly like one nobody held, and it is the operative who is stopped at the gate.',
+        evidence: [{ refType: 'TrainingRecord', refId: training.refId, note: `Expires ${expiry}` }],
+      });
+    }
+
+    return { findings, proposals: [] };
+  },
+};
+
 export const AGENTS: AgentDefinition[] = [
+  // Market intelligence — what work is out there.
+  radarAgent,
+  // Bid engine — should we chase it, and at what price.
+  pipelineAgent,
+  tenderAgent,
+  // Delivery engine — are the jobs we have going wrong.
   programmeAgent,
   commercialAgent,
   riskAgent,
@@ -573,8 +825,14 @@ export const AGENTS: AgentDefinition[] = [
   designAgent,
   fieldAgent,
   handoverAgent,
-  tenderAgent,
+  hseqAgent,
+  // Supply chain — can we still buy what we sell.
+  supplyChainAgent,
 ];
+
+export function agentsByDivision(division: AgentDefinition['division']): AgentDefinition[] {
+  return AGENTS.filter((a) => a.division === division);
+}
 
 export function agentByName(name: string): AgentDefinition | undefined {
   return AGENTS.find((a) => a.name === name);

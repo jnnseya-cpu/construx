@@ -103,8 +103,28 @@ export type AgentMandate = {
   maxUnattended: AutonomyLevel;
 };
 
+/**
+ * Where an agent sits in the fleet.
+ *
+ * The divisions are not decoration. They are the answer to "who is watching
+ * what", and they map onto the three questions a contracting business actually
+ * runs on: what work is out there, should we chase it and at what price, and
+ * are the jobs we already have going wrong. The supply chain sits under all
+ * three because it is the constraint on all three.
+ */
+export type AgentDivision = 'MARKET_INTEL' | 'BID' | 'DELIVERY' | 'SUPPLY_CHAIN';
+
+export const AGENT_DIVISIONS: Array<{ division: AgentDivision; label: string; question: string }> = [
+  { division: 'MARKET_INTEL', label: 'Market intelligence', question: 'What work is out there, and which of it could we actually win?' },
+  { division: 'BID', label: 'Bid engine', question: 'Should we chase this, at what price, and can we fund it?' },
+  { division: 'DELIVERY', label: 'Delivery engine', question: 'Are the jobs we already have going wrong, and how early can we tell?' },
+  { division: 'SUPPLY_CHAIN', label: 'Supply chain', question: 'Can we still buy what we sell?' },
+];
+
 export type AgentDefinition = {
   name: string;
+  /** Which division this agent reports into. */
+  division: AgentDivision;
   /** One sentence: what this agent is for. Shown to the approver. */
   purpose: string;
   mandate: AgentMandate;

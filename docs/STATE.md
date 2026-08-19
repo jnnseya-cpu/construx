@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 436 passing, 0 failing, across 19 files |
+| Tests | 451 passing, 0 failing, across 20 files |
 | Typecheck | clean |
-| Backend | 69 TypeScript files, 26,188 lines |
-| Application | 26 ES modules, 5,836 lines (plus a service worker) |
-| API routes | 168 |
+| Backend | 70 TypeScript files, 26,845 lines |
+| Application | 26 ES modules, 5,906 lines (plus a service worker) |
+| API routes | 170 |
 | Event types | 165, closed catalogue |
 | Entity types | 107, all classified for access |
 | Runtime dependencies | none |
@@ -78,21 +78,52 @@ design, programme, change and handover. Daily site record. Canonical enum
 dropdowns. Evidence hashed with SHA-256 in the browser. Denials are shown as
 denials, never as empty records.
 
-**Agent runtime — autopilot with a human gate.** Eight agents, one per engine,
-each with a mandate naming what it may read, what it may propose in, and which
-roles may decide. They run over materialised state, raise findings that name the
-records they were read from, and propose the command they want run. Then they
-stop.
+**Agent runtime — autopilot with a human gate.** Twelve agents across four
+divisions, each with a mandate naming what it may read, what it may propose in,
+and which roles may decide. The divisions are the answer to "who is watching
+what": *market intelligence* (what work is out there), *bid engine* (should we
+chase it, at what price, can we fund it), *delivery engine* (are the jobs we
+have going wrong, and how early can we tell), and *supply chain* (can we still
+buy what we sell). Eight of them are one per engine. They run over materialised
+state, raise findings that name the records they were read from, and propose the
+command they want run. Then they stop.
 
-Three rules hold it: an agent never writes project state; an agent cannot
-propose outside its mandate, checked by the runtime rather than by the agent;
-and an agent cannot decide. Approval needs both the capability the command
-exercises *and* standing as a nominated approver — reading is not authorising.
-The event catalogue refuses an AI actor authoring an approval, so the guard
-holds even if the runtime one were bypassed. Approved commands run as the
-approving human through the same engine path any manual command takes. A
+Three rules hold the runtime: an agent never writes project state; an agent
+cannot propose outside its mandate, checked by the runtime rather than by the
+agent; and an agent cannot decide. Approval needs both the capability the
+command exercises *and* standing as a nominated approver — reading is not
+authorising. The event catalogue refuses an AI actor authoring an approval, so
+the guard holds even if the runtime one were bypassed. Approved commands run as
+the approving human through the same engine path any manual command takes. A
 rejection needs a reason and stays in the record. Repeat findings are suppressed
 rather than raised again.
+
+The four watchers added for the front end — radar, pipeline, supply chain and
+HSEQ — are observation-only, because none of them can fix what they see. The
+radar notices a shortlisted opportunity running out of days, and a requirement
+that disqualified the business more than once in a single run. The pipeline
+notices an opportunity scored and left, which is worse than one never looked at
+because the qualifying is already paid for. Supply chain watches prequalification
+and framework expiry, the quiet failure found out on the day an enquiry was
+needed. HSEQ watches the duties that are law rather than preference — an
+unapproved Construction Phase Plan, an unanswered RIDDOR question, a lapsed
+competency — and raises them as urgent whatever else is on the list.
+
+**The morning briefing.** The only screen that answers a question no other one
+asks: *what should I do today?* Everything else answers a question about one
+subject; a person running a contracting business has a morning and a list of
+things that will cost money if nobody touches them. It reads across the whole
+tenant, states figures rather than moods, orders by urgency then by value, gives
+every action a record it can be checked against, and says plainly when there is
+nothing to do.
+
+There is no model anywhere in that path — the one screen somebody acts on before
+coffee is arithmetic. Where the platform does not hold a number it stays silent
+rather than reporting a confident zero: the payment cycle holds statutory dates
+rather than applied sums, so the briefing gives the date and no figure. Building
+it caught four fields being read under names the engines do not write — a delay
+forecast reading zero on a project forecasting fifty days, and £1.4m of margin
+erosion invisible because the cost report holds it as a percentage.
 
 **Weekly newsletter.** A role-targeted issue about what the platform does,
 composed from the real feature set and linking only to screens that exist — a

@@ -15,7 +15,11 @@ const PHASES = ['CONCEPT', 'DESIGN', 'TENDER', 'CONSTRUCTION', 'COMMISSIONING', 
 export async function overview(root) {
   const projectId = state.session.projectId;
 
-  const [bundle, events] = await Promise.all([
+  const [briefing, bundle, events] = await Promise.all([
+    // The greeting uses the signed-in person's own name. A briefing addressed
+    // to nobody reads like a report; addressed to somebody it reads like a
+    // handover, which is what it is.
+    api.get(`/v1/briefing?name=${encodeURIComponent((state.session.user?.name ?? '').split(' ')[0] ?? '')}`).catch(() => null),
     entityBundle(projectId, [
       'CVR',
       'EarnedValueSnapshot',
@@ -87,6 +91,72 @@ export async function overview(root) {
           <button class="btn" data-nav="audit">Verify the record</button>
         </div>
       </div>
+
+      ${
+        briefing
+          ? html`
+            <div class="card" style="margin-bottom:14px">
+              <h3>${briefing.greeting} ${badge(briefing.asAt, '')}</h3>
+              <p style="font-size:13px;color:var(--text-2);margin:2px 0 13px">${briefing.headline}</p>
+
+              <div class="grid g4" style="margin-bottom:13px">
+                <div>
+                  <div class="metric">${briefing.market.detected}</div>
+                  <div class="metric-sub">opportunities screened, ${briefing.market.rejected} rejected before anybody read them</div>
+                </div>
+                <div>
+                  <div class="metric orange">${briefing.market.recommended.length}</div>
+                  <div class="metric-sub">recommended to bid</div>
+                </div>
+                <div>
+                  <div class="metric ${raw(briefing.money.marginErosionMinor > 0 ? 'bad' : 'good')}">${money(briefing.money.marginErosionMinor)}</div>
+                  <div class="metric-sub">margin gone since tender, across every job</div>
+                </div>
+                <div>
+                  <div class="metric ${raw(briefing.delivery.worstDelayDays > 0 ? 'warn' : 'good')}">${days(briefing.delivery.worstDelayDays)}</div>
+                  <div class="metric-sub">worst forecast delay${briefing.delivery.worstDelayProject ? ` — ${briefing.delivery.worstDelayProject}` : ''}</div>
+                </div>
+              </div>
+
+              ${
+                briefing.market.recommended.length > 0
+                  ? html`<div class="split-list" style="margin-bottom:13px">
+                      ${briefing.market.recommended.map(
+                        (b) => html`<div class="row">
+                          <span class="lbl">${b.title} — ${b.region} — ${b.daysToDeadline}d left</span>
+                          <span class="val">${money(b.valueMinor)} · ${b.score}%</span>
+                        </div>`,
+                      )}
+                    </div>`
+                  : ''
+              }
+
+              ${
+                briefing.actions.length === 0
+                  ? html`<div class="empty"><b>Nothing needs a decision today</b>That is a real answer, not an empty screen.</div>`
+                  : table({
+                      headers: ['', 'Do this', 'Because', 'By'],
+                      align: ['', '', '', ''],
+                      rows: briefing.actions.map((a) => [
+                        badge(a.severity, a.severity === 'URGENT' ? 'bad' : a.severity === 'ATTENTION' ? 'warn' : ''),
+                        a.action,
+                        html`<span style="font-size:12px;color:var(--text-3)">${a.because}</span>`,
+                        a.dueBy ? date(a.dueBy) : '—',
+                      ]),
+                    })
+              }
+
+              <div class="split-list" style="margin-top:11px">
+                ${briefing.fleet.map(
+                  (f) => html`<div class="row">
+                    <span class="lbl">${f.label}</span>
+                    <span class="val">${f.agents} agent${f.agents === 1 ? '' : 's'}${f.openFindings > 0 ? ` · ${f.openFindings} open` : ''}</span>
+                  </div>`,
+                )}
+              </div>
+            </div>`
+          : ''
+      }
 
       <div class="card" style="margin-bottom:14px">
         <h3>Lifecycle</h3>
