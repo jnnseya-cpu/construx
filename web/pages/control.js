@@ -15,12 +15,13 @@ import { state } from '../app.js';
  * they are the platform's gap, not the project's.
  */
 
-const STATUS_TONE = { PRESENT: 'ok', MISSING: 'bad', NOT_YET_DUE: '', NOT_TRACKED: '' };
+const STATUS_TONE = { PRESENT: 'ok', MISSING: 'bad', NOT_YET_DUE: '', NOT_TRACKED: '', NOT_PROPORTIONATE: '' };
 const STATUS_LABEL = {
   PRESENT: 'in place',
   MISSING: 'MISSING',
   NOT_YET_DUE: 'not yet due',
   NOT_TRACKED: 'not tracked',
+  NOT_PROPORTIONATE: 'not at this size',
 };
 
 const KIND_TONE = { WENT_WRONG: 'bad', WENT_WELL: 'ok' };
@@ -41,13 +42,14 @@ export async function control(root) {
         <div>
           <h1>Project Control</h1>
           <p>
-            One standard, every project. Four stages, ${project.stages.reduce((n, s) => n + s.items.length, 0)} items, measured
-            against what the Golden Thread can actually evidence — and honest about what it cannot.
+            One standard, every project — sized to the job. ${project.applicableItems} of
+            ${project.stages.reduce((n, s) => n + s.items.length, 0)} items apply to a ${project.projectScaleLabel} project, measured
+            against what the Golden Thread can actually evidence and honest about what it cannot.
           </p>
         </div>
       </div>
 
-      <div class="grid g4" style="margin-bottom:14px">
+      <div class="grid g5" style="margin-bottom:14px">
         <div class="card">
           <h3>This project</h3>
           <div class="metric ${raw(
@@ -62,6 +64,14 @@ export async function control(root) {
             ${project.blockingGaps.length > 0
               ? `${project.blockingGaps.length} of them stop the project moving on.`
               : 'None of them stop the project moving on — the rest is discipline.'}
+          </div>
+        </div>
+        <div class="card">
+          <h3>Not at this size</h3>
+          <div class="metric">${project.stages.reduce((n, s) => n + s.notProportionate, 0)}</div>
+          <div class="metric-sub">
+            A ${project.projectScaleLabel} job does not need a programme baseline or a document control procedure. Demanding
+            them is how a standard gets ignored.
           </div>
         </div>
         <div class="card">
@@ -101,12 +111,15 @@ export async function control(root) {
               headers: ['Item', 'Status', 'Found', 'Why it is on the list'],
               align: ['', '', 'num', ''],
               rows: stage.items.map((item) => [
-                item.status === 'NOT_TRACKED'
+                item.status === 'NOT_TRACKED' || item.status === 'NOT_PROPORTIONATE'
                   ? html`<span style="color:var(--text-3)">${item.label}</span>`
                   : html`${item.label}${item.gateEnforced ? badge('gate', 'info') : ''}`,
                 badge(STATUS_LABEL[item.status], STATUS_TONE[item.status]),
                 item.found === undefined ? '—' : `${item.found} ${item.counts}`,
-                html`<span style="font-size:12px;color:var(--text-3)">${item.notTrackedReason ?? item.purpose}</span>`,
+                html`<span style="font-size:12px;color:var(--text-3)">${
+                  item.notTrackedReason ??
+                  (item.status === 'NOT_PROPORTIONATE' ? `Applies from ${item.appliesFrom.toLowerCase()} projects upwards` : item.purpose)
+                }</span>`,
               ]),
             })}
           </div>

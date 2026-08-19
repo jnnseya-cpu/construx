@@ -15,10 +15,10 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 417 passing, 0 failing, across 18 files |
+| Tests | 436 passing, 0 failing, across 19 files |
 | Typecheck | clean |
-| Backend | 68 TypeScript files, 25,829 lines |
-| Application | 26 ES modules, 5,823 lines (plus a service worker) |
+| Backend | 69 TypeScript files, 26,188 lines |
+| Application | 26 ES modules, 5,836 lines (plus a service worker) |
 | API routes | 168 |
 | Event types | 165, closed catalogue |
 | Entity types | 107, all classified for access |
@@ -126,6 +126,39 @@ network-first for navigation, verified by test and in a browser.
 Regenerate the assets with `node tools/icons.mjs` after any brand change. The
 PNG encoder is in that file: `node:zlib` is built in, so it was shorter than the
 argument for a dependency.
+
+**One platform, sole trader to multi-billion.** The same operating system runs a
+sole trader fitting a £3,000 bathroom and a joint venture delivering a £2bn
+programme. That is not a matter of hiding features — it is a matter of no
+threshold in the platform being an absolute money figure, because an absolute
+threshold is always wrong at one end.
+
+`src/lifecycle/scale.ts` is the single place the platform decides how big
+something is: five project bands from under £25k to over £250m, six organisation
+bands from a sole trader under £250k to a Tier 1 over £500m, and the
+proportionality rules that follow. Everything else derives from it. The
+organisation bands used to start at "under £5m", which treated a £40k business
+as a rounding error; they now start where the real users do.
+
+Three things scale from it. **The control standard** marks each of its 36 items
+with the smallest project it is proportionate on — a £3,000 repair is measured
+against 6 items and a £2bn programme against all 36, and an item below the line
+is `NOT_PROPORTIONATE` rather than missing. **The cost model** marks each of its
+20 heads the same way, so a bathroom is not told it has omitted commissioning
+and temporary works; 13 heads simply do not apply, and the one real omission is
+not buried under them. **Quote counts and supplier scrutiny** follow the size of
+what is being bought: one quote for a skip, three for a package that matters.
+
+The part that only a ratio can express is the last one. A £400k package is
+routine for a £30m contractor and a bet-the-company decision for a £600k one —
+same package, different conversation about payment terms and bonding — so
+scrutiny rises with exposure to turnover regardless of the absolute figure.
+Exposure is annualised where the duration is known, because a £2bn programme
+over five years is £400m a year rather than 222% of one year's revenue.
+
+A project whose value nobody recorded is measured against the whole standard.
+Quietly excusing items on a job that might be enormous is the more dangerous
+failure.
 
 **The corporate project control standard.** Every project runs through the same
 four stages — preconstruction, mobilisation, delivery, completion — and the same

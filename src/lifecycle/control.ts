@@ -1,4 +1,5 @@
 import { LIFECYCLE_ORDER, phaseIndex, type LifecyclePhase } from './phases.ts';
+import { atLeastProject, projectBand, projectScale, type ProjectScale } from './scale.ts';
 
 /**
  * The corporate project control standard.
@@ -55,7 +56,7 @@ export const CONTROL_STAGES: Array<{ stage: ControlStage; label: string; purpose
   },
 ];
 
-export type ControlItemStatus = 'PRESENT' | 'MISSING' | 'NOT_YET_DUE' | 'NOT_TRACKED';
+export type ControlItemStatus = 'PRESENT' | 'MISSING' | 'NOT_YET_DUE' | 'NOT_TRACKED' | 'NOT_PROPORTIONATE';
 
 export type ControlItem = {
   id: string;
@@ -84,6 +85,16 @@ export type ControlItem = {
    * in `phases.ts` remains the only thing that enforces.
    */
   gateEnforced?: boolean;
+  /**
+   * The smallest project this item is proportionate on. A programme baseline,
+   * a document control procedure and a written cost report are all correct on a
+   * hospital and all absurd on a two-day repair — demanding them anyway is how
+   * a control standard gets ignored by the people it is meant to help.
+   *
+   * Defaults to MINOR: an item with no floor applies to everything, which is
+   * the right default for scope, RAMS and the record of what was built.
+   */
+  appliesFrom?: ProjectScale;
 };
 
 const any = (): boolean => true;
@@ -108,6 +119,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'PRE.DRAWINGS',
+    appliesFrom: 'SMALL',
     stage: 'PRECONSTRUCTION',
     label: 'Drawings',
     purpose: 'The information the work is priced and built from, at a known revision.',
@@ -116,6 +128,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'PRE.SPECIFICATIONS',
+    appliesFrom: 'MEDIUM',
     stage: 'PRECONSTRUCTION',
     label: 'Specifications',
     purpose: 'The standard the work is measured against when somebody says it is not good enough.',
@@ -124,6 +137,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'PRE.SURVEYS',
+    appliesFrom: 'MEDIUM',
     stage: 'PRECONSTRUCTION',
     label: 'Surveys',
     purpose: 'Ground, topographic, asbestos, measured. What was not surveyed becomes a claim.',
@@ -133,6 +147,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'PRE.CONSTRAINTS',
+    appliesFrom: 'SMALL',
     stage: 'PRECONSTRUCTION',
     label: 'Constraints',
     purpose: 'Access, possessions, permits, neighbours, operating restrictions — the things that decide the programme.',
@@ -141,6 +156,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'PRE.RISK_REGISTER',
+    appliesFrom: 'SMALL',
     stage: 'PRECONSTRUCTION',
     label: 'Risk register',
     purpose: 'Quantified risk. Without it, contingency is a number somebody liked.',
@@ -149,6 +165,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'PRE.PROGRAMME',
+    appliesFrom: 'SMALL',
     stage: 'PRECONSTRUCTION',
     label: 'Programme',
     purpose: 'The sequence and duration the price was built on.',
@@ -157,6 +174,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'PRE.PROCUREMENT_SCHEDULE',
+    appliesFrom: 'MEDIUM',
     stage: 'PRECONSTRUCTION',
     label: 'Procurement schedule',
     purpose: 'When each package must be enquired, returned and let to hold the programme.',
@@ -166,6 +184,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'PRE.DESIGN_RESPONSIBILITIES',
+    appliesFrom: 'MEDIUM',
     stage: 'PRECONSTRUCTION',
     label: 'Design responsibilities',
     purpose: 'Who designs what. The gap between two parties each assuming the other did is where liability sits.',
@@ -202,6 +221,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'MOB.SITE_SETUP',
+    appliesFrom: 'SMALL',
     stage: 'MOBILISATION',
     label: 'Site setup',
     purpose: 'Welfare, hoarding, access, utilities, logistics. A CDM duty and the first thing an inspector looks at.',
@@ -220,6 +240,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'MOB.APPOINTMENTS',
+    appliesFrom: 'MEDIUM',
     stage: 'MOBILISATION',
     label: 'Appointments',
     purpose: 'Named, competent people in the duty-holder roles. CDM requires the competence to be checked, not assumed.',
@@ -228,6 +249,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'MOB.SUBCONTRACTS',
+    appliesFrom: 'SMALL',
     stage: 'MOBILISATION',
     label: 'Subcontract agreements',
     purpose: 'Signed before the work starts. A subcontractor on site without an executed agreement is a dispute waiting.',
@@ -236,6 +258,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'MOB.BASELINE',
+    appliesFrom: 'MEDIUM',
     stage: 'MOBILISATION',
     label: 'Programme baseline',
     purpose: 'The frozen programme every later delay is measured against. Without it, no delay claim can be proved or defended.',
@@ -245,6 +268,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'MOB.BUDGET',
+    appliesFrom: 'SMALL',
     stage: 'MOBILISATION',
     label: 'Cost baseline',
     purpose: 'The approved budget the cost report reports against.',
@@ -254,6 +278,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'MOB.DOCUMENT_CONTROL',
+    appliesFrom: 'MEDIUM',
     stage: 'MOBILISATION',
     label: 'Document control',
     purpose: 'One current revision of everything, and proof of what was issued to whom and when.',
@@ -269,6 +294,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   // --- Delivery --------------------------------------------------------------
   {
     id: 'DEL.DIARY',
+    appliesFrom: 'SMALL',
     stage: 'DELIVERY',
     label: 'Daily diary',
     purpose: 'Weather, labour, plant, events. The contemporaneous record no delay claim survives without.',
@@ -277,6 +303,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'DEL.PROGRESS',
+    appliesFrom: 'MEDIUM',
     stage: 'DELIVERY',
     label: 'Weekly progress',
     purpose: 'Measured progress against the baseline, weekly, while it is still cheap to correct.',
@@ -285,6 +312,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'DEL.RFI',
+    appliesFrom: 'MEDIUM',
     stage: 'DELIVERY',
     label: 'RFIs',
     purpose: 'Questions asked and answered, dated. An unanswered RFI is a programme risk with a name.',
@@ -293,6 +321,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'DEL.SUBMITTALS',
+    appliesFrom: 'MEDIUM',
     stage: 'DELIVERY',
     label: 'Technical submittals',
     purpose: 'Materials and details approved before they are ordered or built.',
@@ -302,6 +331,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'DEL.INSPECTIONS',
+    appliesFrom: 'SMALL',
     stage: 'DELIVERY',
     label: 'Quality inspections',
     purpose: 'Inspected against the ITP at the point it can still be seen, with hold points honoured.',
@@ -310,6 +340,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'DEL.COST_REPORT',
+    appliesFrom: 'MEDIUM',
     stage: 'DELIVERY',
     label: 'Cost report',
     purpose: 'Cost against value, monthly. A job that reports late reports a loss it can no longer recover.',
@@ -318,6 +349,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'DEL.PROGRAMME_UPDATE',
+    appliesFrom: 'MEDIUM',
     stage: 'DELIVERY',
     label: 'Programme update',
     purpose: 'The programme re-run against actual progress, so the completion date is a forecast rather than a hope.',
@@ -331,6 +363,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'DEL.RISK_REGISTER',
+    appliesFrom: 'SMALL',
     stage: 'DELIVERY',
     label: 'Risk register maintained',
     purpose: 'Reviewed as risks close and new ones arrive. A register written once at tender is a document, not a control.',
@@ -339,6 +372,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'DEL.CHANGE_LOG',
+    appliesFrom: 'SMALL',
     stage: 'DELIVERY',
     label: 'Change log',
     purpose: 'Every instruction and variation, valued or not. Unlogged change is unpaid change.',
@@ -357,6 +391,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'COM.TESTING',
+    appliesFrom: 'SMALL',
     stage: 'COMPLETION',
     label: 'Testing',
     purpose: 'Materials and systems tested to the specification, with results kept.',
@@ -365,6 +400,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'COM.COMMISSIONING',
+    appliesFrom: 'MEDIUM',
     stage: 'COMPLETION',
     label: 'Commissioning',
     purpose: 'The asset proven to perform as designed before anybody takes responsibility for it.',
@@ -379,6 +415,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'COM.OM_MANUAL',
+    appliesFrom: 'SMALL',
     stage: 'COMPLETION',
     label: 'O&M manuals',
     purpose: 'How to run and maintain it, for the thirty years that cost more than building it did.',
@@ -387,6 +424,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'COM.AS_BUILTS',
+    appliesFrom: 'MEDIUM',
     stage: 'COMPLETION',
     label: 'As-builts',
     purpose: 'What was actually built, not what was drawn. The next project on this asset depends on it.',
@@ -395,6 +433,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'COM.TRAINING',
+    appliesFrom: 'MEDIUM',
     stage: 'COMPLETION',
     label: 'Training',
     purpose: 'The people who will operate it shown how, and a record that they were.',
@@ -403,6 +442,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'COM.HANDOVER',
+    appliesFrom: 'SMALL',
     stage: 'COMPLETION',
     label: 'Handover',
     purpose: 'A complete evidenced asset accepted by the receiving party — not a box of PDFs.',
@@ -417,6 +457,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
   },
   {
     id: 'COM.FINAL_ACCOUNT',
+    appliesFrom: 'SMALL',
     stage: 'COMPLETION',
     label: 'Final account',
     purpose: 'The agreed final sum, with every variation settled and retention released.',
@@ -456,6 +497,8 @@ export type EvaluatedItem = {
   counts?: string;
   notTrackedReason?: string;
   gateEnforced: boolean;
+  /** The smallest project this item is proportionate on. */
+  appliesFrom: ProjectScale;
 };
 
 export type StageReport = {
@@ -469,6 +512,8 @@ export type StageReport = {
   missing: number;
   notYetDue: number;
   notTracked: number;
+  /** Items this project is too small to need. Excluded from the score. */
+  notProportionate: number;
   /**
    * Present over (present + missing). Null when nothing in the stage is yet
    * due — which is a different statement from zero per cent.
@@ -478,6 +523,11 @@ export type StageReport = {
 
 export type ControlReport = {
   phase: LifecyclePhase;
+  /** The band this project was measured as, and why that changes the list. */
+  projectScale: ProjectScale;
+  projectScaleLabel: string;
+  /** How many of the standard's items apply at this size. */
+  applicableItems: number;
   stages: StageReport[];
   /** Over every due, trackable item on the project. */
   completenessPercent: number | null;
@@ -502,17 +552,34 @@ export type ControlReport = {
 export function evaluateControl(
   phase: LifecyclePhase,
   entitiesByType: (refType: string) => Array<Record<string, unknown>>,
+  /**
+   * Contract value, so the list is proportionate. Omitting it measures against
+   * the whole standard, which is the right default for a project whose value
+   * nobody recorded — the alternative would be quietly excusing items on a job
+   * that might be enormous.
+   */
+  projectValueMinor?: number,
 ): ControlReport {
   const currentIndex = phaseIndex(phase);
+  const scale = projectValueMinor === undefined ? 'MEGA' : projectScale(projectValueMinor);
 
   const evaluate = (item: ControlItem): EvaluatedItem => {
+    const appliesFrom = item.appliesFrom ?? 'MINOR';
     const base = {
       id: item.id,
       stage: item.stage,
       label: item.label,
       purpose: item.purpose,
       gateEnforced: Boolean(item.gateEnforced),
+      appliesFrom,
     };
+
+    // Proportionality is checked before anything else. A £3,000 repair is not
+    // missing a programme baseline; it is a job that does not have one, and
+    // saying otherwise is how a control standard gets ignored.
+    if (!atLeastProject(scale, appliesFrom)) {
+      return { ...base, status: 'NOT_PROPORTIONATE' };
+    }
 
     if (!item.evidence) {
       return { ...base, status: 'NOT_TRACKED', notTrackedReason: item.notTrackedReason };
@@ -544,6 +611,7 @@ export function evaluateControl(
       missing,
       notYetDue: items.filter((i) => i.status === 'NOT_YET_DUE').length,
       notTracked: items.filter((i) => i.status === 'NOT_TRACKED').length,
+      notProportionate: items.filter((i) => i.status === 'NOT_PROPORTIONATE').length,
       completenessPercent: present + missing === 0 ? null : Math.round((present / (present + missing)) * 10000) / 100,
     };
   });
@@ -558,6 +626,9 @@ export function evaluateControl(
 
   return {
     phase,
+    projectScale: scale,
+    projectScaleLabel: projectBand(scale).label,
+    applicableItems: all.filter((i) => i.status !== 'NOT_PROPORTIONATE').length,
     stages,
     completenessPercent: present + missing === 0 ? null : Math.round((present / (present + missing)) * 10000) / 100,
     gaps,

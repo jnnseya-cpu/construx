@@ -1,6 +1,12 @@
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
+import {
+  ORGANISATION_BANDS,
+  organisationScale,
+  type OrganisationBand,
+  type OrganisationScale,
+} from '../lifecycle/scale.ts';
 import { eligibilityProblem, TRADES, tradeByCode, type TradeGroup } from './supplychain.ts';
 
 /**
@@ -29,42 +35,19 @@ import { eligibilityProblem, TRADES, tradeByCode, type TradeGroup } from './supp
 
 // --- Company sizing ------------------------------------------------------------
 
-export type CompanySize = 'MICRO' | 'SMALL' | 'MEDIUM' | 'LARGE' | 'TIER_1';
+/**
+ * Company sizing now lives in `lifecycle/scale.ts`, because the same bands
+ * decide how much process a job needs everywhere else in the platform and two
+ * copies of "how big is this business" would eventually disagree.
+ */
+export type CompanySize = OrganisationScale;
+export type CompanyBand = OrganisationBand & { size: OrganisationScale };
 
-export type CompanyBand = {
-  size: CompanySize;
-  label: string;
-  /** Annual turnover ceiling in minor units; the top band has none. */
-  turnoverCeilingMinor: number | null;
-  /**
-   * How many supplier relationships this business can genuinely maintain.
-   * Not a technical limit — a framework nobody reviews, visits or gives
-   * feedback to is a list with a cover page, and relationship management is
-   * the constraint everybody forgets when they set the target.
-   */
-  relationshipCapacity: number;
-  /**
-   * Sites running at the same time, typical for this band. This is the variable
-   * that separates a large contractor from a Tier 1: they need the same three
-   * quotes per package, but a Tier 1 needs them on twenty sites at once, and no
-   * subcontractor can be on twenty of your sites at once.
-   */
-  typicalConcurrentProjects: number;
-};
-
-export const COMPANY_BANDS: CompanyBand[] = [
-  { size: 'MICRO', label: 'Under £5m', turnoverCeilingMinor: 5_000_000_00, relationshipCapacity: 30, typicalConcurrentProjects: 2 },
-  { size: 'SMALL', label: '£5m–£25m', turnoverCeilingMinor: 25_000_000_00, relationshipCapacity: 70, typicalConcurrentProjects: 4 },
-  { size: 'MEDIUM', label: '£25m–£100m', turnoverCeilingMinor: 100_000_000_00, relationshipCapacity: 140, typicalConcurrentProjects: 8 },
-  { size: 'LARGE', label: '£100m–£500m', turnoverCeilingMinor: 500_000_000_00, relationshipCapacity: 260, typicalConcurrentProjects: 18 },
-  { size: 'TIER_1', label: 'Over £500m', turnoverCeilingMinor: null, relationshipCapacity: 450, typicalConcurrentProjects: 35 },
-];
+export const COMPANY_BANDS: CompanyBand[] = ORGANISATION_BANDS.map((band) => ({ ...band, size: band.scale }));
 
 export function bandFor(annualTurnoverMinor: number): CompanyBand {
-  return (
-    COMPANY_BANDS.find((b) => b.turnoverCeilingMinor !== null && annualTurnoverMinor <= b.turnoverCeilingMinor) ??
-    COMPANY_BANDS[COMPANY_BANDS.length - 1]!
-  );
+  const scale = organisationScale(annualTurnoverMinor);
+  return COMPANY_BANDS.find((b) => b.size === scale)!;
 }
 
 /**

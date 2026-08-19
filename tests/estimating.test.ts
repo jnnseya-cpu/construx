@@ -55,10 +55,15 @@ before(async () => {
 
 const qsCtx = () => platform.context(seed.users.qs!.auth, seed.projectId, { source: 'WEB' });
 
+/**
+ * A line big enough to make `complete()` a MEDIUM project, because the
+ * twenty-head build-up is a medium-and-above concept. Which heads are expected
+ * at which size is covered separately, below.
+ */
 const line = (over: Partial<MeasuredLine> = {}): MeasuredLine => ({
   description: 'Bulk excavation',
   unit: 'm3',
-  quantity: 1_000,
+  quantity: 10_000,
   labourRateMinor: 2_000,
   materialRateMinor: 1_000,
   plantRateMinor: 500,

@@ -221,10 +221,15 @@ export function lessonsLibrary(
 export function projectControl(ctx: EngineContext): ControlReport {
   authorise(ctx, 'PROJECT_SETUP', 'R');
 
+  const project = ctx.ledger.get({ refType: 'Project', refId: ctx.projectId });
   const phase = currentPhase(ctx);
-  if (!phase) throw new DomainError('PROJECT_NOT_FOUND', `No project ${ctx.projectId}`, 404);
+  if (!phase || !project) throw new DomainError('PROJECT_NOT_FOUND', `No project ${ctx.projectId}`, 404);
 
-  return evaluateControl(phase, (refType) => ctx.ledger.list(ctx.projectId, refType).map((r) => r.state));
+  return evaluateControl(
+    phase,
+    (refType) => ctx.ledger.list(ctx.projectId, refType).map((r) => r.state),
+    Number(project.state.contractValueMinor ?? 0) || undefined,
+  );
 }
 
 export type EstateControl = {
@@ -269,8 +274,10 @@ export function estateControl(ctx: EngineContext): EstateControl {
 
   for (const project of projects) {
     const projectId = String(project.id);
-    const report = evaluateControl(project.phase as LifecyclePhase, (refType) =>
-      ctx.ledger.list(projectId, refType).map((r) => r.state),
+    const report = evaluateControl(
+      project.phase as LifecyclePhase,
+      (refType) => ctx.ledger.list(projectId, refType).map((r) => r.state),
+      Number(project.contractValueMinor ?? 0) || undefined,
     );
 
     for (const gap of report.gaps) missingCounts.set(gap.id, (missingCounts.get(gap.id) ?? 0) + 1);

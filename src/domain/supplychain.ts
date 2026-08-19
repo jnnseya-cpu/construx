@@ -1,4 +1,5 @@
 import { DomainError } from '../core/errors.ts';
+import { proportionality } from '../lifecycle/scale.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 
@@ -218,7 +219,23 @@ export const SCRUTINY_THRESHOLDS = {
   enhancedFloorMinor: 250_000_00,
 } as const;
 
-export function scrutinyFor(packageValueMinor: number): ScrutinyLevel {
+/**
+ * How hard to look at a supplier before buying from them.
+ *
+ * The absolute figures above are the default, and they are only ever right for
+ * one size of business. Pass the buyer's turnover and the answer becomes
+ * relative instead: a £200k package is routine for a £30m contractor and the
+ * whole year for a £400k one, and the second needs the harder look however
+ * modest the absolute number is.
+ *
+ * Demanding three years of audited accounts from a two-person firm for a £4,000
+ * package is not diligence, it is an obstacle that pushes good small firms out
+ * of the supply chain — which is why the small end matters as much as the large.
+ */
+export function scrutinyFor(packageValueMinor: number, buyerAnnualTurnoverMinor?: number): ScrutinyLevel {
+  if (buyerAnnualTurnoverMinor !== undefined && buyerAnnualTurnoverMinor > 0) {
+    return proportionality({ projectValueMinor: packageValueMinor, annualTurnoverMinor: buyerAnnualTurnoverMinor }).scrutiny;
+  }
   if (packageValueMinor <= SCRUTINY_THRESHOLDS.lightCeilingMinor) return 'LIGHT';
   if (packageValueMinor >= SCRUTINY_THRESHOLDS.enhancedFloorMinor) return 'ENHANCED';
   return 'STANDARD';

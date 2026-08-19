@@ -201,6 +201,7 @@ button { font: inherit; }
 .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.g5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .g-2-1 { grid-template-columns: 2fr 1fr; }
 .g-1-2 { grid-template-columns: 1fr 2fr; }
 
@@ -399,13 +400,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--orange); ou
 .split-list .row .val { margin-left: auto; font-weight: 650; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 1200px) {
-  .g4 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .g4, .g5 { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .g-2-1, .g-1-2, .g3 { grid-template-columns: 1fr; }
 }
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar { position: static; height: auto; }
-  .g2, .g4 { grid-template-columns: 1fr; }
+  .g2, .g4, .g5 { grid-template-columns: 1fr; }
   .login-page { grid-template-columns: 1fr; }
   .login-brand { display: none; }
 }

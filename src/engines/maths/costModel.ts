@@ -1,4 +1,5 @@
 import { contingencyRequirement, type ScoredRisk } from './risk.ts';
+import { atLeastProject, projectBand, projectScale, type ProjectScale } from '../../lifecycle/scale.ts';
 
 /**
  * The tender cost model: twenty heads, priced on the basis each one actually
@@ -79,27 +80,34 @@ export type CostHeadDefinition = {
   inflationExposed: boolean;
   /** Why it exists, in the terms an estimator would defend it in. */
   note: string;
+  /**
+   * The smallest job this head is expected on. A sole trader pricing a £3,000
+   * bathroom has no site management, no temporary works and no commissioning,
+   * and a model that reported fifteen omissions on that job would be ignored
+   * within a week — which would take the four omissions that do matter with it.
+   */
+  expectedFrom?: ProjectScale;
 };
 
 export const COST_HEADS: CostHeadDefinition[] = [
   { head: 'DIRECT_WORKS', label: 'Direct works', basis: 'MEASURED', inflationExposed: true, note: 'Own labour against measured quantities' },
-  { head: 'SUBCONTRACT', label: 'Subcontract costs', basis: 'MEASURED', inflationExposed: false, note: 'Package sums; fixed-price sums are not indexed' },
+  { expectedFrom: 'SMALL', head: 'SUBCONTRACT', label: 'Subcontract costs', basis: 'MEASURED', inflationExposed: false, note: 'Package sums; fixed-price sums are not indexed' },
   { head: 'MATERIALS', label: 'Materials', basis: 'MEASURED', inflationExposed: true, note: 'Supply against measured quantities, including waste allowance' },
   { head: 'PLANT', label: 'Plant', basis: 'MEASURED', inflationExposed: true, note: 'Owned and hired plant against the works' },
-  { head: 'PRELIMINARIES', label: 'Preliminaries', basis: 'TIME_RELATED', inflationExposed: true, note: 'Site setup, welfare, accommodation, utilities — by the week' },
-  { head: 'SITE_MANAGEMENT', label: 'Site management', basis: 'TIME_RELATED', inflationExposed: true, note: 'Site staff establishment — by the week, per person' },
-  { head: 'TEMPORARY_WORKS', label: 'Temporary works', basis: 'QUANTIFIED', inflationExposed: true, note: 'Design fees plus hire duration; a CDM duty, not an allowance' },
+  { expectedFrom: 'SMALL', head: 'PRELIMINARIES', label: 'Preliminaries', basis: 'TIME_RELATED', inflationExposed: true, note: 'Site setup, welfare, accommodation, utilities — by the week' },
+  { expectedFrom: 'MEDIUM', head: 'SITE_MANAGEMENT', label: 'Site management', basis: 'TIME_RELATED', inflationExposed: true, note: 'Site staff establishment — by the week, per person' },
+  { expectedFrom: 'MEDIUM', head: 'TEMPORARY_WORKS', label: 'Temporary works', basis: 'QUANTIFIED', inflationExposed: true, note: 'Design fees plus hire duration; a CDM duty, not an allowance' },
   { head: 'INSURANCE', label: 'Insurance allocation', basis: 'VALUE_RELATED', inflationExposed: false, note: 'Contract works, PL and PI premiums on contract value' },
-  { head: 'DESIGN', label: 'Design', basis: 'FEE', inflationExposed: false, note: 'Contractor-designed portion, per the design responsibility matrix' },
-  { head: 'PROFESSIONAL_FEES', label: 'Professional fees', basis: 'FEE', inflationExposed: false, note: 'External consultants, surveys, statutory and planning fees' },
-  { head: 'TESTING', label: 'Testing', basis: 'QUANTIFIED', inflationExposed: true, note: 'Materials, structural and systems testing against the ITP' },
-  { head: 'COMMISSIONING', label: 'Commissioning', basis: 'QUANTIFIED', inflationExposed: true, note: 'Systems commissioning, witnessing and demonstration' },
+  { expectedFrom: 'MEDIUM', head: 'DESIGN', label: 'Design', basis: 'FEE', inflationExposed: false, note: 'Contractor-designed portion, per the design responsibility matrix' },
+  { expectedFrom: 'MEDIUM', head: 'PROFESSIONAL_FEES', label: 'Professional fees', basis: 'FEE', inflationExposed: false, note: 'External consultants, surveys, statutory and planning fees' },
+  { expectedFrom: 'MEDIUM', head: 'TESTING', label: 'Testing', basis: 'QUANTIFIED', inflationExposed: true, note: 'Materials, structural and systems testing against the ITP' },
+  { expectedFrom: 'MEDIUM', head: 'COMMISSIONING', label: 'Commissioning', basis: 'QUANTIFIED', inflationExposed: true, note: 'Systems commissioning, witnessing and demonstration' },
   { head: 'WASTE', label: 'Waste', basis: 'QUANTIFIED', inflationExposed: true, note: 'Skips, muck away and gate fees — by volume or tonnage' },
-  { head: 'LOGISTICS', label: 'Logistics', basis: 'TIME_RELATED', inflationExposed: true, note: 'Gate, traffic marshalling, hoists, cranage, deliveries — by the week' },
-  { head: 'HEALTH_AND_SAFETY', label: 'Health and safety', basis: 'TIME_RELATED', inflationExposed: true, note: 'Safety advice, inductions, PPE, monitoring — by the week' },
-  { head: 'QUALITY', label: 'Quality', basis: 'TIME_RELATED', inflationExposed: true, note: 'Inspection, ITP administration, snagging and handover evidence' },
-  { head: 'RISK', label: 'Contingency and risk', basis: 'RISK_REGISTER', inflationExposed: false, note: 'From the quantified register, at P80 rather than expected value' },
-  { head: 'INFLATION', label: 'Inflation', basis: 'INDEXED', inflationExposed: false, note: 'On exposed spend falling after the base date' },
+  { expectedFrom: 'MEDIUM', head: 'LOGISTICS', label: 'Logistics', basis: 'TIME_RELATED', inflationExposed: true, note: 'Gate, traffic marshalling, hoists, cranage, deliveries — by the week' },
+  { expectedFrom: 'SMALL', head: 'HEALTH_AND_SAFETY', label: 'Health and safety', basis: 'TIME_RELATED', inflationExposed: true, note: 'Safety advice, inductions, PPE, monitoring — by the week' },
+  { expectedFrom: 'MEDIUM', head: 'QUALITY', label: 'Quality', basis: 'TIME_RELATED', inflationExposed: true, note: 'Inspection, ITP administration, snagging and handover evidence' },
+  { expectedFrom: 'SMALL', head: 'RISK', label: 'Contingency and risk', basis: 'RISK_REGISTER', inflationExposed: false, note: 'From the quantified register, at P80 rather than expected value' },
+  { expectedFrom: 'MEDIUM', head: 'INFLATION', label: 'Inflation', basis: 'INDEXED', inflationExposed: false, note: 'On exposed spend falling after the base date' },
   { head: 'OVERHEAD', label: 'Overhead', basis: 'MARGIN', inflationExposed: false, note: 'Head office recovery on cost' },
   { head: 'PROFIT', label: 'Profit', basis: 'MARGIN', inflationExposed: false, note: 'Return on cost plus overhead' },
 ];
@@ -210,7 +218,7 @@ export type PricedHead = {
   amountMinor: number;
   /** How the number was arrived at, in words an estimator can check. */
   derivation: string;
-  status: 'PRICED' | 'EXCLUDED' | 'UNPRICED';
+  status: 'PRICED' | 'EXCLUDED' | 'UNPRICED' | 'NOT_EXPECTED';
   excludedReason?: string;
 };
 
@@ -247,6 +255,9 @@ export type PricedEstimate = {
   };
   /** Heads neither priced nor excluded. A tender should not be submitted with these. */
   omissions: CostHead[];
+  /** The band this job was measured as, which decides which heads are expected. */
+  projectScale: ProjectScale;
+  projectScaleLabel: string;
   /** Exclusions, worded ready to go into the tender qualifications. */
   exclusions: Array<{ head: CostHead; label: string; reason: string }>;
   warnings: string[];
@@ -271,6 +282,16 @@ function weeksBetween(from: string, to: string): number {
  */
 export function priceEstimate(input: CostModelInput): PricedEstimate {
   const warnings: string[] = [];
+  // The tender total is not known until the end, so the band is taken from the
+  // measured works — which is what the job is, before margin is added to it.
+  const measuredForScale = input.lines.reduce(
+    (sum, line) =>
+      sum +
+      line.quantity *
+        ((line.labourRateMinor ?? 0) + (line.materialRateMinor ?? 0) + (line.plantRateMinor ?? 0) + (line.subcontractRateMinor ?? 0)),
+    0,
+  );
+  const scale = projectScale(measuredForScale);
 
   if (input.durationWeeks <= 0) {
     throw new Error('DURATION_REQUIRED: time-related costs cannot be priced without a construction period');
@@ -468,6 +489,19 @@ export function priceEstimate(input: CostModelInput): PricedEstimate {
     }
 
     if (amount === 0) {
+      // A job too small to have this head is not omitting it. A £3,000 bathroom
+      // has no commissioning, and reporting fifteen omissions on it would bury
+      // the four that matter.
+      if (!atLeastProject(scale, definition.expectedFrom ?? 'MINOR')) {
+        return {
+          head: definition.head,
+          label: definition.label,
+          basis: definition.basis,
+          amountMinor: 0,
+          derivation: `Not expected on a ${projectBand(scale).label.toLowerCase()} job`,
+          status: 'NOT_EXPECTED' as const,
+        };
+      }
       omissions.push(definition.head);
       return {
         head: definition.head,
@@ -499,13 +533,14 @@ export function priceEstimate(input: CostModelInput): PricedEstimate {
   }
   if (omissions.length > 0) {
     warnings.push(
-      `${omissions.length} head(s) are neither priced nor excluded: ${omissions.join(', ')}. Price them or exclude them in writing before submitting.`,
+      `${omissions.length} ${omissions.length === 1 ? 'head is' : 'heads are'} neither priced nor excluded: ${omissions.join(', ')}. ` +
+        'Price them or exclude them in writing before submitting.',
     );
   }
-  if (!input.risks || input.risks.length === 0) {
+  if ((!input.risks || input.risks.length === 0) && atLeastProject(scale, 'SMALL')) {
     warnings.push('No quantified risk register, so no contingency has been carried');
   }
-  if (!input.inflation && input.durationWeeks > 52) {
+  if (!input.inflation && input.durationWeeks > 52 && atLeastProject(scale, 'MEDIUM')) {
     warnings.push(`A ${input.durationWeeks}-week programme with no inflation allowance is a fixed price on future costs`);
   }
   if (input.margin.profitPercent <= 0) {
@@ -535,6 +570,8 @@ export function priceEstimate(input: CostModelInput): PricedEstimate {
       costPerWeekOfSiteOverheadMinor: round(siteOverhead / input.durationWeeks),
     },
     omissions,
+    projectScale: scale,
+    projectScaleLabel: projectBand(scale).label,
     exclusions: (input.exclusions ?? []).map((e) => ({
       head: e.head,
       label: costHead(e.head)?.label ?? e.head,
