@@ -6,6 +6,7 @@ import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import * as business from '../src/domain/business.ts';
 import * as cdm from '../src/domain/cdm.ts';
 import * as structure from '../src/domain/structure.ts';
+import * as framework from '../src/domain/framework.ts';
 import * as supplychain from '../src/domain/supplychain.ts';
 import * as quality from '../src/engines/quality.ts';
 import * as safety from '../src/engines/safety.ts';
@@ -853,5 +854,332 @@ describe('8 · Strategic / Approved / Conditional / Do Not Use', () => {
     assert.equal(coverage.totals.strategic, 1, 'the proven firm should be strategic');
     assert.equal(coverage.totals.conditional, 1, 'the firm carrying a RIDDOR should be conditional');
     assert.ok(coverage.totals.approved >= 1);
+  });
+});
+
+// ── 8b · Framework agreements ───────────────────────────────────────────────
+
+/**
+ * A framework is a standing relationship with an award rule, not a longer list.
+ * Three things are worth testing and only three: that the size is arithmetic
+ * rather than a round number somebody liked, that a framework place is gated on
+ * the same prequalification an enquiry is, and that the award rule actually
+ * distributes work — which is the governance failure frameworks are famous for.
+ */
+describe('8b · Framework agreements are sized, gated and rotated', () => {
+  const admitted: string[] = [];
+  let frameworkId: string;
+
+  const prequalified = (legalName: string, trades: string[], maxPackageValueMinor = 2_000_000_00): string => {
+    const { supplierId } = supplychain.registerSupplier(ctxFor('qs'), {
+      legalName,
+      trades,
+      contactName: 'A person',
+      contactEmail: `${legalName.replace(/\W/g, '').toLowerCase()}@example.com`,
+    });
+    supplychain.prequalifySupplier(ctxFor('pm'), supplierId, {
+      identity: { companyNumber: '05550000', companyStatus: 'active', incorporatedOn: '2010-05-01', vatNumber: 'GB99', utr: '9999999999', cisStatus: 'GROSS' },
+      financial: { turnoverMinorByYear: [12_000_000_00, 11_000_000_00], accountsFiledUpToDate: true },
+      insurances: [
+        { type: 'PUBLIC_LIABILITY', insurer: 'A', limitMinor: 1_000_000_000, expiresOn: '2030-01-01' },
+        { type: 'EMPLOYERS_LIABILITY', insurer: 'A', limitMinor: 1_000_000_000, expiresOn: '2030-01-01' },
+      ],
+      safetyAccreditations: ['CHAS'],
+      qualityAccreditations: ['ISO 9001'],
+      riddorLastThreeYears: 0,
+      competenceCards: [{ scheme: 'CSCS', holders: 20 }],
+      references: [{ clientName: 'C', projectName: 'P', valueMinor: 1_500_000_00, verified: true }],
+      capacity: { maxPackageValueMinor },
+      complianceConfirmed: true,
+      evidenceHash: hashEvidence(`pqq-${legalName}`),
+    });
+    return supplierId;
+  };
+
+  it('sizes the framework from the trades bought, not from a round number', () => {
+    const small = framework.recommendFramework({
+      annualTurnoverMinor: 12_000_000_00,
+      projectTypes: ['RESIDENTIAL', 'REFURBISHMENT'],
+    });
+
+    // The user's own brief was "perhaps 50–100". That range should fall out of
+    // the arithmetic for a typical regional contractor rather than be asserted.
+    assert.equal(small.band.size, 'SMALL');
+    assert.ok(small.recommendedSize >= 50 && small.recommendedSize <= 100, `expected 50–100, got ${small.recommendedSize}`);
+    assert.ok(small.tradesInScope > 20, 'a residential and refurbishment contractor buys more than 20 trades');
+    assert.ok(small.idealSize > small.recommendedSize, 'overlap between trades should reduce the headcount');
+  });
+
+  it('gives a fit-out contractor a smaller framework than a civils contractor', () => {
+    const fitOut = framework.recommendFramework({ annualTurnoverMinor: 40_000_000_00, projectTypes: ['FIT_OUT'] });
+    const civils = framework.recommendFramework({ annualTurnoverMinor: 40_000_000_00, projectTypes: ['CIVILS_INFRASTRUCTURE'] });
+
+    assert.equal(fitOut.band.size, civils.band.size, 'same turnover, so the difference must be the work');
+    assert.notEqual(fitOut.tradesInScope, civils.tradesInScope);
+  });
+
+  it('separates a large contractor from a Tier 1 on concurrency, not turnover alone', () => {
+    const large = framework.recommendFramework({ annualTurnoverMinor: 300_000_000_00, projectTypes: ['HRB_RESIDENTIAL'] });
+    const tier1 = framework.recommendFramework({ annualTurnoverMinor: 900_000_000_00, projectTypes: ['HRB_RESIDENTIAL'] });
+
+    // Both need three quotes. The Tier 1 needs them on far more sites at once,
+    // and no subcontractor can be on twenty of your sites simultaneously.
+    assert.ok(tier1.concurrentProjects > large.concurrentProjects);
+    assert.ok(tier1.recommendedSize > large.recommendedSize, 'scale must reach the framework size');
+  });
+
+  it('lets a business that knows its own site count override the band default', () => {
+    const defaulted = framework.recommendFramework({ annualTurnoverMinor: 60_000_000_00, projectTypes: ['RESIDENTIAL'] });
+    const busy = framework.recommendFramework({
+      annualTurnoverMinor: 60_000_000_00,
+      projectTypes: ['RESIDENTIAL'],
+      concurrentProjects: 24,
+    });
+
+    assert.ok(busy.recommendedSize > defaulted.recommendedSize);
+    throwsCode(
+      () => framework.recommendFramework({ annualTurnoverMinor: 60_000_000_00, projectTypes: ['RESIDENTIAL'], concurrentProjects: 0 }),
+      'CONCURRENT_PROJECTS_INVALID',
+    );
+    throwsCode(
+      () => framework.recommendFramework({ annualTurnoverMinor: 60_000_000_00, projectTypes: [] }),
+      'PROJECT_TYPES_REQUIRED',
+    );
+  });
+
+  it('caps the recommendation at what the business can actually maintain', () => {
+    const micro = framework.recommendFramework({
+      annualTurnoverMinor: 3_000_000_00,
+      projectTypes: ['HRB_RESIDENTIAL'],
+    });
+
+    assert.equal(micro.recommendedSize, micro.relationshipCapacity);
+    assert.match(micro.rationale, /capped/);
+  });
+
+  it('refuses a framework that buys nothing or ends before it starts', () => {
+    const pmCtx = ctxFor('pm');
+    throwsCode(
+      () => framework.createFramework(pmCtx, { name: 'Empty', startsOn: '2026-01-01', endsOn: '2029-01-01', lots: [], callOffMethod: 'ROTATION', paymentTerms: '30 days' }),
+      'FRAMEWORK_EMPTY',
+    );
+    throwsCode(
+      () =>
+        framework.createFramework(pmCtx, {
+          name: 'Backwards',
+          startsOn: '2029-01-01',
+          endsOn: '2026-01-01',
+          lots: [{ reference: 'L1', trade: 'GROUNDWORKS', maxPackageValueMinor: 500_000_00, directAwardCeilingMinor: 25_000_00 }],
+          callOffMethod: 'ROTATION',
+          paymentTerms: '30 days',
+        }),
+      'FRAMEWORK_TERM_INVALID',
+    );
+  });
+
+  it('refuses a direct-award ceiling that is no ceiling at all', () => {
+    throwsCode(
+      () =>
+        framework.createFramework(ctxFor('pm'), {
+          name: 'Open goal',
+          startsOn: '2026-01-01',
+          endsOn: '2029-01-01',
+          lots: [{ reference: 'L1', trade: 'GROUNDWORKS', maxPackageValueMinor: 500_000_00, directAwardCeilingMinor: 900_000_00 }],
+          callOffMethod: 'DIRECT_AWARD',
+          paymentTerms: '30 days',
+        }),
+      'DIRECT_AWARD_CEILING_INVALID',
+    );
+  });
+
+  it('creates a framework with lots against real trades', () => {
+    const result = framework.createFramework(ctxFor('pm'), {
+      name: 'Regional works framework 2026–2030',
+      startsOn: '2026-01-01',
+      endsOn: '2030-01-01',
+      extensionMonths: 24,
+      lots: [
+        { reference: 'LOT-01', trade: 'GROUNDWORKS', maxPackageValueMinor: 1_500_000_00, directAwardCeilingMinor: 50_000_00 },
+        { reference: 'LOT-02', trade: 'FIRE_STOPPING', maxPackageValueMinor: 400_000_00, directAwardCeilingMinor: 25_000_00 },
+      ],
+      callOffMethod: 'ROTATION',
+      paymentTerms: '30 days from due date',
+      retentionPercent: 3,
+      targets: { localSmePercent: 60, maxSharePerSupplierPercent: 40 },
+    });
+
+    frameworkId = result.frameworkId;
+    assert.equal(result.lots, 2);
+    assert.match(result.reference, /^FW-\d{3}$/);
+    assert.ok(framework.listFrameworks(ctxFor('pm')).some((f) => f.id === frameworkId));
+  });
+
+  it('refuses a lot against a trade that is not in the catalogue', () => {
+    throwsCode(
+      () =>
+        framework.createFramework(ctxFor('pm'), {
+          name: 'Invented',
+          startsOn: '2026-01-01',
+          endsOn: '2029-01-01',
+          lots: [{ reference: 'L1', trade: 'TIME_TRAVEL', maxPackageValueMinor: 100_00, directAwardCeilingMinor: 100_00 }],
+          callOffMethod: 'ROTATION',
+          paymentTerms: '30 days',
+        }),
+      'TRADE_UNKNOWN',
+    );
+  });
+
+  it('gates a framework place on the same prequalification an enquiry needs', () => {
+    const pmCtx = ctxFor('pm');
+    const { supplierId } = supplychain.registerSupplier(ctxFor('qs'), {
+      legalName: 'Never Assessed Groundworks Ltd',
+      trades: ['GROUNDWORKS'],
+      contactName: 'A person',
+      contactEmail: 'never@example.com',
+    });
+
+    // Registered but never prequalified. A framework place is worth more than a
+    // single enquiry, so it must not be the weaker of the two routes in.
+    throwsCode(
+      () => framework.admitToFramework(pmCtx, frameworkId, { supplierId, lot: 'LOT-01', tier: 'LOCAL_SME' }),
+      'SUPPLIER_NOT_ELIGIBLE_FOR_LOT',
+    );
+  });
+
+  it('admits prequalified firms and refuses the same firm twice on one lot', () => {
+    const pmCtx = ctxFor('pm');
+    for (const name of ['Alpha Groundworks Ltd', 'Bravo Civils Ltd', 'Charlie Excavation Ltd']) {
+      const supplierId = prequalified(name, ['GROUNDWORKS']);
+      admitted.push(supplierId);
+      framework.admitToFramework(pmCtx, frameworkId, { supplierId, lot: 'LOT-01', tier: 'LOCAL_SME' });
+    }
+
+    throwsCode(
+      () => framework.admitToFramework(pmCtx, frameworkId, { supplierId: admitted[0]!, lot: 'LOT-01', tier: 'LOCAL_SME' }),
+      'ALREADY_A_MEMBER',
+    );
+    throwsCode(
+      () => framework.admitToFramework(pmCtx, frameworkId, { supplierId: admitted[0]!, lot: 'LOT-99', tier: 'LOCAL_SME' }),
+      'LOT_NOT_FOUND',
+    );
+  });
+
+  it('rotates work to whoever has had least of it', () => {
+    const pmCtx = ctxFor('pm');
+
+    const first = framework.callOff(pmCtx, frameworkId, { lot: 'LOT-01', packageValueMinor: 400_000_00, today: '2027-06-01' });
+    assert.equal(first.method, 'ROTATION');
+    assert.ok(first.competitive);
+    assert.equal(first.invited.length, 3);
+
+    framework.recordFrameworkAward(pmCtx, frameworkId, {
+      supplierId: first.invited[0]!.supplierId,
+      lot: 'LOT-01',
+      valueMinor: 400_000_00,
+      packageReference: 'PKG-001',
+      evidenceHash: hashEvidence('award-001'),
+    });
+
+    const second = framework.callOff(pmCtx, frameworkId, { lot: 'LOT-01', packageValueMinor: 300_000_00, today: '2027-06-02' });
+    assert.notEqual(second.invited[0]!.supplierId, first.invited[0]!.supplierId, 'the firm just awarded should not lead the next call-off');
+    assert.equal(second.invited[0]!.awards, 0);
+  });
+
+  it('drops a suspended member out of the call-off without removing them', () => {
+    const pmCtx = ctxFor('pm');
+    supplychain.suspendSupplier(pmCtx, admitted[2]!, { reason: 'Insurance lapsed mid-term' });
+
+    const result = framework.callOff(pmCtx, frameworkId, { lot: 'LOT-01', packageValueMinor: 200_000_00, today: '2027-07-01' });
+
+    assert.ok(!result.invited.some((i) => i.supplierId === admitted[2]!));
+    assert.equal(result.excluded.length, 1);
+    assert.ok(!result.competitive, 'two eligible firms is not a competitive enquiry');
+    assert.match(result.note, /below the 3 required/);
+
+    // Still a member: suspension is not expulsion, and the record should say so.
+    const position = framework.frameworkPosition(pmCtx, frameworkId, '2027-07-01');
+    assert.equal(position.members, 3);
+  });
+
+  it('escalates a direct award above the lot ceiling into a competition', () => {
+    const pmCtx = ctxFor('pm');
+    const { frameworkId: directId } = framework.createFramework(pmCtx, {
+      name: 'Small works',
+      startsOn: '2026-01-01',
+      endsOn: '2030-01-01',
+      lots: [{ reference: 'SW-01', trade: 'DECORATING', maxPackageValueMinor: 200_000_00, directAwardCeilingMinor: 25_000_00 }],
+      callOffMethod: 'DIRECT_AWARD',
+      paymentTerms: '30 days',
+    });
+
+    for (const name of ['Delta Decorators Ltd', 'Echo Painting Ltd', 'Foxtrot Finishes Ltd']) {
+      framework.admitToFramework(pmCtx, directId, {
+        supplierId: prequalified(name, ['DECORATING']),
+        lot: 'SW-01',
+        tier: 'LOCAL_SME',
+      });
+    }
+
+    const small = framework.callOff(pmCtx, directId, { lot: 'SW-01', packageValueMinor: 18_000_00, today: '2027-01-01' });
+    assert.equal(small.method, 'DIRECT_AWARD');
+    assert.equal(small.invited.length, 1);
+
+    const large = framework.callOff(pmCtx, directId, { lot: 'SW-01', packageValueMinor: 120_000_00, today: '2027-01-01' });
+    assert.equal(large.method, 'MINI_COMPETITION', 'the lot ceiling must beat the framework method');
+    assert.equal(large.invited.length, 3);
+
+    throwsCode(
+      () => framework.callOff(pmCtx, directId, { lot: 'SW-01', packageValueMinor: 900_000_00, today: '2027-01-01' }),
+      'PACKAGE_EXCEEDS_LOT',
+    );
+    throwsCode(
+      () => framework.callOff(pmCtx, directId, { lot: 'SW-01', packageValueMinor: 10_000_00, today: '2031-01-01' }),
+      'FRAMEWORK_EXPIRED',
+    );
+  });
+
+  it('names the concentration and the empty lot rather than scoring the framework', () => {
+    const pmCtx = ctxFor('pm');
+    const position = framework.frameworkPosition(pmCtx, frameworkId, '2029-09-01');
+
+    // LOT-02 was never populated: a lot nobody can bid is worse than no lot.
+    assert.ok(position.thinLots.some((l) => l.lot === 'LOT-02' && l.eligible === 0));
+
+    // One firm took the only award, so it holds 100% of framework value.
+    assert.ok(position.concentration.some((c) => c.sharePercent === 100));
+    assert.ok(position.warnings.some((w) => w.includes('above the 40% limit')));
+
+    // Four months to run and two thirds of the members never used.
+    assert.ok(position.warnings.some((w) => w.includes('Expires in')));
+    assert.equal(position.neverAwarded.length, 2);
+    assert.ok(position.warnings.some((w) => w.includes('never been awarded work')));
+
+    assert.equal(position.byTier.LOCAL_SME, 3);
+    assert.equal(position.localSmePercent, 100);
+  });
+
+  it('refuses an award to a firm that is not on the lot', () => {
+    throwsCode(
+      () =>
+        framework.recordFrameworkAward(ctxFor('pm'), frameworkId, {
+          supplierId: 'SUP-NOT-A-MEMBER',
+          lot: 'LOT-01',
+          valueMinor: 10_000_00,
+          packageReference: 'PKG-X',
+          evidenceHash: hashEvidence('nope'),
+        }),
+      'NOT_A_MEMBER',
+    );
+    throwsCode(() => framework.frameworkPosition(ctxFor('pm'), 'FW-DOES-NOT-EXIST'), 'FRAMEWORK_NOT_FOUND');
+  });
+
+  it('keeps every framework event in the catalogue and off the AI', () => {
+    for (const code of ['FRAMEWORK_CREATED', 'FRAMEWORK_SUPPLIER_ADMITTED', 'FRAMEWORK_AWARD_RECORDED']) {
+      const definition = lookupEventType(code);
+      assert.ok(definition, `${code} is not in the catalogue`);
+      assert.equal(definition.entity, 'Framework');
+      assert.equal(definition.aiAllowed, false, `${code} must not be writable by a model`);
+    }
+    assert.equal(lookupEventType('FRAMEWORK_AWARD_RECORDED')!.requiresEvidence, true);
   });
 });

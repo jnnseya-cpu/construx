@@ -10,6 +10,7 @@ import * as business from '../domain/business.ts';
 import * as cdm from '../domain/cdm.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as supplychain from '../domain/supplychain.ts';
+import * as framework from '../domain/framework.ts';
 import * as structure from '../domain/structure.ts';
 import * as bim from '../engines/bim.ts';
 import * as claims from '../engines/claims.ts';
@@ -579,6 +580,54 @@ export const ROUTES: Route[] = [
     description: 'Suspend a supplier immediately, with a reason',
     handler: (platform, ctx) =>
       supplychain.suspendSupplier(tenantContext(platform, ctx), ctx.params.supplierId as string, body(ctx)),
+  },
+
+  // --------------------------------------------------------- framework agreements
+  {
+    method: 'POST',
+    pattern: '/v1/frameworks/recommend',
+    description: 'Size and shape a framework from turnover and what the business builds',
+    handler: (_platform, ctx) => framework.recommendFramework(body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/frameworks',
+    description: 'Framework agreements held by this tenant',
+    handler: (platform, ctx) => ({ frameworks: framework.listFrameworks(tenantContext(platform, ctx)) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/frameworks',
+    description: 'Create a framework agreement with lots and a call-off rule',
+    handler: (platform, ctx) => framework.createFramework(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/frameworks/:frameworkId',
+    description: 'Framework position: membership balance, thin lots, concentration and expiry',
+    handler: (platform, ctx) =>
+      framework.frameworkPosition(tenantContext(platform, ctx), ctx.params.frameworkId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/frameworks/:frameworkId/members',
+    description: 'Admit a prequalified supplier to a lot',
+    handler: (platform, ctx) =>
+      framework.admitToFramework(tenantContext(platform, ctx), ctx.params.frameworkId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/frameworks/:frameworkId/call-off',
+    description: 'Apply the framework call-off rule to a package and return who to invite',
+    handler: (platform, ctx) =>
+      framework.callOff(tenantContext(platform, ctx), ctx.params.frameworkId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/frameworks/:frameworkId/awards',
+    description: 'Record a framework award so rotation and concentration stay real',
+    handler: (platform, ctx) =>
+      framework.recordFrameworkAward(tenantContext(platform, ctx), ctx.params.frameworkId as string, body(ctx)),
   },
 
   // --------------------------------------------------------------------- CDM

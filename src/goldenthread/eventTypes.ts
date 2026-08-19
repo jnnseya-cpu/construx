@@ -123,6 +123,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SUPPLIER_REGISTERED', 'Supplier', 'CREATE', 'PROCUREMENT'),
   def('SUPPLIER_PREQUALIFIED', 'Supplier', 'APPROVE', 'PROCUREMENT', { requiresEvidence: true }),
   def('SUPPLIER_SUSPENDED', 'Supplier', 'UPDATE', 'PROCUREMENT'),
+  // A framework is a standing relationship with an award rule. Admission and
+  // every award land on the same entity so distribution is auditable.
+  def('FRAMEWORK_CREATED', 'Framework', 'CREATE', 'PROCUREMENT'),
+  def('FRAMEWORK_SUPPLIER_ADMITTED', 'Framework', 'UPDATE', 'PROCUREMENT'),
+  def('FRAMEWORK_AWARD_RECORDED', 'Framework', 'UPDATE', 'PROCUREMENT', { requiresEvidence: true }),
   def('RFQ_CREATED', 'RFQ', 'CREATE', 'PROCUREMENT'),
   def('TENDER_PACKAGE_COMPOSED', 'TenderPackage', 'CREATE', 'PROCUREMENT', { aiAllowed: true }),
   def('RFQ_ISSUED', 'RFQ', 'ISSUE', 'PROCUREMENT', { requiresEvidence: true }),

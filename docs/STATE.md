@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 305 passing, 0 failing, across 15 files |
+| Tests | 322 passing, 0 failing, across 15 files |
 | Typecheck | clean |
-| Backend | 62 TypeScript files, 21,072 lines |
+| Backend | 63 TypeScript files, 22,146 lines |
 | Application | 24 ES modules, 5,205 lines (plus a service worker) |
-| API routes | 146 |
-| Event types | 157, closed catalogue |
-| Entity types | 101, all classified for access |
+| API routes | 153 |
+| Event types | 160, closed catalogue |
+| Entity types | 102, all classified for access |
 | Runtime dependencies | none |
 
 Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`).
@@ -181,6 +181,27 @@ expires; suspension is immediate; and nobody is invited beyond their assessed
 package capacity. The enquiry is refused whole rather than quietly dropping the
 ineligible, because an RFQ that went to four of the six you selected produces a
 comparison you cannot trust.
+
+*Framework agreements* turn the register into standing relationships. The size
+is arithmetic rather than a round number: the trades the business actually buys
+given what it builds, times enough firms per trade to run a three-quote enquiry
+and survive one dropping out, times a concurrency demand — no subcontractor can
+hold packages on twenty of your sites at once — divided by the overlap between
+trades a real register has, and capped at the relationships a business that size
+can genuinely maintain. A £12m residential and refurbishment contractor lands on
+70 firms; a £3m fit-out business on 30; a Tier 1 on the low hundreds. The
+composition is deliberate too: local SMEs, accredited specialists and large
+contractors do different jobs on a framework.
+
+Admission uses the same prequalification gate as an enquiry, because a framework
+place is worth more than one package and must not be the weaker route in.
+Call-off applies the framework's own rule — rotation orders by fewest awards
+then least value, a direct award above the lot's ceiling escalates to a
+competition automatically, and a member suspended or lapsed drops out of the
+call-off without being expelled. The position report names what is wrong rather
+than scoring it: lots too thin to produce a competitive enquiry, a firm above
+the concentration limit, members admitted and never used, and how long is left
+before re-tendering has to start.
 
 **CDM 2015 and the Principal Contractor's duties.** Twelve document types —
 Construction Phase Plan, RAMS, COSHH, temporary works, lifting, working at

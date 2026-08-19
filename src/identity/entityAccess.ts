@@ -69,6 +69,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   MasterPricing: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   PricingSchedule: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   Supplier: { area: 'PROCUREMENT_AWARD' },
+  Framework: { area: 'PROCUREMENT_AWARD' },
   TenderPackage: { area: 'PROCUREMENT_AWARD' },
   RFQ: { area: 'PROCUREMENT_AWARD' },
   SupplierSubmission: { area: 'SUPPLIER_SUBMISSION', sensitivity: 'COMMERCIAL_L3' },
