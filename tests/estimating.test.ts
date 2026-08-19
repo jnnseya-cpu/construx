@@ -10,6 +10,7 @@ import {
   type CostModelInput,
   type MeasuredLine,
 } from '../src/engines/maths/costModel.ts';
+import { cashflowScoreFor, modelFunding } from '../src/engines/maths/funding.ts';
 import { scoreRisk } from '../src/engines/maths/risk.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tender from '../src/engines/tender.ts';
@@ -506,5 +507,235 @@ describe('Automatic tender response', () => {
     assert.ok(definition);
     assert.equal(definition.entity, 'TenderResponse');
     assert.equal(definition.aiAllowed, true, 'the drafting is the part the model does');
+  });
+});
+
+// ── Cash flow and peak funding ──────────────────────────────────────────────
+
+/**
+ * Never bid without a cash model.
+ *
+ * A contract can cover its cost, carry a healthy margin, and still take more
+ * working capital than the business has. The estimate is a statement about
+ * cost; this is a statement about cash, and they answer different questions.
+ * These tests pin the three timing effects that make the difference — labour
+ * paid weekly whatever the client does, retention held then released in halves,
+ * and VAT flowing in the direction it actually flows.
+ */
+describe('Peak funding requirement', () => {
+  const terms = {
+    payment: {
+      applicationIntervalDays: 30,
+      certificationDays: 14,
+      paymentDays: 28,
+      retentionPercent: 5,
+      retentionReleasedAtCompletionPercent: 50,
+      defectsLiabilityWeeks: 52,
+    },
+    supply: {
+      subcontractorPaymentDays: 30,
+      materialSupplierPaymentDays: 30,
+      materialsDepositPercent: 25,
+      materialsDepositLeadWeeks: 4,
+      plantPaymentDays: 30,
+    },
+    vat: { ratePercent: 20, reverseCharge: true, returnIntervalWeeks: 13, settlementLagWeeks: 5 },
+  };
+
+  /** A job that is comfortably profitable on paper. */
+  const job = (over: Partial<Parameters<typeof modelFunding>[0]> = {}) =>
+    modelFunding({
+      contractValueMinor: 500_000_00,
+      durationWeeks: 26,
+      cost: {
+        labourMinor: 130_000_00,
+        materialsMinor: 110_000_00,
+        subcontractMinor: 140_000_00,
+        plantAndPrelimsMinor: 42_000_00,
+        mobilisationMinor: 12_000_00,
+        weeklyOverheadMinor: 230_00,
+      },
+      ...terms,
+      ...over,
+    });
+
+  it('refuses to model a job with no programme', () => {
+    assert.throws(() => job({ durationWeeks: 0 }), /DURATION_REQUIRED/);
+  });
+
+  it('finds a funding requirement a healthy margin completely hides', () => {
+    const model = job();
+
+    // Twelve per cent margin. The estimate would call this a good job.
+    assert.ok(model.marginPercent > 10);
+    // And it needs multiples of that margin in cash before it earns any of it.
+    assert.ok(model.peakFundingRequirementMinor > model.marginMinor);
+    assert.ok(model.returnOnPeakFunding < 1, 'the business puts in more than it takes out, for months');
+    assert.ok(model.peakWeek > 0 && model.peakWeek < 26, 'the peak falls during the build, not at the end');
+    assert.ok(model.warnings.some((w) => w.includes('more than the whole margin')));
+  });
+
+  it('gives the verdict against working capital, not against a feeling', () => {
+    const peak = job().peakFundingRequirementMinor;
+
+    assert.equal(job({ availableWorkingCapitalMinor: Math.round(peak * 0.5) }).verdict, 'UNFUNDABLE');
+    // Using more than 80% of the business's cash is a bet, not a plan.
+    assert.equal(job({ availableWorkingCapitalMinor: Math.round(peak * 1.05) }).verdict, 'TIGHT');
+    assert.equal(job({ availableWorkingCapitalMinor: Math.round(peak * 3) }).verdict, 'FUNDABLE');
+    // Without knowing the working capital it declines to guess.
+    assert.equal(job().verdict, 'UNKNOWN');
+    assert.equal(job().headroomMinor, undefined);
+  });
+
+  it('prices what would fix it rather than only refusing', () => {
+    const model = job({ availableWorkingCapitalMinor: 25_000_00 });
+
+    assert.equal(model.verdict, 'UNFUNDABLE');
+    assert.ok(model.remedies.length > 0, 'refusing without saying what would change is half an answer');
+
+    // Best first, and every one has to actually help.
+    for (const remedy of model.remedies) {
+      assert.ok(remedy.improvementMinor > 0, `${remedy.change} was offered without improving anything`);
+      assert.equal(remedy.peakWouldBecomeMinor, model.peakFundingRequirementMinor - remedy.improvementMinor);
+    }
+    const improvements = model.remedies.map((r) => r.improvementMinor);
+    assert.deepEqual(improvements, [...improvements].sort((a, b) => b - a));
+
+    // An advance payment is the thing most worth negotiating, and it shows.
+    assert.ok(model.remedies.some((r) => r.change.includes('advance payment')));
+  });
+
+  it('offers no remedies to a job that does not need them', () => {
+    assert.deepEqual(job({ availableWorkingCapitalMinor: 5_000_000_00 }).remedies, []);
+  });
+
+  it('holds retention and gives it back in two halves, long after the work', () => {
+    const model = job();
+
+    assert.ok(model.retentionHeldMinor > 0);
+    // The second half lands after the defects period, not at completion.
+    assert.ok(model.finalRetentionWeek > 26 + 52, 'the tail of retention was not carried');
+
+    const released = model.periods.reduce((sum, p) => sum + p.cashInMinor, 0);
+    const contract = 500_000_00;
+    // Everything comes back eventually — retention is cash withheld, not a
+    // discount, and a model that treated it as a deduction would understate
+    // the requirement and overstate the final position.
+    assert.ok(Math.abs(released - contract) < contract * 0.01, `expected the whole contract to be received, got ${released}`);
+  });
+
+  it('shows the reverse charge for what it is: working capital that no longer exists', () => {
+    const charged = job({ vat: { ...terms.vat, reverseCharge: false } });
+    const reversed = job();
+
+    // With VAT on the sale the contractor holds the client's VAT until the
+    // quarter falls due, and that float funds the job. Under the reverse charge
+    // it is simply not there.
+    assert.ok(
+      reversed.peakFundingRequirementMinor > charged.peakFundingRequirementMinor,
+      'the reverse charge should make the funding requirement worse, not better',
+    );
+    assert.ok(reversed.warnings.some((w) => w.includes('no VAT on the sale')));
+  });
+
+  it('notices when the contractor is funding its own supply chain', () => {
+    const model = job({ supply: { ...terms.supply, subcontractorPaymentDays: 14 } });
+    assert.ok(model.warnings.some((w) => w.includes('paid faster than the client pays')));
+  });
+
+  it('improves when the client pays sooner, and worsens when they pay later', () => {
+    const fast = job({ payment: { ...terms.payment, paymentDays: 14 } });
+    const slow = job({ payment: { ...terms.payment, paymentDays: 60 } });
+
+    assert.ok(fast.peakFundingRequirementMinor < slow.peakFundingRequirementMinor);
+    assert.ok(slow.weeksNegative >= fast.weeksNegative);
+  });
+
+  it('maps a funding requirement onto the bid/no-bid cash-flow score', () => {
+    // The same 1–5 scale the algorithm uses, so the evidence reaches the
+    // decision rather than sitting in a separate report.
+    assert.equal(cashflowScoreFor(10_000_00, 100_000_00), 5);
+    assert.equal(cashflowScoreFor(50_000_00, 100_000_00), 3);
+    assert.equal(cashflowScoreFor(120_000_00, 100_000_00), 1);
+    assert.equal(cashflowScoreFor(10_000_00, 0), 1, 'no working capital is the worst case, not a divide by zero');
+  });
+});
+
+describe('Funding modelled from the estimate itself', () => {
+  const terms = {
+    payment: {
+      applicationIntervalDays: 30,
+      certificationDays: 14,
+      paymentDays: 28,
+      retentionPercent: 5,
+      retentionReleasedAtCompletionPercent: 50,
+      defectsLiabilityWeeks: 52,
+    },
+    supply: {
+      subcontractorPaymentDays: 30,
+      materialSupplierPaymentDays: 30,
+      materialsDepositPercent: 25,
+      materialsDepositLeadWeeks: 4,
+      plantPaymentDays: 30,
+    },
+    vat: { ratePercent: 20, reverseCharge: true, returnIntervalWeeks: 13, settlementLagWeeks: 5 },
+  };
+
+  it('reads the cost profile from the priced estimate rather than asking again', () => {
+    const ctx = qsCtx();
+    const built = tender.buildEstimate(ctx, {
+      packageId: 'PKG-FUND',
+      ...complete(),
+      basisOfEstimate: 'Rates',
+      assumptions: [],
+    });
+
+    const funding = tender.modelTenderFunding(ctx, built.estimateId, {
+      ...terms,
+      mobilisationMinor: 8_000_00,
+      availableWorkingCapitalMinor: 50_000_00,
+    });
+
+    // The cash model prices the same job the estimate priced. If these could
+    // drift, one of them would be describing a different contract.
+    const record = ctx.ledger.require({ refType: 'FundingModel', refId: funding.fundingId });
+    assert.equal(record.state.contractValueMinor, built.totalMinor);
+    assert.equal(record.state.estimateId, built.estimateId);
+    assert.equal(record.state.durationWeeks, 40);
+
+    assert.ok(funding.peakFundingRequirementMinor > 0);
+    assert.ok(funding.suggestedCashflowScore! >= 1 && funding.suggestedCashflowScore! <= 5);
+
+    // The weekly working is kept, because "we refused it on cash" needs to be
+    // answerable years later.
+    assert.ok(Array.isArray(record.state.periods) && (record.state.periods as unknown[]).length > 40);
+  });
+
+  it('suggests no cash-flow score when nobody said what the business can fund', () => {
+    const ctx = qsCtx();
+    const built = tender.buildEstimate(ctx, { packageId: 'PKG-FUND-2', ...complete(), basisOfEstimate: 'Rates', assumptions: [] });
+    const funding = tender.modelTenderFunding(ctx, built.estimateId, terms);
+
+    assert.equal(funding.verdict, 'UNKNOWN');
+    assert.equal(funding.suggestedCashflowScore, undefined);
+  });
+
+  it('refuses to model an estimate that carries no programme', () => {
+    const ctx = qsCtx();
+    const built = tender.buildEstimate(ctx, { packageId: 'PKG-FUND-3', ...complete(), basisOfEstimate: 'Rates', assumptions: [] });
+    // Strip the programme the way a legacy record would lack one.
+    const record = ctx.ledger.require({ refType: 'Estimate', refId: built.estimateId });
+    const original = record.state.durationWeeks;
+    delete (record.state as Record<string, unknown>).durationWeeks;
+
+    throwsCode(() => tender.modelTenderFunding(ctx, built.estimateId, terms), 'ESTIMATE_NOT_TIME_BASED');
+    (record.state as Record<string, unknown>).durationWeeks = original;
+  });
+
+  it('keeps the funding event in the catalogue and off the AI', () => {
+    const definition = lookupEventType('TENDER_FUNDING_MODELLED');
+    assert.ok(definition);
+    assert.equal(definition.entity, 'FundingModel');
+    assert.equal(definition.aiAllowed, false, 'whether the business can fund a job is not a model’s call');
   });
 });

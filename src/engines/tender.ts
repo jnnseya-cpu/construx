@@ -13,6 +13,14 @@ import {
   type SubmissionInput,
 } from './maths/bidScoring.ts';
 import { costHead, priceEstimate, reprice, type CostModelInput, type PricedEstimate } from './maths/costModel.ts';
+import {
+  cashflowScoreFor,
+  modelFunding,
+  type FundingModel,
+  type PaymentTerms,
+  type SupplyTerms,
+  type VatTreatment,
+} from './maths/funding.ts';
 
 /**
  * Engine A — Tender & Commercial Intelligence (concept to contract award).
@@ -243,6 +251,118 @@ export function repriceEstimate(
     deltaMinor: priced.tenderTotalMinor - originalTotalMinor,
     priced,
   };
+}
+
+// --- Cash flow and peak funding -----------------------------------------------------
+
+/**
+ * Model the cash this tender needs before it earns anything.
+ *
+ * Never bid without this. A contract can cover its cost, carry a healthy margin
+ * and still take more working capital than the business has — and the estimate,
+ * which is a statement about cost rather than about cash, will not say so. The
+ * peak funding requirement is a different question from the margin and it is
+ * the one that closes companies.
+ *
+ * The cost profile is read from the estimate rather than typed again, so the
+ * cash model cannot drift from the price. The heads are regrouped by *how each
+ * is paid* rather than by what it buys: labour weekly whatever happens,
+ * materials on supplier terms with a deposit in front, packages on subcontract
+ * terms, everything else on ordinary credit.
+ */
+export function modelTenderFunding(
+  ctx: EngineContext,
+  estimateId: string,
+  input: {
+    payment: PaymentTerms;
+    supply: SupplyTerms;
+    vat: VatTreatment;
+    /** Spent before anybody is productive: hoarding, cabins, bonds, deposits. */
+    mobilisationMinor?: number;
+    availableWorkingCapitalMinor?: number;
+    /** Overrides the estimate's programme, for testing a different duration. */
+    durationWeeks?: number;
+  },
+): FundingModel & { fundingId: string; estimateId: string; suggestedCashflowScore?: number } {
+  authorise(ctx, 'BUDGET_COST', 'U', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = ctx.ledger.require({ refType: 'Estimate', refId: estimateId });
+  const heads = record.state.heads as Array<{ head: string; amountMinor: number }> | undefined;
+  if (!heads) {
+    throw new DomainError('ESTIMATE_NOT_PRICED', 'This estimate carries no cost heads to build a cash model from');
+  }
+
+  const amount = (head: string): number => heads.find((h) => h.head === head)?.amountMinor ?? 0;
+  const durationWeeks = input.durationWeeks ?? Number(record.state.durationWeeks ?? 0);
+  if (!durationWeeks) {
+    throw new DomainError('ESTIMATE_NOT_TIME_BASED', 'This estimate carries no programme, so its cash flow cannot be timed');
+  }
+
+  // Grouped by payment behaviour, not by cost head. Everything site-wide and
+  // quantified is bought on ordinary supplier credit; only labour, materials
+  // and packages behave differently enough to model separately.
+  const onSupplierCredit = [
+    'PLANT', 'PRELIMINARIES', 'SITE_MANAGEMENT', 'LOGISTICS', 'HEALTH_AND_SAFETY',
+    'QUALITY', 'TEMPORARY_WORKS', 'TESTING', 'COMMISSIONING', 'WASTE',
+    'DESIGN', 'PROFESSIONAL_FEES', 'INSURANCE',
+  ].reduce((sum, head) => sum + amount(head), 0);
+
+  const model = modelFunding({
+    contractValueMinor: Number(record.state.totalMinor),
+    durationWeeks,
+    cost: {
+      labourMinor: amount('DIRECT_WORKS'),
+      materialsMinor: amount('MATERIALS'),
+      subcontractMinor: amount('SUBCONTRACT'),
+      plantAndPrelimsMinor: onSupplierCredit,
+      mobilisationMinor: input.mobilisationMinor ?? 0,
+      // Overhead is recovered evenly across the job rather than drawn in a lump.
+      weeklyOverheadMinor: Math.round(amount('OVERHEAD') / durationWeeks),
+    },
+    payment: input.payment,
+    supply: input.supply,
+    vat: input.vat,
+    availableWorkingCapitalMinor: input.availableWorkingCapitalMinor,
+  });
+
+  const suggestedCashflowScore =
+    input.availableWorkingCapitalMinor === undefined
+      ? undefined
+      : cashflowScoreFor(model.peakFundingRequirementMinor, input.availableWorkingCapitalMinor);
+
+  const fundingId = ulid();
+  write(ctx, {
+    eventType: 'TENDER_FUNDING_MODELLED',
+    entity: { refType: 'FundingModel', refId: fundingId },
+    nextState: {
+      id: fundingId,
+      estimateId,
+      contractValueMinor: Number(record.state.totalMinor),
+      durationWeeks,
+      peakFundingRequirementMinor: model.peakFundingRequirementMinor,
+      peakWeek: model.peakWeek,
+      weeksNegative: model.weeksNegative,
+      marginMinor: model.marginMinor,
+      marginPercent: model.marginPercent,
+      returnOnPeakFunding: model.returnOnPeakFunding,
+      retentionHeldMinor: model.retentionHeldMinor,
+      finalRetentionWeek: model.finalRetentionWeek,
+      verdict: model.verdict,
+      availableWorkingCapitalMinor: model.availableWorkingCapitalMinor,
+      headroomMinor: model.headroomMinor,
+      remedies: model.remedies,
+      warnings: model.warnings,
+      // The weekly series is the working, and an auditor asking why a bid was
+      // refused on cash rather than on price needs to see it.
+      periods: model.periods,
+      terms: { payment: input.payment, supply: input.supply, vat: input.vat },
+      suggestedCashflowScore,
+      modelledAt: new Date().toISOString(),
+      modelledBy: ctx.auth.actorId,
+    },
+  });
+
+  return { ...model, fundingId, estimateId, suggestedCashflowScore };
 }
 
 // --- Automatic tender response ----------------------------------------------------

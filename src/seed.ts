@@ -491,6 +491,35 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
       `contingency ${(estimate.priced.subtotals.riskMinor / 100).toLocaleString()} GBP at P80, prelims ${estimate.priced.benchmarks.prelimsPercentOfWorks}% of works`,
   );
 
+  // Never bid without a cash model. The margin is a statement about cost; this
+  // is a statement about cash, and it is the one that closes companies.
+  const funding = tender.modelTenderFunding(qsCtx, estimate.estimateId, {
+    payment: {
+      applicationIntervalDays: 30,
+      certificationDays: 14,
+      paymentDays: 28,
+      retentionPercent: 3,
+      retentionReleasedAtCompletionPercent: 50,
+      defectsLiabilityWeeks: 52,
+    },
+    supply: {
+      subcontractorPaymentDays: 35,
+      materialSupplierPaymentDays: 45,
+      materialsDepositPercent: 20,
+      materialsDepositLeadWeeks: 6,
+      plantPaymentDays: 30,
+    },
+    // Construction services between VAT-registered businesses carry the
+    // domestic reverse charge, so there is no VAT on the sale to fund the job.
+    vat: { ratePercent: 20, reverseCharge: true, returnIntervalWeeks: 13, settlementLagWeeks: 5 },
+    mobilisationMinor: 42_000_000,
+    availableWorkingCapitalMinor: 900_000_000,
+  });
+  step(
+    `Cash model: peak funding ${(funding.peakFundingRequirementMinor / 100).toLocaleString()} GBP at week ${funding.peakWeek}, ` +
+      `${funding.weeksNegative} weeks cash-negative, verdict ${funding.verdict}`,
+  );
+
   tender.freezeEstimate(qsCtx, estimate.estimateId, 'Approved at tender settlement meeting');
 
   const tenderPackage = await tender.composeTenderPackage(qsCtx, {

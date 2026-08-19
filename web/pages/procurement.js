@@ -26,6 +26,7 @@ export async function procurement(root) {
     'DesignMaturityAssessment',
     'ScopePackage',
     'BoQItem',
+    'FundingModel',
   ]);
 
   const rfq = b.RFQ.at(-1);
@@ -33,6 +34,7 @@ export async function procurement(root) {
   const adjudication = b.Adjudication.at(-1);
   const subcontract = b.Subcontract.at(-1);
   const estimate = b.Estimate.at(-1);
+  const funding = b.FundingModel.at(-1);
   const maturity = b.DesignMaturityAssessment.at(-1);
   const pack = b.TenderPackage.at(-1);
 
@@ -175,6 +177,57 @@ export async function procurement(root) {
                   </div>`
                 : ''
             }`
+          : ''
+      }
+
+      ${
+        funding
+          ? html`
+            <div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">
+                Cash flow — peak funding requirement
+                ${badge(humanise(funding.verdict), funding.verdict === 'FUNDABLE' ? 'ok' : funding.verdict === 'TIGHT' ? 'warn' : 'bad')}
+              </h3>
+              <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                The margin is a statement about cost. This is a statement about cash, and it is the one that closes
+                companies — a contract can cover its cost, carry a healthy margin, and still take more working capital
+                than the business has.
+              </p>
+              <div class="grid g4" style="padding:13px 17px 0">
+                <div>
+                  <div class="metric ${raw(funding.verdict === 'FUNDABLE' ? 'good' : funding.verdict === 'TIGHT' ? 'warn' : 'bad')}">${money(funding.peakFundingRequirementMinor)}</div>
+                  <div class="metric-sub">Peak funding at week ${funding.peakWeek}, ${funding.weeksNegative} weeks cash-negative.</div>
+                </div>
+                <div>
+                  <div class="metric">${money(funding.marginMinor)}</div>
+                  <div class="metric-sub">Margin, ${pct(funding.marginPercent, 1)} of contract value.</div>
+                </div>
+                <div>
+                  <div class="metric ${raw(funding.returnOnPeakFunding >= 1 ? 'good' : 'warn')}">${funding.returnOnPeakFunding}×</div>
+                  <div class="metric-sub">Profit per pound of peak funding. Below 1 means putting in more than it returns.</div>
+                </div>
+                <div>
+                  <div class="metric">${money(funding.retentionHeldMinor)}</div>
+                  <div class="metric-sub">Retention held, last half back at week ${funding.finalRetentionWeek}.</div>
+                </div>
+              </div>
+              ${
+                (funding.remedies ?? []).length > 0
+                  ? html`${table({
+                      headers: ['What would change it', 'Peak becomes', 'Saves'],
+                      align: ['', 'num', 'num'],
+                      rows: funding.remedies.map((r) => [r.change, money(r.peakWouldBecomeMinor), money(r.improvementMinor)]),
+                    })}`
+                  : ''
+              }
+              ${
+                (funding.warnings ?? []).length > 0
+                  ? html`<div class="split-list" style="padding:11px 17px 15px">
+                      ${funding.warnings.map((w) => html`<div class="row"><span class="lbl">${w}</span></div>`)}
+                    </div>`
+                  : '<div style="height:15px"></div>'
+              }
+            </div>`
           : ''
       }
 

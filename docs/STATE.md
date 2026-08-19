@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 384 passing, 0 failing, across 17 files |
+| Tests | 398 passing, 0 failing, across 17 files |
 | Typecheck | clean |
 | Backend | 66 TypeScript files, 24,572 lines |
 | Application | 26 ES modules, 5,714 lines (plus a service worker) |
@@ -227,6 +227,30 @@ and profit is on cost plus overhead.
 A head with nothing against it comes back as an **omission**, not as zero — a
 tender with nothing priced against waste is not a job with no waste in it. It
 must be priced or excluded in writing, and the exclusion becomes tender wording.
+
+**Never bid without a cash model.** A contract can cover its cost, carry a
+healthy margin, and still take more working capital than the business has — and
+the estimate, which is a statement about cost, will not say so. The peak funding
+requirement is a different question from the margin and it is the one that
+closes companies.
+
+The cost profile is read from the priced estimate rather than typed again, so
+the cash model cannot drift from the price, and the heads are regrouped by *how
+each is paid*: labour weekly whatever the client does, materials on supplier
+terms with a deposit in front, packages on subcontract terms. That mismatch
+against the certificate cycle is the funding requirement. Retention is modelled
+as cash withheld and returned in two halves — the second long after the defects
+period — rather than as a deduction from the price. VAT flows in the direction
+it actually flows: under the domestic reverse charge there is no VAT on the sale
+to fund the job, while input VAT is still paid out and reclaimed at the return,
+which made construction working capital materially harder.
+
+The output is a weekly series, the peak and the week it falls, and a verdict
+against available working capital — fundable, tight (over 80% of the cash
+committed, which is a bet rather than a plan) or unfundable. Refusing is only
+half an answer, so each remedy is priced rather than listed: what an advance
+payment, shorter certification, lower retention or longer subcontract terms
+would actually be worth, best first.
 
 *The automatic tender response* prices a client enquiry, drafts the
 qualifications, exclusions, tender queries and covering letter, and computes

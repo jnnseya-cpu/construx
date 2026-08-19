@@ -87,6 +87,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   CVR: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
   EarnedValueSnapshot: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
   CashflowForecast: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
+  FundingModel: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
   Invoice: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   PaymentApplication: { area: 'PAYMENT_APPLICATIONS', sensitivity: 'COMMERCIAL_L3' },
   PaymentCycle: { area: 'PAYMENT_APPLICATIONS', sensitivity: 'COMMERCIAL_L3' },

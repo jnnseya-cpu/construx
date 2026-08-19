@@ -1107,6 +1107,13 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/estimate/:estimateId/funding',
+    description: 'Peak funding requirement for this tender, against available working capital',
+    handler: (platform, ctx) =>
+      tender.modelTenderFunding(projectContext(platform, ctx), ctx.params.estimateId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/tender/estimate/:estimateId/freeze',
     description: 'Engine A — freeze the estimate',
     handler: (platform, ctx) =>
