@@ -1,4 +1,22 @@
-import { chromium } from 'playwright-core';
+/**
+ * Browser verification tool.
+ *
+ * `playwright-core` is deliberately NOT in package.json: dev dependencies are
+ * TypeScript and @types/node only, and that is a settled decision. This is a
+ * verification utility rather than part of the platform, so it asks for the
+ * package when it needs one instead of making everyone carry it.
+ */
+let chromium;
+try {
+  ({ chromium } = await import('playwright-core'));
+} catch {
+  process.stderr.write(
+    'This tool needs a browser driver, which is not a project dependency.\n' +
+      '  npm install --no-save playwright-core\n' +
+      'Chromium itself is already present at /opt/pw-browsers.\n',
+  );
+  process.exit(1);
+}
 const log = (...a) => process.stdout.write(a.join(' ') + '\n');
 const ROLE = process.argv[2] ?? 'Project Manager';
 const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox','--disable-dev-shm-usage','--disable-gpu'] });

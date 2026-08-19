@@ -1,0 +1,202 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { rejectsCode, throwsCode } from './helpers.ts';
+import { ACUWallet } from '../src/billing/acu.ts';
+import { AIOrchestrator } from '../src/ai/orchestrator.ts';
+import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
+
+/**
+ * The AI control plane, and the three promises it makes.
+ *
+ *   1. A provider outage degrades a feature, never the platform.
+ *   2. No provider is called on an empty wallet — the refusal happens before
+ *      the request goes out, not after the money is spent.
+ *   3. A failed call costs nothing: the hold is released, not consumed.
+ *
+ * All three were claimed as built and none was tested. They are the difference
+ * between an AI feature and an unbounded bill.
+ */
+
+/** A provider that records what was asked of it and can be made to fail. */
+function stubProvider(
+  name: 'OPENAI' | 'GEMINI',
+  capability: 'REASONING' | 'PERCEPTION',
+  options: { healthy?: boolean; throws?: boolean; cost?: number } = {},
+): AIProviderAdapter & { calls: number } {
+  const provider = {
+    name,
+    capability,
+    calls: 0,
+    estimateCostMinor: () => options.cost ?? 100,
+    healthy: () => options.healthy ?? true,
+    async execute(request: ProviderRequest): Promise<ProviderResponse> {
+      provider.calls += 1;
+      if (options.throws) throw new Error('provider exploded');
+      return {
+        provider: name,
+        modelClass: request.modelClass ?? 'default',
+        output: { ok: true },
+        rawCostMinor: options.cost ?? 100,
+        latencyMs: 12,
+      };
+    },
+  };
+  return provider as AIProviderAdapter & { calls: number };
+}
+
+const task = (orchestrator: AIOrchestrator, wallet: ACUWallet, capability: 'REASONING' | 'PERCEPTION' = 'REASONING') =>
+  orchestrator.execute(
+    {
+      tenantId: 'tenant-1',
+      projectId: 'project-1',
+      engine: 'PLANNING',
+      taskType: 'forecast',
+      inputRefs: [],
+      userId: 'user-1',
+      aiPermitted: true,
+      capability,
+      request: { task: 'forecast-delay', payload: {}, modelClass: 'default' },
+    },
+    wallet,
+  );
+
+function fundedWallet(): ACUWallet {
+  const wallet = new ACUWallet('tenant-1');
+  wallet.grantTrialCredit();
+  return wallet;
+}
+
+describe('provider routing and failover', () => {
+  it('uses the primary provider while it is healthy', () => {
+    const reasoning = stubProvider('OPENAI', 'REASONING');
+    const perception = stubProvider('GEMINI', 'PERCEPTION');
+    const orchestrator = new AIOrchestrator({ reasoning, perception });
+
+    assert.equal(orchestrator.adapterFor('REASONING').name, 'OPENAI');
+    assert.equal(orchestrator.adapterFor('PERCEPTION').name, 'GEMINI');
+  });
+
+  it('falls back to the other provider when the primary is down', () => {
+    // A perception outage must degrade the feature, not stop the platform.
+    const reasoning = stubProvider('OPENAI', 'REASONING', { healthy: true });
+    const perception = stubProvider('GEMINI', 'PERCEPTION', { healthy: false });
+    const orchestrator = new AIOrchestrator({ reasoning, perception });
+
+    assert.equal(orchestrator.adapterFor('PERCEPTION').name, 'OPENAI', 'no failover happened');
+  });
+
+  it('refuses rather than pretending when every provider is down', () => {
+    const orchestrator = new AIOrchestrator({
+      reasoning: stubProvider('OPENAI', 'REASONING', { healthy: false }),
+      perception: stubProvider('GEMINI', 'PERCEPTION', { healthy: false }),
+    });
+
+    assert.throws(() => orchestrator.adapterFor('REASONING'), /AI_UNAVAILABLE|No healthy AI provider/);
+  });
+
+  it('publishes provider health without naming a credential', () => {
+    const status = new AIOrchestrator({
+      reasoning: stubProvider('OPENAI', 'REASONING'),
+      perception: stubProvider('GEMINI', 'PERCEPTION', { healthy: false }),
+    }).controlPlaneStatus();
+
+    assert.equal(status.reasoning.healthy, true);
+    assert.equal(status.perception.healthy, false);
+    assert.ok(!JSON.stringify(status).toLowerCase().includes('key'));
+  });
+});
+
+describe('money is reserved before anything is spent', () => {
+  it('never calls a provider on an empty wallet', async () => {
+    const reasoning = stubProvider('OPENAI', 'REASONING', { cost: 500 });
+    const orchestrator = new AIOrchestrator({ reasoning, perception: stubProvider('GEMINI', 'PERCEPTION') });
+    const empty = new ACUWallet('tenant-1'); // no grant, no top-up
+
+    await rejectsCode(() => task(orchestrator, empty), 'ACU_EXHAUSTED');
+    assert.equal(reasoning.calls, 0, 'the provider was called despite an empty wallet — that is a real bill');
+  });
+
+  it('debits nothing until the output has been written to the Golden Thread', async () => {
+    // Settlement is deliberately deferred: execute() returns, the caller
+    // commits the output, and only then is the wallet charged. That ordering
+    // is what makes "no charge without a ledger write" true rather than hoped.
+    const wallet = fundedWallet();
+    const before = wallet.snapshot().balanceMinor;
+
+    const result = await task(new AIOrchestrator({
+      reasoning: stubProvider('OPENAI', 'REASONING', { cost: 50 }),
+      perception: stubProvider('GEMINI', 'PERCEPTION'),
+    }), wallet);
+
+    assert.equal(wallet.snapshot().balanceMinor, before, 'the wallet was debited before the output was persisted');
+
+    result.settle([]);
+    assert.ok(wallet.snapshot().balanceMinor < before, 'settlement charged nothing');
+  });
+
+  it('refuses to settle the same execution twice', async () => {
+    const result = await task(new AIOrchestrator({
+      reasoning: stubProvider('OPENAI', 'REASONING', { cost: 50 }),
+      perception: stubProvider('GEMINI', 'PERCEPTION'),
+    }), fundedWallet());
+
+    result.settle([]);
+    throwsCode(() => result.settle([]), 'AI_ALREADY_SETTLED');
+  });
+
+  it('abandoning an execution releases the hold without charge', async () => {
+    const wallet = fundedWallet();
+    const before = wallet.snapshot().balanceMinor;
+
+    const result = await task(new AIOrchestrator({
+      reasoning: stubProvider('OPENAI', 'REASONING', { cost: 50 }),
+      perception: stubProvider('GEMINI', 'PERCEPTION'),
+    }), wallet);
+
+    result.abandon('the engine rejected the output');
+    assert.equal(wallet.snapshot().balanceMinor, before, 'an abandoned execution was still charged');
+  });
+
+  it('releases the hold when the provider fails, so a failure is free', async () => {
+    const wallet = fundedWallet();
+    const before = wallet.snapshot().balanceMinor;
+
+    const failing = stubProvider('OPENAI', 'REASONING', { throws: true, cost: 50 });
+    const orchestrator = new AIOrchestrator({ reasoning: failing, perception: stubProvider('GEMINI', 'PERCEPTION') });
+
+    await assert.rejects(() => task(orchestrator, wallet), /provider exploded/);
+
+    assert.equal(failing.calls, 1);
+    assert.equal(
+      wallet.snapshot().balanceMinor,
+      before,
+      'a failed AI call was still charged — the hold was not released',
+    );
+  });
+
+  it('refuses an actor who is not permitted to run AI at all', async () => {
+    const orchestrator = new AIOrchestrator({
+      reasoning: stubProvider('OPENAI', 'REASONING'),
+      perception: stubProvider('GEMINI', 'PERCEPTION'),
+    });
+
+    await rejectsCode(
+      () =>
+        orchestrator.execute(
+          {
+            tenantId: 'tenant-1',
+            projectId: 'project-1',
+            engine: 'PLANNING',
+            taskType: 'forecast',
+            inputRefs: [],
+            userId: 'user-1',
+            aiPermitted: false,
+            capability: 'REASONING',
+            request: { task: 'forecast-delay', payload: {}, modelClass: 'default' },
+          },
+          fundedWallet(),
+        ),
+      'AI_NOT_ENABLED',
+    );
+  });
+});

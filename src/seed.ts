@@ -968,6 +968,10 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     portfolioName: 'National Water Resilience Programme',
     projectName: 'Ashworth Water Treatment Works — Phase 2',
     users: {
+      // The operator is a different account layer, not a senior tenant user.
+      // It was created but never returned, which is why nothing could test the
+      // separation between the operator layer and customer delivery data.
+      operator: { id: operator.id, auth: authOf(platform, operator.id) },
       admin: { id: admin.id, auth: adminAuth },
       owner: { id: owner.id, auth: authOf(platform, owner.id) },
       pm: { id: pm.id, auth: authOf(platform, pm.id) },

@@ -250,15 +250,24 @@ export class ExportService {
       }
     }
 
+    // The risk register itself is not commercial — a regulator should see what
+    // is open on the project. Its priced exposure is, and it used to survive
+    // into a copy stamped "pricing detail has been withheld". A document that
+    // carries a false assurance is worse than one that withholds nothing.
     blocks.push(
       { kind: 'HEADING', level: 2, text: 'Risk' },
       {
         kind: 'TABLE',
-        caption: `${risks.length} open risk(s)`,
-        headers: ['Risk', 'Category', 'Severity', 'Expected cost'],
-        rows: risks
-          .slice(0, 20)
-          .map((r) => [String(r.state.title), String(r.state.category), String(r.state.severity), String(r.state.expectedCostMinor)]),
+        caption: commercialVisible
+          ? `${risks.length} open risk(s)`
+          : `${risks.length} open risk(s) — priced exposure withheld`,
+        headers: commercialVisible
+          ? ['Risk', 'Category', 'Severity', 'Expected cost']
+          : ['Risk', 'Category', 'Severity'],
+        rows: risks.slice(0, 20).map((r) => {
+          const row = [String(r.state.title), String(r.state.category), String(r.state.severity)];
+          return commercialVisible ? [...row, String(r.state.expectedCostMinor)] : row;
+        }),
       },
     );
 
