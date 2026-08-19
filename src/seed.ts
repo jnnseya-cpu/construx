@@ -9,6 +9,7 @@ import * as cost from './engines/cost.ts';
 import * as handover from './engines/handover.ts';
 import * as planning from './engines/planning.ts';
 import * as safety from './engines/safety.ts';
+import { scoreRisk } from './engines/maths/risk.ts';
 import * as tender from './engines/tender.ts';
 import type { AuthContext } from './identity/auth.ts';
 import { issueTokens } from './identity/auth.ts';
@@ -251,27 +252,133 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   });
   step(`Take-off produced ${takeoff.boqItemIds.length} BoQ items, traced to sheet C-1001 rev P03`);
 
+  // Eighteen months on site. Every time-related head below is priced against
+  // this number, which is why a programme movement re-prices the tender rather
+  // than quietly eroding the margin.
+  const durationWeeks = 78;
+
+  // Contingency comes from the register, at P80. Four risks, quantified
+  // three-point, scored against the value and duration of this job.
+  const risks = [
+    scoreRisk(
+      {
+        id: 'RSK-GC-01',
+        title: 'Made ground deeper and more variable than the preliminary GI indicates',
+        category: 'GROUND_CONDITIONS',
+        probability: 0.35,
+        costImpact: { optimistic: 8_000_000, mostLikely: 32_000_000, pessimistic: 95_000_000 },
+        scheduleImpactDays: { optimistic: 5, mostLikely: 18, pessimistic: 45 },
+      },
+      1_600_000_000,
+      546,
+    ),
+    scoreRisk(
+      {
+        id: 'RSK-GC-02',
+        title: 'Groundwater requires wellpoint dewatering rather than sump pumping',
+        category: 'GROUND_CONDITIONS',
+        probability: 0.25,
+        costImpact: { optimistic: 12_000_000, mostLikely: 45_000_000, pessimistic: 120_000_000 },
+        scheduleImpactDays: { optimistic: 0, mostLikely: 10, pessimistic: 28 },
+      },
+      1_600_000_000,
+      546,
+    ),
+    scoreRisk(
+      {
+        id: 'RSK-SC-01',
+        title: 'Concrete supply disruption during the continuous clarifier pours',
+        category: 'SUPPLY_CHAIN',
+        probability: 0.2,
+        costImpact: { optimistic: 5_000_000, mostLikely: 18_000_000, pessimistic: 62_000_000 },
+        scheduleImpactDays: { optimistic: 3, mostLikely: 12, pessimistic: 35 },
+      },
+      1_600_000_000,
+      546,
+    ),
+    scoreRisk(
+      {
+        id: 'RSK-DE-01',
+        title: 'Process pipework design released later than the procurement programme requires',
+        category: 'DESIGN',
+        probability: 0.4,
+        costImpact: { optimistic: 4_000_000, mostLikely: 22_000_000, pessimistic: 68_000_000 },
+        scheduleImpactDays: { optimistic: 8, mostLikely: 20, pessimistic: 50 },
+      },
+      1_600_000_000,
+      546,
+    ),
+  ];
+
   const estimate = tender.buildEstimate(qsCtx, {
     packageId,
+    durationWeeks,
+    // Rates, not totals. An estimate held as line totals cannot be checked
+    // against a rate library and cannot be re-measured.
     lines: [
-      { boqItemId: takeoff.boqItemIds[0] as string, description: 'Bulk excavation', unit: 'm3', quantity: 18_400, labourMinor: 40_000_000, plantMinor: 64_000_000, materialMinor: 0, subcontractMinor: 0 },
-      { boqItemId: takeoff.boqItemIds[1] as string, description: 'RC to walls', unit: 'm3', quantity: 3_260, labourMinor: 212_600_000, plantMinor: 42_500_000, materialMinor: 170_000_000, subcontractMinor: 0 },
-      { boqItemId: takeoff.boqItemIds[2] as string, description: 'Reinforcement', unit: 't', quantity: 412, labourMinor: 89_500_000, plantMinor: 17_900_000, materialMinor: 197_000_000, subcontractMinor: 0 },
-      { boqItemId: takeoff.boqItemIds[3] as string, description: 'Formwork', unit: 'm2', quantity: 9_800, labourMinor: 170_400_000, plantMinor: 34_100_000, materialMinor: 63_900_000, subcontractMinor: 0 },
-      { boqItemId: takeoff.boqItemIds[4] as string, description: 'Process pipework', unit: 'm', quantity: 640, labourMinor: 55_600_000, plantMinor: 13_900_000, materialMinor: 139_100_000, subcontractMinor: 0 },
+      { boqItemId: takeoff.boqItemIds[0] as string, description: 'Bulk excavation in made ground', unit: 'm3', quantity: 18_400, labourRateMinor: 2_174, plantRateMinor: 3_478 },
+      { boqItemId: takeoff.boqItemIds[1] as string, description: 'RC to clarifier walls (C40/50)', unit: 'm3', quantity: 3_260, labourRateMinor: 65_215, plantRateMinor: 13_037, materialRateMinor: 52_147, materialWastePercent: 4 },
+      { boqItemId: takeoff.boqItemIds[2] as string, description: 'High yield reinforcement', unit: 't', quantity: 412, labourRateMinor: 217_233, plantRateMinor: 43_447, materialRateMinor: 478_155, materialWastePercent: 5 },
+      { boqItemId: takeoff.boqItemIds[3] as string, description: 'Formwork to vertical faces', unit: 'm2', quantity: 9_800, labourRateMinor: 17_388, plantRateMinor: 3_479, materialRateMinor: 6_520, materialWastePercent: 8 },
+      // Specialist package, let firm price — so it carries no inflation.
+      { boqItemId: takeoff.boqItemIds[4] as string, description: 'Process pipework DN450 including fittings', unit: 'm', quantity: 640, subcontractRateMinor: 325_937, subcontractFixedPrice: true },
     ],
-    prelimsPercent: 14,
-    overheadPercent: 6,
-    profitPercent: 8,
-    riskAllowanceMinor: 121_000_000,
-    basisOfEstimate: 'Bottom-up from measured quantities against regional rate library, Q2 2026 prices',
+    timeRelated: [
+      { head: 'SITE_MANAGEMENT', description: 'Project manager', weeklyRateMinor: 240_000, quantity: 1 },
+      { head: 'SITE_MANAGEMENT', description: 'Site manager', weeklyRateMinor: 190_000, quantity: 2 },
+      { head: 'SITE_MANAGEMENT', description: 'Site engineer', weeklyRateMinor: 160_000, quantity: 2 },
+      { head: 'SITE_MANAGEMENT', description: 'Quantity surveyor', weeklyRateMinor: 180_000, quantity: 1, weeks: 52 },
+      { head: 'PRELIMINARIES', description: 'Site accommodation and welfare', weeklyRateMinor: 185_000, quantity: 1 },
+      { head: 'PRELIMINARIES', description: 'Temporary utilities and consumables', weeklyRateMinor: 95_000, quantity: 1 },
+      { head: 'PRELIMINARIES', description: 'Site security and hoarding maintenance', weeklyRateMinor: 120_000, quantity: 1 },
+      { head: 'LOGISTICS', description: 'Traffic marshal and gate control', weeklyRateMinor: 110_000, quantity: 2 },
+      { head: 'LOGISTICS', description: 'Crawler crane and lifting attendance', weeklyRateMinor: 320_000, quantity: 1, weeks: 40 },
+      { head: 'HEALTH_AND_SAFETY', description: 'Safety adviser', weeklyRateMinor: 145_000, quantity: 1 },
+      { head: 'HEALTH_AND_SAFETY', description: 'PPE, inductions and monitoring', weeklyRateMinor: 32_000, quantity: 1 },
+      { head: 'QUALITY', description: 'Quality engineer', weeklyRateMinor: 170_000, quantity: 1 },
+      { head: 'QUALITY', description: 'ITP administration and handover evidence', weeklyRateMinor: 40_000, quantity: 1 },
+    ],
+    quantified: [
+      { head: 'TEMPORARY_WORKS', description: 'Temporary works design (Cat 2 and 3 checks)', unit: 'item', quantity: 1, rateMinor: 4_800_000 },
+      { head: 'TEMPORARY_WORKS', description: 'Sheet pile cofferdam hire', unit: 'week', quantity: 34, rateMinor: 420_000 },
+      { head: 'TEMPORARY_WORKS', description: 'Propping and falsework hire', unit: 'week', quantity: 22, rateMinor: 185_000 },
+      { head: 'TESTING', description: 'Concrete cube testing', unit: 'set', quantity: 640, rateMinor: 4_800 },
+      { head: 'TESTING', description: 'Compaction testing', unit: 'test', quantity: 180, rateMinor: 16_500 },
+      { head: 'TESTING', description: 'Weld inspection and NDT', unit: 'test', quantity: 220, rateMinor: 21_000 },
+      { head: 'COMMISSIONING', description: 'Process commissioning support', unit: 'day', quantity: 24, rateMinor: 185_000 },
+      { head: 'COMMISSIONING', description: 'Witness testing and demonstration', unit: 'day', quantity: 9, rateMinor: 240_000 },
+      { head: 'WASTE', description: 'Muck away, non-hazardous', unit: 'm3', quantity: 22_400, rateMinor: 2_800 },
+      { head: 'WASTE', description: 'General skips', unit: 'no', quantity: 140, rateMinor: 31_000 },
+      { head: 'WASTE', description: 'Hazardous waste disposal and gate fees', unit: 't', quantity: 340, rateMinor: 18_600 },
+    ],
+    fees: [
+      { head: 'DESIGN', description: 'Contractor-designed portion per the design responsibility matrix', percentOfWorks: 1.2 },
+      { head: 'PROFESSIONAL_FEES', description: 'Topographic and intrusive ground investigation', lumpSumMinor: 6_400_000 },
+      { head: 'PROFESSIONAL_FEES', description: 'Statutory, planning and discharge fees', lumpSumMinor: 2_850_000 },
+    ],
+    insurance: {
+      policies: [
+        { type: 'Contract works', percentOfContractValue: 0.55 },
+        { type: 'Public liability', percentOfContractValue: 0.22 },
+        { type: 'Professional indemnity', percentOfContractValue: 0.18 },
+      ],
+    },
+    risks,
+    contingencyBasis: 'P80',
+    inflation: { baseDate: '2026-04-01', annualRate: 0.035, startOnSite: '2026-09-01' },
+    margin: { overheadPercent: 6, profitPercent: 8 },
+    basisOfEstimate: 'Bottom-up from measured quantities against regional rate library, Q2 2026 base date',
     assumptions: [
       'Continuous access to the works area from commencement',
       'Groundwater controlled by sump pumping; no wellpoint dewatering allowed for',
       'Made ground classified as non-hazardous based on preliminary GI',
+      'Process pipework package let firm price against the issued specification',
     ],
   });
-  step(`Estimate built: ${(estimate.totalMinor / 100).toLocaleString()} GBP with risk priced explicitly`);
+  step(
+    `Estimate built: ${(estimate.totalMinor / 100).toLocaleString()} GBP across ${estimate.priced.heads.filter((h) => h.status === 'PRICED').length} priced cost heads, ` +
+      `contingency ${(estimate.priced.subtotals.riskMinor / 100).toLocaleString()} GBP at P80, prelims ${estimate.priced.benchmarks.prelimsPercentOfWorks}% of works`,
+  );
 
   tender.freezeEstimate(qsCtx, estimate.estimateId, 'Approved at tender settlement meeting');
 

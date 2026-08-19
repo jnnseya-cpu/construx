@@ -66,6 +66,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   Takeoff: { area: 'BOQ_TAKEOFF' },
   BoQItem: { area: 'BOQ_TAKEOFF' },
   Estimate: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
+  TenderResponse: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   MasterPricing: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   PricingSchedule: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   Supplier: { area: 'PROCUREMENT_AWARD' },

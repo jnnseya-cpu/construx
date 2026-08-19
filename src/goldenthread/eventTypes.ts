@@ -118,6 +118,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SCHEDULE_ROUTE_ASSIGNED', 'PricingSchedule', 'UPDATE', 'PROCUREMENT'),
   def('ESTIMATE_CREATED', 'Estimate', 'CREATE', 'PROCUREMENT', { aiAllowed: true }),
   def('ESTIMATE_FROZEN', 'Estimate', 'FREEZE', 'PROCUREMENT', { requiresEvidence: true }),
+  // The response to a client enquiry. The model drafts the words; the price on
+  // it comes from the estimate, which was committed first.
+  def('TENDER_RESPONSE_DRAFTED', 'TenderResponse', 'CREATE', 'PROCUREMENT', { aiAllowed: true }),
   // The supply chain register sits in front of every enquiry: an RFQ cannot be
   // issued to a firm that is not on it and currently prequalified.
   def('SUPPLIER_REGISTERED', 'Supplier', 'CREATE', 'PROCUREMENT'),

@@ -11,6 +11,7 @@ import * as cdm from '../domain/cdm.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as framework from '../domain/framework.ts';
+import * as costModel from '../engines/maths/costModel.ts';
 import * as structure from '../domain/structure.ts';
 import * as bim from '../engines/bim.ts';
 import * as claims from '../engines/claims.ts';
@@ -1008,8 +1009,31 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/estimate',
-    description: 'Engine A — build a bottom-up estimate',
+    description: 'Engine A — build a bottom-up estimate across the twenty tender cost heads',
     handler: (platform, ctx) => tender.buildEstimate(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/tender/cost-heads',
+    description: 'The twenty tender cost heads and the basis each one is priced on',
+    handler: () => ({ heads: costModel.COST_HEADS }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/estimate/:estimateId/reprice',
+    description: 'Engine A — what the estimate becomes on a different programme',
+    handler: (platform, ctx) =>
+      tender.repriceEstimate(
+        projectContext(platform, ctx),
+        ctx.params.estimateId as string,
+        body<{ durationWeeks: number }>(ctx).durationWeeks,
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/response',
+    description: 'Engine A — price a client enquiry and draft the tender response',
+    handler: (platform, ctx) => tender.respondToTender(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',

@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 322 passing, 0 failing, across 15 files |
+| Tests | 355 passing, 0 failing, across 16 files |
 | Typecheck | clean |
-| Backend | 63 TypeScript files, 22,146 lines |
-| Application | 24 ES modules, 5,205 lines (plus a service worker) |
-| API routes | 153 |
-| Event types | 160, closed catalogue |
-| Entity types | 102, all classified for access |
+| Backend | 64 TypeScript files, 23,043 lines |
+| Application | 24 ES modules, 5,283 lines (plus a service worker) |
+| API routes | 156 |
+| Event types | 161, closed catalogue |
+| Entity types | 103, all classified for access |
 | Runtime dependencies | none |
 
 Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`).
@@ -139,6 +139,38 @@ platform's own recommendation is flagged as an override, because that is the
 finding a post-mortem needs. A converted project carries its opportunity id, so
 a variation argued about in year three traces back to the decision to chase the
 job at all.
+
+*Estimating* priced eight heads and derived preliminaries from a percentage of
+works. It now prices **twenty**: direct works, subcontract, materials, plant,
+preliminaries, site management, temporary works, insurance, design,
+professional fees, testing, commissioning, waste, logistics, health and safety,
+quality, contingency, inflation, overhead and profit.
+
+The heads are not the point — the basis each one is priced on is. Time-related
+costs take a weekly rate and a duration, so a programme that moves re-prices the
+tender; as a percentage of works they do not, and eight weeks of overrun is
+eight weeks of unrecovered site staff. The percentage survives as a benchmark
+output, never as an input, and `repriceEstimate` answers what the tender becomes
+on a different programme without writing anything, because a what-if is not a
+commercial position. Contingency is drawn from the quantified risk register at
+P80 rather than being a round number. Inflation is taken to the mid-point of
+exposed spend after the base date and never applied to a firm-price subcontract
+sum. Insurance is a percentage of the value it actually insures, so it is
+computed after risk and inflation, not alongside the fees. Overhead is on cost
+and profit is on cost plus overhead.
+
+A head with nothing against it comes back as an **omission**, not as zero — a
+tender with nothing priced against waste is not a job with no waste in it. It
+must be priced or excluded in writing, and the exclusion becomes tender wording.
+
+*The automatic tender response* prices a client enquiry, drafts the
+qualifications, exclusions, tender queries and covering letter, and computes
+whether the bid is fit to submit. The division of labour is the platform's usual
+one: every number comes from the cost model and the model only writes the words.
+It refuses to call a bid submittable while a cost head is unpriced, while the
+enquiry itself is missing something a bidder needs to price against, or while
+the build-up carries no profit — and a gap in the enquiry becomes a question to
+the client rather than an assumption the contractor silently absorbs.
 
 *Quality* had three catalogue events and no command able to emit any of them: a
 snag could be raised and never closed. There is now an inspection and test plan

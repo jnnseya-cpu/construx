@@ -100,6 +100,84 @@ export async function procurement(root) {
           : ''
       }
 
+      ${
+        estimate?.heads
+          ? html`
+            <div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">
+                Estimate build-up${estimate.durationWeeks ? ` — ${estimate.durationWeeks} weeks on site` : ''}
+              </h3>
+              <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                Each head is priced on the basis it actually has. Site staff, welfare, logistics, safety and quality are
+                weekly costs, so a programme that moves re-prices the tender instead of quietly eating the margin.
+              </p>
+              ${table({
+                headers: ['Cost head', 'Basis', 'Amount', 'How it was arrived at'],
+                align: ['', '', 'num', ''],
+                rows: estimate.heads.map((h) => [
+                  h.status === 'PRICED' ? h.label : html`<span style="color:var(--text-3)">${h.label}</span>`,
+                  badge(humanise(h.basis), h.basis === 'MARGIN' ? 'ok' : ''),
+                  h.status === 'PRICED'
+                    ? money(h.amountMinor)
+                    : h.status === 'EXCLUDED'
+                      ? badge('excluded', 'warn')
+                      : badge('NOT PRICED', 'bad'),
+                  html`<span style="font-size:12px;color:var(--text-3)">${h.excludedReason ?? h.derivation}</span>`,
+                ]),
+                empty: 'No estimate built',
+              })}
+              <div class="split-list" style="padding:0 17px 15px">
+                <div class="row"><span class="lbl">Net measured works</span><span class="val">${money(estimate.subtotals.netMeasuredMinor)}</span></div>
+                <div class="row"><span class="lbl">Site-wide and time-related</span><span class="val">${money(estimate.subtotals.siteOverheadMinor)}</span></div>
+                <div class="row"><span class="lbl">Fees</span><span class="val">${money(estimate.subtotals.feesMinor)}</span></div>
+                <div class="row"><span class="lbl">Inflation</span><span class="val">${money(estimate.subtotals.inflationMinor)}</span></div>
+                <div class="row"><span class="lbl">Contingency from the risk register</span><span class="val">${money(estimate.subtotals.riskMinor)}</span></div>
+                <div class="row"><span class="lbl">Insurance</span><span class="val">${money(estimate.subtotals.insuranceMinor)}</span></div>
+                <div class="row"><span class="lbl"><b>Total cost</b></span><span class="val"><b>${money(estimate.subtotals.totalCostMinor)}</b></span></div>
+                <div class="row"><span class="lbl">Overhead</span><span class="val">${money(estimate.subtotals.overheadMinor)}</span></div>
+                <div class="row"><span class="lbl">Profit</span><span class="val">${money(estimate.subtotals.profitMinor)}</span></div>
+                <div class="row"><span class="lbl"><b>Tender total</b></span><span class="val"><b style="color:var(--orange)">${money(estimate.totalMinor)}</b></span></div>
+              </div>
+            </div>
+
+            <div class="grid g4" style="margin-bottom:14px">
+              <div class="card">
+                <h3>Prelims as % of works</h3>
+                <div class="metric ${raw(estimate.benchmarks.prelimsPercentOfWorks > 25 ? 'warn' : 'good')}">${pct(estimate.benchmarks.prelimsPercentOfWorks, 1)}</div>
+                <div class="metric-sub">A benchmark, never an input — priced as a percentage, prelims do not move when the programme does.</div>
+              </div>
+              <div class="card">
+                <h3>Contingency as % of cost</h3>
+                <div class="metric">${pct(estimate.benchmarks.riskPercentOfCost, 1)}</div>
+                <div class="metric-sub">Drawn from the quantified register at P80, not from a round number.</div>
+              </div>
+              <div class="card">
+                <h3>Weekly burn</h3>
+                <div class="metric">${money(estimate.benchmarks.weeklyBurnMinor)}</div>
+                <div class="metric-sub">${money(estimate.benchmarks.costPerWeekOfSiteOverheadMinor)} of it is site-wide cost that runs whatever the works do.</div>
+              </div>
+              <div class="card">
+                <h3>Margin</h3>
+                <div class="metric ${raw(estimate.marginPercent > 0 ? 'good' : 'bad')}">${pct(estimate.marginPercent, 2)}</div>
+                <div class="metric-sub">Profit over the tender total, which is always below the percentage applied.</div>
+              </div>
+            </div>
+
+            ${
+              (estimate.warnings ?? []).length > 0
+                ? html`<div class="notice warn" style="margin-bottom:14px">
+                    <div>
+                      <b>The build-up raises ${estimate.warnings.length} point${estimate.warnings.length === 1 ? '' : 's'}.</b>
+                      <div class="split-list" style="margin-top:8px">
+                        ${estimate.warnings.map((w) => html`<div class="row"><span class="lbl">${w}</span></div>`)}
+                      </div>
+                    </div>
+                  </div>`
+                : ''
+            }`
+          : ''
+      }
+
       <div class="card pad0" style="margin-bottom:14px">
         <h3 style="padding:15px 17px 0">Bid evaluation${evaluation ? ` — ${evaluation.method.price} price / ${evaluation.method.programme} programme / ${humanise(evaluation.method.risk)} risk` : ''}</h3>
         ${table({

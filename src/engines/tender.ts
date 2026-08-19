@@ -12,6 +12,7 @@ import {
   type PenaltyProfile,
   type SubmissionInput,
 } from './maths/bidScoring.ts';
+import { costHead, priceEstimate, reprice, type CostModelInput, type PricedEstimate } from './maths/costModel.ts';
 
 /**
  * Engine A — Tender & Commercial Intelligence (concept to contract award).
@@ -131,65 +132,48 @@ export async function runTakeoff(
   return { takeoffId, boqItemIds, acuConsumed: result.acuConsumed };
 }
 
-export type EstimateLine = {
-  boqItemId: string;
-  description: string;
-  unit: string;
-  quantity: number;
-  labourMinor: number;
-  plantMinor: number;
-  materialMinor: number;
-  subcontractMinor: number;
+export type EstimateInput = CostModelInput & {
+  packageId: string;
+  basisOfEstimate: string;
+  assumptions: string[];
 };
 
 /**
- * Bottom-up estimate: labour, plant, material, subcontract, prelims, overhead
- * and profit, plus explicit risk allowance. Risk is priced, not buried in a
- * percentage nobody can explain later.
+ * Bottom-up estimate across the twenty tender cost heads.
+ *
+ * The arithmetic lives in `maths/costModel.ts` and every head is priced on the
+ * basis it actually has — time-related costs by the week, contingency from the
+ * risk register at P80, inflation on the exposed spend after the base date, and
+ * margin on the cost beneath it. Nothing here derives prelims from a percentage
+ * of works, because that is the single most reliable way to lose money on a job
+ * whose programme moves.
+ *
+ * A head that is neither priced nor excluded comes back as an omission and the
+ * estimate is marked incomplete. A zero against waste is not a job with no
+ * waste in it.
  */
 export function buildEstimate(
   ctx: EngineContext,
-  input: {
-    packageId: string;
-    lines: EstimateLine[];
-    prelimsPercent: number;
-    overheadPercent: number;
-    profitPercent: number;
-    riskAllowanceMinor: number;
-    basisOfEstimate: string;
-    assumptions: string[];
-  },
-): { estimateId: string; totalMinor: number; breakdown: Record<string, number> } {
+  input: EstimateInput,
+): {
+  estimateId: string;
+  totalMinor: number;
+  breakdown: Record<string, number>;
+  priced: PricedEstimate;
+} {
   authorise(ctx, 'ESTIMATE_TENDER', 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
 
-  const direct = input.lines.reduce(
-    (totals, line) => ({
-      labour: totals.labour + line.labourMinor,
-      plant: totals.plant + line.plantMinor,
-      material: totals.material + line.materialMinor,
-      subcontract: totals.subcontract + line.subcontractMinor,
-    }),
-    { labour: 0, plant: 0, material: 0, subcontract: 0 },
-  );
+  if (input.lines.length === 0) {
+    throw new DomainError('ESTIMATE_EMPTY', 'An estimate must price at least one measured line');
+  }
 
-  const directTotal = direct.labour + direct.plant + direct.material + direct.subcontract;
-  const prelims = Math.round(directTotal * (input.prelimsPercent / 100));
-  const subtotal = directTotal + prelims + input.riskAllowanceMinor;
-  const overhead = Math.round(subtotal * (input.overheadPercent / 100));
-  const profit = Math.round((subtotal + overhead) * (input.profitPercent / 100));
-  const total = subtotal + overhead + profit;
+  const priced = priceEstimate(input);
+
+  // Flat by head, so a projection or an export can read a total without
+  // walking the build-up.
+  const breakdown = Object.fromEntries(priced.heads.map((h) => [`${h.head.toLowerCase()}Minor`, h.amountMinor]));
 
   const estimateId = ulid();
-  const breakdown = {
-    labourMinor: direct.labour,
-    plantMinor: direct.plant,
-    materialMinor: direct.material,
-    subcontractMinor: direct.subcontract,
-    prelimsMinor: prelims,
-    riskAllowanceMinor: input.riskAllowanceMinor,
-    overheadMinor: overhead,
-    profitMinor: profit,
-  };
 
   write(ctx, {
     eventType: 'ESTIMATE_CREATED',
@@ -198,17 +182,233 @@ export function buildEstimate(
       id: estimateId,
       packageId: input.packageId,
       version: 1,
-      status: 'DRAFT',
+      status: priced.omissions.length === 0 ? 'DRAFT' : 'INCOMPLETE',
       basisOfEstimate: input.basisOfEstimate,
       assumptions: input.assumptions,
+      durationWeeks: input.durationWeeks,
       lines: input.lines,
+      // The inputs are kept alongside the result. An estimate you cannot
+      // recompute is a number, not an estimate — and repricing against a moved
+      // programme needs the weekly rates, not the weekly totals.
+      model: input,
+      heads: priced.heads,
+      subtotals: priced.subtotals,
+      benchmarks: priced.benchmarks,
+      omissions: priced.omissions,
+      exclusions: priced.exclusions,
+      warnings: priced.warnings,
       breakdown,
-      totalMinor: total,
-      marginPercent: total === 0 ? 0 : Number(((profit / total) * 100).toFixed(2)),
+      totalMinor: priced.tenderTotalMinor,
+      marginPercent: priced.marginPercent,
     },
   });
 
-  return { estimateId, totalMinor: total, breakdown };
+  return { estimateId, totalMinor: priced.tenderTotalMinor, breakdown, priced };
+}
+
+/**
+ * What this estimate becomes on a different programme.
+ *
+ * The question every contractor is asked after award and few can answer
+ * quickly. It is answerable at all only because the time-related heads were
+ * priced by the week rather than as a percentage — the same reason a slipped
+ * programme is a known number here instead of a surprise at final account.
+ *
+ * This computes and returns; it writes nothing, because a what-if is not a
+ * commercial position.
+ */
+export function repriceEstimate(
+  ctx: EngineContext,
+  estimateId: string,
+  durationWeeks: number,
+): { originalWeeks: number; durationWeeks: number; originalTotalMinor: number; totalMinor: number; deltaMinor: number; priced: PricedEstimate } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'R', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  if (durationWeeks <= 0) throw new DomainError('DURATION_INVALID', 'A programme must be at least one week');
+
+  const record = ctx.ledger.require({ refType: 'Estimate', refId: estimateId });
+  const model = record.state.model as CostModelInput | undefined;
+  if (!model || model.durationWeeks === undefined) {
+    throw new DomainError('ESTIMATE_NOT_TIME_BASED', 'This estimate carries no programme, so it cannot be repriced against one');
+  }
+
+  const priced = reprice(model, durationWeeks);
+  const originalTotalMinor = Number(record.state.totalMinor);
+
+  return {
+    originalWeeks: model.durationWeeks,
+    durationWeeks,
+    originalTotalMinor,
+    totalMinor: priced.tenderTotalMinor,
+    deltaMinor: priced.tenderTotalMinor - originalTotalMinor,
+    priced,
+  };
+}
+
+// --- Automatic tender response ----------------------------------------------------
+
+export type TenderEnquiry = {
+  /** The client's own reference for the enquiry. */
+  clientReference: string;
+  clientName: string;
+  projectTitle: string;
+  /** Form of contract the client is proposing. */
+  contractForm: string;
+  returnBy: string;
+  scopeNarrative: string;
+  /** What the client has actually sent, and at what revision. */
+  documents: Array<{ name: string; revision?: string; ref?: EntityRef }>;
+  /** Employer's requirements the response must answer, in the client's words. */
+  employerRequirements?: string[];
+  /** Elements the client expects the contractor to design. */
+  contractorDesignedPortions?: string[];
+};
+
+export type TenderResponse = {
+  responseId: string;
+  estimateId: string;
+  tenderTotalMinor: number;
+  /** Qualifications and exclusions, ready to go in front of the client. */
+  qualifications: string[];
+  exclusions: string[];
+  /** Things the enquiry did not tell us that we had to assume. */
+  assumptionsMade: string[];
+  /** Questions that should go back as tender queries before the return date. */
+  tenderQueries: string[];
+  submissionLetter: string;
+  /** Whether this is fit to submit, and if not, why not. */
+  readyToSubmit: boolean;
+  blockers: string[];
+  acuConsumed: number;
+};
+
+/** Enquiry components a bidder needs before a price means anything. */
+const ENQUIRY_CHECKLIST = [
+  { key: 'scope', label: 'Scope of works', present: (e: TenderEnquiry) => e.scopeNarrative.trim().length > 50 },
+  { key: 'documents', label: 'Tender drawings and specification', present: (e: TenderEnquiry) => e.documents.length > 0 },
+  { key: 'revisions', label: 'Document revisions', present: (e: TenderEnquiry) => e.documents.every((d) => Boolean(d.revision)) },
+  { key: 'contract', label: 'Form of contract', present: (e: TenderEnquiry) => e.contractForm.trim().length > 0 },
+  { key: 'return', label: 'Return date', present: (e: TenderEnquiry) => e.returnBy.trim().length > 0 },
+  { key: 'requirements', label: "Employer's requirements", present: (e: TenderEnquiry) => (e.employerRequirements ?? []).length > 0 },
+];
+
+/**
+ * Respond to a client enquiry: price it, qualify it, and draft the letter.
+ *
+ * The division of labour is the same one the platform applies everywhere. The
+ * money is arithmetic — the cost model prices twenty heads on the basis each
+ * one has, and the model never touches a number. What the model does is the
+ * writing: turning an unpriced head into an exclusion a client will accept, an
+ * unanswerable gap in the enquiry into a tender query, and the whole thing into
+ * a covering letter.
+ *
+ * The response refuses to call itself submittable while a cost head is neither
+ * priced nor excluded. That is the failure this is built to prevent: a bid that
+ * looks complete, prices twenty-two of twenty-three items, and wins because of
+ * the one it forgot.
+ */
+export async function respondToTender(
+  ctx: EngineContext,
+  input: { enquiry: TenderEnquiry; estimate: EstimateInput },
+): Promise<TenderResponse> {
+  authorise(ctx, 'ESTIMATE_TENDER', 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  // 1 — Price it. Deterministic, and committed before anything is drafted, so
+  // the words are written against a number that already exists on the ledger.
+  const built = buildEstimate(ctx, input.estimate);
+  const priced = built.priced;
+
+  // 2 — What the enquiry itself failed to provide.
+  const enquiryGaps = ENQUIRY_CHECKLIST.filter((c) => !c.present(input.enquiry)).map((c) => c.label);
+
+  const responseId = ulid();
+  const unpricedLabels = priced.omissions.map((head) => costHead(head)?.label ?? head);
+
+  const result = await runAI(ctx, {
+    engine: 'TENDER',
+    taskType: 'tender_response',
+    capability: 'REASONING',
+    inputRefs: input.enquiry.documents.map((d) => d.ref).filter((r): r is EntityRef => r !== undefined),
+    request: {
+      task:
+        'Draft the qualifications, exclusions, tender queries and covering letter for this bid. ' +
+        'Do not state, adjust or infer any price: the commercial figures are fixed and supplied.',
+      payload: {
+        enquiry: input.enquiry,
+        enquiryGaps,
+        headsPriced: priced.heads.filter((h) => h.status === 'PRICED').map((h) => h.label),
+        headsExcluded: priced.exclusions,
+        headsUnpriced: unpricedLabels,
+        assumptions: input.estimate.assumptions,
+        basisOfEstimate: input.estimate.basisOfEstimate,
+        warnings: priced.warnings,
+        contractForm: input.enquiry.contractForm,
+        contractorDesignedPortions: input.enquiry.contractorDesignedPortions ?? [],
+      },
+    },
+    toWrites: (output) => [
+      {
+        eventType: 'TENDER_RESPONSE_DRAFTED',
+        entity: { refType: 'TenderResponse', refId: responseId },
+        nextState: {
+          id: responseId,
+          estimateId: built.estimateId,
+          clientReference: input.enquiry.clientReference,
+          clientName: input.enquiry.clientName,
+          projectTitle: input.enquiry.projectTitle,
+          contractForm: input.enquiry.contractForm,
+          returnBy: input.enquiry.returnBy,
+          enquiryGaps,
+          qualifications: asStrings(output.qualifications),
+          exclusions: priced.exclusions.map((e) => `${e.label}: ${e.reason}`),
+          assumptionsMade: asStrings(output.assumptionsMade),
+          tenderQueries: asStrings(output.tenderQueries),
+          submissionLetter: String(output.narrative ?? output.submissionLetter ?? ''),
+          tenderTotalMinor: priced.tenderTotalMinor,
+          unpricedHeads: priced.omissions,
+          status: priced.omissions.length === 0 ? 'DRAFTED' : 'INCOMPLETE',
+          draftedAt: new Date().toISOString(),
+        },
+      },
+    ],
+  });
+
+  // 3 — The blockers are computed here, not asked of the model. Whether a bid
+  // is fit to submit is not a matter of opinion.
+  const blockers: string[] = [];
+  if (priced.omissions.length > 0) {
+    blockers.push(`${unpricedLabels.length} cost head(s) neither priced nor excluded: ${unpricedLabels.join(', ')}`);
+  }
+  if (enquiryGaps.length > 0) {
+    blockers.push(`The enquiry is incomplete: ${enquiryGaps.join(', ')}`);
+  }
+  if (priced.subtotals.profitMinor <= 0) {
+    blockers.push('The build-up carries no profit');
+  }
+
+  const drafted = ctx.ledger.require({ refType: 'TenderResponse', refId: responseId });
+
+  return {
+    responseId,
+    estimateId: built.estimateId,
+    tenderTotalMinor: priced.tenderTotalMinor,
+    qualifications: asStrings(drafted.state.qualifications),
+    exclusions: asStrings(drafted.state.exclusions),
+    assumptionsMade: asStrings(drafted.state.assumptionsMade),
+    // A gap in the enquiry is a question for the client, always — whatever the
+    // model came back with, the checklist findings go out.
+    tenderQueries: [...enquiryGaps.map((g) => `Please confirm: ${g} was not included in the enquiry.`), ...asStrings(drafted.state.tenderQueries)],
+    submissionLetter: String(drafted.state.submissionLetter ?? ''),
+    readyToSubmit: blockers.length === 0,
+    blockers,
+    acuConsumed: result.acuConsumed,
+  };
+}
+
+function asStrings(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((v) => String(v)).filter((v) => v.trim().length > 0);
+  if (typeof value === 'string' && value.trim().length > 0) return [value];
+  return [];
 }
 
 /**
