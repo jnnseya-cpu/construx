@@ -19,7 +19,7 @@ try {
 }
 const log = (...a) => process.stdout.write(a.join(' ') + '\n');
 
-const ALL = ['overview','copilot','autopilot','enterprise','pipeline','programme','field','design','commercial','procurement','contracts','risk','handover','audit','billing','admin','newsletter'];
+const ALL = ['overview','copilot','autopilot','enterprise','pipeline','programme','field','design','commercial','procurement','contracts','control','risk','handover','audit','billing','admin','newsletter'];
 const BASE = process.env.WALK_BASE ?? 'http://localhost:8123';
 const ROLE = process.argv[2] ?? 'Project Manager';
 const PAGES = process.argv[3] ? process.argv[3].split(',') : ALL;

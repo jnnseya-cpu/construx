@@ -55,6 +55,7 @@ export const NAV = [
   {
     group: 'Assure',
     items: [
+      { id: 'control', label: 'Project Control', area: 'PROJECT_SETUP', icon: 'checklist' },
       { id: 'risk', label: 'Risk & Safety', area: 'RISK_REGISTER', icon: 'shield' },
       { id: 'handover', label: 'Handover & O&M', area: 'HANDOVER_OM', icon: 'key' },
       { id: 'audit', label: 'Golden Thread', area: 'EVIDENCE_AUDIT', icon: 'link' },
@@ -88,6 +89,7 @@ const ICONS = {
   cog: 'M10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM10 2v2M10 16v2M2 10h2M16 10h2M4.5 4.5 6 6M14 14l1.5 1.5M15.5 4.5 14 6M6 14l-1.5 1.5',
   mail: 'M2 5h16v10H2zM2 5l8 6 8-6',
   target: 'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM10 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+  checklist: 'M7 3h10v14H7zM3 5l1.5 1.5L7 4M3 10l1.5 1.5L7 8M3 15l1.5 1.5L7 13',
 };
 
 export function icon(name) {

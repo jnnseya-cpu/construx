@@ -10,7 +10,9 @@ import * as business from '../domain/business.ts';
 import * as cdm from '../domain/cdm.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as supplychain from '../domain/supplychain.ts';
+import * as control from '../domain/control.ts';
 import * as framework from '../domain/framework.ts';
+import * as lifecycleControl from '../lifecycle/control.ts';
 import * as costModel from '../engines/maths/costModel.ts';
 import * as structure from '../domain/structure.ts';
 import * as bim from '../engines/bim.ts';
@@ -81,6 +83,25 @@ function operatorOnly(ctx: RequestContext, action: string): void {
  * A context for work that happens before a project exists — the pipeline.
  * Bound to the tenant's governance chain rather than to a project id.
  */
+/**
+ * A control item as it can be published. The evidence predicate is a function
+ * and does not survive JSON, so what leaves is what the item requires and where
+ * it is looked for — not how the check is implemented.
+ */
+function publishableControlItem(item: lifecycleControl.ControlItem) {
+  return {
+    id: item.id,
+    stage: item.stage,
+    label: item.label,
+    purpose: item.purpose,
+    dueFrom: item.dueFrom,
+    gateEnforced: Boolean(item.gateEnforced),
+    tracked: item.evidence !== undefined,
+    evidence: item.evidence ? { refType: item.evidence.refType, minimum: item.evidence.minimum, counts: item.evidence.counts } : undefined,
+    notTrackedReason: item.notTrackedReason,
+  };
+}
+
 function tenantContext(platform: Platform, ctx: RequestContext) {
   const actor = auth(ctx);
   if (actor.roles.includes('PLATFORM_ADMIN')) {
@@ -464,6 +485,42 @@ export const ROUTES: Route[] = [
     pattern: '/v1/pipeline/discipline',
     description: 'Whether the business is refusing bad work, and whether the bands predict',
     handler: (platform, ctx) => business.bidDiscipline(tenantContext(platform, ctx)),
+  },
+
+  // ------------------------------------------------- corporate project control
+  {
+    method: 'GET',
+    pattern: '/v1/control/standard',
+    description: 'The corporate control standard: four stages and every item in them',
+    handler: () => ({ stages: lifecycleControl.CONTROL_STAGES, items: lifecycleControl.CONTROL_ITEMS.map(publishableControlItem) }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/control',
+    description: 'This project against the standard: what is due, what is present, what is missing',
+    handler: (platform, ctx) => control.projectControl(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/control/estate',
+    description: 'Every project against the same standard, and what the business is systematically missing',
+    handler: (platform, ctx) => control.estateControl(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/lessons',
+    description: 'The lessons library, across every project in the business',
+    handler: (platform, ctx) =>
+      control.lessonsLibrary(tenantContext(platform, ctx), {
+        ...(ctx.query.get('category') ? { category: ctx.query.get('category') as control.LessonCategory } : {}),
+        ...(ctx.query.get('kind') ? { kind: ctx.query.get('kind') as control.LessonKind } : {}),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/lessons',
+    description: 'Capture a lesson against the project that produced it',
+    handler: (platform, ctx) => control.captureLesson(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',

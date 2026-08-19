@@ -4,6 +4,7 @@ import { autopilot } from './autopilot.js';
 import { billing } from './billing.js';
 import { commercial } from './commercial.js';
 import { contracts } from './contracts.js';
+import { control } from './control.js';
 import { copilot } from './copilot.js';
 import { design } from './design.js';
 import { enterprise } from './enterprise.js';
@@ -31,6 +32,7 @@ export const PAGES = {
   commercial,
   procurement,
   contracts,
+  control,
   risk,
   handover,
   audit,

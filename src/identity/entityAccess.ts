@@ -21,6 +21,7 @@ export type EntityClassification = {
 export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // Business development — the pipeline, before a project exists
   Opportunity: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  LessonLearned: { area: 'RISK_REGISTER' },
 
   // Tenancy and platform — the operator layer, never delivery
   Tenant: { area: 'PLATFORM_ADMINISTRATION' },

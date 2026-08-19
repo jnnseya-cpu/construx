@@ -1,5 +1,6 @@
 import { hashEvidence } from './core/canonical.ts';
 import * as business from './domain/business.ts';
+import * as control from './domain/control.ts';
 import * as procurement from './domain/procurement.ts';
 import * as structure from './domain/structure.ts';
 import * as supplychain from './domain/supplychain.ts';
@@ -1259,6 +1260,62 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   step(
     `Maintenance forecast over 5 years: ${maintenance.schedule.length} interventions, ` +
       `${(maintenance.totalForecastMinor / 100).toLocaleString()} GBP, budget pressure ${maintenance.budgetPressure}`,
+  );
+
+  // --- CORPORATE MEMORY ------------------------------------------------------
+  // What this job taught the business, in a form the next one can find. Each
+  // carries what it cost, because a lesson with no impact is an anecdote.
+  for (const lesson of [
+    {
+      title: 'Made ground was deeper and more variable than the preliminary GI indicated',
+      category: 'GROUND_CONDITIONS' as const,
+      kind: 'WENT_WRONG' as const,
+      stage: 'PRECONSTRUCTION' as const,
+      whatHappened:
+        'The preliminary ground investigation sampled on a 40m grid across the clarifier footprint. Made ground ran 1.8m deeper than logged across roughly a third of the area, and the additional excavation and disposal was not in the tender.',
+      recommendation:
+        'On brownfield water treatment sites, price an intrusive GI at 20m centres across the structural footprint before the tender is submitted, or qualify the bid against the depth of made ground explicitly.',
+      costImpactMinor: 31_400_000,
+      scheduleImpactDays: 16,
+      relatedControlItemId: 'PRE.SURVEYS',
+    },
+    {
+      title: 'Process pipework design was released after the procurement programme required it',
+      category: 'DESIGN' as const,
+      kind: 'WENT_WRONG' as const,
+      stage: 'PRECONSTRUCTION' as const,
+      whatHappened:
+        'The specialist pipework package could not be enquired until the process design was issued, which arrived eleven weeks after the date the procurement schedule assumed. The package was let on a compressed tender period with two returns rather than four.',
+      recommendation:
+        'Tie the procurement schedule to the design release programme at tender stage and raise a constraint the moment a design release date moves, rather than discovering it when the enquiry is due out.',
+      costImpactMinor: 18_900_000,
+      scheduleImpactDays: 11,
+      relatedControlItemId: 'PRE.PROCUREMENT_SCHEDULE',
+    },
+    {
+      title: 'Prequalification caught a supplier whose employers liability had lapsed',
+      category: 'SUPPLY_CHAIN' as const,
+      kind: 'WENT_WELL' as const,
+      stage: 'MOBILISATION' as const,
+      whatHappened:
+        'A firm invited to the groundworks enquiry had let its employers liability policy expire between registration and enquiry. The register refused the enquiry rather than deducting points, so the gap was closed before anybody was on site.',
+      recommendation:
+        'Keep insurance expiry as a hard bar rather than a scored criterion. Continue re-checking at the point of enquiry as well as at prequalification, because the gap opens between the two.',
+      scheduleImpactDays: 0,
+    },
+  ]) {
+    control.captureLesson(pmCtx, lesson);
+  }
+
+  const library = control.lessonsLibrary(pmCtx);
+  const position = control.projectControl(pmCtx);
+  step(
+    `Lessons captured: ${library.lessons.length} across ${library.contributingProjects} project, ` +
+      `${(library.recurring.reduce((s, r) => s + r.costImpactMinor, 0) / 100).toLocaleString()} GBP of quantified impact`,
+  );
+  step(
+    `Project control: ${position.completenessPercent}% of due and trackable items in place, ` +
+      `${position.gaps.length} gaps, ${position.notTracked.length} items the platform does not yet track`,
   );
 
   const wallet = platform.wallet(tenant.id).snapshot();

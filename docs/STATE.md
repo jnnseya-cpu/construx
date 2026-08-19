@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 362 passing, 0 failing, across 16 files |
+| Tests | 384 passing, 0 failing, across 17 files |
 | Typecheck | clean |
-| Backend | 64 TypeScript files, 23,554 lines |
-| Application | 25 ES modules, 5,490 lines (plus a service worker) |
-| API routes | 158 |
-| Event types | 161, closed catalogue |
-| Entity types | 103, all classified for access |
+| Backend | 66 TypeScript files, 24,572 lines |
+| Application | 26 ES modules, 5,714 lines (plus a service worker) |
+| API routes | 163 |
+| Event types | 162, closed catalogue |
+| Entity types | 104, all classified for access |
 | Runtime dependencies | none |
 
 Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`).
@@ -71,7 +71,7 @@ before the request goes out, and a released hold when the provider throws.
 **Commercial packaging.** Eight role-priced seats, three packages, three ACU
 bundles. The operator and the regulator consume no seat.
 
-**Application.** Eighteen screens against live endpoints, including Autopilot — the queue where a person approves or declines what the agents propose. Role-aware navigation
+**Application.** Nineteen screens against live endpoints, including Autopilot — the queue where a person approves or declines what the agents propose. Role-aware navigation
 resolved from the API's permission matrix and phase gates, so the interface
 refuses for the reason the platform would. Command surfaces on field, cost,
 design, programme, change and handover. Daily site record. Canonical enum
@@ -126,6 +126,42 @@ network-first for navigation, verified by test and in a browser.
 Regenerate the assets with `node tools/icons.mjs` after any brand change. The
 PNG encoder is in that file: `node:zlib` is built in, so it was shorter than the
 argument for a dependency.
+
+**The corporate project control standard.** Every project runs through the same
+four stages — preconstruction, mobilisation, delivery, completion — and the same
+36 items, evaluated continuously against the ledger rather than only at a phase
+transition. This is deliberately not the phase gate: a gate is a small hard stop
+enforced fail-closed on the write path, and this is the wider question of what a
+project should have in place right now given where it is. A project can legally
+reach handover having kept no site diary; it should not be able to do so
+quietly. The standard cross-references which of its items a gate really enforces
+rather than restating the rule, so `phases.ts` remains the only thing enforcing.
+
+Four statuses, and the distinctions between them are the whole design. An item
+**not yet due** is not a failure — a project in design is not failing for having
+no site diary. An item the platform **cannot evidence** is reported as
+`NOT_TRACKED` with the reason, never as present and never as missing: claiming
+it is satisfied would be a lie, and calling it missing would blame the project
+for the platform's gap. Completeness is measured over what is due *and*
+trackable, so the figure means something. Six items are currently untracked and
+named as such: surveys, procurement schedule, site setup, project insurance,
+technical submittals and final account.
+
+`estateControl` runs the same standard over every project at once, which is the
+reason for having one standard at all. A project manager can see their own gaps;
+only this view shows that the same item is missing on most of the estate, which
+is a statement about how the business runs jobs rather than about one job.
+
+**Corporate memory.** Lessons are captured on the project that produced them and
+read across the whole business, because a lesson only pays for itself on a
+different job. Two rules keep the register from becoming what lessons-learned
+workshops usually produce: a lesson must carry a recommendation somebody on the
+next job could act on — "communication could have been better" is refused — and
+it must name what it cost in money or days. The library reports what recurs
+*across projects*, since one job getting ground conditions wrong is bad luck and
+the same category on four jobs is a business problem no project team was ever in
+a position to see. A library drawing on a single project says so rather than
+presenting one job's experience as corporate knowledge.
 
 **The contractor's delivery chain.** Business development → estimating →
 preconstruction → contract → project management → commercial → HSEQ →
