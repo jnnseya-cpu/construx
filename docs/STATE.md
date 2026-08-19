@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 355 passing, 0 failing, across 16 files |
+| Tests | 362 passing, 0 failing, across 16 files |
 | Typecheck | clean |
-| Backend | 64 TypeScript files, 23,043 lines |
-| Application | 24 ES modules, 5,283 lines (plus a service worker) |
-| API routes | 156 |
+| Backend | 64 TypeScript files, 23,554 lines |
+| Application | 25 ES modules, 5,490 lines (plus a service worker) |
+| API routes | 158 |
 | Event types | 161, closed catalogue |
 | Entity types | 103, all classified for access |
 | Runtime dependencies | none |
@@ -71,7 +71,7 @@ before the request goes out, and a released hold when the provider throws.
 **Commercial packaging.** Eight role-priced seats, three packages, three ACU
 bundles. The operator and the regulator consume no seat.
 
-**Application.** Seventeen screens against live endpoints, including Autopilot — the queue where a person approves or declines what the agents propose. Role-aware navigation
+**Application.** Eighteen screens against live endpoints, including Autopilot — the queue where a person approves or declines what the agents propose. Role-aware navigation
 resolved from the API's permission matrix and phase gates, so the interface
 refuses for the reason the platform would. Command surfaces on field, cost,
 design, programme, change and handover. Daily site record. Canonical enum
@@ -133,12 +133,41 @@ subcontract procurement → programme → quality → handover, walked end to en
 `tests/chain.test.ts`.
 
 *Business development* was entirely absent — the platform began at a project
-that already existed. Opportunities are now registered, scored against six
-weighted criteria, and decided by a person; a decision taken against the
-platform's own recommendation is flagged as an override, because that is the
-finding a post-mortem needs. A converted project carries its opportunity id, so
-a variation argued about in year three traces back to the decision to chase the
-job at all.
+that already existed. Opportunities are now registered, scored, and decided by a
+person. A converted project carries its opportunity id, so a variation argued
+about in year three traces back to the decision to chase the job at all.
+
+**The bid/no-bid algorithm.** Ten factors weighted to 100 — relevant experience
+15, client attractiveness 10, contract size 10, geography 10, supply-chain
+capacity 10, competition 10, margin opportunity 15, cash-flow risk 10, strategic
+value 5, win probability 5 — each scored 1–5, against published thresholds:
+**below 55 no bid, 55–70 director review, above 70 bid**. The rule lives in one
+constant and is served to the interface, so there is no second copy to disagree
+with it.
+
+Three things make it work rather than merely exist. Every factor carries an
+explicit anchor for what 5 means and what 1 means, because two of the ten are
+named as risks and a scorer reading "cash-flow risk: 5" as "very risky" inverts
+the algorithm on the factors where being wrong costs most. The scale runs 20 to
+100, not 0 to 100 — ten factors at 1/5 still return a fifth of every weight, and
+a threshold set as though it could reach zero would never fire. And a single
+factor at 1/5 holds the job at a director's desk however well the average
+scored: a weighted average hides one catastrophic factor behind nine comfortable
+ones, and a trade with nobody on the register is a fact rather than a deduction.
+
+Supply-chain capacity is the one factor the platform can answer from evidence
+instead of memory: `supplyChainEvidence` reads the register for the trades the
+job needs and reports how many are covered three-deep. It suggests and does not
+set — the register knows the count, not whether those firms want the job.
+
+**Refusing bad work is measured, not just permitted.** An algorithm nobody
+declines against is a form, so `bidDiscipline` reports the no-bid rate as the
+headline figure, names every decision taken against the score with who took it
+and how it turned out, and — the part that matters most — reports each band
+against actual outcomes. If jobs above 70 do not convert better than jobs pushed
+through from the review band, the weights are wrong, and an algorithm nobody
+checks against outcomes is a slower way of having the same opinion. A pipeline
+where nothing has been refused is told so in those terms.
 
 *Estimating* priced eight heads and derived preliminaries from a percentage of
 works. It now prices **twenty**: direct works, subcontract, materials, plant,

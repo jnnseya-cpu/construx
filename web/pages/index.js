@@ -12,6 +12,7 @@ import { handover } from './handover.js';
 import { login } from './login.js';
 import { newsletter } from './newsletter.js';
 import { overview } from './overview.js';
+import { pipeline } from './pipeline.js';
 import { procurement } from './procurement.js';
 import { programme } from './programme.js';
 import { risk } from './risk.js';
@@ -23,6 +24,7 @@ export const PAGES = {
   copilot,
   autopilot,
   enterprise,
+  pipeline,
   programme,
   field,
   design,

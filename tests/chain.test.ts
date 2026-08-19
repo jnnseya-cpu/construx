@@ -47,36 +47,96 @@ before(async () => {
 // ── 1 · Business development ────────────────────────────────────────────────
 
 describe('1 · Business development', () => {
-  it('scores an opportunity on arithmetic rather than instinct', () => {
-    const strong = business.qualify({
-      strategicFit: 5, capability: 5, capacity: 4, clientQuality: 4, competitivePosition: 4, riskProfile: 4,
-    });
-    const weak = business.qualify({
-      strategicFit: 2, capability: 2, capacity: 2, clientQuality: 2, competitivePosition: 2, riskProfile: 2,
-    });
+  /** All ten factors at one value, so a test can move one and see what it does. */
+  const flat = (value: number): business.QualificationScores =>
+    Object.fromEntries(business.QUALIFICATION_CRITERIA.map((c) => [c.key, value])) as business.QualificationScores;
 
-    assert.ok(strong.score > weak.score);
-    assert.equal(strong.recommendation, 'PURSUE');
-    assert.equal(weak.recommendation, 'DECLINE');
-    assert.ok(weak.concerns.length > 0, 'a weak opportunity must say what is wrong with it');
+  it('weights ten factors to exactly one hundred', () => {
+    assert.equal(business.QUALIFICATION_CRITERIA.length, 10);
+    assert.equal(business.QUALIFICATION_CRITERIA.reduce((sum, c) => sum + c.weight, 0), 100);
+    assert.equal(new Set(business.QUALIFICATION_CRITERIA.map((c) => c.key)).size, 10);
+
+    // Every factor states what 5 means and what 1 means. Two of them are named
+    // as risks, and a scorer who reads "cash-flow risk: 5" as "very risky"
+    // inverts the algorithm on the factors where being wrong costs most.
+    for (const criterion of business.QUALIFICATION_CRITERIA) {
+      assert.ok(criterion.good.length > 0 && criterion.bad.length > 0, `${criterion.label} has no anchors`);
+    }
   });
 
-  it('forces a review when capacity or client quality is poor, however good the rest', () => {
-    // The average would pass. Taking on work you cannot resource is how a good
-    // job kills a good business, so either criterion alone stops a PURSUE.
-    const stretched = business.qualify({
-      strategicFit: 5, capability: 5, capacity: 2, clientQuality: 5, competitivePosition: 5, riskProfile: 5,
-    });
+  it('runs the scale from 20 to 100 rather than from 0', () => {
+    // Ten factors at 1/5 still return a fifth of every weight. Nothing scores
+    // below 20, and a threshold set as though it could would never fire.
+    assert.equal(business.qualify(flat(1)).score, 20);
+    assert.equal(business.qualify(flat(5)).score, 100);
+    assert.equal(business.qualify(flat(3)).score, 60);
+  });
 
-    assert.ok(stretched.score >= 70, 'the fixture should score well on the average');
-    assert.equal(stretched.recommendation, 'REVIEW', 'thin capacity did not force a review');
+  it('applies the published thresholds, at their exact boundaries', () => {
+    assert.equal(business.BID_THRESHOLDS.noBidBelow, 55);
+    assert.equal(business.BID_THRESHOLDS.bidAbove, 70);
+
+    // 3/5 across the board is 60 — the middle of the review band.
+    assert.equal(business.qualify(flat(3)).recommendation, 'DIRECTOR_REVIEW');
+    // 2/5 across the board is 40 — below 55.
+    assert.equal(business.qualify(flat(2)).recommendation, 'NO_BID');
+    // 4/5 across the board is 80 — above 70.
+    assert.equal(business.qualify(flat(4)).recommendation, 'BID');
+
+    // The boundaries themselves: 70 exactly is review, not a bid, because the
+    // rule is "above 70". 55 exactly is review, because the rule is "below 55".
+    const at70 = business.qualify({ ...flat(3), relevantExperience: 5, marginOpportunity: 4, strategicValue: 4 });
+    assert.equal(at70.score, 70);
+    assert.equal(at70.recommendation, 'DIRECTOR_REVIEW', '70 exactly must not be a bid');
+
+    const at55 = business.qualify({ ...flat(2), relevantExperience: 5, marginOpportunity: 4 });
+    assert.equal(at55.score, 55);
+    assert.equal(at55.recommendation, 'DIRECTOR_REVIEW', '55 exactly must not be a no-bid');
+  });
+
+  it('names what is wrong with a weak opportunity rather than only scoring it', () => {
+    const weak = business.qualify(flat(2));
+    assert.equal(weak.concerns.length, 10, 'every factor at 2/5 is a concern');
+    assert.ok(weak.concerns[0]!.includes('scored 2/5'));
+  });
+
+  it('holds a job at a director however well the average scored, if one factor is a 1', () => {
+    // The weighted average passes comfortably. A trade with nobody on the
+    // register is a fact, not a deduction, and it does not become safe because
+    // the margin looked good.
+    const blindSpot = business.qualify({ ...flat(5), supplyChainCapacity: 1 });
+
+    assert.ok(blindSpot.score > business.BID_THRESHOLDS.bidAbove, 'the fixture should score well on the average');
+    assert.equal(blindSpot.band, 'BID', 'the raw band should still be reported honestly');
+    assert.equal(blindSpot.recommendation, 'DIRECTOR_REVIEW');
+    assert.match(blindSpot.cappedBy!, /Supply-chain capacity scored 1\/5/);
+  });
+
+  it('does not cap a job that was already going to a director', () => {
+    const marginal = business.qualify({ ...flat(3), winProbability: 1 });
+    assert.equal(marginal.recommendation, 'DIRECTOR_REVIEW');
+    assert.equal(marginal.cappedBy, undefined, 'nothing was capped — it was in the review band anyway');
   });
 
   it('refuses a score outside the scale rather than clamping it', () => {
-    throwsCode(
-      () => business.qualify({ strategicFit: 9, capability: 3, capacity: 3, clientQuality: 3, competitivePosition: 3, riskProfile: 3 }),
-      'QUALIFICATION_SCORE_INVALID',
-    );
+    throwsCode(() => business.qualify({ ...flat(3), relevantExperience: 9 }), 'QUALIFICATION_SCORE_INVALID');
+    throwsCode(() => business.qualify({ ...flat(3), geography: 0 }), 'QUALIFICATION_SCORE_INVALID');
+    throwsCode(() => business.qualify({ ...flat(3), competition: 2.5 }), 'QUALIFICATION_SCORE_INVALID');
+  });
+
+  it('answers supply-chain capacity from the register instead of from memory', () => {
+    const ctx = pipelineCtx('qs');
+    const evidence = business.supplyChainEvidence(ctx, ['GROUNDWORKS', 'FIRE_STOPPING']);
+
+    assert.equal(evidence.trades.length, 2);
+    assert.ok(evidence.suggestedScore >= 1 && evidence.suggestedScore <= 5);
+    assert.ok(evidence.note.length > 0);
+
+    // A trade nobody has heard of is reported as unknown, not scored as zero.
+    const invented = business.supplyChainEvidence(ctx, ['TIME_TRAVEL']);
+    assert.deepEqual(invented.uncovered, ['TIME_TRAVEL']);
+    assert.equal(invented.suggestedScore, 1);
+    assert.match(invented.note, /can say nothing about them/);
   });
 
   it('will not record a bid decision before the opportunity has been qualified', () => {
@@ -99,6 +159,7 @@ describe('1 · Business development', () => {
     // The platform advises; the business decides. What it must not do is let
     // the override pass unremarked — that is the finding a post-mortem needs.
     const ctx = pipelineCtx('owner');
+    const before = business.pipeline(ctx).overrides;
     const { opportunityId } = business.registerOpportunity(ctx, {
       title: 'Speculative office fit-out',
       clientName: 'Unknown developer',
@@ -108,7 +169,8 @@ describe('1 · Business development', () => {
     });
 
     business.qualifyOpportunity(ctx, opportunityId, {
-      strategicFit: 1, capability: 2, capacity: 2, clientQuality: 1, competitivePosition: 2, riskProfile: 1,
+      relevantExperience: 1, clientAttractiveness: 1, contractSize: 2, geography: 2, supplyChainCapacity: 2,
+      competition: 2, marginOpportunity: 1, cashflowRisk: 1, strategicValue: 3, winProbability: 2,
     });
     const decision = business.decideBidNoBid(ctx, opportunityId, {
       bid: true,
@@ -117,7 +179,7 @@ describe('1 · Business development', () => {
 
     assert.equal(decision.stage, 'BID');
     assert.equal(decision.againstRecommendation, true, 'the override was not flagged');
-    assert.equal(business.pipeline(ctx).overrides, 1);
+    assert.equal(business.pipeline(ctx).overrides, before + 1, 'the override was not counted');
   });
 
   it('requires a rationale whichever way the decision goes', () => {
@@ -128,6 +190,98 @@ describe('1 · Business development', () => {
       () => business.decideBidNoBid(ctx, String(opportunity.id), { bid: false, rationale: '  ' }),
       'RATIONALE_REQUIRED',
     );
+  });
+
+  /**
+   * The point of scoring every opportunity is to decline some of them. An
+   * algorithm nobody declines against is a form, so the refusals are counted
+   * and the overrides are named.
+   */
+  it('counts the refusals and names every override', () => {
+    const ctx = pipelineCtx('owner');
+
+    const register = (title: string, valueMinor: number) =>
+      business.registerOpportunity(ctx, {
+        title,
+        clientName: 'Assorted clients',
+        sectorType: 'BUILDING',
+        estimatedValueMinor: valueMinor,
+        source: 'Tender portal',
+      }).opportunityId;
+
+    // Three jobs the algorithm says to walk away from, and the business does.
+    for (const title of ['Distant retail unit', 'Loss-leader school', 'Unfamiliar marine works']) {
+      const id = register(title, 1_200_000_00);
+      business.qualifyOpportunity(ctx, id, flat(2));
+      business.decideBidNoBid(ctx, id, { bid: false, rationale: 'Scores below the threshold on every factor' });
+    }
+
+    const strong = register('Repeat client warehouse', 4_000_000_00);
+    business.qualifyOpportunity(ctx, strong, flat(4));
+    business.decideBidNoBid(ctx, strong, { bid: true, rationale: 'Strong on every factor' });
+
+    const discipline = business.bidDiscipline(ctx);
+
+    assert.ok(discipline.noBid >= 3);
+    assert.ok(discipline.noBidRatePercent > 0);
+    assert.ok(discipline.declinedValueMinor >= 3_600_000_00, 'declined value was not accumulated');
+    assert.ok(discipline.observations.some((o) => o.includes('declined')));
+
+    // The earlier test bid a job the algorithm rejected. It must be named here,
+    // with who took it and what they said — not counted and forgotten.
+    const pushedThrough = discipline.overrides.find((o) => o.title === 'Speculative office fit-out');
+    assert.ok(pushedThrough, 'the override was not surfaced');
+    assert.equal(pushedThrough.decision, 'BID');
+    assert.equal(pushedThrough.recommendation, 'NO_BID');
+    assert.match(pushedThrough.rationale, /Strategic entry/);
+    assert.ok(pushedThrough.decidedBy.length > 0);
+
+    // And the bands are reported separately, so the algorithm can be checked
+    // against outcomes rather than believed.
+    assert.deepEqual(discipline.byBand.map((b) => b.band), ['BID', 'DIRECTOR_REVIEW', 'NO_BID']);
+    assert.equal(discipline.byBand.find((b) => b.band === 'BID')!.range, 'above 70');
+    assert.equal(discipline.byBand.find((b) => b.band === 'NO_BID')!.range, 'below 55');
+    assert.equal(discipline.decided, discipline.bid + discipline.noBid);
+
+    // Recurring weaknesses across the pipeline, worst first.
+    assert.ok(discipline.recurringConcerns.length > 0);
+    assert.ok(discipline.recurringConcerns[0]!.count >= discipline.recurringConcerns.at(-1)!.count);
+  });
+
+  it('says so when a pipeline refuses nothing at all, and stays inside its tenant', () => {
+    // A second tenant on the same platform. It sees none of the decisions
+    // above, which is both the empty-pipeline case and a tenant-isolation
+    // check on a report that aggregates commercial judgement.
+    const { tenant } = platform.createTenant({
+      legalName: 'Second Contractor Ltd',
+      jurisdiction: 'GB',
+      defaultCurrency: 'GBP',
+      tier: 'BUSINESS',
+      enterpriseName: 'Second Group',
+    });
+    const auth = { ...seed.users.owner!.auth, tenantId: tenant.id };
+    const other = platform.context(auth, `${tenant.id}-governance`, { source: 'WEB' });
+
+    const quiet = business.bidDiscipline(other);
+    assert.equal(quiet.decided, 0);
+    assert.equal(quiet.overrides.length, 0, "another tenant's overrides leaked into this report");
+    assert.ok(quiet.observations.some((o) => o.includes('No opportunity has reached a decision')));
+
+    // And once it decides everything it sees, it is told that refusing nothing
+    // is not qualification.
+    const id = business.registerOpportunity(other, {
+      title: 'Anything at all',
+      clientName: 'A client',
+      sectorType: 'BUILDING',
+      estimatedValueMinor: 500_000_00,
+      source: 'Relationship',
+    }).opportunityId;
+    business.qualifyOpportunity(other, id, flat(4));
+    business.decideBidNoBid(other, id, { bid: true, rationale: 'Scores well across the board' });
+
+    const processing = business.bidDiscipline(other);
+    assert.equal(processing.noBid, 0);
+    assert.ok(processing.observations.some((o) => o.includes('is not being qualified')));
   });
 });
 
@@ -147,7 +301,8 @@ describe('1 → 5 · Business development hands to project management', () => {
     });
 
     business.qualifyOpportunity(ctx, opportunityId, {
-      strategicFit: 5, capability: 5, capacity: 4, clientQuality: 5, competitivePosition: 4, riskProfile: 4,
+      relevantExperience: 5, clientAttractiveness: 5, contractSize: 4, geography: 5, supplyChainCapacity: 4,
+      competition: 4, marginOpportunity: 5, cashflowRisk: 4, strategicValue: 4, winProbability: 4,
     });
     business.decideBidNoBid(ctx, opportunityId, { bid: true, rationale: 'Repeat client, proven capability' });
 
@@ -180,7 +335,8 @@ describe('1 → 5 · Business development hands to project management', () => {
       source: 'Portal',
     });
     business.qualifyOpportunity(ctx, opportunityId, {
-      strategicFit: 3, capability: 3, capacity: 3, clientQuality: 3, competitivePosition: 3, riskProfile: 3,
+      relevantExperience: 3, clientAttractiveness: 3, contractSize: 3, geography: 3, supplyChainCapacity: 3,
+      competition: 3, marginOpportunity: 3, cashflowRisk: 3, strategicValue: 3, winProbability: 3,
     });
     business.decideBidNoBid(ctx, opportunityId, { bid: false, rationale: 'No capacity this year' });
 

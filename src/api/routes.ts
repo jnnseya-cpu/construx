@@ -456,8 +456,21 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/pipeline/criteria',
-    description: 'The weighted criteria an opportunity is qualified against',
-    handler: () => ({ criteria: business.QUALIFICATION_CRITERIA }),
+    description: 'The ten weighted factors and the bid/no-bid thresholds',
+    handler: () => ({ criteria: business.QUALIFICATION_CRITERIA, thresholds: business.BID_THRESHOLDS }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/pipeline/discipline',
+    description: 'Whether the business is refusing bad work, and whether the bands predict',
+    handler: (platform, ctx) => business.bidDiscipline(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/supply-chain-evidence',
+    description: 'What the register says about the trades an opportunity needs',
+    handler: (platform, ctx) =>
+      business.supplyChainEvidence(tenantContext(platform, ctx), body<{ trades: string[] }>(ctx).trades ?? []),
   },
   {
     method: 'POST',

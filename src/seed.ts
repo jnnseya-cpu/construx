@@ -1,4 +1,5 @@
 import { hashEvidence } from './core/canonical.ts';
+import * as business from './domain/business.ts';
 import * as procurement from './domain/procurement.ts';
 import * as structure from './domain/structure.ts';
 import * as supplychain from './domain/supplychain.ts';
@@ -115,6 +116,115 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
 
   const adminAuth = authOf(platform, admin.id);
   const governanceCtx = contextFor(platform, adminAuth, `${tenant.id}-governance`);
+
+  // --- BUSINESS DEVELOPMENT --------------------------------------------------
+  // The head of the chain. Before there is a project to run there is a decision
+  // about whether to chase the job at all, and that decision is where money is
+  // made or lost long before anybody prices anything.
+  const opportunities: Array<{
+    title: string;
+    clientName: string;
+    sectorType: structure.SectorType;
+    valueMinor: number;
+    source: string;
+    scores: business.QualificationScores;
+    bid: boolean;
+    rationale: string;
+  }> = [
+    {
+      title: 'Ashworth Water Treatment Works — Phase 2',
+      clientName: 'Northern Water Authority',
+      sectorType: 'INFRASTRUCTURE',
+      valueMinor: 1_850_000_000,
+      source: 'Framework mini-competition',
+      scores: {
+        relevantExperience: 5, clientAttractiveness: 5, contractSize: 4, geography: 5, supplyChainCapacity: 4,
+        competition: 4, marginOpportunity: 4, cashflowRisk: 4, strategicValue: 5, winProbability: 4,
+      },
+      bid: true,
+      rationale: 'Phase 1 delivered for the same client; framework position and local supply chain both strong',
+    },
+    {
+      title: 'Coastal outfall renewal, Whitby',
+      clientName: 'Coastal Drainage Board',
+      sectorType: 'INFRASTRUCTURE',
+      valueMinor: 620_000_000,
+      source: 'Tender portal',
+      scores: {
+        relevantExperience: 3, clientAttractiveness: 3, contractSize: 3, geography: 1, supplyChainCapacity: 2,
+        competition: 2, marginOpportunity: 3, cashflowRisk: 3, strategicValue: 2, winProbability: 2,
+      },
+      bid: false,
+      rationale: 'Two hours outside the operating patch with no local supply chain, in an open field of eight',
+    },
+    {
+      title: 'Speculative office fit-out, Leeds',
+      clientName: 'Aldgate Developments',
+      sectorType: 'BUILDING',
+      valueMinor: 84_000_000,
+      source: 'Cold approach',
+      scores: {
+        relevantExperience: 2, clientAttractiveness: 1, contractSize: 2, geography: 3, supplyChainCapacity: 2,
+        competition: 2, marginOpportunity: 2, cashflowRisk: 1, strategicValue: 2, winProbability: 2,
+      },
+      bid: false,
+      rationale: 'Unknown developer, 60-day payment terms and 10% retention on a job we would be funding throughout',
+    },
+    {
+      title: 'Reservoir spillway strengthening, Kielder',
+      clientName: 'Northern Water Authority',
+      sectorType: 'INFRASTRUCTURE',
+      valueMinor: 940_000_000,
+      source: 'Repeat client',
+      scores: {
+        relevantExperience: 3, clientAttractiveness: 4, contractSize: 4, geography: 3, supplyChainCapacity: 3,
+        competition: 3, marginOpportunity: 2, cashflowRisk: 4, strategicValue: 4, winProbability: 3,
+      },
+      bid: true,
+      rationale: 'Director review cleared it: repeat client and a programme that fits the gap after Ashworth',
+    },
+    {
+      title: 'Marine berth reconstruction, Immingham',
+      clientName: 'Humber Ports Group',
+      sectorType: 'INFRASTRUCTURE',
+      valueMinor: 2_300_000_000,
+      source: 'Invitation',
+      scores: {
+        relevantExperience: 1, clientAttractiveness: 4, contractSize: 2, geography: 2, supplyChainCapacity: 2,
+        competition: 3, marginOpportunity: 4, cashflowRisk: 3, strategicValue: 4, winProbability: 2,
+      },
+      // Against the recommendation, deliberately — so the override report has
+      // something real in it and the decision carries the name of whoever made it.
+      bid: true,
+      rationale: 'Entry into marine works accepted as a strategic loss-leader; board minute 2026-03-11',
+    },
+  ];
+
+  let declined = 0;
+  for (const opportunity of opportunities) {
+    const { opportunityId } = business.registerOpportunity(governanceCtx, {
+      title: opportunity.title,
+      clientName: opportunity.clientName,
+      sectorType: opportunity.sectorType,
+      estimatedValueMinor: opportunity.valueMinor,
+      source: opportunity.source,
+      countryCode: 'GB',
+    });
+    business.qualifyOpportunity(governanceCtx, opportunityId, opportunity.scores);
+    const decision = business.decideBidNoBid(governanceCtx, opportunityId, {
+      bid: opportunity.bid,
+      rationale: opportunity.rationale,
+    });
+    if (!opportunity.bid) declined += 1;
+    if (decision.againstRecommendation) {
+      step(`  ${opportunity.title} was bid against the algorithm's recommendation — recorded as an override`);
+    }
+  }
+  const discipline = business.bidDiscipline(governanceCtx);
+  step(
+    `Pipeline qualified: ${opportunities.length} opportunities scored, ${declined} declined ` +
+      `(${discipline.noBidRatePercent}%), ${discipline.overrides.length} override recorded`,
+  );
 
   // --- CONCEPT ---------------------------------------------------------------
   const { portfolioId } = structure.createPortfolio(governanceCtx, {
