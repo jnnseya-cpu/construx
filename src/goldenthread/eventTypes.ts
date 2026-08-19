@@ -223,8 +223,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('RISK_REGISTERED', 'RiskRegisterItem', 'CREATE', 'RISK_SAFETY', { aiAllowed: true }),
   def('RISK_SCORED', 'RiskRegisterItem', 'UPDATE', 'RISK_SAFETY', { aiAllowed: true }),
   def('RISK_MITIGATION_SET', 'RiskRegisterItem', 'UPDATE', 'RISK_SAFETY'),
+  // CDM 2015. An agent may draft; a competent person approves. The approval
+  // events below deliberately withhold aiAllowed, so the catalogue refuses an
+  // AI actor authoring a safety sign-off even if a caller tried.
+  def('CDM_DOCUMENT_DRAFTED', 'CDMDocument', 'CREATE', 'RISK_SAFETY', { aiAllowed: true, creates: true }),
+  def('CDM_DOCUMENT_APPROVED', 'CDMDocument', 'APPROVE', 'RISK_SAFETY', { requiresEvidence: true }),
+  def('INDUCTION_RECORDED', 'Induction', 'CREATE', 'RISK_SAFETY'),
+  def('TOOLBOX_TALK_DELIVERED', 'ToolboxTalk', 'CREATE', 'RISK_SAFETY'),
   def('RAMS_DRAFTED', 'RAMS', 'CREATE', 'RISK_SAFETY', { aiAllowed: true }),
-  def('RAMS_APPROVED', 'RAMS', 'APPROVE', 'RISK_SAFETY', { aiAllowed: true, requiresEvidence: true }),
+  def('RAMS_APPROVED', 'RAMS', 'APPROVE', 'RISK_SAFETY', { requiresEvidence: true }),
   def('RAMS_ACKNOWLEDGED', 'RAMS', 'UPDATE', 'RISK_SAFETY', { requiresEvidence: true }),
   def('SAFETY_OBSERVATION_LOGGED', 'SafetyObservation', 'CREATE', 'RISK_SAFETY', { aiAllowed: true, requiresEvidence: true }),
   def('INCIDENT_RECORDED', 'Incident', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),

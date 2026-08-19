@@ -66,13 +66,19 @@ export function write(
   input: Omit<CommitInput, 'tenantId' | 'projectId' | 'actor' | 'source' | 'correlationId'> &
     Partial<Pick<CommitInput, 'actor' | 'projectId'>>,
 ): { event: GoldenThreadEvent; state: Record<string, unknown> } {
+  // The spread comes first and the defaults after. The other way round, a
+  // caller passing `actor: undefined` — which is what an optional field looks
+  // like when it is absent — overwrote the default and committed an event with
+  // no actor at all.
+  const { actor, projectId, ...rest } = input;
+
   const { event, record } = ctx.ledger.commit({
+    ...rest,
     tenantId: ctx.tenantId,
-    projectId: input.projectId ?? ctx.projectId,
-    actor: input.actor ?? { refType: 'User', refId: ctx.auth.actorId },
+    projectId: projectId ?? ctx.projectId,
+    actor: actor ?? { refType: 'User', refId: ctx.auth.actorId },
     source: ctx.source,
     correlationId: ctx.correlationId,
-    ...input,
   });
   return { event, state: record.state };
 }

@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { rejectsCode, throwsCode } from './helpers.ts';
 import { hashEvidence } from '../src/core/canonical.ts';
+import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import * as business from '../src/domain/business.ts';
+import * as cdm from '../src/domain/cdm.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as supplychain from '../src/domain/supplychain.ts';
 import * as quality from '../src/engines/quality.ts';
@@ -554,5 +556,141 @@ describe('10 · Quality is assurance, not a defect list', () => {
     assert.equal(position.stagesPassed, 2);
     assert.equal(position.conformancePercent, 66.67);
     assert.equal(position.holdPointsOpen, 0);
+  });
+});
+
+// ── 7 · CDM and the Principal Contractor's duties ───────────────────────────
+
+describe('7 · CDM duties are enforced, not documented', () => {
+  let cppId: string;
+
+  it('publishes what each document must contain, as a floor rather than a style', () => {
+    const cpp = cdm.documentSpec('CONSTRUCTION_PHASE_PLAN');
+
+    assert.ok(cpp.gatesConstruction, 'the Construction Phase Plan must gate the construction phase');
+    for (const section of ['Welfare facilities', 'Fire and emergency procedures', 'Site induction arrangements']) {
+      assert.ok(cpp.requiredSections.includes(section), `the plan does not require "${section}"`);
+    }
+    assert.ok(cdm.CDM_DOCUMENTS.length >= 12, 'the catalogue does not cover the documents a PC actually needs');
+  });
+
+  it('drafts from project state and names what it could not fill, rather than inventing it', () => {
+    const draft = cdm.draftDocument(ctxFor('safety'), {
+      type: 'CONSTRUCTION_PHASE_PLAN',
+      title: 'Ashworth WTW Phase 2 — Construction Phase Plan',
+      draftedByAgent: 'safety-agent',
+    });
+
+    cppId = draft.documentId;
+
+    // The description and the significant risks come from the ledger; the rest
+    // is honestly reported as missing.
+    const description = draft.sections.find((s) => s.heading === 'Project description and programme')!;
+    assert.ok(description.body.includes('Ashworth'), 'the plan is not project-specific');
+    assert.ok(draft.gaps.length > 0, 'a first draft claiming no gaps is not telling the truth');
+    for (const gap of draft.gaps) {
+      const section = draft.sections.find((s) => s.heading === gap)!;
+      assert.match(section.body, /Not yet provided/, 'a gap was filled with plausible text instead of being named');
+    }
+  });
+
+  it('refuses to put a competent person against a plan with holes in it', () => {
+    throwsCode(
+      () => cdm.approveDocument(ctxFor('safety'), cppId, { comments: 'Looks fine' }),
+      'CDM_DOCUMENT_INCOMPLETE',
+    );
+  });
+
+  it('refuses construction-phase work while no plan is approved', () => {
+    throwsCode(() => cdm.assertConstructionPhasePlan(ctxFor('safety')), 'CONSTRUCTION_PHASE_PLAN_REQUIRED');
+    throwsCode(
+      () =>
+        cdm.recordInduction(ctxFor('safety'), {
+          personId: 'op-1', personName: 'A worker', employer: 'Northstone',
+          inductedBy: 'HSE Manager', competenciesChecked: ['CSCS'],
+        }),
+      'CONSTRUCTION_PHASE_PLAN_REQUIRED',
+    );
+  });
+
+  it('approves once every required section is filled', () => {
+    const spec = cdm.documentSpec('CONSTRUCTION_PHASE_PLAN');
+    const complete = cdm.draftDocument(ctxFor('safety'), {
+      type: 'CONSTRUCTION_PHASE_PLAN',
+      title: 'Ashworth WTW Phase 2 — Construction Phase Plan rev B',
+      sections: spec.requiredSections.map((heading) => ({
+        heading,
+        body: `${heading}: arrangements agreed with the client and the principal designer.`,
+      })),
+    });
+
+    assert.deepEqual(complete.gaps, []);
+    const approved = cdm.approveDocument(ctxFor('safety'), complete.documentId, {
+      comments: 'Reviewed against the pre-construction information',
+    });
+    assert.equal(approved.status, 'APPROVED');
+    assert.doesNotThrow(() => cdm.assertConstructionPhasePlan(ctxFor('safety')));
+  });
+
+  it('refuses a sign-off from someone the document does not name as competent', () => {
+    const draft = cdm.draftDocument(ctxFor('safety'), {
+      type: 'LIFTING_PLAN',
+      title: 'Clarifier 1 precast lift',
+      sections: cdm.documentSpec('LIFTING_PLAN').requiredSections.map((heading) => ({ heading, body: 'Agreed.' })),
+    });
+
+    // A lifting plan is signed by the constructor, not the safety adviser.
+    throwsCode(() => cdm.approveDocument(ctxFor('safety'), draft.documentId, { comments: 'ok' }), 'CDM_APPROVER_NOT_COMPETENT');
+  });
+
+  it('refuses an AI actor authoring a safety approval, at the catalogue', () => {
+    // Defence in depth, and the law: a method statement signed by a model is
+    // not a competent person's signature.
+    assert.equal(lookupEventType('CDM_DOCUMENT_APPROVED')?.aiAllowed, false);
+    assert.equal(lookupEventType('RAMS_APPROVED')?.aiAllowed, false);
+    // Drafting is exactly what an agent is for.
+    assert.equal(lookupEventType('CDM_DOCUMENT_DRAFTED')?.aiAllowed, true);
+  });
+
+  it('inducts a worker once the site has a plan, and knows who is current', () => {
+    const ctx = ctxFor('safety');
+
+    assert.equal(cdm.isInducted(ctx, 'op-1'), false);
+    cdm.recordInduction(ctx, {
+      personId: 'op-1', personName: 'A worker', employer: 'Northstone Civils Ltd',
+      inductedBy: 'HSE Manager', competenciesChecked: ['CSCS', 'Confined space'],
+    });
+
+    assert.equal(cdm.isInducted(ctx, 'op-1'), true);
+    assert.doesNotThrow(() => cdm.assertInducted(ctx, 'op-1'));
+    throwsCode(() => cdm.assertInducted(ctx, 'op-2'), 'INDUCTION_REQUIRED');
+  });
+
+  it('will not record a toolbox talk that briefed nobody', () => {
+    throwsCode(
+      () => cdm.recordToolboxTalk(ctxFor('safety'), { subject: 'Manual handling', deliveredBy: 'Supervisor', keyPoints: ['Lift safely'], attendees: [] }),
+      'ATTENDANCE_REQUIRED',
+    );
+  });
+
+  it('reports the duty position as named breaches rather than a percentage', () => {
+    const ctx = ctxFor('safety');
+    cdm.recordToolboxTalk(ctx, {
+      subject: 'Working near deep excavations',
+      deliveredBy: 'Site Supervisor',
+      keyPoints: ['Edge protection', 'Access routes', 'Reporting damage'],
+      attendees: ['op-1', 'op-2', 'op-3'],
+    });
+
+    const position = cdm.principalContractorPosition(ctx);
+
+    assert.equal(position.constructionPhasePlan.inPlace, true);
+    assert.equal(position.inductions.current, 1);
+    assert.equal(position.toolboxTalks.attendances, 3);
+    // The incomplete first draft is still open, and the position says so by name.
+    assert.ok(
+      position.breaches.some((b) => b.includes('unfilled required section')),
+      'a document with holes in it did not appear as a breach',
+    );
   });
 });

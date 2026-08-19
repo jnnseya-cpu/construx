@@ -107,6 +107,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // Risk and safety
   RiskRegisterItem: { area: 'RISK_REGISTER' },
   RAMS: { area: 'SAFETY_RAMS' },
+  CDMDocument: { area: 'SAFETY_RAMS', sensitivity: 'SAFETY_L2' },
+  Induction: { area: 'SAFETY_RAMS', sensitivity: 'SAFETY_L2' },
+  ToolboxTalk: { area: 'SAFETY_RAMS' },
   SafetyObservation: { area: 'SAFETY_RAMS' },
   SafetyForecast: { area: 'SAFETY_RAMS' },
   Competency: { area: 'SAFETY_RAMS' },

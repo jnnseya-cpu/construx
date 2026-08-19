@@ -7,6 +7,7 @@ import { config } from '../config.ts';
 import { DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
 import type { Schema } from '../core/validate.ts';
 import * as business from '../domain/business.ts';
+import * as cdm from '../domain/cdm.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as structure from '../domain/structure.ts';
 import * as bim from '../engines/bim.ts';
@@ -533,6 +534,45 @@ export const ROUTES: Route[] = [
     description: 'Close a snag with photographic evidence',
     handler: (platform, ctx) =>
       quality.closeSnag(projectContext(platform, ctx), ctx.params.snagId as string, body(ctx)),
+  },
+
+  // --------------------------------------------------------------------- CDM
+  {
+    method: 'GET',
+    pattern: '/v1/cdm/documents',
+    description: 'The CDM document catalogue and the sections each one requires',
+    handler: () => ({ documents: cdm.CDM_DOCUMENTS }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/cdm',
+    description: 'Principal Contractor position: the plan, inductions, talks and any visible breaches',
+    handler: (platform, ctx) => cdm.principalContractorPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/cdm/documents',
+    description: 'Draft a project-specific CDM document, naming any section it could not fill',
+    handler: (platform, ctx) => cdm.draftDocument(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/cdm/documents/:documentId/approve',
+    description: 'Approve a CDM document — refused while a required section is unfilled',
+    handler: (platform, ctx) =>
+      cdm.approveDocument(projectContext(platform, ctx), ctx.params.documentId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/cdm/inductions',
+    description: 'Record a site induction',
+    handler: (platform, ctx) => cdm.recordInduction(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/cdm/toolbox-talks',
+    description: 'Record a toolbox talk and its attendance',
+    handler: (platform, ctx) => cdm.recordToolboxTalk(projectContext(platform, ctx), body(ctx)),
   },
 
   // -------------------------------------------------------------------- HSEQ

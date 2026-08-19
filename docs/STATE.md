@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 286 passing, 0 failing, across 15 files |
+| Tests | 296 passing, 0 failing, across 15 files |
 | Typecheck | clean |
-| Backend | 61 TypeScript files, 20,490 lines |
+| Backend | 62 TypeScript files, 21,072 lines |
 | Application | 24 ES modules, 5,205 lines (plus a service worker) |
-| API routes | 134 |
-| Event types | 153, closed catalogue |
-| Entity types | 98, all classified for access |
+| API routes | 140 |
+| Event types | 157, closed catalogue |
+| Entity types | 101, all classified for access |
 | Runtime dependencies | none |
 
 Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`).
@@ -158,6 +158,34 @@ expires; suspension is immediate; and nobody is invited beyond their assessed
 package capacity. The enquiry is refused whole rather than quietly dropping the
 ineligible, because an RFQ that went to four of the six you selected produces a
 comparison you cannot trust.
+
+**CDM 2015 and the Principal Contractor's duties.** Twelve document types —
+Construction Phase Plan, RAMS, COSHH, temporary works, lifting, working at
+height, fire, emergency arrangements, environmental controls, work equipment,
+induction, toolbox talk — each declaring the sections it is not valid without.
+
+Drafts are composed from real project state: the description, the significant
+risks and the site conditions come from the ledger, which is what makes a
+document project-specific rather than a template with a name merged in. A
+section the platform cannot fill truthfully is **named as a gap, never
+invented** — a fabricated control measure is worse than a blank one, because
+somebody will read it and believe it.
+
+The duties are enforced as gates rather than described:
+
+- No construction-phase work, and no induction, without an **approved**
+  Construction Phase Plan.
+- No approval while a required section is unfilled.
+- The signing role is fixed per document type: a lifting plan is signed by the
+  constructor, not the safety adviser.
+- An agent may draft; **the catalogue refuses an AI actor authoring any safety
+  approval.** `RAMS_APPROVED` previously permitted one — a method statement
+  signed by a model is not a competent person's signature, and that is now
+  closed.
+
+The Principal Contractor position reports **named breaches rather than a
+percentage**: a score invites somebody to report 87% compliant, a list of
+failures does not.
 
 **Offline field sync.** Device timestamps preserved, operation-id idempotency,
 deterministic conflict resolution, monotonic cursors, governance actions refused
