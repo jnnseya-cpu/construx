@@ -129,6 +129,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // The response to a client enquiry. The model drafts the words; the price on
   // it comes from the estimate, which was committed first.
   def('TENDER_RESPONSE_DRAFTED', 'TenderResponse', 'CREATE', 'PROCUREMENT', { aiAllowed: true }),
+  // The invitation read properly: every requirement with an owner, and the
+  // commercial terms assessed against what this business can actually carry.
+  def('ITT_ANALYSED', 'ITTAnalysis', 'CREATE', 'PROCUREMENT'),
   // Never bid without a cash model. The peak funding requirement is a
   // different question from the margin, and it is the one that closes
   // companies, so it lands on the thread beside the price.

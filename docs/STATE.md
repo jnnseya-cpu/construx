@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 451 passing, 0 failing, across 20 files |
+| Tests | 470 passing, 0 failing, across 21 files |
 | Typecheck | clean |
-| Backend | 70 TypeScript files, 26,845 lines |
+| Backend | 72 TypeScript files, 27,792 lines |
 | Application | 26 ES modules, 5,906 lines (plus a service worker) |
-| API routes | 170 |
-| Event types | 165, closed catalogue |
-| Entity types | 107, all classified for access |
+| API routes | 173 |
+| Event types | 166, closed catalogue |
+| Entity types | 108, all classified for access |
 | Runtime dependencies | none |
 
 Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`).
@@ -320,6 +320,48 @@ and profit is on cost plus overhead.
 A head with nothing against it comes back as an **omission**, not as zero — a
 tender with nothing priced against waste is not a job with no waste in it. It
 must be priced or excluded in writing, and the exclusion becomes tender wording.
+
+**The ITT analyst.** Two outputs, and the second is the one that saves money.
+The compliance matrix is ordinary: every requirement with an owner, the evidence
+it needs, whether the platform can already prove it, and when it is due. Small
+contractors lose bids they priced correctly because one certificate was missing
+from the upload, and an owner against every line is the cheapest fix there is. A
+requirement the platform cannot probe is `UNKNOWN` rather than a gap — marking
+it a gap would bury the real ones under everything nobody automated.
+
+The commercial terms are the half that decides whether the job is worth winning,
+and each is assessed against this business rather than transcribed. Liquidated
+damages are set against the margin, not reported as a rate. A performance bond
+is bonding capacity taken from the next bid as well as this one. Retention is
+cash the business funds, not a discount. Three terms end companies and none are
+visible in the price: **fitness for purpose**, which almost every professional
+indemnity policy excludes, so the obligation sits uninsured; **uncapped
+liquidated damages** on a programme the contractor does not control; and a
+**parent company guarantee** demanded of a business with no parent, which is a
+bar to entry rather than a term to negotiate.
+
+**The cost intelligence database.** It does not invent prices — it organises the
+ones the business has already paid, quoted or been quoted, and reports what they
+actually say, including when they do not say enough.
+
+It is a projection rather than a store: every rate is read from records already
+committed, so nothing is entered twice and nothing can drift. A rate cannot
+exist here that was not part of a commercial position somebody signed off.
+
+**A package price is never converted into a unit rate.** A subcontract covers
+dozens of measured items and there is no honest way to apportion it back to a
+rate per cubic metre; doing so is how a cost database fills with numbers that
+look precise and mean nothing. Unit rates come from estimate lines, package
+outturns from the market, and the two are kept apart.
+
+Every figure carries what is behind it — the count, the spread and the age of
+the newest observation — and confidence is stated rather than implied. A single
+observation is called a data point, not a benchmark. Benchmarking an estimate
+excludes that estimate's own lines from the median it is compared against;
+without that a line is measured against its own reflection and the benchmark
+agrees with everything. And the output only accumulation can give: how far this
+contractor's estimates sit from what the market returns, which is a fact about
+the business rather than about construction.
 
 **Never bid without a cash model.** A contract can cover its cost, carry a
 healthy margin, and still take more working capital than the business has — and

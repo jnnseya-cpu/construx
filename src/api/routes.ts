@@ -12,6 +12,8 @@ import * as procurement from '../domain/procurement.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
+import * as itt from '../domain/itt.ts';
+import * as costintel from '../domain/costintel.ts';
 import { morningBriefing } from '../agents/briefing.ts';
 import { AGENT_DIVISIONS, type AgentDivision } from '../agents/types.ts';
 import { AGENTS } from '../agents/registry.ts';
@@ -1157,6 +1159,29 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/tender/response',
     description: 'Engine A — price a client enquiry and draft the tender response',
     handler: (platform, ctx) => tender.respondToTender(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/itt',
+    description: 'Analyse an invitation to tender: compliance matrix and commercial terms',
+    handler: (platform, ctx) => itt.analyseITT(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/cost-intelligence',
+    description: "Unit rates and package outturns from the business's own committed records",
+    handler: (platform, ctx) =>
+      costintel.costIntelligence(tenantContext(platform, ctx), {
+        ...(ctx.query.get('unit') ? { unit: ctx.query.get('unit') as string } : {}),
+        ...(ctx.query.get('search') ? { search: ctx.query.get('search') as string } : {}),
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/estimate/:estimateId/benchmark',
+    description: "Compare an estimate against the business's own price history",
+    handler: (platform, ctx) =>
+      costintel.benchmarkEstimate(projectContext(platform, ctx), ctx.params.estimateId as string),
   },
   {
     method: 'POST',
