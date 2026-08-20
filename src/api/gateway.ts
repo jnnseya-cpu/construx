@@ -162,7 +162,7 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     }
 
     const result = await matched.route.handler(platform, ctx);
-    const status = ctx.method === 'POST' ? 201 : 200;
+    const status = ctx.method === 'POST' && !matched.route.readOnly ? 201 : 200;
 
     // A handful of routes answer a browser rather than the application. They
     // are marked on the route, never inferred from the shape of the result.

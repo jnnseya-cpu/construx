@@ -1,5 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
-import { command, commandBar } from '../lib/command.js';
+import { command, commandBar, confirmCost } from '../lib/command.js';
 import { CHANGE_ORIGIN, DELAY_CAUSE, NOTICE_TYPE, today } from '../lib/enums.js';
 import { badge, date, days, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -328,10 +328,20 @@ export async function contracts(root) {
 
   document.getElementById('assess')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
+    const path = `/v1/projects/${state.session.projectId}/claims`;
+
+    const accepted = await confirmCost({
+      title: 'Reassess claim',
+      intent: 'Reviews the delay attribution and sets out the contractual argument, concurrency included.',
+      path,
+      runLabel: 'Assess',
+    });
+    if (!accepted) return;
+
     button.disabled = true;
     button.textContent = 'Assessing…';
     try {
-      const result = await api.post(`/v1/projects/${state.session.projectId}/claims`, {
+      const result = await api.post(path, {
         contractId: contract._refId,
         claimType: 'EOT',
         claimedDays: 33,
@@ -353,10 +363,20 @@ export async function contracts(root) {
       toast('No claim', 'Assess a claim before building an evidence pack', 'err');
       return;
     }
+
+    const path = `/v1/projects/${state.session.projectId}/claims/${claim._refId}/evidence-pack`;
+    const accepted = await confirmCost({
+      title: 'Build evidence pack',
+      intent: 'Writes the narrative chronology tying the evidence to the entitlement argument.',
+      path,
+      runLabel: 'Build pack',
+    });
+    if (!accepted) return;
+
     button.disabled = true;
     button.textContent = 'Building…';
     try {
-      const result = await api.post(`/v1/projects/${state.session.projectId}/claims/${claim._refId}/evidence-pack`, {
+      const result = await api.post(path, {
         from: '1970-01-01T00:00:00.000Z',
         to: new Date().toISOString(),
         audience: 'ADJUDICATOR',

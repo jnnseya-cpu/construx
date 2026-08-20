@@ -1,5 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
-import { command, commandBar } from '../lib/command.js';
+import { command, commandBar, confirmCost } from '../lib/command.js';
 import { badge, date, days, html, humanise, modal, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -279,10 +279,20 @@ export async function programme(root) {
 
   document.getElementById('forecast')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
+    const path = `/v1/projects/${state.session.projectId}/programme/delay-forecast`;
+
+    const accepted = await confirmCost({
+      title: 'Run delay forecast',
+      intent: 'Ranks the delay drivers on the current network and prices the corrective measures.',
+      path,
+      runLabel: 'Run forecast',
+    });
+    if (!accepted) return;
+
     button.disabled = true;
     button.textContent = 'Running…';
     try {
-      const result = await api.post(`/v1/projects/${state.session.projectId}/programme/delay-forecast`, {
+      const result = await api.post(path, {
         dailyPreliminariesMinor: 1_850_000,
         contractualDurationDays: 400,
       });

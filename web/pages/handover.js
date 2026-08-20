@@ -1,5 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
-import { command, commandBar } from '../lib/command.js';
+import { command, commandBar, confirmCost } from '../lib/command.js';
 import { today as todayIso } from '../lib/enums.js';
 import { badge, date, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -204,10 +204,20 @@ export async function handover(root) {
 
   document.getElementById('maintenance')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
+    const path = `/v1/projects/${state.session.projectId}/om/maintenance-forecast`;
+
+    const accepted = await confirmCost({
+      title: 'Forecast maintenance',
+      intent: 'Prioritises the maintenance schedule against the available budget and identifies deferrals.',
+      path,
+      runLabel: 'Forecast',
+    });
+    if (!accepted) return;
+
     button.disabled = true;
     button.textContent = 'Forecasting…';
     try {
-      const result = await api.post(`/v1/projects/${state.session.projectId}/om/maintenance-forecast`, {
+      const result = await api.post(path, {
         horizonMonths: 60,
         annualBudgetMinor: 12_000_000,
       });

@@ -208,6 +208,7 @@ export async function design(root) {
       title: 'Register drawing',
       intent: 'Registering a revision supersedes the previous one automatically. Marking up a superseded drawing is then refused.',
       path: `/v1/projects/${projectId}/bim/drawings`,
+      aiCost: true,
       submitLabel: 'Register',
       fields: [
         { name: 'fileHash', label: 'Drawing file', type: 'file', hint: 'Hashed in your browser' },

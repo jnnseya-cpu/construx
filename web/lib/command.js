@@ -1,5 +1,5 @@
 import { api, ApiError } from './api.js';
-import { esc, toast } from './ui.js';
+import { esc, exact, toast } from './ui.js';
 
 /**
  * Command surfaces.
@@ -110,8 +110,14 @@ async function collect(host, fields) {
  * application id in the body would give the endpoint two ways to say the same
  * thing. `transform` lets a caller reshape the collected fields into the body
  * the endpoint expects, for commands whose shape is not flat.
+ *
+ * `aiCost` marks a command that reaches an AI provider. The panel then quotes
+ * the action as it opens and puts the figure above the submit button, so the
+ * cost is on screen before the person commits — the same rule the confirmation
+ * dialog enforces, met inside a panel that was going to open anyway rather than
+ * by stacking a second dialog in front of it.
  */
-export function command({ title, intent, path, fields, submitLabel = 'Submit', transform }) {
+export function command({ title, intent, path, fields, submitLabel = 'Submit', transform, aiCost = false }) {
   return new Promise((resolveCommand) => {
     const host = document.createElement('div');
     host.className = 'modal-host';
@@ -136,6 +142,7 @@ export function command({ title, intent, path, fields, submitLabel = 'Submit', t
             </div>`,
           )
           .join('')}
+        ${aiCost ? '<div class="cost-slot"></div>' : ''}
       </div>
       <div class="foot">
         <button type="button" class="btn quiet" data-close>Cancel</button>
@@ -205,6 +212,173 @@ export function command({ title, intent, path, fields, submitLabel = 'Submit', t
     document.addEventListener('keydown', onKey);
     document.body.append(host);
     host.querySelector('input, select, textarea')?.focus();
+
+    if (aiCost) {
+      const slot = host.querySelector('.cost-slot');
+      // The path may depend on fields the person has not filled in yet, so the
+      // quote is taken against the path as declared. Every quotable route is
+      // identified by its pattern rather than its body, so that is the same
+      // route the submit will hit.
+      const quotePath = typeof path === 'function' ? path({}) : path;
+
+      // Held shut until the cost is on screen. An AI panel that could be
+      // submitted before its price arrived would defeat the rule on exactly
+      // the fast connections nobody tests on.
+      submit.disabled = true;
+      quoteAction(quotePath)
+        .then((quote) => {
+          slot.innerHTML = costBlock(quote);
+          submit.disabled = !quote.affordable;
+          if (quote.affordable) submit.textContent = `${submitLabel} · ${exact(quote.estimatedChargeMinor)}`;
+        })
+        .catch((error) => {
+          slot.innerHTML = `<div class="notice err">${esc(error.message)}</div>`;
+        });
+    }
+  });
+}
+
+/**
+ * What an AI action would cost, asked of the platform rather than guessed here.
+ *
+ * The browser names the request it is about to send and nothing else. Which
+ * engine that reaches, what it is charged at and whether the wallet can carry
+ * it are all server-side facts, and duplicating any of them here would create a
+ * second pricing model that drifts from the one that bills.
+ */
+export function quoteAction(path) {
+  return api.post('/v1/ai/quote', { method: 'POST', path });
+}
+
+/** How confident the figure is, said in words rather than left to a label. */
+function quoteBasisText(quote) {
+  if (quote.basis === 'MEASURED') {
+    const range =
+      quote.highChargeMinor && quote.highChargeMinor !== quote.lowChargeMinor
+        ? ` They cost between ${exact(quote.lowChargeMinor)} and ${exact(quote.highChargeMinor)}.`
+        : '';
+    const runs = quote.observations === 1 ? 'one previous run' : `${quote.observations} previous runs`;
+    return `Estimated from ${runs} of this action on your account.${range}`;
+  }
+  return 'This action has not run on your account yet, so this is the provider’s floor cost rather than a prediction — the real charge is usually higher. It becomes a measured figure after the first run.';
+}
+
+/**
+ * Why the action cannot run, in the customer's own currency.
+ *
+ * The platform decides *whether* it is blocked and *by what* — this only words
+ * it. The server's own message is written in minor units for a log and ends by
+ * saying execution was halted, which is not true of something that has not
+ * started, so it is the fallback rather than the first choice.
+ */
+function quoteBlockedText(quote) {
+  if (quote.blockedBy === 'BALANCE') {
+    return `This action costs ${exact(quote.estimatedChargeMinor)} and ${exact(quote.availableMinor)} is available. Top up before running it.`;
+  }
+  if (quote.blockedBy === 'CAP' && quote.capBreach) {
+    const { scope, capMinor, spentMinor, scopeId } = quote.capBreach;
+    const where =
+      scope === 'MONTHLY' ? 'this month’s AI budget' : scope === 'PROJECT' ? 'this project’s AI budget' : `the AI budget for ${scopeId}`;
+    return `This would take ${where} past its ${exact(capMinor)} cap — ${exact(spentMinor)} of it is already spent. The cap is a setting, not a shortage.`;
+  }
+  return quote.blockedReason;
+}
+
+/**
+ * The cost of an AI action, as a block to put in front of the button that
+ * spends it. Shared by the confirmation dialog and the command panels so both
+ * say the same thing in the same words.
+ */
+export function costBlock(quote) {
+  const blocked = Boolean(quote.blockedReason);
+  return `<div class="cost-quote${blocked ? ' blocked' : ''}">
+    <div class="cost-head">
+      <div>
+        <div class="metric">${esc(exact(quote.estimatedChargeMinor))}</div>
+        <div class="metric-sub">estimated ACU charge</div>
+      </div>
+      <div class="cost-balance">
+        <div>${esc(exact(quote.availableMinor))} available</div>
+        ${
+          // Only where it can actually run. "£858.00 after this action" under a
+          // refusal describes something that is not going to happen.
+          blocked ? '' : `<div class="metric-sub">${esc(exact(quote.balanceAfterMinor))} after this action</div>`
+        }
+      </div>
+    </div>
+    <div class="metric-sub">${esc(quoteBasisText(quote))}</div>
+    ${blocked ? `<div class="notice warn">${esc(quoteBlockedText(quote))}</div>` : ''}
+  </div>`;
+}
+
+/**
+ * Show what an AI action will cost and wait for the person to accept it.
+ *
+ * The commercial model states the rule plainly: no AI action runs without
+ * showing its estimated cost first. A prepaid balance that moves for reasons
+ * the customer could not see beforehand reads as a meter running, however fair
+ * the arithmetic, and no amount of billing transparency after the fact repairs
+ * that.
+ *
+ * Resolves true only if the person accepted. A quote that cannot be obtained is
+ * a refusal, not a licence to spend — if the platform cannot say what something
+ * costs, nobody is committed to it by default.
+ */
+export function confirmCost({ title, intent, path, runLabel = 'Run' }) {
+  return new Promise((resolve) => {
+    const host = document.createElement('div');
+    host.className = 'modal-host';
+    host.innerHTML = `<div class="modal">
+      <header>
+        <div>
+          <h3>${esc(title)}</h3>
+          ${intent ? `<div class="metric-sub">${esc(intent)}</div>` : ''}
+        </div>
+        <button type="button" data-close aria-label="Close">×</button>
+      </header>
+      <div class="body"><div class="cost-slot">Asking what this costs…</div></div>
+      <div class="foot">
+        <button type="button" class="btn quiet" data-close>Cancel</button>
+        <button type="button" class="btn" data-run disabled>${esc(runLabel)}</button>
+      </div>
+    </div>`;
+
+    const close = (value) => {
+      host.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(value);
+    };
+    const onKey = (event) => {
+      if (event.key === 'Escape') close(false);
+    };
+
+    const slot = host.querySelector('.cost-slot');
+    const run = host.querySelector('[data-run]');
+
+    host.addEventListener('click', (event) => {
+      if (event.target === host || event.target.closest('[data-close]')) close(false);
+    });
+    run.addEventListener('click', () => close(true));
+
+    document.addEventListener('keydown', onKey);
+    document.body.append(host);
+
+    quoteAction(path)
+      .then((quote) => {
+        slot.innerHTML = costBlock(quote);
+        if (quote.affordable) {
+          run.disabled = false;
+          run.textContent = `${runLabel} · ${exact(quote.estimatedChargeMinor)}`;
+          run.focus();
+        } else {
+          // Left disabled. The reason is already on screen, and a button that
+          // fails on click teaches people to distrust every other button.
+          run.textContent = runLabel;
+        }
+      })
+      .catch((error) => {
+        slot.innerHTML = `<div class="notice err">${esc(error.message)}</div>`;
+      });
   });
 }
 

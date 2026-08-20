@@ -285,6 +285,7 @@ export async function field(root) {
       title: 'Log safety observation',
       intent: 'Severity is assessed from the description against the hazard library, not chosen by the reporter.',
       path: `/v1/projects/${projectId}/safety/observations`,
+      aiCost: true,
       submitLabel: 'Log',
       fields: [
         { name: 'observationType', label: 'Type', type: 'select', options: OBSERVATION_TYPE },

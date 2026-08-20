@@ -1,5 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
-import { command, commandBar } from '../lib/command.js';
+import { command, commandBar, confirmCost } from '../lib/command.js';
 import { OBSERVATION_TYPE, RISK_CATEGORY } from '../lib/enums.js';
 import { badge, date, days, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -204,10 +204,20 @@ export async function risk(root) {
 
   document.getElementById('forecast-safety')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
+    const path = `/v1/projects/${state.session.projectId}/safety/forecast`;
+
+    const accepted = await confirmCost({
+      title: 'Run safety forecast',
+      intent: 'Interprets the safety leading indicators and prioritises the recommended controls.',
+      path,
+      runLabel: 'Run forecast',
+    });
+    if (!accepted) return;
+
     button.disabled = true;
     button.textContent = 'Running…';
     try {
-      const result = await api.post(`/v1/projects/${state.session.projectId}/safety/forecast`, {
+      const result = await api.post(path, {
         headcount: 74,
         highRiskActivitiesPlanned: 4,
         adverseWeatherDays: 6,
@@ -280,6 +290,7 @@ export async function risk(root) {
       title: 'Log safety observation',
       intent: 'Severity is assessed against the hazard library, not chosen by the reporter.',
       path: `/v1/projects/${projectId}/safety/observations`,
+      aiCost: true,
       submitLabel: 'Log',
       fields: [
         { name: 'observationType', label: 'Type', type: 'select', options: OBSERVATION_TYPE },

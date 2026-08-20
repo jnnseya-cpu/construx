@@ -1,5 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
-import { command, commandBar } from '../lib/command.js';
+import { command, commandBar, confirmCost } from '../lib/command.js';
 import { today } from '../lib/enums.js';
 import { badge, date, exact, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
 import { blockedReason, can, draw, refreshContext, state } from '../app.js';
@@ -318,10 +318,20 @@ export async function commercial(root) {
 
   document.getElementById('publish-cvr')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
+    const path = `/v1/projects/${state.session.projectId}/cost/cvr`;
+
+    const accepted = await confirmCost({
+      title: 'Publish CVR',
+      intent: 'Explains the margin movement and identifies the commercial actions that would recover it.',
+      path,
+      runLabel: 'Publish',
+    });
+    if (!accepted) return;
+
     button.disabled = true;
     button.textContent = 'Publishing…';
     try {
-      const result = await api.post(`/v1/projects/${state.session.projectId}/cost/cvr`, {
+      const result = await api.post(path, {
         period: new Date().toISOString().slice(0, 7),
         costToCompleteMinor: 1_193_000_000,
         accrualsMinor: 47_000_000,

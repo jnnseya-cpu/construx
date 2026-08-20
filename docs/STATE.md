@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 662 passing, 0 failing, across 31 files |
+| Tests | 685 passing, 0 failing, across 32 files |
 | Typecheck | clean |
-| Backend | 77 TypeScript files, 32,392 lines |
-| Application | 26 ES modules, 6,594 lines (plus a service worker) |
-| API routes | 194 |
+| Backend | 77 TypeScript files, 32,706 lines |
+| Application | 25 ES modules, 6,706 lines (plus a service worker) |
+| API routes | 196 |
 | Event types | 169, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
@@ -117,6 +117,42 @@ hard caps, alerts, per-engine attribution. No provider call on an empty wallet;
 no charge without a ledger write. `tests/ai.test.ts` proves each of those with a
 stub provider that counts its own calls: failover, the empty-wallet refusal
 before the request goes out, and a released hold when the provider throws.
+
+**Cost shown before the action runs.** The commercial model states one rule
+about the interface — *no AI action runs without showing its estimated ACU cost
+first* — and the platform now keeps it. `POST /v1/ai/quote` takes the request
+the browser is about to send (`{method, path}`) and answers what it would cost.
+Nothing is written, no provider is contacted, and the caller is authorised for
+AI execution on that project first, so nobody is shown the price of something
+they would then be refused.
+
+The estimate is **measured, not modelled**. The real charge scales with the
+payload an engine assembles, and that payload does not exist until the command
+runs — twelve of the twenty-two AI commands register evidence before they reach
+a provider, so there is no dry run that leaves nothing behind. Instead
+`ACUWallet.observedRawCosts(engine, taskType)` reads what this account has
+actually settled for that action and the quote reports the median at today's
+multiplier, with the observed range. Raw costs are kept and repriced rather than
+billed amounts reused, because the volume incentive moves the multiplier.
+
+Where an action has never run on the account there is nothing to measure, and
+the quote says so: basis `FLOOR`, which the console words as the provider's
+floor rather than a prediction. Presenting a floor as a forecast would be the
+exact deception the rule exists to prevent.
+
+Quotability is declared on the route (`ai: { engine, taskType, capability }`),
+next to the handler that calls the engine, so the browser needs no vocabulary of
+its own and a new AI route without a declaration is caught by
+`tests/quote.test.ts`. A refusal comes back as facts as well as prose
+(`blockedBy: 'BALANCE' | 'CAP'`, `capBreach`), so the console can say "this
+would take this month's AI budget past its £50.00 cap" instead of repeating a
+log line written in minor units.
+
+In the console: `confirmCost()` for the six AI buttons that post directly, and
+`aiCost: true` on the three command panels that reach a provider — the panel
+holds its submit shut until the price is on screen. `POST /v1/ai/quote` is the
+first route marked `readOnly`, so it answers 200 rather than 201; a POST that
+creates nothing has no resource to point at.
 
 **Localisation, and the minor-unit bug underneath it.** *Money is in minor units
 everywhere* is a settled decision and a correct one. What was missing is that a
@@ -913,6 +949,13 @@ Re-opening these is what caused churn before.
 - The seeded demo project sits in the **Operations** phase, so field-execution
   and tender writes are correctly phase-gated. This is not a bug; commands show
   as locked with that reason.
+- `tender.analyseReturns` had no route and was therefore unreachable over HTTP —
+  a working engine command with no way to call it, found while tagging every AI
+  route for quoting. It is now `POST /v1/projects/:projectId/tender/returns`.
+  The same sweep found that a project id supplied in the quote body was never
+  validated against the tenant, because nothing else in that handler reads the
+  project; it now requires the project to exist and to be the caller's, and
+  answers "no such project" either way rather than distinguishing the two.
 - One server instance is enough. `PORT=8123 node src/main.ts`. Seed with
   `POST /v1/console/identities`. Restarting reseeds and changes all ids.
 - The browser tools need `playwright-core`, which is deliberately **not** a

@@ -1,7 +1,7 @@
 import { config } from '../config.ts';
 import { DomainError, ForbiddenError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
-import type { ACUWallet } from '../billing/acu.ts';
+import type { ACUWallet, CapBreach } from '../billing/acu.ts';
 import type { AIProvider, EntityRef } from '../goldenthread/types.ts';
 import { mockPerception, mockReasoning } from './providers/mock.ts';
 import { remotePerception, remoteReasoning } from './providers/remote.ts';
@@ -126,6 +126,49 @@ export type ExecuteResult = {
   abandon: (reason: string) => void;
 };
 
+/**
+ * Where the estimate came from. Shown, not hidden: a number carries a different
+ * weight depending on whether it was measured or assumed, and the user is the
+ * one deciding whether to spend against it.
+ */
+export type QuoteBasis = 'MEASURED' | 'FLOOR';
+
+export type CostQuote = {
+  engine: string;
+  taskType: string;
+  capability: ProviderCapability;
+  provider: string;
+  basis: QuoteBasis;
+  /** How many settled runs the estimate is drawn from. Zero where the basis is FLOOR. */
+  observations: number;
+  estimatedRawCostMinor: number;
+  estimatedChargeMinor: number;
+  /** The cheapest this action has been. On a FLOOR basis, the floor itself. */
+  lowChargeMinor: number;
+  /** The dearest it has been. Absent where nothing has been measured. */
+  highChargeMinor?: number;
+  multiplier: number;
+  availableMinor: number;
+  balanceAfterMinor: number;
+  affordable: boolean;
+  /** Present where the action cannot proceed, with the reason it cannot. */
+  blockedReason?: string;
+  /**
+   * The same refusal as facts. A screen can then say "£42.00 needed, £20.00
+   * available" in the customer's own currency rather than repeating a message
+   * written in minor units for a log.
+   */
+  blockedBy?: 'BALANCE' | 'CAP';
+  capBreach?: CapBreach;
+};
+
+function median(sortedAscending: number[]): number {
+  const middle = Math.floor(sortedAscending.length / 2);
+  return sortedAscending.length % 2 === 1
+    ? sortedAscending[middle]!
+    : Math.ceil((sortedAscending[middle - 1]! + sortedAscending[middle]!) / 2);
+}
+
 export class AIOrchestrator {
   readonly #requests = new Map<string, AIRequestRecord>();
   readonly #executions = new Map<string, AIExecutionRecord>();
@@ -147,6 +190,73 @@ export class AIOrchestrator {
     if (fallback.healthy()) return fallback;
 
     throw new DomainError('AI_UNAVAILABLE', 'No healthy AI provider is available for this capability', 503);
+  }
+
+  /**
+   * What an AI action would cost, before anybody commits to it.
+   *
+   * The commercial model's own rule: *no AI action runs without showing its
+   * estimated cost first*. It is the cheapest trust the platform can buy — a
+   * prepaid wallet whose balance moves for reasons the user could not see
+   * beforehand feels like a meter running, however fair the arithmetic.
+   *
+   * The hard part is not the pricing, it is the estimate. The real charge scales
+   * with the size of the payload the engine assembles, and that payload does not
+   * exist until the command runs — half of these commands register evidence
+   * before they reach the provider, so there is no way to dry-run one without
+   * leaving records behind.
+   *
+   * So the estimate is measured rather than modelled. Every settled execution
+   * records its raw provider cost against the engine and task that caused it,
+   * which is a direct answer to "what does this action normally cost on this
+   * account", and it improves with use instead of drifting. Today's multiplier
+   * is applied to a raw history so the figure is comparable with the charge the
+   * next reservation will compute.
+   *
+   * Where the action has never run here there is no measurement, and the quote
+   * says so: the provider's floor cost is a lower bound, not a prediction, and
+   * presenting it as one would be the exact deception this rule exists to
+   * prevent. Nothing is written and no provider is contacted either way.
+   */
+  quote(input: {
+    capability: ProviderCapability;
+    engine: string;
+    taskType: string;
+    wallet: ACUWallet;
+    projectId?: string;
+  }): CostQuote {
+    const adapter = this.adapterFor(input.capability);
+    const observed = input.wallet.observedRawCosts(input.engine, input.taskType);
+
+    // The floor: what the adapter charges for this capability with nothing to
+    // read. Every real call costs at least this and almost always more.
+    const floorRawMinor = adapter.estimateCostMinor({ task: input.taskType, payload: {} });
+
+    const basis: QuoteBasis = observed.length > 0 ? 'MEASURED' : 'FLOOR';
+    const estimatedRawCostMinor = basis === 'MEASURED' ? median(observed) : floorRawMinor;
+
+    const priced = input.wallet.quote(estimatedRawCostMinor, input.projectId, input.engine);
+    const charge = (rawMinor: number): number => Math.ceil(rawMinor * priced.multiplier);
+
+    return {
+      engine: input.engine,
+      taskType: input.taskType,
+      capability: input.capability,
+      provider: adapter.name,
+      basis,
+      observations: observed.length,
+      estimatedRawCostMinor,
+      estimatedChargeMinor: priced.chargeMinor,
+      lowChargeMinor: basis === 'MEASURED' ? charge(observed[0]!) : charge(floorRawMinor),
+      highChargeMinor: basis === 'MEASURED' ? charge(observed[observed.length - 1]!) : undefined,
+      multiplier: priced.multiplier,
+      availableMinor: priced.availableMinor,
+      balanceAfterMinor: Math.max(0, priced.availableMinor - priced.chargeMinor),
+      affordable: priced.blockedReason === undefined,
+      blockedReason: priced.blockedReason,
+      blockedBy: priced.blockedBy,
+      capBreach: priced.capBreach,
+    };
   }
 
   /**

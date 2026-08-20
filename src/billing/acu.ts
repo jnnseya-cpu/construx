@@ -47,6 +47,15 @@ export type ACUCaps = {
   perModuleMinor?: Record<string, number>;
 };
 
+/** A ceiling a charge would breach, before it is turned into a sentence. */
+export type CapBreach = {
+  scope: 'MONTHLY' | 'PROJECT' | 'MODULE';
+  capMinor: number;
+  spentMinor: number;
+  /** The project or module the cap applies to. Absent for the monthly cap. */
+  scopeId?: string;
+};
+
 export type ACUAlert = {
   threshold: 50 | 80 | 100;
   scope: 'MONTHLY' | 'PROJECT' | 'MODULE';
@@ -158,6 +167,52 @@ export class ACUWallet {
    * Ring-fence funds before a provider is called. If this throws, no provider
    * call happens — that is the whole point of holding first.
    */
+  /**
+   * What a reservation of this size would cost, and whether it would succeed.
+   *
+   * Shares every rule with `reserve` — the same multiplier, the same balance
+   * check, the same caps — but holds nothing and writes nothing. Two separate
+   * calculations would eventually disagree, and the one a user was shown is the
+   * one they would remember.
+   */
+  quote(estimatedRawCostMinor: number, projectId?: string, module?: string): {
+    chargeMinor: number;
+    multiplier: number;
+    availableMinor: number;
+    blockedReason?: string;
+    /** What stopped it, for a caller that would rather word the message itself. */
+    blockedBy?: 'BALANCE' | 'CAP';
+    capBreach?: CapBreach;
+  } {
+    const multiplier = effectiveMultiplier(this.monthRawSpendMinor(), this.#volumeIncentive);
+    const chargeMinor = Math.ceil(estimatedRawCostMinor * multiplier);
+    const availableMinor = this.availableMinor();
+
+    if (chargeMinor > availableMinor) {
+      return {
+        chargeMinor,
+        multiplier,
+        availableMinor,
+        blockedBy: 'BALANCE',
+        blockedReason: `Insufficient ACU balance: ${chargeMinor} required, ${availableMinor} available.`,
+      };
+    }
+
+    const capBreach = this.#capBreach(chargeMinor, projectId, module);
+    if (capBreach) {
+      return {
+        chargeMinor,
+        multiplier,
+        availableMinor,
+        blockedBy: 'CAP',
+        capBreach,
+        blockedReason: this.#checkCaps(chargeMinor, projectId, module),
+      };
+    }
+
+    return { chargeMinor, multiplier, availableMinor };
+  }
+
   reserve(input: {
     aiRequestId: string;
     estimatedRawCostMinor: number;
@@ -288,6 +343,23 @@ export class ACUWallet {
       .reduce((sum, e) => sum + e.billedMinor, 0);
   }
 
+  /**
+   * What this account has actually paid a provider for one kind of action,
+   * ascending, in raw minor units before markup.
+   *
+   * Raw rather than billed, because the multiplier moves with monthly volume:
+   * a charge settled last month at 3.0x says nothing about what the same work
+   * costs today at 2.5x. Re-applying the current multiplier to a raw history
+   * gives a figure that is comparable with the one the next reservation will
+   * compute.
+   */
+  observedRawCosts(module: string, feature: string): number[] {
+    return this.#entries
+      .filter((e) => e.type === 'DEBIT' && e.module === module && e.feature === feature)
+      .map((e) => e.rawCostMinor)
+      .sort((a, b) => a - b);
+  }
+
   entries(filter: { projectId?: string; module?: string; month?: string } = {}): ACUEntry[] {
     return this.#entries.filter((e) => {
       if (filter.projectId && e.projectId !== filter.projectId) return false;
@@ -338,32 +410,45 @@ export class ACUWallet {
 
   // --- Internals -------------------------------------------------------------
 
-  #checkCaps(pendingBilledMinor: number, projectId?: string, module?: string): string | undefined {
+  /**
+   * Which ceiling a charge of this size would breach, as facts rather than as a
+   * sentence. The message a person reads is built from these, so a screen can
+   * put the figure in their own currency instead of repeating minor units.
+   */
+  #capBreach(pendingBilledMinor: number, projectId?: string, module?: string): CapBreach | undefined {
     const caps = this.#caps;
-    const monthly = this.monthBilledMinor();
-
-    if (caps.monthlyMinor !== undefined && monthly + pendingBilledMinor > caps.monthlyMinor) {
-      return `Monthly AI cap of ${caps.monthlyMinor} minor units would be exceeded. AI execution halted.`;
-    }
-    if (projectId && caps.perProjectMinor?.[projectId] !== undefined) {
-      const spent = this.entries({ projectId, month: monthKey(new Date().toISOString()) })
+    const spentOn = (filter: { projectId?: string; module?: string }): number =>
+      this.entries({ ...filter, month: monthKey(new Date().toISOString()) })
         .filter((e) => e.type === 'DEBIT')
         .reduce((s, e) => s + e.billedMinor, 0);
+
+    if (caps.monthlyMinor !== undefined && this.monthBilledMinor() + pendingBilledMinor > caps.monthlyMinor) {
+      return { scope: 'MONTHLY', capMinor: caps.monthlyMinor, spentMinor: this.monthBilledMinor() };
+    }
+    if (projectId && caps.perProjectMinor?.[projectId] !== undefined) {
       const cap = caps.perProjectMinor[projectId] as number;
+      const spent = spentOn({ projectId });
       if (spent + pendingBilledMinor > cap) {
-        return `Project AI cap of ${cap} minor units would be exceeded for ${projectId}. AI execution halted.`;
+        return { scope: 'PROJECT', capMinor: cap, spentMinor: spent, scopeId: projectId };
       }
     }
     if (module && caps.perModuleMinor?.[module] !== undefined) {
-      const spent = this.entries({ module, month: monthKey(new Date().toISOString()) })
-        .filter((e) => e.type === 'DEBIT')
-        .reduce((s, e) => s + e.billedMinor, 0);
       const cap = caps.perModuleMinor[module] as number;
+      const spent = spentOn({ module });
       if (spent + pendingBilledMinor > cap) {
-        return `Module AI cap of ${cap} minor units would be exceeded for ${module}. AI execution halted.`;
+        return { scope: 'MODULE', capMinor: cap, spentMinor: spent, scopeId: module };
       }
     }
     return undefined;
+  }
+
+  #checkCaps(pendingBilledMinor: number, projectId?: string, module?: string): string | undefined {
+    const breach = this.#capBreach(pendingBilledMinor, projectId, module);
+    if (!breach) return undefined;
+
+    const where = breach.scopeId ? ` for ${breach.scopeId}` : '';
+    const scope = breach.scope === 'MONTHLY' ? 'Monthly' : breach.scope === 'PROJECT' ? 'Project' : 'Module';
+    return `${scope} AI cap of ${breach.capMinor} minor units would be exceeded${where}. AI execution halted.`;
   }
 
   /** Alerts fire once per threshold per month, at 50 / 80 / 100 percent. */

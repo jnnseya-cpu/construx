@@ -1,4 +1,6 @@
 import { ask } from '../ai/conversation.ts';
+import type { Engine } from '../ai/orchestrator.ts';
+import type { ProviderCapability } from '../ai/providers/types.ts';
 import * as agents from '../agents/runtime.ts';
 import { fleetManifest } from '../agents/runtime.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
@@ -45,7 +47,7 @@ import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { createMfaChallenge, refreshTokens, shapeMfaResponse, verifyMfaChallenge } from '../identity/auth.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
 import { PERMISSION_MATRIX } from '../identity/roles.ts';
-import { AUTHZ_OPTIONS } from '../engines/context.ts';
+import { authorise, AUTHZ_OPTIONS, currentPhase } from '../engines/context.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import type { Platform } from '../platform.ts';
 import type { ExportAudience, ExportFormat } from '../export/exporter.ts';
@@ -68,8 +70,27 @@ export type Route = {
   public?: boolean;
   /** Handler returns a complete HTML page rather than a JSON payload. */
   html?: boolean;
+  /**
+   * A POST that creates nothing and changes nothing — answered 200, not 201.
+   *
+   * The method is POST because the question does not fit in a path, not because
+   * a resource appears. 201 Created would name a resource there is nothing to
+   * point at, the same reasoning the HTML routes already carry.
+   */
+  readOnly?: boolean;
   schema?: Schema;
   description: string;
+  /**
+   * Declared where the handler reaches an AI provider, so the cost of the
+   * action can be quoted before anybody commits to it.
+   *
+   * It lives on the route rather than in a separate catalogue because the route
+   * is the only place that already knows which engine command runs — and it
+   * sits next to that call, where a change to one is visible against the other.
+   * The browser then needs no vocabulary of its own: it asks what the request
+   * it is about to send would cost.
+   */
+  ai?: { engine: Engine; taskType: string; capability: ProviderCapability };
 };
 
 function body<T>(ctx: RequestContext): T {
@@ -122,8 +143,8 @@ function tenantContext(platform: Platform, ctx: RequestContext) {
   });
 }
 
-function projectContext(platform: Platform, ctx: RequestContext) {
-  const projectId = ctx.params.projectId;
+function projectContext(platform: Platform, ctx: RequestContext, overrideProjectId?: string) {
+  const projectId = overrideProjectId ?? ctx.params.projectId;
   if (!projectId) throw new NotFoundError('Project id missing from path');
   // Refuse the operator layer here rather than letting it fail later on a
   // missing wallet: the answer is "you are not allowed", not "not found".
@@ -1161,6 +1182,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/takeoff',
+    ai: { engine: 'TENDER', taskType: 'quantity_extraction', capability: 'PERCEPTION' },
     description: 'Engine A — run a take-off and create BoQ items',
     handler: (platform, ctx) => tender.runTakeoff(projectContext(platform, ctx), body(ctx)),
   },
@@ -1190,6 +1212,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/response',
+    ai: { engine: 'TENDER', taskType: 'tender_response', capability: 'REASONING' },
     description: 'Engine A — price a client enquiry and draft the tender response',
     handler: (platform, ctx) => tender.respondToTender(projectContext(platform, ctx), body(ctx)),
   },
@@ -1233,8 +1256,16 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/package',
+    ai: { engine: 'TENDER', taskType: 'package_composition', capability: 'REASONING' },
     description: 'Engine A — compose a tender package',
     handler: (platform, ctx) => tender.composeTenderPackage(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/returns',
+    description: 'Engine A — normalise supplier returns, rank variance and raise clarifications',
+    ai: { engine: 'TENDER', taskType: 'return_variance_analysis', capability: 'REASONING' },
+    handler: (platform, ctx) => tender.analyseReturns(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
@@ -1341,12 +1372,14 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/programme/wbs',
+    ai: { engine: 'PLANNING', taskType: 'wbs_generation', capability: 'REASONING' },
     description: 'Engine B — generate a work breakdown structure',
     handler: (platform, ctx) => planning.generateWBS(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/programme/delay-forecast',
+    ai: { engine: 'PLANNING', taskType: 'delay_risk_forecast', capability: 'REASONING' },
     description: 'Engine B — forecast delay risk with corrective measures',
     handler: (platform, ctx) => planning.forecastDelay(projectContext(platform, ctx), body(ctx)),
   },
@@ -1502,6 +1535,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/cost/cvr',
+    ai: { engine: 'RESOURCE_COST', taskType: 'cvr_analysis', capability: 'REASONING' },
     description: 'Engine C — publish the live CVR',
     handler: (platform, ctx) => cost.publishCVR(projectContext(platform, ctx), body(ctx)),
   },
@@ -1650,6 +1684,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/safety/rams',
+    ai: { engine: 'RISK_SAFETY', taskType: 'rams_drafting', capability: 'REASONING' },
     description: 'Engine D — draft a RAMS from the hazard library',
     handler: (platform, ctx) => safety.draftRAMS(projectContext(platform, ctx), body(ctx)),
   },
@@ -1665,12 +1700,14 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/safety/observations',
+    ai: { engine: 'RISK_SAFETY', taskType: 'hazard_classification', capability: 'PERCEPTION' },
     description: 'Engine D — log a safety observation',
     handler: (platform, ctx) => safety.logSafetyObservation(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/safety/forecast',
+    ai: { engine: 'RISK_SAFETY', taskType: 'safety_forecast', capability: 'REASONING' },
     description: 'Engine D — predictive safety forecast',
     handler: (platform, ctx) => safety.forecastSafetyRisk(projectContext(platform, ctx), body(ctx)),
   },
@@ -1678,6 +1715,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/bim/drawings',
+    ai: { engine: 'BIM_TWIN', taskType: 'title_block_extraction', capability: 'PERCEPTION' },
     description: 'Engine E — register a drawing and supersede prior revisions',
     handler: (platform, ctx) => bim.registerDrawing(projectContext(platform, ctx), body(ctx)),
   },
@@ -1718,24 +1756,28 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/bim/models',
+    ai: { engine: 'BIM_TWIN', taskType: 'model_ingestion', capability: 'PERCEPTION' },
     description: 'Engine E — ingest a model',
     handler: (platform, ctx) => bim.ingestModel(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/bim/clashes',
+    ai: { engine: 'BIM_TWIN', taskType: 'clash_triage', capability: 'REASONING' },
     description: 'Engine E — detect and triage clashes',
     handler: (platform, ctx) => bim.detectClashes(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/bim/twin',
+    ai: { engine: 'BIM_TWIN', taskType: 'site_reality_comparison', capability: 'PERCEPTION' },
     description: 'Engine E — update the twin from site reality',
     handler: (platform, ctx) => bim.updateTwinFromSite(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/bim/as-built',
+    ai: { engine: 'BIM_TWIN', taskType: 'as_built_generation', capability: 'REASONING' },
     description: 'Engine E — generate the as-built record',
     handler: (platform, ctx) => bim.generateAsBuilt(projectContext(platform, ctx), body(ctx)),
   },
@@ -1755,6 +1797,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/contracts/:contractId/intelligence',
+    ai: { engine: 'CONTRACTS_CLAIMS', taskType: 'clause_extraction', capability: 'REASONING' },
     description: 'Engine F — extract clauses and register obligations',
     handler: (platform, ctx) =>
       claims.extractContractIntelligence(projectContext(platform, ctx), {
@@ -1771,6 +1814,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/changes/:changeRequestId/impact',
+    ai: { engine: 'CONTRACTS_CLAIMS', taskType: 'impact_assessment', capability: 'REASONING' },
     description: 'Engine F — assess change impact',
     handler: (platform, ctx) =>
       claims.assessImpact(projectContext(platform, ctx), {
@@ -1880,12 +1924,14 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/claims',
+    ai: { engine: 'CONTRACTS_CLAIMS', taskType: 'claim_assessment', capability: 'REASONING' },
     description: 'Engine F — assess a delay claim with concurrency',
     handler: (platform, ctx) => claims.assessDelayClaim(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/claims/:claimId/evidence-pack',
+    ai: { engine: 'CONTRACTS_CLAIMS', taskType: 'evidence_pack_narrative', capability: 'REASONING' },
     description: 'Engine F — build a verifiable evidence pack',
     handler: (platform, ctx) =>
       claims.buildEvidencePack(projectContext(platform, ctx), {
@@ -1919,6 +1965,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/handover/pack',
+    ai: { engine: 'HANDOVER_OM', taskType: 'handover_readiness', capability: 'REASONING' },
     description: 'Engine G — compile the handover pack',
     handler: (platform, ctx) => handover.compileHandoverPack(projectContext(platform, ctx), body(ctx)),
   },
@@ -1940,6 +1987,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/om/manual',
+    ai: { engine: 'HANDOVER_OM', taskType: 'om_manual_generation', capability: 'PERCEPTION' },
     description: 'Engine G — publish an O&M manual',
     handler: (platform, ctx) => handover.publishOMManual(projectContext(platform, ctx), body(ctx)),
   },
@@ -1958,6 +2006,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/om/maintenance-forecast',
+    ai: { engine: 'HANDOVER_OM', taskType: 'maintenance_forecast', capability: 'REASONING' },
     description: 'Engine G — predictive maintenance forecast',
     handler: (platform, ctx) => handover.forecastMaintenance(projectContext(platform, ctx), body(ctx)),
   },
@@ -2272,6 +2321,67 @@ export const ROUTES: Route[] = [
     pattern: '/v1/ai/control-plane',
     description: 'AI routing matrix and provider health',
     handler: (platform) => platform.orchestrator.controlPlaneStatus(),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ai/quote',
+    description: 'What an AI action would cost, before anybody commits to it. Runs nothing.',
+    readOnly: true,
+    schema: {
+      type: 'object',
+      required: ['method', 'path'],
+      properties: {
+        method: { type: 'string', enum: ['POST'] },
+        path: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const input = body<{ method: string; path: string }>(ctx);
+      const [pathname] = input.path.split('?');
+      const matched = matchRoute(input.method, pathname ?? '');
+
+      if (!matched) throw new NotFoundError(`No route matches ${input.method} ${pathname}`);
+      if (!matched.route.ai) {
+        // Not a refusal to quote — a statement that there is nothing to quote.
+        // A caller told "£0.00" would reasonably conclude the AI is free.
+        throw new DomainError(
+          'NOT_AN_AI_ACTION',
+          `${input.method} ${matched.route.pattern} does not call an AI provider, so it has no ACU cost`,
+          400,
+        );
+      }
+
+      // Quoted under the AI permission every one of these actions shares, and
+      // under the same phase gate: showing someone the price of something they
+      // would then be refused is worse than the refusal. It is not the whole
+      // check — each command also authorises its own capability area when it
+      // runs, and a quote does not stand in for that.
+      const projectId = matched.params.projectId;
+      if (!projectId) throw new DomainError('QUOTE_SCOPE', 'AI actions are quoted against a project', 400);
+
+      const engineCtx = projectContext(platform, ctx, projectId);
+
+      // The project has to exist and be this tenant's. Nothing else in this
+      // handler reads the project, so without an explicit check a quote would
+      // answer for any id at all — the one route in the platform where a
+      // caller supplies a project id that no read then validates.
+      const project = platform.ledger.get({ refType: 'Project', refId: projectId });
+      if (!project || project.tenantId !== engineCtx.tenantId) {
+        // Not "exists but not yours": that answer is itself information.
+        throw new NotFoundError(`No project ${projectId}`);
+      }
+
+      authorise(engineCtx, 'AI_EXECUTION', 'X', { lifecyclePhase: currentPhase(engineCtx) });
+
+      return platform.orchestrator.quote({
+        capability: matched.route.ai.capability,
+        engine: matched.route.ai.engine,
+        taskType: matched.route.ai.taskType,
+        wallet: engineCtx.wallet,
+        projectId,
+      });
+    },
   },
 ];
 
