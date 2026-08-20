@@ -1111,6 +1111,350 @@ export async function buildEvidencePack(
   return { packId, eventCount: timeline.length, packHash, acuConsumed: result.acuConsumed };
 }
 
+// --- The obligations calendar ---------------------------------------------------
+//
+// Two kinds of contractual obligation, and the distinction decides how each is
+// managed.
+//
+// A **reactive** obligation has no date until something happens: a compensation
+// event occurs and a notice period starts running. It cannot be diarised in
+// advance, only watched for, and it is lost by not noticing rather than by
+// forgetting.
+//
+// A **dated** obligation has a date the day the contract is signed: insurance
+// renewal, bond expiry, the end of the defects liability period, retention
+// release. Nothing triggers it and nobody is watching for it, which is exactly
+// why it gets missed — there is no event to react to, only a diary nobody keeps.
+//
+// The platform held the first kind and not the second. It could tell you a
+// notice was late; it could not tell you the retention was released two months
+// ago and nobody asked for it.
+
+export type ObligationSource = 'REGISTERED' | 'DERIVED_FROM_CONTRACT' | 'DERIVED_FROM_RECORD';
+
+export type CalendarEntry = {
+  reference: string;
+  category: string;
+  description: string;
+  dueDate: string;
+  daysRemaining: number;
+  owner: string;
+  /** Where the date came from, so nothing here looks like it was typed in. */
+  source: ObligationSource;
+  status: 'DUE' | 'APPROACHING' | 'OVERDUE' | 'SATISFIED';
+  /**
+   * Whether missing it can be put right. A late insurance renewal is a gap to
+   * close; a missed time bar is gone, and putting both in the same list without
+   * saying which is which is how the recoverable ones absorb the attention.
+   */
+  recoverable: boolean;
+  entityRef?: EntityRef;
+};
+
+export type ObligationCalendar = {
+  entries: CalendarEntry[];
+  overdue: CalendarEntry[];
+  /** Reactive obligations whose clock is running against a recorded trigger. */
+  running: Array<{
+    trigger: string;
+    triggerDate: string;
+    category: string;
+    timeBarDays: number;
+    daysRemaining: number;
+    served: boolean;
+    /** Once this passes there is no notice worth serving. */
+    lost: boolean;
+  }>;
+  nextDue?: CalendarEntry;
+  summary: string;
+};
+
+/** Add whole months to an ISO date, clamping to the end of a short month. */
+function addMonths(iso: string, months: number): string {
+  const date = new Date(`${iso.slice(0, 10)}T00:00:00.000Z`);
+  const day = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  date.setUTCDate(Math.min(day, lastDay));
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Register a dated obligation.
+ *
+ * Obligations could only be created by clause extraction, which meant the
+ * platform's list of what the contract requires was whatever a model happened
+ * to find in the text. A person reading the contract has to be able to add one,
+ * and the date is what makes it manageable rather than a note.
+ */
+export function registerObligation(
+  ctx: EngineContext,
+  input: {
+    contractId: string;
+    category: string;
+    description: string;
+    dueDate: string;
+    owner: string;
+    /** Renewals recur. An annual policy is not one obligation, it is one a year. */
+    recurrenceMonths?: number;
+  },
+): { obligationId: string; reference: string } {
+  authorise(ctx, 'CONTRACTS_CLAIMS', 'C', { dataSensitivity: 'LEGAL_L4' });
+
+  ctx.ledger.require({ refType: 'Contract', refId: input.contractId });
+  if (!input.owner.trim()) {
+    throw new DomainError('OBLIGATION_OWNER_REQUIRED', 'An obligation with nobody against it is a note, not an obligation');
+  }
+  if (!/^\d{4}-\d{2}-\d{2}/.test(input.dueDate)) {
+    throw new DomainError('OBLIGATION_DUE_DATE_REQUIRED', 'A dated obligation needs a date. Reactive obligations come from clause extraction.');
+  }
+
+  const sequence = ctx.ledger.list(ctx.projectId, 'Obligation').length + 1;
+  const reference = formatRef('OBL', sequence);
+  const obligationId = ulid();
+
+  write(ctx, {
+    eventType: 'OBLIGATION_REGISTERED',
+    entity: { refType: 'Obligation', refId: obligationId },
+    nextState: {
+      id: obligationId,
+      projectId: ctx.projectId,
+      contractId: input.contractId,
+      reference,
+      category: input.category,
+      description: input.description,
+      dueDate: input.dueDate.slice(0, 10),
+      recurrenceMonths: input.recurrenceMonths,
+      owner: input.owner,
+      status: 'ACTIVE',
+      registeredAt: new Date().toISOString(),
+      registeredBy: ctx.auth.actorId,
+    },
+  });
+
+  return { obligationId, reference };
+}
+
+/**
+ * The calendar.
+ *
+ * Dates are derived from what the contract already records rather than asked
+ * for again — the defects liability period ends a known number of months after
+ * a known completion date, and retention is released in two halves around it.
+ * Deriving is not the same as inventing: every derived entry names the contract
+ * term it came from, and where a term was never recorded no entry appears.
+ */
+export function obligationCalendar(
+  ctx: EngineContext,
+  today = new Date().toISOString().slice(0, 10),
+  horizonDays = 180,
+): ObligationCalendar {
+  authorise(ctx, 'CONTRACTS_CLAIMS', 'R', { dataSensitivity: 'LEGAL_L4' });
+  return obligationFacts(ctx.ledger, ctx.projectId, today, horizonDays);
+}
+
+/**
+ * The calendar for one project, without the authorisation check.
+ *
+ * Separate because the morning briefing reads across every project in the
+ * tenant from a context scoped to none of them, the same way it reads the
+ * payment cycles. Building the calendar twice would mean two places deciding
+ * what a contract requires.
+ */
+export function obligationFacts(
+  ledger: EngineContext['ledger'],
+  projectId: string,
+  today = new Date().toISOString().slice(0, 10),
+  horizonDays = 180,
+): ObligationCalendar {
+  const entries: CalendarEntry[] = [];
+  const daysBetween = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
+
+  const classify = (dueDate: string, satisfied: boolean): CalendarEntry['status'] => {
+    if (satisfied) return 'SATISFIED';
+    if (dueDate < today) return 'OVERDUE';
+    return daysBetween(today, dueDate) <= 30 ? 'APPROACHING' : 'DUE';
+  };
+
+  const contracts = ledger.list(projectId, 'Contract');
+
+  for (const contract of contracts) {
+    const completion = typeof contract.state.completionDate === 'string' ? contract.state.completionDate.slice(0, 10) : undefined;
+    const defectsMonths = Number(contract.state.defectsLiabilityMonths ?? 0);
+    const form = String(contract.state.form ?? contract.state.suite ?? 'the contract');
+
+    if (completion && defectsMonths > 0) {
+      const expiry = addMonths(completion, defectsMonths);
+      entries.push({
+        reference: 'DLP-EXPIRY',
+        category: 'DEFECTS_LIABILITY',
+        description: `Defects liability period ends — ${defectsMonths} months from completion under ${form}`,
+        dueDate: expiry,
+        daysRemaining: daysBetween(today, expiry),
+        owner: 'CONTRACTOR',
+        source: 'DERIVED_FROM_CONTRACT',
+        status: classify(expiry, false),
+        // A defects period that ends is not a failure; it is a date to act
+        // before, and afterwards the position is simply different.
+        recoverable: true,
+        entityRef: { refType: 'Contract', refId: contract.refId },
+      });
+
+      // Retention is released in two halves, and the second is the one that
+      // goes missing: it falls due long after everybody has left the job.
+      const retentionPercent = Number(contract.state.retentionPercent ?? 0);
+      if (retentionPercent > 0) {
+        entries.push({
+          reference: 'RET-FIRST',
+          category: 'RETENTION',
+          description: `First half of retention released at practical completion (${retentionPercent}% held)`,
+          dueDate: completion,
+          daysRemaining: daysBetween(today, completion),
+          owner: 'CONTRACTOR',
+          source: 'DERIVED_FROM_CONTRACT',
+          status: classify(completion, false),
+          recoverable: true,
+          entityRef: { refType: 'Contract', refId: contract.refId },
+        });
+        entries.push({
+          reference: 'RET-SECOND',
+          category: 'RETENTION',
+          description: 'Second half of retention released at the end of the defects liability period',
+          dueDate: expiry,
+          daysRemaining: daysBetween(today, expiry),
+          owner: 'CONTRACTOR',
+          source: 'DERIVED_FROM_CONTRACT',
+          status: classify(expiry, false),
+          recoverable: true,
+          entityRef: { refType: 'Contract', refId: contract.refId },
+        });
+      }
+    }
+  }
+
+  // Registered obligations that carry a date. The undated ones are reactive and
+  // are reported separately, because a list mixing "renew the policy by March"
+  // with "serve within 14 days of an event that has not happened" is unusable.
+  for (const record of ledger.list(projectId, 'Obligation')) {
+    const dueDate = typeof record.state.dueDate === 'string' ? record.state.dueDate.slice(0, 10) : undefined;
+    if (!dueDate) continue;
+
+    const recurrence = Number(record.state.recurrenceMonths ?? 0);
+    // A recurring obligation rolls forward rather than going overdue forever:
+    // an annual policy renewed last year is not an outstanding failure, it is
+    // due again next year.
+    let effective = dueDate;
+    if (recurrence > 0) {
+      while (effective < today) effective = addMonths(effective, recurrence);
+    }
+
+    entries.push({
+      reference: String(record.state.reference ?? record.refId.slice(-6)),
+      category: String(record.state.category),
+      // A recurring obligation is reported at its next occurrence. The platform
+      // does not record whether the previous ones were met, and saying so is
+      // better than either a false overdue or a silent all-clear.
+      description:
+        recurrence > 0 && effective !== dueDate
+          ? `${String(record.state.description)} (recurs every ${recurrence} months; earlier occurrences are not recorded as met or missed)`
+          : String(record.state.description),
+      dueDate: effective,
+      daysRemaining: daysBetween(today, effective),
+      owner: String(record.state.owner ?? 'CONTRACTOR'),
+      source: 'REGISTERED',
+      status: classify(effective, record.state.status === 'SATISFIED'),
+      recoverable: true,
+      entityRef: { refType: 'Obligation', refId: record.refId },
+    });
+  }
+
+  // Competency expiry. A lapsed card reads the same as one nobody held, and the
+  // date is already on the record.
+  for (const record of ledger.list(projectId, 'Competency')) {
+    const expires = typeof record.state.expiresAt === 'string' ? record.state.expiresAt.slice(0, 10) : undefined;
+    if (!expires) continue;
+    if (daysBetween(today, expires) > horizonDays) continue;
+
+    entries.push({
+      reference: `CMP-${record.refId.slice(-6)}`,
+      category: 'COMPETENCY',
+      description: `${String(record.state.qualification)} expires for ${String(record.state.operativeId)}`,
+      dueDate: expires,
+      daysRemaining: daysBetween(today, expires),
+      owner: 'CONTRACTOR',
+      source: 'DERIVED_FROM_RECORD',
+      status: classify(expires, false),
+      recoverable: true,
+      entityRef: { refType: 'Competency', refId: record.refId },
+    });
+  }
+
+  // Reactive obligations, matched against the trigger events actually recorded.
+  const obligations = ledger.list(projectId, 'Obligation');
+  const notices = ledger.list(projectId, 'Notice');
+  const running: ObligationCalendar['running'] = [];
+
+  for (const event of ledger.list(projectId, 'DelayEvent')) {
+    const triggerDate = String(event.state.start ?? '').slice(0, 10);
+    if (!triggerDate) continue;
+
+    // A time bar only matters where there was something to claim. The event
+    // already carries its entitlement from the cause, so a contractor-risk
+    // delay with no time and no money in it is not a missed notice — reporting
+    // it as one is crying wolf, and the real ones get skimmed past.
+    if (event.state.timeEntitlement !== true && event.state.moneyEntitlement !== true) continue;
+
+    const obligation = obligations.find((o) => String(o.state.category).includes('EXTENSION'));
+    const timeBarDays = Number(obligation?.state.timeBarDays ?? 28);
+    const deadline = new Date(Date.parse(triggerDate) + timeBarDays * 86_400_000).toISOString().slice(0, 10);
+
+    // The delay event records whether a notice was served against it, so that
+    // is read rather than inferred by matching dates across the notice
+    // register — an inference that would call an unrelated notice a match.
+    const served =
+      event.state.noticeServed === true ||
+      notices.some((n) => {
+        const ref = n.state.relatedEntityRef as EntityRef | undefined;
+        return ref?.refType === 'DelayEvent' && ref.refId === event.refId;
+      });
+
+    running.push({
+      trigger: String(event.state.description ?? event.state.cause ?? 'Delay event'),
+      triggerDate,
+      category: 'EXTENSION_OF_TIME',
+      timeBarDays,
+      daysRemaining: daysBetween(today, deadline),
+      served,
+      // The distinction that matters: a time bar that has run cannot be
+      // recovered by arguing about it later.
+      lost: !served && today > deadline,
+    });
+  }
+
+  const withinHorizon = entries
+    .filter((entry) => entry.status !== 'SATISFIED')
+    .filter((entry) => entry.daysRemaining <= horizonDays)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+
+  const overdue = withinHorizon.filter((entry) => entry.status === 'OVERDUE');
+  const nextDue = withinHorizon.find((entry) => entry.status !== 'OVERDUE');
+  const lost = running.filter((r) => r.lost).length;
+
+  const parts: string[] = [];
+  if (overdue.length > 0) parts.push(`${overdue.length} obligation${overdue.length === 1 ? '' : 's'} past its date`);
+  if (lost > 0) parts.push(`${lost} time ${lost === 1 ? 'bar' : 'bars'} run without a notice served`);
+
+  const summary =
+    withinHorizon.length === 0 && running.length === 0
+      ? 'No contractual obligation falls due in the window, and no time bar is running.'
+      : parts.length === 0
+        ? `${withinHorizon.length} obligation${withinHorizon.length === 1 ? '' : 's'} in the next ${horizonDays} days, none overdue.`
+        : `${parts.join(' and ')}.`;
+
+  return { entries: withinHorizon, overdue, running, nextDue, summary };
+}
+
 /** Serve a contractual notice, with the time bar checked at the point of issue. */
 export function issueNotice(
   ctx: EngineContext,

@@ -218,6 +218,32 @@ describe('The morning briefing', () => {
     assert.equal(b.actions.filter((a) => a.because.includes('notice was missed')).length, 0);
   });
 
+
+  it('surfaces a dated obligation nothing on the project would trigger', () => {
+    // The bond expires on 31 October 2026 and nothing in the delivery of the
+    // job will remind anybody. That is the whole reason it is in the briefing.
+    const b = brief('2026-10-20');
+
+    const bond = b.actions.find((a) => a.action.includes('Performance bond'));
+    assert.ok(bond, 'the bond expiry did not reach the briefing');
+    assert.match(bond.because, /Finance director owns it/);
+    assert.equal(bond.dueBy, '2026-10-31');
+  });
+
+  it('escalates an obligation once its date has passed', () => {
+    const b = brief('2026-11-10');
+    const bond = b.actions.find((a) => a.action.includes('Performance bond'))!;
+
+    assert.equal(bond.severity, 'URGENT');
+    assert.match(bond.because, /10 days ago/);
+  });
+
+  it('stays quiet about an obligation months away', () => {
+    // A briefing that reports everything trains its reader to skim.
+    const b = brief('2026-08-20');
+    assert.equal(b.actions.filter((a) => a.action.includes('Performance bond')).length, 0);
+  });
+
   it('refuses a role with no business development read', async () => {
     const supplier = seed.users.regulator;
     if (!supplier) return;

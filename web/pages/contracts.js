@@ -33,6 +33,10 @@ export async function contracts(root) {
   // subcontractor claim that belongs to it.
   const register = await api.get(`/v1/projects/${projectId}/variations/register`).catch(() => null);
 
+  // Dated obligations. Nothing triggers these and nobody is watching for them,
+  // which is exactly why they get missed.
+  const calendar = await api.get(`/v1/projects/${projectId}/obligations/calendar`).catch(() => null);
+
   const contract = b.Contract.filter((c) => c.status === 'EXECUTED').at(-1) ?? b.Contract.at(-1);
   const claim = b.Claim.at(-1);
   const attribution = claim?.attribution;
@@ -59,6 +63,7 @@ export async function contracts(root) {
             { id: 'reject', label: 'Refuse a change', permitted: can('CHANGE_VARIATION', 'A'), reason: blockedReason('CHANGE_VARIATION', 'A') },
             { id: 'delay', label: 'Record delay event', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
             { id: 'notice', label: 'Serve notice', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
+            { id: 'obligation', label: 'Register obligation', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
           ]))}
           ${can('CONTRACTS_CLAIMS', 'X') ? html`<button class="btn ghost" id="assess">Reassess claim</button>` : ''}
           ${can('CONTRACTS_CLAIMS', 'I') ? html`<button class="btn quiet" id="pack">Build evidence pack</button>` : ''}
@@ -162,6 +167,54 @@ export async function contracts(root) {
                     </div>`
                   : ''
               }
+            </div>`
+          : ''
+      }
+
+      ${
+        calendar && (calendar.entries.length > 0 || calendar.running.length > 0)
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Obligations calendar</h3>
+              <div style="padding:0 17px"><div class="metric-sub">
+                A reactive obligation has no date until something happens, and is lost by not noticing. A dated one
+                exists from the day the contract is signed and is missed because nothing triggers it. They are kept
+                apart because a list mixing the two is unusable.
+              </div></div>
+              ${table({
+                headers: ['Ref', 'Category', 'Obligation', 'Owner', 'Due', 'Days'],
+                align: ['', '', '', '', '', 'num'],
+                rows: calendar.entries.map((e) => [
+                  e.reference,
+                  humanise(e.category),
+                  String(e.description).slice(0, 78) + (String(e.description).length > 78 ? '…' : ''),
+                  e.owner,
+                  e.status === 'OVERDUE' ? html`${date(e.dueDate)} ${badge('overdue', 'bad')}` : e.status === 'APPROACHING' ? html`${date(e.dueDate)} ${badge('soon', 'warn')}` : date(e.dueDate),
+                  `${e.daysRemaining}`,
+                ]),
+                empty: 'Nothing dated falls due in the window',
+              })}
+              ${
+                calendar.running.length > 0
+                  ? html`<div style="padding:12px 17px 4px">
+                      <div class="metric-sub" style="margin-bottom:7px"><b>Time bars running</b> — against recorded events, not a diary.</div>
+                      ${table({
+                        headers: ['Trigger', 'From', 'Bar', 'Days left', 'Notice'],
+                        align: ['', '', 'num', 'num', ''],
+                        rows: calendar.running.map((r) => [
+                          String(r.trigger).slice(0, 60),
+                          date(r.triggerDate),
+                          days(r.timeBarDays),
+                          `${r.daysRemaining}`,
+                          r.served ? badge('served', 'good') : r.lost ? badge('lost', 'bad') : badge('open', 'warn'),
+                        ]),
+                        empty: 'No time bar running',
+                      })}
+                    </div>`
+                  : ''
+              }
+              <div style="padding:10px 17px 15px">
+                <div class="notice ${raw(calendar.overdue.length > 0 || calendar.running.some((r) => r.lost) ? 'warn' : 'ok')}">${calendar.summary}</div>
+              </div>
             </div>`
           : ''
       }
@@ -329,6 +382,30 @@ function contractLabel(contract) {
   return form.startsWith(suite) ? form : `${suite} ${form}`.trim();
 
   const COMMANDS = {
+    obligation: {
+      title: 'Register obligation',
+      intent:
+        'A dated obligation — a renewal, an expiry, a review cycle. Nothing in the project will trigger it, which is why it needs a date and an owner.',
+      path: `/v1/projects/${projectId}/obligations`,
+      submitLabel: 'Register',
+      fields: [
+        { name: 'contractId', label: 'Contract', type: 'select', options: b.Contract.map((c) => ({ value: c._refId, label: `${c.form} · ${c.suite}` })) },
+        { name: 'category', label: 'Category', type: 'select', options: [
+          { value: 'INSURANCE', label: 'Insurance renewal' },
+          { value: 'PERFORMANCE_BOND', label: 'Bond or guarantee expiry' },
+          { value: 'COLLATERAL_WARRANTY', label: 'Collateral warranty' },
+          { value: 'REVIEW_CYCLE', label: 'Review cycle' },
+          { value: 'HANDOVER_TRIGGER', label: 'Handover trigger' },
+          { value: 'RETENTION', label: 'Retention release' },
+          { value: 'DEFECTS_LIABILITY', label: 'Defects liability' },
+        ] },
+        { name: 'description', label: 'What has to happen', type: 'textarea' },
+        { name: 'dueDate', label: 'Due', type: 'date' },
+        { name: 'owner', label: 'Owner', type: 'text' },
+        { name: 'recurrenceMonths', label: 'Recurs every (months)', type: 'number', required: false,
+          hint: 'Leave blank for a one-off. An annual policy is not one obligation, it is one a year.' },
+      ],
+    },
     value: {
       title: 'Agree a variation',
       intent:

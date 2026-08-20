@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 575 passing, 0 failing, across 27 files |
+| Tests | 593 passing, 0 failing, across 28 files |
 | Typecheck | clean |
-| Backend | 74 TypeScript files, 30,721 lines |
-| Application | 26 ES modules, 6,331 lines (plus a service worker) |
-| API routes | 189 |
+| Backend | 74 TypeScript files, 31,150 lines |
+| Application | 26 ES modules, 6,408 lines (plus a service worker) |
+| API routes | 191 |
 | Event types | 169, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
@@ -166,6 +166,36 @@ acted on it. `diaryPosition` reads the register as an exhibit rather than a list
 — the working days with no entry and the entries written long after the fact,
 which are the two things the other side looks for first and neither of which is
 visible reading it a day at a time. Weekends are not counted as gaps.
+
+**The obligations calendar.** Two kinds of contractual obligation, and the
+distinction decides how each is managed. A **reactive** one has no date until
+something happens — a compensation event occurs and a notice period starts
+running — and is lost by not noticing. A **dated** one exists from the day the
+contract is signed: insurance renewal, bond expiry, the end of the defects
+liability period, retention release. Nothing triggers it and nobody is watching
+for it, which is exactly why it gets missed.
+
+The platform held the first kind and not the second. It could tell you a notice
+was late; it could not tell you the bond expired last month. Obligations could
+also only be created by clause extraction, so the list of what a contract
+requires was whatever a model happened to find in the text.
+
+Dates are **derived from terms already recorded** rather than asked for again —
+the defects liability period ends a known number of months after a known
+completion date, and retention releases in two halves around it, the second long
+after everybody has left the job. Deriving is not inventing: every derived entry
+names the contract term behind it, and where a term was never recorded no entry
+appears. A recurring obligation rolls forward to its next occurrence and says so,
+rather than sitting overdue forever or implying the earlier ones were met.
+
+The two lists are kept apart, because one mixing "renew the policy by March" with
+"serve within 14 days of an event that has not happened" is unusable. Time bars
+are read from the delay events themselves, which record whether a notice was
+served, and only where the event carried an entitlement — a contractor-risk
+delay has no notice worth serving, and reporting it as a missed one is crying
+wolf. A missed time bar is marked **lost**, distinct from a late renewal that can
+still be put right; without that distinction the recoverable items absorb the
+attention.
 
 **Lookahead planning and Percent Plan Complete.** `LOOKAHEAD_PUBLISHED` and
 `CONSTRAINT_RAISED` both had nothing emitting them, which meant the delay-risk

@@ -926,6 +926,34 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   });
   step('Contract clauses extracted and time-barred obligations registered');
 
+  // Dated obligations — the kind nothing triggers and nobody watches for.
+  // Clause extraction finds the time bars; these are the diary entries that
+  // get missed because no event reminds anybody they exist.
+  claimsEngine.registerObligation(qsCtx, {
+    contractId: mainContract.contractId,
+    category: 'INSURANCE',
+    description: 'Contractor all-risks and public liability renewal — £10m limit required under the contract',
+    dueDate: '2026-09-15',
+    owner: 'Commercial director',
+    recurrenceMonths: 12,
+  });
+  claimsEngine.registerObligation(qsCtx, {
+    contractId: mainContract.contractId,
+    category: 'PERFORMANCE_BOND',
+    description: 'Performance bond at 10% of the contract sum expires and must be extended to cover the revised completion date',
+    dueDate: '2026-10-31',
+    owner: 'Finance director',
+  });
+  claimsEngine.registerObligation(qsCtx, {
+    contractId: mainContract.contractId,
+    category: 'REVIEW_CYCLE',
+    description: 'Quarterly contract review with the client project manager under the Z-clauses',
+    dueDate: '2026-08-01',
+    owner: 'Project manager',
+    recurrenceMonths: 3,
+  });
+  step('Dated obligations registered — insurance renewal, bond expiry and the quarterly review cycle');
+
   structure.transitionPhase(ownerCtx, { to: 'CONSTRUCTION', justification: 'Contract executed and estimate frozen; works may commence' });
 
   // --- CONSTRUCTION ----------------------------------------------------------

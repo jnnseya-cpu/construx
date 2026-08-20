@@ -1,3 +1,4 @@
+import { obligationFacts } from '../engines/claims.ts';
 import { paymentCycleFacts } from '../engines/cost.ts';
 import { authorise, type EngineContext } from '../engines/context.ts';
 import { compliancePosition } from '../engines/maths/constructionAct.ts';
@@ -302,6 +303,32 @@ export function morningBriefing(
           valueMinor: position.totalOverdueMinor,
         });
       }
+    }
+
+    // Contractual obligations with a date on them. Nothing on the project
+    // triggers these — that is precisely why they get missed — so the briefing
+    // is the only place they surface before somebody notices the bond expired.
+    const calendar = obligationFacts(ctx.ledger, projectId, today, 45);
+    for (const entry of calendar.entries.filter((e) => e.status === 'OVERDUE' || e.status === 'APPROACHING')) {
+      actions.push({
+        severity: entry.status === 'OVERDUE' ? 'URGENT' : 'ATTENTION',
+        action: `${entry.status === 'OVERDUE' ? 'Close out' : 'Deal with'} ${entry.description.slice(0, 70)} on ${name}`,
+        because:
+          entry.status === 'OVERDUE'
+            ? `Was due ${entry.dueDate}, ${Math.abs(entry.daysRemaining)} day${Math.abs(entry.daysRemaining) === 1 ? '' : 's'} ago. ${entry.owner} owns it.`
+            : `Due ${entry.dueDate}, ${entry.daysRemaining} day${entry.daysRemaining === 1 ? '' : 's'} away. ${entry.owner} owns it.`,
+        source: entry.entityRef ?? { refType: 'Contract', refId: projectId },
+        dueBy: entry.dueDate,
+      });
+    }
+
+    for (const running of calendar.running.filter((r) => !r.served && !r.lost && r.daysRemaining <= 14)) {
+      actions.push({
+        severity: running.daysRemaining <= 5 ? 'URGENT' : 'ATTENTION',
+        action: `Serve notice on ${running.trigger.slice(0, 60)} for ${name}`,
+        because: `${running.daysRemaining} day${running.daysRemaining === 1 ? '' : 's'} of a ${running.timeBarDays}-day time bar left. A time bar that runs cannot be recovered by argument.`,
+        source: { refType: 'Contract', refId: projectId },
+      });
     }
 
     // Enquiries issued and not returned.

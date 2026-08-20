@@ -1802,6 +1802,36 @@ export const ROUTES: Route[] = [
       }),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/obligations',
+    description: 'Register a dated contractual obligation',
+    schema: {
+      type: 'object',
+      required: ['contractId', 'category', 'description', 'dueDate', 'owner'],
+      properties: {
+        contractId: stringField,
+        category: stringField,
+        description: stringField,
+        dueDate: stringField,
+        owner: stringField,
+        recurrenceMonths: { type: 'number', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => claims.registerObligation(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/obligations/calendar',
+    description: 'The obligations calendar: what falls due, and which time bars are running',
+    handler: (platform, ctx) =>
+      claims.obligationCalendar(
+        projectContext(platform, ctx),
+        ctx.query.get('today') ?? undefined,
+        ctx.query.get('horizonDays') ? Number(ctx.query.get('horizonDays')) : undefined,
+      ),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/variations/register',
     description: 'Engine F — the variation control matrix, both sides of every change',
