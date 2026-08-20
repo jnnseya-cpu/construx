@@ -1709,6 +1709,50 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/variations/:variationId/value',
+    description: 'Engine F — agree the value of a variation with the client',
+    schema: {
+      type: 'object',
+      required: ['valuationMethod', 'agreedAmountMinor', 'agreedTimeDays', 'basis', 'agreedWith'],
+      properties: {
+        valuationMethod: { type: 'string', enum: ['BOQ_RATES', 'STAR_RATE', 'DAYWORK', 'LUMP_SUM', 'FAIR_VALUATION'] },
+        agreedAmountMinor: { type: 'number' },
+        agreedTimeDays: { type: 'number' },
+        basis: { type: 'string', minLength: 15 },
+        agreedWith: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      claims.valueVariation(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof claims.valueVariation>[1], 'variationId'>>(ctx),
+        variationId: ctx.params.variationId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/changes/:changeRequestId/reject',
+    description: 'Engine F — refuse a change, with the grounds',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 15 }, rejectedBy: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      claims.rejectChangeRequest(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof claims.rejectChangeRequest>[1], 'changeRequestId'>>(ctx),
+        changeRequestId: ctx.params.changeRequestId as string,
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/variations/register',
+    description: 'Engine F — the variation control matrix, both sides of every change',
+    handler: (platform, ctx) => claims.variationRegister(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/delay-events',
     description: 'Engine F — record an evidenced delay event',
     handler: (platform, ctx) => claims.recordDelayEvent(projectContext(platform, ctx), body(ctx)),

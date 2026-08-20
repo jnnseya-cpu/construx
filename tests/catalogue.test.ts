@@ -66,8 +66,6 @@ const NOT_EMITTED: Record<string, string> = {
   CLASH_RESOLVED: 'A clash can be detected and recorded; closing one out is not built.',
   LOOKAHEAD_PUBLISHED: 'Last Planner lookahead planning is not built.',
   CONSTRAINT_RAISED: 'The constraints log that goes with the lookahead is not built.',
-  CHANGE_REQUEST_REJECTED: 'A change can be submitted and assessed; refusing one outright is not built.',
-  VARIATION_VALUED: 'Instruction carries a valuation. Valuing a variation as a separate later act is not built.',
 };
 
 async function sourceFiles(dir: string): Promise<string[]> {

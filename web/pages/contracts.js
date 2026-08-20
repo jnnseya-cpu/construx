@@ -28,6 +28,11 @@ export async function contracts(root) {
     'ImpactAssessment',
   ]);
 
+  // The matrix reconciles the two sides of every change, which no entity read
+  // can do — it needs the link between an upstream variation and the
+  // subcontractor claim that belongs to it.
+  const register = await api.get(`/v1/projects/${projectId}/variations/register`).catch(() => null);
+
   const contract = b.Contract.filter((c) => c.status === 'EXECUTED').at(-1) ?? b.Contract.at(-1);
   const claim = b.Claim.at(-1);
   const attribution = claim?.attribution;
@@ -50,6 +55,8 @@ export async function contracts(root) {
         <div class="actions cmd-bar">
           ${raw(commandBar([
             { id: 'change', label: 'Raise change request', tone: '', permitted: can('CHANGE_VARIATION', 'C'), reason: blockedReason('CHANGE_VARIATION', 'C') },
+            { id: 'value', label: 'Agree a variation', permitted: can('CHANGE_VARIATION', 'A'), reason: blockedReason('CHANGE_VARIATION', 'A') },
+            { id: 'reject', label: 'Refuse a change', permitted: can('CHANGE_VARIATION', 'A'), reason: blockedReason('CHANGE_VARIATION', 'A') },
             { id: 'delay', label: 'Record delay event', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
             { id: 'notice', label: 'Serve notice', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
           ]))}
@@ -161,19 +168,55 @@ export async function contracts(root) {
 
       <div class="grid g2" style="margin-bottom:14px">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Variation register</h3>
+          <h3 style="padding:15px 17px 0">Variation control matrix</h3>
+          <div style="padding:0 17px"><div class="metric-sub">
+            One change, both sides of it. Change is where money leaves a contract quietly, and it leaves in
+            two directions — cost the business will pay and never charged on, and a price agreed with the client
+            before anybody knew what the packages would cost.
+          </div></div>
           ${table({
-            headers: ['Ref', 'Origin', 'Value', 'Time', 'Status'],
-            align: ['', '', 'num', 'num', ''],
-            rows: b.Variation.map((v) => [
-              html`${v.reference}${v.isDomestic ? html` ${badge('domestic', 'warn')}` : ''}${v.earlyWarning ? html` ${badge('early warning', 'bad')}` : ''}`,
-              humanise(v.origin),
-              money(v.valuedAmountMinor),
-              days(v.timeImpactDays ?? 0),
-              badge(humanise(v.status), statusTone(v.status)),
+            headers: ['Ref', 'Origin', 'Upstream', 'Downstream', 'Time', 'Status'],
+            align: ['', '', 'num', 'num', 'num', ''],
+            rows: (register?.lines ?? b.Variation.map((v) => ({
+              reference: v.reference,
+              origin: v.origin,
+              agreedMinor: 0,
+              instructedMinor: Number(v.valuedAmountMinor ?? 0),
+              downstreamCapturedMinor: 0,
+              timeImpactDays: v.timeImpactDays ?? 0,
+              status: v.status,
+            }))).map((l) => [
+              html`${l.reference}${l.mismatch ? html` ${badge(l.mismatch.kind === 'DOWNSTREAM_NOT_RECOVERED' ? 'not recovered' : 'unsupported', 'bad')}` : ''}`,
+              humanise(l.origin),
+              l.agreedMinor > 0 ? money(l.agreedMinor) : l.instructedMinor > 0 ? html`${money(l.instructedMinor)} <span class="metric-sub">instructed</span>` : '—',
+              l.downstreamCapturedMinor > 0 ? money(l.downstreamCapturedMinor) : '—',
+              days(l.timeImpactDays ?? 0),
+              badge(humanise(l.status), statusTone(l.status)),
             ]),
-            empty: 'No variations',
+            empty: 'No change recorded',
           })}
+          ${
+            register
+              ? html`<div style="padding:10px 17px 15px">
+                  <div class="split-list">
+                    <div class="row"><span class="lbl">Cost carried with nothing claimed upstream</span><span class="val">${
+                      register.downstreamNotRecoveredMinor > 0 ? money(register.downstreamNotRecoveredMinor) : '—'
+                    }</span></div>
+                    <div class="row"><span class="lbl">Value agreed against packages not yet priced</span><span class="val">${
+                      register.upstreamUnsupportedMinor > 0 ? money(register.upstreamUnsupportedMinor) : '—'
+                    }</span></div>
+                    <div class="row"><span class="lbl">Assessed and not instructed</span><span class="val">${
+                      register.uninstructedMinor > 0 ? money(register.uninstructedMinor) : '—'
+                    }</span></div>
+                    <div class="row"><span class="lbl">Instructed and not agreed</span><span class="val">${
+                      register.unvaluedMinor > 0 ? money(register.unvaluedMinor) : '—'
+                    }</span></div>
+                    <div class="row"><span class="lbl">Margin on change</span><span class="val">${money(register.marginOnChangeMinor)}</span></div>
+                  </div>
+                  <div class="notice ${raw(register.downstreamNotRecoveredMinor > 0 || register.upstreamUnsupportedMinor > 0 ? 'warn' : 'ok')}" style="margin-top:10px">${register.summary}</div>
+                </div>`
+              : ''
+          }
         </div>
 
         <div class="card pad0">
@@ -286,6 +329,41 @@ function contractLabel(contract) {
   return form.startsWith(suite) ? form : `${suite} ${form}`.trim();
 
   const COMMANDS = {
+    value: {
+      title: 'Agree a variation',
+      intent:
+        'Agreeing the client figure before the packages have priced means agreeing it without knowing your own cost, and there is no route back. The platform refuses until the downstream cost is captured.',
+      path: (collected) => `/v1/projects/${projectId}/variations/${collected.variationId}/value`,
+      transform: ({ variationId, ...rest }) => rest,
+      submitLabel: 'Agree',
+      fields: [
+        { name: 'variationId', label: 'Variation', type: 'select',
+          options: b.Variation.filter((v) => !v.isDomestic && v.status !== 'VALUED').map((v) => ({ value: v._refId, label: `${v.reference} · ${money(v.valuedAmountMinor)} instructed` })) },
+        { name: 'valuationMethod', label: 'Valuation method', type: 'select', options: [
+          { value: 'BOQ_RATES', label: 'Bill rates' },
+          { value: 'STAR_RATE', label: 'Star rate' },
+          { value: 'DAYWORK', label: 'Daywork' },
+          { value: 'LUMP_SUM', label: 'Lump sum' },
+          { value: 'FAIR_VALUATION', label: 'Fair valuation' },
+        ] },
+        { name: 'agreedAmountMinor', label: 'Amount agreed', type: 'number', money: true },
+        { name: 'agreedTimeDays', label: 'Time agreed (days)', type: 'number' },
+        { name: 'basis', label: 'Basis of the figure', type: 'textarea', hint: 'A valuation without a basis is a number' },
+        { name: 'agreedWith', label: 'Agreed with', type: 'text' },
+      ],
+    },
+    reject: {
+      title: 'Refuse a change',
+      intent: 'A register full of changes nobody decided is worse than a short one — at final account every unresolved line is argued as though it were live.',
+      path: (collected) => `/v1/projects/${projectId}/changes/${collected.changeRequestId}/reject`,
+      transform: ({ changeRequestId, ...rest }) => rest,
+      submitLabel: 'Refuse',
+      fields: [
+        { name: 'changeRequestId', label: 'Change', type: 'select',
+          options: b.ChangeRequest.filter((c) => c.status !== 'REJECTED' && c.status !== 'INSTRUCTED').map((c) => ({ value: c._refId, label: `${c.reference} · ${String(c.description).slice(0, 50)}` })) },
+        { name: 'reason', label: 'Grounds for refusal', type: 'textarea', hint: 'An unexplained rejection gets re-opened' },
+      ],
+    },
     change: {
       title: 'Raise change request',
       intent: 'Origin and notice type are the start of the chain a claim is later argued from. Both are recorded now, not reconstructed later.',

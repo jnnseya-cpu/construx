@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 541 passing, 0 failing, across 25 files |
+| Tests | 555 passing, 0 failing, across 26 files |
 | Typecheck | clean |
-| Backend | 74 TypeScript files, 29,720 lines |
-| Application | 26 ES modules, 6,151 lines (plus a service worker) |
-| API routes | 181 |
+| Backend | 74 TypeScript files, 30,164 lines |
+| Application | 26 ES modules, 6,229 lines (plus a service worker) |
+| API routes | 184 |
 | Event types | 166, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
@@ -166,6 +166,38 @@ acted on it. `diaryPosition` reads the register as an exhibit rather than a list
 — the working days with no entry and the entries written long after the fact,
 which are the two things the other side looks for first and neither of which is
 visible reading it a day at a time. Weekends are not counted as gaps.
+
+**The variation control matrix.** One change, both sides of it. Change is where
+money leaves a construction contract quietly, and it leaves in exactly two
+directions: a subcontractor's claim the business will pay and never charged on,
+and a price agreed with the client before anybody knew what the packages would
+cost — which reads as a win on the day and as an unexplained margin drop at
+final account. Neither is visible from either register alone.
+
+Two more dead events closed getting there. `VARIATION_VALUED` had nothing
+emitting it because the instruction carried a figure and everybody treated that
+as the valuation; they are different acts, usually months apart, and the gap
+between them is where a main contractor finds out what its subcontractors
+actually charged. `CHANGE_REQUEST_REJECTED` had nothing emitting it either, so a
+change could be submitted, assessed and simply left — and at final account every
+undecided line is argued as though it were live.
+
+**An upstream valuation is refused while the downstream cost it names is
+uncaptured.** If the change names affected subcontract packages and not one has
+priced it, agreeing with the client means agreeing without knowing your own
+cost, and the guess is always low because the claim has not arrived yet. Once
+agreed there is no route back. A change naming no subcontracts is self-delivered
+and valued without objection.
+
+The two sides are matched on **the change, never on the package**. Two changes
+can hit one subcontract — a wall-thickness variation and a dewatering claim are
+not each other's downstream cost — and matching loosely would report a
+reconciliation that never happened. A false all-clear is worse than a false
+alarm, because nobody rechecks it.
+
+Instructing a variation now closes its change request, which it did not: the
+request stayed `ASSESSED` forever, so a change could be instructed and then
+refused, and the register could not tell an open position from a decided one.
 
 **Answering an RFI, and rescoring a risk.** Two more registers that could only be
 added to. An RFI could be raised from a drawing markup and never closed, so the

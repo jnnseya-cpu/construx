@@ -1196,6 +1196,32 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   });
   step(`Change ${change.reference} assessed and instructed as variation ${variation.reference}`);
 
+  // The downstream side of the same change. Capturing it before the client
+  // figure is agreed is the whole discipline: agree upstream first and you are
+  // agreeing a price without knowing your own cost, and there is no route back.
+  claimsEngine.flagDomesticVariation(qsCtx, {
+    applicationId: 'SUB-APP-004',
+    subcontractId: subcontract.subcontractId,
+    changeRequestId: change.changeRequestId,
+    description: 'Thicker clarifier walls — additional reinforcement, formwork and pour sequence',
+    claimedAmountMinor: 26_800_000,
+    claimedTimeDays: 14,
+    supportingEvidenceHash: hash('subcontractor-wall-thickness-quotation'),
+  });
+
+  const valued = claimsEngine.valueVariation(pmCtx, {
+    variationId: variation.variationId,
+    valuationMethod: 'BOQ_RATES',
+    agreedAmountMinor: 36_900_000,
+    agreedTimeDays: 18,
+    basis: 'Remeasured against contract rates for C40 concrete and reinforcement, formwork by daywork record',
+    agreedWith: 'Ashworth Water Authority — project manager',
+  });
+  step(
+    `Variation ${valued.reference} agreed at ${(valued.agreedAmountMinor / 100).toFixed(0)} pounds against ` +
+      `${(valued.downstreamCapturedMinor / 100).toFixed(0)} captured downstream`,
+  );
+
   claimsEngine.issueNotice(qsCtx, {
     contractId: mainContract.contractId,
     type: 'COMPENSATION_EVENT',

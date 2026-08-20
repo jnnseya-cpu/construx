@@ -404,6 +404,17 @@ export function instructVariation(
     evidenceRefs: [evidence],
   });
 
+  // The change request is closed by the instruction. It used to stay
+  // 'ASSESSED' forever, which meant a change could be instructed and then
+  // refused, and the register had no way to tell an open position from a
+  // decided one.
+  write(ctx, {
+    eventType: 'CHANGE_REQUEST_APPROVED',
+    entity: { refType: 'ChangeRequest', refId: input.changeRequestId },
+    nextState: { ...changeRequest.state, status: 'INSTRUCTED', variationId, variationReference: reference },
+    evidenceRefs: [evidence],
+  });
+
   return { variationId, reference };
 }
 
@@ -421,6 +432,12 @@ export function flagDomesticVariation(
     claimedAmountMinor: number;
     claimedTimeDays: number;
     supportingEvidenceHash: string;
+    /**
+     * The upstream change this cost belongs to, where the subcontractor's claim
+     * arises from one. Naming it is what makes the two sides of a single change
+     * one record instead of two that never meet.
+     */
+    changeRequestId?: string;
   },
 ): { variationId: string; reference: string; earlyWarning: boolean } {
   authorise(ctx, 'CHANGE_VARIATION', 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
@@ -450,6 +467,7 @@ export function flagDomesticVariation(
       reference,
       subcontractId: input.subcontractId,
       sourceApplicationId: input.applicationId,
+      changeRequestId: input.changeRequestId,
       origin: 'SUBCONTRACTOR',
       description: input.description,
       valuedAmountMinor: input.claimedAmountMinor,
@@ -464,6 +482,362 @@ export function flagDomesticVariation(
   });
 
   return { variationId, reference, earlyWarning };
+}
+
+/**
+ * Refuse a change outright.
+ *
+ * `CHANGE_REQUEST_REJECTED` was in the catalogue with nothing emitting it, so a
+ * change could be submitted, assessed, and then simply left. A register full of
+ * changes nobody ever decided is worse than a short one: it is impossible to
+ * tell an open commercial position from an abandoned one, and at final account
+ * every unresolved line is argued as though it were live.
+ *
+ * The reason is kept because it is the answer to the question that arrives
+ * months later — a rejection nobody can explain gets re-opened.
+ */
+export function rejectChangeRequest(
+  ctx: EngineContext,
+  input: { changeRequestId: string; reason: string; rejectedBy?: string },
+): { changeRequestId: string; reference: string } {
+  authorise(ctx, 'CHANGE_VARIATION', 'A', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const changeRequest = ctx.ledger.require({ refType: 'ChangeRequest', refId: input.changeRequestId });
+  if (changeRequest.state.status === 'REJECTED') {
+    throw new DomainError('CHANGE_ALREADY_REJECTED', `${String(changeRequest.state.reference)} has already been refused`);
+  }
+  if (changeRequest.state.status === 'INSTRUCTED') {
+    throw new DomainError('CHANGE_ALREADY_INSTRUCTED', 'A change that has been instructed cannot be refused; it is varied or omitted');
+  }
+  if (input.reason.trim().length < 15) {
+    throw new DomainError('CHANGE_REJECTION_REASON_REQUIRED', 'A refusal must state its grounds. An unexplained rejection gets re-opened.');
+  }
+
+  const evidence = registerEvidence(ctx, {
+    type: 'CHANGE_REJECTION',
+    hash: hashEvidence(JSON.stringify({ changeRequestId: input.changeRequestId, reason: input.reason })),
+    description: `Refusal of ${String(changeRequest.state.reference)}`,
+    linkedEntities: [{ refType: 'ChangeRequest', refId: input.changeRequestId }],
+  });
+
+  write(ctx, {
+    eventType: 'CHANGE_REQUEST_REJECTED',
+    entity: { refType: 'ChangeRequest', refId: input.changeRequestId },
+    nextState: {
+      ...changeRequest.state,
+      status: 'REJECTED',
+      rejectionReason: input.reason,
+      rejectedBy: input.rejectedBy ?? ctx.auth.actorId,
+      rejectedAt: new Date().toISOString(),
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return { changeRequestId: input.changeRequestId, reference: String(changeRequest.state.reference) };
+}
+
+/**
+ * Value a variation upstream — agree with the client what the change is worth.
+ *
+ * `VARIATION_VALUED` was in the catalogue with nothing emitting it, because the
+ * instruction carried a figure and everybody treated that as the valuation.
+ * They are not the same act and they are usually months apart: the instruction
+ * is the client telling you to do something, the valuation is the two of you
+ * agreeing the price, and the gap between them is where a main contractor
+ * discovers what its subcontractors actually charged.
+ *
+ * Which is the rule this command enforces. **An upstream valuation is refused
+ * while the downstream cost it names is uncaptured.** If the change names
+ * affected subcontract packages and not one of them has a domestic variation
+ * against it, the contractor is agreeing a price with the client while guessing
+ * at its own cost — and the guess is always low, because the subcontractor's
+ * claim has not arrived yet. Once the client's figure is agreed there is no
+ * route back. This is the single largest source of quiet margin loss on a
+ * construction project, and it is entirely preventable by sequence.
+ *
+ * A change that names no subcontracts is self-delivered, has no downstream cost
+ * to capture, and is valued without objection.
+ */
+export function valueVariation(
+  ctx: EngineContext,
+  input: {
+    variationId: string;
+    valuationMethod: 'BOQ_RATES' | 'STAR_RATE' | 'DAYWORK' | 'LUMP_SUM' | 'FAIR_VALUATION';
+    agreedAmountMinor: number;
+    agreedTimeDays: number;
+    /** How the figure was arrived at. A valuation without a basis is a number. */
+    basis: string;
+    agreedWith: string;
+  },
+): {
+  variationId: string;
+  reference: string;
+  agreedAmountMinor: number;
+  movementFromInstructionMinor: number;
+  downstreamCapturedMinor: number;
+  marginOnChangeMinor: number;
+} {
+  authorise(ctx, 'CHANGE_VARIATION', 'A', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const variation = ctx.ledger.require({ refType: 'Variation', refId: input.variationId });
+  if (variation.state.status === 'VALUED') {
+    throw new DomainError('VARIATION_ALREADY_VALUED', `${String(variation.state.reference)} has already been valued`);
+  }
+  if (input.basis.trim().length < 15) {
+    throw new DomainError('VARIATION_BASIS_REQUIRED', 'State how the figure was arrived at. A valuation without a basis is a number.');
+  }
+
+  const affected = (variation.state.affectedSubcontractIds ?? []) as string[];
+  const domestic = ctx.ledger
+    .list(ctx.projectId, 'Variation')
+    .filter((record) => record.state.isDomestic === true);
+
+  // Matched on the change, never on the package. Two changes can hit the same
+  // subcontract — a wall thickness variation and a dewatering claim are not
+  // each other's downstream cost, and treating them as such would report a
+  // reconciliation that had not happened. A false all-clear here is worse than
+  // a false alarm, because nobody goes back to check it.
+  const captured = domestic.filter(
+    (record) =>
+      typeof record.state.changeRequestId === 'string' &&
+      record.state.changeRequestId === variation.state.changeRequestId,
+  );
+
+  if (affected.length > 0 && captured.length === 0) {
+    throw new DomainError(
+      'DOWNSTREAM_COST_NOT_CAPTURED',
+      `${String(variation.state.reference)} affects ${affected.length} subcontract ${affected.length === 1 ? 'package' : 'packages'} and no downstream cost has been captured. ` +
+        'Agreeing the client figure first means agreeing it without knowing your own cost, and there is no route back once it is agreed.',
+    );
+  }
+
+  const downstreamCaptured = captured.reduce((sum, record) => sum + Number(record.state.valuedAmountMinor ?? 0), 0);
+  const instructed = Number(variation.state.valuedAmountMinor ?? 0);
+
+  const evidence = registerEvidence(ctx, {
+    type: 'VARIATION_VALUATION',
+    hash: hashEvidence(JSON.stringify({ variationId: input.variationId, agreed: input.agreedAmountMinor, basis: input.basis })),
+    description: `Valuation of ${String(variation.state.reference)} agreed with ${input.agreedWith}`,
+    linkedEntities: [{ refType: 'Variation', refId: input.variationId }],
+  });
+
+  write(ctx, {
+    eventType: 'VARIATION_VALUED',
+    entity: { refType: 'Variation', refId: input.variationId },
+    nextState: {
+      ...variation.state,
+      status: 'VALUED',
+      valuationMethod: input.valuationMethod,
+      instructedAmountMinor: instructed,
+      valuedAmountMinor: input.agreedAmountMinor,
+      timeImpactDays: input.agreedTimeDays,
+      valuationBasis: input.basis,
+      agreedWith: input.agreedWith,
+      downstreamCapturedMinor: downstreamCaptured,
+      valuedAt: new Date().toISOString(),
+      valuedBy: ctx.auth.actorId,
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return {
+    variationId: input.variationId,
+    reference: String(variation.state.reference),
+    agreedAmountMinor: input.agreedAmountMinor,
+    movementFromInstructionMinor: input.agreedAmountMinor - instructed,
+    downstreamCapturedMinor: downstreamCaptured,
+    marginOnChangeMinor: input.agreedAmountMinor - downstreamCaptured,
+  };
+}
+
+export type VariationLine = {
+  reference: string;
+  variationId?: string;
+  changeRequestId?: string;
+  description: string;
+  origin: string;
+  noticeType?: string;
+  /** SUBMITTED, ASSESSED, INSTRUCTED, VALUED, REJECTED. */
+  status: string;
+  instructedMinor: number;
+  agreedMinor: number;
+  downstreamCapturedMinor: number;
+  affectedSubcontracts: number;
+  timeImpactDays: number;
+  /** Where the two sides of the same change disagree, and by how much. */
+  mismatch?: { kind: 'DOWNSTREAM_NOT_RECOVERED' | 'UPSTREAM_UNSUPPORTED'; amountMinor: number; detail: string };
+};
+
+export type VariationRegister = {
+  lines: VariationLine[];
+  /** Change instructed and not yet valued with the client. */
+  uninstructedMinor: number;
+  unvaluedMinor: number;
+  /** Downstream cost the business is carrying with nothing claimed upstream. */
+  downstreamNotRecoveredMinor: number;
+  /** Upstream value agreed against packages whose cost is still unknown. */
+  upstreamUnsupportedMinor: number;
+  /** Agreed upstream less captured downstream, across every valued change. */
+  marginOnChangeMinor: number;
+  summary: string;
+};
+
+/**
+ * The variation control matrix: one change, both sides of it.
+ *
+ * Change is the part of a contract where money is lost quietly, and it is lost
+ * in exactly two directions. **Downstream cost not recovered upstream** is a
+ * subcontractor's claim the business will pay and never charged on to the
+ * client. **Upstream value agreed without downstream cost** is a price agreed
+ * with the client before anybody knew what the packages would cost — which
+ * reads as a win at the time and as an unexplained margin drop at final account.
+ *
+ * Neither is visible from either side's register alone, which is why they are
+ * usually found at the end. Both are arithmetic once the two sides are linked.
+ */
+export function variationRegister(ctx: EngineContext): VariationRegister {
+  authorise(ctx, 'CHANGE_VARIATION', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const changes = ctx.ledger.list(ctx.projectId, 'ChangeRequest');
+  const variations = ctx.ledger.list(ctx.projectId, 'Variation');
+  const upstream = variations.filter((v) => v.state.isDomestic !== true);
+  const domestic = variations.filter((v) => v.state.isDomestic === true);
+
+  const lines: VariationLine[] = [];
+  let downstreamNotRecovered = 0;
+  let upstreamUnsupported = 0;
+  let uninstructed = 0;
+  let unvalued = 0;
+  let marginOnChange = 0;
+
+  // Changes that never became a variation. Assessed and left is the worst of
+  // these: the assessment has been paid for and the position is still open.
+  for (const change of changes) {
+    const instructedAgainst = upstream.find((v) => v.state.changeRequestId === change.refId);
+    if (instructedAgainst) continue;
+
+    const assessment = ctx.ledger
+      .list(ctx.projectId, 'ImpactAssessment')
+      .find((a) => a.state.changeRequestId === change.refId);
+    const cost = Number(assessment?.state.costImpactMinor ?? 0);
+
+    // A refused change stays on the register — the record of what was decided
+    // is the point — but it carries no exposure, because it was decided.
+    if (change.state.status !== 'REJECTED') uninstructed += cost;
+
+    lines.push({
+      reference: String(change.state.reference),
+      changeRequestId: change.refId,
+      description: String(change.state.description ?? ''),
+      origin: String(change.state.origin),
+      noticeType: String(change.state.noticeType),
+      status: String(change.state.status),
+      instructedMinor: 0,
+      agreedMinor: 0,
+      downstreamCapturedMinor: 0,
+      affectedSubcontracts: ((change.state.affectedSubcontractIds ?? []) as string[]).length,
+      timeImpactDays: Number(assessment?.state.timeImpactDays ?? 0),
+    });
+  }
+
+  for (const variation of upstream) {
+    const affected = (variation.state.affectedSubcontractIds ?? []) as string[];
+    const captured = domestic.filter(
+      (d) => typeof d.state.changeRequestId === 'string' && d.state.changeRequestId === variation.state.changeRequestId,
+    );
+    const capturedMinor = captured.reduce((sum, d) => sum + Number(d.state.valuedAmountMinor ?? 0), 0);
+    const valued = variation.state.status === 'VALUED';
+    const agreed = valued ? Number(variation.state.valuedAmountMinor ?? 0) : 0;
+    const instructed = valued ? Number(variation.state.instructedAmountMinor ?? 0) : Number(variation.state.valuedAmountMinor ?? 0);
+
+    if (!valued) unvalued += instructed;
+    if (valued) marginOnChange += agreed - capturedMinor;
+
+    let mismatch: VariationLine['mismatch'];
+    if (affected.length > 0 && captured.length === 0) {
+      // Value agreed with the client against packages whose cost nobody knows.
+      const exposed = valued ? agreed : instructed;
+      upstreamUnsupported += exposed;
+      mismatch = {
+        kind: 'UPSTREAM_UNSUPPORTED',
+        amountMinor: exposed,
+        detail: `${affected.length} affected ${affected.length === 1 ? 'package has' : 'packages have'} no downstream cost captured`,
+      };
+    }
+
+    lines.push({
+      reference: String(variation.state.reference),
+      variationId: variation.refId,
+      changeRequestId: variation.state.changeRequestId as string | undefined,
+      description: String(variation.state.description ?? variation.state.valuationBasis ?? ''),
+      origin: String(variation.state.origin ?? 'CLIENT'),
+      status: String(variation.state.status),
+      instructedMinor: instructed,
+      agreedMinor: agreed,
+      downstreamCapturedMinor: capturedMinor,
+      affectedSubcontracts: affected.length,
+      timeImpactDays: Number(variation.state.timeImpactDays ?? 0),
+      mismatch,
+    });
+  }
+
+  for (const claim of domestic) {
+    const recoveredBy =
+      typeof claim.state.changeRequestId === 'string'
+        ? upstream.find((v) => v.state.changeRequestId === claim.state.changeRequestId)
+        : undefined;
+    const amount = Number(claim.state.valuedAmountMinor ?? 0);
+
+    let mismatch: VariationLine['mismatch'];
+    if (!recoveredBy) {
+      // Cost the business will pay with nothing claimed against it upstream.
+      downstreamNotRecovered += amount;
+      mismatch = {
+        kind: 'DOWNSTREAM_NOT_RECOVERED',
+        amountMinor: amount,
+        detail:
+          typeof claim.state.changeRequestId === 'string'
+            ? 'Linked to a change that has not been instructed upstream'
+            : 'Claimed by a subcontractor and not linked to any upstream change',
+      };
+    }
+
+    lines.push({
+      reference: String(claim.state.reference),
+      variationId: claim.refId,
+      changeRequestId: claim.state.changeRequestId as string | undefined,
+      description: String(claim.state.description ?? ''),
+      origin: 'SUBCONTRACTOR',
+      status: String(claim.state.status),
+      instructedMinor: 0,
+      agreedMinor: 0,
+      downstreamCapturedMinor: amount,
+      affectedSubcontracts: claim.state.subcontractId ? 1 : 0,
+      timeImpactDays: Number(claim.state.timeImpactDays ?? 0),
+      mismatch,
+    });
+  }
+
+  const exposures: string[] = [];
+  if (downstreamNotRecovered > 0) exposures.push('cost carried with nothing claimed upstream');
+  if (upstreamUnsupported > 0) exposures.push('value agreed against packages whose cost is unknown');
+
+  const summary =
+    lines.length === 0
+      ? 'No change recorded on this contract.'
+      : exposures.length === 0
+        ? `${lines.length} change ${lines.length === 1 ? 'record' : 'records'}, both sides reconciled.`
+        : `Change exposure in ${exposures.length === 1 ? 'one direction' : 'both directions'}: ${exposures.join(', ')}.`;
+
+  return {
+    lines: lines.sort((a, b) => a.reference.localeCompare(b.reference)),
+    uninstructedMinor: uninstructed,
+    unvaluedMinor: unvalued,
+    downstreamNotRecoveredMinor: downstreamNotRecovered,
+    upstreamUnsupportedMinor: upstreamUnsupported,
+    marginOnChangeMinor: marginOnChange,
+    summary,
+  };
 }
 
 // --- Delay & claims ----------------------------------------------------------
