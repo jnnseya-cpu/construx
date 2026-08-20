@@ -1350,6 +1350,18 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => planning.forecastDelay(projectContext(platform, ctx), body(ctx)),
   },
   {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/programme/simulate',
+    description: 'Engine B — Monte Carlo completion across the whole network, with the criticality index',
+    handler: (platform, ctx) =>
+      planning.simulateProgramme(projectContext(platform, ctx), {
+        iterations: ctx.query.get('iterations') ? Number(ctx.query.get('iterations')) : undefined,
+        contractualDurationDays: ctx.query.get('contractualDurationDays')
+          ? Number(ctx.query.get('contractualDurationDays'))
+          : undefined,
+      }),
+  },
+  {
     method: 'POST',
     pattern: '/v1/projects/:projectId/programme/what-if',
     description: 'Engine B — what-if analysis (no state change)',

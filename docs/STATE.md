@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 624 passing, 0 failing, across 29 files |
+| Tests | 647 passing, 0 failing, across 30 files |
 | Typecheck | clean |
-| Backend | 75 TypeScript files, 31,647 lines |
-| Application | 26 ES modules, 6,489 lines (plus a service worker) |
-| API routes | 192 |
+| Backend | 76 TypeScript files, 31,985 lines |
+| Application | 26 ES modules, 6,545 lines (plus a service worker) |
+| API routes | 193 |
 | Event types | 169, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
@@ -255,6 +255,45 @@ delay has no notice worth serving, and reporting it as a missed one is crying
 wolf. A missed time bar is marked **lost**, distinct from a late renewal that can
 still be put right; without that distinction the recoverable items absorb the
 attention.
+
+**Monte Carlo completion, and the two errors it corrects.** The platform
+published a P80 duration computed the textbook way — sum the variance of the
+activities on the deterministic critical path, read the normal quantile — and
+that method is wrong in two directions, both from treating "the critical path"
+as a single fixed chain.
+
+It **understates** where a near-critical path can overtake: the path is only
+critical for the durations you assumed, and finishing by a date needs every path
+to make it. It **overstates** where several paths are critical at once, summing
+the variance of activities that run alongside each other as though they ran in
+series — the demonstration being that adding a duplicate parallel path leaves
+the project finishing on the same day while moving the published figure by a
+fortnight. A forecast that shifts when the schedule did not is not a forecast.
+
+The simulation resamples every activity and recomputes the critical path from
+scratch each run. Two decisions are deliberate: the generator is **seeded from
+the project id**, because an unreproducible forecast cannot be checked against
+the platform that produced it, and durations are sampled from a **triangular**
+distribution, which claims no more than three numbers from a planner support.
+
+The difference is **reported rather than swapped in**, and split into its
+causes rather than blamed on one: how much is skew — the analytic figure centres
+on the sum of *most likely* durations while a right-skewed estimate expects more
+than its mode — and how much is everything else. On the seeded project the
+analytic P80 is 43 days optimistic, about 20 of them skew. Naming merge bias as
+the cause on a serial chain would have been a guess dressed as an explanation.
+
+It also produces the output PERT cannot: the **criticality index**, the share of
+runs in which each activity was critical. An activity with float today and a
+high index is a risk the deterministic path never shows.
+
+Building it found a defect in shared code. `calculateCPM` marked an activity
+critical on `totalFloat <= 0`, an exact float comparison — and float is a
+difference of sums, so on non-integer durations a genuinely critical activity
+comes out at 3e-14 and silently drops off the path. Integer programmes were
+unaffected, which is why it had never shown; a 2.5-day activity is ordinary, and
+the simulation samples fractional durations by design. Compared against a
+tolerance now.
 
 **Lookahead planning and Percent Plan Complete.** `LOOKAHEAD_PUBLISHED` and
 `CONSTRAINT_RAISED` both had nothing emitting them, which meant the delay-risk

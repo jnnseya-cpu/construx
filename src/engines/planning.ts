@@ -11,6 +11,7 @@ import {
   type Activity,
   type Dependency,
 } from './maths/cpm.ts';
+import { simulateCompletion, type ThreePointActivity } from './maths/montecarlo.ts';
 import { forecastDelayRisk, type DelayDriver } from './maths/risk.ts';
 
 /**
@@ -1117,6 +1118,70 @@ export function ppcTrend(ctx: EngineContext, today = new Date().toISOString().sl
           'the recurring reason is the one worth fixing.';
 
   return { weeks, meanPpcPercent, topReasons, openConstraints, meanDaysToClear, summary };
+}
+
+/**
+ * Simulate the completion date across the whole network.
+ *
+ * The published P80 sums variance along the deterministic critical path, which
+ * is the textbook method and systematically optimistic: the critical path is
+ * only critical for the durations you assumed, and finishing by a date needs
+ * *every* path to make it. This runs the network end to end many times so a
+ * path that only becomes critical under stress is counted when it does.
+ *
+ * Reads only. A forecast is not a commercial position, and writing one would
+ * mean the number moved every time somebody looked at it.
+ */
+export function simulateProgramme(
+  ctx: EngineContext,
+  options: { iterations?: number; contractualDurationDays?: number } = {},
+): ReturnType<typeof simulateCompletion> & { analyticP80Days: number } {
+  authorise(ctx, 'PROGRAMME_BASELINES', 'R');
+
+  const { activities, dependencies } = loadNetwork(ctx);
+  if (activities.length === 0) throw new DomainError('PROGRAMME_EMPTY', 'No activities exist to simulate');
+
+  const taskRecords = new Map(ctx.ledger.list(ctx.projectId, 'Task').map((r) => [r.refId, r.state]));
+
+  const threePoint: ThreePointActivity[] = activities.map((activity) => {
+    const state = taskRecords.get(activity.id);
+    const duration = Number(state?.durationDays ?? activity.duration);
+    return {
+      ...activity,
+      optimistic: Number(state?.optimisticDays ?? duration),
+      mostLikely: duration,
+      pessimistic: Number(state?.pessimisticDays ?? duration),
+    };
+  });
+
+  // The analytic figure the platform publishes, computed the same way it is
+  // published, so the comparison is against the real number rather than a
+  // second derivation of it.
+  const cpm = calculateCPM(activities, dependencies);
+  const varianceSum = cpm.criticalPath.reduce((sum, taskId) => {
+    const state = taskRecords.get(taskId);
+    if (!state) return sum;
+    const { variance } = pert(
+      Number(state.optimisticDays ?? state.durationDays),
+      Number(state.durationDays),
+      Number(state.pessimisticDays ?? state.durationDays),
+    );
+    return sum + variance;
+  }, 0);
+  const analyticP80Days = durationAtConfidence(cpm.projectDuration, varianceSum, 0.8);
+
+  return {
+    ...simulateCompletion(threePoint, dependencies, {
+      // Seeded from the project, so the same programme gives the same forecast
+      // twice. An unreproducible number cannot be audited against the platform
+      // that produced it.
+      seed: ctx.projectId,
+      iterations: options.iterations,
+      contractualDurationDays: options.contractualDurationDays,
+      analyticP80Days,
+    }),
+    analyticP80Days,
+  };
 }
 
 /**

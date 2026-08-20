@@ -23,6 +23,13 @@ export async function programme(root) {
     api.get(`/v1/projects/${projectId}/lookahead/ppc`).catch(() => null),
   ]);
 
+  // The simulated distribution, alongside the analytic figure rather than
+  // instead of it — people have been quoting the analytic one and need to be
+  // able to explain the difference.
+  const sim = await api
+    .get(`/v1/projects/${projectId}/programme/simulate?contractualDurationDays=400`)
+    .catch(() => null);
+
   const tasks = bundle.Task;
   const baseline = bundle.ProgrammeBaseline.filter((b) => b.status === 'APPROVED').at(-1);
   const delay = bundle.DelayRiskSnapshot.at(-1);
@@ -51,6 +58,55 @@ export async function programme(root) {
       </div>
 
       ${calc.error ? html`<div class="notice err">${calc.error.message}</div>` : ''}
+
+      ${
+        sim
+          ? html`<div class="card" style="margin-bottom:14px">
+              <h3>Simulated completion — ${sim.iterations.toLocaleString()} runs of the whole network</h3>
+              <p class="metric-sub" style="margin-bottom:12px">
+                The published P80 sums the variance along the deterministic critical path. That path is only critical
+                for the durations it assumed, and where several paths are critical at once it adds up work that runs
+                side by side as though it ran end to end. This resamples every activity and recomputes the path each
+                time. Seeded from the project, so the same programme gives the same answer twice.
+              </p>
+              <div class="grid g5" style="margin-bottom:11px">
+                <div><div class="metric">${days(sim.deterministicDays)}</div><div class="metric-sub">deterministic</div></div>
+                <div><div class="metric">${days(sim.p50)}</div><div class="metric-sub">P50 simulated</div></div>
+                <div><div class="metric orange">${days(sim.p80)}</div><div class="metric-sub">P80 simulated</div></div>
+                <div><div class="metric">${days(sim.p90)}</div><div class="metric-sub">P90 simulated</div></div>
+                <div><div class="metric ${raw(sim.probabilityOnTime >= 0.8 ? 'good' : sim.probabilityOnTime >= 0.5 ? 'warn' : 'bad')}">${pct((sim.probabilityOnTime ?? 0) * 100, 0)}</div><div class="metric-sub">on the contractual date</div></div>
+              </div>
+              <div class="notice ${raw(Math.abs(sim.analyticErrorDays) < 1 ? 'ok' : sim.analyticErrorDays > 0 ? 'warn' : '')}">
+                ${
+                  Math.abs(sim.analyticErrorDays) < 1
+                    ? `The analytic P80 of ${sim.analyticP80Days.toFixed(1)}d agrees with the simulation.`
+                    : html`The analytic P80 of ${sim.analyticP80Days.toFixed(1)}d is
+                        ${Math.abs(sim.analyticErrorDays).toFixed(1)}d ${sim.analyticErrorDays > 0 ? 'optimistic' : 'pessimistic'}
+                        against the simulation. ${days(Math.abs(sim.skewDays))} of that is skew — it centres on the sum of
+                        most-likely durations, and the expected duration of a right-skewed estimate is higher than its
+                        most likely. The remaining ${days(Math.abs(sim.residualDays))} is path effects and the normal
+                        approximation's own understatement of the tail.`
+                }
+              </div>
+              ${
+                sim.criticalityIndex.length > 0
+                  ? html`<div style="margin-top:12px">
+                      <div class="metric-sub" style="margin-bottom:7px">
+                        <b>Criticality index</b> — how often each activity landed on the critical path. An activity with
+                        float today and a high index is a risk the critical path never shows.
+                      </div>
+                      ${table({
+                        headers: ['Activity', 'On the critical path in'],
+                        align: ['', 'num'],
+                        rows: sim.criticalityIndex.slice(0, 8).map((c) => [c.name, pct(c.index * 100, 0)]),
+                        empty: 'No activity was ever critical',
+                      })}
+                    </div>`
+                  : ''
+              }
+            </div>`
+          : ''
+      }
 
       ${
         ppc

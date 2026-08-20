@@ -80,6 +80,13 @@ function topologicalOrder(
   return { order, cycles: [stuck] };
 }
 
+/**
+ * A millionth of a working day, about a tenth of a second.
+ *
+ * Below this, a float is arithmetic noise rather than slack anybody could use.
+ */
+const FLOAT_TOLERANCE_DAYS = 1e-6;
+
 export function calculateCPM(activities: Activity[], dependencies: Dependency[]): CPMResult {
   const byId = new Map(activities.map((a) => [a.id, a]));
   const ids = activities.map((a) => a.id);
@@ -194,7 +201,13 @@ export function calculateCPM(activities: Activity[], dependencies: Dependency[])
       lateFinish: lf,
       totalFloat,
       freeFloat: Math.max(0, Math.min(freeFloat, totalFloat)),
-      critical: totalFloat <= 0,
+      // Compared against a tolerance rather than against zero. Float is a
+      // difference of sums, so on non-integer durations a genuinely critical
+      // activity comes out at 3e-14 rather than 0 and silently drops off the
+      // critical path. Integer programmes are unaffected — their floats are
+      // exact — but a 2.5-day activity is entirely ordinary, and the Monte
+      // Carlo simulation samples fractional durations by design.
+      critical: totalFloat <= FLOAT_TOLERANCE_DAYS,
     };
   });
 
