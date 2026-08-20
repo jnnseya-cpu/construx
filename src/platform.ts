@@ -63,7 +63,29 @@ export class Platform {
   constructor(orchestrator = new AIOrchestrator()) {
     this.orchestrator = orchestrator;
     this.sync = new SyncEngine(this.ledger);
-    this.exports = new ExportService(this.ledger);
+    // The exporter asks whether a tenant may take a document out; the platform
+    // is what knows. A tenant with no subscription on record is refused rather
+    // than allowed — the failure of a lookup should not open the gate.
+    this.exports = new ExportService(this.ledger, (tenantId) => {
+      const subscription = this.#subscriptions.get(tenantId);
+      if (!subscription) {
+        return { permitted: false, reason: 'No subscription is recorded for this tenancy' };
+      }
+      const definition = PACKAGES[subscription.package];
+      if (!definition.export) {
+        return {
+          permitted: false,
+          reason:
+            `The ${definition.label} package does not include exporting or printing. ` +
+            'Everything else is available — the platform governs, records and computes on a trial; ' +
+            'what it does not do is let a document leave.',
+        };
+      }
+      if (subscription.status !== 'ACTIVE') {
+        return { permitted: false, reason: `This subscription is ${subscription.status.toLowerCase()}` };
+      }
+      return { permitted: true };
+    });
   }
 
   // --- Tenancy ---------------------------------------------------------------

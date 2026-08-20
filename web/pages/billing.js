@@ -12,10 +12,13 @@ import { can, refreshContext, state } from '../app.js';
  */
 
 export async function billing(root) {
-  const [wallet, attribution, plane] = await Promise.all([
+  const [wallet, attribution, plane, seats] = await Promise.all([
     api.get('/v1/billing/wallet'),
     api.get('/v1/billing/attribution'),
     api.get('/v1/ai/control-plane').catch(() => null),
+    // What the package actually includes. A platform that refuses an export on
+    // plan grounds and has no screen saying what the plan covers is a dead end.
+    api.get('/v1/billing/seats').catch(() => null),
   ]);
 
   const effective = wallet.monthRawSpendMinor === 0 ? 0 : wallet.monthBilledMinor / wallet.monthRawSpendMinor;
@@ -46,6 +49,43 @@ export async function billing(root) {
           ? html`<div class="notice warn">
               <div><b>${wallet.alerts.length} budget alert(s)</b><br>
               ${wallet.alerts.map((a) => `${a.threshold}% of the ${a.scope.toLowerCase()} cap reached`).join(' · ')}</div>
+            </div>`
+          : ''
+      }
+
+      ${
+        seats
+          ? html`<div class="card" style="margin-bottom:14px">
+              <h3>Your package — ${seats.package.label}</h3>
+              <p class="metric-sub" style="margin-bottom:12px">
+                The package is charged, not the sum of its seats. No package includes AI: ACUs are bought separately,
+                which is why a heavy AI user pays for what they consume rather than everybody absorbing it.
+              </p>
+              <div class="split-list">
+                <div class="row"><span class="lbl">Seats</span><span class="val">${seats.seatsUsed} of ${
+                  seats.package.includedSeats === null ? 'unlimited' : seats.package.includedSeats
+                }</span></div>
+                <div class="row"><span class="lbl">Storage</span><span class="val">${
+                  seats.package.storageGb === null ? 'unlimited' : `${seats.package.storageGb} GB`
+                }</span></div>
+                <div class="row"><span class="lbl">Export, download and print</span><span class="val">${
+                  seats.package.export ? badge('included', 'good') : badge('not on this plan', 'warn')
+                }</span></div>
+                <div class="row"><span class="lbl">API access</span><span class="val">${
+                  seats.package.apiAccess ? badge('included', 'good') : badge('not on this plan', 'warn')
+                }</span></div>
+                <div class="row"><span class="lbl">Isolated tenancy</span><span class="val">${
+                  seats.package.isolatedTenancy ? badge('included', 'good') : '—'
+                }</span></div>
+              </div>
+              ${
+                seats.package.export
+                  ? ''
+                  : html`<div class="notice warn" style="margin-top:11px">
+                      Everything on this plan governs, records and computes. What it does not do is let a document leave —
+                      exporting and printing need a paid subscription.
+                    </div>`
+              }
             </div>`
           : ''
       }

@@ -76,17 +76,49 @@ function brandedHeader(branding: ClientBranding, title: string, subtitle?: strin
   return blocks;
 }
 
+/**
+ * Whether a tenant may take a document out of the platform at all.
+ *
+ * Supplied rather than imported so the exporter stays free of the billing
+ * model: this file's job is to build an evidenced, branded, correctly redacted
+ * document, and it should not also know what a package costs.
+ */
+export type ExportEntitlement = { permitted: boolean; reason?: string };
+
 export class ExportService {
   readonly #ledger: GoldenThreadLedger;
   readonly #brandingByTenant = new Map<string, ClientBranding>();
+  readonly #entitlement: (tenantId: string) => ExportEntitlement;
   #sequence = 0;
 
-  constructor(ledger: GoldenThreadLedger) {
+  constructor(ledger: GoldenThreadLedger, entitlement?: (tenantId: string) => ExportEntitlement) {
     this.#ledger = ledger;
+    // Default open. A caller that does not supply an entitlement check is a
+    // test or a tool, not a tenant taking a document to a client.
+    this.#entitlement = entitlement ?? (() => ({ permitted: true }));
   }
 
   setBranding(tenantId: string, branding: ClientBranding): void {
     this.#brandingByTenant.set(tenantId, branding);
+  }
+
+  /**
+   * May this tenant take a document out of the platform?
+   *
+   * Called at the top of each export and again where the document is built.
+   * The early call is what makes the message useful — a trial account asking
+   * for a report should be told it is not on the plan, not that the project
+   * was not found or that a logo needs configuring first. The later call is
+   * what makes it hard to bypass.
+   */
+  #assertEntitled(tenantId: string): void {
+    const entitlement = this.#entitlement(tenantId);
+    if (!entitlement.permitted) {
+      throw new DomainError(
+        'EXPORT_NOT_ENTITLED',
+        entitlement.reason ?? 'This subscription does not include exporting or printing',
+      );
+    }
   }
 
   branding(tenantId: string): ClientBranding {
@@ -116,6 +148,10 @@ export class ExportService {
       correlationId: string;
     },
   ): ExportDocument {
+    // The backstop. Every route into a document passes through here, so a new
+    // export method inherits the gate without anybody remembering to add it.
+    this.#assertEntitled(auth.tenantId);
+
     const branding = this.branding(auth.tenantId);
     this.#sequence += 1;
 
@@ -196,6 +232,7 @@ export class ExportService {
     projectId: string,
     input: { audience: ExportAudience; format?: ExportFormat; correlationId: string },
   ): ExportDocument {
+    this.#assertEntitled(auth.tenantId);
     const project = this.#ledger.require({ refType: 'Project', refId: projectId });
 
     const evms = this.#ledger.list(projectId, 'EarnedValueSnapshot');
@@ -293,6 +330,8 @@ export class ExportService {
     projectId: string,
     input: { audience: ExportAudience; from: string; to: string; format?: ExportFormat; correlationId: string },
   ): ExportDocument {
+    this.#assertEntitled(auth.tenantId);
+
     const replayAudience =
       input.audience === 'REGULATOR' || input.audience === 'INSURER' || input.audience === 'COURT'
         ? input.audience

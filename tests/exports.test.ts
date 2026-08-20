@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
+import { PACKAGES } from '../src/billing/seats.ts';
 import type { ExportAudience, ExportDocument } from '../src/export/exporter.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -124,5 +125,122 @@ describe('every export is recorded', () => {
     const record = after.find((r) => r.refId === doc.id);
     assert.ok(record, 'the recorded export does not match the document returned');
     assert.equal(record.state.audience, 'CLIENT');
+  });
+});
+
+describe('what a trial does not include', () => {
+  /**
+   * The commercial line, and it is the whole product minus the thing you would
+   * take to a client. A trial governs, records and computes; nothing gets out.
+   *
+   * The gate sits inside the exporter rather than on the routes, because there
+   * is more than one way to produce a document and a per-route check is one
+   * somebody forgets to add to the next one.
+   */
+  function tenantOn(packageTier: 'FREE_TRIAL' | 'CORE_PROJECT') {
+    const p = new Platform();
+    const { tenant } = p.createTenant({
+      legalName: 'Evaluation Contracting Ltd',
+      jurisdiction: 'GB',
+      defaultCurrency: 'GBP',
+      tier: packageTier === 'FREE_TRIAL' ? 'FREE_TRIAL' : 'TEAM',
+      package: packageTier,
+      enterpriseName: 'Evaluation',
+    });
+    p.exports.setBranding(tenant.id, {
+      clientName: 'Evaluation Contracting Ltd',
+      primaryColour: '#ff6600',
+      documentReferencePrefix: 'EVA',
+      legalFooter: 'Issued under evaluation terms.',
+    });
+    return { platform: p, tenantId: tenant.id };
+  }
+
+  it('refuses an export on a trial package, and says why in commercial terms', () => {
+    const { platform: trial, tenantId } = tenantOn('FREE_TRIAL');
+
+    try {
+      trial.exports.projectReport(
+        { ...seed.users.pm!.auth, tenantId },
+        seed.projectId,
+        { audience: 'CLIENT', correlationId: 'trial-export' },
+      );
+      assert.fail('a trial account should not be able to export');
+    } catch (error) {
+      assert.equal((error as { code?: string }).code, 'EXPORT_NOT_ENTITLED');
+      // The message has to be a commercial one. "Forbidden" would read as a
+      // permission fault and send somebody to their administrator.
+      assert.match((error as Error).message, /does not include exporting or printing/);
+      assert.match((error as Error).message, /governs, records and computes/);
+    }
+  });
+
+  it('checks entitlement before branding, so the message is the useful one', () => {
+    // A trial account with no logo configured should be told it is not on the
+    // plan, not told to upload a logo it will then still be refused for.
+    const trial = new Platform();
+    const { tenant } = trial.createTenant({
+      legalName: 'Unbranded Trial Ltd',
+      jurisdiction: 'GB',
+      defaultCurrency: 'GBP',
+      tier: 'FREE_TRIAL',
+      package: 'FREE_TRIAL',
+      enterpriseName: 'Unbranded',
+    });
+
+    throwsCode(
+      () =>
+        trial.exports.projectReport(
+          { ...seed.users.pm!.auth, tenantId: tenant.id },
+          seed.projectId,
+          { audience: 'CLIENT', correlationId: 'unbranded-trial' },
+        ),
+      'EXPORT_NOT_ENTITLED',
+    );
+  });
+
+  it('allows it on a paid package', () => {
+    const { platform: paid, tenantId } = tenantOn('CORE_PROJECT');
+    // Reaches the branding and content stage rather than the entitlement gate.
+    // The seeded project belongs to another tenancy, so this fails on the data
+    // rather than on the plan — which is the distinction under test.
+    try {
+      paid.exports.projectReport(
+        { ...seed.users.pm!.auth, tenantId },
+        seed.projectId,
+        { audience: 'CLIENT', correlationId: 'paid-export' },
+      );
+    } catch (error) {
+      assert.notEqual((error as { code?: string }).code, 'EXPORT_NOT_ENTITLED');
+    }
+  });
+
+  it('refuses a tenancy with no subscription on record rather than defaulting open', () => {
+    // A lookup that fails must not open the gate.
+    const bare = new Platform();
+    bare.exports.setBranding('ghost-tenant', {
+      clientName: 'Ghost',
+      primaryColour: '#ff6600',
+      documentReferencePrefix: 'GHO',
+      legalFooter: 'No subscription on record.',
+    });
+
+    throwsCode(
+      () =>
+        bare.exports.projectReport(
+          { ...seed.users.pm!.auth, tenantId: 'ghost-tenant' },
+          seed.projectId,
+          { audience: 'CLIENT', correlationId: 'ghost-export' },
+        ),
+      'EXPORT_NOT_ENTITLED',
+    );
+  });
+
+  it('states the entitlement on the package rather than in the exporter', () => {
+    // One place to read what a package includes.
+    assert.equal(PACKAGES.FREE_TRIAL.export, false);
+    assert.equal(PACKAGES.CORE_PROJECT.export, true);
+    assert.equal(PACKAGES.PROFESSIONAL_DELIVERY.export, true);
+    assert.equal(PACKAGES.ENTERPRISE.export, true);
   });
 });

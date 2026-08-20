@@ -112,6 +112,15 @@ export type PackageDefinition = {
   storageGb: number | null;
   isolatedTenancy: boolean;
   apiAccess: boolean;
+  /**
+   * Whether documents may leave the platform — export, download, print.
+   *
+   * The trial is the whole product minus the thing you would take to a client.
+   * Everything governs, records and computes; nothing gets out. That is the
+   * commercial line, and it is here rather than in the exporter so there is one
+   * place to read what a package includes.
+   */
+  export: boolean;
 };
 
 export const PACKAGES: Record<PackageTier, PackageDefinition> = {
@@ -124,6 +133,7 @@ export const PACKAGES: Record<PackageTier, PackageDefinition> = {
     storageGb: 5,
     isolatedTenancy: false,
     apiAccess: false,
+    export: false,
   },
   CORE_PROJECT: {
     package: 'CORE_PROJECT',
@@ -134,6 +144,7 @@ export const PACKAGES: Record<PackageTier, PackageDefinition> = {
     storageGb: 100,
     isolatedTenancy: false,
     apiAccess: false,
+    export: true,
   },
   PROFESSIONAL_DELIVERY: {
     package: 'PROFESSIONAL_DELIVERY',
@@ -144,6 +155,7 @@ export const PACKAGES: Record<PackageTier, PackageDefinition> = {
     storageGb: 500,
     isolatedTenancy: false,
     apiAccess: true,
+    export: true,
   },
   ENTERPRISE: {
     package: 'ENTERPRISE',
@@ -154,6 +166,7 @@ export const PACKAGES: Record<PackageTier, PackageDefinition> = {
     storageGb: null,
     isolatedTenancy: true,
     apiAccess: true,
+    export: true,
   },
 };
 

@@ -163,7 +163,10 @@ export async function audit(root) {
       const doc = await api.post(`/v1/projects/${state.session.projectId}/exports/audit`, { audience: 'ADJUDICATOR' });
       toast('Audit pack exported', `${doc.reference} · hash ${shortHash(doc.contentHash)} · branded for ${doc.branding.clientName}`, 'ok');
     } catch (error) {
-      toast('Export failed', error.message, 'err');
+      // A plan limit is not a fault. Titling it "export failed" sends somebody
+      // to their administrator to fix a permission that is working correctly.
+      if (error.code === 'EXPORT_NOT_ENTITLED') toast('Not on this plan', error.message, 'warn');
+      else toast('Export failed', error.message, 'err');
     }
     button.disabled = false;
     button.textContent = 'Export audit pack';

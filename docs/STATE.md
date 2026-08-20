@@ -15,10 +15,10 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 593 passing, 0 failing, across 28 files |
+| Tests | 598 passing, 0 failing, across 28 files |
 | Typecheck | clean |
-| Backend | 74 TypeScript files, 31,150 lines |
-| Application | 26 ES modules, 6,408 lines (plus a service worker) |
+| Backend | 74 TypeScript files, 31,224 lines |
+| Application | 26 ES modules, 6,451 lines (plus a service worker) |
 | API routes | 191 |
 | Event types | 169, closed catalogue |
 | Entity types | 108, all classified for access |
@@ -120,6 +120,26 @@ before the request goes out, and a released hold when the provider throws.
 
 **Commercial packaging.** Eight role-priced seats, three packages, three ACU
 bundles. The operator and the regulator consume no seat.
+
+**What a trial does not include.** The commercial line is the whole product
+minus the thing you would take to a client: a trial governs, records and
+computes, and no document leaves. That was specified and unenforced — every
+export succeeded regardless of package.
+
+The gate is a property of the package rather than a rule in the exporter, so
+there is one place to read what a plan includes, and it is checked at the top of
+each export *and* again where the document is built. The early check makes the
+message useful — a trial account asking for a report is told it is not on the
+plan rather than that the project was not found or a logo needs configuring
+first — and the later one means a new export method inherits the gate without
+anybody remembering to add it. A tenancy with no subscription on record is
+refused: a failed lookup must not open the gate.
+
+The interface treats it as a plan limit rather than a fault, because "export
+failed" sends somebody to their administrator to fix a permission that is
+working correctly. The billing screen states what the package covers, which it
+did not before — refusing on plan grounds with no screen saying what the plan
+includes is a dead end.
 
 **Application.** Nineteen screens against live endpoints, including Autopilot — the queue where a person approves or declines what the agents propose. Role-aware navigation
 resolved from the API's permission matrix and phase gates, so the interface
