@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 660 passing, 0 failing, across 31 files |
+| Tests | 662 passing, 0 failing, across 31 files |
 | Typecheck | clean |
 | Backend | 77 TypeScript files, 32,392 lines |
 | Application | 26 ES modules, 6,594 lines (plus a service worker) |
@@ -173,6 +173,13 @@ plan rather than that the project was not found or a logo needs configuring
 first — and the later one means a new export method inherits the gate without
 anybody remembering to add it. A tenancy with no subscription on record is
 refused: a failed lookup must not open the gate.
+
+Two roles are exempt, and the second is the one that matters. The platform
+operator is not a customer and has no package to be limited by. And a
+**regulator's** export is an access the asset owner is obliged to provide —
+refusing it because the contractor has not paid would be the platform enforcing
+a commercial term against a statutory right, which is not a trade-off it gets to
+make.
 
 The interface treats it as a plan limit rather than a fault, because "export
 failed" sends somebody to their administrator to fix a permission that is

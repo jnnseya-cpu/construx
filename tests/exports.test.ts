@@ -236,6 +236,43 @@ describe('what a trial does not include', () => {
     );
   });
 
+
+  it('does not block a regulator because the contractor has not paid', () => {
+    // A regulator's export is an access the asset owner is obliged to provide.
+    // Refusing it on the tenant's package would be this platform enforcing a
+    // commercial term against a statutory right, which is not a trade-off it
+    // gets to make.
+    const { platform: trial, tenantId } = tenantOn('FREE_TRIAL');
+
+    try {
+      trial.exports.projectReport(
+        { ...seed.users.regulator!.auth, tenantId },
+        seed.projectId,
+        { audience: 'REGULATOR', correlationId: 'regulator-on-trial' },
+      );
+    } catch (error) {
+      assert.notEqual(
+        (error as { code?: string }).code,
+        'EXPORT_NOT_ENTITLED',
+        'a regulator was blocked by the tenant\'s subscription',
+      );
+    }
+  });
+
+  it('does not block the platform operator, who has no package to be limited by', () => {
+    const { platform: trial, tenantId } = tenantOn('FREE_TRIAL');
+
+    try {
+      trial.exports.projectReport(
+        { ...seed.users.operator!.auth, tenantId },
+        seed.projectId,
+        { audience: 'INTERNAL', correlationId: 'operator-on-trial' },
+      );
+    } catch (error) {
+      assert.notEqual((error as { code?: string }).code, 'EXPORT_NOT_ENTITLED');
+    }
+  });
+
   it('states the entitlement on the package rather than in the exporter', () => {
     // One place to read what a package includes.
     assert.equal(PACKAGES.FREE_TRIAL.export, false);

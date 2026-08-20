@@ -4,7 +4,7 @@ import { SyncEngine } from './field/sync.ts';
 import { ACUWallet } from './billing/acu.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
 import { assignIdentity, packageForTier, revokeIdentity, TIERS, type Subscription, type SubscriptionTier } from './billing/subscription.ts';
-import { PACKAGES, type PackageTier } from './billing/seats.ts';
+import { PACKAGES, UNCHARGED_ROLES, type PackageTier } from './billing/seats.ts';
 import { config } from './config.ts';
 import { DomainError, NotFoundError } from './core/errors.ts';
 import { ulid } from './core/ids.ts';
@@ -66,7 +66,16 @@ export class Platform {
     // The exporter asks whether a tenant may take a document out; the platform
     // is what knows. A tenant with no subscription on record is refused rather
     // than allowed — the failure of a lookup should not open the gate.
-    this.exports = new ExportService(this.ledger, (tenantId) => {
+    this.exports = new ExportService(this.ledger, (tenantId, roles) => {
+      // Two exemptions, and the second is the one that matters.
+      //
+      // The platform operator is not a customer and has no package to be
+      // limited by. And a **regulator's** export is an access the asset owner
+      // is obliged to provide — refusing it because the contractor has not paid
+      // would be this platform enforcing a commercial term against a statutory
+      // right, which is not a trade-off it gets to make.
+      if (roles?.some((role) => (UNCHARGED_ROLES as readonly string[]).includes(role))) return { permitted: true };
+
       const subscription = this.#subscriptions.get(tenantId);
       if (!subscription) {
         return { permitted: false, reason: 'No subscription is recorded for this tenancy' };

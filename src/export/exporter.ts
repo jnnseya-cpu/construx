@@ -88,10 +88,10 @@ export type ExportEntitlement = { permitted: boolean; reason?: string };
 export class ExportService {
   readonly #ledger: GoldenThreadLedger;
   readonly #brandingByTenant = new Map<string, ClientBranding>();
-  readonly #entitlement: (tenantId: string) => ExportEntitlement;
+  readonly #entitlement: (tenantId: string, roles?: readonly string[]) => ExportEntitlement;
   #sequence = 0;
 
-  constructor(ledger: GoldenThreadLedger, entitlement?: (tenantId: string) => ExportEntitlement) {
+  constructor(ledger: GoldenThreadLedger, entitlement?: (tenantId: string, roles?: readonly string[]) => ExportEntitlement) {
     this.#ledger = ledger;
     // Default open. A caller that does not supply an entitlement check is a
     // test or a tool, not a tenant taking a document to a client.
@@ -111,8 +111,8 @@ export class ExportService {
    * was not found or that a logo needs configuring first. The later call is
    * what makes it hard to bypass.
    */
-  #assertEntitled(tenantId: string): void {
-    const entitlement = this.#entitlement(tenantId);
+  #assertEntitled(auth: AuthContext): void {
+    const entitlement = this.#entitlement(auth.tenantId, auth.roles);
     if (!entitlement.permitted) {
       throw new DomainError(
         'EXPORT_NOT_ENTITLED',
@@ -150,7 +150,7 @@ export class ExportService {
   ): ExportDocument {
     // The backstop. Every route into a document passes through here, so a new
     // export method inherits the gate without anybody remembering to add it.
-    this.#assertEntitled(auth.tenantId);
+    this.#assertEntitled(auth);
 
     const branding = this.branding(auth.tenantId);
     this.#sequence += 1;
@@ -232,7 +232,7 @@ export class ExportService {
     projectId: string,
     input: { audience: ExportAudience; format?: ExportFormat; correlationId: string },
   ): ExportDocument {
-    this.#assertEntitled(auth.tenantId);
+    this.#assertEntitled(auth);
     const project = this.#ledger.require({ refType: 'Project', refId: projectId });
 
     const evms = this.#ledger.list(projectId, 'EarnedValueSnapshot');
@@ -330,7 +330,7 @@ export class ExportService {
     projectId: string,
     input: { audience: ExportAudience; from: string; to: string; format?: ExportFormat; correlationId: string },
   ): ExportDocument {
-    this.#assertEntitled(auth.tenantId);
+    this.#assertEntitled(auth);
 
     const replayAudience =
       input.audience === 'REGULATOR' || input.audience === 'INSURER' || input.audience === 'COURT'
