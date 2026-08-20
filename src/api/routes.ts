@@ -1353,6 +1353,62 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/constraints',
+    description: 'Raise a constraint against an activity, with an owner and a need-by date',
+    schema: {
+      type: 'object',
+      required: ['taskId', 'category', 'description', 'owner', 'needByDate'],
+      properties: {
+        taskId: stringField,
+        category: { type: 'string', enum: ['DESIGN', 'MATERIALS', 'LABOUR', 'PLANT', 'ACCESS', 'PERMIT', 'PREDECESSOR', 'INFORMATION', 'APPROVAL'] },
+        description: stringField,
+        owner: stringField,
+        needByDate: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planning.raiseConstraint(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/constraints/:constraintId/close',
+    description: 'Clear a constraint, with what cleared it',
+    schema: {
+      type: 'object',
+      required: ['resolution'],
+      properties: { resolution: { type: 'string', minLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      planning.closeConstraint(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof planning.closeConstraint>[1], 'constraintId'>>(ctx),
+        constraintId: ctx.params.constraintId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/lookahead',
+    description: 'Publish the lookahead. Work that is still constrained cannot be committed to.',
+    handler: (platform, ctx) => planning.publishLookahead(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/lookahead/:lookaheadId/review',
+    description: 'Review the week and compute Percent Plan Complete',
+    handler: (platform, ctx) =>
+      planning.reviewLookahead(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof planning.reviewLookahead>[1], 'lookaheadId'>>(ctx),
+        lookaheadId: ctx.params.lookaheadId as string,
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/lookahead/ppc',
+    description: 'The PPC trend, the recurring reason promises break, and the open constraints log',
+    handler: (platform, ctx) => planning.ppcTrend(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/site-diary',
     description: 'Record the daily site diary — the contemporaneous record a delay claim stands on',
     schema: {

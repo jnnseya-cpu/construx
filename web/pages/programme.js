@@ -14,9 +14,13 @@ import { blockedReason, can, draw, state } from '../app.js';
 export async function programme(root) {
   const projectId = state.session.projectId;
 
-  const [calc, bundle] = await Promise.all([
+  const [calc, bundle, ppc] = await Promise.all([
     api.get(`/v1/projects/${projectId}/programme?contractualDurationDays=400`).catch((error) => ({ error })),
-    entityBundle(projectId, ['Task', 'ProgrammeBaseline', 'DelayRiskSnapshot', 'Dependency', 'Constraint', 'WorkPackage', 'ScopePackage']),
+    entityBundle(projectId, ['Task', 'ProgrammeBaseline', 'DelayRiskSnapshot', 'Dependency', 'Constraint', 'LookaheadPlan', 'WorkPackage', 'ScopePackage']),
+    // Percent Plan Complete and the constraints log. The critical path says
+    // what the programme needs; PPC says whether the team can be relied on to
+    // deliver a week of it, which is a different and more useful question.
+    api.get(`/v1/projects/${projectId}/lookahead/ppc`).catch(() => null),
   ]);
 
   const tasks = bundle.Task;
@@ -38,6 +42,8 @@ export async function programme(root) {
         <div class="actions cmd-bar">
           ${raw(commandBar([
             { id: 'task', label: 'Create activity', tone: '', permitted: can('WORKPACKAGES_TASKS', 'C'), reason: blockedReason('WORKPACKAGES_TASKS', 'C') },
+            { id: 'constraint', label: 'Raise constraint', permitted: can('LOOKAHEAD_CONSTRAINTS', 'C'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C') },
+            { id: 'clear', label: 'Clear constraint', permitted: can('LOOKAHEAD_CONSTRAINTS', 'U'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'U') },
           ]))}
           ${can('PROGRAMME_BASELINES', 'X') ? html`<button class="btn ghost" id="forecast">Run delay forecast</button>` : ''}
           ${can('PROGRAMME_BASELINES', 'R') ? html`<button class="btn quiet" id="whatif">What-if analysis</button>` : ''}
@@ -45,6 +51,66 @@ export async function programme(root) {
       </div>
 
       ${calc.error ? html`<div class="notice err">${calc.error.message}</div>` : ''}
+
+      ${
+        ppc
+          ? html`<div class="card" style="margin-bottom:14px">
+              <h3>Percent Plan Complete</h3>
+              <p class="metric-sub" style="margin-bottom:12px">
+                The critical path says what the programme needs. PPC says whether a week of it can be relied on —
+                promises kept over promises made, with no partial credit, because the reason planning fails is almost
+                never that people finished ten percent short.
+              </p>
+              <div class="grid g4" style="margin-bottom:11px">
+                <div><div class="metric ${raw(ppc.meanPpcPercent === null ? '' : ppc.meanPpcPercent >= 85 ? 'good' : ppc.meanPpcPercent >= 65 ? 'warn' : 'bad')}">${
+                  ppc.meanPpcPercent === null ? '—' : `${ppc.meanPpcPercent}%`
+                }</div><div class="metric-sub">across ${ppc.weeks.length} reviewed ${ppc.weeks.length === 1 ? 'week' : 'weeks'}</div></div>
+                <div><div class="metric ${raw(ppc.openConstraints.length === 0 ? 'good' : 'warn')}">${ppc.openConstraints.length}</div><div class="metric-sub">open constraints</div></div>
+                <div><div class="metric ${raw(ppc.openConstraints.filter((c) => c.overdue).length === 0 ? '' : 'bad')}">${ppc.openConstraints.filter((c) => c.overdue).length}</div><div class="metric-sub">past their need-by date</div></div>
+                <div><div class="metric">${ppc.meanDaysToClear === null ? '—' : days(ppc.meanDaysToClear)}</div><div class="metric-sub">average to clear one</div></div>
+              </div>
+              <div class="notice ${raw(ppc.meanPpcPercent === null ? '' : ppc.meanPpcPercent >= 85 ? 'ok' : 'warn')}">${ppc.summary}</div>
+              ${
+                ppc.weeks.length > 0
+                  ? html`<div style="display:flex;align-items:flex-end;gap:4px;height:80px;margin:12px 0 4px">
+                      ${ppc.weeks.map((w) => html`<div style="flex:1;background:linear-gradient(180deg,var(--orange),rgba(255,102,0,.25));height:${raw(Math.max(2, Math.round(w.ppcPercent)))}%;border-radius:2px 2px 0 0" title="${w.weekStarting}: ${w.completed}/${w.promised}"></div>`)}
+                    </div>
+                    <div class="metric-sub">${ppc.weeks.map((w) => `${w.weekStarting} ${w.ppcPercent}%`).join(' · ')}</div>`
+                  : ''
+              }
+              ${
+                ppc.topReasons.length > 0
+                  ? html`<div class="split-list" style="margin-top:11px">
+                      ${ppc.topReasons.map((r) => html`<div class="row"><span class="lbl">${humanise(r.reason)}</span><span class="val">${r.count} · ${r.share}% of broken promises</span></div>`)}
+                    </div>`
+                  : ''
+              }
+            </div>`
+          : ''
+      }
+
+      ${
+        ppc && ppc.openConstraints.length > 0
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Constraints log</h3>
+              <div style="padding:0 17px"><div class="metric-sub">
+                Work that cannot be committed to until somebody clears it. An owner and a need-by date against every
+                line is what stops the log becoming wallpaper.
+              </div></div>
+              ${table({
+                headers: ['Ref', 'Category', 'Owner', 'Needed by', 'On critical path'],
+                rows: ppc.openConstraints.map((c) => [
+                  c.reference,
+                  humanise(c.category),
+                  c.owner,
+                  c.overdue ? html`${date(c.needByDate)} ${badge('overdue', 'bad')}` : date(c.needByDate),
+                  c.blocksCriticalPath ? badge('yes', 'bad') : 'no',
+                ]),
+                empty: 'No open constraints',
+              })}
+            </div>`
+          : ''
+      }
 
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">
@@ -228,6 +294,42 @@ function moneyOf(minor) {
       ],
       // The endpoint takes a batch; a single activity is a batch of one.
       transform: (v) => ({ tasks: [v] }),
+    },
+    constraint: {
+      title: 'Raise constraint',
+      intent:
+        'Something that must be cleared before the work can start. It needs an owner and a date it is needed by — a log without either is a list of complaints.',
+      path: `/v1/projects/${projectId}/constraints`,
+      submitLabel: 'Raise',
+      fields: [
+        { name: 'taskId', label: 'Activity', type: 'select', options: tasks.map((t) => ({ value: t._refId, label: `${t.activityCode} · ${t.name}` })) },
+        { name: 'category', label: 'Category', type: 'select', options: [
+          { value: 'DESIGN', label: 'Design information' },
+          { value: 'MATERIALS', label: 'Materials' },
+          { value: 'LABOUR', label: 'Labour' },
+          { value: 'PLANT', label: 'Plant' },
+          { value: 'ACCESS', label: 'Access' },
+          { value: 'PERMIT', label: 'Permit or consent' },
+          { value: 'PREDECESSOR', label: 'Predecessor work' },
+          { value: 'INFORMATION', label: 'Information' },
+          { value: 'APPROVAL', label: 'Approval' },
+        ] },
+        { name: 'description', label: 'What is blocking it', type: 'textarea' },
+        { name: 'owner', label: 'Who has to clear it', type: 'text', hint: 'Not the person raising it' },
+        { name: 'needByDate', label: 'Needed by', type: 'date' },
+      ],
+    },
+    clear: {
+      title: 'Clear constraint',
+      intent: 'What actually cleared it, so the next job can see how this one was unblocked.',
+      path: (collected) => `/v1/projects/${projectId}/constraints/${collected.constraintId}/close`,
+      transform: ({ constraintId, ...rest }) => rest,
+      submitLabel: 'Clear',
+      fields: [
+        { name: 'constraintId', label: 'Constraint', type: 'select',
+          options: (bundle.Constraint ?? []).filter((c) => c.status !== 'CLOSED').map((c) => ({ value: c._refId, label: `${c.reference} · ${String(c.description).slice(0, 46)}` })) },
+        { name: 'resolution', label: 'What cleared it', type: 'textarea', hint: '"Resolved" tells the next job nothing' },
+      ],
     },
   };
 

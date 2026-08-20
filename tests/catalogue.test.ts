@@ -64,8 +64,6 @@ const NOT_EMITTED: Record<string, string> = {
   SITE_OBSERVATION_CAPTURED: 'A general site observation from a walk, distinct from a safety observation. Not built.',
   DISPUTE_OPENED: 'Adjudication and dispute handling are not built.',
   CLASH_RESOLVED: 'A clash can be detected and recorded; closing one out is not built.',
-  LOOKAHEAD_PUBLISHED: 'Last Planner lookahead planning is not built.',
-  CONSTRAINT_RAISED: 'The constraints log that goes with the lookahead is not built.',
 };
 
 async function sourceFiles(dir: string): Promise<string[]> {

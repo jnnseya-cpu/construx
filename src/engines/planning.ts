@@ -702,6 +702,423 @@ export function diaryPosition(
   };
 }
 
+// --- Lookahead planning and PPC -------------------------------------------------
+//
+// `LOOKAHEAD_PUBLISHED` and `CONSTRAINT_RAISED` were both in the catalogue with
+// nothing able to emit them, so the platform had a delay-risk model that read
+// open constraints from a log nothing could write to. It always read zero.
+//
+// This is Last Planner rather than a rolling bar chart, and the difference is
+// the promise. A lookahead lists what *could* be done in the next few weeks; a
+// commitment is a named person saying they *will* do a specific thing by a
+// specific date. Percent Plan Complete measures how many of those promises were
+// kept, and the reasons the rest were not are the entire point — a team that
+// keeps 50% of its promises cannot plan at all, and the reasons say why.
+
+export type ConstraintCategory =
+  | 'DESIGN'
+  | 'MATERIALS'
+  | 'LABOUR'
+  | 'PLANT'
+  | 'ACCESS'
+  | 'PERMIT'
+  | 'PREDECESSOR'
+  | 'INFORMATION'
+  | 'APPROVAL';
+
+/**
+ * Raise a constraint against an activity.
+ *
+ * A constraint is something that must be cleared before work can start, owned
+ * by a named person with a date it is needed by. Both are required: a
+ * constraints log without owners is a list of complaints, and one without need-by
+ * dates cannot be prioritised, which is how the log becomes wallpaper.
+ */
+export function raiseConstraint(
+  ctx: EngineContext,
+  input: {
+    taskId: string;
+    category: ConstraintCategory;
+    description: string;
+    /** Who has to clear it. Not the person who raised it. */
+    owner: string;
+    needByDate: string;
+  },
+  now = new Date(),
+): { constraintId: string; reference: string; blocksCriticalPath: boolean } {
+  authorise(ctx, 'LOOKAHEAD_CONSTRAINTS', 'C', { lifecyclePhase: currentPhase(ctx) });
+
+  const task = ctx.ledger.require({ refType: 'Task', refId: input.taskId });
+  if (!input.owner.trim()) {
+    throw new DomainError('CONSTRAINT_OWNER_REQUIRED', 'A constraint needs somebody who has to clear it, or it is a complaint');
+  }
+
+  // Whether it sits on the critical path decides how it is treated, and the
+  // network already knows. Asking the person raising it would be asking them to
+  // guess at something the platform can answer.
+  const { activities, dependencies } = loadNetwork(ctx);
+  const cpm = calculateCPM(activities, dependencies);
+  const blocksCriticalPath = cpm.criticalPath.includes(input.taskId);
+
+  const sequence = ctx.ledger.list(ctx.projectId, 'Constraint').length + 1;
+  const reference = `CON-${String(sequence).padStart(4, '0')}`;
+  const constraintId = ulid();
+
+  write(ctx, {
+    eventType: 'CONSTRAINT_RAISED',
+    entity: { refType: 'Constraint', refId: constraintId },
+    nextState: {
+      id: constraintId,
+      projectId: ctx.projectId,
+      reference,
+      taskId: input.taskId,
+      taskName: task.state.name,
+      category: input.category,
+      description: input.description,
+      owner: input.owner,
+      needByDate: input.needByDate,
+      blocksCriticalPath,
+      status: 'OPEN',
+      raisedAt: now.toISOString(),
+      raisedBy: ctx.auth.actorId,
+    },
+  });
+
+  return { constraintId, reference, blocksCriticalPath };
+}
+
+/** Clear a constraint, with what actually cleared it. */
+export function closeConstraint(
+  ctx: EngineContext,
+  input: { constraintId: string; resolution: string },
+  now = new Date(),
+): { constraintId: string; daysOpen: number; clearedLate: boolean } {
+  authorise(ctx, 'LOOKAHEAD_CONSTRAINTS', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const constraint = ctx.ledger.require({ refType: 'Constraint', refId: input.constraintId });
+  if (constraint.state.status === 'CLOSED') {
+    throw new DomainError('CONSTRAINT_ALREADY_CLOSED', `${String(constraint.state.reference)} is already closed`);
+  }
+  if (input.resolution.trim().length < 10) {
+    throw new DomainError('CONSTRAINT_RESOLUTION_REQUIRED', 'Say what cleared it. "Resolved" tells the next job nothing.');
+  }
+
+  const raisedAt = String(constraint.state.raisedAt);
+  const daysOpen = Math.max(0, Math.round((now.getTime() - Date.parse(raisedAt)) / 86_400_000));
+  const clearedLate = now.toISOString().slice(0, 10) > String(constraint.state.needByDate);
+
+  write(ctx, {
+    eventType: 'CONSTRAINT_CLOSED',
+    entity: { refType: 'Constraint', refId: input.constraintId },
+    nextState: {
+      ...constraint.state,
+      status: 'CLOSED',
+      resolution: input.resolution,
+      closedAt: now.toISOString(),
+      closedBy: ctx.auth.actorId,
+      daysOpen,
+      clearedLate,
+    },
+  });
+
+  return { constraintId: input.constraintId, daysOpen, clearedLate };
+}
+
+export type Commitment = {
+  taskId: string;
+  /** What is promised, in terms somebody can say yes or no to at the end of the week. */
+  promise: string;
+  /** The person making the promise. A commitment with no name is a wish. */
+  promisedBy: string;
+  dueDate: string;
+};
+
+/**
+ * Publish a lookahead.
+ *
+ * The rule that makes this Last Planner: **a task with an open constraint
+ * cannot be committed to.** Promising work that is blocked is how a plan becomes
+ * a list of intentions, and it is the single commonest reason PPC collapses. The
+ * constraint has to be cleared first, or the promise has to wait.
+ *
+ * Activities can still appear in the lookahead while constrained — that is what
+ * the lookahead is for, making the constraint visible early enough to clear it.
+ * What is refused is the promise.
+ */
+export function publishLookahead(
+  ctx: EngineContext,
+  input: {
+    weekStarting: string;
+    /** Six is the usual window: long enough to clear a constraint, short enough to mean something. */
+    weeks?: number;
+    plannedTaskIds: string[];
+    commitments: Commitment[];
+  },
+): { lookaheadId: string; weekStarting: string; committed: number; planned: number } {
+  authorise(ctx, 'LOOKAHEAD_CONSTRAINTS', 'C', { lifecyclePhase: currentPhase(ctx) });
+
+  // Structural validity first: a promise with no name against it is invalid
+  // whatever the constraint position, and reporting the constraint instead
+  // would send somebody to clear a constraint that was not the problem.
+  for (const commitment of input.commitments) {
+    if (!commitment.promisedBy.trim()) {
+      throw new DomainError('COMMITMENT_UNOWNED', 'A commitment with no name against it is a wish, not a promise');
+    }
+  }
+
+  const openConstraints = ctx.ledger
+    .list(ctx.projectId, 'Constraint')
+    .filter((record) => record.state.status !== 'CLOSED');
+
+  const blocked = input.commitments
+    .map((commitment) => ({
+      commitment,
+      constraints: openConstraints.filter((c) => String(c.state.taskId) === commitment.taskId),
+    }))
+    .filter((entry) => entry.constraints.length > 0);
+
+  if (blocked.length > 0) {
+    const first = blocked[0]!;
+    throw new DomainError(
+      'COMMITMENT_CONSTRAINED',
+      `${blocked.length} ${blocked.length === 1 ? 'commitment is' : 'commitments are'} made against work that is still constrained — ` +
+        `${String(first.constraints[0]!.state.reference)} (${String(first.constraints[0]!.state.category).toLowerCase()}) on "${first.commitment.promise}". ` +
+        'Clear the constraint or leave the work in the lookahead without a promise against it.',
+    );
+  }
+
+  const lookaheadId = ulid();
+  write(ctx, {
+    eventType: 'LOOKAHEAD_PUBLISHED',
+    entity: { refType: 'LookaheadPlan', refId: lookaheadId },
+    nextState: {
+      id: lookaheadId,
+      projectId: ctx.projectId,
+      weekStarting: input.weekStarting.slice(0, 10),
+      weeks: input.weeks ?? 6,
+      plannedTaskIds: input.plannedTaskIds,
+      commitments: input.commitments.map((c) => ({ ...c, status: 'PROMISED' })),
+      status: 'PUBLISHED',
+      publishedAt: new Date().toISOString(),
+      publishedBy: ctx.auth.actorId,
+    },
+  });
+
+  return {
+    lookaheadId,
+    weekStarting: input.weekStarting.slice(0, 10),
+    committed: input.commitments.length,
+    planned: input.plannedTaskIds.length,
+  };
+}
+
+/**
+ * Reasons a promise was not kept.
+ *
+ * A fixed list on purpose. Free text produces a hundred variants of "waiting on
+ * the designer" and the whole value of PPC is being able to count them: the
+ * reason that recurs is the one to fix, and it is invisible unless the same
+ * words are used every week.
+ */
+export type NonCompletionReason =
+  | 'PREREQUISITE_WORK'
+  | 'DESIGN_INFORMATION'
+  | 'MATERIALS'
+  | 'LABOUR'
+  | 'PLANT'
+  | 'ACCESS'
+  | 'WEATHER'
+  | 'CHANGED_PRIORITY'
+  | 'OVERCOMMITTED'
+  | 'APPROVAL';
+
+/**
+ * Review the week and compute PPC.
+ *
+ * PPC is completed promises over promises made, and it is deliberately harsh:
+ * a promise 90% done counts as not kept. That is the point. A measure that gave
+ * partial credit would report a comfortable number for a team that finishes
+ * nothing, and the reason planning fails is almost never that people are 10%
+ * short.
+ */
+export function reviewLookahead(
+  ctx: EngineContext,
+  input: {
+    lookaheadId: string;
+    outcomes: Array<{ taskId: string; completed: boolean; reason?: NonCompletionReason; note?: string }>;
+  },
+): {
+  lookaheadId: string;
+  promised: number;
+  completed: number;
+  ppcPercent: number;
+  reasons: Array<{ reason: NonCompletionReason; count: number }>;
+  assessment: string;
+} {
+  authorise(ctx, 'LOOKAHEAD_CONSTRAINTS', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const lookahead = ctx.ledger.require({ refType: 'LookaheadPlan', refId: input.lookaheadId });
+  if (lookahead.state.status === 'REVIEWED') {
+    throw new DomainError('LOOKAHEAD_ALREADY_REVIEWED', 'This week has already been reviewed');
+  }
+
+  const commitments = (lookahead.state.commitments ?? []) as Array<Commitment & { status: string }>;
+  const byTask = new Map(input.outcomes.map((outcome) => [outcome.taskId, outcome]));
+
+  const missing = commitments.filter((c) => !byTask.has(c.taskId));
+  if (missing.length > 0) {
+    // Every promise gets an answer. Leaving one out is how PPC quietly rises:
+    // the promises nobody wants to discuss are the ones that were not kept.
+    throw new DomainError(
+      'REVIEW_INCOMPLETE',
+      `${missing.length} ${missing.length === 1 ? 'commitment has' : 'commitments have'} no outcome recorded. Every promise gets an answer, including the ones nobody wants to discuss.`,
+    );
+  }
+
+  for (const outcome of input.outcomes) {
+    if (!outcome.completed && !outcome.reason) {
+      throw new DomainError(
+        'NON_COMPLETION_REASON_REQUIRED',
+        'A promise that was not kept needs its reason. Counting the reasons is what makes PPC worth measuring.',
+      );
+    }
+  }
+
+  const reviewed = commitments.map((commitment) => {
+    const outcome = byTask.get(commitment.taskId)!;
+    return {
+      ...commitment,
+      status: outcome.completed ? 'COMPLETED' : 'NOT_COMPLETED',
+      reason: outcome.reason,
+      note: outcome.note,
+    };
+  });
+
+  const completed = reviewed.filter((c) => c.status === 'COMPLETED').length;
+  const ppcPercent = commitments.length === 0 ? 0 : Number(((completed / commitments.length) * 100).toFixed(1));
+
+  const counts = new Map<NonCompletionReason, number>();
+  for (const entry of reviewed) {
+    if (entry.status === 'COMPLETED' || !entry.reason) continue;
+    counts.set(entry.reason as NonCompletionReason, (counts.get(entry.reason as NonCompletionReason) ?? 0) + 1);
+  }
+  const reasons = [...counts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // The bands are the ones the Last Planner literature uses and they are blunt
+  // for a reason: below 50% the plan is not a plan, and saying so is more useful
+  // than a percentage nobody interprets.
+  const assessment =
+    commitments.length === 0
+      ? 'No commitments were made, so there is nothing to measure. A lookahead without promises is a bar chart.'
+      : ppcPercent >= 85
+        ? `${ppcPercent}% — the plan is reliable enough to build the next one on.`
+        : ppcPercent >= 65
+          ? `${ppcPercent}% — promises are being made that the week cannot keep. The reasons below say which.`
+          : `${ppcPercent}% — the plan is not a plan. Under two thirds of promises kept means downstream trades cannot rely on any of it.`;
+
+  write(ctx, {
+    eventType: 'LOOKAHEAD_REVIEWED',
+    entity: { refType: 'LookaheadPlan', refId: input.lookaheadId },
+    nextState: {
+      ...lookahead.state,
+      status: 'REVIEWED',
+      commitments: reviewed,
+      completedCount: completed,
+      ppcPercent,
+      reasons,
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: ctx.auth.actorId,
+    },
+  });
+
+  return { lookaheadId: input.lookaheadId, promised: commitments.length, completed, ppcPercent, reasons, assessment };
+}
+
+export type PPCTrend = {
+  weeks: Array<{ weekStarting: string; promised: number; completed: number; ppcPercent: number }>;
+  /** Across every reviewed week, which is the figure that means something. */
+  meanPpcPercent: number | null;
+  /** The reason that recurs — the one worth fixing. */
+  topReasons: Array<{ reason: NonCompletionReason; count: number; share: number }>;
+  openConstraints: Array<{ reference: string; category: string; owner: string; needByDate: string; overdue: boolean; blocksCriticalPath: boolean }>;
+  /** How long the business takes to unblock its own work. */
+  meanDaysToClear: number | null;
+  summary: string;
+};
+
+/**
+ * The trend, which is the only form of PPC worth reading.
+ *
+ * One week's figure says almost nothing. The trend says whether the team is
+ * learning, and the recurring reason says what to fix. A single reason
+ * accounting for most failures is a business problem rather than a planning
+ * problem, and no individual week shows it.
+ */
+export function ppcTrend(ctx: EngineContext, today = new Date().toISOString().slice(0, 10)): PPCTrend {
+  authorise(ctx, 'LOOKAHEAD_CONSTRAINTS', 'R');
+
+  const reviewed = ctx.ledger
+    .list(ctx.projectId, 'LookaheadPlan')
+    .filter((record) => record.state.status === 'REVIEWED')
+    .sort((a, b) => String(a.state.weekStarting).localeCompare(String(b.state.weekStarting)));
+
+  const weeks = reviewed.map((record) => ({
+    weekStarting: String(record.state.weekStarting),
+    promised: ((record.state.commitments ?? []) as unknown[]).length,
+    completed: Number(record.state.completedCount ?? 0),
+    ppcPercent: Number(record.state.ppcPercent ?? 0),
+  }));
+
+  const totalPromised = weeks.reduce((sum, w) => sum + w.promised, 0);
+  const totalCompleted = weeks.reduce((sum, w) => sum + w.completed, 0);
+  // Weighted by promises rather than averaging the weekly percentages: a week
+  // with two commitments should not count as much as a week with thirty.
+  const meanPpcPercent = totalPromised === 0 ? null : Number(((totalCompleted / totalPromised) * 100).toFixed(1));
+
+  const counts = new Map<NonCompletionReason, number>();
+  for (const record of reviewed) {
+    for (const entry of (record.state.reasons ?? []) as Array<{ reason: NonCompletionReason; count: number }>) {
+      counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + entry.count);
+    }
+  }
+  const totalFailures = [...counts.values()].reduce((sum, n) => sum + n, 0);
+  const topReasons = [...counts.entries()]
+    .map(([reason, count]) => ({ reason, count, share: totalFailures === 0 ? 0 : Number(((count / totalFailures) * 100).toFixed(1)) }))
+    .sort((a, b) => b.count - a.count);
+
+  const constraints = ctx.ledger.list(ctx.projectId, 'Constraint');
+  const openConstraints = constraints
+    .filter((c) => c.state.status !== 'CLOSED')
+    .map((c) => ({
+      reference: String(c.state.reference),
+      category: String(c.state.category),
+      owner: String(c.state.owner),
+      needByDate: String(c.state.needByDate),
+      overdue: today > String(c.state.needByDate),
+      blocksCriticalPath: c.state.blocksCriticalPath === true,
+    }))
+    .sort((a, b) => a.needByDate.localeCompare(b.needByDate));
+
+  const closed = constraints.filter((c) => c.state.status === 'CLOSED');
+  const meanDaysToClear =
+    closed.length === 0
+      ? null
+      : Number((closed.reduce((sum, c) => sum + Number(c.state.daysOpen ?? 0), 0) / closed.length).toFixed(1));
+
+  const summary =
+    weeks.length === 0
+      ? 'No week has been reviewed yet, so there is no PPC to report. A figure would be invented.'
+      : topReasons.length === 0
+        ? `${meanPpcPercent}% across ${weeks.length} reviewed ${weeks.length === 1 ? 'week' : 'weeks'}, with every promise kept.`
+        : `${meanPpcPercent}% across ${weeks.length} reviewed ${weeks.length === 1 ? 'week' : 'weeks'}. ` +
+          `${topReasons[0]!.reason.replace(/_/g, ' ').toLowerCase()} accounts for ${topReasons[0]!.share}% of broken promises — ` +
+          'the recurring reason is the one worth fixing.';
+
+  return { weeks, meanPpcPercent, topReasons, openConstraints, meanDaysToClear, summary };
+}
+
 /**
  * What-if analysis. Runs the network against a hypothetical change without
  * writing anything — scenarios must never contaminate the live programme.

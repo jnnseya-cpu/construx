@@ -1125,6 +1125,80 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   }
   step('Five consecutive site diaries recorded, including a weather day that stopped work');
 
+  // Last Planner. Three weeks so PPC has a trend rather than a number, and a
+  // recurring reason to find — one week's figure says almost nothing.
+  const designConstraint = planning.raiseConstraint(
+    plannerCtx,
+    {
+      taskId: taskIds[3] as string,
+      category: 'DESIGN',
+      description: 'Clarifier wall reinforcement details not issued for construction',
+      owner: 'Meridian Design — lead structural engineer',
+      needByDate: '2026-08-14',
+    },
+    new Date('2026-07-20T09:00:00.000Z'),
+  );
+  planning.raiseConstraint(
+    plannerCtx,
+    {
+      taskId: taskIds[4] as string,
+      category: 'MATERIALS',
+      description: 'Precast channel units on a 14-week lead time, order not placed',
+      owner: 'Procurement manager',
+      needByDate: '2026-09-04',
+    },
+    new Date('2026-07-27T09:00:00.000Z'),
+  );
+
+  planning.closeConstraint(
+    plannerCtx,
+    {
+      constraintId: designConstraint.constraintId,
+      resolution: 'Reinforcement details issued at revision C following the wall thickness instruction',
+    },
+    new Date('2026-08-18T09:00:00.000Z'),
+  );
+  step('Constraints log opened — one design constraint cleared four days late, one long-lead material still open');
+
+  const weeks: Array<{ start: string; commit: number[]; outcomes: Array<{ i: number; done: boolean; reason?: planning.NonCompletionReason }> }> = [
+    {
+      start: '2026-08-03',
+      commit: [0, 1, 2],
+      outcomes: [{ i: 0, done: true }, { i: 1, done: true }, { i: 2, done: true }],
+    },
+    {
+      start: '2026-08-10',
+      commit: [1, 2, 5],
+      outcomes: [{ i: 1, done: true }, { i: 2, done: false, reason: 'WEATHER' }, { i: 5, done: false, reason: 'DESIGN_INFORMATION' }],
+    },
+    {
+      start: '2026-08-17',
+      commit: [1, 5, 6],
+      outcomes: [{ i: 1, done: true }, { i: 5, done: false, reason: 'DESIGN_INFORMATION' }, { i: 6, done: true }],
+    },
+  ];
+
+  let lastPpc = 0;
+  for (const week of weeks) {
+    const plan = planning.publishLookahead(plannerCtx, {
+      weekStarting: week.start,
+      plannedTaskIds: taskIds.slice(0, 7) as string[],
+      commitments: week.commit.map((i) => ({
+        taskId: taskIds[i] as string,
+        promise: `Complete the planned quantity on ${String(platform.ledger.require({ refType: 'Task', refId: taskIds[i] as string }).state.name)}`,
+        promisedBy: 'Site manager',
+        dueDate: week.start,
+      })),
+    });
+
+    const review = planning.reviewLookahead(plannerCtx, {
+      lookaheadId: plan.lookaheadId,
+      outcomes: week.outcomes.map((o) => ({ taskId: taskIds[o.i] as string, completed: o.done, reason: o.reason })),
+    });
+    lastPpc = review.ppcPercent;
+  }
+  step(`Three weeks of Last Planner run — PPC ${lastPpc}% in the latest week, design information the recurring reason`);
+
   // The diary feeding the register. A weather risk scored before anybody was on
   // site, then rescored against what the diary actually recorded, is the whole
   // argument for keeping one — and the P80 contingency moves with it rather

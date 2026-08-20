@@ -15,12 +15,12 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 555 passing, 0 failing, across 26 files |
+| Tests | 575 passing, 0 failing, across 27 files |
 | Typecheck | clean |
-| Backend | 74 TypeScript files, 30,164 lines |
-| Application | 26 ES modules, 6,229 lines (plus a service worker) |
-| API routes | 184 |
-| Event types | 166, closed catalogue |
+| Backend | 74 TypeScript files, 30,721 lines |
+| Application | 26 ES modules, 6,331 lines (plus a service worker) |
+| API routes | 189 |
+| Event types | 169, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
 
@@ -166,6 +166,36 @@ acted on it. `diaryPosition` reads the register as an exhibit rather than a list
 — the working days with no entry and the entries written long after the fact,
 which are the two things the other side looks for first and neither of which is
 visible reading it a day at a time. Weekends are not counted as gaps.
+
+**Lookahead planning and Percent Plan Complete.** `LOOKAHEAD_PUBLISHED` and
+`CONSTRAINT_RAISED` both had nothing emitting them, which meant the delay-risk
+model read open constraints from a log nothing could write to and always found
+zero. It had been reporting a risk driver it could never observe.
+
+This is Last Planner rather than a rolling bar chart, and the difference is the
+promise: a lookahead lists what *could* be done, a commitment is a named person
+saying they *will* do a specific thing by a specific date. **Work that is still
+constrained cannot be committed to** — promising blocked work is the commonest
+reason PPC collapses — though it can and should sit in the lookahead, which is
+what a lookahead is for. A commitment with no name against it is refused as a
+wish.
+
+PPC gives no partial credit: a promise 90% done counts as not kept, because a
+measure that gave credit would report a comfortable number for a team that
+finishes nothing. Reasons for non-completion come from a fixed list, since free
+text produces a hundred variants of "waiting on the designer" and the entire
+value is being able to count them — the reason that recurs is the one worth
+fixing, and no single week shows it. The trend weights by promises rather than
+averaging weekly percentages, so a week with two commitments does not count as
+much as a week with thirty. A project with no reviewed week reports no PPC
+rather than 0%, which would read as a team keeping no promises rather than one
+that has not started.
+
+Two events were added to the catalogue to close it honestly: `CONSTRAINT_CLOSED`,
+because a log that can only grow is a list and the time taken to clear one is
+the measure that matters, and `LOOKAHEAD_REVIEWED`, because the reason a promise
+broke cannot be derived from progress — a task at 60% and a task nobody started
+both fail, for different reasons leading to different fixes.
 
 **The variation control matrix.** One change, both sides of it. Change is where
 money leaves a construction contract quietly, and it leaves in exactly two
@@ -649,7 +679,6 @@ named so it is not mistaken for finished.
 | Evidence capture | Real SHA-256 over the real file, recorded against the event | No object store for the file itself |
 | Clause extraction | From supplied text | OCR and table extraction |
 | Knowledge graph | Entities cross-reference by id; the ledger reconstructs lineage | No graph store or traversal API |
-| Lookahead planning | Entities in the catalogue | PPC metrics not computed |
 | 4D scheduling | Twin states link to task ids | No visualisation |
 | PDF export | Structured document model and HTML rendering | PDF rendering |
 | Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded | No bounce processing or suppression list; DKIM belongs at the relay, where the key should live |

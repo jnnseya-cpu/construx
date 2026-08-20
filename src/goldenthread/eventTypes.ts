@@ -179,7 +179,17 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PROGRAMME_BASELINE_APPROVED', 'ProgrammeBaseline', 'APPROVE', 'DELIVERY', { requiresEvidence: true, creates: true }),
   def('PROGRAMME_RECALCULATED', 'ProgrammeBaseline', 'EXECUTE', 'DELIVERY'),
   def('LOOKAHEAD_PUBLISHED', 'LookaheadPlan', 'CREATE', 'DELIVERY'),
+  // The weekly review is what makes a lookahead Last Planner rather than a
+  // rolling bar chart: the team says which promises were kept and, where one
+  // was not, why. The reason cannot be derived from progress — a task at 60%
+  // and a task nobody started both fail the promise, for different reasons that
+  // lead to different fixes — so the review is its own event.
+  def('LOOKAHEAD_REVIEWED', 'LookaheadPlan', 'UPDATE', 'DELIVERY'),
   def('CONSTRAINT_RAISED', 'Constraint', 'CREATE', 'DELIVERY'),
+  // A constraints log that can only grow is a list. Closure carries who cleared
+  // it and when, which is what turns the log into a measure of how long the
+  // business takes to unblock its own work.
+  def('CONSTRAINT_CLOSED', 'Constraint', 'UPDATE', 'DELIVERY'),
   def('PROGRESS_RECORDED', 'ProgressMeasurement', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
   def('SITE_DIARY_RECORDED', 'SiteDiary', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
   def('SITE_OBSERVATION_CAPTURED', 'SiteObservation', 'CREATE', 'DELIVERY', { aiAllowed: true, requiresEvidence: true }),
