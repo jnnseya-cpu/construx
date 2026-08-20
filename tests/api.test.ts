@@ -42,10 +42,11 @@ type Reply = { status: number; body: any; headers: Headers; text: string };
 async function call(
   method: string,
   path: string,
-  options: { token?: string; body?: unknown; raw?: string; contentType?: string } = {},
+  options: { token?: string; body?: unknown; raw?: string; contentType?: string; acceptLanguage?: string } = {},
 ): Promise<Reply> {
   const headers: Record<string, string> = {};
   if (options.token) headers.authorization = `Bearer ${options.token}`;
+  if (options.acceptLanguage) headers['accept-language'] = options.acceptLanguage;
   if (options.body !== undefined) headers['content-type'] = 'application/json';
   if (options.contentType) headers['content-type'] = options.contentType;
 
@@ -417,5 +418,45 @@ describe('the interface is given the rules rather than holding them', () => {
     for (const secret of ['sk-', 'apikey', 'api_key', 'secret', 'password', 'token']) {
       assert.ok(!serialised.includes(secret), `the control plane response mentions "${secret}"`);
     }
+  });
+});
+
+describe('localisation is resolved at the edge, from what the device sent', () => {
+  it('answers in the locale the request asked for', async () => {
+    const reply = await call('GET', '/v1/localisation', {
+      token: tokenFor('pm'),
+      acceptLanguage: 'fr-CA,fr;q=0.9,en;q=0.8',
+    });
+
+    assert.equal(reply.status, 200);
+    assert.equal(reply.body.locale, 'fr-CA');
+  });
+
+  it('falls back rather than failing on a header a client made up', async () => {
+    // The tag reaches a formatter that would throw. A request must not 500
+    // because somebody sent an odd string.
+    const reply = await call('GET', '/v1/localisation', {
+      token: tokenFor('pm'),
+      acceptLanguage: 'not a language tag at all!!',
+    });
+
+    assert.equal(reply.status, 200);
+    assert.equal(reply.body.locale, 'en-GB');
+  });
+
+  it('publishes the currency exponents rather than assuming two everywhere', async () => {
+    const reply = await call('GET', '/v1/localisation', { token: tokenFor('pm') });
+    const byCode = new Map(reply.body.currencies.map((c: { code: string; exponent: number }) => [c.code, c.exponent]));
+
+    assert.equal(byCode.get('GBP'), 2);
+    assert.equal(byCode.get('JPY'), 0);
+    assert.equal(byCode.get('KWD'), 3);
+  });
+
+  it('is not a public route', async () => {
+    // Reference data, but tenant-facing. A route becoming public by accident is
+    // a one-word edit, so this is asserted rather than trusted.
+    const reply = await call('GET', '/v1/localisation');
+    assert.equal(reply.status, 401);
   });
 });

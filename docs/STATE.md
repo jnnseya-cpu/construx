@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 598 passing, 0 failing, across 28 files |
+| Tests | 624 passing, 0 failing, across 29 files |
 | Typecheck | clean |
-| Backend | 74 TypeScript files, 31,224 lines |
-| Application | 26 ES modules, 6,451 lines (plus a service worker) |
-| API routes | 191 |
+| Backend | 75 TypeScript files, 31,647 lines |
+| Application | 26 ES modules, 6,489 lines (plus a service worker) |
+| API routes | 192 |
 | Event types | 169, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
@@ -117,6 +117,45 @@ hard caps, alerts, per-engine attribution. No provider call on an empty wallet;
 no charge without a ledger write. `tests/ai.test.ts` proves each of those with a
 stub provider that counts its own calls: failover, the empty-wallet refusal
 before the request goes out, and a released hold when the provider throws.
+
+**Localisation, and the minor-unit bug underneath it.** *Money is in minor units
+everywhere* is a settled decision and a correct one. What was missing is that a
+minor unit is not always a hundredth: a yen has none and a dinar has three. The
+platform divided by 100 in five places, so a JPY figure would have displayed a
+hundred times too small — an order of magnitude, not a rounding difference, and
+it would have reached a client before anybody noticed. For a platform aimed at
+governments, DFIs and global EPCs that is a defect rather than a limitation.
+
+`src/domain/locale.ts` is the single place the platform knows how to count
+money. An unknown currency is refused rather than defaulted to two digits,
+because the silent default is exactly how the figure goes wrong. Formatting uses
+the runtime's own `Intl` data, so a French reader gets a comma decimal and a
+space separator without a dependency or a symbol table — there were four copies
+of a three-entry table that called every other currency a dollar, and they are
+one function now.
+
+Language comes from `Accept-Language`, resolved and validated at the gateway
+rather than in a handler: the header is client-supplied and reaches a formatter
+that would throw on a bad tag. Geolocation is deliberately not used — it asks
+where somebody is standing to answer what language they read, and is wrong for
+every expatriate engineer on a project.
+
+**A project's money stays in the project's currency.** A JCT contract in
+sterling is not a dollar contract, and converting it for display would invent
+precision the record does not have; only the platform's own USD-priced charges
+are ever converted. **And no exchange rate is invented**: a rate is used where
+one has been supplied, and its source and date travel with the result. An
+inverse is the same fact read backwards and is used; a cross-rate through a
+third currency is not, because two rates struck at different moments multiplied
+together is a number nobody published. Where no rate is held the figure appears
+in its own currency with the reason.
+
+Tax rules are held per jurisdiction for **display** — what a figure is labelled
+and what an invoice must say — not to compute a liability, which turns on
+registration and place of supply. The UK domestic reverse charge shows nothing
+collected and says why, including the part that bites: the tax is not received,
+so it is not cash the business holds until its return. Where a jurisdiction has
+no national rate to publish, as with US sales tax, none is published.
 
 **Commercial packaging.** Eight role-priced seats, three packages, three ACU
 bundles. The operator and the regulator consume no seat.

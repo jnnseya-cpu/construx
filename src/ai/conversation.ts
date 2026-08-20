@@ -1,4 +1,5 @@
 import { config } from '../config.ts';
+import { abbreviateMoney } from '../domain/locale.ts';
 import type { EngineContext } from '../engines/context.ts';
 import { currentPhase } from '../engines/context.ts';
 import { evaluateAccess } from '../identity/abac.ts';
@@ -277,13 +278,7 @@ function gatherGrounding(
    * Money in the project's currency. The copilot quotes figures a person will
    * repeat in a meeting, and "224865000 minor units" is not one of them.
    */
-  const gbp = (minor: number): string => {
-    const symbol = currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : currency === 'USD' ? '$' : `${currency} `;
-    const major = minor / 100;
-    if (Math.abs(major) >= 1_000_000) return `${symbol}${(major / 1_000_000).toFixed(2)}M`;
-    if (Math.abs(major) >= 1_000) return `${symbol}${(major / 1_000).toFixed(1)}K`;
-    return `${symbol}${major.toFixed(2)}`;
-  };
+  const gbp = (minor: number): string => abbreviateMoney(minor, currency);
 
   const count = (refType: string): number => ctx.ledger.list(ctx.projectId, refType).length;
   const latest = (refType: string): Record<string, unknown> | undefined => {

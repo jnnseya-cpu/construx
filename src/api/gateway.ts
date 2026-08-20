@@ -19,6 +19,7 @@ import {
   validateRequest,
   type RequestContext,
 } from './middleware.ts';
+import { resolveLocale } from '../domain/locale.ts';
 import { truncateAddress } from './telemetry.ts';
 import { matchRoute, ROUTES } from './routes.ts';
 import { serveStatic } from './static.ts';
@@ -86,6 +87,9 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     query: url.searchParams,
     body: undefined,
     idempotencyKey: header(req, 'idempotency-key'),
+    // Resolved and validated here rather than in a handler: the header is
+    // client-supplied and ends up at a formatter that would throw on a bad tag.
+    locale: resolveLocale(header(req, 'accept-language')),
     startedAt: Date.now(),
   };
 

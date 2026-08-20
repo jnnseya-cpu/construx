@@ -1,3 +1,4 @@
+import { abbreviateMoney } from '../domain/locale.ts';
 import { obligationFacts } from '../engines/claims.ts';
 import { paymentCycleFacts } from '../engines/cost.ts';
 import { authorise, type EngineContext } from '../engines/context.ts';
@@ -98,12 +99,12 @@ export type MorningBriefing = {
 
 const DAY_MS = 86_400_000;
 
-function money(minor: number): string {
-  const major = Math.abs(minor) / 100;
-  const sign = minor < 0 ? '-' : '';
-  if (major >= 1_000_000) return `${sign}£${(major / 1_000_000).toFixed(2)}m`;
-  if (major >= 1_000) return `${sign}£${(major / 1_000).toFixed(1)}k`;
-  return `${sign}£${major.toFixed(0)}`;
+/**
+ * Money for a sentence a person reads over coffee, abbreviated rather than
+ * exact, and lowercase-suffixed because it sits mid-sentence.
+ */
+function money(minor: number, code = 'GBP'): string {
+  return abbreviateMoney(minor, code, { uppercaseSuffix: false });
 }
 
 function daysUntil(date: string, today: string): number {

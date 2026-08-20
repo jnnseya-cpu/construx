@@ -1,4 +1,5 @@
 import { ulid } from '../core/ids.ts';
+import { currencySymbol, formatMoney as exactMoney, toMajor } from '../domain/locale.ts';
 import type { ACUWallet } from './acu.ts';
 import { monthlySubscriptionCharge, type Subscription, TIERS } from './subscription.ts';
 
@@ -100,8 +101,7 @@ export function buildInvoice(
 }
 
 export function formatMoney(minor: number, currency = 'USD'): string {
-  const symbol = currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : '$';
-  return `${symbol}${(minor / 100).toFixed(2)}`;
+  return exactMoney(minor, currency);
 }
 
 /**
@@ -109,12 +109,12 @@ export function formatMoney(minor: number, currency = 'USD'): string {
  * the header does not read "$0.0B" on an empty portfolio.
  */
 export function formatContractValue(minor: number, currency = 'USD'): string {
-  const symbol = currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : '$';
-  const major = minor / 100;
+  const symbol = currencySymbol(currency);
+  const major = toMajor(minor, currency);
   if (major === 0) return `${symbol}0.0M`;
   const abs = Math.abs(major);
   // Portfolio headline figures read in millions from a thousand upwards, so a
-  // half-million-pound project shows as $0.5M rather than $500.0K.
+  // half-million-pound project shows as £0.5M rather than £500.0K.
   if (abs < 1_000) return `${symbol}${(major / 1_000).toFixed(1)}K`;
   if (abs < 1_000_000_000) return `${symbol}${(major / 1_000_000).toFixed(1)}M`;
   return `${symbol}${(major / 1_000_000_000).toFixed(1)}B`;

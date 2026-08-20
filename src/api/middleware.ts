@@ -32,6 +32,12 @@ export type RequestContext = {
   authzDecision?: { allow: boolean; policyId?: string; reason?: string };
   rateLimitKey?: string;
   rateLimitRemaining?: number;
+  /**
+   * The locale this request should be answered in, resolved from
+   * `Accept-Language` at the edge and validated there. Handlers get a usable
+   * tag rather than a client-supplied string that would throw at a formatter.
+   */
+  locale: string;
   startedAt: number;
 };
 

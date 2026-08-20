@@ -4,6 +4,7 @@ import { fleetManifest } from '../agents/runtime.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
 import { seatEconomics, TIERS } from '../billing/subscription.ts';
 import { config } from '../config.ts';
+import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
 import { DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
 import type { Schema } from '../core/validate.ts';
 import * as business from '../domain/business.ts';
@@ -895,6 +896,19 @@ export const ROUTES: Route[] = [
         ],
       };
     },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/localisation',
+    description: 'Currencies, the locale resolved from this request, and the tax rules held per jurisdiction',
+    handler: (_platform, ctx) => ({
+      locale: ctx.locale,
+      currencies: Object.values(CURRENCIES),
+      jurisdictions: Object.values(JURISDICTIONS),
+      note:
+        'A project\u2019s money stays in the project\u2019s currency. Only the platform\u2019s own charges are converted, ' +
+        'and only where a rate has been supplied — no rate is invented.',
+    }),
   },
   {
     method: 'GET',

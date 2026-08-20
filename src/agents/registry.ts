@@ -1,3 +1,4 @@
+import { abbreviateMoney } from '../domain/locale.ts';
 import type { EngineContext } from '../engines/context.ts';
 import type { AgentDefinition, AgentOutput, Finding, ProposedCommand } from './types.ts';
 
@@ -18,12 +19,7 @@ const latest = (ctx: EngineContext, refType: string) => list(ctx, refType).at(-1
 
 /** Round a money figure to a readable phrase without pulling in the UI layer. */
 function money(minor: number, currency = 'GBP'): string {
-  const symbol = currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : '$';
-  const major = Math.abs(minor) / 100;
-  const sign = minor < 0 ? '-' : '';
-  if (major >= 1_000_000) return `${sign}${symbol}${(major / 1_000_000).toFixed(2)}M`;
-  if (major >= 1_000) return `${sign}${symbol}${(major / 1_000).toFixed(1)}K`;
-  return `${sign}${symbol}${major.toFixed(0)}`;
+  return abbreviateMoney(minor, currency);
 }
 
 const empty: AgentOutput = { findings: [], proposals: [] };

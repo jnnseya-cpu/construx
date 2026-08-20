@@ -41,21 +41,59 @@ export function render(target, content) {
 // --- formatting -------------------------------------------------------------
 
 /** Money in minor units → a readable figure. Zero at portfolio scale reads $0.0M. */
+/**
+ * Minor units in one major unit, per ISO 4217.
+ *
+ * This used to be a hardcoded 100 and a three-symbol lookup that fell back to a
+ * dollar sign. A yen has no minor unit and a dinar has three, so dividing by a
+ * hundred was wrong by an order of magnitude on the first Japanese contract —
+ * and it would have appeared in front of a client before anybody noticed. The
+ * server holds the same table; this is the display half of it.
+ */
+const MINOR_EXPONENT = { JPY: 0, KRW: 0, KWD: 3, BHD: 3, OMR: 3, TND: 3 };
+
+function minorPerMajor(currency) {
+  return 10 ** (MINOR_EXPONENT[currency] ?? 2);
+}
+
+/**
+ * The reader's locale, taken from the browser rather than assumed.
+ *
+ * `Intl` already knows a French reader expects a space before the symbol and a
+ * comma for the decimal. Hardcoding a symbol table threw that away and got the
+ * answer wrong for every currency outside three.
+ */
+const LOCALE = typeof navigator !== 'undefined' && navigator.language ? navigator.language : 'en-GB';
+
+function symbolFor(currency) {
+  // Just the symbol, so the abbreviated forms below can keep their K/M/B suffix.
+  const parts = new Intl.NumberFormat(LOCALE, { style: 'currency', currency, currencyDisplay: 'narrowSymbol' })
+    .formatToParts(0)
+    .filter((p) => p.type === 'currency');
+  return parts[0]?.value ?? `${currency} `;
+}
+
 export function money(minor, currency = 'GBP') {
-  const symbol = currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : '$';
+  const symbol = symbolFor(currency);
   const value = Number(minor ?? 0);
   if (value === 0) return `${symbol}0`;
-  const major = value / 100;
+  const major = value / minorPerMajor(currency);
   const abs = Math.abs(major);
-  if (abs < 1_000) return `${symbol}${major.toFixed(2)}`;
+  const digits = MINOR_EXPONENT[currency] ?? 2;
+  if (abs < 1_000) return `${symbol}${major.toFixed(digits)}`;
   if (abs < 1_000_000) return `${symbol}${(major / 1_000).toFixed(1)}K`;
   if (abs < 1_000_000_000) return `${symbol}${(major / 1_000_000).toFixed(2)}M`;
   return `${symbol}${(major / 1_000_000_000).toFixed(2)}B`;
 }
 
 export function exact(minor, currency = 'GBP') {
-  const symbol = currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : '$';
-  return `${symbol}${(Number(minor ?? 0) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const digits = MINOR_EXPONENT[currency] ?? 2;
+  return new Intl.NumberFormat(LOCALE, {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(Number(minor ?? 0) / minorPerMajor(currency));
 }
 
 export function pct(value, digits = 1) {
