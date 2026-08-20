@@ -11,6 +11,14 @@ import { blockedReason, can, draw, refreshContext, state } from '../app.js';
  * forecast final cost moves the moment reality does rather than at month end.
  */
 
+/** Where the notified sum came from, said in words rather than in a constant. */
+const SOURCE_LABEL = {
+  PAY_LESS_NOTICE: 'Pay less notice',
+  PAYMENT_NOTICE: 'Payment notice',
+  APPLICATION_BY_DEFAULT: 'Application, by default — no effective notice',
+  NOT_YET_DETERMINED: 'Not yet determined',
+};
+
 export async function commercial(root) {
   const projectId = state.session.projectId;
 
@@ -46,6 +54,12 @@ export async function commercial(root) {
     ? await api.get(`/v1/projects/${projectId}/cost/notices/${cycle._refId}`).catch(() => null)
     : null;
 
+  // The statutory position is a different number from the valuation: what the
+  // Act makes payable, rather than what the work was worth.
+  const statutory = cycle
+    ? await api.get(`/v1/projects/${projectId}/cost/statutory/${cycle._refId}`).catch(() => null)
+    : null;
+
   // Payments are separate records from certificates, so a certificate with
   // nothing against it is visibly outstanding rather than silently assumed paid.
   const paidByCertificate = new Map();
@@ -67,6 +81,7 @@ export async function commercial(root) {
           ${raw(commandBar([
             { id: 'actual', label: 'Post actual cost', tone: '', permitted: can('BUDGET_COST', 'C'), reason: blockedReason('BUDGET_COST', 'C') },
             { id: 'application', label: 'Submit application', permitted: can('PAYMENT_APPLICATIONS', 'C'), reason: blockedReason('PAYMENT_APPLICATIONS', 'C') },
+            { id: 'payless', label: 'Issue pay less notice', permitted: can('PAYMENT_APPLICATIONS', 'A'), reason: blockedReason('PAYMENT_APPLICATIONS', 'A') },
           ]))}
           ${can('BUDGET_COST', 'X') ? html`<button class="btn ghost" id="publish-cvr">Publish CVR</button>` : ''}
           ${can('BUDGET_COST', 'R') ? html`<button class="btn quiet" id="evm">Take EVM snapshot</button>` : ''}
@@ -187,6 +202,26 @@ export async function commercial(root) {
             ]),
             empty: 'No payment cycle generated',
           })}
+          ${
+            statutory
+              ? html`<div style="padding:12px 17px 15px">
+                  <div class="split-list">
+                    <div class="row"><span class="lbl">Exposure from missed or invalid notices</span><span class="val">${
+                      statutory.totalExposureMinor > 0 ? money(statutory.totalExposureMinor) : '—'
+                    }</span></div>
+                    <div class="row"><span class="lbl">Notified sums unpaid past the final date</span><span class="val">${
+                      statutory.totalOverdueMinor > 0 ? money(statutory.totalOverdueMinor) : '—'
+                    }</span></div>
+                    ${
+                      statutory.nextAction
+                        ? html`<div class="row"><span class="lbl">Next notice due</span><span class="val">${statutory.nextAction.notice} · cycle #${statutory.nextAction.cycleNumber} · serve by ${date(statutory.nextAction.serveBy)}</span></div>`
+                        : ''
+                    }
+                  </div>
+                  <div class="metric-sub" style="margin-top:9px">${statutory.summary}</div>
+                </div>`
+              : ''
+          }
         </div>
 
         <div class="card">
@@ -236,6 +271,48 @@ export async function commercial(root) {
           the quantity surveyor who applies cannot certify, and every certificate names the payment notice that carries it.
         </div></div>
       </div>
+
+      ${
+        statutory
+          ? html`<div class="card pad0" style="margin-top:14px">
+              <h3 style="padding:15px 17px 0">Statutory position — Housing Grants Act</h3>
+              <div style="padding:0 17px"><div class="metric-sub">
+                What is payable under the Act, which is a different question from what the work was worth. Where no
+                effective notice was given, the sum applied for becomes the notified sum however the valuation reads.
+              </div></div>
+              ${table({
+                headers: ['Cycle', 'Applied', 'Notified sum', 'From', 'Paid', 'Exposure'],
+                align: ['', 'num', 'num', '', 'num', 'num'],
+                rows: statutory.cycles
+                  .filter((c) => c.notifiedSumSource !== 'NOT_YET_DETERMINED' || c.appliedMinor > 0)
+                  .map((c) => [
+                    `#${c.cycleNumber}`,
+                    money(c.appliedMinor),
+                    c.notifiedSumSource === 'NOT_YET_DETERMINED' ? badge('not yet determined', 'warn') : money(c.notifiedSumMinor),
+                    SOURCE_LABEL[c.notifiedSumSource] ?? c.notifiedSumSource,
+                    c.paidMinor > 0 ? money(c.paidMinor) : '—',
+                    c.exposureMinor > 0 ? badge(money(c.exposureMinor), 'bad') : '—',
+                  ]),
+                empty: 'No cycles to assess',
+              })}
+              ${
+                statutory.cycles.flatMap((c) => c.findings.filter((f) => f.severity === 'CRITICAL').map((f) => ({ ...f, cycleNumber: c.cycleNumber }))).length > 0
+                  ? html`<div style="padding:4px 17px 16px">
+                      ${statutory.cycles.flatMap((c) =>
+                        c.findings
+                          .filter((f) => f.severity === 'CRITICAL')
+                          .map(
+                            (f) => html`<div class="notice err" style="margin:8px 0 0">
+                              <div><b>Cycle #${c.cycleNumber} · ${f.authority}</b><br>${f.finding}<br>${f.consequence}</div>
+                            </div>`,
+                          ),
+                      )}
+                    </div>`
+                  : html`<div style="padding:4px 17px 16px"><div class="notice ok">No statutory failure on any cycle.</div></div>`
+              }
+            </div>`
+          : ''
+      }
     `,
   );
 
@@ -303,6 +380,25 @@ export async function commercial(root) {
         { name: 'previouslyCertifiedMinor', label: 'Previously certified', type: 'number', money: true },
         { name: 'retentionMinor', label: 'Retention', type: 'number', money: true },
         { name: 'supportingEvidenceHash', label: 'Supporting valuation', type: 'file' },
+      ],
+    },
+    payless: {
+      title: 'Issue pay less notice',
+      intent:
+        'The only lawful route to paying less than the notified sum. It must state the sum considered due and the basis on which it is calculated — a figure on its own is not a valid notice.',
+      // The notice is given against an application, so the application is in
+      // the path rather than the body.
+      path: (collected) => `/v1/projects/${projectId}/cost/application/${collected.applicationId}/pay-less`,
+      transform: ({ applicationId, ...rest }) => rest,
+      submitLabel: 'Issue notice',
+      fields: [
+        { name: 'applicationId', label: 'Application', type: 'select',
+          options: bundle.PaymentApplication.map((a) => ({ value: a._refId, label: `#${a.cycleNumber} · ${money(a.netAppliedMinor)} applied` })) },
+        { name: 'sumConsideredDueMinor', label: 'Sum considered due', type: 'number', money: true },
+        { name: 'basis', label: 'Basis of calculation', type: 'text',
+          hint: 'Set out how the sum was arrived at. Required by s.111(4); a notice without it is liable to be held invalid.' },
+        { name: 'issuedDate', label: 'Date issued', type: 'date', value: today() },
+        { name: 'noticeHash', label: 'Notice document', type: 'file' },
       ],
     },
   };

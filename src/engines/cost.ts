@@ -4,6 +4,15 @@ import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
 import { calculateCVR, calculateEVM, sCurveDistribution, type CVRInput } from './maths/evm.ts';
 import { checkNoticeCompliance, generatePaymentCycle, type PaymentTerms } from './maths/claims.ts';
+import {
+  assessPaymentTerms,
+  compliancePosition,
+  DEFAULT_CALENDAR,
+  type BusinessCalendar,
+  type CompliancePosition,
+  type CycleInput,
+  type TermsFinding,
+} from './maths/constructionAct.ts';
 
 /**
  * Engine C — Resource & Cost Intelligence.
@@ -509,6 +518,208 @@ export function noticePosition(
     cycleNumber: period.cycleNumber,
     checks: checkNoticeCompliance(period, noticesByCycle.get(period.cycleNumber) ?? {}, today),
   }));
+}
+
+/**
+ * Issue a pay less notice.
+ *
+ * This was the hole in the payment cycle. `PAY_LESS_NOTICE_ISSUED` sat in the
+ * catalogue and `noticePosition` read the records, so the platform could tell a
+ * payer the notice was overdue and give them no way at all to give one — and
+ * the pay less notice is the *only* lawful route to paying less than the
+ * notified sum. Without it the platform's advice was always "pay in full".
+ *
+ * Two statutory requirements are enforced rather than described, because a
+ * notice that fails either is worth nothing and the payer finds out at
+ * adjudication. It must state the sum considered due **and the basis on which
+ * that sum is calculated** — a figure alone has repeatedly been held
+ * insufficient — and it cannot exceed the notified sum, because a notice
+ * paying *more* is not a pay less notice at all.
+ *
+ * A notice given after the prescribed period is still recorded, and recorded as
+ * ineffective. Refusing to write it would destroy the evidence of what was said
+ * and when, which is the record needed to argue about it later.
+ */
+export function issuePayLessNotice(
+  ctx: EngineContext,
+  input: {
+    applicationId: string;
+    /** The sum the payer considers due at the date of the notice. */
+    sumConsideredDueMinor: number;
+    /** The basis of calculation. s.111(4) requires it; a bare figure is not a notice. */
+    basis: string;
+    issuedDate: string;
+    noticeHash: string;
+  },
+): { noticeId: string; reference: string; inTime: boolean; effective: boolean } {
+  // The payer gives this notice, not the applicant — the same separation that
+  // keeps certification away from whoever applied.
+  authorise(ctx, 'PAYMENT_APPLICATIONS', 'A', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const application = ctx.ledger.require({ refType: 'PaymentApplication', refId: input.applicationId });
+  const period = application.state.period as {
+    cycleNumber: number;
+    payLessNoticeDeadline: string;
+    finalDateForPayment: string;
+  };
+
+  if (input.basis.trim().length < 20) {
+    throw new DomainError(
+      'PAY_LESS_BASIS_REQUIRED',
+      'A pay less notice must set out the basis on which the sum is calculated. A figure on its own is not a valid notice under s.111(4).',
+    );
+  }
+
+  if (input.sumConsideredDueMinor < 0) {
+    throw new DomainError('PAY_LESS_SUM_INVALID', 'The sum considered due cannot be negative');
+  }
+
+  // The sum the notice is measured against: the payment notice if one was
+  // given, otherwise the application, which is what the Act would make the
+  // notified sum in its absence.
+  const notice = ctx.ledger
+    .list(ctx.projectId, 'PaymentNotice')
+    .find((record) => record.state.applicationId === input.applicationId);
+  const notifiedSum = Number(notice?.state.noticedSumMinor ?? application.state.netAppliedMinor ?? 0);
+
+  if (input.sumConsideredDueMinor > notifiedSum) {
+    throw new DomainError(
+      'PAY_LESS_EXCEEDS_NOTIFIED_SUM',
+      'A pay less notice cannot state a sum above the notified sum. Certify a higher figure instead.',
+    );
+  }
+
+  const inTime = input.issuedDate <= period.payLessNoticeDeadline;
+
+  const evidence = registerEvidence(ctx, {
+    type: 'PAY_LESS_NOTICE',
+    hash: input.noticeHash,
+    description: `Pay less notice for cycle ${period.cycleNumber}`,
+  });
+
+  const sequence = ctx.ledger.list(ctx.projectId, 'PayLessNotice').length + 1;
+  const reference = `PLN-${String(sequence).padStart(4, '0')}`;
+  const noticeId = ulid();
+
+  write(ctx, {
+    eventType: 'PAY_LESS_NOTICE_ISSUED',
+    entity: { refType: 'PayLessNotice', refId: noticeId },
+    nextState: {
+      id: noticeId,
+      projectId: ctx.projectId,
+      reference,
+      applicationId: input.applicationId,
+      cycleNumber: period.cycleNumber,
+      issuedDate: input.issuedDate,
+      deadline: period.payLessNoticeDeadline,
+      sumConsideredDueMinor: input.sumConsideredDueMinor,
+      notifiedSumMinor: notifiedSum,
+      withheldMinor: notifiedSum - input.sumConsideredDueMinor,
+      basis: input.basis,
+      basisStated: true,
+      // Stated on the record because a late notice is not merely late: it has
+      // no effect at all, and the payer needs to know that today rather than
+      // when the money is demanded.
+      inTime,
+      effective: inTime,
+      issuedBy: ctx.auth.actorId,
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return { noticeId, reference, inTime, effective: inTime };
+}
+
+/**
+ * The statutory position across a payment cycle: what is payable under the Act
+ * rather than what anybody thinks the work was worth.
+ *
+ * `noticePosition` answers whether a notice was late. This answers the question
+ * that follows from it — what that costs — and it is a different number from
+ * the valuation in every case where a notice was missed.
+ */
+export function statutoryPosition(
+  ctx: EngineContext,
+  cycleId: string,
+  today = new Date().toISOString().slice(0, 10),
+  calendar: BusinessCalendar = DEFAULT_CALENDAR,
+): CompliancePosition & { terms: TermsFinding[] } {
+  authorise(ctx, 'PAYMENT_APPLICATIONS', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const cycle = ctx.ledger.require({ refType: 'PaymentCycle', refId: cycleId });
+  const terms = cycle.state.terms as PaymentTerms;
+
+  return {
+    ...compliancePosition(paymentCycleFacts(ctx.ledger, ctx.projectId, cycleId), today, calendar),
+    terms: assessPaymentTerms({
+      applicationDayOfMonth: terms.applicationDayOfMonth,
+      paymentNoticeDays: terms.paymentNoticeDays,
+      payLessNoticeDaysBeforeFinal: terms.payLessNoticeDaysBeforeFinal,
+      finalDateDays: terms.finalDateDays,
+    }),
+  };
+}
+
+/**
+ * Assemble what the ledger holds about one payment cycle into the facts the
+ * statutory maths needs.
+ *
+ * Separate from `statutoryPosition` and unauthorised on purpose. The morning
+ * briefing reads materialised state the same way every other agent does, and
+ * having it build these facts for itself would mean two places deciding which
+ * notice belongs to which cycle — which is exactly the kind of quiet
+ * disagreement that makes two screens report different money.
+ */
+export function paymentCycleFacts(
+  ledger: EngineContext['ledger'],
+  projectId: string,
+  cycleId: string,
+): CycleInput[] {
+  const cycle = ledger.require({ refType: 'PaymentCycle', refId: cycleId });
+  const periods = cycle.state.periods as ReturnType<typeof generatePaymentCycle>;
+
+  const applications = ledger.list(projectId, 'PaymentApplication').filter((a) => a.state.cycleId === cycleId);
+  const notices = ledger.list(projectId, 'PaymentNotice');
+  const payLess = ledger.list(projectId, 'PayLessNotice');
+  const certificates = ledger.list(projectId, 'PaymentCertificate');
+  const entries = ledger.list(projectId, 'LedgerEntry').filter((e) => e.state.type === 'PAYMENT');
+
+  return periods.map((period) => {
+    const application = applications.find((a) => Number(a.state.cycleNumber) === period.cycleNumber);
+    const notice = notices.find((n) => Number(n.state.cycleNumber) === period.cycleNumber);
+    const less = payLess.find((n) => Number(n.state.cycleNumber) === period.cycleNumber);
+
+    const certificateIds = certificates
+      .filter((c) => Number(c.state.cycleNumber) === period.cycleNumber)
+      .map((c) => c.refId);
+    const paid = entries
+      .filter((e) => certificateIds.includes(String(e.state.certificateId)))
+      .reduce((sum, e) => sum + Number(e.state.amountMinor ?? 0), 0);
+
+    return {
+      cycleNumber: period.cycleNumber,
+      dueDate: period.dueDate,
+      paymentNoticeDeadline: period.paymentNoticeDeadline,
+      payLessNoticeDeadline: period.payLessNoticeDeadline,
+      finalDateForPayment: period.finalDateForPayment,
+      appliedMinor: application ? Number(application.state.netAppliedMinor) : undefined,
+      paymentNotice: notice
+        ? {
+            issuedDate: String(notice.state.issuedDate),
+            sumMinor: Number(notice.state.noticedSumMinor),
+            basisStated: true,
+          }
+        : undefined,
+      payLessNotice: less
+        ? {
+            issuedDate: String(less.state.issuedDate),
+            sumMinor: Number(less.state.sumConsideredDueMinor),
+            basisStated: less.state.basisStated === true,
+          }
+        : undefined,
+      paidMinor: paid,
+    };
+  });
 }
 
 /**

@@ -104,9 +104,12 @@ async function collect(host, fields) {
  * Open a command panel. Resolves with the API response once the platform has
  * accepted it, or null if the user closed the panel.
  *
- * `path` is the endpoint; `transform` lets a caller reshape the collected
- * fields into the body the endpoint expects, for commands whose shape is not
- * flat.
+ * `path` is the endpoint. It may be a function of the collected payload, for
+ * commands where the subject of the command is part of the URL rather than the
+ * body — a pay less notice is given *against an application*, and putting the
+ * application id in the body would give the endpoint two ways to say the same
+ * thing. `transform` lets a caller reshape the collected fields into the body
+ * the endpoint expects, for commands whose shape is not flat.
  */
 export function command({ title, intent, path, fields, submitLabel = 'Submit', transform }) {
   return new Promise((resolveCommand) => {
@@ -189,7 +192,7 @@ export function command({ title, intent, path, fields, submitLabel = 'Submit', t
       try {
         const collected = await collect(host, fields);
         const payload = transform ? transform(collected) : collected;
-        const response = await api.post(path, payload);
+        const response = await api.post(typeof path === 'function' ? path(collected) : path, payload);
         toast(title, 'Recorded in the Golden Thread', 'ok');
         close(response);
       } catch (error) {

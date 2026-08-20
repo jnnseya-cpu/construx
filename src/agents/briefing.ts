@@ -1,4 +1,6 @@
+import { paymentCycleFacts } from '../engines/cost.ts';
 import { authorise, type EngineContext } from '../engines/context.ts';
+import { compliancePosition } from '../engines/maths/constructionAct.ts';
 import { AGENTS } from './registry.ts';
 import { AGENT_DIVISIONS, type AgentDivision } from './types.ts';
 
@@ -267,6 +269,39 @@ export function morningBriefing(
         source: { refType: 'PaymentCycle', refId: cycle.refId },
         dueBy: next.applicationDate,
       });
+    }
+
+    // Statutory exposure that has already crystallised. The block above says
+    // what is coming; this says what a missed date has already cost, which is a
+    // different and more urgent thing — nobody can serve last month's notice.
+    for (const cycle of ctx.ledger.list(projectId, 'PaymentCycle')) {
+      const upstream = String(cycle.state.direction) === 'UPSTREAM';
+      const position = compliancePosition(paymentCycleFacts(ctx.ledger, projectId, cycle.refId), today);
+
+      if (position.totalExposureMinor > 0) {
+        actions.push({
+          severity: 'URGENT',
+          action: upstream
+            ? `Pursue the notified sum on ${name}`
+            : `Take advice on the payment position for ${name}`,
+          because: upstream
+            ? `${money(position.totalExposureMinor)} is payable above the certified valuation because a notice was missed, late or given without its basis.`
+            : `${money(position.totalExposureMinor)} is payable above what was certified because a notice was missed, late or given without its basis.`,
+          source: { refType: 'PaymentCycle', refId: cycle.refId },
+          valueMinor: position.totalExposureMinor,
+        });
+      }
+
+      if (position.totalOverdueMinor > 0 && upstream) {
+        actions.push({
+          severity: 'URGENT',
+          action: `Chase ${money(position.totalOverdueMinor)} past its final date on ${name}`,
+          because:
+            'The notified sum was not paid by the final date for payment. Statutory interest runs and the right to suspend is available on seven days’ notice.',
+          source: { refType: 'PaymentCycle', refId: cycle.refId },
+          valueMinor: position.totalOverdueMinor,
+        });
+      }
     }
 
     // Enquiries issued and not returned.

@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 481 passing, 0 failing, across 22 files |
+| Tests | 517 passing, 0 failing, across 23 files |
 | Typecheck | clean |
-| Backend | 73 TypeScript files, 28,221 lines |
+| Backend | 74 TypeScript files, 29,071 lines |
 | Application | 26 ES modules, 5,906 lines (plus a service worker) |
-| API routes | 174 |
+| API routes | 176 |
 | Event types | 166, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
@@ -48,6 +48,41 @@ payment cycle dates. Reliability-adjusted maintenance forecasting.
 settlement. The applicant cannot certify; the payer posts the payment. Refuses
 over-certification, double certification and overpayment. Withheld sums carry a
 reason.
+
+**The Construction Act.** The statute that decides who gets paid what, and it
+does not turn on who was right about the work. If the payer gives no payment
+notice and no pay less notice, the sum applied for becomes the notified sum and
+is payable in full however optimistic the application was. `constructionAct.ts`
+computes that position rather than describing it: which notice established the
+notified sum, what a missed or invalid one has already cost in money, whether
+the right to suspend is open, and what has to be served next.
+
+Building it found the hole. `PAY_LESS_NOTICE_ISSUED` was in the catalogue and
+`noticePosition` read the records, but **no command could emit one** — the
+platform told a payer the notice was overdue and gave them no way to give it,
+which left "pay in full" as the only advice it could ever offer. The command now
+exists and enforces the two requirements that decide whether a notice is worth
+anything: it must state the sum considered due **and the basis of calculation**,
+because a bare figure has repeatedly been held insufficient, and it cannot exceed
+the notified sum, because a notice paying more is not a pay less notice. A late
+notice is still recorded, and recorded as ineffective — refusing to write it
+would destroy the evidence of what was said and when.
+
+Two boundaries are deliberate. **Statutory periods are counted in days, not
+business days**, because the Act says days and a court reads days, so the
+deadline never moves; the UK bank holiday calendar (computed, including Easter,
+the weekend substitution rules and the three jurisdictions' different days)
+answers the separate question of *service*, and the position reports a serve-by
+date labelled as what it is. And **no rate is invented**: statutory interest runs
+at base rate plus 8%, the base rate is a fact about the outside world this
+platform is not connected to, so the entitlement is stated and the amount is not.
+
+Contract terms are assessed against the Act with the distinction that matters —
+a term the Act makes **void** is replaced by the Scheme whether anybody noticed
+or not, so a contractor who priced for a payment period the Act strikes out has
+priced for a cost he does not carry; a term that is merely **onerous** is lawful
+and stays his problem. The morning briefing carries the crystallised exposure,
+because nobody can serve last month's notice.
 
 **Access control.** Three account layers, RBAC, OAuth2-style scopes, ABAC, in a
 fixed fail-closed order. Tenant isolation. Lifecycle phase gating on writes.

@@ -1437,12 +1437,44 @@ export const ROUTES: Route[] = [
       }),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/cost/application/:applicationId/pay-less',
+    description: 'Engine C — issue a pay less notice under s.111',
+    schema: {
+      type: 'object',
+      required: ['sumConsideredDueMinor', 'basis', 'issuedDate', 'noticeHash'],
+      properties: {
+        sumConsideredDueMinor: { type: 'number', minimum: 0 },
+        basis: { type: 'string', minLength: 20 },
+        issuedDate: stringField,
+        noticeHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      cost.issuePayLessNotice(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof cost.issuePayLessNotice>[1], 'applicationId'>>(ctx),
+        applicationId: ctx.params.applicationId as string,
+      }),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/cost/notices/:cycleId',
     description: 'Engine C — notice compliance position',
     handler: (platform, ctx) => ({
       position: cost.noticePosition(projectContext(platform, ctx), ctx.params.cycleId as string),
     }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/cost/statutory/:cycleId',
+    description: 'Engine C — the statutory payment position under the Construction Act',
+    handler: (platform, ctx) =>
+      cost.statutoryPosition(
+        projectContext(platform, ctx),
+        ctx.params.cycleId as string,
+        ctx.query.get('today') ?? undefined,
+      ),
   },
   {
     method: 'GET',

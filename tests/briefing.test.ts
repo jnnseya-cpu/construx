@@ -192,6 +192,32 @@ describe('The morning briefing', () => {
     await Promise.resolve();
   });
 
+
+  it('raises a notified sum unpaid past its final date, with the figure', () => {
+    // The third certificate is certified and never paid. Under the Act the
+    // notified sum was payable by 24 November whatever anybody thinks of the
+    // valuation, so by December it is a debt and not a discussion.
+    const b = brief('2026-12-01');
+
+    const chase = b.actions.find((a) => a.action.includes('past its final date'));
+    assert.ok(chase, 'an unpaid notified sum did not reach the briefing');
+    assert.equal(chase.severity, 'URGENT');
+    assert.ok((chase.valueMinor ?? 0) > 2_000_000_00, `expected the certified sum, got ${chase.valueMinor}`);
+    assert.match(chase.because, /right to suspend/);
+  });
+
+  it('stays silent about cycles nobody has applied against', () => {
+    // Nine of the twelve cycles have no application. Reporting them as exposure
+    // would bury the one that is real under nine that are not.
+    const b = brief('2026-12-01');
+    assert.equal(b.actions.filter((a) => a.action.includes('past its final date')).length, 1);
+  });
+
+  it('says nothing about statutory exposure before any of it has crystallised', () => {
+    const b = brief();
+    assert.equal(b.actions.filter((a) => a.because.includes('notice was missed')).length, 0);
+  });
+
   it('refuses a role with no business development read', async () => {
     const supplier = seed.users.regulator;
     if (!supplier) return;
