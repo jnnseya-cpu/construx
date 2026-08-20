@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 517 passing, 0 failing, across 23 files |
+| Tests | 541 passing, 0 failing, across 25 files |
 | Typecheck | clean |
-| Backend | 74 TypeScript files, 29,071 lines |
-| Application | 26 ES modules, 5,906 lines (plus a service worker) |
-| API routes | 176 |
+| Backend | 74 TypeScript files, 29,720 lines |
+| Application | 26 ES modules, 6,151 lines (plus a service worker) |
+| API routes | 181 |
 | Event types | 166, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
@@ -124,9 +124,64 @@ bundles. The operator and the regulator consume no seat.
 **Application.** Nineteen screens against live endpoints, including Autopilot — the queue where a person approves or declines what the agents propose. Role-aware navigation
 resolved from the API's permission matrix and phase gates, so the interface
 refuses for the reason the platform would. Command surfaces on field, cost,
-design, programme, change and handover. Daily site record. Canonical enum
+design, programme, change and handover. Daily site diary. Canonical enum
 dropdowns. Evidence hashed with SHA-256 in the browser. Denials are shown as
 denials, never as empty records.
+
+**The catalogue is checked against what the platform can do.** An event type in
+the closed catalogue with nothing able to emit it is a specific and dangerous
+hole: it reads as capability from every direction — the catalogue lists it,
+entity access classifies it, the control standard can require evidence of it —
+and no command in the platform can ever produce one. It had been found by hand
+three times: a snag that could be raised and never closed, a pay less notice the
+platform called overdue while offering no way to give one, and a daily diary the
+control standard demanded of every project and reported missing forever.
+
+Finding it a fourth time by hand is not a plan, so `tests/catalogue.test.ts`
+scans every source file for what is actually emitted and fails on any event that
+is neither emitted nor named in a list with the reason it is not. It found
+twenty-three. Three were real capability and are now built; the rest are named
+with their reason, and every line of that list is a debt. The test also fails on
+a stale excuse — an entry claiming something is missing when it is not — because
+a list that overstates the gaps stops being read.
+
+**The daily site diary.** The record delay and disruption claims are decided on,
+and the one the control standard called "the contemporaneous record no delay
+claim survives without" while having no way to write it.
+
+Three rules, each because the diary is evidence rather than administration. It
+**cannot be dated ahead** — a record of what happened, written before it happens,
+is a plan wearing a diary's clothes. It **states when it was written**, and marks
+an entry made days later as what it is, because a diary compiled from memory
+three weeks on carries a fraction of the weight and every adjudicator asks; a
+platform that presented one as contemporaneous would be handing over a weaker
+exhibit than its owner believed. And **weather is required even when it was
+fine**, because weather is the commonest ground for an extension of time and a
+diary with weather only on the bad days proves nothing about the good ones.
+
+A second entry for the same day is refused unless it names the entry it replaces
+and why. Supersession is derived from that reference rather than stamped on the
+original: the superseded entry stays readable in full, because somebody may have
+acted on it. `diaryPosition` reads the register as an exhibit rather than a list
+— the working days with no entry and the entries written long after the fact,
+which are the two things the other side looks for first and neither of which is
+visible reading it a day at a time. Weekends are not counted as gaps.
+
+**Answering an RFI, and rescoring a risk.** Two more registers that could only be
+added to. An RFI could be raised from a drawing markup and never closed, so the
+register could not show which questions held the job up — the exhibit a
+design-delay claim is built from. The answer now records the drawing revision it
+was given against, alongside the revision the question was asked on, because
+answering against a revision the site no longer holds is how an answer becomes a
+dispute and it is invisible unless both ends are on the record.
+
+A risk could be registered and never revised. That is not cosmetic: the P80
+contingency in every tender and every cost report is computed from these scores,
+so a register frozen at the day it was written prices the job against risks as
+they were understood before anybody had been on site — precise-looking and
+stale. A rescore requires the reason, because a score that moves without one is
+an opinion, and the whole value of a register is being able to ask later why the
+exposure moved the month before the tender went in.
 
 **Agent runtime — autopilot with a human gate.** Twelve agents across four
 divisions, each with a mandate naming what it may read, what it may propose in,

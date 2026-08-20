@@ -1351,6 +1351,52 @@ export const ROUTES: Route[] = [
       return { recorded: true };
     },
   },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-diary',
+    description: 'Record the daily site diary — the contemporaneous record a delay claim stands on',
+    schema: {
+      type: 'object',
+      required: ['diaryDate', 'weather', 'labour', 'plant', 'progressNarrative', 'evidenceHash'],
+      properties: {
+        diaryDate: stringField,
+        weather: {
+          type: 'object',
+          required: ['conditions', 'workingStopped'],
+          properties: {
+            conditions: { type: 'string', minLength: 1 },
+            temperatureC: { type: 'number' },
+            workingStopped: { type: 'boolean' },
+            hoursLost: { type: 'number', minimum: 0 },
+          },
+          additionalProperties: false,
+        },
+        labour: { type: 'array' },
+        plant: { type: 'array' },
+        progressNarrative: stringField,
+        workedTaskIds: { type: 'array' },
+        deliveries: { type: 'array' },
+        blockers: { type: 'array' },
+        visitors: { type: 'array' },
+        safetyEvents: { type: 'array' },
+        evidenceHash: stringField,
+        supersedes: { type: 'string' },
+        supersessionReason: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planning.recordSiteDiary(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-diary/position',
+    description: 'The diary as evidence: gaps, late entries, weather days lost and blocked days',
+    handler: (platform, ctx) =>
+      planning.diaryPosition(projectContext(platform, ctx), {
+        from: ctx.query.get('from') ?? new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10),
+        to: ctx.query.get('to') ?? new Date().toISOString().slice(0, 10),
+      }),
+  },
 
   {
     method: 'POST',
@@ -1490,6 +1536,29 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => safety.registerRisk(projectContext(platform, ctx), body(ctx)),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/risk/:riskId/rescore',
+    description: 'Engine D — rescore a risk, with the reason the exposure moved',
+    schema: {
+      type: 'object',
+      required: ['probability', 'costImpact', 'scheduleImpactDays', 'reason', 'projectValueMinor', 'projectDurationDays'],
+      properties: {
+        probability: { type: 'number', minimum: 0, maximum: 1 },
+        costImpact: { type: 'object' },
+        scheduleImpactDays: { type: 'object' },
+        reason: { type: 'string', minLength: 15 },
+        projectValueMinor: { type: 'number', minimum: 0 },
+        projectDurationDays: { type: 'number', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      safety.rescoreRisk(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof safety.rescoreRisk>[1], 'riskId'>>(ctx),
+        riskId: ctx.params.riskId as string,
+      }),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/risk/contingency',
     description: 'Engine D — contingency requirement (expected and P80)',
@@ -1534,6 +1603,34 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/bim/markups',
     description: 'Engine E — add a markup, optionally converting it to an RFI or instruction',
     handler: (platform, ctx) => bim.addMarkup(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/rfi/:rfiId/answer',
+    description: 'Answer an RFI, recording the revision it was answered against',
+    schema: {
+      type: 'object',
+      required: ['answer', 'answeredBy', 'evidenceHash'],
+      properties: {
+        answer: { type: 'string', minLength: 10 },
+        answeredBy: stringField,
+        changesDesign: { type: 'boolean' },
+        supersedingDrawingId: { type: 'string' },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bim.answerRFI(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof bim.answerRFI>[1], 'rfiId'>>(ctx),
+        rfiId: ctx.params.rfiId as string,
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/rfi/position',
+    description: 'The RFI register as a delay exhibit: what is overdue and for how long',
+    handler: (platform, ctx) => bim.rfiPosition(projectContext(platform, ctx)),
   },
   {
     method: 'POST',

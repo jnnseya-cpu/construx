@@ -41,6 +41,7 @@ export async function risk(root) {
           ${raw(commandBar([
             { id: 'risk', label: 'Register risk', tone: '', permitted: can('RISK_REGISTER', 'C'), reason: blockedReason('RISK_REGISTER', 'C') },
             { id: 'observation', label: 'Log observation', permitted: can('SAFETY_RAMS', 'C'), reason: blockedReason('SAFETY_RAMS', 'C') },
+            { id: 'rescore', label: 'Rescore a risk', permitted: can('RISK_REGISTER', 'U'), reason: blockedReason('RISK_REGISTER', 'U') },
           ]))}
           ${can('SAFETY_RAMS', 'X') ? html`<button class="btn ghost" id="forecast-safety">Run safety forecast</button>` : ''}
         </div>
@@ -247,6 +248,33 @@ export async function risk(root) {
         projectValueMinor: Number(state.project?.contractValueMinor ?? 0),
         projectDurationDays: 400,
       }),
+    },
+    rescore: {
+      title: 'Rescore a risk',
+      intent:
+        'The P80 contingency in every tender and cost report is computed from these scores. A register frozen at the day it was written prices the job against risks as they were understood before anybody had been on site.',
+      path: (collected) => `/v1/projects/${projectId}/risk/${collected.riskId}/rescore`,
+      transform: ({ riskId, costOptimistic, costMostLikely, costPessimistic, daysOptimistic, daysMostLikely, daysPessimistic, ...rest }) => ({
+        ...rest,
+        costImpact: { optimistic: costOptimistic, mostLikely: costMostLikely, pessimistic: costPessimistic },
+        scheduleImpactDays: { optimistic: daysOptimistic, mostLikely: daysMostLikely, pessimistic: daysPessimistic },
+        projectValueMinor: Number(state.project?.contractValueMinor ?? 0),
+        projectDurationDays: 400,
+      }),
+      submitLabel: 'Rescore',
+      fields: [
+        { name: 'riskId', label: 'Risk', type: 'select',
+          options: openRisks.map((r) => ({ value: r._refId, label: `${r.title} · ${pct((r.probability ?? 0) * 100, 0)}` })) },
+        { name: 'probability', label: 'Probability', type: 'number', step: '0.05', min: 0, hint: 'Between 0 and 1' },
+        { name: 'costOptimistic', label: 'Cost impact — best case', type: 'number', money: true },
+        { name: 'costMostLikely', label: 'Cost impact — most likely', type: 'number', money: true },
+        { name: 'costPessimistic', label: 'Cost impact — worst case', type: 'number', money: true },
+        { name: 'daysOptimistic', label: 'Delay — best case (days)', type: 'number' },
+        { name: 'daysMostLikely', label: 'Delay — most likely (days)', type: 'number' },
+        { name: 'daysPessimistic', label: 'Delay — worst case (days)', type: 'number' },
+        { name: 'reason', label: 'What changed', type: 'textarea',
+          hint: 'A score that moves without a reason is an opinion. This is the answer to "why did the exposure halve the month before the tender went in".' },
+      ],
     },
     observation: {
       title: 'Log safety observation',

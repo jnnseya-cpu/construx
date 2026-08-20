@@ -2,6 +2,7 @@ import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
+import { isBusinessDay } from './maths/constructionAct.ts';
 import {
   calculateCPM,
   completionProbability,
@@ -461,6 +462,244 @@ export function recordProgress(
       status: input.percentComplete >= 100 ? 'COMPLETE' : input.percentComplete > 0 ? 'IN_PROGRESS' : 'NOT_STARTED',
     },
   });
+}
+
+// --- The daily site diary ------------------------------------------------------
+//
+// `SITE_DIARY_RECORDED` sat in the closed catalogue with nothing able to emit
+// it. The project control standard asked every project for a diary, described
+// it as "the contemporaneous record no delay claim survives without", and
+// reported it missing — correctly, and permanently, because there was no
+// command that could write one.
+//
+// This is the record that decides delay and disruption claims. A programme
+// shows what was planned; the diary is the only evidence of what actually
+// happened on a given day, and its value is almost entirely a function of when
+// it was written.
+
+/**
+ * The diaries that stand, with corrected entries resolved out.
+ *
+ * Supersession is derived rather than stamped: a corrected entry names the one
+ * it replaces, and anything named that way is no longer the record for its day.
+ * The superseded entry stays readable in full, because somebody may have acted
+ * on it and an append-only ledger never removes what was relied upon.
+ */
+function currentDiaries(ctx: EngineContext): ReturnType<EngineContext['ledger']['list']> {
+  const all = ctx.ledger.list(ctx.projectId, 'SiteDiary');
+  const replaced = new Set(all.map((record) => record.state.supersedes).filter((id): id is string => typeof id === 'string'));
+  return all.filter((record) => !replaced.has(record.refId));
+}
+
+export type DiaryLabour = { trade: string; headcount: number; hours: number; subcontractorId?: string };
+export type DiaryPlant = { description: string; hoursWorked: number; hoursIdle: number; downtimeReason?: string };
+
+export type DiaryWeather = {
+  /** Free description — "heavy rain from 11:00", not a code. */
+  conditions: string;
+  temperatureC?: number;
+  /** Whether weather actually stopped work, which is the fact a claim turns on. */
+  workingStopped: boolean;
+  hoursLost?: number;
+};
+
+/**
+ * Record the day.
+ *
+ * Three rules, each of which exists because the record is evidence rather than
+ * administration.
+ *
+ * **It cannot be dated in the future.** A diary is a record of what happened,
+ * and one written in advance is a plan wearing a diary's clothes.
+ *
+ * **It states when it was written, and whether that was contemporaneous.** A
+ * diary compiled three weeks later from memory carries a fraction of the weight
+ * of one written on the day, and every experienced adjudicator asks. Recording
+ * the gap and flagging it is honest; silently presenting a late entry as
+ * contemporaneous evidence is not, and it is the kind of thing that loses an
+ * otherwise good claim.
+ *
+ * **Weather is required, including the fact that it was fine.** Weather is the
+ * most common ground for an extension of time, and a diary with weather only on
+ * the bad days is a diary that proves nothing about the good ones.
+ */
+export function recordSiteDiary(
+  ctx: EngineContext,
+  input: {
+    diaryDate: string;
+    weather: DiaryWeather;
+    labour: DiaryLabour[];
+    plant: DiaryPlant[];
+    /** Work done, against tasks where the diarist can name them. */
+    progressNarrative: string;
+    workedTaskIds?: string[];
+    deliveries?: string[];
+    /** Anything that stopped or slowed work. These become delay evidence. */
+    blockers?: string[];
+    visitors?: string[];
+    safetyEvents?: string[];
+    evidenceHash: string;
+    /** Naming an earlier entry for the same date makes this an amendment. */
+    supersedes?: string;
+    supersessionReason?: string;
+  },
+  now = new Date(),
+): { diaryId: string; contemporaneous: boolean; daysLate: number; labourHours: number } {
+  authorise(ctx, 'FIELD_EXECUTION', 'C', { lifecyclePhase: currentPhase(ctx) });
+
+  const diaryDate = input.diaryDate.slice(0, 10);
+  const today = now.toISOString().slice(0, 10);
+  if (diaryDate > today) {
+    throw new DomainError('DIARY_DATE_IN_FUTURE', 'A site diary records a day that has happened; it cannot be dated ahead');
+  }
+
+  if (!input.weather.conditions.trim()) {
+    throw new DomainError(
+      'DIARY_WEATHER_REQUIRED',
+      'Record the weather even when it was fine. A diary with weather only on the bad days proves nothing about the good ones.',
+    );
+  }
+
+  const existing = currentDiaries(ctx).filter((record) => String(record.state.diaryDate) === diaryDate);
+
+  if (existing.length > 0) {
+    // Append-only means a correction is a new record that says what it replaces
+    // and why — never a silent second entry for the same day, which is how two
+    // versions of a day end up in front of an adjudicator.
+    if (!input.supersedes || !input.supersessionReason) {
+      throw new DomainError(
+        'DIARY_ALREADY_RECORDED',
+        `A diary already exists for ${diaryDate}. An amendment must name the entry it supersedes and the reason.`,
+      );
+    }
+    if (!existing.some((record) => record.refId === input.supersedes)) {
+      throw new DomainError('DIARY_SUPERSEDES_UNKNOWN', 'The entry being superseded is not the current diary for that date');
+    }
+  }
+
+  const daysLate = Math.round((Date.parse(today) - Date.parse(diaryDate)) / 86_400_000);
+  // Written the same day or the next working morning is contemporaneous. Beyond
+  // that it is a reconstruction, and it is labelled as one.
+  const contemporaneous = daysLate <= 1;
+
+  const labourHours = input.labour.reduce((sum, line) => sum + line.headcount * line.hours, 0);
+  const plantIdleHours = input.plant.reduce((sum, line) => sum + line.hoursIdle, 0);
+
+  const evidence = registerEvidence(ctx, {
+    type: 'SITE_DIARY_RECORD',
+    hash: input.evidenceHash,
+    description: `Site diary for ${diaryDate}`,
+  });
+
+  const diaryId = ulid();
+  write(ctx, {
+    eventType: 'SITE_DIARY_RECORDED',
+    entity: { refType: 'SiteDiary', refId: diaryId },
+    nextState: {
+      id: diaryId,
+      projectId: ctx.projectId,
+      diaryDate,
+      weather: input.weather,
+      labour: input.labour,
+      plant: input.plant,
+      labourHours: Number(labourHours.toFixed(2)),
+      plantIdleHours: Number(plantIdleHours.toFixed(2)),
+      progressNarrative: input.progressNarrative,
+      workedTaskIds: input.workedTaskIds ?? [],
+      deliveries: input.deliveries ?? [],
+      blockers: input.blockers ?? [],
+      visitors: input.visitors ?? [],
+      safetyEvents: input.safetyEvents ?? [],
+      recordedAt: now.toISOString(),
+      recordedBy: ctx.auth.actorId,
+      daysLate,
+      contemporaneous,
+      supersedes: input.supersedes,
+      supersessionReason: input.supersessionReason,
+      status: 'RECORDED',
+    },
+    evidenceRefs: [evidence],
+  });
+
+  // Nothing is written back to the superseded entry. `SITE_DIARY_RECORDED`
+  // creates rather than updates, and more to the point the original record is
+  // evidence: the fact that it was replaced belongs on the replacement, which is
+  // what a corrected record looks like on paper too. Readers resolve it.
+  return { diaryId, contemporaneous, daysLate, labourHours: Number(labourHours.toFixed(2)) };
+}
+
+/**
+ * The diary as evidence rather than as a list of days.
+ *
+ * A delay claim stands on an unbroken contemporaneous record. This reports the
+ * two things that decide whether it is one: the days with no entry at all, and
+ * the entries written long enough after the event to be challenged. Both are
+ * invisible when you read the diary a page at a time, and both are the first
+ * thing the other side's expert looks for.
+ */
+export function diaryPosition(
+  ctx: EngineContext,
+  window: { from: string; to: string },
+): {
+  daysInWindow: number;
+  recorded: number;
+  /** Working days with no diary at all, most recent first. */
+  missingDates: string[];
+  lateEntries: Array<{ diaryDate: string; daysLate: number }>;
+  weatherDaysLost: number;
+  totalLabourHours: number;
+  /** Days a blocker was recorded — where a delay claim would start from. */
+  blockedDays: Array<{ diaryDate: string; blockers: string[] }>;
+  completeness: string;
+} {
+  authorise(ctx, 'FIELD_EXECUTION', 'R');
+
+  const diaries = currentDiaries(ctx).map((record) => record.state);
+
+  const inWindow = diaries.filter((d) => String(d.diaryDate) >= window.from && String(d.diaryDate) <= window.to);
+  const byDate = new Set(inWindow.map((d) => String(d.diaryDate)));
+
+  // Only working days are counted as missing. Nobody keeps a diary on a Sunday
+  // the site was shut, and reporting those as gaps would bury the real ones.
+  const missing: string[] = [];
+  let daysInWindow = 0;
+  for (let day = new Date(`${window.from}T00:00:00.000Z`); day <= new Date(`${window.to}T00:00:00.000Z`); day.setUTCDate(day.getUTCDate() + 1)) {
+    const date = day.toISOString().slice(0, 10);
+    if (!isBusinessDay(date)) continue;
+    daysInWindow += 1;
+    if (!byDate.has(date)) missing.push(date);
+  }
+
+  const lateEntries = inWindow
+    .filter((d) => d.contemporaneous !== true)
+    .map((d) => ({ diaryDate: String(d.diaryDate), daysLate: Number(d.daysLate ?? 0) }))
+    .sort((a, b) => b.daysLate - a.daysLate);
+
+  const weatherDaysLost = inWindow.filter((d) => (d.weather as DiaryWeather | undefined)?.workingStopped === true).length;
+  const totalLabourHours = inWindow.reduce((sum, d) => sum + Number(d.labourHours ?? 0), 0);
+
+  const blockedDays = inWindow
+    .filter((d) => Array.isArray(d.blockers) && (d.blockers as string[]).length > 0)
+    .map((d) => ({ diaryDate: String(d.diaryDate), blockers: d.blockers as string[] }))
+    .sort((a, b) => b.diaryDate.localeCompare(a.diaryDate));
+
+  const completeness =
+    daysInWindow === 0
+      ? 'No working days in the window.'
+      : missing.length === 0
+        ? `Unbroken across ${daysInWindow} working ${daysInWindow === 1 ? 'day' : 'days'}.`
+        : `${missing.length} of ${daysInWindow} working ${daysInWindow === 1 ? 'day has' : 'days have'} no diary. A gap is where a delay claim is attacked.`;
+
+  return {
+    daysInWindow,
+    recorded: inWindow.length,
+    missingDates: missing.sort((a, b) => b.localeCompare(a)),
+    lateEntries,
+    weatherDaysLost,
+    totalLabourHours: Number(totalLabourHours.toFixed(2)),
+    blockedDays,
+    completeness,
+  };
 }
 
 /**

@@ -1,4 +1,4 @@
-import { entityBundle } from '../lib/api.js';
+import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { OBSERVATION_TYPE, WEATHER_CONDITION, today } from '../lib/enums.js';
 import { badge, date, days, html, humanise, pct, raw, render, statusTone, table, time, track } from '../lib/ui.js';
@@ -25,7 +25,15 @@ export async function field(root) {
     'CommissioningTest',
     'EvidenceItem',
     'Constraint',
+    'SiteDiary',
   ]);
+
+  // The diary read as evidence rather than as a list of days. A gap and a late
+  // entry are the two things the other side's expert looks for first, and
+  // neither is visible reading the diary a page at a time.
+  const diary = await api
+    .get(`/v1/projects/${projectId}/site-diary/position`)
+    .catch(() => null);
 
   const measured = b.Task.filter((t) => Number(t.percentComplete ?? 0) > 0);
   const complete = b.Task.filter((t) => Number(t.percentComplete ?? 0) >= 100);
@@ -70,26 +78,43 @@ export async function field(root) {
         <form class="input-zone" id="daily">
           <div class="field">
             <label for="d-date">Date</label>
-            <input id="d-date" name="date" type="date" value="${today()}">
+            <input id="d-date" name="diaryDate" type="date" value="${today()}" max="${today()}">
           </div>
           <div class="field">
-            <label for="d-task">Activity</label>
-            <select id="d-task" name="taskId">
-              ${b.Task.map((t) => html`<option value="${t._refId}">${t.activityCode} · ${t.name}</option>`)}
-            </select>
+            <label for="d-trade">Trade on site</label>
+            <input id="d-trade" name="trade" type="text" placeholder="Groundworks">
           </div>
           <div class="field">
-            <label for="d-labour">Labour on site</label>
-            <input id="d-labour" name="labour" type="number" min="0" step="1" placeholder="operatives">
+            <label for="d-labour">Operatives</label>
+            <input id="d-labour" name="headcount" type="number" min="0" step="1" placeholder="8">
           </div>
           <div class="field">
-            <label for="d-plant">Plant hours</label>
-            <input id="d-plant" name="plant" type="number" min="0" step="0.5" placeholder="hours">
+            <label for="d-hours">Hours each</label>
+            <input id="d-hours" name="hours" type="number" min="0" step="0.5" value="9">
+          </div>
+          <div class="field">
+            <label for="d-plantdesc">Plant</label>
+            <input id="d-plantdesc" name="plantDescription" type="text" placeholder="13t excavator">
+          </div>
+          <div class="field">
+            <label for="d-plant">Plant hours worked</label>
+            <input id="d-plant" name="plantHours" type="number" min="0" step="0.5" placeholder="hours">
+          </div>
+          <div class="field">
+            <label for="d-idle">Plant hours idle</label>
+            <input id="d-idle" name="plantIdle" type="number" min="0" step="0.5" value="0">
           </div>
           <div class="field">
             <label for="d-weather">Weather</label>
             <select id="d-weather" name="weather">
               ${WEATHER_CONDITION.map((o) => html`<option value="${o.value}">${o.label}</option>`)}
+            </select>
+          </div>
+          <div class="field">
+            <label for="d-stopped">Did weather stop work?</label>
+            <select id="d-stopped" name="workingStopped">
+              <option value="false">No</option>
+              <option value="true">Yes</option>
             </select>
           </div>
           <div class="field">
@@ -102,6 +127,35 @@ export async function field(root) {
         </form>
         <div class="metric-sub" style="margin-top:11px" id="daily-note"></div>
       </div>
+
+      ${
+        diary
+          ? html`<div class="card" style="margin-bottom:14px">
+              <h3>The diary as evidence</h3>
+              <p class="metric-sub" style="margin-bottom:12px">
+                A delay claim stands on an unbroken contemporaneous record. What decides whether it is one is
+                the days with no entry and the entries written long after the event — both invisible reading it a day at a time.
+              </p>
+              <div class="grid g4" style="margin-bottom:11px">
+                <div><div class="metric ${raw(diary.missingDates.length === 0 ? 'good' : 'warn')}">${diary.recorded}<span style="font-size:16px;color:var(--text-3)"> / ${diary.daysInWindow}</span></div><div class="metric-sub">working days recorded</div></div>
+                <div><div class="metric ${raw(diary.lateEntries.length === 0 ? '' : 'warn')}">${diary.lateEntries.length}</div><div class="metric-sub">written after the event</div></div>
+                <div><div class="metric">${diary.weatherDaysLost}</div><div class="metric-sub">days weather stopped work</div></div>
+                <div><div class="metric">${diary.blockedDays.length}</div><div class="metric-sub">days a blocker was recorded</div></div>
+              </div>
+              <div class="notice ${raw(diary.missingDates.length === 0 ? 'ok' : 'warn')}">${diary.completeness}</div>
+              ${
+                diary.missingDates.length > 0
+                  ? html`<div class="metric-sub" style="margin-top:9px">No entry: ${diary.missingDates.slice(0, 12).map((d) => date(d)).join(' · ')}${diary.missingDates.length > 12 ? ` and ${diary.missingDates.length - 12} more` : ''}</div>`
+                  : ''
+              }
+              ${
+                diary.lateEntries.length > 0
+                  ? html`<div class="metric-sub" style="margin-top:6px">Written late: ${diary.lateEntries.slice(0, 8).map((e) => `${date(e.diaryDate)} (+${e.daysLate}d)`).join(' · ')}</div>`
+                  : ''
+              }
+            </div>`
+          : ''
+      }
 
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">
@@ -267,39 +321,61 @@ export async function field(root) {
     if (result) await draw();
   });
 
-  // The daily record has no single endpoint: it is a progress measurement with
-  // the shift's conditions attached, so it is submitted as one.
+  // The daily record used to be a progress measurement with the shift's
+  // conditions flattened into a free-text evidence description, because there
+  // was no diary to write. There is now, so labour, plant and weather are
+  // structured facts the delay engine and the control standard can read rather
+  // than a sentence nobody can query.
   root.querySelector('#daily')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const note = root.querySelector('#daily-note');
     const data = Object.fromEntries(new FormData(form).entries());
 
-    note.textContent = 'Recording…';
-    try {
-      await command({
-        title: 'Daily site record',
-        intent: `Conditions on ${data.date}: ${data.labour || 0} operatives, ${data.plant || 0} plant hours, ${humanise(String(data.weather))}, ${data.hoursLost || 0} hours lost. Confirm the progress this shift achieved.`,
-        path: `/v1/projects/${projectId}/progress`,
-        submitLabel: 'Record the day',
-        fields: [
-          { name: 'taskId', label: 'Activity', type: 'hidden', value: data.taskId },
-          { name: 'percentComplete', label: 'Percent complete at end of shift', type: 'number', min: 0 },
-          { name: 'elapsedDays', label: 'Elapsed days on this activity', type: 'number', min: 0 },
-          {
-            name: 'evidenceDescription',
-            label: 'Evidence description',
-            type: 'text',
-            value: `Daily record ${data.date}: ${data.labour || 0} operatives, ${data.plant || 0} plant hours, ${data.weather}, ${data.hoursLost || 0} hours lost`,
-          },
-          { name: 'evidenceHash', label: 'Signed day sheet or photograph', type: 'file' },
-        ],
-      }).then((result) => {
-        if (result) void draw();
-      });
-      note.textContent = '';
-    } catch (error) {
-      note.textContent = error.message;
-    }
+    note.textContent = '';
+    const stopped = data.workingStopped === 'true';
+
+    await command({
+      title: 'Daily site diary',
+      intent:
+        'The contemporaneous record a delay claim stands on. Its weight depends on when it was written, so the platform records that too — an entry written weeks later is marked as what it is.',
+      path: `/v1/projects/${projectId}/site-diary`,
+      submitLabel: 'Record the day',
+      fields: [
+        { name: 'diaryDate', label: 'Date', type: 'hidden', value: data.diaryDate },
+        { name: 'progressNarrative', label: 'What the site did today', type: 'textarea' },
+        { name: 'blockers', label: 'Anything that stopped or slowed work', type: 'text', required: false,
+          hint: 'One per line. These become the delay evidence.' },
+        { name: 'deliveries', label: 'Deliveries', type: 'text', required: false },
+        { name: 'visitors', label: 'Visitors and inspections', type: 'text', required: false },
+        { name: 'evidenceHash', label: 'Signed day sheet or photographs', type: 'file' },
+      ],
+      transform: (collected) => ({
+        diaryDate: data.diaryDate,
+        weather: {
+          conditions: humanise(String(data.weather)),
+          workingStopped: stopped,
+          ...(Number(data.hoursLost) > 0 ? { hoursLost: Number(data.hoursLost) } : {}),
+        },
+        labour: data.trade ? [{ trade: String(data.trade), headcount: Number(data.headcount || 0), hours: Number(data.hours || 0) }] : [],
+        plant: data.plantDescription
+          ? [{ description: String(data.plantDescription), hoursWorked: Number(data.plantHours || 0), hoursIdle: Number(data.plantIdle || 0) }]
+          : [],
+        progressNarrative: collected.progressNarrative,
+        // A blank line is not a blocker. Splitting and filtering keeps empty
+        // strings out of a list a claim would later be built from.
+        blockers: String(collected.blockers ?? '').split('\n').map((s) => s.trim()).filter(Boolean),
+        deliveries: String(collected.deliveries ?? '').split('\n').map((s) => s.trim()).filter(Boolean),
+        visitors: String(collected.visitors ?? '').split('\n').map((s) => s.trim()).filter(Boolean),
+        evidenceHash: collected.evidenceHash,
+      }),
+    }).then((result) => {
+      if (result) {
+        if (result.contemporaneous === false) {
+          note.textContent = `Recorded, and marked as written ${result.daysLate} days after the event. A late entry carries less weight than one written on the day, so the record says so.`;
+        }
+        void draw();
+      }
+    });
   });
 }

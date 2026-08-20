@@ -1,4 +1,4 @@
-import { entityBundle } from '../lib/api.js';
+import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { DISCIPLINE } from '../lib/enums.js';
 import { badge, date, html, humanise, pct, raw, render, statusTone, table } from '../lib/ui.js';
@@ -33,6 +33,10 @@ export async function design(root) {
   const asBuilt = b.Model.filter((m) => m.status === 'AS_BUILT');
   const maturity = b.DesignMaturityAssessment.at(-1);
   const twin = b.DigitalTwinState.at(-1);
+
+  // The register read as a delay exhibit rather than a count: how long questions
+  // stayed open, and whether the answers arrived after they were needed.
+  const rfi = await api.get(`/v1/projects/${projectId}/rfi/position`).catch(() => null);
   const deviations = b.DigitalTwinState.reduce((sum, s) => sum + Number(s.deviationCount ?? 0), 0);
 
   render(
@@ -47,6 +51,7 @@ export async function design(root) {
           ${raw(commandBar([
             { id: 'drawing', label: 'Register drawing', tone: '', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
             { id: 'markup', label: 'Add markup', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
+            { id: 'answer', label: 'Answer an RFI', permitted: can('DESIGN_INFORMATION', 'U'), reason: blockedReason('DESIGN_INFORMATION', 'U') },
           ]))}
         </div>
       </div>
@@ -160,21 +165,37 @@ export async function design(root) {
         <div class="card pad0">
           <h3 style="padding:15px 17px 0">RFIs raised from markups</h3>
           ${table({
-            headers: ['Ref', 'Question', 'Against rev', 'Due', 'Status'],
+            headers: ['Ref', 'Question', 'Against rev', 'Due', 'Days open', 'Status'],
             rows: b.RFI.map((r) => [
               r.reference,
-              String(r.question).slice(0, 70) + (String(r.question).length > 70 ? '…' : ''),
+              String(r.question).slice(0, 62) + (String(r.question).length > 62 ? '…' : ''),
               `${r.linkedDrawingRevision ?? '—'}`,
               date(r.dueDate),
-              badge(humanise(r.status), statusTone(r.status)),
+              r.daysOpen !== undefined ? `${r.daysOpen}` : '—',
+              r.status === 'ANSWERED'
+                ? badge(r.answeredLate ? 'answered late' : 'answered', r.answeredLate ? 'warn' : 'good')
+                : badge(humanise(r.status), statusTone(r.status)),
             ]),
             empty: 'No RFIs raised',
           })}
           ${
-            b.RFI.length > 0
-              ? html`<div style="padding:0 17px 15px"><div class="metric-sub">
-                  Each RFI records the drawing revision it was raised against — answering the wrong revision is how RFI answers become disputes.
-                </div></div>`
+            rfi
+              ? html`<div style="padding:0 17px 15px">
+                  <div class="notice ${raw(rfi.overdue.length > 0 ? 'warn' : 'ok')}" style="margin-bottom:9px">${rfi.summary}</div>
+                  <div class="split-list">
+                    ${
+                      rfi.averageDaysToAnswer !== undefined
+                        ? html`<div class="row"><span class="lbl">Average days to answer</span><span class="val">${rfi.averageDaysToAnswer}</span></div>`
+                        : html`<div class="row"><span class="lbl">Average days to answer</span><span class="val">nothing answered yet</span></div>`
+                    }
+                    <div class="row"><span class="lbl">Answered after the return date</span><span class="val">${rfi.answeredLate}</span></div>
+                    <div class="row"><span class="lbl">Answers that changed the design</span><span class="val">${rfi.designChanges}</span></div>
+                  </div>
+                  <div class="metric-sub" style="margin-top:9px">
+                    Each RFI records the drawing revision it was raised against, and the answer records the revision it was given against —
+                    answering the wrong revision is how RFI answers become disputes.
+                  </div>
+                </div>`
               : ''
           }
         </div>
@@ -220,6 +241,27 @@ export async function design(root) {
           { value: 'RFI', label: 'Raise as an RFI' },
           { value: 'INSTRUCTION', label: 'Raise as an instruction' },
         ] },
+      ],
+    },
+    answer: {
+      title: 'Answer an RFI',
+      intent:
+        'The answer records the drawing revision it was given against. A design team answering against a revision the site no longer holds is how an answer becomes a dispute.',
+      path: (collected) => `/v1/projects/${projectId}/rfi/${collected.rfiId}/answer`,
+      // A select yields a string; the endpoint takes a boolean and refuses
+      // anything else, which is the validation working rather than a nuisance.
+      transform: ({ rfiId, changesDesign, ...rest }) => ({ ...rest, changesDesign: changesDesign === 'true' }),
+      submitLabel: 'Answer',
+      fields: [
+        { name: 'rfiId', label: 'RFI', type: 'select',
+          options: b.RFI.filter((r) => r.status !== 'ANSWERED').map((r) => ({ value: r._refId, label: `${r.reference} · ${String(r.question).slice(0, 50)}` })) },
+        { name: 'answer', label: 'Answer', type: 'textarea', hint: 'It has to say something a site team can build to' },
+        { name: 'answeredBy', label: 'Answered by', type: 'text', value: state.session.user.name },
+        { name: 'changesDesign', label: 'Does this change the design?', type: 'select', options: [
+          { value: 'false', label: 'No — it explains the existing design' },
+          { value: 'true', label: 'Yes — the design changes' },
+        ] },
+        { name: 'evidenceHash', label: 'Answer document', type: 'file' },
       ],
     },
   };

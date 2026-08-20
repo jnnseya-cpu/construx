@@ -510,3 +510,144 @@ export async function generateAsBuilt(
 
   return { asBuiltId, reconciledDeviations: allDeviations.length, acuConsumed: result.acuConsumed };
 }
+
+/**
+ * Answer an RFI.
+ *
+ * `RFI_ANSWERED` was in the catalogue with nothing able to emit it: a question
+ * could be raised from a drawing markup and never closed. An RFI register that
+ * only grows is the most common cause of a design-delay claim nobody can
+ * evidence, because the register cannot show which questions went unanswered
+ * or for how long.
+ *
+ * The answer records the drawing revision it was given against. A design team
+ * answering against a revision the site no longer holds is how an RFI answer
+ * turns into an argument, and it is invisible unless the revision is on the
+ * record at both ends.
+ */
+export function answerRFI(
+  ctx: EngineContext,
+  input: {
+    rfiId: string;
+    answer: string;
+    answeredBy: string;
+    /** Set where the answer changes the design rather than explaining it. */
+    changesDesign?: boolean;
+    /** Where the answer supersedes a drawing, the revision it now points at. */
+    supersedingDrawingId?: string;
+    evidenceHash: string;
+  },
+  now = new Date(),
+): { rfiId: string; reference: string; daysOpen: number; overdue: boolean; changeRequestSuggested: boolean } {
+  authorise(ctx, 'DESIGN_INFORMATION', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const rfi = ctx.ledger.require({ refType: 'RFI', refId: input.rfiId });
+  if (rfi.state.status === 'ANSWERED') {
+    throw new DomainError('RFI_ALREADY_ANSWERED', `${String(rfi.state.reference)} has already been answered`);
+  }
+
+  if (input.answer.trim().length < 10) {
+    throw new DomainError('RFI_ANSWER_INSUBSTANTIAL', 'An RFI answer must say something a site team can build to');
+  }
+
+  const raisedAt = String(rfi.state.raisedAt);
+  const daysOpen = Math.max(0, Math.round((now.getTime() - Date.parse(raisedAt)) / 86_400_000));
+  const dueDate = typeof rfi.state.dueDate === 'string' ? rfi.state.dueDate : undefined;
+  const overdue = dueDate !== undefined && now.toISOString().slice(0, 10) > dueDate;
+
+  const evidence = registerEvidence(ctx, {
+    type: 'RFI_ANSWER',
+    hash: input.evidenceHash,
+    description: `Answer to ${String(rfi.state.reference)}`,
+    linkedEntities: [{ refType: 'RFI', refId: input.rfiId }],
+  });
+
+  write(ctx, {
+    eventType: 'RFI_ANSWERED',
+    entity: { refType: 'RFI', refId: input.rfiId },
+    nextState: {
+      ...rfi.state,
+      status: 'ANSWERED',
+      answer: input.answer,
+      answeredBy: input.answeredBy,
+      answeredAt: now.toISOString(),
+      // The revision the question was asked against, kept alongside the answer,
+      // so a later dispute can see whether both ends were looking at the same
+      // drawing.
+      answeredAgainstRevision: rfi.state.linkedDrawingRevision,
+      supersedingDrawingId: input.supersedingDrawingId,
+      changesDesign: input.changesDesign === true,
+      daysOpen,
+      answeredLate: overdue,
+    },
+    evidenceRefs: [evidence],
+  });
+
+  // An answer that changes the design is a change event whether or not anybody
+  // calls it one. Saying so is not the same as raising it — the platform does
+  // not instruct a change on the design team's behalf — but a change that goes
+  // unrecognised at this point is a change nobody gets paid for.
+  return {
+    rfiId: input.rfiId,
+    reference: String(rfi.state.reference),
+    daysOpen,
+    overdue,
+    changeRequestSuggested: input.changesDesign === true,
+  };
+}
+
+/**
+ * The RFI register as a delay exhibit rather than a list.
+ *
+ * What matters is not how many are open but how long they have been open and
+ * whether the answers arrived after they were needed. That is the shape of a
+ * design-information delay claim, and it is the shape the register has to be in
+ * before anybody can argue it.
+ */
+export function rfiPosition(
+  ctx: EngineContext,
+  today = new Date().toISOString().slice(0, 10),
+): {
+  total: number;
+  open: number;
+  overdue: Array<{ reference: string; question: string; daysOpen: number; dueDate?: string }>;
+  answeredLate: number;
+  averageDaysToAnswer?: number;
+  designChanges: number;
+  summary: string;
+} {
+  authorise(ctx, 'DESIGN_INFORMATION', 'R');
+
+  const rfis = ctx.ledger.list(ctx.projectId, 'RFI').map((record) => record.state);
+  const open = rfis.filter((r) => r.status !== 'ANSWERED');
+
+  const overdue = open
+    .filter((r) => typeof r.dueDate === 'string' && today > String(r.dueDate))
+    .map((r) => ({
+      reference: String(r.reference),
+      question: String(r.question ?? ''),
+      daysOpen: Math.max(0, Math.round((Date.parse(today) - Date.parse(String(r.raisedAt))) / 86_400_000)),
+      dueDate: String(r.dueDate),
+    }))
+    .sort((a, b) => b.daysOpen - a.daysOpen);
+
+  const answered = rfis.filter((r) => r.status === 'ANSWERED');
+  const answeredLate = answered.filter((r) => r.answeredLate === true).length;
+  // Stated only where something has been answered. An average over nothing is
+  // zero, and zero days to answer reads as excellent rather than as no data.
+  const averageDaysToAnswer =
+    answered.length === 0
+      ? undefined
+      : Number((answered.reduce((sum, r) => sum + Number(r.daysOpen ?? 0), 0) / answered.length).toFixed(1));
+
+  const designChanges = answered.filter((r) => r.changesDesign === true).length;
+
+  const summary =
+    rfis.length === 0
+      ? 'No RFIs raised.'
+      : overdue.length === 0
+        ? `${open.length} open, none overdue.`
+        : `${overdue.length} overdue, the oldest ${overdue[0]!.daysOpen} days. Unanswered information is the most common ground for a design-delay claim.`;
+
+  return { total: rfis.length, open: open.length, overdue, answeredLate, averageDaysToAnswer, designChanges, summary };
+}

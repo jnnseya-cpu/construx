@@ -37,6 +37,81 @@ export function registerRisk(
   return { riskId, scored };
 }
 
+/**
+ * Rescore a risk.
+ *
+ * `RISK_SCORED` was in the catalogue with nothing emitting it, so a risk could
+ * be registered and never revised. That is not a cosmetic gap: the P80
+ * contingency in every tender and every cost report is computed from these
+ * scores, so a register frozen at the day it was written prices the job against
+ * risks as they were understood before anybody had been on site. The number
+ * looks precise and is stale, which is the worst combination.
+ *
+ * The reason is required and kept. A risk score that moves without a reason is
+ * an opinion, and the whole value of a register is being able to ask later why
+ * the exposure halved the month before the tender went in.
+ */
+export function rescoreRisk(
+  ctx: EngineContext,
+  input: {
+    riskId: string;
+    probability: number;
+    costImpact: { optimistic: number; mostLikely: number; pessimistic: number };
+    scheduleImpactDays: { optimistic: number; mostLikely: number; pessimistic: number };
+    reason: string;
+    projectValueMinor: number;
+    projectDurationDays: number;
+  },
+): { riskId: string; scored: ReturnType<typeof scoreRisk>; expectedCostMovementMinor: number } {
+  authorise(ctx, 'RISK_REGISTER', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const risk = ctx.ledger.require({ refType: 'RiskRegisterItem', refId: input.riskId });
+  if (risk.state.status === 'CLOSED') {
+    throw new DomainError('RISK_CLOSED', 'A closed risk is rescored by reopening it, not by revising the closed record');
+  }
+  if (input.reason.trim().length < 15) {
+    throw new DomainError(
+      'RISK_RESCORE_REASON_REQUIRED',
+      'A rescore must say what changed. Without it the register cannot answer why exposure moved.',
+    );
+  }
+  if (input.probability < 0 || input.probability > 1) {
+    throw new DomainError('RISK_PROBABILITY_RANGE', 'Probability is a value between 0 and 1');
+  }
+
+  const previous = Number(risk.state.expectedCostMinor ?? 0);
+  const scored = scoreRisk(
+    {
+      id: input.riskId,
+      title: String(risk.state.title),
+      category: risk.state.category as RiskInput['category'],
+      probability: input.probability,
+      costImpact: input.costImpact,
+      scheduleImpactDays: input.scheduleImpactDays,
+      ownerPartyId: risk.state.ownerPartyId as string | undefined,
+      mitigations: risk.state.mitigations as RiskInput['mitigations'],
+    },
+    input.projectValueMinor,
+    input.projectDurationDays,
+  );
+
+  write(ctx, {
+    eventType: 'RISK_SCORED',
+    entity: { refType: 'RiskRegisterItem', refId: input.riskId },
+    nextState: {
+      ...risk.state,
+      ...scored,
+      id: input.riskId,
+      rescoredAt: new Date().toISOString(),
+      rescoredBy: ctx.auth.actorId,
+      rescoreReason: input.reason,
+      previousExpectedCostMinor: previous,
+    },
+  });
+
+  return { riskId: input.riskId, scored, expectedCostMovementMinor: scored.expectedCostMinor - previous };
+}
+
 /** Portfolio-defensible contingency: expected value plus a P80 tail figure. */
 export function assessContingency(ctx: EngineContext): ReturnType<typeof contingencyRequirement> {
   authorise(ctx, 'RISK_REGISTER', 'R');

@@ -214,14 +214,19 @@ describe('The standard against a real project', () => {
       assert.equal(stage.notYetDue, 0, `${stage.stage} still has items pending in operations`);
     }
 
-    // The gaps it names are real: the demo project genuinely keeps no site
-    // diary and runs no quality inspections.
-    assert.ok(report.gaps.some((g) => g.id === 'DEL.DIARY'));
+    // The gaps it names are real: the demo project genuinely runs no quality
+    // inspections.
     assert.ok(report.gaps.some((g) => g.id === 'DEL.INSPECTIONS'));
+
+    // The diary used to be here, and it was not the project's fault. The
+    // standard demanded a record no command in the platform could write, so it
+    // reported the same gap on every project forever. The command exists now
+    // and the seed keeps a diary, so the item is satisfied by evidence.
+    assert.ok(!report.gaps.some((g) => g.id === 'DEL.DIARY'), 'the diary gap should close once diaries exist');
 
     // And the things it did do are found.
     const found = report.stages.flatMap((s) => s.items).filter((i) => i.status === 'PRESENT').map((i) => i.id);
-    for (const id of ['PRE.SCOPE', 'MOB.BASELINE', 'COM.HANDOVER', 'COM.AS_BUILTS', 'COM.LESSONS_LEARNED']) {
+    for (const id of ['PRE.SCOPE', 'MOB.BASELINE', 'DEL.DIARY', 'COM.HANDOVER', 'COM.AS_BUILTS', 'COM.LESSONS_LEARNED']) {
       assert.ok(found.includes(id), `${id} was delivered by the seed but not found`);
     }
   });

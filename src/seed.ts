@@ -457,7 +457,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   });
   step(`BIM: 2 models ingested, ${clashes.clashIds.length} clashes triaged (${clashes.critical} critical)`);
 
-  bim.addMarkup(bimCtx, {
+  const clashRfi = bim.addMarkup(bimCtx, {
     drawingId: drawing.drawingId,
     author: bimLead.name,
     note: 'Wall penetration at grid C4 conflicts with DN450 process main. Confirm required builder\'s work opening and structural adequacy.',
@@ -465,6 +465,27 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     convertTo: 'RFI',
   });
   step('Clash converted into a numbered RFI, linked to the drawing revision');
+
+  // Answered, and answered late. An RFI register that only ever grows cannot
+  // show which questions held the job up, which is the exhibit a design-delay
+  // claim is built from.
+  if (clashRfi.derivedId) {
+    bim.answerRFI(
+      bimCtx,
+      {
+        rfiId: clashRfi.derivedId,
+        answer:
+          'Form a 600x600 builder\'s work opening at grid C4, lintel over per SK-041. The DN450 main is to be re-routed at high level; revised MEP layout to follow.',
+        answeredBy: 'Meridian Design — lead structural engineer',
+        changesDesign: true,
+        evidenceHash: hash('rfi-answer-c4-penetration'),
+      },
+      // Eleven days after it was raised, against a seven-day return. Late is
+      // the normal case and the record has to be able to show it.
+      new Date(Date.now() + 11 * 86_400_000),
+    );
+    step('RFI answered eleven days after it was raised — recorded as late, against the drawing revision it was asked on');
+  }
 
   const maturity = structure.assessDesignMaturity(pmCtx, {
     packageId,
@@ -1014,7 +1035,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     projectDurationDays: 400,
     mitigations: [{ description: 'Weekly interface workshop with MEP designer', costMinor: 1_200_000, probabilityReduction: 0.3, impactReduction: 0.25 }],
   });
-  safety.registerRisk(safetyCtx, {
+  const weatherRisk = safety.registerRisk(safetyCtx, {
     id: '',
     title: 'Exceptional rainfall halting concrete pours',
     category: 'WEATHER',
@@ -1042,6 +1063,82 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     evidenceHash: hash('excavation-survey-w10'),
   });
   step('Progress recorded against evidence — productivity below plan on bulk excavation');
+
+  // The daily record. Five consecutive working days rather than one entry,
+  // because a diary's evidential value is in being unbroken — a single record
+  // proves the command works and proves nothing about the project.
+  const diaryDays: Array<{ date: string; weather: planning.DiaryWeather; narrative: string; blockers?: string[] }> = [
+    {
+      date: '2026-08-10',
+      weather: { conditions: 'Dry, light cloud', temperatureC: 19, workingStopped: false },
+      narrative: 'Bulk excavation zone 2 continuing. Formation level reached in the north half.',
+    },
+    {
+      date: '2026-08-11',
+      weather: { conditions: 'Heavy rain from 11:00, standing water in excavation', temperatureC: 14, workingStopped: true, hoursLost: 5 },
+      narrative: 'Excavation stopped late morning. Pumps mobilised to zone 2.',
+      blockers: ['Excavation suspended — standing water, formation unworkable'],
+    },
+    {
+      date: '2026-08-12',
+      weather: { conditions: 'Overcast, drying', temperatureC: 16, workingStopped: false },
+      narrative: 'Dewatering through the morning. Excavation resumed after lunch at reduced output.',
+      blockers: ['Half day lost to dewatering before formation could be re-inspected'],
+    },
+    {
+      date: '2026-08-13',
+      weather: { conditions: 'Dry and bright', temperatureC: 21, workingStopped: false },
+      narrative: 'Formation re-inspected and accepted. Blinding to the north half.',
+    },
+    {
+      date: '2026-08-14',
+      weather: { conditions: 'Dry, warm', temperatureC: 23, workingStopped: false },
+      narrative: 'Blinding complete. Reinforcement fixing started to bases B1 to B4.',
+    },
+  ];
+
+  for (const day of diaryDays) {
+    planning.recordSiteDiary(
+      pmCtx,
+      {
+        diaryDate: day.date,
+        weather: day.weather,
+        labour: [
+          { trade: 'Groundworks', headcount: 12, hours: 9 },
+          { trade: 'Site management', headcount: 3, hours: 10 },
+        ],
+        plant: [
+          { description: '30t excavator', hoursWorked: day.weather.workingStopped ? 3 : 9, hoursIdle: day.weather.workingStopped ? 6 : 0, downtimeReason: day.weather.workingStopped ? 'Weather' : undefined },
+          { description: 'Dumper x2', hoursWorked: day.weather.workingStopped ? 3 : 9, hoursIdle: day.weather.workingStopped ? 6 : 0 },
+        ],
+        progressNarrative: day.narrative,
+        workedTaskIds: [taskIds[1] as string],
+        deliveries: ['Reinforcement — 8t, delivered to laydown'],
+        blockers: day.blockers,
+        visitors: ['Client representative, morning walkround'],
+        evidenceHash: hash(`site-diary-${day.date}`),
+      },
+      // Written on the day. The seed models a site that keeps its records,
+      // which is the point of comparison for one that does not.
+      new Date(`${day.date}T17:30:00.000Z`),
+    );
+  }
+  step('Five consecutive site diaries recorded, including a weather day that stopped work');
+
+  // The diary feeding the register. A weather risk scored before anybody was on
+  // site, then rescored against what the diary actually recorded, is the whole
+  // argument for keeping one — and the P80 contingency moves with it rather
+  // than staying at the number somebody wrote at tender.
+  const rescored = safety.rescoreRisk(safetyCtx, {
+    riskId: weatherRisk.riskId,
+    probability: 0.55,
+    costImpact: { optimistic: 4_000_000, mostLikely: 11_000_000, pessimistic: 26_000_000 },
+    scheduleImpactDays: { optimistic: 5, mostLikely: 16, pessimistic: 34 },
+    reason: 'One full and one half day lost to standing water in the first week of August; wetter than the tender assumption',
+    projectValueMinor: 1_850_000_000,
+    projectDurationDays: 400,
+  });
+  step(`Weather risk rescored against the diary — expected cost moves by ${(rescored.expectedCostMovementMinor / 100).toFixed(0)} pounds`);
 
   await bim.updateTwinFromSite(bimCtx, {
     observationHash: hash('drone-flight-w10'),
