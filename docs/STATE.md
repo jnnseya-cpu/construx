@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 647 passing, 0 failing, across 30 files |
+| Tests | 660 passing, 0 failing, across 31 files |
 | Typecheck | clean |
-| Backend | 76 TypeScript files, 31,985 lines |
-| Application | 26 ES modules, 6,545 lines (plus a service worker) |
-| API routes | 193 |
+| Backend | 77 TypeScript files, 32,392 lines |
+| Application | 26 ES modules, 6,594 lines (plus a service worker) |
+| API routes | 194 |
 | Event types | 169, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
@@ -255,6 +255,40 @@ delay has no notice worth serving, and reporting it as a missed one is crying
 wolf. A missed time bar is marked **lost**, distinct from a late renewal that can
 still be put right; without that distinction the recoverable items absorb the
 attention.
+
+**Do the records agree?** Every module in the platform is individually correct
+and none of them looks at the others, which is where the expensive mistakes
+live. The programme computes a duration, the contract records a completion date,
+the estimate prices a scope and the field record measures progress — and a
+programme that finishes after the contract date is liquidated damages, a number
+computable from two facts already on record, that nobody sees because the
+planner is reading a critical path and the commercial manager is reading a
+contract.
+
+Six checks: contract against programme (priced in damages at the contractual
+rate, **capped where the contract caps it**, because the exposure is what is
+payable rather than the arithmetic before the cap applies), slippage the network
+was never told about, schedule against progress, estimate against contract sum,
+duplicate activity codes, and commitments against budget.
+
+Three rules keep it from becoming noise. **Every finding carries the money or
+the days** — "programme inconsistent with contract" is a shrug, "143 days past
+the contract date, £35,750 in damages" is a decision. **Every finding names both
+records it came from**, so it can be checked rather than believed. And **a check
+that cannot run is reported as not run**, never as passed: a project with no
+contract has not passed the contract check, it has not taken it.
+
+The report reads only, because a disagreement between two records is a question
+for a person rather than a fact to write down. Where the reader has no
+commercial clearance the disagreements still show and the figures do not — the
+same decision the audit feed makes, keeping the envelope and withholding the
+content, because a safety lead should know the programme is past its contract
+date and has no business knowing what it costs.
+
+On the seeded project it finds 44 days of delay that has already happened and
+was never fed back into the network: five activities finished late, so nothing
+flags them as overrunning, and the programme still holds their original
+durations.
 
 **Monte Carlo completion, and the two errors it corrects.** The platform
 published a P80 duration computed the textbook way — sum the variance of the

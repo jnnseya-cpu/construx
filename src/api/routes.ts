@@ -4,6 +4,7 @@ import { fleetManifest } from '../agents/runtime.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
 import { seatEconomics, TIERS } from '../billing/subscription.ts';
 import { config } from '../config.ts';
+import * as consistency from '../domain/consistency.ts';
 import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
 import { DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
 import type { Schema } from '../core/validate.ts';
@@ -1845,6 +1846,13 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => claims.registerObligation(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/consistency',
+    description: 'What the records say against each other, with the money or the days behind each disagreement',
+    handler: (platform, ctx) =>
+      consistency.consistencyReport(projectContext(platform, ctx), ctx.query.get('today') ?? undefined),
   },
   {
     method: 'GET',

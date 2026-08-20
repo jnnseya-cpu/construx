@@ -35,6 +35,11 @@ export async function control(root) {
     api.get('/v1/lessons').catch(() => null),
   ]);
 
+  // What the records say against each other. Every module here is right about
+  // its own subject and none of them looks at the others, which is where the
+  // expensive mistakes live.
+  const consistency = await api.get(`/v1/projects/${projectId}/consistency`).catch(() => null);
+
   render(
     root,
     html`
@@ -48,6 +53,50 @@ export async function control(root) {
           </p>
         </div>
       </div>
+
+      ${
+        consistency
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Do the records agree?</h3>
+              <div style="padding:0 17px"><div class="metric-sub">
+                The programme computes a duration, the contract records a date, the estimate prices a scope and the
+                field record measures progress. Each is right about its own subject; none of them looks at the others.
+              </div></div>
+              ${
+                consistency.findings.length > 0
+                  ? html`<div style="padding:11px 17px 4px">
+                      ${consistency.findings.map(
+                        (f) => html`<div class="notice ${raw(f.severity === 'CRITICAL' ? 'err' : 'warn')}" style="margin:0 0 9px">
+                          <div>
+                            <b>${f.check}</b>${f.exposureMinor ? html` · ${money(f.exposureMinor)}` : ''}${f.exposureDays ? html` · ${f.exposureDays} days` : ''}<br>
+                            ${f.finding}<br>${f.consequence}
+                          </div>
+                        </div>`,
+                      )}
+                    </div>`
+                  : html`<div style="padding:11px 17px 4px"><div class="notice ok">${consistency.summary}</div></div>`
+              }
+              <div style="padding:4px 17px 15px">
+                <div class="split-list">
+                  ${consistency.passed.map((p) => html`<div class="row"><span class="lbl">${p.split(' — ')[0]}</span><span class="val">${badge('agrees', 'good')}</span></div>`)}
+                  ${consistency.skipped.map((sk) => html`<div class="row"><span class="lbl">${sk.check}</span><span class="val">${badge('not run', 'warn')} <span class="metric-sub">${sk.reason}</span></span></div>`)}
+                </div>
+                ${
+                  consistency.skipped.length > 0
+                    ? html`<div class="metric-sub" style="margin-top:9px">
+                        A check that could not run has not passed. It has not been taken, and the two are different things.
+                      </div>`
+                    : ''
+                }
+                ${
+                  consistency.commercialWithheld
+                    ? html`<div class="metric-sub" style="margin-top:9px">Commercial detail is withheld from your role. The disagreements themselves stand.</div>`
+                    : ''
+                }
+              </div>
+            </div>`
+          : ''
+      }
 
       <div class="grid g5" style="margin-bottom:14px">
         <div class="card">
