@@ -19,6 +19,7 @@ import {
   validateRequest,
   type RequestContext,
 } from './middleware.ts';
+import { truncateAddress } from './telemetry.ts';
 import { matchRoute, ROUTES } from './routes.ts';
 import { serveStatic } from './static.ts';
 
@@ -130,6 +131,10 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     if (!matched) throw new NotFoundError(`No route for ${ctx.method} ${ctx.path}`);
 
     ctx.params = matched.params;
+    ctx.remote = truncateAddress(req.socket.remoteAddress);
+    // Metrics group by route pattern, never by path: a path carries ids and
+    // would produce one series per project.
+    ctx.routeId = `${matched.route.method} ${matched.route.pattern}`;
     const isPublic = matched.route.public === true;
 
     // Pre-auth limiting keyed by IP protects the login surface.

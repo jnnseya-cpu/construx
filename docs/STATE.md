@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 470 passing, 0 failing, across 21 files |
+| Tests | 481 passing, 0 failing, across 22 files |
 | Typecheck | clean |
-| Backend | 72 TypeScript files, 27,792 lines |
+| Backend | 73 TypeScript files, 28,221 lines |
 | Application | 26 ES modules, 5,906 lines (plus a service worker) |
-| API routes | 173 |
+| API routes | 174 |
 | Event types | 166, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
@@ -61,6 +61,21 @@ stands the gateway up on a socket and pins the public-route list, the
 operator/delivery separation, the tenant filter on the generic entity read, and
 the problem+json contract. A route becoming public by accident is a one-word
 edit, so the list is asserted rather than trusted.
+
+**Gateway observability.** Monotonic counters (`requests_total`,
+`auth_failures_total`, `authz_denies_total`, `rate_limited_total`,
+`validation_reject_total`), a fixed-bucket latency histogram per route, and a
+security audit stream separate from the request log. Counters are held in
+`src/api/telemetry.ts` and are never derived from the bounded log buffer — the
+metrics that preceded them were, and so fell as traffic rose, which is the one
+direction a request counter must never move. Latency groups by route pattern,
+not path, so an id does not fragment a series. Every request record carries the
+mandatory fields: route, outcome, authentication result, authorisation decision,
+rate-limit key and remaining budget, correlation and trace ids. Audit events
+record reason categories only — no token, no credential, no policy attribute
+value — and remote addresses are truncated to /24 or /48, enough to see one
+source hammering a login and not enough to be a record of who was where.
+Published at `/v1/admin/logs` and `/v1/admin/security`, platform-admin only.
 
 **ACU economics.** Route → reserve → execute → persist → debit. Prepaid only,
 hard caps, alerts, per-engine attribution. No provider call on an empty wallet;

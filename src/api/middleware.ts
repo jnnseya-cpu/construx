@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { config } from '../config.ts';
 import { AuthError, RateLimitError, ValidationError, toProblem, DomainError } from '../core/errors.ts';
 import { assertValid, type Schema } from '../core/validate.ts';
+import { counters, latency, recordSecurityEvent, truncateAddress } from './telemetry.ts';
 import { verifyToken, type AuthContext } from '../identity/auth.ts';
 
 /**
@@ -21,6 +22,16 @@ export type RequestContext = {
   body: unknown;
   auth?: AuthContext;
   idempotencyKey?: string;
+  /** The route pattern this matched, so metrics group by route not by path. */
+  routeId?: string;
+  /** Truncated source, for the audit stream. Never the full address. */
+  remote?: string;
+  /** Outcome of authentication, with a reason code when it failed. */
+  authResult?: { ok: boolean; reason?: string };
+  /** Outcome of authorisation, with the area and code that were checked. */
+  authzDecision?: { allow: boolean; policyId?: string; reason?: string };
+  rateLimitKey?: string;
+  rateLimitRemaining?: number;
   startedAt: number;
 };
 
@@ -55,10 +66,13 @@ class RateLimiter {
     this.#backendHealthy = healthy;
   }
 
-  consume(key: string, options: { max: number; burst: number; windowSeconds: number }): { allowed: boolean; retryAfter: number } {
+  consume(
+    key: string,
+    options: { max: number; burst: number; windowSeconds: number },
+  ): { allowed: boolean; retryAfter: number; remaining: number } {
     // Fail closed: if the shared limiter backend is unavailable, deny rather
     // than allow. An open door during an outage is how brute force gets in.
-    if (!this.#backendHealthy) return { allowed: false, retryAfter: options.windowSeconds };
+    if (!this.#backendHealthy) return { allowed: false, retryAfter: options.windowSeconds, remaining: 0 };
 
     const now = Date.now();
     const capacity = options.max + options.burst;
@@ -70,12 +84,12 @@ class RateLimiter {
 
     if (bucket.tokens < 1) {
       this.#buckets.set(key, bucket);
-      return { allowed: false, retryAfter: Math.ceil((1 - bucket.tokens) / refillPerMs / 1000) };
+      return { allowed: false, retryAfter: Math.ceil((1 - bucket.tokens) / refillPerMs / 1000), remaining: 0 };
     }
 
     bucket.tokens -= 1;
     this.#buckets.set(key, bucket);
-    return { allowed: true, retryAfter: 0 };
+    return { allowed: true, retryAfter: 0, remaining: Math.floor(bucket.tokens) };
   }
 
   reset(): void {
@@ -106,7 +120,23 @@ export function applyRateLimit(ctx: RequestContext, remoteAddress: string): void
     windowSeconds: config.rateLimit.windowSeconds,
   });
 
+  ctx.rateLimitKey = key;
+  ctx.rateLimitRemaining = result.remaining;
+
   if (!result.allowed) {
+    counters.increment('rate_limited_total', { route: ctx.routeId ?? ctx.path, group });
+    recordSecurityEvent({
+      kind: 'RATE_LIMITED',
+      reason: ctx.auth ? 'TOKEN_RATE_LIMIT' : 'IP_RATE_LIMIT',
+      method: ctx.method,
+      path: ctx.routeId ?? ctx.path,
+      traceId: ctx.traceId,
+      correlationId: ctx.correlationId,
+      tenantId: ctx.auth?.tenantId,
+      actorId: ctx.auth?.actorId,
+      remote: ctx.remote,
+      status: 429,
+    });
     throw new RateLimitError('Rate limit exceeded for this key', result.retryAfter);
   }
 }
@@ -116,16 +146,42 @@ export function applyRateLimit(ctx: RequestContext, remoteAddress: string): void
 export function authenticate(req: IncomingMessage, ctx: RequestContext, routeIsPublic: boolean): void {
   const authorization = header(req, 'authorization');
 
+  /** Reason codes only. A security log that records the token is the leak. */
+  const fail = (reason: string, message: string): never => {
+    ctx.authResult = { ok: false, reason };
+    counters.increment('auth_failures_total', { reason });
+    recordSecurityEvent({
+      kind: reason === 'TOKEN_INVALID' || reason === 'TOKEN_EXPIRED' ? 'TOKEN_ANOMALY' : 'AUTH_FAILURE',
+      reason,
+      method: ctx.method,
+      path: ctx.routeId ?? ctx.path,
+      traceId: ctx.traceId,
+      correlationId: ctx.correlationId,
+      remote: ctx.remote,
+      status: 401,
+    });
+    throw new AuthError(message);
+  };
+
   if (!authorization) {
     if (routeIsPublic || !config.auth.required) return;
-    throw new AuthError('Authorization header is required');
+    fail('NO_CREDENTIAL', 'Authorization header is required');
   }
 
-  const [scheme, token] = authorization.split(' ');
-  if (scheme !== 'Bearer' || !token) throw new AuthError('Expected a Bearer token');
+  const [scheme, token] = authorization!.split(' ');
+  if (scheme !== 'Bearer' || !token) fail('MALFORMED_HEADER', 'Expected a Bearer token');
 
   // Expiry, signature and revocation are all enforced before routing.
-  ctx.auth = verifyToken(token, 'access');
+  try {
+    ctx.auth = verifyToken(token!, 'access');
+  } catch (error) {
+    const code = (error as { code?: string }).code ?? '';
+    fail(
+      /EXPIRED/i.test(code) ? 'TOKEN_EXPIRED' : 'TOKEN_INVALID',
+      error instanceof Error ? error.message : 'Token rejected',
+    );
+  }
+  ctx.authResult = { ok: true };
 }
 
 // --- Validation -------------------------------------------------------------
@@ -133,9 +189,26 @@ export function authenticate(req: IncomingMessage, ctx: RequestContext, routeIsP
 export function validateRequest(ctx: RequestContext, schema: Schema | undefined, isPublicRoute: boolean): void {
   if (!config.validation.required || !schema) return;
 
+  const rejected = (): void => {
+    counters.increment('validation_reject_total', { route: ctx.routeId ?? ctx.path });
+    recordSecurityEvent({
+      kind: 'VALIDATION_REJECT',
+      reason: 'SCHEMA_VIOLATION',
+      method: ctx.method,
+      path: ctx.routeId ?? ctx.path,
+      traceId: ctx.traceId,
+      correlationId: ctx.correlationId,
+      tenantId: ctx.auth?.tenantId,
+      actorId: ctx.auth?.actorId,
+      remote: ctx.remote,
+      status: 400,
+    });
+  };
+
   try {
     assertValid(ctx.body ?? {}, schema, 'request body');
   } catch (error) {
+    rejected();
     // Public auth endpoints get a generic message: detailed validation errors
     // are a user-enumeration aid on a login route.
     if (isPublicRoute && error instanceof ValidationError) {
@@ -234,10 +307,16 @@ export type LogRecord = {
   correlationId: string;
   method: string;
   path: string;
+  /** The matched route pattern. A path has an id in it; a route does not. */
+  routeId?: string;
   status: number;
   durationMs: number;
   tenantId?: string;
   actorId?: string;
+  authResult?: string;
+  authzDecision?: string;
+  rateLimitKey?: string;
+  rateLimitRemaining?: number;
   /** Present when the request was denied, so denials are queryable. */
   denyReason?: string;
 };
@@ -245,6 +324,49 @@ export type LogRecord = {
 const logs: LogRecord[] = [];
 
 export function logRequest(ctx: RequestContext, status: number, error?: unknown): void {
+  const durationMs = Date.now() - ctx.startedAt;
+  const routeId = ctx.routeId ?? ctx.path;
+  const denyReason = error instanceof DomainError ? error.code : undefined;
+
+  // Counters first, and never from the log buffer below — that buffer trims,
+  // and a request counter that goes down is worse than no counter.
+  counters.increment('requests_total', { route: routeId, status: String(status) });
+  latency.observe(routeId, durationMs);
+
+  // An authorisation denial is a security event, not just a 403 in the log.
+  if (status === 403) {
+    counters.increment('authz_denies_total', { route: routeId, policyId: denyReason ?? 'unknown' });
+    recordSecurityEvent({
+      kind: 'AUTHZ_DENY',
+      reason: denyReason ?? 'FORBIDDEN',
+      method: ctx.method,
+      path: routeId,
+      traceId: ctx.traceId,
+      correlationId: ctx.correlationId,
+      tenantId: ctx.auth?.tenantId,
+      actorId: ctx.auth?.actorId,
+      remote: ctx.remote,
+      status,
+    });
+  }
+
+  // Administrative surfaces are audited whether the call succeeded or not,
+  // because "who tried" matters as much as "who managed to".
+  if (ctx.path.startsWith('/v1/console') || ctx.path.startsWith('/v1/admin') || ctx.path.startsWith('/v1/platform')) {
+    recordSecurityEvent({
+      kind: 'ADMIN_ACCESS',
+      reason: status < 400 ? 'ADMIN_ENDPOINT_REACHED' : (denyReason ?? 'ADMIN_ENDPOINT_REFUSED'),
+      method: ctx.method,
+      path: routeId,
+      traceId: ctx.traceId,
+      correlationId: ctx.correlationId,
+      tenantId: ctx.auth?.tenantId,
+      actorId: ctx.auth?.actorId,
+      remote: ctx.remote,
+      status,
+    });
+  }
+
   const record: LogRecord = {
     timestamp: new Date().toISOString(),
     level: status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info',
@@ -252,11 +374,16 @@ export function logRequest(ctx: RequestContext, status: number, error?: unknown)
     correlationId: ctx.correlationId,
     method: ctx.method,
     path: ctx.path,
+    routeId: ctx.routeId,
     status,
-    durationMs: Date.now() - ctx.startedAt,
+    durationMs,
     tenantId: ctx.auth?.tenantId,
     actorId: ctx.auth?.actorId,
-    denyReason: error instanceof DomainError ? error.code : undefined,
+    authResult: ctx.authResult ? (ctx.authResult.ok ? 'success' : `fail:${ctx.authResult.reason}`) : undefined,
+    authzDecision: status === 403 ? `deny:${denyReason ?? 'unknown'}` : status < 400 ? 'allow' : undefined,
+    rateLimitKey: ctx.rateLimitKey,
+    rateLimitRemaining: ctx.rateLimitRemaining,
+    denyReason,
   };
 
   logs.push(record);

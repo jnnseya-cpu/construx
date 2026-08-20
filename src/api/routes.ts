@@ -48,6 +48,7 @@ import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import type { Platform } from '../platform.ts';
 import type { ExportAudience, ExportFormat } from '../export/exporter.ts';
 import { metrics, recentLogs, type RequestContext } from './middleware.ts';
+import { gatewayMetrics, securityEvents, securitySummary, type SecurityEventKind } from './telemetry.ts';
 
 /**
  * The gateway routing table. Routes are explicit and versioned — no backend
@@ -312,7 +313,24 @@ export const ROUTES: Route[] = [
     description: 'Recent gateway request logs',
     handler: (_platform, ctx) => {
       if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Operator access required');
-      return { logs: recentLogs(200), metrics: metrics() };
+      return { logs: recentLogs(200), metrics: metrics(), gateway: gatewayMetrics() };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/security',
+    description: 'The gateway security audit stream: auth failures, denials, rate limits, admin access',
+    handler: (_platform, ctx) => {
+      // The audit stream names who tried what. It is operator-only for the same
+      // reason the logs are: it is a map of where the locks are.
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Operator access required');
+      return {
+        summary: securitySummary(),
+        events: securityEvents({
+          limit: Number(ctx.query.get('limit') ?? 100),
+          ...(ctx.query.get('kind') ? { kind: ctx.query.get('kind') as SecurityEventKind } : {}),
+        }),
+      };
     },
   },
 
