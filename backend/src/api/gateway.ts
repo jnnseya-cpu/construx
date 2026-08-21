@@ -78,6 +78,32 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   }
 }
 
+/**
+ * The body as bytes, for the routes that receive a file.
+ *
+ * Its own reader with its own ceiling: `MAX_BODY_BYTES` is sized for a command
+ * envelope and a site photograph is an order of magnitude larger, while a
+ * scanned drawing set is larger still. The limit is read from configuration so
+ * the value that refuses an upload is the same value the store enforces —
+ * failing at the store instead would mean reading the whole file first.
+ */
+async function readRawBody(req: IncomingMessage, limit: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    // Refused as it arrives, not after. An oversized upload is rejected part
+    // way through rather than buffered to completion and then thrown away.
+    if (size > limit) {
+      throw new ValidationError(`Upload exceeds the ${Math.round(limit / 1_048_576)}MB limit`);
+    }
+    chunks.push(chunk as Buffer);
+  }
+
+  return Buffer.concat(chunks);
+}
+
 export function createGateway(platform: Platform): Server {
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     void handle(platform, req, res);
@@ -181,7 +207,12 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     // Re-apply post-auth so the tenant-aware key takes effect once known.
     if (ctx.auth) await applyRateLimit(ctx, req.socket.remoteAddress ?? 'unknown');
 
-    ctx.body = await readBody(req);
+    if (matched.route.upload) {
+      ctx.rawBody = await readRawBody(req, config.evidence.maxBytes);
+      ctx.contentType = header(req, 'content-type');
+    } else {
+      ctx.body = await readBody(req);
+    }
     validateRequest(ctx, matched.route.schema, isPublic);
 
     // Idempotency: a retried command returns the original result rather than
@@ -209,11 +240,25 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     // A file, not a payload. Sent with the headers that make a browser save it
     // under the document's own reference rather than a route name.
     if (matched.route.binary) {
-      const file = result as { contentType: string; filename: string; bytes: Uint8Array };
+      const file = result as {
+        contentType: string;
+        filename: string;
+        bytes: Uint8Array;
+        disposition?: 'attachment' | 'inline';
+      };
       res.writeHead(200, {
         'Content-Type': file.contentType,
         'Content-Length': file.bytes.byteLength,
-        'Content-Disposition': `attachment; filename="${file.filename}"`,
+        'Content-Disposition': `${file.disposition ?? 'attachment'}; filename="${file.filename}"`,
+        // Evidence is bytes somebody uploaded, and the content type came from
+        // the same upload. Without these two headers, storing an HTML file and
+        // opening its link is stored cross-site scripting on the platform's own
+        // origin: `nosniff` stops the browser second-guessing the declared
+        // type, and the policy denies the document every capability — no
+        // script, no fetch, no frames, an opaque origin — so a document served
+        // inline can render itself and nothing else.
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox",
         'x-trace-id': ctx.traceId,
         'x-correlation-id': ctx.correlationId,
         'Cache-Control': 'no-store',

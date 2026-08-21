@@ -21,6 +21,17 @@ export type RequestContext = {
   params: Record<string, string>;
   query: URLSearchParams;
   body: unknown;
+  /**
+   * The request body as bytes, on the routes that take a file.
+   *
+   * Only ever populated for a route that declares `upload`, and `body` is left
+   * undefined on those — a file is not JSON and pretending otherwise is how a
+   * 50MB photograph becomes a 67MB base64 string inside an envelope that then
+   * has to be parsed as text.
+   */
+  rawBody?: Buffer;
+  /** The `Content-Type` the caller sent, on an upload route. Metadata, not trust. */
+  contentType?: string;
   auth?: AuthContext;
   idempotencyKey?: string;
   /** The route pattern this matched, so metrics group by route not by path. */

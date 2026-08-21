@@ -70,6 +70,11 @@ describe('what an anonymous caller can obtain', () => {
       'GET /healthz',
       'GET /readyz',
       'GET /unsubscribe',
+      // Public route, private object. A signed evidence link has to work
+      // without a session — that is the whole of what it is for — so the
+      // handler, not the router, decides: a valid HMAC over tenant, hash and
+      // expiry, or an authorised identity, or nothing is served.
+      'GET /v1/evidence/:hash',
       'GET /v1/signup/account-types',
       'POST /unsubscribe',
       'POST /v1/auth/login',

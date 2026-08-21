@@ -1,4 +1,5 @@
 import { AIOrchestrator } from './ai/orchestrator.ts';
+import { EvidenceStore } from './evidence/store.ts';
 import { ExportService } from './export/exporter.ts';
 import { SyncEngine } from './field/sync.ts';
 import { ACUWallet, type ACUCaps, type ACUEntry } from './billing/acu.ts';
@@ -65,6 +66,12 @@ export class Platform {
   readonly sync: SyncEngine;
   /** Every document that leaves the platform is branded, hashed and recorded. */
   readonly exports: ExportService;
+  /**
+   * The bytes behind the evidence hashes. Empty root means the ledger records
+   * that a document with a given hash was the evidence and the platform does
+   * not hold it — a state the register reports rather than hides.
+   */
+  readonly evidence: EvidenceStore;
 
   readonly #wallets = new Map<string, ACUWallet>();
   /**
@@ -84,8 +91,9 @@ export class Platform {
   readonly #tenants = new Map<string, Tenant>();
   readonly #users = new Map<string, PlatformUser>();
 
-  constructor(orchestrator = new AIOrchestrator()) {
+  constructor(orchestrator = new AIOrchestrator(), evidence = new EvidenceStore()) {
     this.orchestrator = orchestrator;
+    this.evidence = evidence;
     this.sync = new SyncEngine(this.ledger);
     // The exporter asks whether a tenant may take a document out; the platform
     // is what knows. A tenant with no subscription on record is refused rather

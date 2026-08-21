@@ -105,6 +105,12 @@ describe('the routing table itself', () => {
       'GET /healthz',
       'GET /readyz',
       'GET /unsubscribe',
+      // Public so a signed evidence link works without a session, which is the
+      // only thing a signed link is for. The route is public; the *object* is
+      // not — the handler demands either an HMAC over tenant, hash and expiry,
+      // or an authenticated identity with EVIDENCE_AUDIT read on the project
+      // the evidence belongs to. Refused either way, and the refusal is tested.
+      'GET /v1/evidence/:hash',
       'GET /v1/signup/account-types',
       'POST /unsubscribe',
       'POST /v1/auth/login',

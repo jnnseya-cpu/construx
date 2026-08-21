@@ -18,7 +18,7 @@ import { seatEconomics, TIERS } from '../billing/subscription.ts';
 import { config, isProduction } from '../config.ts';
 import * as consistency from '../domain/consistency.ts';
 import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
-import { DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
+import { AuthError, DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
 import type { Schema } from '../core/validate.ts';
 import * as business from '../domain/business.ts';
 import * as cdm from '../domain/cdm.ts';
@@ -60,6 +60,7 @@ import { createMfaChallenge, refreshTokens, shapeMfaResponse, verifyMfaChallenge
 import { classifyEntity } from '../identity/entityAccess.ts';
 import { FIELD_FORBIDDEN_EVENTS } from '../field/sync.ts';
 import { estateBurn } from '../billing/burn.ts';
+import * as evidence from '../evidence/registry.ts';
 import { ownershipMap } from '../identity/ownership.ts';
 import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode } from '../identity/roles.ts';
 import { authorise, AUTHZ_OPTIONS, currentPhase } from '../engines/context.ts';
@@ -93,6 +94,12 @@ export type Route = {
    * somebody's browser saves with the right name.
    */
   binary?: boolean;
+  /**
+   * The request body is a file, delivered as bytes on `ctx.rawBody` rather than
+   * parsed as JSON. Base64 inside an envelope would inflate a 50MB photograph
+   * to 67MB of text and then ask the JSON parser to hold all of it.
+   */
+  upload?: boolean;
   /**
    * A POST that creates nothing and changes nothing — answered 200, not 201.
    *
@@ -3431,7 +3438,229 @@ export const ROUTES: Route[] = [
       });
     },
   },
+
+  // --- Evidence objects ------------------------------------------------------
+  //
+  // The platform recorded that a document with a given hash was the evidence
+  // and did not hold the document. That is a real chain only while somebody
+  // outside the platform still has the file, and three years after practical
+  // completion the person who took the photograph has left and the phone has
+  // been wiped. These three routes close it.
+  //
+  // The order is the rule: a ledger record names a hash first, and only then
+  // may bytes be stored against it. Reversing that would make this an open blob
+  // store with an authentication check on it.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/evidence',
+    readOnly: true,
+    description: 'Evidence register for a project, and which files the platform actually holds',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      authorise(engineCtx, 'EVIDENCE_AUDIT', 'R');
+
+      const entries = evidence.projectRegister(
+        platform.ledger,
+        platform.evidence,
+        engineCtx.tenantId,
+        engineCtx.projectId,
+      );
+      return {
+        // Said out loud rather than inferred from an empty register: with no
+        // store configured every entry is unheld, and a screen showing that
+        // without the reason reads as lost evidence rather than as a
+        // deployment that never switched the store on.
+        storeConfigured: platform.evidence.configured,
+        coverage: evidence.coverage(entries),
+        entries,
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/evidence/:hash',
+    upload: true,
+    description: 'Store the file behind an evidence hash the ledger already records',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+      }
+
+      const hash = ctx.params.hash as string;
+      const record = evidence.findByHash(platform.ledger, actor.tenantId, hash);
+      if (!record) {
+        // Not "unknown hash": within this tenancy nothing has claimed that hash
+        // as evidence, so there is nothing for these bytes to be evidence of.
+        throw new NotFoundError('No evidence record in this tenancy references that hash');
+      }
+
+      // Through the project the evidence belongs to, so the same authorisation
+      // that governs reading the record governs supplying its file. The project
+      // id comes from a record already scoped to the caller's tenancy, so it
+      // cannot be used to reach across one.
+      const engineCtx = platform.context(actor, record.projectId, {
+        correlationId: ctx.correlationId,
+        source: sourceOf(ctx),
+      });
+      // Evidence is never created through this route; the record already
+      // exists, and this supplies the file it always referred to. The matrix
+      // has no `C` on EVIDENCE_AUDIT for exactly that reason.
+      //
+      // Two ways to be allowed, and the second is not a loosening. A site
+      // supervisor holds EVIDENCE_AUDIT read only, and is precisely the person
+      // whose phone took the photograph: on `I` alone the field app could
+      // register a hash and then be refused the file behind it, which is the
+      // whole feature failing for the role it exists for. Supplying bytes that
+      // match a hash you yourself committed is finishing your own act, not
+      // reaching into somebody else's — so the captor may complete their own
+      // record, and `I` is what it takes to complete anybody's.
+      authorise(engineCtx, 'EVIDENCE_AUDIT', 'R');
+      const capturedBy = (record.state as { capturedBy?: string }).capturedBy;
+      if (capturedBy !== actor.actorId) authorise(engineCtx, 'EVIDENCE_AUDIT', 'I');
+
+      const stored = platform.evidence.put(actor.tenantId, hash, ctx.rawBody ?? Buffer.alloc(0), mediaType(ctx.contentType));
+
+      // No ledger event is written, and that is deliberate rather than an
+      // omission. The hash was committed by the domain command that registered
+      // the evidence; bytes that hash to it add no assertion, and bytes that do
+      // not are refused above. There is no new fact to record, and inventing an
+      // event type to record a non-fact would widen a closed catalogue.
+      return { ...stored, evidenceId: record.refId, projectId: record.projectId };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/evidence/:hash',
+    binary: true,
+    // Public so a signed link works without a session — which is the only thing
+    // a signed link is for. The handler refuses anyone who has neither a valid
+    // signature nor an authorised identity.
+    public: true,
+    description: 'Fetch a stored evidence file, by session or by signed link',
+    handler: (platform, ctx) => {
+      const hash = ctx.params.hash as string;
+      const tenantId = signedTenant(platform, ctx) ?? sessionTenant(platform, ctx, hash);
+
+      const file = platform.evidence.get(tenantId, hash);
+      return {
+        contentType: file.contentType,
+        // Named by its hash. The original filename is not in the record — the
+        // chain is over content, not over what a device happened to call it —
+        // and inventing one would put a name on a file that nothing attests to.
+        filename: `${hash.replace(':', '-')}${extensionFor(file.contentType)}`,
+        bytes: file.bytes,
+        // Inline only for the few types a browser renders without executing
+        // anything. Everything else downloads: served inline, an uploaded HTML
+        // file would be stored cross-site scripting on the platform's origin.
+        disposition: INLINE_TYPES.has(file.contentType) ? ('inline' as const) : ('attachment' as const),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/evidence/:hash/link',
+    readOnly: true,
+    description: 'Mint an expiring link to a stored evidence file',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const hash = ctx.params.hash as string;
+      const record = evidence.findByHash(platform.ledger, actor.tenantId, hash);
+      if (!record) throw new NotFoundError('No evidence record in this tenancy references that hash');
+
+      const engineCtx = platform.context(actor, record.projectId, {
+        correlationId: ctx.correlationId,
+        source: sourceOf(ctx),
+      });
+      authorise(engineCtx, 'EVIDENCE_AUDIT', 'R');
+
+      if (!platform.evidence.has(actor.tenantId, hash)) {
+        throw new NotFoundError('The platform holds no bytes for this evidence');
+      }
+      return platform.evidence.signedUrl(actor.tenantId, hash);
+    },
+  },
 ];
+
+/**
+ * The tenancy a signed link names, if the signature over it is good.
+ *
+ * Returns undefined when there is no link to check, so the caller falls through
+ * to session authorisation. A link that is present but bad is a refusal, never
+ * a fallthrough — otherwise a forged signature would quietly become an
+ * unauthenticated request and get the ordinary 401.
+ */
+function signedTenant(platform: Platform, ctx: RequestContext): string | undefined {
+  const signature = ctx.query.get('signature');
+  const tenant = ctx.query.get('tenant');
+  const expires = ctx.query.get('expires');
+  if (!signature && !tenant && !expires) return undefined;
+
+  if (!signature || !tenant || !expires) throw new ForbiddenError('Incomplete signed link', 'EVIDENCE_LINK_INVALID');
+  if (!platform.evidence.verifySignedUrl(tenant, ctx.params.hash as string, Number(expires), signature)) {
+    throw new ForbiddenError('This link is not valid, or has expired', 'EVIDENCE_LINK_INVALID');
+  }
+  return tenant;
+}
+
+/** The tenancy an authenticated caller may read this evidence in. */
+function sessionTenant(platform: Platform, ctx: RequestContext, hash: string): string {
+  // The route is public so a signed link works; an anonymous caller who brought
+  // no link and no credential is unauthenticated rather than forbidden, and
+  // saying so is the difference between "sign in" and "you may not have this".
+  // On every other route the gateway raises this before a handler is reached.
+  if (!ctx.auth) throw new AuthError('Evidence requires a session or a signed link');
+  const actor = auth(ctx);
+  if (actor.roles.includes('PLATFORM_ADMIN')) {
+    throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+  }
+
+  const record = evidence.findByHash(platform.ledger, actor.tenantId, hash);
+  if (!record) throw new NotFoundError('No evidence record in this tenancy references that hash');
+
+  const engineCtx = platform.context(actor, record.projectId, { correlationId: ctx.correlationId });
+  authorise(engineCtx, 'EVIDENCE_AUDIT', 'R');
+  return actor.tenantId;
+}
+
+/**
+ * Types a browser renders without running anything in them.
+ *
+ * Deliberately short. SVG is absent and stays absent: it is a document format
+ * that carries script, so an inline SVG is the exact attack the nosniff and
+ * sandbox headers exist to contain, and there is no reason to rely on them
+ * when the file can simply download instead.
+ */
+const INLINE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf']);
+
+const EXTENSIONS: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'application/pdf': '.pdf',
+  'text/plain': '.txt',
+  'text/csv': '.csv',
+};
+
+function extensionFor(contentType: string): string {
+  return EXTENSIONS[contentType] ?? '';
+}
+
+/**
+ * The media type from a `Content-Type` header, with the parameters dropped.
+ *
+ * Whitelisted rather than sanitised: this string is written to disk beside the
+ * object and later sent back as a response header, and a header value the
+ * caller controls without constraint is a response-splitting question nobody
+ * should have to think about twice.
+ */
+function mediaType(header: string | undefined): string {
+  const declared = (header ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+  return /^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$/.test(declared)
+    ? declared
+    : 'application/octet-stream';
+}
 
 /** Match a path against the routing table, extracting params. */
 export function matchRoute(method: string, path: string): { route: Route; params: Record<string, string> } | undefined {

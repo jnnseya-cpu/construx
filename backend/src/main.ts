@@ -107,6 +107,11 @@ process.stdout.write(
     `  Rate limits  ${limiterState}`,
     `  Health       http://localhost:${config.port}/readyz`,
     `  Ledger       ${durability}`,
+    `  Evidence     ${
+      config.evidence.storePath === ''
+        ? 'hashes only — no store configured, so the platform holds no files'
+        : `${config.evidence.storePath} — up to ${Math.round(config.evidence.maxBytes / 1_048_576)}MB per object`
+    }`,
     `  AI mode      ${config.ai.mode}${config.ai.mode === 'local' ? ' (deterministic engines, no provider spend)' : ''}`,
     `  Newsletter   ${
       config.newsletter.enabled

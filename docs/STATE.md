@@ -1015,6 +1015,80 @@ that glyph's geometry rather than each holding a private copy — which is exact
 how the console came to show a four-square placeholder while the brand was
 something else entirely.
 
+**The platform now holds the evidence, not only its hash.** Until this build the
+chain proved a document *with a given hash* was the evidence and did not hold the
+document. That is a real chain and it lasts exactly as long as somebody outside
+the platform still has the file — which, three years after practical completion,
+means the person who took the photograph has left and the phone has been wiped.
+
+`backend/src/evidence/store.ts` is a content-addressed store on `node:fs` and
+`node:crypto`, no runtime dependency, the same argument the durable ledger
+journal already makes. S3 becomes a driver behind this interface when there is
+somewhere to deploy it; the semantics do not change. `EVIDENCE_STORE_PATH` unset
+is a legitimate deployment — hashes recorded, files not held — and
+`assertProductionSafety` says so rather than letting it be discovered during a
+dispute.
+
+The rules that make it evidence rather than a file server, each verified by a
+test that tries to break it:
+
+- **A ledger record names a hash first; only then may bytes exist.** An upload
+  for a hash nothing in the tenancy has claimed is refused. Without that rule
+  this is an open blob store with an authentication check on it.
+- **The bytes are hashed again on the server and refused if they do not match.**
+  The browser's hash decides the address; if the upload were trusted to declare
+  its own, a client could store anything under a hash the ledger already trusts
+  and poison the chain at its root. Re-hashed on read too, so a corrupted volume
+  cannot serve something that is no longer the evidence anybody recorded.
+- **Deduplication stops at the tenant boundary.** Two tenancies uploading the
+  same file get two objects. That looks wasteful and is correct: one tenant's
+  retention decision must not reach into another's record.
+- **The hash is whitelisted, never sanitised.** `^sha256:[0-9a-f]{64}$` is the
+  only thing between a caller-supplied string and a path join; a check for `..`
+  is a traversal waiting for an encoding nobody thought of.
+- **Links expire and are bound to their tenancy.** An HMAC over tenant, hash and
+  expiry, compared in constant time, so an adjudicator can be sent a link that
+  works without a session and stops working afterwards. `GET /v1/evidence/:hash`
+  is therefore a public *route* over a private *object*: valid signature, or
+  authorised identity, or nothing.
+- **Nothing uploaded is served inline unless a browser merely renders it.**
+  Images and PDFs display; everything else downloads, under `nosniff` and a
+  policy that denies the document every capability. An uploaded HTML file served
+  inline would be stored cross-site scripting on the platform's own origin.
+- **No ledger event is written on upload**, and that is deliberate rather than an
+  omission. The hash was committed by the domain command that registered the
+  evidence; bytes that hash to it assert nothing new, and bytes that do not are
+  refused. Inventing an event type to record a non-fact would widen a closed
+  catalogue for nothing.
+
+Two authorisation subtleties are worth stating. Supplying the file is `I` —
+import — because the record already exists and this completes it; `EVIDENCE_AUDIT`
+carries no `C` for exactly that reason. And the person who *registered* the
+evidence may supply its file with read permission alone, because a site
+supervisor holds `EVIDENCE_AUDIT: ['R']` and is precisely whose phone took the
+photograph. On `I` alone the field app could record a hash and then be refused
+the file behind it — the feature failing for the role it exists for.
+
+The Golden Thread screen now leads with **files held**, and the evidence register
+lists every record with `held` or `hash only` against it. That number is the
+honest one: a chain of hashes proves nothing has been altered, and says nothing
+about whether anybody still has the documents. Supplying a file hashes it in the
+browser first and refuses a mismatch locally, naming which document it should
+have been, before anything is sent.
+
+**The field app holds the bytes too.** `frontend/lib/outbox.js` keeps captured
+files in IndexedDB as Blobs beside the operations that name them, and flushes
+them *after* the operations — an upload is refused until a record names its hash,
+so the record has to land first. A file the platform is not ready for is kept; a
+file whose bytes cannot match its address is dropped, because that cannot become
+true later. Both paths verified in a browser with the record deliberately absent
+and then deliberately present. The queue is cleared on sign-out with the
+operations, for the same reason: a handset changes hands.
+
+One gap is stated rather than hidden. A file whose operation was rejected
+outright waits on the device indefinitely, so `pendingFiles()` is exposed for a
+screen to show what a handset is still carrying; no such screen exists yet.
+
 Regenerate the assets with `node tools/icons.mjs` after any brand change; the
 generator parses `logo-glyph.svg` rather than restating it, and refuses any path
 it cannot render exactly. The PNG encoder is in that file: `node:zlib` is built
@@ -1778,7 +1852,7 @@ named so it is not mistaken for finished.
 | Drawing register | Title-block structuring from supplied text, supersession, markup→RFI | OCR from the image |
 | Model ingestion | Records the model, hash, discipline, LOD, element count as a governed event | IFC parsing, geometry hash, model diffing |
 | Digital twin | Reconciles observed against expected element status | Observations are structured input, not derived from imagery |
-| Evidence capture | Real SHA-256 over the real file, recorded against the event | No object store for the file itself |
+| Evidence capture | Real SHA-256 over the real file, recorded against the event, and the file itself held in a tenant-scoped content-addressed store | Retention and deletion policy; no antivirus scan on upload |
 | Clause extraction | From supplied text | OCR and table extraction |
 | 4D scheduling | Twin states link to task ids | No visualisation |
 | Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded | No bounce processing or suppression list; DKIM belongs at the relay, where the key should live |
@@ -1791,9 +1865,11 @@ Specified in the source documents, deliberately absent, and **not to be claimed
 as present**. Most of it is perception and ingestion infrastructure — real ML and
 parsing work, not wiring.
 
-- **File ingestion pipeline** — presigned upload, virus scan, MIME validation, ML
-  file classifier with confidence, OCR, table extraction, vector embedding,
-  `FILE_EXTRACTED`
+- **File ingestion pipeline** — virus scan, ML file classifier with confidence,
+  OCR, table extraction, vector embedding, `FILE_EXTRACTED`. Upload and storage
+  themselves are built: `backend/src/evidence/store.ts` holds the bytes, and the
+  content type is recorded as the label it is rather than validated, because the
+  address is the hash and the store never trusts the declaration
 - **Vision pipeline** — progress estimation, PPE compliance, equipment
   recognition, defect detection, `PROGRESS_EXTRACTED_FROM_IMAGES`
 - **Audio and communication intelligence** — transcription, commitment and

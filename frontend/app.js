@@ -255,7 +255,23 @@ async function drainOutbox() {
       toast('Field record not accepted', conflict.message, 'err');
     }
   }
-  if (result.accepted > 0) await draw();
+
+  // Files after operations, never before: an upload is refused unless a ledger
+  // record already names its hash, so the record has to land first. A file the
+  // platform is not ready for stays on the handset rather than being dropped.
+  const files = await outbox.flushFiles((path, blob) => api.upload(path, blob));
+  if (files.stored > 0) {
+    toast('Evidence uploaded', `${files.stored} file${files.stored === 1 ? '' : 's'} now held by the platform`, 'ok');
+  }
+  if (files.rejected > 0) {
+    toast(
+      'Evidence not stored',
+      `${files.rejected} file${files.rejected === 1 ? ' does' : 's do'} not match the hash recorded against them and cannot be attached.`,
+      'err',
+    );
+  }
+
+  if (result.accepted > 0 || files.stored > 0) await draw();
 }
 
 window.addEventListener('online', () => void drainOutbox());

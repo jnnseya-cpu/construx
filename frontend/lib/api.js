@@ -144,6 +144,48 @@ async function download(path, body, options = {}) {
   return { filename };
 }
 
+/**
+ * Send a file as bytes.
+ *
+ * Not `request`, because a file is not JSON: base64 inside an envelope would
+ * inflate a 50MB photograph to 67MB of text and hand the whole thing to a JSON
+ * parser at each end. The refusal path is still problem+json, so a denial reads
+ * as a denial rather than as a parse error.
+ */
+async function upload(path, file, options = {}) {
+  const key = crypto.randomUUID();
+
+  const attempt = async (token) =>
+    fetch(path, {
+      method: 'POST',
+      headers: {
+        // Whatever the operating system says the file is. The platform stores
+        // it as a label and never trusts it — the address is the hash.
+        'Content-Type': file.type || 'application/octet-stream',
+        'Idempotency-Key': key,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: file,
+    });
+
+  let response = await attempt(session.get()?.accessToken);
+  if (response.status === 401 && !options.anonymous) {
+    const token = await rotate();
+    if (token) response = await attempt(token);
+  }
+
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) : {};
+  if (!response.ok) throw new ApiError(payload, response.status);
+  return payload;
+}
+
+/** SHA-256 of a file, in the form the ledger records. */
+export async function hashFile(file) {
+  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+  return `sha256:${[...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+}
+
 export const api = {
   get: (path, options) => request('GET', path, undefined, options),
   post: (path, body, options) => request('POST', path, body ?? {}, options),
@@ -153,6 +195,7 @@ export const api = {
   // rather than ignoring one.
   delete: (path, options) => request('DELETE', path, undefined, options),
   download,
+  upload,
 };
 
 // --- domain helpers ---------------------------------------------------------

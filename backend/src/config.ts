@@ -65,6 +65,26 @@ export const config = {
     fsync: bool('LEDGER_JOURNAL_FSYNC', true),
   },
 
+  /**
+   * The object store for field evidence.
+   *
+   * Unset means the platform records that a document with a given hash was the
+   * evidence and does not hold the document — which is a real chain only while
+   * somebody else still has the file. `assertProductionSafety` says so out loud
+   * rather than letting a deployment discover it during a dispute.
+   */
+  evidence: {
+    storePath: str('EVIDENCE_STORE_PATH', ''),
+    /**
+     * Per-object ceiling. A site photograph is a few megabytes; a scanned
+     * drawing set is tens. The limit exists so one upload cannot fill the
+     * volume the ledger journal is also writing to.
+     */
+    maxBytes: num('EVIDENCE_MAX_BYTES', 50 * 1_048_576),
+    /** How long a signed link stays good. Short: it is a link to open now. */
+    linkTtlSeconds: num('EVIDENCE_LINK_TTL_SECONDS', 300),
+  },
+
   auth: {
     required: bool('GATEWAY_REQUIRE_AUTH', true),
     exposeMfa: bool('GATEWAY_AUTH_EXPOSE_MFA', true),
@@ -230,6 +250,11 @@ export function assertProductionSafety(): string[] {
   if (config.env === 'production') {
     if (config.auth.jwtSecret === 'construx-development-secret') {
       warnings.push('GATEWAY_JWT_SECRET is still the development default');
+    }
+    if (config.evidence.storePath === '') {
+      warnings.push(
+        'EVIDENCE_STORE_PATH is unset — the platform records evidence hashes but holds no files, so a chain is only as good as whoever still has the original',
+      );
     }
     if (config.ledger.journalPath === '') {
       // The loudest thing this function says, because it is the only one that

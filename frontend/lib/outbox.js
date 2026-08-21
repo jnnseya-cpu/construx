@@ -45,8 +45,18 @@
  */
 
 const DB_NAME = 'construx-outbox';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = 'operations';
+/**
+ * Captured files, waiting for the record that names them.
+ *
+ * Queuing the operation without the bytes would have left the field app exactly
+ * where the platform was before the object store existed: a hash captured at a
+ * work face, and the photograph itself on a handset that may be dropped in a
+ * trench before it next sees signal. IndexedDB holds Blobs, so the file waits
+ * beside the operation that refers to it.
+ */
+const FILES = 'files';
 
 /**
  * Events a device may never originate.
@@ -104,16 +114,22 @@ function open() {
         // tap, a retry after a crash — is one row rather than two records.
         db.createObjectStore(STORE, { keyPath: 'operationId' });
       }
+      if (!db.objectStoreNames.contains(FILES)) {
+        // Keyed by content hash. The same photograph attached to two records is
+        // one row, which is the same property the server's store has and for
+        // the same reason.
+        db.createObjectStore(FILES, { keyPath: 'hash' });
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
 }
 
-function transact(db, mode, run) {
+function transact(db, mode, run, storeName = STORE) {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, mode);
-    const result = run(tx.objectStore(STORE));
+    const tx = db.transaction(storeName, mode);
+    const result = run(tx.objectStore(storeName));
     tx.oncomplete = () => resolve(result?.result ?? result);
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
@@ -150,6 +166,87 @@ export async function queue({ projectId, eventType, entity, nextState, evidenceR
   await transact(db, 'readwrite', (store) => store.put(operation));
   db.close();
   return operation;
+}
+
+/**
+ * Hold the bytes of a captured file until the record that names them exists.
+ *
+ * The hash is computed here rather than accepted from a caller: it is the
+ * address the file will be stored at and the value that goes into the event, so
+ * the two must come from the same read of the same bytes.
+ */
+export async function queueFile(file, projectId) {
+  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+  const hash = `sha256:${[...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+
+  const db = await open();
+  await transact(
+    db,
+    'readwrite',
+    // The Blob itself, not a data URL. A base64 string of a 4MB photograph is
+    // 5.5MB of text in a store the browser may evict for being large.
+    (store) => store.put({ hash, blob: file, name: file.name, type: file.type, projectId, queuedAt: new Date().toISOString() }),
+    FILES,
+  );
+  db.close();
+  return hash;
+}
+
+/** Files still on the device, waiting to be stored. */
+export async function pendingFiles() {
+  const db = await open();
+  const all = await transact(db, 'readonly', (store) => store.getAll(), FILES);
+  db.close();
+  return all;
+}
+
+/**
+ * Upload every held file, and keep the ones the platform is not ready for.
+ *
+ * Run after the operations have been pushed, because an upload is refused
+ * unless a ledger record already names its hash — the record has to land first.
+ *
+ * Two outcomes clear the file and nothing else does. A 2xx means the platform
+ * holds it. A 422 means the bytes do not hash to the address they claim, which
+ * cannot become true later and would keep the wrong file on the handset for
+ * ever. A 404 — no record names this hash yet — keeps it, because the record
+ * may simply be in the next batch. That leaves one honest gap: a file whose
+ * operation was rejected outright waits indefinitely, so `pendingFiles` is
+ * exposed for a screen to show what the device is still carrying.
+ */
+export async function flushFiles(upload) {
+  const files = await pendingFiles();
+  if (files.length === 0) return { stored: 0, waiting: 0, rejected: 0 };
+
+  let stored = 0;
+  let waiting = 0;
+  let rejected = 0;
+  const settled = [];
+
+  for (const file of files) {
+    try {
+      await upload(`/v1/evidence/${encodeURIComponent(file.hash)}`, file.blob);
+      stored += 1;
+      settled.push(file.hash);
+    } catch (error) {
+      if (error?.status === 422) {
+        rejected += 1;
+        settled.push(file.hash);
+      } else {
+        waiting += 1;
+      }
+    }
+  }
+
+  if (settled.length > 0) {
+    const db = await open();
+    await transact(db, 'readwrite', (store) => {
+      for (const hash of settled) store.delete(hash);
+    }, FILES);
+    db.close();
+  }
+
+  return { stored, waiting, rejected };
 }
 
 /** Everything still waiting, oldest first — the order the server replays in. */
@@ -232,9 +329,17 @@ export async function flush(post) {
   return { accepted, duplicates, conflicts, unsent };
 }
 
-/** Drop everything. Called on sign-out; the device may change hands on site. */
+/**
+ * Drop everything. Called on sign-out; the device may change hands on site.
+ *
+ * The held files go with the operations. A photograph captured under one
+ * operative's session is that operative's record, and leaving it on the handset
+ * to be flushed under the next person's token would put the wrong name against
+ * it in the chain.
+ */
 export async function clear() {
   const db = await open();
   await transact(db, 'readwrite', (store) => store.clear());
+  await transact(db, 'readwrite', (store) => store.clear(), FILES);
   db.close();
 }

@@ -147,6 +147,28 @@ describe('the outbox', () => {
 
   it('clears on sign-out, because a site handset changes hands', () => {
     assert.match(outbox, /export async function clear/);
+    // Including the held files. A photograph captured under one operative's
+    // session must not flush under the next person's token.
+    assert.match(outbox, /store\.clear\(\), FILES/);
+  });
+
+  it('holds the file, not only the hash it computed from it', () => {
+    // Queuing the operation without the bytes leaves the field app exactly
+    // where the platform was before the object store existed: a hash captured
+    // at a work face, and the photograph on a handset that may not survive to
+    // see signal again.
+    assert.match(outbox, /export async function queueFile/);
+    assert.match(outbox, /export async function flushFiles/);
+    // The Blob itself. Base64 in a data URL is a third larger for no gain.
+    assert.match(outbox, /blob: file/);
+  });
+
+  it('keeps a file whose record has not landed yet, and drops one that can never match', () => {
+    // A 404 means no ledger record names this hash *yet* — the record may be in
+    // the next batch, so the file waits. A 422 means the bytes do not hash to
+    // the address they claim, which cannot become true later.
+    assert.match(outbox, /error\?\.status === 422/);
+    assert.match(outbox, /waiting \+= 1/);
   });
 });
 

@@ -1,4 +1,4 @@
-import { api } from '../lib/api.js';
+import { api, hashFile } from '../lib/api.js';
 import { badge, html, raw, render, shortHash, table, time, toast } from '../lib/ui.js';
 import { can, state } from '../app.js';
 
@@ -13,7 +13,14 @@ import { can, state } from '../app.js';
 
 export async function audit(root) {
   const projectId = state.session.projectId;
-  const data = await api.get(`/v1/projects/${projectId}/audit/events`);
+  const [data, evidence] = await Promise.all([
+    api.get(`/v1/projects/${projectId}/audit/events`),
+    // The other half of the same claim. A chain of hashes proves nothing has
+    // been altered; it does not prove anybody still has the documents those
+    // hashes describe, and until this screen showed both, that difference was
+    // invisible from inside the product.
+    api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
+  ]);
   const events = data.events;
 
   const byActor = { User: 0, AI: 0, System: 0 };
@@ -52,7 +59,7 @@ export async function audit(root) {
           : ''
       }
 
-      <div class="grid g4" style="margin-bottom:14px">
+      <div class="grid g5" style="margin-bottom:14px">
         <div class="card">
           <h3>Events recorded</h3>
           <div class="metric orange">${events.length}</div>
@@ -67,6 +74,23 @@ export async function audit(root) {
           <h3>Evidenced</h3>
           <div class="metric good">${withEvidence}</div>
           <div class="metric-sub">events carrying at least one evidence reference</div>
+        </div>
+        <div class="card">
+          <h3>Files held</h3>
+          <div class="metric ${raw(evidence && evidence.coverage.missing === 0 ? 'good' : 'warn')}">
+            ${evidence ? `${evidence.coverage.held}/${evidence.coverage.total}` : '—'}
+          </div>
+          <div class="metric-sub">
+            ${
+              !evidence
+                ? 'not visible to your role'
+                : !evidence.storeConfigured
+                  ? 'no object store configured on this deployment'
+                  : evidence.coverage.missing === 0
+                    ? 'every recorded hash has its document behind it'
+                    : `${evidence.coverage.missing} depend on somebody outside the platform still holding the original`
+            }
+          </div>
         </div>
         <div class="card">
           <h3>Chain head</h3>
@@ -105,6 +129,46 @@ export async function audit(root) {
           </div>
         </div>
       </div>
+
+      ${
+        evidence
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <div style="padding:15px 17px 0">
+                <h3>Evidence register — what the platform actually holds</h3>
+                <p class="metric-sub" style="margin-bottom:12px">
+                  A hash proves a document has not been altered. It does not produce the document. Everything marked
+                  <b>hash only</b> below is a record whose file lives somewhere else — on a phone, in an inbox, with somebody who
+                  may have left. Supplying it here stores it against the hash already in the chain; a file that does not match
+                  that hash is refused rather than recorded as a correction.
+                  ${
+                    evidence.storeConfigured
+                      ? ''
+                      : html`<br><b>This deployment has no object store configured</b>, so nothing can be held yet.`
+                  }
+                </p>
+              </div>
+              ${table({
+                headers: ['Captured', 'Type', 'Description', 'Hash', 'File'],
+                align: ['', '', '', 'mono', ''],
+                rows: evidence.entries.slice(0, 40).map((entry) => [
+                  time(entry.capturedAt),
+                  entry.type,
+                  entry.description,
+                  shortHash(entry.hash),
+                  entry.held
+                    ? html`<a class="btn quiet sm" href="#" data-open="${entry.hash}">Open</a>`
+                    : evidence.storeConfigured && can('EVIDENCE_AUDIT', 'R')
+                      ? html`<label class="btn quiet sm" style="cursor:pointer">
+                          Supply file
+                          <input type="file" data-supply="${entry.hash}" style="display:none">
+                        </label>`
+                      : badge('hash only', 'warn'),
+                ]),
+                empty: 'Nothing in this project has been recorded with evidence yet.',
+              })}
+            </div>`
+          : ''
+      }
 
       <div class="card" style="margin-bottom:14px">
         <h3>Trace a record</h3>
@@ -152,6 +216,72 @@ export async function audit(root) {
       </div>
     `,
   );
+
+  // Supply the file behind a hash the chain already records. The browser hashes
+  // it first and refuses a mismatch locally, so somebody who picked the wrong
+  // file is told which file it should be rather than told the server said no.
+  // The server hashes it again regardless — the local check is a courtesy, not
+  // a control.
+  for (const input of document.querySelectorAll('input[data-supply]')) {
+    input.addEventListener('change', async (event) => {
+      // Held rather than read from the event: `currentTarget` is null once the
+      // handler has awaited anything, and on the success path the element is
+      // gone entirely because the view re-renders.
+      const control = event.target;
+      const file = control.files?.[0];
+      const expected = control.dataset.supply;
+      if (!file) return;
+
+      const label = control.closest('label');
+      const original = label?.firstChild?.nodeValue;
+      if (label?.firstChild) label.firstChild.nodeValue = ' Checking… ';
+
+      try {
+        const actual = await hashFile(file);
+        if (actual !== expected) {
+          toast(
+            'Not this document',
+            `"${file.name}" hashes to ${shortHash(actual)}, and the record was taken over ${shortHash(expected)}. ` +
+              'Supplying it would put the wrong file behind a hash the chain already relies on.',
+            'warn',
+          );
+          return;
+        }
+
+        const stored = await api.upload(`/v1/evidence/${encodeURIComponent(expected)}`, file);
+        toast('Evidence stored', `${file.name} — ${Math.max(1, Math.round(stored.bytes / 1024))} KB held against ${shortHash(expected)}`, 'ok');
+        // Re-render so the row moves from "hash only" to a file that opens, and
+        // the coverage figure at the top moves with it.
+        await audit(root);
+        return;
+      } catch (error) {
+        toast('Could not store', error.message, 'err');
+      } finally {
+        // Only if the row still exists — after a successful store the whole
+        // view has been rebuilt and this control is detached.
+        if (control.isConnected) {
+          if (label?.firstChild && original !== undefined) label.firstChild.nodeValue = original;
+          control.value = '';
+        }
+      }
+    });
+  }
+
+  for (const link of document.querySelectorAll('a[data-open]')) {
+    link.addEventListener('click', async (event) => {
+      event.preventDefault();
+      const hash = event.target.dataset.open;
+      try {
+        // An expiring, tenant-bound link rather than the object's own path: the
+        // tab that opens has no session, and a URL people paste to each other
+        // should stop working.
+        const { url } = await api.post(`/v1/evidence/${encodeURIComponent(hash)}/link`);
+        window.open(url, '_blank', 'noopener');
+      } catch (error) {
+        toast('Could not open', error.message, 'err');
+      }
+    });
+  }
 
   document.getElementById('trace')?.addEventListener('submit', async (event) => {
     event.preventDefault();
