@@ -38,6 +38,10 @@ export async function field(root) {
   // The walk register ordered by what is overdue. Sorted by date, the one that
   // matters is the one furthest down.
   const walk = await api.get(`/v1/projects/${projectId}/observations/position`).catch(() => null);
+
+  // Days earned against days spent. The arithmetic already existed inside the
+  // delay forecast, where nothing could read it on its own.
+  const productivity = await api.get(`/v1/projects/${projectId}/productivity`).catch(() => null);
   const openObservations = b.SiteObservation.filter((o) => o.status === 'OPEN');
 
   const measured = b.Task.filter((t) => Number(t.percentComplete ?? 0) > 0);
@@ -299,6 +303,74 @@ export async function field(root) {
           })}
         </div>
       </div>
+
+      ${
+        productivity
+          ? html`<div class="card pad0" style="margin-top:14px">
+              <div style="padding:15px 17px 0">
+                <h3>Productivity against plan</h3>
+                <p class="metric-sub" style="margin-bottom:12px">
+                  Days earned over days spent. Below 1.0 an activity is taking longer than the work done justifies —
+                  which is a different fact from being behind, and the one that says whether it will catch up.
+                  ${productivity.summary}
+                </p>
+                ${
+                  productivity.projectFactor !== null
+                    ? html`<div class="grid g4" style="margin:0 17px 12px">
+                        <div>
+                          <div class="metric-sub">Project</div>
+                          <div class="metric ${raw(productivity.projectFactor < 1 ? 'bad' : 'good')}">
+                            ${productivity.projectFactor.toFixed(2)}
+                          </div>
+                          <div class="metric-sub">weighted by planned duration</div>
+                        </div>
+                        <div>
+                          <div class="metric-sub">Measured</div>
+                          <div class="metric">${productivity.measured}</div>
+                          <div class="metric-sub">${productivity.notStarted} not started</div>
+                        </div>
+                        <div>
+                          <div class="metric-sub">Days earned</div>
+                          <div class="metric">${productivity.earnedDays}</div>
+                          <div class="metric-sub">against ${productivity.elapsedDays} spent</div>
+                        </div>
+                        <div>
+                          <div class="metric-sub">Unmeasurable</div>
+                          <div class="metric ${raw(productivity.unmeasurable.length > 0 ? 'warn' : 'good')}">
+                            ${productivity.unmeasurable.length}
+                          </div>
+                          <div class="metric-sub">progress recorded without the days it took</div>
+                        </div>
+                      </div>`
+                    : ''
+                }
+                ${
+                  productivity.unmeasurable.length > 0
+                    ? html`<div class="notice warn" style="margin:0 17px 12px">
+                        <div><b>${productivity.unmeasurable.length} activity(ies) record progress against no elapsed time.</b><br>
+                        That is a data fault rather than infinite productivity, so ${productivity.unmeasurable.length === 1 ? 'it is' : 'they are'} excluded and named:
+                        ${productivity.unmeasurable.map((entry) => entry.taskName).join(', ')}.</div>
+                      </div>`
+                    : ''
+                }
+              </div>
+              ${table({
+                headers: ['Activity', 'Planned', 'Complete', 'Elapsed', 'Earned', 'Factor', 'On critical path'],
+                align: ['', 'num', 'num', 'num', 'num', 'num', ''],
+                rows: productivity.activities.slice(0, 15).map((a) => [
+                  a.taskName,
+                  `${a.plannedDays}d`,
+                  pct(a.percentComplete),
+                  `${a.elapsedDays}d`,
+                  `${a.earnedDays}d`,
+                  badge(a.factor.toFixed(2), a.factor < 0.9 ? 'bad' : a.factor < 1 ? 'warn' : 'good'),
+                  a.onCriticalPath ? badge('critical', 'bad') : '—',
+                ]),
+                empty: 'Nothing has both progress and elapsed time recorded against it.',
+              })}
+            </div>`
+          : ''
+      }
     `,
   );
 

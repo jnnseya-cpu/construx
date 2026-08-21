@@ -1244,6 +1244,130 @@ export function publishLookahead(
 }
 
 /**
+ * Productivity, measured rather than felt.
+ *
+ * The arithmetic already existed inside `forecastDelay`, where it was one input
+ * to a risk model and nothing could read it on its own — which is why the site
+ * command centre reported "productivity against baseline is not derived". It was
+ * derived; it was just not published.
+ *
+ * The factor is earned days over elapsed days. Below 1.0 an activity is taking
+ * longer than the work done justifies, and above it the activity is ahead. It is
+ * a ratio and not a percentage complete, because 60% complete in half the
+ * planned time and 60% complete in twice the planned time are the same progress
+ * report and opposite facts.
+ *
+ * Three refusals keep the number honest:
+ *
+ * **An activity nobody has started is excluded, not scored 1.0.** Zero elapsed
+ * days gives no evidence either way, and counting it as on-plan flatters a
+ * project whose work has not begun.
+ *
+ * **An activity with progress but no elapsed days is a data fault, not
+ * infinite productivity.** It is reported as unmeasurable and named.
+ *
+ * **The project figure is weighted by planned duration.** An unweighted mean
+ * lets a one-day snagging item cancel out a twelve-week structure — arithmetic
+ * that produces a comfortable number from an uncomfortable job.
+ */
+export type ProductivityPosition = {
+  measured: number;
+  notStarted: number;
+  unmeasurable: Array<{ taskId: string; taskName: string; reason: string }>;
+  /** Weighted by planned duration, so a long activity counts for more. */
+  projectFactor: number | null;
+  earnedDays: number;
+  elapsedDays: number;
+  /** Worst first — where the recovery conversation actually is. */
+  activities: Array<{
+    taskId: string;
+    taskName: string;
+    plannedDays: number;
+    percentComplete: number;
+    elapsedDays: number;
+    earnedDays: number;
+    factor: number;
+    onCriticalPath: boolean;
+    /** Days this activity is behind what its elapsed time should have bought. */
+    daysBehind: number;
+  }>;
+  summary: string;
+};
+
+export function productivityPosition(ctx: EngineContext): ProductivityPosition {
+  authorise(ctx, 'FIELD_EXECUTION', 'R');
+
+  const network = networkFloat(ctx);
+  const unmeasurable: ProductivityPosition['unmeasurable'] = [];
+  let notStarted = 0;
+
+  const activities = ctx.ledger
+    .list(ctx.projectId, 'Task')
+    .map((record) => {
+      const plannedDays = Number(record.state.durationDays ?? 0);
+      const percentComplete = Number(record.state.percentComplete ?? 0);
+      const elapsedDays = Number(record.state.elapsedDays ?? 0);
+      const earnedDays = plannedDays * (percentComplete / 100);
+
+      if (elapsedDays === 0 && percentComplete === 0) {
+        notStarted += 1;
+        return undefined;
+      }
+      if (elapsedDays === 0) {
+        unmeasurable.push({
+          taskId: record.refId,
+          taskName: String(record.state.name),
+          reason: `${percentComplete}% complete against no elapsed time. Progress was recorded without the days it took.`,
+        });
+        return undefined;
+      }
+
+      const factor = earnedDays / elapsedDays;
+      return {
+        taskId: record.refId,
+        taskName: String(record.state.name),
+        plannedDays,
+        percentComplete,
+        elapsedDays,
+        earnedDays: Number(earnedDays.toFixed(2)),
+        factor: Number(factor.toFixed(3)),
+        onCriticalPath: network.critical.has(record.refId),
+        daysBehind: Number(Math.max(0, elapsedDays - earnedDays).toFixed(2)),
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined)
+    .sort((a, b) => a.factor - b.factor);
+
+  const earnedDays = activities.reduce((sum, a) => sum + a.earnedDays, 0);
+  const elapsedDays = activities.reduce((sum, a) => sum + a.elapsedDays, 0);
+  const projectFactor = elapsedDays > 0 ? Number((earnedDays / elapsedDays).toFixed(3)) : null;
+
+  const criticalBehind = activities.filter((a) => a.onCriticalPath && a.factor < 1);
+
+  return {
+    measured: activities.length,
+    notStarted,
+    unmeasurable,
+    projectFactor,
+    earnedDays: Number(earnedDays.toFixed(2)),
+    elapsedDays: Number(elapsedDays.toFixed(2)),
+    activities,
+    summary:
+      activities.length === 0
+        ? 'Nothing has both progress and elapsed time recorded against it, so there is no productivity to measure.'
+        : projectFactor === null
+          ? 'No elapsed time is recorded.'
+          : `${(projectFactor).toFixed(2)} days earned per day spent across ${activities.length} measured ${
+              activities.length === 1 ? 'activity' : 'activities'
+            }. ${
+              criticalBehind.length > 0
+                ? `${criticalBehind.length} on the critical path ${criticalBehind.length === 1 ? 'is' : 'are'} below 1.0 — that is where the completion date moves.`
+                : 'Nothing on the critical path is below 1.0.'
+            }`,
+  };
+}
+
+/**
  * Reasons a promise was not kept.
  *
  * A fixed list on purpose. Free text produces a hundred variants of "waiting on

@@ -1041,6 +1041,31 @@ belongs to the cost model and is validated there — and they declare their
 top-level fields and stay open rather than restating a shape in two places,
 which is the drift the schemas exist to prevent. A test holds the ratio.
 
+**Two answers the command centres reported as missing, derived rather than
+built.** The site centre said "productivity against baseline is not derived" and
+the design centre answered "what will happen next" with nothing at all.
+
+`productivityPosition` publishes days earned over days spent — arithmetic that
+already existed inside `forecastDelay`, where it was one input to a risk model
+and nothing could read it on its own. Derived and not published is
+indistinguishable from absent when you are looking at a screen. Three refusals
+keep it honest: work nobody has started is excluded rather than scored 1.0,
+because no elapsed time is no evidence either way; progress recorded against no
+elapsed days is reported as a data fault rather than as infinite productivity;
+and the project figure is weighted by duration, because an unweighted mean lets a
+one-day snagging item cancel out a twelve-week structure.
+
+`designReadiness` answers a deliberately narrow question — not "is the design
+finished", which no project can answer, but *of the work in the published
+lookahead, what is waiting on a question nobody has answered*. It became
+answerable only once an RFI carried the activity it holds up. Committed work
+sorts above merely planned work, because those are the promises that break, and
+an activity with no open question is reported as ready rather than omitted: "nine
+of eleven are ready" and "nine are ready" are different statements and only one
+can be checked. Where a lookahead has not been published it says so instead of
+inferring a window from the whole programme, which would answer a different
+question.
+
 **The mark has one source and everything is derived from it.**
 `frontend/logo.svg` is the full mark — skyline, tower crane, ground line and the
 orange X. `frontend/logo-glyph.svg` is the reduced mark used everywhere the full

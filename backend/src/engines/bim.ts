@@ -1102,6 +1102,153 @@ export function specificationCoverage(ctx: EngineContext): SpecificationCoverage
  * change to the capture command and it is worth more than any refinement of the
  * arithmetic, so it is reported rather than left as a comment nobody reads.
  */
+/**
+ * Design readiness against the work about to start.
+ *
+ * The design command centre answered "what will happen next" with nothing at
+ * all: there was no way to say whether the information needed for the next six
+ * weeks of work is going to be there. It is answerable now for the same reason
+ * the delay exposure is computed — an RFI names the activity it is holding up.
+ *
+ * The question is deliberately narrow. Not "is the design finished", which no
+ * project can answer, but: **of the activities in the published lookahead, which
+ * are waiting on a question nobody has answered, and how late is the answer?**
+ * That is a fortnight's worth of foresight from records that already exist, and
+ * it is the difference between finding out on the Monday and finding out three
+ * weeks earlier.
+ *
+ * An activity with no open question is reported as ready rather than silently
+ * omitted, because "nine of eleven are ready" and "nine are ready" are different
+ * statements and only one of them is checkable.
+ */
+export type DesignReadiness = {
+  /** Whether a lookahead has been published at all. Nothing is inferred without one. */
+  hasLookahead: boolean;
+  weekStarting?: string;
+  weeks?: number;
+  plannedActivities: number;
+  ready: number;
+  waiting: Array<{
+    taskId: string;
+    taskName: string;
+    onCriticalPath: boolean;
+    /** Promised in the lookahead, or merely planned in it. */
+    committed: boolean;
+    openRfis: Array<{ reference: string; question: string; dueDate: string; daysOverdue: number }>;
+  }>;
+  /** Committed work waiting on information — the promises most likely to break. */
+  committedAtRisk: number;
+  summary: string;
+  /** What would make the answer better, where anything would. */
+  toMakeExact?: string;
+};
+
+export function designReadiness(
+  ctx: EngineContext,
+  today = new Date().toISOString().slice(0, 10),
+): DesignReadiness {
+  authorise(ctx, 'DESIGN_INFORMATION', 'R');
+
+  const lookahead = ctx.ledger
+    .list(ctx.projectId, 'LookaheadPlan')
+    .filter((record) => record.state.status !== 'SUPERSEDED')
+    .sort((a, b) => String(a.state.weekStarting).localeCompare(String(b.state.weekStarting)))
+    .at(-1);
+
+  if (!lookahead) {
+    return {
+      hasLookahead: false,
+      plannedActivities: 0,
+      ready: 0,
+      waiting: [],
+      committedAtRisk: 0,
+      summary:
+        'No lookahead is published, so there is no window of work to check the design information against.',
+      toMakeExact: 'Publish a lookahead. Design readiness is a question about the work that is about to start.',
+    };
+  }
+
+  const plannedTaskIds = (lookahead.state.plannedTaskIds as string[]) ?? [];
+  const commitments = (lookahead.state.commitments as Array<{ taskId: string }>) ?? [];
+  const committedTaskIds = new Set(commitments.map((commitment) => commitment.taskId));
+
+  const openByTask = new Map<string, DesignReadiness['waiting'][number]['openRfis']>();
+  let unlinkedOpen = 0;
+
+  for (const record of ctx.ledger.list(ctx.projectId, 'RFI')) {
+    const rfi = record.state;
+    if (rfi.status === 'ANSWERED') continue;
+
+    const taskId = typeof rfi.linkedTaskId === 'string' ? rfi.linkedTaskId : undefined;
+    if (!taskId) {
+      unlinkedOpen += 1;
+      continue;
+    }
+    if (!plannedTaskIds.includes(taskId)) continue;
+
+    const due = String(rfi.dueDate ?? '');
+    const list = openByTask.get(taskId) ?? [];
+    list.push({
+      reference: String(rfi.reference),
+      question: String(rfi.question ?? ''),
+      dueDate: due,
+      daysOverdue: due !== '' && today > due
+        ? Math.max(0, Math.round((Date.parse(today) - Date.parse(due)) / 86_400_000))
+        : 0,
+    });
+    openByTask.set(taskId, list);
+  }
+
+  const network = networkFloat(ctx);
+  const names = new Map(
+    ctx.ledger.list(ctx.projectId, 'Task').map((record) => [record.refId, String(record.state.name)]),
+  );
+
+  const waiting = [...openByTask.entries()]
+    .map(([taskId, openRfis]) => ({
+      taskId,
+      taskName: names.get(taskId) ?? network.activityNames.get(taskId) ?? taskId,
+      onCriticalPath: network.critical.has(taskId),
+      committed: committedTaskIds.has(taskId),
+      openRfis: openRfis.sort((a, b) => b.daysOverdue - a.daysOverdue),
+    }))
+    // Committed and critical first: those are the promises that break.
+    .sort((a, b) =>
+      Number(b.committed) - Number(a.committed) ||
+      Number(b.onCriticalPath) - Number(a.onCriticalPath) ||
+      (b.openRfis[0]?.daysOverdue ?? 0) - (a.openRfis[0]?.daysOverdue ?? 0),
+    );
+
+  const committedAtRisk = waiting.filter((entry) => entry.committed).length;
+
+  return {
+    hasLookahead: true,
+    weekStarting: String(lookahead.state.weekStarting),
+    weeks: Number(lookahead.state.weeks ?? 6),
+    plannedActivities: plannedTaskIds.length,
+    ready: plannedTaskIds.length - waiting.length,
+    waiting,
+    committedAtRisk,
+    summary:
+      waiting.length === 0
+        ? `All ${plannedTaskIds.length} activities in the lookahead from ${String(lookahead.state.weekStarting)} have their design information. Nothing in the window is waiting on an answer.`
+        : `${waiting.length} of ${plannedTaskIds.length} activities in the lookahead are waiting on a question nobody has answered${
+            committedAtRisk > 0
+              ? `, and ${committedAtRisk} of those ${committedAtRisk === 1 ? 'carries a promise' : 'carry promises'} against ${committedAtRisk === 1 ? 'it' : 'them'}`
+              : ''
+          }.`,
+    // Only worth saying where a question exists that this could have counted.
+    ...(unlinkedOpen > 0
+      ? {
+          toMakeExact:
+            `${unlinkedOpen} open RFI${unlinkedOpen === 1 ? '' : 's'} name no activity, so ${
+              unlinkedOpen === 1 ? 'it is' : 'they are'
+            } invisible to this answer. Naming the activity on the markup is what brings ${unlinkedOpen === 1 ? 'it' : 'them'} in.`,
+        }
+      : {}),
+  };
+}
+
 export type DesignDelayExposure = {
   /** Overdue RFIs, and the total days of information owed. */
   overdueCount: number;

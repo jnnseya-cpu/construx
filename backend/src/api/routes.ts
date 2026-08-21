@@ -3774,6 +3774,20 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'GET',
+    pattern: '/v1/projects/:projectId/design/readiness',
+    readOnly: true,
+    description: 'Whether the work in the published lookahead has the design information it needs',
+    handler: (platform, ctx) => bim.designReadiness(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/productivity',
+    readOnly: true,
+    description: 'Earned days against elapsed days, per activity and weighted for the project',
+    handler: (platform, ctx) => planning.productivityPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
     pattern: '/v1/projects/:projectId/rfi/exposure',
     description: 'What late design information is costing, priced at the contract damages rate',
     readOnly: true,

@@ -59,6 +59,10 @@ export async function design(root) {
   // rather than assumed: whether this deployment has a provider that can look
   // at a file is a fact about the deployment, and which evidence the platform
   // actually holds is a fact about the project.
+  // What the next few weeks of work is waiting on. Answerable only because an
+  // RFI now names the activity it holds up.
+  const readiness = await api.get(`/v1/projects/${projectId}/design/readiness`).catch(() => null);
+
   const [perception, evidence] = await Promise.all([
     api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
     api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
@@ -315,6 +319,37 @@ export async function design(root) {
               : ''
           }
         </div>
+
+        ${
+          readiness
+            ? html`<div class="card pad0">
+                <div style="padding:15px 17px 0">
+                  <h3>What the next weeks are waiting on</h3>
+                  <p class="metric-sub" style="margin-bottom:12px">
+                    Not "is the design finished", which no project can answer — of the work in the published lookahead, what is
+                    waiting on a question nobody has answered. ${readiness.summary}
+                    ${readiness.toMakeExact ? html`<br><b>To see more:</b> ${readiness.toMakeExact}` : ''}
+                  </p>
+                </div>
+                ${
+                  readiness.hasLookahead
+                    ? table({
+                        headers: ['Activity', 'Promised', 'On critical path', 'Waiting on', 'Worst overdue'],
+                        align: ['', '', '', '', 'num'],
+                        rows: readiness.waiting.map((entry) => [
+                          entry.taskName,
+                          entry.committed ? badge('promised', 'bad') : badge('planned', 'neutral'),
+                          entry.onCriticalPath ? badge('critical', 'bad') : '—',
+                          entry.openRfis.map((r) => r.reference).join(', '),
+                          `${entry.openRfis[0]?.daysOverdue ?? 0}d`,
+                        ]),
+                        empty: `All ${readiness.plannedActivities} activities in the window have their information.`,
+                      })
+                    : ''
+                }
+              </div>`
+            : ''
+        }
 
         ${
           perception
