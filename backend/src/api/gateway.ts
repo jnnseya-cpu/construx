@@ -33,8 +33,12 @@ import { serveStatic } from './static.ts';
  * No internal service is exposed directly, and the gateway holds no state.
  */
 
+// The frontend is a sibling of the backend, not a subdirectory of it: the two
+// are separate deployables that this process happens to serve from one origin.
+// Anchored to this module rather than to the working directory, so the service
+// starts the same way from a container, a systemd unit or a developer's shell.
 const HERE = dirname(fileURLToPath(import.meta.url));
-const WEB_ROOT = join(HERE, '..', '..', 'web');
+const WEB_ROOT = join(HERE, '..', '..', '..', 'frontend');
 const APP_SHELL = join(WEB_ROOT, 'index.html');
 const LANDING = join(WEB_ROOT, 'landing.html');
 

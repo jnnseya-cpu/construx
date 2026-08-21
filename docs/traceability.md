@@ -24,42 +24,42 @@ not pretend to have done.
 
 | Requirement | Status | Where |
 |---|---|---|
-| One data model and one operating logic across all sectors | Built | `src/domain/structure.ts` — `sectorType` is an attribute, never a separate code path |
-| Building construction (residential, commercial, industrial, public) | Built | `SectorType.BUILDING`, WBS templates in `src/engines/planning.ts` |
+| One data model and one operating logic across all sectors | Built | `backend/src/domain/structure.ts` — `sectorType` is an attribute, never a separate code path |
+| Building construction (residential, commercial, industrial, public) | Built | `SectorType.BUILDING`, WBS templates in `backend/src/engines/planning.ts` |
 | Civil and infrastructure (transport, utilities, energy) | Built | `SectorType.INFRASTRUCTURE`, distinct WBS template; the seeded demo is a water treatment works |
 | Specialised and operational (demolition, MEP, fit-out, FM, RM&I) | Built | `SectorType.SPECIALISED` template; FM and O&M covered by Engine G |
 | No sector verticals, no duplicated logic | Built | One event catalogue, one permission matrix, one ledger for all sectors |
-| Full lifecycle: concept → 30+ year O&M | Built | `src/lifecycle/phases.ts`; demo traverses all seven phases |
+| Full lifecycle: concept → 30+ year O&M | Built | `backend/src/lifecycle/phases.ts`; demo traverses all seven phases |
 | Data persists through handover without migration | Built | Handover and O&M write to the same ledger and project as tender did |
 
 ## 2. Golden Thread
 
 | Requirement | Status | Where |
 |---|---|---|
-| Continuous, immutable, append-only lineage | Built | `src/goldenthread/ledger.ts` |
+| Continuous, immutable, append-only lineage | Built | `backend/src/goldenthread/ledger.ts` |
 | No destructive updates; all changes versioned | Built | Only `commit()` mutates; every commit increments `version` |
 | No state change without a valid event | Built | Entity state is unreachable except through `commit()` |
-| Event envelope with all mandated fields | Built | `src/goldenthread/types.ts` |
-| Canonical serialisation: sorted keys, no whitespace, array order preserved | Built | `src/core/canonical.ts`, tested |
+| Event envelope with all mandated fields | Built | `backend/src/goldenthread/types.ts` |
+| Canonical serialisation: sorted keys, no whitespace, array order preserved | Built | `backend/src/core/canonical.ts`, tested |
 | Non-state fields stripped before hashing (audit, derived, transient) | Built | `stripNonState()`, tested |
 | SHA-256 as `sha256:<lowercase hex>` | Built | `sha256()` |
 | `beforeHash` / `afterHash` per event | Built | Set on commit, verified on replay |
-| JSON Patch constrained to add/remove/replace | Built | `src/core/jsonpatch.ts`, tested |
+| JSON Patch constrained to add/remove/replace | Built | `backend/src/core/jsonpatch.ts`, tested |
 | Ordering remove → add → replace | Built | `orderPatch()`, tested |
 | No wildcard paths, explicit array indices only | Built | `validatePatch()`, tested |
 | Patch validated against entity schema before commit | Built | `assertValid()` in `commit()` after applying the patch |
-| Event type catalogue is authoritative; unknown types rejected | Built | `src/goldenthread/eventTypes.ts`, tested |
+| Event type catalogue is authoritative; unknown types rejected | Built | `backend/src/goldenthread/eventTypes.ts`, tested |
 | `aiAllowed=false` + AI actor = hard failure | Built | Enforced in `commit()`, tested |
 | `requiresEvidence=true` with no evidence = hard failure | Built | Enforced in `commit()`, tested |
 | Correlation and causation ids | Built | On the envelope; AI writes carry the request id as causation |
 | Chain hash detecting deletion and reordering | Built | Beyond the written spec; `chainHash`/`previousChainHash`, verified on replay |
-| Exports branded with client identity | Built | `src/export/exporter.ts` — refuses to export without branding |
+| Exports branded with client identity | Built | `backend/src/export/exporter.ts` — refuses to export without branding |
 
 ## 3. Replay and audit
 
 | Requirement | Status | Where |
 |---|---|---|
-| Deterministic replay from the event log | Built | `src/goldenthread/replay.ts` |
+| Deterministic replay from the event log | Built | `backend/src/goldenthread/replay.ts` |
 | Ordering by (timestamp, eventId) | Built | `ledger.events()` |
 | Per-event verification statuses | Built | `VERIFIED`, `FAILED_HASH`, `FAILED_SCHEMA`, `FAILED_PATCH`, `FAILED_CHAIN`, `FAILED_CATALOG`, `MISSING_EVIDENCE` |
 | State materialisation keyed by (refType, refId) | Built | `replayProject()` |
@@ -75,7 +75,7 @@ not pretend to have done.
 
 | Engine | Status | Where |
 |---|---|---|
-| A — Tender & Commercial Intelligence | Built | `src/engines/tender.ts` |
+| A — Tender & Commercial Intelligence | Built | `backend/src/engines/tender.ts` |
 | Vision-based 2D and BIM take-off | Partial | `runTakeoff()` governs, evidences and prices measured items and traces each to a sheet and revision; the quantities are supplied by the caller, not extracted from a drawing |
 | Auto-generated BoQ with confidence per item | Built | `BOQITEM_CREATED_FROM_TAKEOFF` carries `confidenceScore` |
 | Bottom-up estimating (labour, plant, material, prelims, O&P) | Built | `buildEstimate()` |
@@ -83,13 +83,13 @@ not pretend to have done.
 | Live market pricing feeds | Design only | Rate library and index entities modelled; no external feed connected |
 | Contract-aware risk pricing (JCT, NEC, FIDIC, IChemE, MF/1) | Built | `ContractSuite` union; clause extraction per suite |
 | Baseline programme and cashflow generation | Built | `planning.approveBaseline()`, `cost.forecastCashflow()` |
-| B — Planning & Delivery | Built | `src/engines/planning.ts` |
+| B — Planning & Delivery | Built | `backend/src/engines/planning.ts` |
 | AI-generated CPM programmes | Built | `generateWBS()` proposes; a planner approves |
 | Critical path probability forecasting | Built | PERT variance → `probabilityOnTime`, `p80DurationDays` |
 | 4D BIM-linked scheduling | Partial | Twin states link to task ids; no 4D visualisation |
 | Lookahead planning (Last Planner) | Partial | Lookahead and constraint entities in the catalogue; PPC metrics not computed |
 | Delay likelihood modelling with recovery scenarios | Built | `forecastDelay()` + system-controlled corrective measures library |
-| C — Resource & Cost Intelligence | Built | `src/engines/cost.ts` |
+| C — Resource & Cost Intelligence | Built | `backend/src/engines/cost.ts` |
 | Earned value (EAC, ETC, CPI, SPI) | Built | `calculateEVM()` with three EAC scenarios and confidence |
 | Live CVR connected to contract, commitments, variations, certificates | Built | `publishCVR()` |
 | Margin erosion alerts | Built | CVR alerts |
@@ -99,7 +99,7 @@ not pretend to have done.
 | Withheld sums recorded with a reason | Built | `withheldMinor` and `reason` on every certificate |
 | Commercial ledger bridge (committed / certified / paid, exception queue) | Built | `ledgerPosition()` |
 | Trade-level labour productivity analytics | Partial | Productivity factor derived per task from earned vs elapsed; no trade-level rollup |
-| D — Risk, Safety & Compliance | Built | `src/engines/safety.ts` |
+| D — Risk, Safety & Compliance | Built | `backend/src/engines/safety.ts` |
 | Risk quantified in money and days | Built | `scoreRisk()` with residual position and mitigation net benefit |
 | P80 contingency | Built | `contingencyRequirement()` |
 | RAMS generation as a deterministic multi-step machine | Built | `draftRAMS()` against a hazard library, not freeform |
@@ -109,7 +109,7 @@ not pretend to have done.
 | Predictive safety incident modelling | Built | `forecastSafety()` from leading indicators |
 | Weather-driven hazard forecasting | Partial | Adverse weather days are an input; no weather feed connected |
 | Competency and training register | Built | `recordCompetency()` |
-| E — BIM & Digital Twin | Built | `src/engines/bim.ts` |
+| E — BIM & Digital Twin | Built | `backend/src/engines/bim.ts` |
 | Drawing register with title-block structuring | Partial | `registerDrawing()` structures a title block from raw text; the OCR that produces that text is not implemented |
 | Revision supersession engine | Built | Automatic; marking up a superseded drawing is refused |
 | Markup → RFI / instruction conversion | Built | `addMarkup({ convertTo })` with auto-numbering |
@@ -118,7 +118,7 @@ not pretend to have done.
 | Live twin fed by drones, IoT, site capture | Partial | `updateTwinFromSite()` and `ingestSensorReading()` reconcile observed against expected element status; the observations are supplied as structured input, not derived from imagery |
 | Automated as-built generation | Built | `generateAsBuilt()` reconciling captures against the model |
 | ISO 19650 CDE | Partial | Revision control, status and supersession built; full CDE state model not |
-| F — Contracts, Change & Claims | Built | `src/engines/claims.ts` |
+| F — Contracts, Change & Claims | Built | `backend/src/engines/claims.ts` |
 | Contract generation and interpretation | Built | `createContract()`, `extractContractIntelligence()` |
 | Bid-to-contract conversion carrying qualifications | Built | `convertBidToContract()` |
 | Obligation register with time bars | Built | `OBLIGATION_REGISTERED` with `timeBarDays` |
@@ -128,7 +128,7 @@ not pretend to have done.
 | Claim probability / entitlement scoring | Built | `assessClaim()` on entitlement, causation, evidence, procedure |
 | Evidence pack auto-generation | Built | `buildEvidencePack()` |
 | Notices with time-bar checking | Built | `issueNotice()`; late notices are recorded, not hidden |
-| G — Handover & O&M Intelligence | Built | `src/engines/handover.ts` |
+| G — Handover & O&M Intelligence | Built | `backend/src/engines/handover.ts` |
 | Commissioning results and system acceptance | Built | Inconsistent PASS with out-of-tolerance readings is refused |
 | Handover pack with completeness scoring | Built | `compileHandoverPack()` |
 | Digital O&M manuals | Built | `publishOMManual()` |
@@ -141,7 +141,7 @@ not pretend to have done.
 
 | Requirement | Status | Where |
 |---|---|---|
-| Perception observes, reasoning decides | Built | `ROUTING_MATRIX` in `src/ai/orchestrator.ts` |
+| Perception observes, reasoning decides | Built | `ROUTING_MATRIX` in `backend/src/ai/orchestrator.ts` |
 | Provider abstraction, no vendor lock-in | Built | `AIProviderAdapter`; engines never import a vendor SDK |
 | Task routing rules per engine | Built | Routing matrix |
 | Cost tracking per provider | Built | ACU entries carry provider and engine |
@@ -157,7 +157,7 @@ not pretend to have done.
 |---|---|---|
 | Fixed markup over provider cost, all customer categories | Built | `ACU_MARKUP_MULTIPLIER`, tested |
 | Prepaid only, no negative balances | Built | `reserve()` throws before any provider call, tested |
-| Atomic reserve → execute → persist → debit | Built | `runAI()` in `src/engines/context.ts` |
+| Atomic reserve → execute → persist → debit | Built | `runAI()` in `backend/src/engines/context.ts` |
 | No debit without a Golden Thread write | Built | Settlement occurs only after commits succeed, tested |
 | Automatic halt when credits expire | Built | `aiHalted`, tested |
 | Per-engine cost attribution | Built | `attributionByModule()` |
@@ -166,7 +166,7 @@ not pretend to have done.
 | Alerts at 50 / 80 / 100 percent | Built | Once per threshold per month, tested |
 | Volume incentive bands | Built | `effectiveMultiplier()`, tested |
 | Free trial: non-AI features plus a fixed AI grant, no auto top-up | Built | `grantTrialCredit()` |
-| Subscription tiers with named identity seats | Built | `src/billing/subscription.ts`, tested |
+| Subscription tiers with named identity seats | Built | `backend/src/billing/subscription.ts`, tested |
 | One human = one identity, seats revocable and reusable | Built | `assignIdentity()` / `revokeIdentity()`, tested |
 | Subscription includes no AI entitlement | Built | Stated on every invoice |
 | Invoice separating subscription from AI usage | Built | `buildInvoice()`, tested |
@@ -177,7 +177,7 @@ not pretend to have done.
 | Requirement | Status | Where |
 |---|---|---|
 | Three account layers, strictly separated | Built | `AccountLayer`; platform operators are barred from delivery data |
-| Enterprise → Portfolio → Programme → Project → Package | Built | `src/domain/structure.ts`; every level creatable |
+| Enterprise → Portfolio → Programme → Project → Package | Built | `backend/src/domain/structure.ts`; every level creatable |
 | Roles: Owner, EPC, QS, PM, Planner, Safety, FM, Regulator, Supplier, and more | Built | `Role` union |
 | Permission codes R/C/U/A/I/X/G | Built | `PermissionCode` |
 | Permission matrix by role and capability area | Built | `PERMISSION_MATRIX`, exposed at `/v1/permissions/matrix` |
@@ -188,12 +188,12 @@ not pretend to have done.
 | Supplier confined to its own submissions | Built | ABAC party check; procurement commands verify identity |
 | Decision order: authenticate → RBAC → scopes → ABAC | Built | `evaluateAccess()` |
 | Fail-closed on missing attribute or evaluation error | Built | `evaluateAccess()`, covered in `tests/identity.test.ts` |
-| Entity reads carry their own capability area and sensitivity | Built | `src/identity/entityAccess.ts`; the generic entity endpoint evaluates it |
+| Entity reads carry their own capability area and sensitivity | Built | `backend/src/identity/entityAccess.ts`; the generic entity endpoint evaluates it |
 | The audit trail cannot be used to read around a capability boundary | Built | Event envelopes stay; the patch is withheld for entities the caller cannot read |
 | Tenant isolation | Built | Enforced in ABAC and again in the ledger |
 | Phase gating on writes | Built | `WRITE_PHASE_GATES` |
-| OAuth2-style scopes | Built | `src/identity/scopes.ts` |
-| Access TTL 15 min, refresh 7 days, rotation | Built | `src/identity/auth.ts` |
+| OAuth2-style scopes | Built | `backend/src/identity/scopes.ts` |
+| Access TTL 15 min, refresh 7 days, rotation | Built | `backend/src/identity/auth.ts` |
 | No grace window on expiry | Built | Rejected before routing |
 | MFA with exposure flag | Built | `shapeMfaResponse()` |
 | Full audit log of all actions | Built | The Golden Thread is the audit log |
@@ -235,7 +235,7 @@ not pretend to have done.
 
 | Requirement | Status | Where |
 |---|---|---|
-| Offline-first capture | Built | `src/field/sync.ts` |
+| Offline-first capture | Built | `backend/src/field/sync.ts` |
 | Local append-only writes | Built | Client-side contract; server accepts operation batches |
 | Device timestamps preserved | Built | `deviceTimestamp` on the event, tested |
 | Batch push / pull sync | Built | `push()` / `pull()` |
@@ -252,7 +252,7 @@ not pretend to have done.
 
 | Requirement | Status | Where |
 |---|---|---|
-| Single internet-facing ingress | Built | `src/api/gateway.ts` |
+| Single internet-facing ingress | Built | `backend/src/api/gateway.ts` |
 | Stateless gateway | Built | No sessions; tokens verified per request |
 | Path-based routing with explicit versioning | Built | `ROUTES`, listed at `/v1/routes` |
 | Trace and correlation id propagation | Built | `buildTrace()` |
@@ -276,20 +276,20 @@ not pretend to have done.
 
 | Requirement | Status | Where |
 |---|---|---|
-| Core Black, Carbon, Structural Grey, Signal Orange palette | Built | `web/app.css`, `web/landing.html` |
-| Status colours (success, warning, critical, info) | Built | `web/app.css` tone tokens |
+| Core Black, Carbon, Structural Grey, Signal Orange palette | Built | `frontend/app.css`, `frontend/landing.html` |
+| Status colours (success, warning, critical, info) | Built | `frontend/app.css` tone tokens |
 | Portfolio value formatter (zero as `$0.0M`) | Built | `formatContractValue()`, tested |
-| Enterprise → Portfolio → Project drill-down | Built | Topbar breadcrumb and `web/pages/enterprise.js` |
-| Single scroll container, sticky headers, no overlap | Built | `.table-scroll` in `web/app.css` |
+| Enterprise → Portfolio → Project drill-down | Built | Topbar breadcrumb and `frontend/pages/enterprise.js` |
+| Single scroll container, sticky headers, no overlap | Built | `.table-scroll` in `frontend/app.css` |
 | Region filters as ISO codes | Built | `continentCode` / `countryCode` on portfolios and projects |
 | AI insights never look broken | Built | The copilot states when the record is empty rather than failing |
-| Web application across the lifecycle | Built | Fifteen screens in `web/pages/`, each reading live endpoints |
+| Web application across the lifecycle | Built | Fifteen screens in `frontend/pages/`, each reading live endpoints |
 | Role-aware navigation that matches enforcement | Built | Nav entries declare a capability area and resolve it against the live matrix; refused screens show the reason |
 | Three account layers visible in the product | Built | Signing in as the Platform Operator produces a different application with no delivery data |
-| Denials distinguished from empty records | Built | `withheldRecords()` in `web/lib/api.js`, surfaced by the shell |
-| Command surfaces on every relevant screen | Built | `web/lib/command.js`; commands on field, cost, design, programme, change and handover |
-| Field input zones (labour, plant, weather, progress) | Built | Daily site record on `web/pages/field.js`, submitted as an evidenced progress measurement |
-| Canonical enum dropdowns shared across pickers | Built | `web/lib/enums.js`; every value matches the enum the API validates |
+| Denials distinguished from empty records | Built | `withheldRecords()` in `frontend/lib/api.js`, surfaced by the shell |
+| Command surfaces on every relevant screen | Built | `frontend/lib/command.js`; commands on field, cost, design, programme, change and handover |
+| Field input zones (labour, plant, weather, progress) | Built | Daily site record on `frontend/pages/field.js`, submitted as an evidenced progress measurement |
+| Canonical enum dropdowns shared across pickers | Built | `frontend/lib/enums.js`; every value matches the enum the API validates |
 | Dates via picker, stored UTC | Built | Date controls in the command layer; ISO conversion on submit |
 | Evidence attached at the point of capture | Partial | The file is hashed with SHA-256 in the browser and the hash is recorded; there is no object store for the file itself |
 | Project profile input with canonical enums at creation | Design only | Projects are created through the API; the guided creation form is not built |
@@ -327,7 +327,7 @@ pricing. The build still carries the earlier model.
 
 | Requirement | Status | Where |
 |---|---|---|
-| Subscription separated from AI consumption | Built | `src/billing/subscription.ts` and `src/billing/acu.ts` are independent |
+| Subscription separated from AI consumption | Built | `backend/src/billing/subscription.ts` and `backend/src/billing/acu.ts` are independent |
 | Trial granted automatically on tenant creation, no manual override | Built | `grantTrialCredit()` in `createTenant()`; no operator path adds trial credit |
 | Seat model with per-role prices (£25–£180) | Design only | Seats are counted and capped by tier; they carry no role price |
 | Packages: Core Project £950, Professional Delivery £2,200, Enterprise £6,500 | Design only | Tiers are SOLO/TEAM/BUSINESS/ENTERPRISE/SOVEREIGN at the earlier prices |

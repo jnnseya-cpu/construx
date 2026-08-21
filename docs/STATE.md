@@ -23,6 +23,7 @@ and claims of completion that did not hold.
 | Event types | 172, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
+| Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
 Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`).
 
@@ -32,6 +33,25 @@ Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`
 
 These are implemented, covered by tests, and exercised through the running
 application. Do not rebuild them.
+
+**Three deployables, one repository.** `backend/` is the service, `frontend/` is
+the browser application, `shared/` is the vocabulary both read. They were always
+separate — the frontend never imported a backend module and never could, because
+one is TypeScript run by Node and the other is ES modules run by a browser — but
+the layout said `src/` and `web/`, which reads as "the code" and "the website"
+rather than as two things that ship independently.
+
+The frontend is a **sibling** of the backend, not a subdirectory of it. That one
+process serves both from one origin is a deployment choice, held in a single
+constant in `backend/src/api/gateway.ts`; putting the frontend behind a CDN
+later is a deployment change, not a rewrite.
+
+Two tests were holding a path relative to the working directory rather than to
+themselves — the catalogue invariant scanned `'src'` and the static-asset suite
+resolved `'../web'`. Both passed only because `npm test` happened to run from
+the repository root, and both broke on the move. They are anchored to their own
+module now, so they answer the same way from any cwd, which is what a CI step
+with its own working directory needs.
 
 **Golden Thread.** Append-only hash-chained ledger. Canonical serialisation,
 SHA-256, constrained RFC 6902 patches ordered remove→add→replace, closed event
@@ -199,7 +219,7 @@ answer when the document carries a content hash: a browser's print pipeline
 re-flows the content, so what was hashed and what was printed are not the same
 artefact.
 
-`src/export/pdf.ts` writes the file directly — objects, content streams, and the
+`backend/src/export/pdf.ts` writes the file directly — objects, content streams, and the
 byte-offset cross-reference table that is the only part a reader is strict
 about. Text uses the standard 14 fonts, which every reader has and none of which
 need embedding; that is what makes it possible with no dependency, and it is
@@ -283,7 +303,7 @@ edit, so the list is asserted rather than trusted.
 `auth_failures_total`, `authz_denies_total`, `rate_limited_total`,
 `validation_reject_total`), a fixed-bucket latency histogram per route, and a
 security audit stream separate from the request log. Counters are held in
-`src/api/telemetry.ts` and are never derived from the bounded log buffer — the
+`backend/src/api/telemetry.ts` and are never derived from the bounded log buffer — the
 metrics that preceded them were, and so fell as traffic rose, which is the one
 direction a request counter must never move. Latency groups by route pattern,
 not path, so an id does not fragment a series. Every request record carries the
@@ -344,7 +364,7 @@ hundred times too small — an order of magnitude, not a rounding difference, an
 it would have reached a client before anybody noticed. For a platform aimed at
 governments, DFIs and global EPCs that is a defect rather than a limitation.
 
-`src/domain/locale.ts` is the single place the platform knows how to count
+`backend/src/domain/locale.ts` is the single place the platform knows how to count
 money. An unknown currency is refused rather than defaulted to two digits,
 because the silent default is exactly how the figure goes wrong. Formatting uses
 the runtime's own `Intl` data, so a French reader gets a comma decimal and a
@@ -718,7 +738,7 @@ programme. That is not a matter of hiding features — it is a matter of no
 threshold in the platform being an absolute money figure, because an absolute
 threshold is always wrong at one end.
 
-`src/lifecycle/scale.ts` is the single place the platform decides how big
+`backend/src/lifecycle/scale.ts` is the single place the platform decides how big
 something is: five project bands from under £25k to over £250m, six organisation
 bands from a sole trader under £250k to a Tier 1 over £500m, and the
 proportionality rules that follow. Everything else derives from it. The
@@ -1136,7 +1156,7 @@ Re-opening these is what caused churn before.
   validated against the tenant, because nothing else in that handler reads the
   project; it now requires the project to exist and to be the caller's, and
   answers "no such project" either way rather than distinguishing the two.
-- One server instance is enough. `PORT=8123 node src/main.ts`. Seed with
+- One server instance is enough. `PORT=8123 node backend/src/main.ts`. Seed with
   `POST /v1/console/identities`. Restarting reseeds and changes all ids.
 - The browser tools need `playwright-core`, which is deliberately **not** a
   project dependency — dev dependencies are TypeScript and `@types/node` only.

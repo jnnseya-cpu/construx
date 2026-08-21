@@ -38,7 +38,7 @@ p.on('console', m => { if (m.type()==='error' && !m.text().includes('favicon')) 
 
 await p.goto(`${BASE}/app`, { waitUntil: 'domcontentloaded' });
 await p.waitForSelector('.identity', { timeout: 40000 });
-if (SHOT) await p.screenshot({ path: `web/shots/${PREFIX}00-login.png` });
+if (SHOT) await p.screenshot({ path: `frontend/shots/${PREFIX}00-login.png` });
 await p.locator('.identity', { hasText: ROLE }).first().click();
 await p.waitForSelector('.sidebar', { timeout: 20000 });
 await p.waitForTimeout(2200);
@@ -79,7 +79,7 @@ for (const page of PAGES) {
   log(`${page.padEnd(12)} ${status.padEnd(7)} h1="${h1.trim().slice(0,26).padEnd(26)}" cards=${String(cards).padStart(2)} tables=${tables} empty=${empties}${err ? ` ERR="${err.trim().replace(/\s+/g,' ').slice(0,80)}"` : ''}`);
 
   if (SHOT && clicked) {
-    await p.screenshot({ path: `web/shots/${PREFIX}${String(index).padStart(2,'0')}-${page}.png` });
+    await p.screenshot({ path: `frontend/shots/${PREFIX}${String(index).padStart(2,'0')}-${page}.png` });
   }
   index += 1;
 }

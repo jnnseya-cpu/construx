@@ -138,28 +138,51 @@ genuinely re-tender, but it is recorded explicitly as a regression.
 
 ## Layout
 
+Three deployables, not three folders. `backend/` and `frontend/` share no code
+and no build; `shared/` is the only thing both read, and it holds vocabulary
+rather than logic.
+
 ```
-src/
-  core/          canonical hashing, constrained JSON Patch, ULID, validation, errors
-  goldenthread/  event catalogue, ledger, replay and verification
-  identity/      roles, permission matrix, RBAC/ABAC/scopes, tokens and MFA
-  billing/       ACU wallet, subscription tiers, invoicing
-  ai/            orchestrator, provider adapters, conversational copilot
-  engines/       the seven engines and the maths they own
-  domain/        governance structure, lifecycle phases, procurement
-  lifecycle/     phase definitions and gate evaluation
-  api/           gateway, middleware, routing table
-  cli/           demo
-web/
-  landing.html   marketing page
-  index.html     application shell
-  app.js         router, session, role-aware navigation
-  lib/           API client and the HTML/escaping helpers
-  pages/         one module per screen, each reading live endpoints
-docs/            architecture and requirement traceability
-tools/           browser walker used to verify every page renders
-tests/           unit and integration suites
+backend/                 the service — one Node process, no dependencies
+  src/
+    core/                canonical hashing, constrained JSON Patch, ULID, validation, errors
+    goldenthread/        event catalogue, ledger, journal, replay and verification
+    identity/            roles, permission matrix, RBAC/ABAC/scopes, tokens and MFA
+    billing/             ACU wallet, subscription tiers, invoicing
+    ai/                  orchestrator, provider adapters, conversational copilot
+    engines/             the seven engines and the maths they own
+    domain/              governance structure, lifecycle phases, procurement
+    lifecycle/           phase definitions and gate evaluation
+    export/              document model, HTML and the hand-written PDF writer
+    api/                 gateway, middleware, routing table
+    cli/                 demo
+  tests/                 unit and integration suites
+
+frontend/                the browser application — plain ES modules, no build
+  landing.html           marketing page
+  index.html             application shell
+  app.js                 router, session, role-aware navigation
+  lib/                   API client and the HTML/escaping helpers
+  pages/                 one module per screen, each reading live endpoints
+
+shared/                  read by both, owned by neither
+  vocabulary.js          the canonical enumerations
+
+deploy/                  Dockerfile, compose, environment template
+docs/                    state, architecture, traceability, runbook
+tools/                   browser walker used to verify every page renders
 ```
+
+**Why the frontend is a sibling and not a subdirectory.** They are separate
+deployables that one process happens to serve from one origin. Serving is a
+deployment choice — `backend/src/api/gateway.ts` resolves `../frontend` — and
+moving the frontend to a CDN later is a deployment change rather than a
+rewrite.
+
+**Why `shared/` is `.js` and not `.ts`.** The browser has to run it unmodified
+and the backend has to import it without a build. Plain ES modules are the only
+form both can read, which is the same constraint that produced settled
+decisions 2 and 3.
 
 The application is plain ES modules with no build step and no framework: the
 same constraint as the backend, for the same reason — nothing to compile means

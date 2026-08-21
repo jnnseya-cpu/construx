@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
  * These are committed rather than generated at boot, because a service worker
  * precaches them and a build step is a settled no for this repository. They are
  * generated rather than drawn, so the mark on the home screen cannot drift away
- * from `web/favicon.svg` — regenerate with `node tools/icons.mjs` after any
+ * from `frontend/favicon.svg` — regenerate with `node tools/icons.mjs` after any
  * change to the brand.
  *
  * The PNG encoder is here because the alternative was a dependency. A PNG is a
@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'web', 'icons');
 
 // --- Brand ------------------------------------------------------------------
-// Matches web/favicon.svg and the --core-black / --orange tokens in app.css.
+// Matches frontend/favicon.svg and the --core-black / --orange tokens in app.css.
 
 const BLACK = [12, 12, 14];
 const WHITE = [255, 255, 255];

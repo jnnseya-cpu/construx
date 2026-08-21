@@ -48,8 +48,8 @@ reasons.**
 ## 4. Never break what works
 
 Before changing shared code, establish what depends on it. Be most careful
-with: `src/goldenthread/`, `src/identity/`, `src/engines/context.ts`,
-`src/api/middleware.ts`, `web/app.js`, `web/lib/ui.js`.
+with: `backend/src/goldenthread/`, `backend/src/identity/`, `backend/src/engines/context.ts`,
+`backend/src/api/middleware.ts`, `frontend/app.js`, `frontend/lib/ui.js`.
 
 Prefer small controlled changes. Inspect → small change → verify → next.
 
@@ -152,16 +152,16 @@ mechanism rather than inventing a parallel one.
 
 | Rule | The mechanism already in place |
 |---|---|
-| Single source of truth | `docs/STATE.md` for project state; `src/goldenthread/eventTypes.ts` for the closed event catalogue; `src/identity/roles.ts` for the permission matrix; `src/identity/entityAccess.ts` for entity classification |
-| No hardcoded business values | `src/billing/seats.ts` (seats, packages, bundles), `src/config.ts` (every env flag), `src/billing/acu.ts` (markup, unit value) |
-| Business logic is server-side | The browser holds no rule the API does not publish. `web/app.js` fetches the permission matrix and phase gates rather than duplicating them |
-| Tenant isolation | Enforced in `src/identity/` and applied on every read, including the generic entity route and the audit feed |
+| Single source of truth | `docs/STATE.md` for project state; `backend/src/goldenthread/eventTypes.ts` for the closed event catalogue; `backend/src/identity/roles.ts` for the permission matrix; `backend/src/identity/entityAccess.ts` for entity classification |
+| No hardcoded business values | `backend/src/billing/seats.ts` (seats, packages, bundles), `backend/src/config.ts` (every env flag), `backend/src/billing/acu.ts` (markup, unit value) |
+| Business logic is server-side | The browser holds no rule the API does not publish. `frontend/app.js` fetches the permission matrix and phase gates rather than duplicating them |
+| Tenant isolation | Enforced in `backend/src/identity/` and applied on every read, including the generic entity route and the audit feed |
 | Financial idempotency | Domain-level: the payment cycle refuses over-certification, double certification and overpayment (`tests/payments.test.ts`). Field sync uses operation-id idempotency |
-| AI fails safely | `src/ai/orchestrator.ts` routes to a healthy provider, falls back, and refuses to call a provider on an empty wallet. No charge without a ledger write |
-| Observability | `buildTrace` / `logRequest` in `src/api/middleware.ts`; every response carries `x-correlation-id`; errors are RFC 7807 problem+json |
+| AI fails safely | `backend/src/ai/orchestrator.ts` routes to a healthy provider, falls back, and refuses to call a provider on an empty wallet. No charge without a ledger write |
+| Observability | `buildTrace` / `logRequest` in `backend/src/api/middleware.ts`; every response carries `x-correlation-id`; errors are RFC 7807 problem+json |
 | Secrets | Server-side only, via `.env` (gitignored). `.env.example` carries names and safe defaults, never values |
-| Error handling in the UI | `web/lib/command.js` surfaces per-field problem+json errors and never closes optimistically. A denial is shown as a denial, never as zero |
-| Design system | `web/lib/ui.js` and `web/app.css`. Reuse `card`, `badge`, `table`, `notice`, `metric`, `field`. Do not introduce new colours or components |
+| Error handling in the UI | `frontend/lib/command.js` surfaces per-field problem+json errors and never closes optimistically. A denial is shown as a denial, never as zero |
+| Design system | `frontend/lib/ui.js` and `frontend/app.css`. Reuse `card`, `badge`, `table`, `notice`, `metric`, `field`. Do not introduce new colours or components |
 | Dependencies | Zero runtime dependencies is a settled decision. Dev dependencies are `typescript` and `@types/node` only |
 | Type safety | `erasableSyntaxOnly` + `verbatimModuleSyntax`, `.ts` import extensions. No `@ts-ignore`; fix the type |
 | Authorship | Governance decisions are human by construction. `aiAllowed: false` on decision events; no agent mandate exceeds `PROPOSE` |

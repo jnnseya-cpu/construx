@@ -816,7 +816,7 @@ S(p([t('Not ARR. ', { bold: true }), t('Governed events committed per customer p
 // ── Sources ────────────────────────────────────────────────────────────────
 S(h1('Sources and honesty notes'));
 S(h3('Taken from the implementation'));
-S(p('Pricing, packages, seat rates, ACU bundles and the free regulator seat are read directly from the CONSTRUX codebase (src/billing/seats.ts), not proposed. Product capability claims in section 01 are taken from the verified build state in docs/STATE.md.'));
+S(p('Pricing, packages, seat rates, ACU bundles and the free regulator seat are read directly from the CONSTRUX codebase (backend/src/billing/seats.ts), not proposed. Product capability claims in section 01 are taken from the verified build state in docs/STATE.md.'));
 S(h3('Externally sourced'));
 S(bullet('Higher-risk building scale (~12,500 in England), Gateway duties and golden thread requirements: Building Safety Act 2022 and published UK guidance.'));
 S(bullet('Software procurement requirements quoted in section 01 — attribution, timestamping, immutability, ISO 27001, Cyber Essentials, UK residency, tenant isolation, annual penetration testing — from published industry guidance on what the Act requires of software.'));

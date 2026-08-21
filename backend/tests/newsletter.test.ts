@@ -26,7 +26,7 @@ import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
 /** Page ids taken from the application itself, not from a list kept in step. */
-const PAGE_IDS = readdirSync(new URL('../web/pages/', import.meta.url))
+const PAGE_IDS = readdirSync(new URL('../../frontend/pages/', import.meta.url))
   .filter((file) => file.endsWith('.js') && file !== 'index.js')
   .map((file) => file.replace('.js', ''));
 

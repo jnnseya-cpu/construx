@@ -4,9 +4,9 @@ dist/
 .env
 .env.*
 !.env.example
-data/*.jsonl
+data/
 .DS_Store
 
 # Captures are regenerated on demand by tools/walk.mjs
-web/landing-full.*
-web/shots/
+frontend/landing-full.*
+frontend/shots/

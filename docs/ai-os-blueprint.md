@@ -90,7 +90,7 @@ is the difference between a feature and a business. `[BUILT]`
 | Developer / API consumer | scoped token | Whatever scopes are granted | Anything outside scope |
 | Merchant (BitriPay) | `MERCHANT` `[NEW]` | Its own payment configuration, transactions, settlements | Project delivery data |
 
-All roles and the enforceable matrix: `src/identity/roles.ts` `[BUILT]`
+All roles and the enforceable matrix: `backend/src/identity/roles.ts` `[BUILT]`
 
 ---
 
@@ -99,7 +99,7 @@ All roles and the enforceable matrix: `src/identity/roles.ts` `[BUILT]`
 Each user type receives a command centre: a role-scoped surface combining live
 state, the agents available to that role, and the actions the permission matrix
 permits. The context-aware tool router already returns exactly the tools a role
-may use at the current lifecycle phase (`src/ai/conversation.ts`) `[BUILT]`.
+may use at the current lifecycle phase (`backend/src/ai/conversation.ts`) `[BUILT]`.
 
 | Command centre | Live panels | Agents available | Autonomy ceiling |
 |---|---|---|---|
@@ -115,7 +115,7 @@ may use at the current lifecycle phase (`src/ai/conversation.ts`) `[BUILT]`.
 | **Platform operator** | Tenant health, ACU consumption, provider status, incidents | System Health, Infrastructure, Governance, Security | Auto-remediate infrastructure; never touch tenant data |
 | **Merchant** `[NEW]` | Payment volume, settlement, disputes, API keys | Payment, Fraud, Support | Auto-retry settlement; disputes escalate |
 
-### Command centre contract `[NEW — extends `src/ai/conversation.ts`]`
+### Command centre contract `[NEW — extends `backend/src/ai/conversation.ts`]`
 
 ```ts
 type CommandCentre = {
@@ -140,7 +140,7 @@ escalation path.
 
 ## 5. Agent catalogue
 
-Seven domain engines exist today (`src/engines/`) `[BUILT]`. The agent layer
+Seven domain engines exist today (`backend/src/engines/`) `[BUILT]`. The agent layer
 wraps them with memory, triggers and escalation.
 
 ### 5.1 Agent contract `[NEW]`
@@ -242,19 +242,19 @@ tombstone event. The chain stays intact, the personal data does not. `[NEW]`
 
 | Module | Status | Location |
 |---|---|---|
-| Golden Thread ledger, replay, attestation | `[BUILT]` | `src/goldenthread/` |
-| Identity, RBAC/ABAC/scopes, MFA, token rotation | `[BUILT]` | `src/identity/` |
-| Enterprise → portfolio → programme → project → package | `[BUILT]` | `src/domain/structure.ts` |
-| Lifecycle phase gates | `[BUILT]` | `src/lifecycle/phases.ts` |
-| Seven engines | `[BUILT]` | `src/engines/` |
-| Procurement and tender workflow | `[BUILT]` | `src/domain/procurement.ts` |
-| ACU wallet, caps, alerts, attribution | `[BUILT]` | `src/billing/acu.ts` |
-| Subscription and invoicing | `[BUILT]` | `src/billing/` |
-| Offline field sync | `[BUILT]` | `src/field/sync.ts` |
-| Branded, hashed exports | `[BUILT]` | `src/export/exporter.ts` |
-| Gateway, rate limiting, validation, problem+json | `[BUILT]` | `src/api/` |
-| Conversational copilot | `[BUILT]` | `src/ai/conversation.ts` |
-| Command centre UI | `[BUILT]` (fifteen screens) / `[EXTEND]` (per role) | `web/pages/` |
+| Golden Thread ledger, replay, attestation | `[BUILT]` | `backend/src/goldenthread/` |
+| Identity, RBAC/ABAC/scopes, MFA, token rotation | `[BUILT]` | `backend/src/identity/` |
+| Enterprise → portfolio → programme → project → package | `[BUILT]` | `backend/src/domain/structure.ts` |
+| Lifecycle phase gates | `[BUILT]` | `backend/src/lifecycle/phases.ts` |
+| Seven engines | `[BUILT]` | `backend/src/engines/` |
+| Procurement and tender workflow | `[BUILT]` | `backend/src/domain/procurement.ts` |
+| ACU wallet, caps, alerts, attribution | `[BUILT]` | `backend/src/billing/acu.ts` |
+| Subscription and invoicing | `[BUILT]` | `backend/src/billing/` |
+| Offline field sync | `[BUILT]` | `backend/src/field/sync.ts` |
+| Branded, hashed exports | `[BUILT]` | `backend/src/export/exporter.ts` |
+| Gateway, rate limiting, validation, problem+json | `[BUILT]` | `backend/src/api/` |
+| Conversational copilot | `[BUILT]` | `backend/src/ai/conversation.ts` |
+| Command centre UI | `[BUILT]` (fifteen screens) / `[EXTEND]` (per role) | `frontend/pages/` |
 | Agent runtime and memory | `[NEW]` | §5.1, §9 |
 | Vector store and knowledge graph | `[NEW]` | §8 |
 | Notification and webhook engine | `[NEW]` | §11 |
@@ -341,7 +341,7 @@ POST   /v1/pay/webhooks/bitripay              Inbound provider callback
 6. **Every payment event enters the Golden Thread**, so the payment record and
    the certification it settles share one chain.
 
-### 7.6 New event types `[NEW — extends `src/goldenthread/eventTypes.ts`]`
+### 7.6 New event types `[NEW — extends `backend/src/goldenthread/eventTypes.ts`]`
 
 `MERCHANT_REGISTERED`, `MERCHANT_KYB_PASSED`, `PAYMENT_INTENT_CREATED`,
 `PAYMENT_CAPTURED`, `PAYMENT_FAILED`, `REFUND_ISSUED`, `SETTLEMENT_BATCH_CREATED`,

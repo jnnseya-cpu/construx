@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { IOS_LAUNCH, launchImageName } from '../tools/icons.mjs';
+import { IOS_LAUNCH, launchImageName } from '../../tools/icons.mjs';
 
 /**
  * The installed application.
@@ -17,8 +17,8 @@ import { IOS_LAUNCH, launchImageName } from '../tools/icons.mjs';
  * sitting outside the platform's access control.
  */
 
-const read = (path: string) => readFileSync(new URL(`../web/${path}`, import.meta.url), 'utf8');
-const bytes = (path: string) => readFileSync(new URL(`../web/${path}`, import.meta.url));
+const read = (path: string) => readFileSync(new URL(`../../frontend/${path}`, import.meta.url), 'utf8');
+const bytes = (path: string) => readFileSync(new URL(`../../frontend/${path}`, import.meta.url));
 
 const manifest = JSON.parse(read('manifest.webmanifest')) as {
   name: string;

@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { EVENT_TYPES } from '../src/goldenthread/eventTypes.ts';
+
+/** Anchored to this file, not to the working directory: the suite must give the
+ * same answer run from the repository root, from `backend/`, or from a CI step
+ * that sets its own cwd. */
+const SRC_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
 /**
  * The closed catalogue, checked against what the platform can actually do.
@@ -71,7 +77,7 @@ async function sourceFiles(dir: string): Promise<string[]> {
 
 describe('the closed event catalogue', () => {
   it('has a command behind every event, or a stated reason it has none', async () => {
-    const files = await sourceFiles('src');
+    const files = await sourceFiles(SRC_ROOT);
     const sources = await Promise.all(files.map((file) => readFile(file, 'utf8')));
     const corpus = sources.join('\n');
 
@@ -94,7 +100,7 @@ describe('the closed event catalogue', () => {
   it('does not carry an excuse for an event that is in fact emitted', async () => {
     // The other direction. A stale entry here understates the platform, and the
     // list stops being a reliable statement of what is missing.
-    const files = await sourceFiles('src');
+    const files = await sourceFiles(SRC_ROOT);
     const sources = await Promise.all(files.map((file) => readFile(file, 'utf8')));
     const corpus = sources.join('\n');
 

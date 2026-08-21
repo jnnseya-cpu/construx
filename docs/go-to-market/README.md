@@ -10,7 +10,7 @@ generated from.
 ## Why it lives in the repository
 
 The plan quotes the platform's own pricing, packaging and capability claims.
-Those come from `src/billing/seats.ts` and `docs/STATE.md`, and they change. A
+Those come from `backend/src/billing/seats.ts` and `docs/STATE.md`, and they change. A
 plan kept somewhere else drifts away from the product silently; kept here, a
 pricing change and the document that quotes it are one commit.
 

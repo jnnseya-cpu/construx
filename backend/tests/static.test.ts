@@ -10,7 +10,7 @@ import { serveStatic } from '../src/api/static.ts';
  * and a file server that can be talked out of its root is a disclosure bug.
  */
 
-const WEB_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'web');
+const WEB_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'frontend');
 
 /** A response object that records what was written without needing a socket. */
 function capture(): ServerResponse & { statusCode: number; headers: Record<string, unknown>; body: Buffer } {
