@@ -15,12 +15,12 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 755 passing, 0 failing, across 35 files |
+| Tests | 770 passing, 0 failing, across 36 files |
 | Typecheck | clean |
 | Backend | 79 TypeScript files, 34,724 lines |
 | Application | 25 ES modules, 7,070 lines (plus a service worker) |
-| API routes | 207 |
-| Event types | 171, closed catalogue |
+| API routes | 208 |
+| Event types | 172, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
 
@@ -149,6 +149,33 @@ Site walk observations are deterministic and free, deliberately separate from
 safety observations, and refuse an action with no owner and no date. Work
 packages can be typed in rather than only generated, and carry their origin: a
 generated package is a proposal, a typed one is a decision.
+
+**Governance changes are recorded, and billing is authorised.** Two holes of
+the kind that only shows up when somebody looks.
+
+A person's roles were whatever they were created with, forever — the only way to
+change them was to suspend the identity and issue another, losing the link
+between the person and everything they had already authored. `assignRoles`
+changes them under three separation-of-duties rules: nobody changes their own
+(self-elevation is the first thing an insider tries), a delivery identity never
+receives an operator role, and a reason is required because an auditor asks
+about a role change a year later when nobody remembers. Seats are re-priced on
+the change, so a move the tier cannot carry is refused and the identity keeps
+what it had.
+
+The billing routes enforced **nothing**. The matrix had the answer
+(`BILLING_ACU`, update reserved to the enterprise administrator and the asset
+owner), the console asked it before drawing the buttons, and the API never did:
+any authenticated identity in a tenant could top the wallet up, move the AI
+spend caps or issue an invoice. All five routes now authorise, and the console
+gate on "issue invoice" was corrected upward to match the server rather than the
+other way round.
+
+Moving a spend cap is recorded under `ACU_CAPS_SET`, against the person who
+moved it, with the previous ceiling and a required reason. A cap is a governance
+decision rather than an accounting fact, so it belongs on the thread; spend
+itself stays in the ACU ledger alone, because two answers to "what was spent"
+is worse than one.
 
 **Access control.** Three account layers, RBAC, OAuth2-style scopes, ABAC, in a
 fixed fail-closed order. Tenant isolation. Lifecycle phase gating on writes.

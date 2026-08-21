@@ -98,6 +98,7 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('IDENTITY_SEAT_REVOKED', 'Subscription', 'UPDATE', 'GOVERNANCE'),
   def('SUBSCRIPTION_ACTIVATED', 'Subscription', 'CREATE', 'GOVERNANCE'),
   def('POLICY_UPDATED', 'PermissionPolicy', 'UPDATE', 'GOVERNANCE'),
+  def('ACU_CAPS_SET', 'ACUWallet', 'UPDATE', 'GOVERNANCE'),
 
   // --- Portfolio / project structure ---------------------------------------
   def('PORTFOLIO_CREATED', 'Portfolio', 'CREATE', 'PROJECT_CONTROL'),

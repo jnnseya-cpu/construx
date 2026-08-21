@@ -57,8 +57,8 @@ const NOT_EMITTED: Record<string, string> = {
     'Replay recomputes from the head of the chain rather than from a snapshot. Snapshotting is a performance measure with no measured bottleneck behind it.',
 
   // --- Not yet built --------------------------------------------------------
-  USER_ROLE_ASSIGNED: 'Role assignment is an identity-service operation and does not currently reach the project ledger.',
-  POLICY_UPDATED: 'The permission matrix is code, not data, so there is nothing to record a change to.',
+  POLICY_UPDATED:
+    'The permission matrix is code, not data, so there is no PermissionPolicy record to change. The settings that genuinely are data — the AI spend caps — are recorded under ACU_CAPS_SET, which says what it is rather than borrowing this.',
   MASTER_PRICING_CONSOLIDATED: 'Tender stage 6, the consolidated view across pricing routes, is not built.',
 };
 

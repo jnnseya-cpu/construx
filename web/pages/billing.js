@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { command } from '../lib/command.js';
 import { badge, exact, html, humanise, money, pct, raw, render, table, toast, track } from '../lib/ui.js';
 import { can, refreshContext, state } from '../app.js';
 
@@ -35,7 +36,8 @@ export async function billing(root) {
         </div>
         <div class="actions">
           ${can('BILLING_ACU', 'U') ? html`<button class="btn ghost" id="topup">Top up</button>` : ''}
-          ${can('BILLING_ACU', 'R') ? html`<button class="btn quiet" id="invoice">Issue invoice</button>` : ''}
+          ${can('BILLING_ACU', 'U') ? html`<button class="btn quiet" id="invoice">Issue invoice</button>` : ''}
+          ${can('BILLING_ACU', 'U') ? html`<button class="btn quiet" id="caps">Set spend caps</button>` : ''}
         </div>
       </div>
 
@@ -195,6 +197,25 @@ export async function billing(root) {
     } catch (error) {
       toast('Top-up failed', error.message, 'err');
     }
+  });
+
+  document.getElementById('caps')?.addEventListener('click', async () => {
+    // A cap is a governance decision, so the reason is part of the command
+    // rather than an afterthought: it is what an auditor asks about a year
+    // later, when nobody remembers why the ceiling moved.
+    const result = await command({
+      title: 'Set AI spend caps',
+      intent:
+        'A hard ceiling on AI spend, enforced before any provider is contacted. Recorded against you, with the reason, because a budget ceiling that moves with no record is not a control.',
+      path: '/v1/billing/caps',
+      submitLabel: 'Set caps',
+      fields: [
+        { name: 'monthlyMinor', label: 'Monthly ceiling', type: 'number', money: true,
+          hint: 'Across the whole tenancy. Reached, AI execution halts rather than overspending.' },
+        { name: 'reason', label: 'Why it is changing', type: 'textarea' },
+      ],
+    });
+    if (result) await billing(root);
   });
 
   document.getElementById('invoice')?.addEventListener('click', async () => {

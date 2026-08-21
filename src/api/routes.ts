@@ -3,6 +3,7 @@ import type { Engine } from '../ai/orchestrator.ts';
 import type { ProviderCapability } from '../ai/providers/types.ts';
 import * as agents from '../agents/runtime.ts';
 import { fleetManifest } from '../agents/runtime.ts';
+import type { ACUCaps } from '../billing/acu.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
 import { seatEconomics, TIERS } from '../billing/subscription.ts';
 import { config } from '../config.ts';
@@ -45,9 +46,9 @@ import {
 } from '../messaging/newsletter.ts';
 import { unsubscribePage } from '../messaging/render.ts';
 import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
-import { createMfaChallenge, refreshTokens, shapeMfaResponse, verifyMfaChallenge } from '../identity/auth.ts';
+import { createMfaChallenge, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
-import { PERMISSION_MATRIX } from '../identity/roles.ts';
+import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode } from '../identity/roles.ts';
 import { authorise, AUTHZ_OPTIONS, currentPhase } from '../engines/context.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import type { Platform } from '../platform.ts';
@@ -131,6 +132,25 @@ function publishableControlItem(item: lifecycleControl.ControlItem) {
     evidence: item.evidence ? { refType: item.evidence.refType, minimum: item.evidence.minimum, counts: item.evidence.counts } : undefined,
     notTrackedReason: item.notTrackedReason,
   };
+}
+
+/**
+ * Authorise a tenant-level action that is not about a project.
+ *
+ * Billing is the case this exists for. Those routes enforced nothing at all:
+ * any authenticated identity in a tenant could top the wallet up, move the AI
+ * spend caps or issue an invoice, and the console was the only thing stopping
+ * them — which is to say nothing was. The permission matrix already had the
+ * answer (`BILLING_ACU`, update reserved to the enterprise administrator and
+ * the asset owner); it simply was not being asked.
+ */
+function authoriseTenant(ctx: RequestContext, area: CapabilityArea, code: PermissionCode): AuthContext {
+  const actor = auth(ctx);
+  const decision = evaluateAccess(actor, area, code, { tenantId: actor.tenantId }, AUTHZ_OPTIONS);
+  if (decision.decision !== 'ALLOW') {
+    throw new ForbiddenError(decision.reason ?? 'Not permitted', 'ACCESS_DENIED');
+  }
+  return actor;
 }
 
 function tenantContext(platform: Platform, ctx: RequestContext) {
@@ -886,6 +906,30 @@ export const ROUTES: Route[] = [
         throw new ForbiddenError('Only an enterprise admin may create users', 'ENTERPRISE_ADMIN_REQUIRED');
       }
       return platform.createUser({ ...body<{ name: string; email: string; roles: Parameters<typeof platform.createUser>[0]['roles']; partyId?: string }>(ctx), tenantId: actor.tenantId });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/users/:userId/roles',
+    description: 'Change what an identity is allowed to do, recorded against whoever changed it',
+    schema: {
+      type: 'object',
+      required: ['roles', 'reason'],
+      properties: {
+        roles: { type: 'array', minItems: 1, items: { type: 'string' } },
+        reason: { type: 'string', minLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('ENTERPRISE_ADMIN') && !actor.roles.includes('OWNER')) {
+        throw new ForbiddenError('Only an enterprise admin may change roles', 'ENTERPRISE_ADMIN_REQUIRED');
+      }
+      return platform.assignRoles(actor, {
+        ...body<{ roles: Parameters<typeof platform.assignRoles>[1]['roles']; reason: string }>(ctx),
+        userId: ctx.params.userId as string,
+      });
     },
   },
   {
@@ -2473,14 +2517,16 @@ export const ROUTES: Route[] = [
     method: 'GET',
     pattern: '/v1/billing/wallet',
     description: 'ACU wallet position, caps and alerts',
-    handler: (platform, ctx) => platform.wallet(auth(ctx).tenantId).snapshot(),
+    handler: (platform, ctx) => platform.wallet(authoriseTenant(ctx, 'BILLING_ACU', 'R').tenantId).snapshot(),
   },
   {
     method: 'GET',
     pattern: '/v1/billing/attribution',
     description: 'AI cost attribution by engine',
     handler: (platform, ctx) => ({
-      attribution: platform.wallet(auth(ctx).tenantId).attributionByModule(ctx.query.get('month') ?? undefined),
+      attribution: platform
+        .wallet(authoriseTenant(ctx, 'BILLING_ACU', 'R').tenantId)
+        .attributionByModule(ctx.query.get('month') ?? undefined),
     }),
   },
   {
@@ -2494,17 +2540,30 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => {
-      platform.topUp(auth(ctx).tenantId, body<{ amountMinor: number }>(ctx).amountMinor);
-      return platform.wallet(auth(ctx).tenantId).snapshot();
+      const actor = authoriseTenant(ctx, 'BILLING_ACU', 'U');
+      platform.topUp(actor.tenantId, body<{ amountMinor: number }>(ctx).amountMinor);
+      return platform.wallet(actor.tenantId).snapshot();
     },
   },
   {
     method: 'POST',
     pattern: '/v1/billing/caps',
-    description: 'Set monthly, per-project and per-module AI spend caps',
+    description: 'Set monthly, per-project and per-module AI spend caps, recorded against whoever moved them',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: {
+        monthlyMinor: { type: 'integer', minimum: 0 },
+        perProjectMinor: { type: 'object' },
+        perModuleMinor: { type: 'object' },
+        reason: { type: 'string', minLength: 10 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => {
-      platform.wallet(auth(ctx).tenantId).setCaps(body(ctx));
-      return platform.wallet(auth(ctx).tenantId).snapshot();
+      const actor = authoriseTenant(ctx, 'BILLING_ACU', 'U');
+      const { reason, ...caps } = body<{ reason: string } & ACUCaps>(ctx);
+      return platform.setAcuCaps(actor, caps, reason);
     },
   },
   {
@@ -2517,7 +2576,8 @@ export const ROUTES: Route[] = [
       properties: { period: { type: 'string', pattern: '^\\d{4}-\\d{2}$' } },
       additionalProperties: false,
     },
-    handler: (platform, ctx) => platform.issueInvoice(auth(ctx).tenantId, body<{ period: string }>(ctx).period),
+    handler: (platform, ctx) =>
+      platform.issueInvoice(authoriseTenant(ctx, 'BILLING_ACU', 'U').tenantId, body<{ period: string }>(ctx).period),
   },
   {
     method: 'GET',

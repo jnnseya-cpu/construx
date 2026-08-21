@@ -1,12 +1,12 @@
 import { AIOrchestrator } from './ai/orchestrator.ts';
 import { ExportService } from './export/exporter.ts';
 import { SyncEngine } from './field/sync.ts';
-import { ACUWallet } from './billing/acu.ts';
+import { ACUWallet, type ACUCaps } from './billing/acu.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
 import { assignIdentity, packageForTier, revokeIdentity, TIERS, type Subscription, type SubscriptionTier } from './billing/subscription.ts';
 import { PACKAGES, UNCHARGED_ROLES, type PackageTier } from './billing/seats.ts';
 import { config } from './config.ts';
-import { DomainError, NotFoundError } from './core/errors.ts';
+import { DomainError, ForbiddenError, NotFoundError } from './core/errors.ts';
 import { ulid } from './core/ids.ts';
 import type { EngineContext } from './engines/context.ts';
 import { GoldenThreadLedger } from './goldenthread/ledger.ts';
@@ -341,6 +341,92 @@ export class Platform {
     return user;
   }
 
+  /**
+   * Change what somebody is allowed to do.
+   *
+   * People move. A quantity surveyor takes on commercial management, a safety
+   * lead leaves and somebody covers, a supervisor is promoted. Until now the
+   * roles a person was created with were the roles they had forever, which is
+   * not a security model so much as an absence of one: the only way to change
+   * them was to suspend the identity and issue a new one, losing the link
+   * between the person and everything they had already authored.
+   *
+   * Three rules, all of them separation of duties rather than convenience:
+   *
+   * **Nobody changes their own roles.** Self-elevation is the first thing an
+   * insider tries and the easiest to prevent.
+   *
+   * **A tenant identity never receives an operator role.** The account layers
+   * are separate by construction, and `PLATFORM_ADMIN` on a delivery identity
+   * would collapse that in one call.
+   *
+   * **A reason is required**, because a role change is the kind of thing an
+   * auditor asks about a year later and nobody remembers.
+   */
+  assignRoles(
+    actor: AuthContext,
+    input: { userId: string; roles: Role[]; reason: string },
+  ): { userId: string; previousRoles: Role[]; roles: Role[] } {
+    const user = this.#users.get(input.userId);
+    if (!user) throw new NotFoundError(`No user ${input.userId}`);
+    if (user.tenantId !== actor.tenantId) throw new NotFoundError(`No user ${input.userId}`);
+
+    if (actor.actorId === input.userId) {
+      throw new DomainError(
+        'SELF_ROLE_CHANGE',
+        'An identity cannot change its own roles. Somebody else with the permission has to do it.',
+        403,
+      );
+    }
+    if (input.roles.length === 0) {
+      throw new DomainError('ROLES_REQUIRED', 'An identity with no role can do nothing; revoke the seat instead');
+    }
+    if (input.roles.includes('PLATFORM_ADMIN')) {
+      throw new ForbiddenError(
+        'A delivery identity cannot be given an operator role — the account layers are separate by construction',
+        'ACCOUNT_LAYER_SEPARATION',
+      );
+    }
+    if (input.reason.trim().length < 10) {
+      throw new DomainError('ROLE_CHANGE_UNEXPLAINED', 'Say why the roles are changing');
+    }
+
+    const previousRoles = [...user.roles];
+
+    // Seats are priced by role, so a change is a revoke and a re-assign rather
+    // than an edit. If the new roles do not fit the tier this throws and the
+    // identity keeps the roles it had.
+    const subscription = this.subscription(actor.tenantId);
+    const reseated = assignIdentity(revokeIdentity(subscription, input.userId), input.userId, input.roles);
+    this.#subscriptions.set(actor.tenantId, reseated);
+    user.roles = input.roles;
+
+    this.ledger.commit({
+      tenantId: actor.tenantId,
+      projectId: `${actor.tenantId}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'USER_ROLE_ASSIGNED',
+      entity: { refType: 'User', refId: input.userId },
+      nextState: {
+        id: input.userId,
+        tenantId: user.tenantId,
+        name: user.name,
+        email: user.email,
+        roles: input.roles,
+        previousRoles,
+        partyId: user.partyId,
+        status: user.status,
+        reason: input.reason,
+        changedBy: actor.actorId,
+        changedAt: new Date().toISOString(),
+      },
+    });
+
+    return { userId: input.userId, previousRoles, roles: input.roles };
+  }
+
   revokeUserSeat(tenantId: string, userId: string): void {
     const subscription = this.subscription(tenantId);
     const updated = revokeIdentity(subscription, userId);
@@ -441,6 +527,45 @@ export class Platform {
         lastTopUpAt: new Date().toISOString(),
       },
     });
+  }
+
+  /**
+   * Move the AI spend ceilings, and record who moved them.
+   *
+   * A cap is a governance decision, not an accounting fact. The ACU ledger
+   * stays the single source of truth for what was *spent* — writing spend into
+   * the project ledger as well would give the platform two answers to the same
+   * question — but who raised a budget ceiling, when, and why is exactly what
+   * the Golden Thread is for, and it was previously changeable with no record
+   * of any kind.
+   */
+  setAcuCaps(actor: AuthContext, caps: ACUCaps, reason: string): ReturnType<ACUWallet['snapshot']> {
+    const wallet = this.wallet(actor.tenantId);
+    const previous = wallet.snapshot().caps;
+    wallet.setCaps(caps);
+    const snapshot = wallet.snapshot();
+
+    this.ledger.commit({
+      tenantId: actor.tenantId,
+      projectId: `${actor.tenantId}-governance`,
+      // A person, not the system. That is the whole point of recording it.
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'ACU_CAPS_SET',
+      entity: { refType: 'ACUWallet', refId: actor.tenantId },
+      nextState: {
+        id: actor.tenantId,
+        tenantId: actor.tenantId,
+        balanceMinor: snapshot.balanceMinor,
+        caps: snapshot.caps,
+        previousCaps: previous,
+        reason,
+        setAt: new Date().toISOString(),
+      },
+    });
+
+    return snapshot;
   }
 
   issueInvoice(tenantId: string, period: string): Invoice {
