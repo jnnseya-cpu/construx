@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 947 passing, 0 failing, across 45 files |
+| Tests | 958 passing, 0 failing, across 45 files |
 | Typecheck | clean |
 | Backend | 81 TypeScript files, 35,927 lines |
 | Application | 25 ES modules, 7,199 lines (plus a service worker) |
@@ -48,7 +48,7 @@ application. Do not rebuild them.
    rather than assumed, because a currency with a different exponent would
    otherwise silently change what an ACU is worth.
 3. **Provider cost is charged at 4×.** Revenue 4, cost 1.
-4. **30% of every subscription payment is credited as AI allowance.** Credited
+4. **20% of every subscription payment is credited as AI allowance.** Credited
    at activation and again when each period is invoiced, once per period —
    invoices get corrected and reissued, and each reissue handing out another
    month of AI would be free money. Rounded down, because a fraction of an ACU
@@ -71,9 +71,11 @@ headline by accident — and `effectiveMultiplier` clamps to the derived floor
 whatever the table says. Even the deepest band leaves 230% profit, and a test
 asserts every band clears the requirement.
 
-The allocation rate is configuration, not a code path: **30% or 20%** are the
-same arithmetic with a different number, verified at both, so switching is a
-deployment change.
+The allocation rate is configuration, not a code path, so changing it is a
+deployment change rather than an edit — but it has one default and that default
+is 20%. It had been carrying two candidate values in a comment, which is not a
+setting, it is an unmade decision sitting in the file that decides how much AI a
+plan buys.
 
 The allowance is published on the pricing page from the package definitions —
 28,500 ACUs on Core Project, 66,000 on Professional Delivery, 195,000 on
@@ -1315,6 +1317,36 @@ as Golden Thread events. A document stamped "commercial detail withheld" is now
 tested to contain no figures anywhere — including the risk table, which used to
 carry priced exposure into a redacted copy.
 
+**Sector, on a taxonomy the engines can use.** The nine ONS
+construction-output categories — Residential, Commercial, Industrial,
+Transport, Utilities, Energy, FM, RMI, Professional — declared once in
+`shared/vocabulary.js`. It replaced `BUILDING | INFRASTRUCTURE | SPECIALISED`,
+three values that could not carry a distinction the platform is repeatedly
+asked to make: sector selects templates, weights risk, picks the contract form
+and keys the cost library, and a water treatment works and a residential block
+behaved identically under one label.
+
+The picker the browser renders and the enum the route schema validates against
+are **the same bytes**, not two lists that agree. `CONTRACT_FORM` is surfaced
+from the claims engine's own `ContractSuite` for the same reason — a picker
+offering a form the engine has no clauses for would produce notices against
+clauses that do not exist.
+
+Records written under the old vocabulary keep their codes, because the ledger is
+append-only and that is the correct behaviour. `LEGACY_SECTOR` translates them
+on read. It is not a migration to be run and deleted; it is how a seven-year
+statutory record stays legible after the vocabulary that produced it was
+replaced.
+
+**Both HTML responses carry the policy layer.** The application shell used to
+write its own response head, which made it the one page on the server with no
+content-security-policy, no frame refusal and no `nosniff`. A console whose
+buttons certify payments and approve baselines must not be framable. Found by
+reading the headers of a running server, not by a test — no test asked. Inbound
+`x-trace-id` is now validated before it is echoed back and written into every
+log line; a value carrying a header separator used to turn the request into a
+500 from `writeHead`.
+
 ---
 
 ## What is partial
@@ -1381,8 +1413,13 @@ Re-opening these is what caused churn before.
    path. One ACU is one minor unit, so £1 buys 100 ACUs. Provider cost is
    charged at 4x. **The company takes at least 100% profit on every AI
    transaction** — the multiplier floor is derived from that rule, not
-   configured beside it. 30% (or 20%) of every subscription payment is
-   credited as AI allowance. No AI work runs without available ACUs.
+   configured beside it. 20% of every subscription payment is credited as AI
+   allowance. No AI work runs without available ACUs.
+
+   The 4x is confirmed and deliberate. Several specification documents state
+   3x; the instruction given directly, and reaffirmed when queried, is 4x. It
+   is one value, `ACU_MARKUP_MULTIPLIER`, and every test fixture derives its
+   arithmetic from it, so the suite follows whichever number is set.
 6. **The interface never holds a rule the API does not publish.** Permission
    matrix and phase gates are fetched, not duplicated.
 7. **A denial is displayed as a denial.** Never as zero, never as empty.
