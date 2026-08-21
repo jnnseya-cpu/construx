@@ -27,7 +27,7 @@ const BRAND = {
 } as const;
 
 /** Escape for HTML text and attribute contexts alike. */
-function esc(value: string): string {
+export function esc(value: string): string {
   return String(value)
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
@@ -36,7 +36,7 @@ function esc(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
-function absolute(path: string): string {
+export function absolute(path: string): string {
   return path.startsWith('http') ? path : `${config.publicBaseUrl}${path}`;
 }
 

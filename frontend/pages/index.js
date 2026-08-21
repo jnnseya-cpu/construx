@@ -3,6 +3,7 @@ import { audit } from './audit.js';
 import { autopilot } from './autopilot.js';
 import { billing } from './billing.js';
 import { commercial } from './commercial.js';
+import { communications } from './communications.js';
 import { contracts } from './contracts.js';
 import { control } from './control.js';
 import { copilot } from './copilot.js';
@@ -38,6 +39,7 @@ export const PAGES = {
   audit,
   billing,
   admin,
+  communications,
   // Reachable by every signed-in user through the link in the email footer,
   // not only by the operators who see it in the sidebar.
   newsletter,

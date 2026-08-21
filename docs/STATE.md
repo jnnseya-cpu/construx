@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 829 passing, 0 failing, across 39 files |
+| Tests | 880 passing, 0 failing, across 42 files |
 | Typecheck | clean |
 | Backend | 81 TypeScript files, 35,927 lines |
 | Application | 25 ES modules, 7,199 lines (plus a service worker) |
-| API routes | 212 |
-| Event types | 172, closed catalogue |
-| Entity types | 108, all classified for access |
+| API routes | 219 |
+| Event types | 175 Golden Thread (closed) · 177 communication events (closed) |
+| Entity types | 111, all classified for access |
 | Runtime dependencies | none |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -33,6 +33,51 @@ Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`
 
 These are implemented, covered by tests, and exercised through the running
 application. Do not rebuild them.
+
+**Communication Event Architecture.** One engine, **177 events across 15
+categories**, fanning out over email, in-app, SMS, push and WhatsApp.
+`backend/src/notifications/catalogue.ts` is a closed catalogue for the same
+reason the Golden Thread's is: a notification firable from anywhere with an
+arbitrary string is one nobody can audit, suppress or translate. Channels are a
+property of the event, so a caller may narrow the routing and can never widen
+it — no code path can quietly start sending SMS.
+
+It is **not** the Golden Thread catalogue and shares nothing but a shape.
+`eventTypes.ts` records what happened to a project and is evidence; this records
+what the platform told somebody, and is a delivery obligation. Conflating them
+would put marketing into a legal record and statutory notices into a mailing
+list.
+
+**Twenty-seven notices are mandatory and ignore preferences by construction.**
+Account locked, password changed by another party, payment failed, compliance
+breach, data deletion. `allows()` answers `true` for them before it reads
+anything the recipient has said, and it *says* `MANDATORY` rather than merely
+behaving that way — a screen that cannot tell "allowed because they want it"
+from "allowed because they cannot refuse it" will render a live mute control for
+a notice that ignores it. A mandatory email also carries no unsubscribe link and
+states why, because an unsubscribe that cannot work is worse than none.
+
+**Nothing reports a delivery it did not make.** Email is `SENT` only when a
+server accepted it. Email with no relay configured, and SMS, push and WhatsApp
+which have no provider at all, come back `RECORDED` — dispatched, not
+transmitted — which the console shows as "logged". A muted channel is
+`SUPPRESSED` and recorded rather than dropped, so "why did they not get it" has
+an answer instead of an absence. WhatsApp is declared, carries zero events and
+has no carrier; the test asserts the zero so the day something routes there,
+somebody has to confirm a carrier exists.
+
+Verified end to end against the running gateway: with billing muted on email,
+`invoice.paid` came back `SUPPRESSED` and `invoice.overdue` was still delivered.
+
+Building it found a **cross-tenant leak in the read path**. All tenancies share
+the reserved `platform-notifications` chain — that is what makes it a platform
+chain — so the deliveries feed, which read it by project id, returned every
+other customer's notification history including the addresses in it. Reads are
+scoped by tenant now. The capability area was wrong too:
+`PLATFORM_ADMINISTRATION` is the operator's area, so the tenant administrator
+who actually needs their own delivery log was locked out of it while the
+operator was not. It is `ENTERPRISE_STRUCTURE`, and `tenantContext` already bars
+operators from customer delivery data.
 
 **The unauthenticated console login, closed.** `POST /v1/console/session` was
 `public: true` with no production gate. It seeded a demonstration project and

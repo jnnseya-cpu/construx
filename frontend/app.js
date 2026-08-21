@@ -67,6 +67,7 @@ export const NAV = [
       { id: 'billing', label: 'ACU & Billing', area: 'BILLING_ACU', icon: 'meter' },
       { id: 'admin', label: 'Platform Admin', area: 'PLATFORM_ADMINISTRATION', icon: 'cog' },
       { id: 'newsletter', label: 'Newsletter', area: 'PLATFORM_ADMINISTRATION', icon: 'mail' },
+      { id: 'communications', label: 'Communications', area: 'ENTERPRISE_STRUCTURE', icon: 'radar' },
     ],
   },
 ];

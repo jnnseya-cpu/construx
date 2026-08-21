@@ -241,6 +241,19 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('NEWSLETTER_CAMPAIGN_ISSUED', 'NewsletterCampaign', 'ISSUE', 'GOVERNANCE', { creates: true }),
   def('NEWSLETTER_DELIVERY_RECORDED', 'NewsletterDelivery', 'CREATE', 'GOVERNANCE'),
 
+  // Transactional communication. Separate from the newsletter because the
+  // obligation is different: a marketing send is subject to consent, and a
+  // notice that an account was locked is subject to nothing — the recipient is
+  // entitled to it whatever they have muted. Recording the dispatch is what
+  // makes "we told you on the 14th" answerable, which is the whole point of
+  // keeping it here rather than in a log that rotates.
+  //
+  // No AI actor may author either. An agent that could set somebody's
+  // notification preferences could silence the alert about what it did next.
+  def('NOTIFICATION_DISPATCHED', 'NotificationDispatch', 'ISSUE', 'GOVERNANCE', { creates: true }),
+  def('NOTIFICATION_DELIVERY_RECORDED', 'NotificationDelivery', 'CREATE', 'GOVERNANCE'),
+  def('NOTIFICATION_PREFERENCES_SET', 'NotificationPreferences', 'UPDATE', 'GOVERNANCE', { creates: true }),
+
   // --- Change, variation, claims -------------------------------------------
   def('CHANGE_REQUEST_SUBMITTED', 'ChangeRequest', 'CREATE', 'CONTRACTS_CLAIMS', { requiresEvidence: true }),
   def('IMPACT_ASSESSED', 'ImpactAssessment', 'AI_EXECUTE', 'CONTRACTS_CLAIMS', { aiAllowed: true, requiresEvidence: true }),

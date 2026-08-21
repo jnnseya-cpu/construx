@@ -1,5 +1,10 @@
 import { SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
 import { ask } from '../ai/conversation.ts';
+import * as notifications from '../notifications/catalogue.ts';
+import { CATEGORIES, CATEGORY_TITLES, NOTIFICATION_EVENTS } from '../notifications/catalogue.ts';
+import * as notifyEngine from '../notifications/notify.ts';
+import * as preferences from '../notifications/preferences.ts';
+import * as notificationRender from '../notifications/render.ts';
 import type { Engine } from '../ai/orchestrator.ts';
 import type { ProviderCapability } from '../ai/providers/types.ts';
 import * as agents from '../agents/runtime.ts';
@@ -1022,6 +1027,150 @@ export const ROUTES: Route[] = [
       // drifting from it.
       writePhaseGates: WRITE_PHASE_GATES,
     }),
+  },
+
+  // ----------------------------------------------------------- notifications
+  {
+    method: 'GET',
+    pattern: '/v1/notifications/catalogue',
+    description: 'The communication event catalogue — 177 events, 15 categories, channel coverage',
+    handler: (_platform, ctx) => {
+      // Readable by any authenticated identity: a person is entitled to know
+      // what the platform may send them before being asked to set preferences
+      // about it. It carries no tenant data — only the catalogue itself.
+      auth(ctx);
+      return {
+        events: NOTIFICATION_EVENTS,
+        categories: CATEGORIES.map((code) => ({
+          code,
+          title: CATEGORY_TITLES[code],
+          events: notifications.eventsInCategory(code).length,
+        })),
+        channels: notifyEngine.channelStatus(),
+        coverage: notifications.channelCoverage(),
+        mandatory: notifications.mandatoryEvents().length,
+        totals: { events: NOTIFICATION_EVENTS.length, categories: CATEGORIES.length },
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/notifications/deliveries',
+    description: 'Every event × channel × recipient with its delivery status',
+    handler: (platform, ctx) => {
+      // ENTERPRISE_STRUCTURE, not PLATFORM_ADMINISTRATION: these are the
+      // tenant's own outbound messages to its own people. The platform
+      // operator's area would have made this an operator screen and locked the
+      // administrator who actually needs it out of their own delivery log.
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      return {
+        deliveries: notifyEngine.deliveries(platform, actor.tenantId, 100),
+        totals: notifyEngine.deliveryTotals(platform, actor.tenantId),
+        tenantId: actor.tenantId,
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/notifications/inbox',
+    description: 'The caller’s own in-app notifications',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      return { messages: notifyEngine.inbox(platform, actor.tenantId, actor.actorId, 60) };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/notifications/preferences',
+    description: 'The caller’s notification preferences, and which of them are switchable',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      return {
+        matrix: preferences.preferenceMatrix(platform, actor.actorId),
+        categories: CATEGORY_TITLES,
+        // Stated so the screen does not have to infer it, and cannot render a
+        // live control for a notice that ignores it.
+        note:
+          'Mandatory notices — security, payment, compliance and data-protection facts — are sent regardless of these settings.',
+      };
+    },
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/notifications/preferences',
+    description: 'Set the caller’s notification preferences',
+    schema: {
+      type: 'object',
+      required: ['muted'],
+      properties: { muted: { type: 'object' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      // A person sets their own preferences and nobody else's. There is no
+      // route that takes a userId, so an administrator cannot mute somebody
+      // else's alerts.
+      const actor = auth(ctx);
+      const { muted } = body<{ muted: Record<string, Record<string, boolean>> }>(ctx);
+      return preferences.setPreferences(platform, {
+        userId: actor.actorId,
+        tenantId: actor.tenantId,
+        muted: muted as never,
+        updatedBy: actor.actorId,
+        correlationId: ctx.correlationId,
+      });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/notifications/preview',
+    description: 'Render the branded email a recipient would receive for one event',
+    readOnly: true,
+    schema: {
+      type: 'object',
+      required: ['code'],
+      properties: { code: stringField, payload: { type: 'object' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      const { code, payload } = body<{ code: string; payload?: Record<string, unknown> }>(ctx);
+      const user = platform.user(actor.actorId);
+      return notificationRender.previewNotification({
+        event: notifications.requireEvent(code),
+        recipient: { id: user.id, name: user.name, email: user.email },
+        payload: payload ?? {},
+        branding: platform.exports.branding(actor.tenantId),
+      });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/notifications/test',
+    description: 'Fire one event to the caller across its channels',
+    schema: {
+      type: 'object',
+      required: ['code'],
+      properties: { code: stringField, payload: { type: 'object' } },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      // Deliberately only ever to the caller. A route that took a recipient
+      // would be a way to make the platform send arbitrary branded mail to an
+      // arbitrary address, which is a spam relay with an audit trail.
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      const { code, payload } = body<{ code: string; payload?: Record<string, unknown> }>(ctx);
+      const user = platform.user(actor.actorId);
+
+      return notifyEngine.notify(platform, {
+        code,
+        recipients: [{ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }],
+        payload: payload ?? {},
+        branding: platform.exports.branding(actor.tenantId),
+        actorId: actor.actorId,
+        correlationId: ctx.correlationId,
+      });
+    },
   },
 
   // ----------------------------------------------------------------- console

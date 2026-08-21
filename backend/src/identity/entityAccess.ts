@@ -156,6 +156,12 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   MarketingConsent: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
   NewsletterCampaign: { area: 'PLATFORM_ADMINISTRATION' },
   NewsletterDelivery: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
+  // A dispatch record names a person and what they were told. The delivery
+  // record additionally names their address and whether it reached them, which
+  // is why the two are classified apart rather than together.
+  NotificationDispatch: { area: 'PLATFORM_ADMINISTRATION' },
+  NotificationDelivery: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
+  NotificationPreferences: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
 };
 
 export function classifyEntity(refType: string): EntityClassification | undefined {
