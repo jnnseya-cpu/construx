@@ -15,12 +15,12 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 685 passing, 0 failing, across 32 files |
+| Tests | 755 passing, 0 failing, across 35 files |
 | Typecheck | clean |
-| Backend | 77 TypeScript files, 32,706 lines |
-| Application | 25 ES modules, 6,706 lines (plus a service worker) |
-| API routes | 196 |
-| Event types | 169, closed catalogue |
+| Backend | 79 TypeScript files, 34,724 lines |
+| Application | 25 ES modules, 7,070 lines (plus a service worker) |
+| API routes | 207 |
+| Event types | 171, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
 
@@ -83,6 +83,72 @@ or not, so a contractor who priced for a payment period the Act strikes out has
 priced for a cost he does not carry; a term that is merely **onerous** is lawful
 and stays his problem. The morning briefing carries the crystallised exposure,
 because nobody can serve last month's notice.
+
+**Statutory adjudication, s.108.** The twenty-eight-day dispute procedure every
+UK construction contract must contain, and which the Scheme supplies where the
+contract does not. The timetable is what is held, because both ends of it are
+fatal in different directions and neither is about the merits: seven days from
+the notice to secure an appointment and serve the referral, twenty-eight from
+referral to a decision. Miss the first and the appointment is liable to be a
+nullity; miss the second and the decision is, and the parties are back where
+they started having paid the fees.
+
+Extension mechanics are precise because they are relied on late: fourteen days
+on the referring party's consent alone, longer only by both parties, and consent
+given before the referral is no consent under s.108(2)(e). A decision reached in
+time binds *until* the dispute is finally determined — temporarily binding is
+still binding. s.108A holds a Tolent clause ineffective, which is worth saying
+plainly because the fear of that clause is what keeps disputes unreferred. A
+late referral and an out-of-time decision are recorded rather than refused;
+refusing the record leaves a party with nothing in front of them at the moment
+they decide whether to pay against it.
+
+Not to be confused with tender adjudication, which is the commercial decision
+closing a bid evaluation. They share a word and nothing else, and the code says
+so where the two meet.
+
+**s.116 and short periods.** The exception to "the statute counts days": a
+period of **less than seven days** excludes Christmas Day, Good Friday and bank
+holidays — but not weekends. It turns on the length of the period rather than on
+which period it is, which is what made it easy to miss, and the Scheme's
+five-day payment notice period falls inside it. The platform was adding five
+calendar days, which produces a deadline earlier than the statute allows and
+would have told a payee they were entitled to the notified sum while the payer
+was still in time. `reckonPeriod` is now the only place a statutory period is
+decided. Its exclusion set is deliberately wider than the business-day calendar:
+s.116(3) counts Saturdays, so Boxing Day falling on one has to be excluded
+explicitly or the deadline comes out a day early.
+
+**Lineage over the ledger.** `GET /v1/projects/:id/lineage/:refType/:refId`
+answers what caused a record and what was built on it, by walking the event log.
+No graph store — that would be a second copy of a relationship the ledger
+already records, and the two would disagree the first time either was rebuilt.
+
+Edges carry how they were established: `EVIDENCE` and `AI_INPUT` were declared
+by an event and name it, `SAME_COMMAND` shares a correlation id, `REFERENCE` was
+read out of a record's state and carries the field that produced it. They are
+not equally strong and are not presented as though they were.
+
+Access is applied at every node, not at the entry point — the walk crosses
+capability areas by its nature. An unreadable record returns as a shell: type
+and edge, nothing else. Reference edges are derived only from state the caller
+may read, or the shape of the graph would leak it. Two limits are reported
+rather than applied quietly: depth (and the walk checks whether anything lies
+beyond the ceiling rather than assuming it), and a command touching more than
+eight records, which is treated as a batch — a take-off creating forty bill
+items made all forty siblings of each other and produced 5,736 links on the
+first run.
+
+**Registers that close.** Clashes, site observations and the scope breakdown
+could previously only grow. Clash closeout records how, and for a model revision
+which discipline moved — that is who bears the rework, and it is what nobody can
+establish six months later. Dismissing a critical clash as a detection artefact
+costs an explanation proportionate to what is being waved through; closing on
+site is recorded as leaving the model describing something that was not built.
+Site walk observations are deterministic and free, deliberately separate from
+safety observations, and refuse an action with no owner and no date. Work
+packages can be typed in rather than only generated, and carry their origin: a
+generated package is a proposal, a typed one is a decision.
 
 **Access control.** Three account layers, RBAC, OAuth2-style scopes, ABAC, in a
 fixed fail-closed order. Tenant isolation. Lifecycle phase gating on writes.
