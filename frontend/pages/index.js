@@ -1,3 +1,4 @@
+import { account } from './account.js';
 import { admin } from './admin.js';
 import { audit } from './audit.js';
 import { autopilot } from './autopilot.js';
@@ -22,6 +23,7 @@ import { risk } from './risk.js';
 /** Route id → view. Ids match the navigation model in app.js. */
 export const PAGES = {
   login,
+  account,
   overview,
   copilot,
   autopilot,

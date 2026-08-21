@@ -148,6 +148,10 @@ export const api = {
   get: (path, options) => request('GET', path, undefined, options),
   post: (path, body, options) => request('POST', path, body ?? {}, options),
   put: (path, body, options) => request('PUT', path, body ?? {}, options),
+  // No body. The one DELETE the console issues cancels an erasure request, and
+  // the route's schema is a closed empty object — it refuses a stray body
+  // rather than ignoring one.
+  delete: (path, options) => request('DELETE', path, undefined, options),
   download,
 };
 

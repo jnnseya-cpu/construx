@@ -135,6 +135,19 @@ export const config = {
     freeTrialGrantMinor: num('FREE_TRIAL_GRANT_MINOR', 500),
   },
 
+  privacy: {
+    /**
+     * Days between an erasure request and the erasure itself.
+     *
+     * The delay is a safety feature. Erasure is irreversible, and without a
+     * window whoever holds a stolen session can destroy an identity that a
+     * competent person's approvals are recorded against. It is also the window
+     * in which the mandatory notice reaches the real mailbox, which is what
+     * lets the true owner stop it.
+     */
+    erasureGraceDays: num('ERASURE_GRACE_DAYS', 30),
+  },
+
   /** Absolute origin used in email links. Email cannot resolve a relative path. */
   publicBaseUrl: str('PUBLIC_BASE_URL', `http://localhost:${num('PORT', 8080)}`),
 

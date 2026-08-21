@@ -14,6 +14,7 @@ import type { EventSource } from './goldenthread/types.ts';
 import type { AuthContext } from './identity/auth.ts';
 import { issueTokens, type TokenPair } from './identity/auth.ts';
 import type { Role } from './identity/roles.ts';
+import { dueAt, graceDays, isDue, pseudonym, retentionBasis } from './identity/erasure.ts';
 
 /**
  * Platform assembly — one object that owns the ledger, the wallets, the
@@ -45,6 +46,16 @@ export type PlatformUser = {
   roles: Role[];
   partyId?: string;
   status: 'ACTIVE' | 'SUSPENDED';
+  /**
+   * Erasure. Absent on an identity nobody has asked to remove, which is almost
+   * all of them, so the fields are optional rather than a nested object that
+   * would exist empty on every user.
+   */
+  erasureRequestedAt?: string;
+  erasureDueAt?: string;
+  erasureRequestedBy?: string;
+  /** Set once the identity has been pseudonymised. Never unset. */
+  erasedAt?: string;
 };
 
 export class Platform {
@@ -447,6 +458,200 @@ export class Platform {
     });
 
     return { userId: input.userId, previousRoles, roles: input.roles };
+  }
+
+  /**
+   * Ask for an identity to be erased.
+   *
+   * The request starts a grace period rather than doing anything immediately —
+   * see `identity/erasure.ts` for why the delay is a safety feature and not a
+   * dark pattern. The seat is revoked at once, so the account stops working
+   * straight away and stops being billed for, but the identity is still there
+   * to be restored if the request was not genuine.
+   *
+   * A person may ask for their own erasure. An administrator may ask on their
+   * behalf — somebody has to be able to act on a written request from an
+   * employee who has already left — and the record says which it was.
+   */
+  requestErasure(actor: AuthContext, input: { userId: string; reason: string }): { userId: string; dueAt: string } {
+    const user = this.#users.get(input.userId);
+    if (!user) throw new NotFoundError(`No user ${input.userId}`);
+    if (user.tenantId !== actor.tenantId) throw new NotFoundError(`No user ${input.userId}`);
+    if (user.erasedAt !== undefined) {
+      throw new DomainError('ALREADY_ERASED', 'That identity has already been erased', 409);
+    }
+    if (user.erasureRequestedAt !== undefined) {
+      throw new DomainError('ERASURE_ALREADY_REQUESTED', 'An erasure request is already outstanding', 409);
+    }
+
+    const requestedAt = new Date().toISOString();
+    const due = dueAt(requestedAt);
+
+    // The seat goes now. Waiting until the grace period expired would keep
+    // charging for an account whose owner has asked to leave.
+    this.revokeUserSeat(actor.tenantId, input.userId);
+
+    user.erasureRequestedAt = requestedAt;
+    user.erasureDueAt = due;
+    user.erasureRequestedBy = actor.actorId;
+
+    this.ledger.commit({
+      tenantId: actor.tenantId,
+      projectId: `${actor.tenantId}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'USER_ERASURE_REQUESTED',
+      entity: { refType: 'User', refId: input.userId },
+      nextState: {
+        id: input.userId,
+        tenantId: user.tenantId,
+        // The name and address are still here, because the identity has not
+        // been erased yet — this event records that somebody asked.
+        name: user.name,
+        email: user.email,
+        roles: user.roles,
+        status: 'SUSPENDED',
+        erasureRequestedAt: requestedAt,
+        erasureDueAt: due,
+        requestedBy: actor.actorId,
+        onOwnBehalf: actor.actorId === input.userId,
+        reason: input.reason,
+        graceDays: graceDays(),
+      },
+    });
+
+    return { userId: input.userId, dueAt: due };
+  }
+
+  /** Call off an outstanding request. Only possible before it is carried out. */
+  cancelErasure(actor: AuthContext, input: { userId: string; reason: string }): { userId: string } {
+    const user = this.#users.get(input.userId);
+    if (!user) throw new NotFoundError(`No user ${input.userId}`);
+    if (user.tenantId !== actor.tenantId) throw new NotFoundError(`No user ${input.userId}`);
+    if (user.erasedAt !== undefined) {
+      throw new DomainError('ALREADY_ERASED', 'That identity has already been erased and cannot be restored', 409);
+    }
+    if (user.erasureRequestedAt === undefined) {
+      throw new DomainError('NO_ERASURE_REQUEST', 'There is no outstanding erasure request to cancel', 409);
+    }
+
+    delete user.erasureRequestedAt;
+    delete user.erasureDueAt;
+    delete user.erasureRequestedBy;
+    user.status = 'ACTIVE';
+
+    this.ledger.commit({
+      tenantId: actor.tenantId,
+      projectId: `${actor.tenantId}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'USER_ERASURE_CANCELLED',
+      entity: { refType: 'User', refId: input.userId },
+      nextState: {
+        id: input.userId,
+        tenantId: user.tenantId,
+        name: user.name,
+        email: user.email,
+        roles: user.roles,
+        status: 'ACTIVE',
+        cancelledBy: actor.actorId,
+        cancelledAt: new Date().toISOString(),
+        reason: input.reason,
+      },
+    });
+
+    // The seat has to be re-assigned, because requesting revoked it. If the
+    // tier has since filled up this throws and the cancellation still stands:
+    // the identity is restored and un-seated, which is recoverable, rather
+    // than erased, which is not.
+    const subscription = this.subscription(actor.tenantId);
+    this.#subscriptions.set(actor.tenantId, assignIdentity(subscription, input.userId, user.roles));
+
+    return { userId: input.userId };
+  }
+
+  /** Identities whose grace period has expired and are waiting to be erased. */
+  dueErasures(now = new Date()): PlatformUser[] {
+    return [...this.#users.values()].filter((user) =>
+      isDue({ requestedAt: user.erasureRequestedAt, dueAt: user.erasureDueAt, erasedAt: user.erasedAt }, now),
+    );
+  }
+
+  /**
+   * Carry out an erasure.
+   *
+   * Name, email and mobile are replaced with a token that identifies nobody.
+   * Every event the identity authored keeps referring to the same actor id, so
+   * the hash chain still verifies and the sequence of who-did-what still reads
+   * — it just no longer resolves to a person.
+   *
+   * `force` skips the grace period. It exists because a supervisory authority
+   * can order immediate erasure and because a person who has confirmed through
+   * a second channel should not have to wait, and it is recorded on the event
+   * so an auditor can see the window was deliberately not served.
+   */
+  eraseUser(
+    actor: AuthContext,
+    input: { userId: string; force?: boolean; now?: Date },
+  ): { userId: string; erasedAt: string } {
+    const now = input.now ?? new Date();
+    const user = this.#users.get(input.userId);
+    if (!user) throw new NotFoundError(`No user ${input.userId}`);
+    if (user.tenantId !== actor.tenantId) throw new NotFoundError(`No user ${input.userId}`);
+    if (user.erasedAt !== undefined) {
+      throw new DomainError('ALREADY_ERASED', 'That identity has already been erased', 409);
+    }
+    if (user.erasureRequestedAt === undefined) {
+      throw new DomainError('NO_ERASURE_REQUEST', 'Erasure has not been requested for that identity', 409);
+    }
+    if (input.force !== true && !isDue({ dueAt: user.erasureDueAt }, now)) {
+      throw new DomainError(
+        'ERASURE_NOT_DUE',
+        `The grace period runs until ${String(user.erasureDueAt)}. Erasing now discards the window that lets the real owner stop it.`,
+        409,
+      );
+    }
+
+    const basis = retentionBasis();
+    const replacement = pseudonym(input.userId);
+    const erasedAt = now.toISOString();
+
+    // The event is written before the identity is overwritten, so it can still
+    // record what was there — and it records the pseudonym rather than the
+    // name, because an "erasure" event carrying the erased name in its payload
+    // would put the data straight back into the ledger it was removed from.
+    this.ledger.commit({
+      tenantId: actor.tenantId,
+      projectId: `${actor.tenantId}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'USER_ERASED',
+      entity: { refType: 'User', refId: input.userId },
+      nextState: {
+        id: input.userId,
+        tenantId: user.tenantId,
+        name: replacement.name,
+        email: replacement.email,
+        roles: user.roles,
+        status: 'SUSPENDED',
+        erasedAt,
+        erasedBy: actor.actorId,
+        graceServed: input.force !== true,
+        removed: basis.removed,
+        retained: basis.retained,
+        lawfulBasis: basis.lawfulBasis,
+      },
+    });
+
+    user.name = replacement.name;
+    user.email = replacement.email;
+    user.status = 'SUSPENDED';
+    user.erasedAt = erasedAt;
+
+    return { userId: input.userId, erasedAt };
   }
 
   revokeUserSeat(tenantId: string, userId: string): void {

@@ -68,6 +68,10 @@ export const NAV = [
       { id: 'admin', label: 'Platform Admin', area: 'PLATFORM_ADMINISTRATION', icon: 'cog' },
       { id: 'newsletter', label: 'Newsletter', area: 'PLATFORM_ADMINISTRATION', icon: 'mail' },
       { id: 'communications', label: 'Communications', area: 'ENTERPRISE_STRUCTURE', icon: 'radar' },
+      // Outside the capability matrix — see `visible()`. Asking to be erased is
+      // not a permission somebody else grants you, and the mobile stores
+      // require the route to exist for every account.
+      { id: 'account', label: 'Account', area: 'PROJECT_SETUP', icon: 'cog' },
     ],
   },
 ];
@@ -270,7 +274,7 @@ function reachable(item) {
   // and an operator has none. So the Platform page is the whole operator app.
   if (isOperator()) return item.area === 'PLATFORM_ADMINISTRATION';
   if (item.area === 'PLATFORM_ADMINISTRATION') return false;
-  return can(item.area, 'R') || item.id === 'overview' || item.id === 'copilot';
+  return can(item.area, 'R') || item.id === 'overview' || item.id === 'copilot' || item.id === 'account';
 }
 
 function lockReason(item) {

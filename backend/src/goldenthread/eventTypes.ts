@@ -94,6 +94,12 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('ENTERPRISE_CREATED', 'Enterprise', 'CREATE', 'GOVERNANCE'),
   def('USER_CREATED', 'User', 'CREATE', 'GOVERNANCE'),
   def('USER_ROLE_ASSIGNED', 'User', 'UPDATE', 'GOVERNANCE'),
+  // Erasure is three events, not one, because the gap between them is the
+  // point: a request starts a grace period the person can still call off, and
+  // the record has to show which of the two actually happened.
+  def('USER_ERASURE_REQUESTED', 'User', 'UPDATE', 'GOVERNANCE'),
+  def('USER_ERASURE_CANCELLED', 'User', 'UPDATE', 'GOVERNANCE'),
+  def('USER_ERASED', 'User', 'UPDATE', 'GOVERNANCE'),
   def('IDENTITY_SEAT_ASSIGNED', 'Subscription', 'UPDATE', 'GOVERNANCE'),
   def('IDENTITY_SEAT_REVOKED', 'Subscription', 'UPDATE', 'GOVERNANCE'),
   def('SUBSCRIPTION_ACTIVATED', 'Subscription', 'CREATE', 'GOVERNANCE'),

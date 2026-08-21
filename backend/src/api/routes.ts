@@ -1,6 +1,7 @@
 import { SECTOR, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
 import { ask } from '../ai/conversation.ts';
 import * as signup from '../identity/signup.ts';
+import * as erasure from '../identity/erasure.ts';
 import * as site from '../site/index.ts';
 import * as notifications from '../notifications/catalogue.ts';
 import { CATEGORIES, CATEGORY_TITLES, NOTIFICATION_EVENTS } from '../notifications/catalogue.ts';
@@ -959,6 +960,132 @@ export const ROUTES: Route[] = [
         ...body<{ roles: Parameters<typeof platform.assignRoles>[1]['roles']; reason: string }>(ctx),
         userId: ctx.params.userId as string,
       });
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/me/erasure',
+    description: 'Whether an erasure is outstanding for the signed-in identity, and what it would and would not remove',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const user = platform.user(actor.actorId);
+      const basis = erasure.retentionBasis();
+      return {
+        // Which account this is about. A confirmation screen for an
+        // irreversible act has to name the thing being destroyed, and the
+        // session payload does not carry the address.
+        identity: { id: user.id, name: user.name, email: user.email, roles: user.roles },
+        requestedAt: user.erasureRequestedAt,
+        dueAt: user.erasureDueAt,
+        erasedAt: user.erasedAt,
+        graceDays: erasure.graceDays(),
+        // Published rather than described in help text: what a person is told
+        // before they press the button has to be the same thing the platform
+        // will actually do, and the only way to guarantee that is to read it
+        // from the code that does it.
+        removed: basis.removed,
+        retained: basis.retained,
+        lawfulBasis: basis.lawfulBasis,
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/me/erasure',
+    description: 'Ask for this identity to be erased. Starts the grace period; does not erase anything yet',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 3 } },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      const { reason } = body<{ reason: string }>(ctx);
+      // Read the identity before requesting: after this the account is
+      // suspended, and the notice still has to reach the real mailbox.
+      const before = platform.user(actor.actorId);
+      const recipient = { id: before.id, name: before.name, email: before.email, tenantId: before.tenantId };
+
+      const requested = platform.requestErasure(actor, { userId: actor.actorId, reason });
+
+      // Mandatory. This is the notice that lets the true owner stop an erasure
+      // somebody else asked for with a stolen session, so it is not subject to
+      // a preference and the catalogue enforces that.
+      await notifyEngine.notify(platform, {
+        code: 'privacy.account_deletion_requested',
+        recipients: [recipient],
+        payload: {
+          actionUrl: '/app',
+          actionLabel: 'Cancel this request',
+          detail:
+            `Your account will be erased on ${requested.dueAt.slice(0, 10)}. ` +
+            `If you did not ask for this, sign in and cancel it before then. ` +
+            `Your project record is kept: ${erasure.retentionBasis().lawfulBasis}`,
+        },
+        branding: platform.exports.branding(actor.tenantId),
+        actorId: actor.actorId,
+        correlationId: ctx.correlationId,
+      });
+
+      return requested;
+    },
+  },
+  {
+    method: 'DELETE',
+    pattern: '/v1/me/erasure',
+    description: 'Call off an outstanding erasure request and restore the identity',
+    // It takes no body, and this says so rather than saying nothing. A route
+    // with no schema is not validated at all, which is the debt the register in
+    // vocabulary.test.ts counts; an empty closed object refuses a stray body
+    // instead of ignoring it.
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      return platform.cancelErasure(actor, {
+        userId: actor.actorId,
+        reason: 'Cancelled by the account holder',
+      });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/users/:userId/erasure',
+    description: 'Request erasure of another identity in this tenancy, on a written request from its holder',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('ENTERPRISE_ADMIN') && !actor.roles.includes('OWNER')) {
+        throw new ForbiddenError('Only an enterprise admin may request erasure of another identity', 'ENTERPRISE_ADMIN_REQUIRED');
+      }
+      const userId = ctx.params.userId as string;
+      const before = platform.user(userId);
+      const recipient = { id: before.id, name: before.name, email: before.email, tenantId: before.tenantId };
+
+      const requested = platform.requestErasure(actor, { userId, reason: body<{ reason: string }>(ctx).reason });
+
+      await notifyEngine.notify(platform, {
+        code: 'privacy.account_deletion_requested',
+        recipients: [recipient],
+        payload: {
+          actionUrl: '/app',
+          actionLabel: 'Cancel this request',
+          detail:
+            `An administrator has asked for your account to be erased on ${requested.dueAt.slice(0, 10)}. ` +
+            'If this is wrong, sign in and cancel it before then.',
+        },
+        branding: platform.exports.branding(actor.tenantId),
+        actorId: actor.actorId,
+        correlationId: ctx.correlationId,
+      });
+
+      return requested;
     },
   },
   {

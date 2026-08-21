@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 958 passing, 0 failing, across 45 files |
+| Tests | 990 passing, 0 failing, across 47 files |
 | Typecheck | clean |
 | Backend | 81 TypeScript files, 35,927 lines |
 | Application | 25 ES modules, 7,199 lines (plus a service worker) |
-| API routes | 234 (13 of them the public site) |
+| API routes | 238 (13 of them the public site) |
 | Event types | 175 Golden Thread (closed) · 177 communication events (closed) |
 | Entity types | 111, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
@@ -1337,6 +1337,37 @@ append-only and that is the correct behaviour. `LEGACY_SECTOR` translates them
 on read. It is not a migration to be run and deleted; it is how a seven-year
 statutory record stays legible after the vocabulary that produced it was
 replaced.
+
+**The right to erasure, against a ledger that cannot be erased.** UK GDPR
+Art. 17 gives a data subject the right to have their personal data erased;
+Art. 17(3) withdraws it where processing is necessary to comply with a legal
+obligation or to defend legal claims. A construction record is inside both —
+CDM 2015 and the Building Safety Act require the safety file and the golden
+thread to be retained, and an adjudication three years later is decided on what
+the record says happened and who did it.
+
+So the ledger is not touched. Deleting events would break the hash chain, which
+is the thing that makes the record evidence at all. What is erased is the
+**identity**: name, email and mobile are replaced with a token that identifies
+nobody, and every event keeps referring to the same actor id, so the chain still
+verifies and the sequence of who-did-what still reads — it just no longer
+resolves to a person. A test asserts the chain still replays as VERIFIED after
+an erasure, and another asserts the erased name does not appear in the event
+that records the erasure.
+
+A request starts a **30-day grace period** (`ERASURE_GRACE_DAYS`) rather than
+acting immediately. The delay is a safety feature: erasure is irreversible, and
+without a window whoever holds a stolen session can destroy an identity that a
+competent person's approvals are recorded against. The seat is revoked at once,
+so the account stops working and stops being billed for. The mandatory
+`privacy.account_deletion_requested` notice goes to the real mailbox, which is
+what lets the true owner stop it.
+
+Reachable at `/app/account` by **every** signed-in identity, outside the
+capability matrix — asking to be erased is not a permission somebody else
+grants you, and the mobile stores require the route to exist. What the screen
+says is kept and removed is read from `GET /v1/me/erasure`, so the wording
+shown before the button is pressed is the same rule the platform applies.
 
 **Both HTML responses carry the policy layer.** The application shell used to
 write its own response head, which made it the one page on the server with no
