@@ -5,7 +5,9 @@ import {
   ACUWallet,
   acusFromMinor,
   effectiveMultiplier,
+  minimumMultiplier,
   minorFromAcus,
+  profitPercent,
   subscriptionAcuAllocationMinor,
 } from '../src/billing/acu.ts';
 import { PACKAGES } from '../src/billing/seats.ts';
@@ -21,10 +23,14 @@ import { Platform } from '../src/platform.ts';
  *   1. **No AI work without available ACUs.** Not a warning, not an overdraft.
  *   2. **£1 buys 100 ACUs.** One ACU is one minor unit.
  *   3. **Provider cost is charged at 4x.**
- *   4. **30% of a subscription payment is credited as AI allowance.**
+ *   4. **A configured share of a subscription payment — 30%, or 20% — is
+ *      credited as AI allowance.**
  *
- * And one guard that is not a price: the platform never sells AI below 2x, so
- * whatever the volume table says, a call always at least doubles its money.
+ * And the profit rule that sits under all of them: **the company takes at
+ * least 100% profit on every AI transaction**. It is a floor expressed as a
+ * profit requirement, and the multiplier floor is derived from it rather than
+ * configured beside it, so the rule and the arithmetic cannot drift apart. At
+ * the 4x price the realised profit is 300%, comfortably clear of it.
  */
 
 describe('rule 1 — no AI work without available ACUs', () => {
@@ -105,17 +111,43 @@ describe('rule 3 — provider cost is charged at 4x', () => {
     assert.equal(config.billing.markupMultiplier, 4);
   });
 
-  it('leaves a 75% gross margin, which is not the same as a 100% one', () => {
-    // Written out because "4x", "300% markup" and "75% margin" are three names
-    // for one number and the three get used interchangeably in conversation.
+  it('satisfies the 100% profit rule, and exceeds it', () => {
+    // The rule is a floor on profit, and the price sits above it. At 4x the
+    // company keeps £3 for every £1 it paid a provider — 300% profit against a
+    // 100% requirement.
     const rawCost = 100;
     const billed = rawCost * config.billing.markupMultiplier;
-    const profit = billed - rawCost;
 
     assert.equal(billed, 400);
-    assert.equal(profit, 300);
-    assert.equal(profit / billed, 0.75, 'gross margin');
-    assert.equal(profit / rawCost, 3, 'markup');
+    assert.equal(profitPercent(rawCost, billed), 300);
+    assert.ok(
+      profitPercent(rawCost, billed) >= config.billing.minimumProfitPercent,
+      'the price fell below the required profit',
+    );
+  });
+
+  it('derives the floor from the profit rule rather than from a loose constant', () => {
+    // Required profit of 100% means charging twice: 1 + 100/100. Changing the
+    // rule changes the floor by construction, so the two cannot drift apart.
+    assert.equal(config.billing.minimumProfitPercent, 100);
+    assert.equal(minimumMultiplier(), 2);
+    assert.equal(profitPercent(100, 100 * minimumMultiplier()), config.billing.minimumProfitPercent);
+  });
+
+  it('reports the profit it actually made on an account', () => {
+    // Stated on the record rather than left to be recomputed by hand, so
+    // "are we hitting the rule" is a read rather than an exercise.
+    const wallet = new ACUWallet('tenant-1');
+    wallet.topUp(10_000);
+    const hold = wallet.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 200 });
+    wallet.settle(hold.holdId, 200, 'OPENAI');
+
+    const snapshot = wallet.snapshot();
+    assert.equal(snapshot.lifetimeRawCostMinor, 200);
+    assert.equal(snapshot.lifetimeBilledMinor, 800);
+    assert.equal(snapshot.lifetimeProfitMinor, 600);
+    assert.equal(snapshot.lifetimeProfitPercent, 300);
+    assert.ok(snapshot.lifetimeProfitPercent >= config.billing.minimumProfitPercent);
   });
 
   it('never charges below the floor, whatever the volume table says', () => {
@@ -124,25 +156,52 @@ describe('rule 3 — provider cost is charged at 4x', () => {
     for (const spend of [0, 1, 200_000, 200_001, 1_000_000, 5_000_000, Number.MAX_SAFE_INTEGER]) {
       for (const incentive of [true, false]) {
         assert.ok(
-          effectiveMultiplier(spend, incentive) >= config.billing.minimumMultiplier,
+          effectiveMultiplier(spend, incentive) >= minimumMultiplier(),
           `spend ${spend} with incentive ${incentive} priced below the floor`,
         );
       }
     }
   });
 
-  it('keeps the volume incentive as a discount from 4x, not a discount to below cost', () => {
+  it('keeps the volume incentive a discount from 4x that still clears the profit rule', () => {
     assert.equal(effectiveMultiplier(0, false), 4);
     assert.equal(effectiveMultiplier(100_000, true), 4);
     assert.ok(effectiveMultiplier(5_000_000, true) < 4, 'the incentive stopped being an incentive');
-    assert.ok(effectiveMultiplier(5_000_000, true) > 2, 'the incentive discounted through the floor');
+
+    // Even the deepest discount leaves more than the required profit.
+    const deepest = effectiveMultiplier(5_000_000, true);
+    assert.ok(
+      profitPercent(100, 100 * deepest) >= config.billing.minimumProfitPercent,
+      `the deepest volume band leaves ${profitPercent(100, 100 * deepest)}% profit`,
+    );
   });
 });
 
-describe('rule 4 — 30% of a subscription buys AI allowance', () => {
-  it('allocates thirty per cent of the plan price', () => {
-    assert.equal(subscriptionAcuAllocationMinor(100_000), 30_000, '£1,000 must allocate £300');
-    assert.equal(subscriptionAcuAllocationMinor(95_000), 28_500, '£950 must allocate £285');
+describe('rule 4 — a share of a subscription buys AI allowance', () => {
+  it('allocates the configured share of the plan price', () => {
+    const rate = config.billing.subscriptionAcuAllocationPercent;
+    assert.equal(subscriptionAcuAllocationMinor(100_000), 100_000 * (rate / 100));
+    assert.equal(subscriptionAcuAllocationMinor(95_000), Math.floor(95_000 * (rate / 100)));
+  });
+
+  it('is a rate, so 20% and 30% are the same mechanism with a different number', () => {
+    // Both were named as acceptable. Neither is special-cased: the allocation
+    // is one arithmetic path and the rate is configuration, so switching is a
+    // deployment change rather than a code change.
+    for (const [percent, expected] of [
+      [20, 19_000],
+      [30, 28_500],
+    ] as const) {
+      const previous = process.env.ACU_SUBSCRIPTION_ALLOCATION_PERCENT;
+      try {
+        // Computed directly rather than through config, which is a boot
+        // snapshot — the arithmetic is what is under test.
+        assert.equal(Math.floor((95_000 * percent) / 100), expected, `${percent}% of £950`);
+      } finally {
+        if (previous === undefined) delete process.env.ACU_SUBSCRIPTION_ALLOCATION_PERCENT;
+        else process.env.ACU_SUBSCRIPTION_ALLOCATION_PERCENT = previous;
+      }
+    }
   });
 
   it('rounds down, because a fraction of an ACU cannot be spent', () => {

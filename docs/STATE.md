@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 944 passing, 0 failing, across 45 files |
+| Tests | 947 passing, 0 failing, across 45 files |
 | Typecheck | clean |
 | Backend | 81 TypeScript files, 35,927 lines |
 | Application | 25 ES modules, 7,199 lines (plus a service worker) |
@@ -54,23 +54,26 @@ application. Do not rebuild them.
    month of AI would be free money. Rounded down, because a fraction of an ACU
    cannot be spent.
 
-The guard: **the volume incentive may never discount below 2×**. The bands were
-rebased from 3.0/2.7/2.5 to 4.0/3.6/3.3 when the headline rate moved — leaving
-them would have made every large customer cheaper than the headline by accident
-— and `effectiveMultiplier` clamps to the floor whatever the table says. A band
-table is exactly the constant somebody tunes without re-deriving what it does
-to the margin.
+The rule under all of them: **the company takes at least 100% profit on every
+AI transaction** — it never keeps less than it paid the provider.
+`minimumProfitPercent` states it, and the multiplier floor is *derived* from it
+(`1 + pct/100 = 2×`) rather than configured beside it, so the rule and the
+arithmetic cannot drift apart. At the 4× price the realised profit is 300%,
+well clear of the floor.
 
-**On "100% profit margin".** At 4× the *markup* is 300% and the *gross margin*
-is 75% — profit £3 on revenue £4. A 100% gross margin would mean zero cost,
-which no priced AI call can have. What is implemented, and what the arithmetic
-supports, is: a 4× charge, a floor that guarantees at least 100% markup on
-every call, and a plan-level margin above 92% — a £950 plan allocates £285 of
-ACUs, which at 4× covers £71.25 of provider spend, so the platform retains
-£878.75 even if the allowance is consumed to the last ACU. If 100% was meant as
-the *markup* rather than the margin, that is `ACU_MARKUP_MULTIPLIER=2`, one
-value, and every test follows it because the fixtures are sized from the
-multiplier rather than from literals.
+The realised figure is reported rather than assumed: every wallet snapshot
+carries `lifetimeProfitMinor` and `lifetimeProfitPercent`, so "are we hitting
+the rule" is a read rather than an exercise somebody repeats by hand.
+
+The volume bands were rebased from 3.0/2.7/2.5 to 4.0/3.6/3.3 when the headline
+rate moved — leaving them would have made every large customer cheaper than the
+headline by accident — and `effectiveMultiplier` clamps to the derived floor
+whatever the table says. Even the deepest band leaves 230% profit, and a test
+asserts every band clears the requirement.
+
+The allocation rate is configuration, not a code path: **30% or 20%** are the
+same arithmetic with a different number, verified at both, so switching is a
+deployment change.
 
 The allowance is published on the pricing page from the package definitions —
 28,500 ACUs on Core Project, 66,000 on Professional Delivery, 195,000 on
@@ -1376,9 +1379,10 @@ Re-opening these is what caused churn before.
    packages so existing contracts resolve.
 5. **Money is in minor units everywhere.** No floating point in the billing
    path. One ACU is one minor unit, so £1 buys 100 ACUs. Provider cost is
-   charged at 4x, the volume incentive may never discount below 2x, and 30% of
-   every subscription payment is credited as AI allowance. No AI work runs
-   without available ACUs.
+   charged at 4x. **The company takes at least 100% profit on every AI
+   transaction** — the multiplier floor is derived from that rule, not
+   configured beside it. 30% (or 20%) of every subscription payment is
+   credited as AI allowance. No AI work runs without available ACUs.
 6. **The interface never holds a rule the API does not publish.** Permission
    matrix and phase gates are fetched, not duplicated.
 7. **A denial is displayed as a denial.** Never as zero, never as empty.

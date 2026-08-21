@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
-import { ACUWallet, effectiveMultiplier } from '../src/billing/acu.ts';
+import { ACUWallet, effectiveMultiplier, minimumMultiplier } from '../src/billing/acu.ts';
 import { assignIdentity, revokeIdentity, SeatLimitError, TIERS, type Subscription } from '../src/billing/subscription.ts';
 import { buildInvoice, formatContractValue } from '../src/billing/invoice.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS, seatForRole } from '../src/billing/seats.ts';
@@ -143,8 +143,8 @@ describe('volume incentive', () => {
     // the incentive can produce is at or above the floor.
     for (const spend of [0, 100_000, 500_000, 5_000_000, Number.MAX_SAFE_INTEGER]) {
       assert.ok(
-        effectiveMultiplier(spend, true) >= config.billing.minimumMultiplier,
-        `a monthly spend of ${spend} priced below the ${config.billing.minimumMultiplier}x floor`,
+        effectiveMultiplier(spend, true) >= minimumMultiplier(),
+        `a monthly spend of ${spend} priced below the ${minimumMultiplier()}x floor`,
       );
     }
   });

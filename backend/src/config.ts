@@ -108,10 +108,19 @@ export const config = {
      */
     markupMultiplier: num('ACU_MARKUP_MULTIPLIER', 4),
     /**
-     * The floor the volume incentive may never discount through: the platform
-     * always at least doubles its money on a provider call. 100% markup.
+     * The company's required profit on every AI transaction, as a percentage
+     * of what the provider charged.
+     *
+     * 100 means the platform keeps at least as much as it paid out — it never
+     * takes less than double what a call cost it. This is a floor and a
+     * business rule, not the price: the price is `markupMultiplier`, and at 4x
+     * the realised profit is 300% of cost, comfortably above the requirement.
+     *
+     * Expressed as a profit requirement rather than as a bare multiplier so
+     * the rule reads as the rule. A number called `minimumMultiplier` invites
+     * somebody to tune it without asking what profit it leaves.
      */
-    minimumMultiplier: num('ACU_MINIMUM_MULTIPLIER', 2),
+    minimumProfitPercent: num('ACU_MINIMUM_PROFIT_PERCENT', 100),
     /**
      * One ACU is one minor unit, so £1 buys 100 ACUs and $1 buys 100. Stated
      * as its own value rather than assumed, because a currency with a

@@ -572,8 +572,9 @@ export function getStarted(): string {
     <h2>How AI is paid for</h2>
     <p>
       Every plan credits <b>${config.billing.subscriptionAcuAllocationPercent}% of what you pay</b> to your AI wallet
-      each month. £1 buys 100 ACUs, so a £950 plan includes £285 — 28,500 ACUs — of AI. Provider cost is charged at
-      ${config.billing.markupMultiplier}×, so that allowance covers £71.25 of actual model spend.
+      each month. £1 buys 100 ACUs, so a £950 plan includes £285 — 28,500 ACUs — of AI. Model usage is charged at
+      ${config.billing.markupMultiplier}× what the provider charges us, and every action tells you its price before
+      you run it.
     </p>
     <p>
       <b>When the ACUs run out, AI stops.</b> Not a warning, not an overdraft, not a surprise line on next month's

@@ -114,8 +114,33 @@ const VOLUME_BANDS: Array<{ upToRawMinor: number; multiplier: number }> = [
  * edited the bands — a band table is exactly the kind of constant somebody
  * tunes without re-deriving what it does to the margin.
  */
+/**
+ * The lowest multiplier that still satisfies the company's profit rule.
+ *
+ * Profit is what is left after the provider is paid, so a required profit of
+ * 100% of cost means charging twice: `1 + 100/100 = 2`. Derived rather than
+ * configured as a bare number, so the rule and the arithmetic cannot drift
+ * apart — changing the required profit changes the floor by construction.
+ */
+export function minimumMultiplier(): number {
+  return 1 + config.billing.minimumProfitPercent / 100;
+}
+
+/**
+ * Profit on one transaction, as a percentage of what the provider charged.
+ *
+ * Reported rather than assumed. The platform states a required profit and a
+ * price; this is what it actually made, and having it on the record is what
+ * stops "are we hitting the rule" from being a question anybody has to
+ * recompute by hand.
+ */
+export function profitPercent(rawCostMinor: number, billedMinor: number): number {
+  if (rawCostMinor <= 0) return 0;
+  return ((billedMinor - rawCostMinor) / rawCostMinor) * 100;
+}
+
 export function effectiveMultiplier(monthlyRawSpendMinor: number, volumeIncentiveEnabled: boolean): number {
-  const floor = config.billing.minimumMultiplier;
+  const floor = minimumMultiplier();
   if (!volumeIncentiveEnabled) return Math.max(config.billing.markupMultiplier, floor);
   for (const band of VOLUME_BANDS) {
     if (monthlyRawSpendMinor <= band.upToRawMinor) return Math.max(band.multiplier, floor);
@@ -172,6 +197,13 @@ export type WalletSnapshot = {
   availableMinor: number;
   lifetimeBilledMinor: number;
   lifetimeRawCostMinor: number;
+  /**
+   * What the company actually made on this account, as a percentage of what it
+   * paid providers. The rule requires at least `minimumProfitPercent`; this is
+   * the realised figure, so nobody has to recompute it to know.
+   */
+  lifetimeProfitPercent: number;
+  lifetimeProfitMinor: number;
   monthRawSpendMinor: number;
   monthBilledMinor: number;
   caps: ACUCaps;
@@ -487,13 +519,18 @@ export class ACUWallet {
 
   snapshot(): WalletSnapshot {
     const halted = this.availableMinor() <= 0;
+    const debits = this.#entries.filter((entry) => entry.type === 'DEBIT');
+    const lifetimeBilled = debits.reduce((sum, entry) => sum + entry.billedMinor, 0);
+    const lifetimeRawCost = debits.reduce((sum, entry) => sum + entry.rawCostMinor, 0);
     return {
       tenantId: this.tenantId,
       balanceMinor: this.#balanceMinor,
       heldMinor: this.heldMinor(),
       availableMinor: this.availableMinor(),
-      lifetimeBilledMinor: this.#entries.filter((e) => e.type === 'DEBIT').reduce((s, e) => s + e.billedMinor, 0),
-      lifetimeRawCostMinor: this.#entries.filter((e) => e.type === 'DEBIT').reduce((s, e) => s + e.rawCostMinor, 0),
+      lifetimeBilledMinor: lifetimeBilled,
+      lifetimeRawCostMinor: lifetimeRawCost,
+      lifetimeProfitMinor: lifetimeBilled - lifetimeRawCost,
+      lifetimeProfitPercent: profitPercent(lifetimeRawCost, lifetimeBilled),
       monthRawSpendMinor: this.monthRawSpendMinor(),
       monthBilledMinor: this.monthBilledMinor(),
       caps: this.#caps,
