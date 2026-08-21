@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { rejectsCode, throwsCode } from './helpers.ts';
 import { ACUWallet } from '../src/billing/acu.ts';
-import { AIOrchestrator } from '../src/ai/orchestrator.ts';
+import { AIOrchestrator, ENGINE_CONTRACTS, engineActiveIn } from '../src/ai/orchestrator.ts';
+import { LIFECYCLE_ORDER } from '../src/lifecycle/phases.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
 
 /**
@@ -198,5 +199,62 @@ describe('money is reserved before anything is spent', () => {
         ),
       'AI_NOT_ENABLED',
     );
+  });
+});
+
+/**
+ * Engine contracts: when each engine may run.
+ *
+ * The routing matrix says which provider an engine reaches. It said nothing
+ * about when the engine is applicable, so every engine was reachable in every
+ * phase — a handover engine could be asked to assemble an O&M manual for a
+ * project still at CONCEPT. It would produce an answer, spend the ACUs and
+ * write it to a ledger that cannot be edited, and the answer would be worthless.
+ *
+ * The binding is a contract rather than documentation because `runAI` enforces
+ * it and `/v1/ai/control-plane` publishes the same table.
+ */
+describe('when an engine may run', () => {
+  it('binds every engine to at least one phase', () => {
+    for (const [engine, contract] of Object.entries(ENGINE_CONTRACTS)) {
+      assert.ok(
+        contract.activeInPhases.length > 0,
+        `${engine} is active in no phase, so it can never run`,
+      );
+      assert.ok(contract.purpose.length > 0, `${engine} declares no purpose`);
+      assert.ok(contract.inputs.length > 0, `${engine} declares no inputs`);
+      assert.ok(contract.outputs.length > 0, `${engine} declares no outputs`);
+    }
+  });
+
+  it('declares only phases that exist', () => {
+    // A typo here would silently disable an engine everywhere rather than fail.
+    for (const [engine, contract] of Object.entries(ENGINE_CONTRACTS)) {
+      for (const phase of contract.activeInPhases) {
+        assert.ok(LIFECYCLE_ORDER.includes(phase), `${engine} names a phase that does not exist: ${phase}`);
+      }
+    }
+  });
+
+  it('keeps handover out of concept and tender out of operations', () => {
+    // The two that matter commercially: an O&M manual for a project that has no
+    // scope yet, and a tender price for an asset handed over three years ago.
+    assert.equal(engineActiveIn('HANDOVER_OM', 'CONCEPT'), false);
+    assert.equal(engineActiveIn('HANDOVER_OM', 'OPERATIONS'), true);
+    assert.equal(engineActiveIn('TENDER', 'OPERATIONS'), false);
+    assert.equal(engineActiveIn('TENDER', 'TENDER'), true);
+  });
+
+  it('leaves the portfolio engine unbound, deliberately', () => {
+    // A portfolio spans projects in different phases, so binding this would
+    // bind it to whichever project happened to be asked about.
+    for (const phase of LIFECYCLE_ORDER) {
+      assert.equal(engineActiveIn('EXECUTIVE', phase), true, `EXECUTIVE was blocked in ${phase}`);
+    }
+  });
+
+  it('publishes the same table it enforces', () => {
+    const published = new AIOrchestrator().controlPlaneStatus().engineContracts;
+    assert.deepEqual(published, ENGINE_CONTRACTS, 'the console would be shown a rule the API does not apply');
   });
 });

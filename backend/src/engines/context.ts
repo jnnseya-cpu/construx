@@ -1,7 +1,8 @@
 import type { ACUWallet } from '../billing/acu.ts';
-import type { AIOrchestrator, Engine } from '../ai/orchestrator.ts';
+import { ENGINE_CONTRACTS, engineActiveIn, type AIOrchestrator, type Engine } from '../ai/orchestrator.ts';
 import type { ProviderCapability, ProviderRequest } from '../ai/providers/types.ts';
 import { config } from '../config.ts';
+import { DomainError } from '../core/errors.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import { assertAccess, type AccessAttributes } from '../identity/abac.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
@@ -122,7 +123,25 @@ export type AITaskResult = {
  * Golden Thread.
  */
 export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITaskResult> {
-  authorise(ctx, 'AI_EXECUTION', 'X', { lifecyclePhase: currentPhase(ctx) });
+  const phase = currentPhase(ctx);
+  authorise(ctx, 'AI_EXECUTION', 'X', { lifecyclePhase: phase });
+
+  // Each engine declares the phases it is applicable in, and this is where that
+  // declaration is enforced — before anything is reserved or charged. Without
+  // it every engine was reachable in every phase: a handover engine would
+  // assemble an O&M manual for a project still at CONCEPT, spend the ACUs, and
+  // write a worthless answer to a ledger that cannot be edited.
+  // `phase` is undefined on a context that is not a delivery project — the
+  // tenant governance pseudo-project, for instance. There is no lifecycle to
+  // check against there, and inventing one would block portfolio reasoning.
+  if (phase !== undefined && !engineActiveIn(task.engine, phase)) {
+    const contract = ENGINE_CONTRACTS[task.engine];
+    throw new DomainError(
+      'ENGINE_NOT_APPLICABLE',
+      `The ${task.engine} engine does not run during ${phase}. It is active in ${contract.activeInPhases.join(', ')}.`,
+      409,
+    );
+  }
 
   const aiPermitted = !ctx.auth.roles.includes('REGULATOR') || ctx.auth.regulatorAiEnabled;
 

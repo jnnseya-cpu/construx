@@ -1369,6 +1369,19 @@ grants you, and the mobile stores require the route to exist. What the screen
 says is kept and removed is read from `GET /v1/me/erasure`, so the wording
 shown before the button is pressed is the same rule the platform applies.
 
+**Every AI engine declares when it may run.** The routing matrix says which
+provider an engine reaches; it said nothing about applicability, so every engine
+was reachable in every phase. A handover engine could be asked to assemble an
+O&M manual for a project still at CONCEPT — it would answer, spend the ACUs and
+write the answer to a ledger that cannot be edited.
+
+`ENGINE_CONTRACTS` binds each of the eight engines to a purpose, its declared
+inputs and outputs, and the lifecycle phases it is active in. `runAI` refuses an
+engine outside its phases **before** anything is reserved or charged, and
+`/v1/ai/control-plane` publishes the same table so the console can grey out what
+does not apply rather than offering it and failing. `EXECUTIVE` is unbound on
+purpose: a portfolio spans projects in different phases.
+
 **Rate limits that survive a second replica.** The limiter is a token bucket
 in a `Map`. For one process that is right; behind a load balancer with four
 replicas it is four separate buckets, so the configured limit is enforced four

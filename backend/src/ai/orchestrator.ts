@@ -1,4 +1,5 @@
 import { config } from '../config.ts';
+import type { LifecyclePhase } from '../lifecycle/phases.ts';
 import { DomainError, ForbiddenError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { ACUWallet, CapBreach } from '../billing/acu.ts';
@@ -71,6 +72,109 @@ export const ROUTING_MATRIX: Record<Engine, { perception: string[]; reasoning: s
     reasoning: ['Portfolio scenario modelling', 'Executive briefing'],
   },
 };
+
+/**
+ * When each engine may run, and what it is for.
+ *
+ * The routing matrix above says *which provider* an engine reaches. It says
+ * nothing about *when* the engine is applicable, so every engine was reachable
+ * in every phase: a handover engine could be asked to assemble an O&M manual
+ * for a project still at CONCEPT, and a tender engine could price a job three
+ * years after it was handed over. Both would produce an answer, spend ACUs and
+ * write it to the ledger, and the answer would be worthless.
+ *
+ * So each engine declares the phases it is active in. This is a contract, not
+ * documentation — `runAI` refuses an engine outside its phases before anything
+ * is reserved or charged, and `/v1/ai/control-plane` publishes it so the
+ * console can grey out what is not applicable rather than offering it and
+ * failing.
+ *
+ * `EXECUTIVE` is active everywhere by design: portfolio reasoning spans
+ * projects that are in different phases from each other, so binding it to one
+ * would be binding it to whichever project was asked about.
+ */
+export type EngineContract = {
+  /** What the engine is asked to decide, in the language of the person asking. */
+  purpose: string;
+  /** The lifecycle phases in which this engine may run. */
+  activeInPhases: LifecyclePhase[];
+  /** What it reads. Named so a reviewer can see the provenance of an answer. */
+  inputs: string[];
+  /** What it produces, and therefore what a person is being asked to act on. */
+  outputs: string[];
+};
+
+const ALL_PHASES: LifecyclePhase[] = [
+  'CONCEPT',
+  'DESIGN',
+  'TENDER',
+  'CONSTRUCTION',
+  'COMMISSIONING',
+  'HANDOVER',
+  'OPERATIONS',
+];
+
+export const ENGINE_CONTRACTS: Record<Engine, EngineContract> = {
+  TENDER: {
+    purpose: 'Price the work and say what the commercial risk in it is',
+    activeInPhases: ['CONCEPT', 'DESIGN', 'TENDER'],
+    inputs: ['Scope packages', 'Drawings and models', 'Cost intelligence from settled projects'],
+    outputs: ['Estimate by cost head', 'Priced risk allowances', 'Bid/no-bid factors'],
+  },
+  PLANNING: {
+    purpose: 'Say when the work will finish and what would recover it',
+    // Not in CONCEPT: there is no programme to reason about before a scope
+    // exists, and a critical path computed from nothing reads as a forecast.
+    activeInPhases: ['DESIGN', 'TENDER', 'CONSTRUCTION', 'COMMISSIONING'],
+    inputs: ['Approved baseline', 'Progress measurements', 'Delay events'],
+    outputs: ['Delay forecast with confidence', 'Critical path', 'Costed recovery options'],
+  },
+  RESOURCE_COST: {
+    purpose: 'Say where the margin is going and what it will cost to complete',
+    activeInPhases: ['TENDER', 'CONSTRUCTION', 'COMMISSIONING'],
+    inputs: ['Budget and cost codes', 'Committed and actual cost', 'Progress measurements'],
+    outputs: ['Earned value position', 'Cost to complete', 'Margin erosion by cause'],
+  },
+  RISK_SAFETY: {
+    purpose: 'Say what is likely to go wrong and whether the controls are adequate',
+    activeInPhases: ALL_PHASES,
+    inputs: ['Risk register', 'Incidents and observations', 'RAMS and method statements'],
+    outputs: ['Exposure by category', 'Control adequacy findings', 'Mitigation proposals'],
+  },
+  BIM_TWIN: {
+    purpose: 'Say where the design conflicts with itself or with what was built',
+    activeInPhases: ['DESIGN', 'TENDER', 'CONSTRUCTION', 'COMMISSIONING', 'HANDOVER'],
+    inputs: ['Models and drawing register', 'Clash records', 'Site observations'],
+    outputs: ['Clash severity and sequencing', 'Design-to-as-built deltas'],
+  },
+  CONTRACTS_CLAIMS: {
+    purpose: 'Say what the contract entitles and what the evidence supports',
+    // From TENDER, because the form of contract is chosen before it is signed
+    // and the notice regime it imposes starts mattering immediately.
+    activeInPhases: ['TENDER', 'CONSTRUCTION', 'COMMISSIONING', 'HANDOVER', 'OPERATIONS'],
+    inputs: ['Contract and its clauses', 'Notices and correspondence', 'Delay events and evidence'],
+    outputs: ['Entitlement assessment', 'Time-bar position', 'Claim pack with references'],
+  },
+  HANDOVER_OM: {
+    purpose: 'Say whether the asset can be operated and what it will need',
+    activeInPhases: ['COMMISSIONING', 'HANDOVER', 'OPERATIONS'],
+    inputs: ['Asset register', 'Commissioning results', 'Warranties and defects'],
+    outputs: ['Handover readiness and gaps', 'Maintenance strategy', 'Lifecycle replacement plan'],
+  },
+  EXECUTIVE: {
+    purpose: 'Say what across the portfolio needs a decision this week',
+    // Everywhere, deliberately: a portfolio spans projects in different phases,
+    // so binding this would bind it to whichever project was asked about.
+    activeInPhases: ALL_PHASES,
+    inputs: ['Every project position', 'Agent findings', 'Wallet and commercial state'],
+    outputs: ['Ranked actions with reasons', 'Portfolio exposure'],
+  },
+};
+
+/** Whether an engine may run in a phase. */
+export function engineActiveIn(engine: Engine, phase: LifecyclePhase): boolean {
+  return ENGINE_CONTRACTS[engine].activeInPhases.includes(phase);
+}
 
 export type AIRequestStatus = 'QUEUED' | 'HELD' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'REJECTED';
 
@@ -366,12 +470,17 @@ export class AIOrchestrator {
     reasoning: { provider: AIProvider; healthy: boolean };
     perception: { provider: AIProvider; healthy: boolean };
     routingMatrix: typeof ROUTING_MATRIX;
+    engineContracts: typeof ENGINE_CONTRACTS;
   } {
     return {
       mode: config.ai.mode,
       reasoning: { provider: this.#reasoning.name, healthy: this.#reasoning.healthy() },
       perception: { provider: this.#perception.name, healthy: this.#perception.healthy() },
       routingMatrix: ROUTING_MATRIX,
+      // Published so the console can grey out an engine that is not applicable
+      // to the phase rather than offering it and failing. `runAI` enforces the
+      // same table, so the interface holds no rule the API does not publish.
+      engineContracts: ENGINE_CONTRACTS,
     };
   }
 }
