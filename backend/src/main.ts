@@ -1,4 +1,6 @@
 import { startGateway } from './api/gateway.ts';
+import { rateLimiter } from './api/middleware.ts';
+import { SharedLimiter } from './api/sharedlimiter.ts';
 import { assertProductionSafety, config } from './config.ts';
 import { Journal, RecordJournal } from './goldenthread/journal.ts';
 import type { ACUEntry } from './billing/acu.ts';
@@ -78,6 +80,15 @@ if (config.ledger.journalPath !== '') {
   if (!config.ledger.fsync) durability += ' (fsync OFF)';
 }
 
+// Rate-limit state, shared across replicas when a backend is configured.
+// Unset means the buckets stay in this process, which is correct for one
+// instance and is the multiplied-limit defect for more than one.
+let limiterState = 'in-process (single instance only)';
+if (config.rateLimit.redisUrl !== '') {
+  rateLimiter.attachShared(new SharedLimiter({ url: config.rateLimit.redisUrl }));
+  limiterState = `shared via ${new URL(config.rateLimit.redisUrl).host}`;
+}
+
 const server = await startGateway(platform, config.port);
 
 const newsletter = startNewsletterSchedule(platform, (report) => {
@@ -93,6 +104,7 @@ process.stdout.write(
     `  Site         http://localhost:${config.port}/`,
     `  Console      http://localhost:${config.port}/app`,
     `  API routes   http://localhost:${config.port}/v1/routes`,
+    `  Rate limits  ${limiterState}`,
     `  Health       http://localhost:${config.port}/readyz`,
     `  Ledger       ${durability}`,
     `  AI mode      ${config.ai.mode}${config.ai.mode === 'local' ? ' (deterministic engines, no provider spend)' : ''}`,

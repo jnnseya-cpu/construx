@@ -83,6 +83,18 @@ export const config = {
     max: num('GATEWAY_RATE_LIMIT_MAX', 1000),
     burst: num('GATEWAY_RATE_LIMIT_BURST', 200),
     windowSeconds: num('GATEWAY_RATE_LIMIT_WINDOW_SECONDS', 60),
+    /**
+     * Where the buckets live when there is more than one replica.
+     *
+     * Empty means in-process, which is correct for one process and silently
+     * wrong for four: four replicas are four separate buckets, so the limit
+     * configured above is multiplied by the replica count and the login route
+     * hands out that much more budget to a brute-force attempt. Set this the
+     * moment the deployment scales past one instance —
+     * `assertProductionSafety` cannot detect the replica count, so it warns
+     * about the absence rather than the mistake.
+     */
+    redisUrl: str('GATEWAY_RATE_LIMIT_REDIS_URL', ''),
   },
 
   validation: {
@@ -233,6 +245,11 @@ export function assertProductionSafety(): string[] {
       warnings.push(`AI_MODE is "${config.ai.mode}" in a production environment`);
     }
     if (!config.auth.required) warnings.push('GATEWAY_REQUIRE_AUTH is disabled in production');
+    if (config.rateLimit.redisUrl === '') {
+      warnings.push(
+        'GATEWAY_RATE_LIMIT_REDIS_URL is unset — rate limits are per-process, so N replicas enforce N times the configured limit',
+      );
+    }
     if (config.newsletter.enabled && !config.smtp.host) {
       warnings.push('NEWSLETTER_ENABLED is on but SMTP_HOST is unset — issues will be recorded, not delivered');
     }

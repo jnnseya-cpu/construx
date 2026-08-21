@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 990 passing, 0 failing, across 47 files |
+| Tests | 1001 passing, 0 failing, across 48 files |
 | Typecheck | clean |
 | Backend | 81 TypeScript files, 35,927 lines |
 | Application | 25 ES modules, 7,199 lines (plus a service worker) |
@@ -1368,6 +1368,29 @@ capability matrix — asking to be erased is not a permission somebody else
 grants you, and the mobile stores require the route to exist. What the screen
 says is kept and removed is read from `GET /v1/me/erasure`, so the wording
 shown before the button is pressed is the same rule the platform applies.
+
+**Rate limits that survive a second replica.** The limiter is a token bucket
+in a `Map`. For one process that is right; behind a load balancer with four
+replicas it is four separate buckets, so the configured limit is enforced four
+times over — and the login route, which carries the tightest limit precisely
+because it is the brute-force surface, hands out four times the budget.
+
+`GATEWAY_RATE_LIMIT_REDIS_URL` moves the buckets into Redis, spoken directly
+over a socket the way `messaging/smtp.ts` speaks SMTP, because zero runtime
+dependencies is settled. The refill and the decrement run as one script inside
+Redis: doing it as GET then SET across the network is a race under exactly the
+load the limiter exists for. Unreachable is a denial, never a fall-back to the
+local bucket — the local bucket during a backend outage is the multiplied limit
+again, and the outage is when somebody is most likely to be pushing.
+
+Unset, the behaviour is byte-identical to before. `assertProductionSafety`
+warns when it is unset in production, because it cannot see the replica count.
+
+The bucket arithmetic is tested against a real `redis-server`, including two
+clients sharing one bucket; a fake reimplementing the Lua would be testing the
+fake. Where no Redis is reachable those tests **skip loudly** and CI fails on
+the skip, because a green tick against an unexercised security control is worse
+than no test.
 
 **Both HTML responses carry the policy layer.** The application shell used to
 write its own response head, which made it the one page on the server with no

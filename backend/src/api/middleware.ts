@@ -5,6 +5,7 @@ import { AuthError, RateLimitError, ValidationError, toProblem, DomainError } fr
 import { assertValid, type Schema } from '../core/validate.ts';
 import { counters, latency, recordSecurityEvent, truncateAddress } from './telemetry.ts';
 import { verifyToken, type AuthContext } from '../identity/auth.ts';
+import type { SharedLimiter } from './sharedlimiter.ts';
 
 /**
  * Gateway middleware. The gateway is the only internet-facing component and it
@@ -85,9 +86,48 @@ type Bucket = { tokens: number; lastRefill: number };
 class RateLimiter {
   readonly #buckets = new Map<string, Bucket>();
   #backendHealthy = true;
+  #shared: SharedLimiter | undefined;
 
   setBackendHealthy(healthy: boolean): void {
     this.#backendHealthy = healthy;
+  }
+
+  /**
+   * Move the buckets off this process.
+   *
+   * In one process the `Map` below is exactly right. Behind a load balancer
+   * with four replicas it is four separate buckets, so the configured limit is
+   * silently multiplied by the replica count and the login route — the one with
+   * the tightest limit precisely because it is the brute-force surface — hands
+   * out four times the budget. Attaching a shared store is what makes the
+   * number in the configuration the number that is actually enforced.
+   */
+  attachShared(shared: SharedLimiter | undefined): void {
+    this.#shared = shared;
+  }
+
+  get shared(): boolean {
+    return this.#shared !== undefined;
+  }
+
+  /**
+   * The shared path. Falls back to nothing: if the backend cannot answer, the
+   * request is denied rather than waved through on the local bucket, because a
+   * local bucket during a backend outage is the multiplied limit again, and the
+   * outage is exactly when somebody is most likely to be pushing.
+   */
+  async consumeShared(
+    key: string,
+    options: { max: number; burst: number; windowSeconds: number },
+  ): Promise<{ allowed: boolean; retryAfter: number; remaining: number }> {
+    if (!this.#shared) return this.consume(key, options);
+    if (!this.#backendHealthy) return { allowed: false, retryAfter: options.windowSeconds, remaining: 0 };
+
+    try {
+      return await this.#shared.consume(key, options);
+    } catch {
+      return { allowed: false, retryAfter: options.windowSeconds, remaining: 0 };
+    }
   }
 
   consume(
@@ -130,7 +170,7 @@ const ROUTE_GROUP_LIMITS: Record<string, { max: number; burst: number }> = {
   default: { max: config.rateLimit.max, burst: config.rateLimit.burst },
 };
 
-export function applyRateLimit(ctx: RequestContext, remoteAddress: string): void {
+export async function applyRateLimit(ctx: RequestContext, remoteAddress: string): Promise<void> {
   const group = ctx.path.startsWith('/v1/auth') ? 'auth' : ctx.path.includes('/ai/') ? 'ai' : 'default';
   const limits = ROUTE_GROUP_LIMITS[group] ?? ROUTE_GROUP_LIMITS.default;
 
@@ -138,7 +178,10 @@ export function applyRateLimit(ctx: RequestContext, remoteAddress: string): void
     ? `rl:${ctx.auth.tenantId}:${ctx.auth.actorId}:${group}`
     : `rl:ip:${remoteAddress}:${group}`;
 
-  const result = rateLimiter.consume(key, {
+  // One await, and it resolves synchronously when no shared store is attached —
+  // which is every test and every single-process deployment, so the local path
+  // keeps behaving exactly as it did.
+  const result = await rateLimiter.consumeShared(key, {
     max: (limits as { max: number }).max,
     burst: (limits as { burst: number }).burst,
     windowSeconds: config.rateLimit.windowSeconds,

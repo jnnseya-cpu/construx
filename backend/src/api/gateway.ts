@@ -174,12 +174,12 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     const isPublic = matched.route.public === true;
 
     // Pre-auth limiting keyed by IP protects the login surface.
-    applyRateLimit(ctx, req.socket.remoteAddress ?? 'unknown');
+    await applyRateLimit(ctx, req.socket.remoteAddress ?? 'unknown');
 
     authenticate(req, ctx, isPublic);
 
     // Re-apply post-auth so the tenant-aware key takes effect once known.
-    if (ctx.auth) applyRateLimit(ctx, req.socket.remoteAddress ?? 'unknown');
+    if (ctx.auth) await applyRateLimit(ctx, req.socket.remoteAddress ?? 'unknown');
 
     ctx.body = await readBody(req);
     validateRequest(ctx, matched.route.schema, isPublic);
