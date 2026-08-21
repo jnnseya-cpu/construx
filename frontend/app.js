@@ -1,5 +1,6 @@
 import { api, ApiError, resetWithheld, session, withheldRecords } from './lib/api.js';
 import { esc, html, humanise, initials, money, raw, render, toast } from './lib/ui.js';
+import * as outbox from './lib/outbox.js';
 import { PAGES } from './pages/index.js';
 
 /**
@@ -113,6 +114,10 @@ async function loadMatrix() {
   const result = await api.get('/v1/permissions/matrix');
   matrix = result.matrix;
   writePhaseGates = result.writePhaseGates ?? {};
+  // The same call carries which events a device may never originate, so the
+  // outbox refuses a governance action at the point of the press rather than
+  // queuing one the sync engine will certainly reject.
+  outbox.useNeverOffline(result.neverOffline);
   return matrix;
 }
 
@@ -216,8 +221,44 @@ export function signOut() {
   session.clear();
   state.session = null;
   state.project = null;
+  // Queued operations were authorised for the identity signing out, and a site
+  // handset changes hands. Leaving them to flush under the next operative's
+  // token would attribute one person's record to another.
+  void outbox.clear();
   navigate('login');
 }
+
+/**
+ * Push whatever the outbox is holding, and say what happened.
+ *
+ * Called when the browser reports it is back online and once on load, because
+ * `online` does not fire for an application launched with signal already
+ * present. Silent on success with nothing to send; a rejected operation is
+ * always surfaced, because finding out at the end of the week that a record
+ * did not stick is how a field log loses its authority.
+ */
+async function drainOutbox() {
+  if (!state.session || !navigator.onLine) return;
+
+  let result;
+  try {
+    result = await outbox.flush((path, body) => api.post(path, body));
+  } catch {
+    return; // Nothing was decided. The queue keeps everything and tries again.
+  }
+
+  if (result.accepted > 0) {
+    toast('Field records synced', `${result.accepted} operation${result.accepted === 1 ? '' : 's'} filed`, 'ok');
+  }
+  for (const conflict of result.conflicts) {
+    if (conflict.resolution === 'REJECTED' || conflict.resolution === 'SERVER_WINS') {
+      toast('Field record not accepted', conflict.message, 'err');
+    }
+  }
+  if (result.accepted > 0) await draw();
+}
+
+window.addEventListener('online', () => void drainOutbox());
 
 // --- shell ------------------------------------------------------------------
 
@@ -450,6 +491,10 @@ function splashFailed(message) {
 
 void draw()
   .then(dismissSplash)
+  // Once on load as well as on `online`: the event does not fire for an
+  // application launched with signal already present, which is the common case
+  // for a handset that queued work yesterday and is opened back at the office.
+  .then(() => drainOutbox())
   .catch((error) => {
     // draw() handles its own errors, so reaching here means the shell itself
     // failed. Leaving the splash up with its progress bar sweeping would imply

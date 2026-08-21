@@ -58,6 +58,7 @@ import { unsubscribePage } from '../messaging/render.ts';
 import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { createMfaChallenge, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
+import { FIELD_FORBIDDEN_EVENTS } from '../field/sync.ts';
 import { ownershipMap } from '../identity/ownership.ts';
 import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode } from '../identity/roles.ts';
 import { authorise, AUTHZ_OPTIONS, currentPhase } from '../engines/context.ts';
@@ -194,9 +195,17 @@ function projectContext(platform: Platform, ctx: RequestContext, overrideProject
   return platform.context(auth(ctx), projectId, { correlationId: ctx.correlationId, source: sourceOf(ctx) });
 }
 
-function sourceOf(ctx: RequestContext): 'WEB' | 'ANDROID' | 'IOS' | 'SYSTEM' {
+function sourceOf(ctx: RequestContext): 'WEB' | 'PWA' | 'ANDROID' | 'IOS' | 'SYSTEM' {
+  // The installed application declares itself, because only it knows: a PWA in
+  // standalone display mode is the same user agent as the same browser with a
+  // tab open, and nothing in the request distinguishes them. The client asserts
+  // it, the ledger records what was asserted, and the value is a provenance
+  // note rather than a permission — nothing is granted or refused on it.
   const client = ctx.query.get('client');
-  return client === 'android' ? 'ANDROID' : client === 'ios' ? 'IOS' : 'WEB';
+  if (client === 'android') return 'ANDROID';
+  if (client === 'ios') return 'IOS';
+  if (client === 'pwa') return 'PWA';
+  return 'WEB';
 }
 
 const stringField = { type: 'string', minLength: 1 } as const;
@@ -1186,6 +1195,11 @@ export const ROUTES: Route[] = [
       // it will actually be refused, rather than duplicating the rule and
       // drifting from it.
       writePhaseGates: WRITE_PHASE_GATES,
+      // Same argument, one layer further out: the installed application refuses
+      // a governance action at the point of the press rather than queuing an
+      // operation the sync engine will certainly reject, and showing the
+      // operative an approval as "pending sync" until it does.
+      neverOffline: [...FIELD_FORBIDDEN_EVENTS],
     }),
   },
 

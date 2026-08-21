@@ -975,6 +975,36 @@ access control and serve it to whoever opens the app on that device next.
 Offline field work is the sync protocol's job, not a cache's. Shell only,
 network-first for navigation, verified by test and in a browser.
 
+**The outbox is what makes it a field application rather than an installable
+bookmark.** `frontend/lib/outbox.js` holds captured work in IndexedDB until the
+sync engine has decided about it. Three properties, each verified in a browser
+with the network genuinely cut rather than reasoned about:
+
+- **`PWA` is a first-class event source**, added alongside `WEB`, `ANDROID` and
+  `IOS`. A record typed at a desk and a record captured at a work face are
+  different evidence, and a browser claiming to be Android would put a false
+  provenance into a ledger that cannot afterwards be corrected. The client
+  asserts it — nothing in a request distinguishes a standalone PWA from the same
+  browser with a tab open — and it is a provenance note, never a permission.
+- **The device timestamp survives the delay.** Verified end to end: an
+  observation captured offline at `18:12:45.965` and flushed three seconds later
+  carries `deviceTimestamp 18:12:45.965` against `recordedAt 18:12:48.983`. The
+  time on the record is the time on site, which is the fact a delay claim turns
+  on.
+- **A governance action is refused at the press, not queued.** The sync engine's
+  own `FIELD_FORBIDDEN_EVENTS` is published on `/v1/permissions/matrix` and the
+  outbox reads it, so the operative is told immediately rather than shown an
+  approval as "pending sync" that was never going to be accepted. The first
+  version of that list was hardcoded in the browser and every one of its eight
+  event names was wrong, which is settled decision 6 earning its keep.
+
+What the outbox refuses to do is as load-bearing as what it does. An operation
+the server did not *decide* about — a dropped connection rather than a verdict —
+is kept, because dropping it is how a site record silently loses a day. A
+rejection is surfaced rather than swallowed. And the queue is cleared on
+sign-out, because a site handset changes hands and one operative's record must
+not flush under another's token.
+
 Regenerate the assets with `node tools/icons.mjs` after any brand change. The
 PNG encoder is in that file: `node:zlib` is built in, so it was shorter than the
 argument for a dependency.
@@ -1530,8 +1560,12 @@ parsing work, not wiring.
 - **Audio and communication intelligence** — transcription, commitment and
   deadline extraction, `COMMITMENT_REGISTERED`, `DEADLINE_TRACKED`
 - **Deployment topology** — Terraform, Kong, MSK, RDS, S3
-- **Native Android and iOS clients** — the sync protocol and `ANDROID`/`IOS`
-  event sources are built and tested server-side
+- **Native Android and iOS clients** — the installed PWA covers the field case
+  today, including offline capture, and the `ANDROID`/`IOS` event sources exist
+  server-side for when a native client arrives. Two things a PWA cannot do that
+  a store app can, and neither is worked around here: background sync while the
+  application is closed, and camera or location capture beyond what the browser
+  grants
 - **External data feeds** — commodity pricing, weather, credit reference
 - **Postgres, RLS and horizontal scale** — the ledger is durable now (an
   append-only journal on a volume, verified on restore), but one process owns

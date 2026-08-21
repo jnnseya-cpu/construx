@@ -36,7 +36,13 @@ export type SyncOperation = {
   evidenceRefs?: EntityRef[];
   /** State hash the device believed current when it made the change. */
   baseStateHash?: string;
-  source: Extract<EventSource, 'ANDROID' | 'IOS'>;
+  /**
+   * Offline capture only. `WEB` is excluded deliberately: a desk browser has no
+   * reason to push a batch, and allowing it would let an online client
+   * backdate work through `deviceTimestamp` without the offline provenance
+   * that justifies the backdating.
+   */
+  source: Extract<EventSource, 'PWA' | 'ANDROID' | 'IOS'>;
 };
 
 export type SyncConflict = {
@@ -90,8 +96,16 @@ function priorityOf(auth: AuthContext): number {
   return Math.max(0, ...auth.roles.map((role) => ROLE_PRIORITY[role] ?? 0));
 }
 
-/** Operations that must never be accepted from a device. */
-const FIELD_FORBIDDEN_EVENTS = new Set([
+/**
+ * Events a device may never originate, however good its authorisation.
+ *
+ * Exported and published at `/v1/permissions/matrix` so the installed
+ * application can refuse a governance action at the point of the press. Without
+ * that, the outbox queues an operation that will certainly be rejected on flush
+ * and shows the operative an approval as "pending sync" until then. Settled
+ * decision 6 again: the interface holds no rule the API does not publish.
+ */
+export const FIELD_FORBIDDEN_EVENTS = new Set([
   'PROGRAMME_BASELINE_APPROVED',
   'BUDGET_BASELINE_APPROVED',
   'ESTIMATE_FROZEN',

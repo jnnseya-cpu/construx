@@ -5,7 +5,18 @@ export type EntityRef = { refType: string; refId: string };
 
 export type ActorRef = { refType: 'User' | 'System' | 'AI'; refId: string };
 
-export type EventSource = 'WEB' | 'ANDROID' | 'IOS' | 'SYSTEM' | 'AI';
+/**
+ * Where a record was made. Written into every event and never editable after.
+ *
+ * `PWA` is the installed browser application on a device — a phone on a site,
+ * launched from the home screen, capturing work that may have happened with no
+ * signal. It is separate from `WEB` because a record typed at a desk and a
+ * record captured at a work face are different evidence, and separate from
+ * `ANDROID`/`IOS` because those mean a native client, which is not built. A
+ * browser claiming to be Android would put a false provenance into an
+ * append-only ledger, where it cannot afterwards be corrected.
+ */
+export type EventSource = 'WEB' | 'PWA' | 'ANDROID' | 'IOS' | 'SYSTEM' | 'AI';
 
 export type AIProvider = 'OPENAI' | 'GEMINI';
 
