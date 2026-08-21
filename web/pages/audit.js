@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { badge, html, humanise, raw, render, shortHash, table, time, toast } from '../lib/ui.js';
+import { badge, html, raw, render, shortHash, table, time, toast } from '../lib/ui.js';
 import { can, state } from '../app.js';
 
 /**
@@ -105,6 +105,36 @@ export async function audit(root) {
         </div>
       </div>
 
+      <div class="card" style="margin-bottom:14px">
+        <h3>Trace a record</h3>
+        <p class="metric-sub" style="margin-bottom:12px">
+          What caused this, and what was built on it. Walked over the ledger rather than held in a second index — links are
+          labelled by how they were established, because a declared piece of evidence and a state field that happens to name
+          an id are not the same claim.
+        </p>
+        <form class="input-zone" id="trace">
+          <div class="field">
+            <label for="t-entity">Record</label>
+            <select id="t-entity" name="entity">
+              ${[...new Map(events.slice(-120).reverse().map((e) => [`${e.entity.refType}/${e.entity.refId}`, e])).entries()]
+                .slice(0, 60)
+                .map(([key, e]) => html`<option value="${key}">${e.entity.refType} · ${e.entity.refId.slice(-6)} · ${e.eventType}</option>`)}
+            </select>
+          </div>
+          <div class="field">
+            <label for="t-depth">Steps</label>
+            <select id="t-depth" name="depth">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3" selected>3</option>
+              <option value="4">4</option>
+            </select>
+          </div>
+          <div class="actions"><button class="btn" type="submit">Trace</button></div>
+        </form>
+        <div id="trace-result" style="margin-top:13px"></div>
+      </div>
+
       <div class="card">
         <h3>How to verify this yourself</h3>
         <div class="code">
@@ -121,6 +151,56 @@ export async function audit(root) {
       </div>
     `,
   );
+
+  document.getElementById('trace')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const host = document.getElementById('trace-result');
+    const [refType, refId] = document.getElementById('t-entity').value.split('/');
+    const depth = document.getElementById('t-depth').value;
+
+    render(host, html`<div class="notice info">Walking the ledger…</div>`);
+
+    try {
+      const graph = await api.get(`/v1/projects/${projectId}/lineage/${refType}/${refId}?depth=${depth}`);
+      const byKey = new Map(graph.nodes.map((n) => [`${n.ref.refType}:${n.ref.refId}`, n]));
+      // Spelled out rather than title-cased: "Ai input" is not a thing, and
+      // these four words carry the whole distinction the panel exists to make.
+      const LINK_LABEL = {
+        EVIDENCE: 'evidence',
+        AI_INPUT: 'AI input',
+        SAME_COMMAND: 'same command',
+        REFERENCE: 'reference',
+      };
+      const nameOf = (ref) => {
+        const node = byKey.get(`${ref.refType}:${ref.refId}`);
+        if (!node) return `${ref.refType} ${ref.refId.slice(-6)}`;
+        return node.readable ? `${ref.refType} · ${node.label ?? ref.refId.slice(-6)}` : `${ref.refType} · withheld`;
+      };
+
+      render(
+        host,
+        html`
+          <div class="notice ${raw(graph.withheldCount > 0 ? 'warn' : 'info')}">${graph.summary}</div>
+          ${table({
+            headers: ['From', 'Link', 'To', 'Established by'],
+            rows: graph.edges.map((e) => [
+              nameOf(e.from),
+              badge(LINK_LABEL[e.kind] ?? e.kind, e.kind === 'REFERENCE' ? 'neutral' : 'ok'),
+              nameOf(e.to),
+              e.kind === 'REFERENCE' ? `state field "${e.via}"` : `${e.eventType} · ${time(e.timestamp)}`,
+            ]),
+            empty: 'Nothing else in the record refers to this, and it refers to nothing else.',
+          })}
+          <div class="metric-sub" style="margin-top:9px">
+            A <b>reference</b> link was read out of a record's state; every other kind was declared by an event at the time, and
+            names it. The difference matters when somebody is relying on the chain.
+          </div>
+        `,
+      );
+    } catch (error) {
+      render(host, html`<div class="notice err">${error.message}</div>`);
+    }
+  });
 
   document.getElementById('replay')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;

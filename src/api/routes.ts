@@ -33,6 +33,7 @@ import * as planning from '../engines/planning.ts';
 import * as quality from '../engines/quality.ts';
 import * as safety from '../engines/safety.ts';
 import * as tender from '../engines/tender.ts';
+import { lineage } from '../goldenthread/lineage.ts';
 import { replayProject, replayTimeline } from '../goldenthread/replay.ts';
 import { readConsent, resolveAudience, resolveUnsubscribe, setConsent } from '../messaging/audience.ts';
 import {
@@ -2385,6 +2386,32 @@ export const ROUTES: Route[] = [
         timestamp ?? new Date().toISOString(),
         // A regulator always gets the regulator view regardless of what is asked for.
         { audience: actor.roles.includes('REGULATOR') ? 'REGULATOR' : audience, scope },
+      );
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/lineage/:refType/:refId',
+    description: 'What caused a record and what was built on it, walked over the ledger',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+      }
+
+      const projectId = ctx.params.projectId as string;
+      const project = platform.ledger.get({ refType: 'Project', refId: projectId });
+      if (!project || project.tenantId !== actor.tenantId) throw new NotFoundError(`No project ${projectId}`);
+
+      // The starting record is authorised the same way every node in the walk
+      // is, by the walk itself. What is checked here is only that the caller is
+      // asking about a project that is theirs.
+      return lineage(
+        platform.ledger,
+        actor,
+        projectId,
+        { refType: ctx.params.refType as string, refId: ctx.params.refId as string },
+        { maxDepth: ctx.query.get('depth') ? Number(ctx.query.get('depth')) : undefined, authzOptions: AUTHZ_OPTIONS },
       );
     },
   },

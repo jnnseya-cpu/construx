@@ -883,7 +883,6 @@ named so it is not mistaken for finished.
 | Digital twin | Reconciles observed against expected element status | Observations are structured input, not derived from imagery |
 | Evidence capture | Real SHA-256 over the real file, recorded against the event | No object store for the file itself |
 | Clause extraction | From supplied text | OCR and table extraction |
-| Knowledge graph | Entities cross-reference by id; the ledger reconstructs lineage | No graph store or traversal API |
 | 4D scheduling | Twin states link to task ids | No visualisation |
 | PDF export | Structured document model and HTML rendering | PDF rendering |
 | Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded | No bounce processing or suppression list; DKIM belongs at the relay, where the key should live |
