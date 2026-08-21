@@ -372,7 +372,7 @@ export async function field(root) {
           { value: 'true', label: 'Yes — needs an owner and a date' },
         ] },
         { name: 'actionOwner', label: 'Action owner', type: 'text', required: false },
-        { name: 'actionByDate', label: 'Needed by', type: 'date', required: false },
+        { name: 'actionByDate', label: 'Needed by', type: 'date', required: false, min: today() },
         { name: 'evidenceHash', label: 'Photograph', type: 'file',
           hint: 'An observation without one is an assertion' },
       ],

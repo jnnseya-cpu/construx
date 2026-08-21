@@ -62,8 +62,13 @@ function control(field) {
   const type = FIELD_TYPES.has(field.type) ? field.type : 'text';
   const step = field.type === 'number' ? ` step="${esc(field.step ?? 'any')}"` : '';
   const min = field.min !== undefined ? ` min="${esc(field.min)}"` : '';
+  // `max` was never rendered, so a date field had no upper bound to offer even
+  // where one obviously applied. The bound is an affordance — it puts the
+  // calendar's greyed-out days in the right place — and never the enforcement:
+  // the API refuses a future notice date whatever the browser allowed.
+  const max = field.max !== undefined ? ` max="${esc(field.max)}"` : '';
   return `<input id="${id}" name="${esc(field.name)}" type="${type}" value="${esc(field.value ?? '')}"
-    placeholder="${esc(field.placeholder ?? '')}"${step}${min} ${required}>`;
+    placeholder="${esc(field.placeholder ?? '')}"${step}${min}${max} ${required}>`;
 }
 
 async function collect(host, fields) {

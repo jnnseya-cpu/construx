@@ -260,7 +260,7 @@ export async function handover(root) {
         { name: 'manufacturer', label: 'Manufacturer', type: 'text' },
         { name: 'modelNumber', label: 'Model', type: 'text' },
         { name: 'serialNumber', label: 'Serial number', type: 'text', required: false },
-        { name: 'installedAt', label: 'Installed', type: 'date', value: todayIso() },
+        { name: 'installedAt', label: 'Installed', type: 'date', value: todayIso(), max: todayIso() },
         { name: 'location', label: 'Location', type: 'text' },
         { name: 'expectedLifeYears', label: 'Expected life (years)', type: 'number', min: 1 },
         { name: 'replacementCostMinor', label: 'Replacement cost', type: 'number', money: true, hint: 'In pounds' },

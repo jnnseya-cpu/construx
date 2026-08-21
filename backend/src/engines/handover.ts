@@ -2,6 +2,7 @@ import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
+import { assertNotFuture } from '../domain/dates.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
 
 /**
@@ -227,6 +228,11 @@ export function registerAsset(
   },
 ): { assetId: string } {
   authorise(ctx, 'HANDOVER_OM', 'C', { lifecyclePhase: currentPhase(ctx) });
+
+  // An asset is registered because it is in the ground. A future installation
+  // date pushes the replacement date below out with it, and the whole thirty
+  // year lifecycle plan is built off that one number.
+  assertNotFuture(input.installedAt, 'installedAt');
 
   const assetId = ulid();
   write(ctx, {

@@ -1,4 +1,5 @@
 import { hashEvidence } from '../core/canonical.ts';
+import { assertOrder } from './dates.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
@@ -155,6 +156,11 @@ export function createProject(
   },
 ): { projectId: string; phase: LifecyclePhase } {
   authorise(ctx, 'PROJECT_SETUP', 'C');
+
+  // A project that completes before it starts produces a negative duration
+  // everywhere downstream — the programme, the cash-flow model and the delay
+  // forecast all divide by it. Nothing checked, so nothing stopped it.
+  assertOrder(input.plannedStart, input.plannedCompletion, 'plannedStart', 'plannedCompletion');
 
   ctx.ledger.require({ refType: 'Portfolio', refId: input.portfolioId });
 

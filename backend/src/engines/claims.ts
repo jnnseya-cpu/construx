@@ -3,6 +3,7 @@ import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
 import { replayTimeline } from '../goldenthread/replay.ts';
+import { assertNotFuture, assertOrder } from '../domain/dates.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
 import { assessClaim, attributeDelay, CAUSE_LIABILITY, type DelayCause, type DelayEventInput } from './maths/claims.ts';
 import {
@@ -875,6 +876,17 @@ export function recordDelayEvent(
 
   if (evidenceRefs.length === 0) {
     throw new DomainError('DELAY_EVENT_UNEVIDENCED', 'A delay event must carry at least one item of evidence');
+  }
+
+  // A delay is a period that has happened, and the time bar below counts from
+  // its start. Unchecked, an end before the start gave a negative duration, and
+  // a notice dated before the event it notifies scored as comfortably inside
+  // the 28 days — the wrong answer arrived at confidently.
+  assertNotFuture(input.start, 'start');
+  assertOrder(input.start, input.end, 'start', 'end');
+  if (input.noticeDate !== undefined) {
+    assertNotFuture(input.noticeDate, 'noticeDate');
+    assertOrder(input.start, input.noticeDate, 'start', 'noticeDate');
   }
 
   // Time bars run from the event, and most standard forms allow 28 days.

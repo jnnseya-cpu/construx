@@ -1808,7 +1808,12 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     manufacturer: 'Hydrotech',
     modelNumber: 'SB-4000',
     serialNumber: 'SN-88213',
-    installedAt: '2027-11-15T00:00:00.000Z',
+    // Relative to the run, not a fixed date. It was '2027-11-15' — an
+    // installation date in the future, on a project the seed has already taken
+    // through to HANDOVER, with a fifteen-year replacement plan counted from
+    // it. A literal here is wrong twice: it was wrong when written, and any
+    // replacement literal goes stale the moment the clock passes it.
+    installedAt: new Date(Date.now() - 90 * 86_400_000).toISOString(),
     location: 'Clarifier No.1',
     expectedLifeYears: 15,
     replacementCostMinor: 4_200_000,
