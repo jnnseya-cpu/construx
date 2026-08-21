@@ -1428,6 +1428,29 @@ Verified against a running server: a project created in Columbus, Ohio at
 per-field problem+json error; and the estate's contract-value card switched to
 "mixed currencies" rather than adding dollars to pounds.
 
+**Every actionable item can name a person.** The permission matrix resolves a
+*capability* — it says a planner may approve a baseline. It does not say which
+planner, and an item that names nobody is an item nobody picks up. `ownership.ts`
+resolves the same matrix against the tenancy's named identities, published at
+`GET /v1/ownership`.
+
+The ordering rule is the design decision. Holders are ranked by how many areas
+their role holds **that permission code** in, narrowest first. Counting every
+area a role touches was the obvious version and does not discriminate — PM
+touches 22 and OWNER 21, so one area of noise would decide who a screen names.
+Counting approvals separates them properly: a baseline names the planner
+(approves in one area), escalating to the PM (eight), with the client behind
+both (ten). That is the real chain of authority on a project, and it falls out
+of the matrix rather than being asserted.
+
+Two refusals. The platform operator is never named against a delivery decision
+even where the matrix would allow it, because that account layer is deliberately
+blind to delivery. And an area with no approver is classified rather than left
+blank: `SEAT_GAP` where roles approve and nobody in the tenancy holds one — a
+queue that cannot drain — against `NOT_APPROVABLE` where nothing in the area is
+approved at all. An audit feed is read; reporting it as a missing seat would
+send an administrator looking for a role that does not exist.
+
 **Every AI engine declares when it may run.** The routing matrix says which
 provider an engine reaches; it said nothing about applicability, so every engine
 was reachable in every phase. A handover engine could be asked to assemble an

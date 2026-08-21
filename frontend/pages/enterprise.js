@@ -21,11 +21,12 @@ export async function enterprise(root) {
   // figure below carries the number of projects it was built from, because a
   // total that treats a missing CVR as zero is the most confident wrong number
   // a portfolio screen can print.
-  const [position, portfolios, enterprises, gates] = await Promise.all([
+  const [position, portfolios, enterprises, gates, ownership] = await Promise.all([
     api.get('/v1/enterprise/command'),
     api.get('/v1/portfolios').catch(() => ({ portfolios: [] })),
     api.get('/v1/enterprises').catch(() => ({ enterprises: [] })),
     api.get('/v1/lifecycle/gates').catch(() => ({ gates: [] })),
+    api.get('/v1/ownership').catch(() => ({ areas: [] })),
   ]);
 
   const { estate, financial, delivery, risks, projects } = position;
@@ -173,6 +174,41 @@ export async function enterprise(root) {
           A dash is not a zero. Cost is blank until a CVR is published, schedule until a baseline is approved,
           progress until something is measured — and a portfolio total that filled those in with nought would read
           as confident and be wrong.
+        </div>
+      </div>
+
+      <div class="card pad0" style="margin-bottom:14px">
+        <h3 style="padding:15px 17px 0">Who owns the decision</h3>
+        ${table({
+          headers: ['Capability', 'Approves', 'Escalates to', 'Creates'],
+          rows: (ownership.areas ?? [])
+            // Areas nobody approves by design are not gaps and would be noise
+            // here. A seat gap is the opposite: it is the row that matters most.
+            .filter((a) => a.noApprover !== 'NOT_APPROVABLE')
+            .map((a) => {
+              const first = a.approve[0];
+              const behind = a.approve.slice(1);
+              return [
+                humanise(a.area),
+                // Guarded on the name being there rather than on the flag. The
+                // flag says why it is missing; the name is what this cell needs,
+                // and a page that reads one and dereferences the other is one
+                // API change away from rendering nothing at all.
+                // `html` rather than a plain string: table cells are escaped by
+                // default, which is right — a person's name is data, not markup.
+                first === undefined
+                  ? badge('No seat', 'bad')
+                  : html`${first.name} <span class="metric-sub">${first.role}</span>`,
+                behind.length === 0 ? '—' : behind.map((o) => o.name).join(' → '),
+                a.create.length === 0 ? '—' : `${a.create[0].name}${a.create.length > 1 ? ` +${a.create.length - 1}` : ''}`,
+              ];
+            }),
+          empty: 'No capability areas resolved',
+        })}
+        <div class="metric-sub" style="padding:0 17px 14px">
+          Named from the permission matrix, most specialised first — the planner owns a baseline, the project
+          manager is the escalation, the client is behind both. <b>No seat</b> means roles approve in that area
+          and nobody in this tenancy holds one, so the queue cannot drain until a seat is filled.
         </div>
       </div>
 

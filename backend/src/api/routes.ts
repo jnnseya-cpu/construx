@@ -58,6 +58,7 @@ import { unsubscribePage } from '../messaging/render.ts';
 import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { createMfaChallenge, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
+import { ownershipMap } from '../identity/ownership.ts';
 import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode } from '../identity/roles.ts';
 import { authorise, AUTHZ_OPTIONS, currentPhase } from '../engines/context.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
@@ -961,6 +962,20 @@ export const ROUTES: Route[] = [
         ...body<{ roles: Parameters<typeof platform.assignRoles>[1]['roles']; reason: string }>(ctx),
         userId: ctx.params.userId as string,
       });
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/ownership',
+    description: 'Who owns the decision — named holders of create and approve in every capability area',
+    readOnly: true,
+    // The permission matrix resolves a capability; this resolves it to people.
+    // An item that names no owner is an item nobody picks up, and "awaiting
+    // approval" is not an owner. One call per screen rather than one per row:
+    // the answer is the same for every item in an area.
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      return { areas: ownershipMap(platform.users(actor.tenantId)) };
     },
   },
   {
