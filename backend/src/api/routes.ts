@@ -5102,6 +5102,50 @@ export const ROUTES: Route[] = [
       };
     },
   },
+  // Retention, which here is mostly a policy about not deleting. Tenant-scoped
+  // rather than project-scoped because the store is: the same file legitimately
+  // evidences things in more than one project of the same tenancy.
+  {
+    method: 'GET',
+    pattern: '/v1/evidence/retention',
+    readOnly: true,
+    description: 'What the object store holds, what no record names, and the policy on removing any of it',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+      }
+      // `I` rather than `R`: this reads across every project in the tenancy at
+      // once, which is the export-shaped permission rather than the read one.
+      authorise(
+        platform.context(actor, `${actor.tenantId}-governance`, { correlationId: ctx.correlationId }),
+        'EVIDENCE_AUDIT',
+        'I',
+      );
+      return evidence.retentionPosition(platform.ledger, platform.evidence, actor.tenantId);
+    },
+  },
+  {
+    method: 'DELETE',
+    pattern: '/v1/evidence/:hash',
+    description: 'Remove bytes no evidence record names. Anything the ledger names is refused.',
+    // No body, and said rather than left unstated: an empty closed object
+    // refuses a stray body instead of ignoring it.
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+      }
+      authorise(
+        platform.context(actor, `${actor.tenantId}-governance`, { correlationId: ctx.correlationId }),
+        'EVIDENCE_AUDIT',
+        'I',
+      );
+      // The guard is in the registry, not here, and it refuses whoever asks.
+      return evidence.discardOrphan(platform.ledger, platform.evidence, actor.tenantId, ctx.params.hash as string);
+    },
+  },
   {
     method: 'POST',
     pattern: '/v1/evidence/:hash',

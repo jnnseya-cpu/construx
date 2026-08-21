@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,251 passing, 0 failing, 0 skipped, across 64 files |
+| Tests | 1,259 passing, 0 failing, 0 skipped, across 64 files |
 | Typecheck | clean |
 | Backend | 103 TypeScript files, 48,782 lines |
 | Application | 32 ES modules, 10,031 lines (plus a service worker) |
-| API routes | 271 (25 of them public) |
+| API routes | 273 (25 of them public) |
 | Event types | 189 Golden Thread (closed) · 177 communication events (closed) |
 | Entity types | 117, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
@@ -1163,6 +1163,24 @@ test that tries to break it:
   refused. Inventing an event type to record a non-fact would widen a closed
   catalogue for nothing.
 
+**Retention here is mostly a policy about not deleting.** The usual retention
+question — what is old enough to remove — has the wrong shape on an append-only
+ledger. An evidence record can be argued over for as long as the contract can be
+sued on, so age is not a reason to delete a file and does not become one. There
+is no expiry sweep because nothing expires.
+
+What retention *can* honestly report is where the volume and the record
+disagree, in both directions. Recorded and not held is a chain that depends on
+somebody outside the platform still having the file, and is already named on the
+register. Held and not recorded is the opposite: bytes at an address no evidence
+record names. The upload route cannot create one — it refuses a hash the ledger
+has not claimed — so an orphan means a restored volume, a copy between
+environments, or an interrupted write, and those are the only files here that
+may be removed. `discardOrphan` refuses anything the ledger names, with no
+override, because an override is what somebody reaches for on the day the
+evidence is inconvenient. The guard lives in `registry.ts` rather than in the
+store: the store holds bytes and knows nothing about what they prove.
+
 Two authorisation subtleties are worth stating. Supplying the file is `I` —
 import — because the record already exists and this completes it; `EVIDENCE_AUDIT`
 carries no `C` for exactly that reason. And the person who *registered* the
@@ -1187,9 +1205,13 @@ true later. Both paths verified in a browser with the record deliberately absent
 and then deliberately present. The queue is cleared on sign-out with the
 operations, for the same reason: a handset changes hands.
 
-One gap is stated rather than hidden. A file whose operation was rejected
-outright waits on the device indefinitely, so `pendingFiles()` is exposed for a
-screen to show what a handset is still carrying; no such screen exists yet.
+That gap is now closed. A file whose operation was rejected outright waits on
+the device for a record that will never exist, and nothing on the handset can
+tell that apart from a record still in the queue — so the decision is a person's
+and the Field Execution screen shows what this device is still carrying, with the
+capture's name, the address the record would name it by, and a discard that
+confirms and says what is being lost. There is no timer: a photograph deleted
+automatically is evidence nobody chose to lose.
 
 **Every command that takes evidence now stores the file behind it.** The console
 already hashed a chosen file in the browser and put the hash in the event;

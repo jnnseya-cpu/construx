@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,7 +7,7 @@ import { after, before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import { createGateway } from '../src/api/gateway.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
-import { coverage, findByHash, projectRegister } from '../src/evidence/registry.ts';
+import { coverage, discardOrphan, findByHash, projectRegister, retentionPosition } from '../src/evidence/registry.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -386,6 +386,39 @@ describe('evidence over HTTP', () => {
     assert.equal(status, 201);
   });
 
+  it('routes /v1/evidence/retention to the retention report, not to a hash lookup', async () => {
+    // A literal segment sharing a shape with a parameter is the classic way a
+    // route table starts answering the wrong question. `retention` can never be
+    // a valid hash, so the failure would be a 400 about a malformed hash rather
+    // than anything that reads like a routing fault.
+    const response = await fetch(`${base}/v1/evidence/retention`, {
+      headers: { authorization: `Bearer ${tokenFor('pm')}` },
+    });
+
+    assert.equal(response.status, 200);
+    const position = (await response.json()) as { configured: boolean; policy: string };
+    assert.equal(position.configured, true);
+    assert.match(position.policy, /Nothing the ledger names is deletable/i);
+  });
+
+  it('refuses over HTTP to delete a file the ledger names', async () => {
+    // The same guard as the unit test, reached the way an operator would reach
+    // it. 409 rather than 403: the caller is permitted to ask, and the answer is
+    // that the record makes it impossible.
+    const stored = await upload('a photograph somebody will want in three years', 'image/jpeg');
+    assert.equal(stored.status, 201);
+
+    const response = await fetch(`${base}/v1/evidence/${encodeURIComponent(stored.hash)}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${tokenFor('pm')}` },
+    });
+
+    assert.equal(response.status, 409);
+    const problem = (await response.json()) as { title: string };
+    assert.equal(problem.title, 'EVIDENCE_RECORDED');
+    assert.equal(platform.evidence.has(seed.tenantId, stored.hash), true, 'the bytes were removed anyway');
+  });
+
   it('reports honestly which evidence the platform actually holds', async () => {
     const response = await fetch(`${base}/v1/projects/${seed.projectId}/evidence`, {
       headers: { authorization: `Bearer ${tokenFor('pm')}` },
@@ -419,5 +452,122 @@ describe('evidence over HTTP', () => {
     assert.equal(findByHash(platform.ledger, seed.tenantId, hash)?.refType, 'EvidenceItem');
     // Scoped to the tenancy, so another tenant's identifier finds nothing.
     assert.equal(findByHash(platform.ledger, 'some-other-tenant', hash), undefined);
+  });
+});
+
+/**
+ * Retention, which on this platform is mostly a policy about *not* deleting.
+ *
+ * The usual retention question — what is old enough to remove — has the wrong
+ * shape here. The ledger is append-only and an evidence record can be argued
+ * over for as long as the contract can be sued on, so age is not a reason to
+ * delete and never becomes one. There is no expiry sweep because nothing
+ * expires, and a test that proved a sweep worked would be proving the wrong
+ * thing.
+ *
+ * What is worth asserting is the refusal, and the one narrow case that is
+ * genuinely removable: bytes at an address no record names. The upload route
+ * cannot produce one — it refuses a hash the ledger has not claimed — so an
+ * orphan means a restored volume, a copy between environments, or an interrupted
+ * write, and those are the only files here anybody may take away.
+ */
+describe('evidence retention', () => {
+  let platform: Platform;
+  let seed: SeedResult;
+  let store: EvidenceStore;
+  let root: string;
+
+  before(async () => {
+    root = join(directory, 'retention');
+    store = new EvidenceStore(root);
+    platform = new Platform(undefined, store);
+    seed = await seedDemoProject(platform);
+  });
+
+  /** Put bytes on the volume behind the store's back, the way a restore does. */
+  function plant(tenantId: string, content: string): string {
+    const bytes = bytesOf(content);
+    const hash = hashBytes(bytes);
+    const digest = hash.slice('sha256:'.length);
+    const dir = join(root, tenantId, digest.slice(0, 2), digest.slice(2, 4));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, digest), bytes);
+    return hash;
+  }
+
+  it('refuses to remove a file an evidence record names, whoever is asking', () => {
+    // The whole policy in one guard. There is no override, because an override
+    // is what somebody reaches for on the day the evidence is inconvenient.
+    const record = platform.ledger.list(seed.projectId, 'EvidenceItem')[0]!;
+    const hash = (record.state as { hash: string }).hash;
+
+    throwsCode(() => discardOrphan(platform.ledger, store, seed.tenantId, hash), 'EVIDENCE_RECORDED');
+  });
+
+  it('reports bytes no record names, because the upload route cannot have made them', () => {
+    const orphan = plant(seed.tenantId, 'restored from a volume nobody kept the ledger for');
+
+    const position = retentionPosition(platform.ledger, store, seed.tenantId);
+    assert.equal(position.configured, true);
+    assert.ok(
+      position.orphans.some((object) => object.hash === orphan),
+      'a file on the volume that no record names was not reported',
+    );
+    assert.match(position.summary, /no record names/i);
+    assert.match(position.policy, /Nothing the ledger names is deletable/i);
+  });
+
+  it('removes an orphan and leaves the register untouched', () => {
+    const orphan = plant(seed.tenantId, 'an interrupted copy');
+    const before = projectRegister(platform.ledger, store, seed.tenantId, seed.projectId);
+
+    assert.deepEqual(discardOrphan(platform.ledger, store, seed.tenantId, orphan), { discarded: true });
+    assert.equal(store.has(seed.tenantId, orphan), false);
+
+    const after = projectRegister(platform.ledger, store, seed.tenantId, seed.projectId);
+    assert.deepEqual(after, before, 'discarding an orphan changed what the evidence register reports');
+  });
+
+  it('counts a half-written object as removable rather than as evidence', () => {
+    // A `.partial` is what a crashed write leaves behind. It is not at its own
+    // address — nothing hashes to it — so it can never be served, and leaving it
+    // to accumulate is how a volume fills up with nothing.
+    const digest = 'a'.repeat(64);
+    const dir = join(root, seed.tenantId, digest.slice(0, 2), digest.slice(2, 4));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${digest}.partial`), bytesOf('half a photograph'));
+
+    const position = retentionPosition(platform.ledger, store, seed.tenantId);
+    const found = position.orphans.find((object) => object.hash === `sha256:${digest}`);
+    assert.ok(found, 'a half-written object was not reported');
+    assert.equal(found.partial, true);
+  });
+
+  it('does not see another tenancy’s objects at all', () => {
+    const foreign = plant('some-other-tenant', 'belongs to somebody else entirely');
+
+    const position = retentionPosition(platform.ledger, store, seed.tenantId);
+    assert.ok(
+      !position.orphans.some((object) => object.hash === foreign),
+      'the retention report reached across the tenant boundary',
+    );
+    // And it is genuinely there — otherwise this passes because nothing was
+    // planted rather than because the boundary held.
+    assert.ok(
+      retentionPosition(platform.ledger, store, 'some-other-tenant').orphans.some((o) => o.hash === foreign),
+    );
+  });
+
+  it('says the platform holds nothing rather than reporting a clean store', () => {
+    // Unset is a legitimate deployment: hashes recorded, files not held. A
+    // retention report of zero orphans would read as a tidy volume rather than
+    // as no volume at all.
+    const unconfigured = new EvidenceStore('');
+    const position = retentionPosition(platform.ledger, unconfigured, seed.tenantId);
+
+    assert.equal(position.configured, false);
+    assert.equal(position.heldObjects, 0);
+    assert.ok(position.recordedNotHeld > 0);
+    assert.match(position.summary, /No object store is configured/i);
   });
 });

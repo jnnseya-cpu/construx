@@ -1,7 +1,8 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { OBSERVATION_TYPE, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, today } from '../lib/enums.js';
-import { badge, date, days, html, humanise, pct, raw, render, statusTone, table, time, track } from '../lib/ui.js';
+import { badge, date, days, html, humanise, pct, raw, render, statusTone, table, time, toast, track } from '../lib/ui.js';
+import * as outbox from '../lib/outbox.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -42,6 +43,12 @@ export async function field(root) {
   // Days earned against days spent. The arithmetic already existed inside the
   // delay forecast, where nothing could read it on its own.
   const productivity = await api.get(`/v1/projects/${projectId}/productivity`).catch(() => null);
+
+  // What this handset is still holding. The outbox retries on its own, but a
+  // file whose operation the platform rejected outright waits for a record that
+  // will never exist — and until this screen there was nothing that could tell
+  // anybody a photograph was sitting on a phone rather than in the record.
+  const carrying = await outbox.pendingFiles().catch(() => []);
   const openObservations = b.SiteObservation.filter((o) => o.status === 'OPEN');
 
   const measured = b.Task.filter((t) => Number(t.percentComplete ?? 0) > 0);
@@ -79,6 +86,34 @@ export async function field(root) {
           )}
         </div>
       </div>
+
+      ${
+        carrying.length === 0
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">On this device, not yet on the platform</h3>
+              <div style="padding:8px 17px 0"><div class="metric-sub">
+                ${carrying.length} file${carrying.length === 1 ? '' : 's'} captured here and still waiting.
+                The outbox retries whenever this device is online and the record that names a file has to land
+                before its bytes can, so most of these clear on their own. One does not: a file whose record the
+                platform refused waits for something that will never arrive, and only a person can decide to let
+                it go.
+              </div></div>
+              ${table({
+                headers: ['File', 'Type', 'Captured', 'Address', ''],
+                align: ['', '', '', 'mono', ''],
+                rows: carrying.map((file) => [
+                  file.name || 'Unnamed capture',
+                  file.type || 'unknown',
+                  time(file.queuedAt),
+                  // The hash, shortened. It is what the record will name, so it
+                  // is the one value that identifies this file anywhere else.
+                  `${String(file.hash).slice(7, 19)}…`,
+                  html`<button class="btn quiet" data-discard="${file.hash}">Discard</button>`,
+                ]),
+              })}
+            </div>`
+      }
 
       <div class="card" style="margin-bottom:14px">
         <h3>Daily site record</h3>
@@ -467,6 +502,19 @@ export async function field(root) {
       ],
     },
   };
+
+  // Giving up on a capture is a decision, so it is confirmed and it names what
+  // is being lost. The bytes exist nowhere else — that is the whole reason this
+  // panel had to be built.
+  root.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-discard]');
+    if (!button) return;
+    const file = carrying.find((entry) => entry.hash === button.dataset.discard);
+    if (!confirm(`Discard ${file?.name || 'this capture'}? The platform never received it and nothing else holds a copy.`)) return;
+    await outbox.discardFile(button.dataset.discard);
+    toast('Capture discarded', 'The file was removed from this device and was never filed.', 'err');
+    await draw();
+  });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

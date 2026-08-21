@@ -1,5 +1,5 @@
 import { createHmac, createHash, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DomainError } from '../core/errors.ts';
 import { config } from '../config.ts';
@@ -206,6 +206,72 @@ export class EvidenceStore {
       bytes,
       contentType: existsSync(typeFile) ? readFileSync(typeFile, 'utf8') : 'application/octet-stream',
     };
+  }
+
+  // --- retention ------------------------------------------------------------
+
+  /**
+   * Everything this tenancy's store holds.
+   *
+   * Walking the fan-out directories rather than reading the ledger, because the
+   * question retention asks is the opposite one: not "what does the record say
+   * exists" but "what is actually on the volume". The two disagreeing is the
+   * finding.
+   */
+  list(tenantId: string): Array<{ hash: string; bytes: number; storedAt: string; partial: boolean }> {
+    if (!this.configured) return [];
+    if (!/^[0-9A-Za-z_-]{1,64}$/.test(tenantId)) {
+      throw new DomainError('EVIDENCE_TENANT_INVALID', 'Not a tenant identifier');
+    }
+    const root = join(this.#root, tenantId);
+    if (!existsSync(root)) return [];
+
+    const found: Array<{ hash: string; bytes: number; storedAt: string; partial: boolean }> = [];
+    for (const first of readdirSync(root, { withFileTypes: true })) {
+      if (!first.isDirectory()) continue;
+      for (const second of readdirSync(join(root, first.name), { withFileTypes: true })) {
+        if (!second.isDirectory()) continue;
+        const dir = join(root, first.name, second.name);
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          if (!entry.isFile()) continue;
+          // `.type` sidecars are metadata for an object, not objects.
+          if (entry.name.endsWith('.type')) continue;
+          const partial = entry.name.endsWith('.partial');
+          const digest = partial ? entry.name.slice(0, -'.partial'.length) : entry.name;
+          if (!/^[0-9a-f]{64}$/.test(digest)) continue;
+          const stat = statSync(join(dir, entry.name));
+          found.push({
+            hash: `sha256:${digest}`,
+            bytes: stat.size,
+            storedAt: stat.mtime.toISOString(),
+            partial,
+          });
+        }
+      }
+    }
+    return found.sort((a, b) => (a.storedAt < b.storedAt ? -1 : 1));
+  }
+
+  /**
+   * Remove an object.
+   *
+   * Deliberately unconditional here and deliberately never called that way: the
+   * caller in `registry.ts` refuses anything the ledger names, and that refusal
+   * is where the policy lives. Putting the ledger check inside the store would
+   * make the store depend on the ledger to delete a file, which is the wrong
+   * shape — the store holds bytes and knows nothing about what they prove.
+   */
+  discard(tenantId: string, hash: string): boolean {
+    if (!this.configured) return false;
+    const target = this.#pathFor(tenantId, hash);
+    let removed = false;
+    for (const path of [target, `${target}.type`, `${target}.partial`]) {
+      if (existsSync(path)) {
+        rmSync(path);
+        removed = removed || path === target || path === `${target}.partial`;
+      }
+    }
+    return removed;
   }
 
   // --- signed links ---------------------------------------------------------

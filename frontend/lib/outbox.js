@@ -201,6 +201,23 @@ export async function pendingFiles() {
 }
 
 /**
+ * Give up on a file, deliberately.
+ *
+ * The one case `flushFiles` cannot resolve on its own: an operation the platform
+ * rejected outright leaves its file waiting for a record that will never exist,
+ * and nothing on the device can tell that apart from a record still in the
+ * queue. So the decision is a person's, made from a screen that shows what is
+ * being given up — which is why this is separate from the flush rather than a
+ * timeout inside it. A photograph deleted by a timer is evidence nobody chose
+ * to lose.
+ */
+export async function discardFile(hash) {
+  const db = await open();
+  await transact(db, 'readwrite', (store) => store.delete(hash), FILES);
+  db.close();
+}
+
+/**
  * Upload every held file, and keep the ones the platform is not ready for.
  *
  * Run after the operations have been pushed, because an upload is refused
