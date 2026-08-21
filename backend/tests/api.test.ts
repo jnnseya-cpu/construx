@@ -477,3 +477,65 @@ describe('localisation is resolved at the edge, from what the device sent', () =
     assert.equal(reply.status, 401);
   });
 });
+
+/**
+ * The console shell, which was the one response on this server that wrote its
+ * own head. It carried a trace id and a cache directive and nothing else — no
+ * policy, no frame refusal, no nosniff — while every other page went through
+ * `sendHtml` and got all three. Found by reading the headers of a running
+ * server rather than by a test, because no test asked.
+ *
+ * Framing is the one that matters. The buttons in this shell certify payments
+ * and approve baselines; a page that can put it in an invisible iframe can have
+ * somebody else press them.
+ */
+describe('the application shell', () => {
+  it('refuses to be framed and declares a policy', async () => {
+    const reply = await call('GET', '/app');
+    assert.equal(reply.status, 200);
+
+    const csp = reply.headers.get('content-security-policy') ?? '';
+    assert.match(csp, /frame-ancestors 'none'/, 'the console can be framed');
+    assert.match(csp, /default-src 'none'/);
+    assert.match(csp, /script-src 'self'/, 'the shell would run inline script');
+    // The client calls this origin. Anything else is exfiltration.
+    assert.match(csp, /connect-src 'self'/);
+    assert.equal(reply.headers.get('x-content-type-options'), 'nosniff');
+  });
+
+  it('is revalidated rather than never stored, so navigation is not a re-download', async () => {
+    const reply = await call('GET', '/app/overview');
+    assert.equal(reply.headers.get('cache-control'), 'no-cache');
+  });
+});
+
+/**
+ * Trace identifiers arrive from the client and are written straight back out as
+ * a response header and into every log line. Unchecked, a value carrying CR or
+ * LF is refused by `writeHead` and turns the request into a 500, and a value of
+ * arbitrary length sits on every log record the caller generates.
+ */
+describe('inbound trace headers', () => {
+  async function traceOf(sent: string): Promise<string> {
+    const response = await fetch(`${base}/healthz`, { headers: { 'x-trace-id': sent } });
+    await response.text();
+    return response.headers.get('x-trace-id') ?? '';
+  }
+
+  it('propagates a well-formed trace so a request can be followed', async () => {
+    assert.equal(await traceOf('edge-7f3a_b21.4'), 'edge-7f3a_b21.4');
+  });
+
+  it('replaces one carrying a header separator instead of failing the request', async () => {
+    // `fetch` rejects a raw CR/LF in a header value, so the injection is tried
+    // in its encoded form — which is what reaches a log file as text anyway.
+    const echoed = await traceOf('abc%0d%0aX-Injected:%201');
+    assert.notEqual(echoed, 'abc%0d%0aX-Injected:%201');
+    assert.match(echoed, /^[0-9a-f-]{36}$/, 'expected a freshly minted uuid');
+  });
+
+  it('replaces an oversized trace rather than carrying it on every log line', async () => {
+    const echoed = await traceOf('a'.repeat(4096));
+    assert.match(echoed, /^[0-9a-f-]{36}$/);
+  });
+});

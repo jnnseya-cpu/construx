@@ -126,9 +126,11 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     // The application is a single-page shell: every /app route serves the same
     // document and the client router resolves the view.
     if (ctx.method === 'GET' && (ctx.path === '/app' || ctx.path.startsWith('/app/'))) {
+      // Through `sendHtml` so the console gets the same security headers as
+      // every other page. Writing its own head is how it ended up as the only
+      // response on this server with no policy and no frame refusal on it.
       const html = await readFile(APP_SHELL, 'utf8');
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'x-trace-id': traceId, 'Cache-Control': 'no-cache' });
-      res.end(html);
+      sendHtml(res, ctx, 200, html, 'APP_SHELL', 'no-cache');
       logRequest(ctx, 200);
       return;
     }

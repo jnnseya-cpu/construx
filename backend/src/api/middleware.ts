@@ -43,11 +43,29 @@ export type RequestContext = {
 
 // --- Tracing ----------------------------------------------------------------
 
+/**
+ * Trace identifiers are client-supplied, and this one is written straight back
+ * out as a response header and into every log line for the request. Unbounded
+ * and unchecked, that is two problems: a value containing CR or LF is rejected
+ * by `writeHead` and turns the request into a 500, and a 4KB value is 4KB on
+ * every log record for as long as the caller keeps sending it.
+ *
+ * So an inbound trace is honoured only if it looks like a trace. Anything else
+ * is replaced rather than rejected — the caller gets a working request and a
+ * correlation id it did not choose, which is the right trade for a header whose
+ * only purpose is to help us find things later.
+ */
+const TRACE_ID = /^[A-Za-z0-9._-]{1,128}$/;
+
+function safeTrace(value: string | undefined): string | undefined {
+  return value !== undefined && TRACE_ID.test(value) ? value : undefined;
+}
+
 export function buildTrace(req: IncomingMessage): { traceId: string; correlationId: string } {
   // Propagate an inbound trace where one exists so a request can be followed
   // across the client, the gateway and every downstream service.
-  const traceId = header(req, 'x-trace-id') ?? randomUUID();
-  const correlationId = header(req, 'x-correlation-id') ?? traceId;
+  const traceId = safeTrace(header(req, 'x-trace-id')) ?? randomUUID();
+  const correlationId = safeTrace(header(req, 'x-correlation-id')) ?? traceId;
   return { traceId, correlationId };
 }
 
@@ -291,6 +309,21 @@ const CSP = {
   PUBLIC_SITE:
     "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; " +
     "font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  /**
+   * The application shell. It was being written with no security headers at all
+   * — no policy, no frame refusal, no nosniff — because it is the one response
+   * that writes its own head instead of going through here. A console that can
+   * be framed is a console whose buttons can be clicked by somebody else's page,
+   * and the buttons on this one certify payments.
+   *
+   * `connect-src 'self'` is what the shell needs and all it needs: the client
+   * calls this origin and nowhere else. `style-src 'unsafe-inline'` is required
+   * because the views set style attributes on elements they build.
+   */
+  APP_SHELL:
+    "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; " +
+    "img-src 'self' data:; font-src 'self'; manifest-src 'self'; form-action 'self'; " +
+    "base-uri 'none'; frame-ancestors 'none'",
 } as const;
 
 export type HtmlPolicy = keyof typeof CSP;
@@ -301,13 +334,16 @@ export function sendHtml(
   status: number,
   html: string,
   policy: HtmlPolicy = 'SELF_CONTAINED',
+  // The shell is revalidated rather than never stored: it carries no data, and
+  // `no-store` would re-download it on every navigation of a single-page app.
+  cacheControl = 'no-store',
 ): void {
   res.writeHead(status, {
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Length': Buffer.byteLength(html),
     'x-trace-id': ctx.traceId,
     'x-correlation-id': ctx.correlationId,
-    'Cache-Control': 'no-store',
+    'Cache-Control': cacheControl,
     'Content-Security-Policy': CSP[policy],
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
