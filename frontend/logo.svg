@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="CONSTRUX">
+  <title>CONSTRUX</title>
+  <!--
+    The CONSTRUX mark: a skyline under a tower crane, on a ground line, with the
+    X of the name cutting across the corner.
+
+    One file, and everything else is generated from it. The favicon, the site
+    header, the console sidebar and every PNG in the home-screen icon set are
+    rendered from this path data rather than each holding its own copy of the
+    geometry — which is what let the console show a four-square placeholder
+    while the brand was something else entirely.
+
+    Drawn as flat polygons on purpose. A gradient would look closer to the
+    supplied artwork at 1024px and would turn to mud at 32, and the sizes that
+    matter most are the small ones: a browser tab, a home-screen tile, a
+    sidebar at 19 pixels.
+  -->
+  <defs>
+    <linearGradient id="cx-steel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5a5f66"/>
+      <stop offset="1" stop-color="#33373d"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Ground line. Tapered, so it reads as a horizon rather than a rule. -->
+  <path fill="#3a3f45"
+        d="M208 672 C 350 604 505 586 648 612 L 640 636 C 505 614 348 632 208 672 Z"/>
+
+  <!-- Skyline: a low block, a tall tower with a raked crown, and the gap
+       between them that keeps both readable when the mark is 24px wide. -->
+  <path fill="url(#cx-steel)" d="M346 620 L346 398 L424 366 L424 620 Z"/>
+  <path fill="#2b2f34"    d="M442 620 L442 350 L530 264 L530 620 Z"/>
+  <path fill="#4a4f56"    d="M442 620 L442 350 L486 328 L486 620 Z"/>
+
+  <!-- Tower crane. The jib and the counter-jib are one bar; the A-frame above
+       it is what makes the silhouette a crane and not a lamp post. -->
+  <path fill="#4a4f56" d="M536 398 L752 398 L752 416 L536 416 Z"/>
+  <path fill="#4a4f56" d="M572 398 L590 398 L590 508 L572 508 Z"/>
+  <path fill="none" stroke="#4a4f56" stroke-width="11" stroke-linejoin="round"
+        d="M548 398 L600 366 L652 398"/>
+  <path fill="#4a4f56" d="M704 416 L714 416 L714 462 L704 462 Z"/>
+  <path fill="none" stroke="#4a4f56" stroke-width="11" stroke-linecap="round"
+        d="M709 462 C 709 482 693 486 693 470"/>
+
+  <!-- The X. The orange limb is drawn last so it crosses over the steel one,
+       which is the order in the supplied artwork and the reason the mark reads
+       as a single letter rather than two overlapping shapes. -->
+  <path fill="#3a3f45" d="M528 492 L640 492 L742 630 L688 686 Z"/>
+  <path fill="#3a3f45" d="M700 618 L790 618 L864 748 L738 748 Z"/>
+  <path fill="#ff6600" d="M742 492 L866 492 L654 748 L536 748 Z"/>
+</svg>

@@ -265,9 +265,15 @@ window.addEventListener('online', () => void drainOutbox());
 function sidebar(active) {
   return html`<aside class="sidebar">
     <div class="sidebar-mark">
-      <svg width="19" height="19" viewBox="0 0 32 32" fill="none">
-        <path d="M4 27 L11 27 L11 12 L16 9 L16 27 L21 27 L21 5 L25 5 L25 27 L28 27" stroke="#8a9099" stroke-width="2.2" stroke-linejoin="round"/>
-        <path d="M14 28 L28 6" stroke="#ff6600" stroke-width="4.4" stroke-linecap="square"/>
+      <!-- The reduced mark. Geometry matches frontend/logo-glyph.svg; at 19px
+           the full mark's crane and ground line become grey smudges, which read
+           as a rendering fault rather than as a logo. -->
+      <svg width="19" height="19" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <path fill="#6b727b" d="M12 14 L22 9 L22 40 L12 40 Z"/>
+        <path fill="#8b939d" d="M24 12 L31 8 L31 40 L24 40 Z"/>
+        <path fill="#6b727b" d="M30 30 L38 30 L45 40 L41 45 Z"/>
+        <path fill="#6b727b" d="M43 38 L50 38 L56 52 L47 52 Z"/>
+        <path fill="#ff6600" d="M45 30 L56 30 L41 52 L31 52 Z"/>
       </svg>
       <span>CONSTRU<span class="x">X</span></span>
     </div>

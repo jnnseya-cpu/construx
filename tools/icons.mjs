@@ -1,5 +1,5 @@
 import { deflateSync } from 'node:zlib';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,16 +15,70 @@ import { fileURLToPath } from 'node:url';
  * The PNG encoder is here because the alternative was a dependency. A PNG is a
  * signature, three chunks and a zlib stream, and `node:zlib` is built in, so
  * the whole encoder is shorter than the argument for adding one.
+ *
+ * The geometry is **read from `frontend/logo-glyph.svg`**, not held here. It
+ * used to be two chevron strokes duplicated between this file and the favicon,
+ * which is how the console came to show a four-square placeholder while the
+ * brand was a skyline under a tower crane. One file draws the mark; everything
+ * else renders it.
  */
 
-const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'web', 'icons');
+// , which is what the gateway serves. This pointed at 
+// until now — a directory left behind by the backend/frontend/shared split — so
+// the generator had been writing where nothing reads and the committed icons
+// were never actually regenerated from the mark. Precisely the drift the note
+// above claims this file prevents.
+const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'frontend', 'icons');
 
 // --- Brand ------------------------------------------------------------------
 // Matches frontend/favicon.svg and the --core-black / --orange tokens in app.css.
 
 const BLACK = [12, 12, 14];
-const WHITE = [255, 255, 255];
 const ORANGE = [255, 102, 0];
+
+const GLYPH = join(dirname(fileURLToPath(import.meta.url)), '..', 'frontend', 'logo-glyph.svg');
+
+/**
+ * The filled polygons of the reduced mark, in its own 64-unit space.
+ *
+ * A deliberately small parser: the glyph is written with absolute move, line
+ * and close commands only, and keeping it that way is cheaper than either a
+ * path library or a second copy of the numbers. If somebody adds a curve to the
+ * glyph this throws rather than silently dropping a shape.
+ */
+function readGlyph() {
+  const svg = readFileSync(GLYPH, 'utf8');
+  const shapes = [];
+
+  for (const match of svg.matchAll(/<path\s+fill="([^"]+)"\s+d="([^"]+)"/g)) {
+    const [, fill, d] = match;
+    if (/[cCsSqQtTaAhHvV]/.test(d)) {
+      throw new Error(`logo-glyph.svg uses a curve or shorthand this rasteriser cannot draw: ${d}`);
+    }
+    const points = [...d.matchAll(/[ML]\s*([\d.]+)\s+([\d.]+)/g)].map((m) => [Number(m[1]), Number(m[2])]);
+    if (points.length < 3) continue;
+    shapes.push({ colour: hexToRgb(fill), points });
+  }
+
+  if (shapes.length === 0) throw new Error('no polygons found in logo-glyph.svg');
+  return shapes;
+}
+
+function hexToRgb(hex) {
+  const value = hex.replace('#', '');
+  return [0, 2, 4].map((i) => parseInt(value.slice(i, i + 2), 16));
+}
+
+/** Even-odd containment. The glyph has no holes, so a crossing count is enough. */
+function insidePolygon(x, y, points) {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i, i += 1) {
+    const [xi, yi] = points[i];
+    const [xj, yj] = points[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
 
 // --- PNG --------------------------------------------------------------------
 
@@ -110,8 +164,6 @@ function drawMark(width, height, options = {}) {
   const { background = BLACK, plate = null, markScale = 1, transparent = false } = options;
   const rgba = Buffer.alloc(width * height * 4);
 
-  // Background fills the whole canvas unless the caller wants transparency
-  // around a plate — which is what a non-maskable icon needs.
   if (!transparent) {
     for (let i = 0; i < width * height; i += 1) {
       rgba[i * 4] = background[0];
@@ -125,17 +177,14 @@ function drawMark(width, height, options = {}) {
   const cx = width / 2;
   const cy = height / 2;
 
-  // Mark geometry in the 64-unit space of favicon.svg, scaled to this canvas.
+  // The glyph is drawn in a 64-unit square. Sizing off the narrow edge is what
+  // gives the same proportion on a phone and on a 12.9-inch iPad.
   const unit = (side / 64) * markScale;
-  const stroke = 7 * unit;
-  const half = stroke / 2;
-  const px = (x, y) => [cx + (x - 32) * unit, cy + (y - 32) * unit];
-
-  const [l1x, l1y] = px(20, 18);
-  const [l2x, l2y] = px(32, 32);
-  const [l3x, l3y] = px(20, 46);
-  const [r1x, r1y] = px(44, 18);
-  const [r3x, r3y] = px(44, 46);
+  const shapes = readGlyph().map(({ colour, points }) => ({
+    colour,
+    // Into canvas space once, rather than per sample.
+    points: points.map(([x, y]) => [cx + (x - 32) * unit, cy + (y - 32) * unit]),
+  }));
 
   const plateRadius = plate ? plate.radius : 0;
   const plateSize = plate ? plate.size : 0;
@@ -144,12 +193,12 @@ function drawMark(width, height, options = {}) {
 
   const SAMPLES = 3;
   const step = 1 / SAMPLES;
+  const total = SAMPLES * SAMPLES;
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       let plateHits = 0;
-      let whiteHits = 0;
-      let orangeHits = 0;
+      const hits = new Array(shapes.length).fill(0);
 
       for (let sy = 0; sy < SAMPLES; sy += 1) {
         for (let sx = 0; sx < SAMPLES; sx += 1) {
@@ -159,26 +208,19 @@ function drawMark(width, height, options = {}) {
           if (plate && distanceToRoundedRect(px0, py0, plateX, plateY, plateSize, plateSize, plateRadius) <= 0) {
             plateHits += 1;
           }
-          const white = Math.min(
-            distanceToSegment(px0, py0, l1x, l1y, l2x, l2y),
-            distanceToSegment(px0, py0, l2x, l2y, l3x, l3y),
-          );
-          const orange = Math.min(
-            distanceToSegment(px0, py0, r1x, r1y, l2x, l2y),
-            distanceToSegment(px0, py0, l2x, l2y, r3x, r3y),
-          );
-          // The orange stroke is drawn over the white one where they meet, the
-          // same order as the SVG.
-          if (orange <= half) orangeHits += 1;
-          else if (white <= half) whiteHits += 1;
+          for (let i = 0; i < shapes.length; i += 1) {
+            if (insidePolygon(px0, py0, shapes[i].points)) hits[i] += 1;
+          }
         }
       }
 
-      const total = SAMPLES * SAMPLES;
       const offset = (y * width + x) * 4;
       if (plate && plateHits > 0) blend(rgba, offset, plate.colour, plateHits / total);
-      if (whiteHits > 0) blend(rgba, offset, WHITE, whiteHits / total);
-      if (orangeHits > 0) blend(rgba, offset, ORANGE, orangeHits / total);
+      // Painted in document order, so the orange limb of the X crosses over the
+      // steel one exactly as it does in the SVG.
+      for (let i = 0; i < shapes.length; i += 1) {
+        if (hits[i] > 0) blend(rgba, offset, shapes[i].colour, hits[i] / total);
+      }
     }
   }
 

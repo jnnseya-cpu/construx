@@ -81,7 +81,7 @@ function header(current: string): string {
   return `<header class="site-head">
   <div class="wrap head-row">
     <a class="mark" href="/" aria-label="CONSTRUX.AI home">
-      <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM11 3h7v7h-7zM3 11h7v7H3z" fill="#ff6600"/><path d="M11 11h7v7h-7z" fill="#f5f7fa"/></svg>
+      <svg width="30" height="30" viewBox="0 0 64 64" aria-hidden="true"><path fill="#6b727b" d="M12 14 L22 9 L22 40 L12 40 Z"/><path fill="#8b939d" d="M24 12 L31 8 L31 40 L24 40 Z"/><path fill="#6b727b" d="M30 30 L38 30 L45 40 L41 45 Z"/><path fill="#6b727b" d="M43 38 L50 38 L56 52 L47 52 Z"/><path fill="#ff6600" d="M45 30 L56 30 L41 52 L31 52 Z"/></svg>
       <span>CONSTRU<span class="x">X</span></span>
     </a>
     <nav class="site-nav" aria-label="Primary">${links}</nav>

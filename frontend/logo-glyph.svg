@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="CONSTRUX">
+  <title>CONSTRUX</title>
+  <!--
+    The reduced mark: the X alone, plus one building edge to keep the
+    construction reference.
+
+    The full mark carries a skyline, a tower crane and a ground line. At 19px in
+    the console sidebar and 16px in a browser tab those become three grey smudges
+    — verified by rendering it, not assumed — and a smudge is worse than a
+    simpler mark, because it reads as a rendering fault rather than as a logo.
+
+    So this is the small-size lockup. The X is the distinctive element and the
+    letter the name turns on; it survives to 16px. `logo.svg` stays the full mark
+    for the site header and anywhere at 64px or above.
+  -->
+  <path fill="#3a3f45" d="M12 14 L22 9 L22 40 L12 40 Z"/>
+  <path fill="#4a4f56" d="M24 12 L31 8 L31 40 L24 40 Z"/>
+  <path fill="#3a3f45" d="M30 30 L38 30 L45 40 L41 45 Z"/>
+  <path fill="#3a3f45" d="M43 38 L50 38 L56 52 L47 52 Z"/>
+  <path fill="#ff6600" d="M45 30 L56 30 L41 52 L31 52 Z"/>
+</svg>

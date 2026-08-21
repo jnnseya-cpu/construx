@@ -1005,9 +1005,23 @@ rejection is surfaced rather than swallowed. And the queue is cleared on
 sign-out, because a site handset changes hands and one operative's record must
 not flush under another's token.
 
-Regenerate the assets with `node tools/icons.mjs` after any brand change. The
-PNG encoder is in that file: `node:zlib` is built in, so it was shorter than the
-argument for a dependency.
+**The mark has one source and everything is derived from it.**
+`frontend/logo.svg` is the full mark — skyline, tower crane, ground line and the
+orange X. `frontend/logo-glyph.svg` is the reduced mark used everywhere the full
+one would turn to mud: rendering showed the crane becomes illegible below about
+48px, so the small sizes drop it rather than draw it badly. The favicon, the site
+header, the console sidebar, the in-document splash and every generated PNG carry
+that glyph's geometry rather than each holding a private copy — which is exactly
+how the console came to show a four-square placeholder while the brand was
+something else entirely.
+
+Regenerate the assets with `node tools/icons.mjs` after any brand change; the
+generator parses `logo-glyph.svg` rather than restating it, and refuses any path
+it cannot render exactly. The PNG encoder is in that file: `node:zlib` is built
+in, so it was shorter than the argument for a dependency. The generator used to
+write to `web/icons/`, which nothing had served since the backend/frontend split
+— every regeneration since then had been a no-op. It writes to `frontend/icons/`,
+where the gateway actually looks.
 
 **One platform, sole trader to multi-billion.** The same operating system runs a
 sole trader fitting a £3,000 bathroom and a joint venture delivering a £2bn

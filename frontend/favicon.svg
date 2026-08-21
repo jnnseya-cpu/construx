@@ -1,5 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="CONSTRUX">
-  <rect width="64" height="64" rx="14" fill="rgb(12,12,14)"/>
-  <path d="M20 18 L32 32 L20 46" fill="none" stroke="rgb(255,255,255)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M44 18 L32 32 L44 46" fill="none" stroke="rgb(255,102,0)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <title>CONSTRUX</title>
+  <!--
+    The reduced mark on a plate, for a browser tab.
+
+    Geometry identical to `logo-glyph.svg`; this adds the rounded background a
+    tab needs so the mark does not sit on whatever colour the browser chooses.
+    The full mark — skyline, tower crane, ground line — is `logo.svg` and is
+    used at 64px and above, where its detail survives.
+  -->
+  <rect width="64" height="64" rx="14" fill="#0c0c0e"/>
+  <path fill="#6b727b" d="M12 14 L22 9 L22 40 L12 40 Z"/>
+  <path fill="#8b939d" d="M24 12 L31 8 L31 40 L24 40 Z"/>
+  <path fill="#6b727b" d="M30 30 L38 30 L45 40 L41 45 Z"/>
+  <path fill="#6b727b" d="M43 38 L50 38 L56 52 L47 52 Z"/>
+  <path fill="#ff6600" d="M45 30 L56 30 L41 52 L31 52 Z"/>
 </svg>
