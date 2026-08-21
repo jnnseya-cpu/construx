@@ -27,6 +27,7 @@ export async function procurement(root) {
     'ScopePackage',
     'BoQItem',
     'FundingModel',
+    'MasterPricing',
   ]);
 
   const rfq = b.RFQ.at(-1);
@@ -37,6 +38,11 @@ export async function procurement(root) {
   const funding = b.FundingModel.at(-1);
   const maturity = b.DesignMaturityAssessment.at(-1);
   const pack = b.TenderPackage.at(-1);
+
+  // Stage six: both routes converge and the sum that goes out is assembled.
+  // The arithmetic is trivial; what matters is scope priced by nobody, which is
+  // invisible in a spreadsheet that sums what is there.
+  const master = b.MasterPricing.at(-1);
 
   const scores = evaluation?.scores ?? [];
   const winner = scores[0];
@@ -57,6 +63,55 @@ export async function procurement(root) {
           <p>Take-off through award as a state machine. Every transition is a Golden Thread event, so the commercial basis of the award survives the people who made it.</p>
         </div>
       </div>
+
+      ${
+        master
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Master pricing — the number that goes out</h3>
+              <div style="padding:0 17px"><div class="metric-sub">
+                Each package is carried from its assigned route: bought packages at what a supplier agreed to do the work
+                for, kept packages at the estimate. Which figure counts is decided by the route, never by which number is
+                larger — carrying an estimate for work that went to market puts a price in the bid nobody has agreed to.
+              </div></div>
+              <div class="grid g4" style="padding:13px 17px 4px">
+                <div><div class="metric orange">${money(master.totalMinor)}</div><div class="metric-sub">consolidated tender sum</div></div>
+                <div><div class="metric">${money(master.marketPricedMinor)}</div><div class="metric-sub">bought — agreed by a supplier</div></div>
+                <div><div class="metric">${money(master.selfPricedMinor)}</div><div class="metric-sub">self-performed — our own estimate</div></div>
+                <div><div class="metric ${raw(master.unpricedPackages > 0 ? 'bad' : 'good')}">${master.unpricedPackages}</div><div class="metric-sub">packages carrying no price</div></div>
+              </div>
+              ${
+                master.provisionalSumsMinor > 0
+                  ? html`<div style="padding:4px 17px 0"><div class="notice warn">
+                      <div><b>${money(master.provisionalSumsMinor)} of the total is provisional sum, not firm price.</b><br>
+                      Inside the figure above rather than additional to it. It is expended against actual cost, so a tender
+                      total that treats it as fixed understates the risk being taken.</div>
+                    </div></div>`
+                  : ''
+              }
+              ${table({
+                headers: ['Package', 'Route', 'Priced from', 'Supplier', 'Carried'],
+                align: ['', '', '', '', 'num'],
+                rows: (master.lines ?? []).map((l) => [
+                  l.packageName,
+                  l.route ? badge(humanise(l.route), 'neutral') : badge('unrouted', 'bad'),
+                  l.source === 'NONE' ? badge('nothing', 'bad') : badge(humanise(l.source), 'ok'),
+                  l.supplier ?? '—',
+                  l.amountMinor > 0 ? money(l.amountMinor) : '—',
+                ]),
+              })}
+              ${(master.findings ?? [])
+                .filter((f) => f.severity !== 'INFO')
+                .map(
+                  (f) => html`<div style="padding:0 17px 9px"><div class="notice ${raw(f.severity === 'CRITICAL' ? 'err' : 'warn')}">
+                    <div><b>${f.packageName} — ${humanise(f.kind)}</b>${f.amountMinor ? html` · ${money(f.amountMinor)}` : ''}<br>
+                    ${f.finding}<br>
+                    <span style="color:var(--text-3)">${f.consequence}</span></div>
+                  </div></div>`,
+                )}
+              <div style="padding:4px 17px 15px"><div class="metric-sub">${master.summary}</div></div>
+            </div>`
+          : ''
+      }
 
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">

@@ -1307,6 +1307,17 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/master-pricing',
+    description: 'Engine A — consolidate every pricing route into the number that goes out',
+    schema: {
+      type: 'object',
+      properties: { estimateId: stringField, note: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => tender.consolidateMasterPricing(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/tender/returns',
     description: 'Engine A — normalise supplier returns, rank variance and raise clarifications',
     ai: { engine: 'TENDER', taskType: 'return_variance_analysis', capability: 'REASONING' },

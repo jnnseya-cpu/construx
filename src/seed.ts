@@ -944,6 +944,24 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     conditions: winner?.conditions ?? [],
   });
 
+  // Stage six. The civils package went to the market and is carried at what
+  // Northstone agreed to do it for; the routes converge and the sum that goes
+  // out is assembled from them rather than from whichever number was to hand.
+  tender.assignScheduleRoute(qsCtx, {
+    scheduleId: `sched-${packageId}`,
+    packageId,
+    route: 'SUPPLY_CHAIN',
+    lines: [],
+    rationale: 'Civils and process structures let to the supply chain — no self-perform capability for the process elements.',
+  });
+  const masterPricing = tender.consolidateMasterPricing(qsCtx, {
+    estimateId: estimate.estimateId,
+    note: 'Stage 6 consolidation before the tender was submitted',
+  });
+  step(
+    `Master pricing consolidated: ${masterPricing.pricing.packages} package(s), ${masterPricing.pricing.unpricedPackages} carrying no price`,
+  );
+
   const subcontract = procurement.assembleSubcontract(qsCtx, {
     rfqId: rfq.rfqId,
     contractSuite: 'NEC4',

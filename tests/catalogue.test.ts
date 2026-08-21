@@ -56,7 +56,6 @@ const NOT_EMITTED: Record<string, string> = {
   // --- Not yet built --------------------------------------------------------
   POLICY_UPDATED:
     'The permission matrix is code, not data, so there is no PermissionPolicy record to change. The settings that genuinely are data — the AI spend caps — are recorded under ACU_CAPS_SET, which says what it is rather than borrowing this.',
-  MASTER_PRICING_CONSOLIDATED: 'Tender stage 6, the consolidated view across pricing routes, is not built.',
 };
 
 async function sourceFiles(dir: string): Promise<string[]> {

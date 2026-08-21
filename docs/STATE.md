@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 795 passing, 0 failing, across 37 files |
+| Tests | 812 passing, 0 failing, across 38 files |
 | Typecheck | clean |
-| Backend | 80 TypeScript files, 35,542 lines |
-| Application | 25 ES modules, 7,070 lines (plus a service worker) |
-| API routes | 210 |
+| Backend | 81 TypeScript files, 35,927 lines |
+| Application | 25 ES modules, 7,199 lines (plus a service worker) |
+| API routes | 211 |
 | Event types | 172, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
@@ -168,6 +168,30 @@ alone reported a dozen sections as covered by one plan.
 Reads supplied text, on the same terms as contract clause extraction. OCR is not
 built and a scanned specification cannot be read here; the record says
 `source: 'SUPPLIED_TEXT'` so nobody relying on it has to guess.
+
+**Master pricing — tender stage six.** Both routes converge and the sum that
+goes out is assembled. `assignScheduleRoute` had said "both routes converge
+again at master pricing" since it was written, and nothing did.
+
+Which figure counts is decided by the route, never by which number is larger or
+more recent: a package sent to the market is carried at what a supplier agreed
+to do the work for, even where an in-house estimate exists — that estimate was
+the budget the enquiry was measured against, and carrying it would put a price
+in the bid nobody has agreed to.
+
+The arithmetic is trivial and the findings are the point. Scope priced by
+nobody — routed to the market with nothing awarded, or never routed at all — is
+the expensive one: it is invisible in a spreadsheet that sums what is there, it
+goes out at zero, and it is built at the contractor's cost. Provisional sums
+inside an awarded price are separated from firm price without being double
+counted. Exclusions are listed as items to confirm rather than checked, because
+checking whether an exclusion is priced elsewhere means reading two documents
+and the platform has read neither. Where both routes produced a number the gap
+is reported and not resolved, because which one goes in the bid is a commercial
+decision.
+
+A package with no pricing schedule at all is included, which a consolidation
+reading only schedules would miss entirely.
 
 **Registers that close.** Clashes, site observations and the scope breakdown
 could previously only grow. Clash closeout records how, and for a model revision

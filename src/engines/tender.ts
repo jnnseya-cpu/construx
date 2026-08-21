@@ -3,6 +3,7 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
+import { consolidate, type MasterPricing, type SchedulePricing } from './maths/masterPricing.ts';
 import {
   analyseReturnVariance,
   DEFAULT_PENALTY_PROFILE,
@@ -908,4 +909,104 @@ export function compileBidPack(
   });
 
   return { packId, contentHash };
+}
+
+// --- Master pricing -----------------------------------------------------------
+
+/**
+ * Consolidate every pricing route into the number that goes out.
+ *
+ * Stage six, and the last point at which a package priced by nobody can still
+ * be caught. Both routes converge here: packages sent to the market are carried
+ * at what somebody agreed to do the work for, packages kept in-house at the
+ * estimate. Which figure counts is decided by the route, not by which number is
+ * larger or more recent — carrying an in-house estimate for work that went out
+ * to the market puts a price in the bid that nobody has agreed to.
+ *
+ * The consolidation is written to the thread because a tender sum that cannot
+ * be reconstructed later is a number, not a price. Six months on, when the job
+ * is losing money on a package, the question is always which route priced it
+ * and what it was measured against.
+ */
+export function consolidateMasterPricing(
+  ctx: EngineContext,
+  input: { estimateId?: string; note?: string } = {},
+): { masterPricingId: string; pricing: MasterPricing } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const packages = new Map(
+    ctx.ledger.list(ctx.projectId, 'ScopePackage').map((record) => [record.refId, String(record.state.name ?? record.refId)]),
+  );
+
+  // The market side: what was actually awarded, per package. An RFQ that has
+  // not been awarded contributes nothing — a submission somebody is still
+  // considering is not a price the business has agreed to.
+  const awards = new Map<string, { supplier: string; priceMinor: number; provisionalSumsMinor: number; exclusions: string[] }>();
+  for (const rfq of ctx.ledger.list(ctx.projectId, 'RFQ')) {
+    if (rfq.state.status !== 'AWARDED' || typeof rfq.state.awardedSubmissionId !== 'string') continue;
+    const submission = ctx.ledger.get({ refType: 'SupplierSubmission', refId: rfq.state.awardedSubmissionId });
+    if (!submission) continue;
+
+    awards.set(String(rfq.state.packageId), {
+      supplier: String(submission.state.supplierName ?? 'Unnamed supplier'),
+      priceMinor: Number(submission.state.priceMinor ?? 0),
+      provisionalSumsMinor: Number(submission.state.provisionalSumsMinor ?? 0),
+      exclusions: (submission.state.exclusions ?? []) as string[],
+    });
+  }
+
+  // The in-house side: the latest estimate per package.
+  const selfPriced = new Map<string, number>();
+  for (const estimate of ctx.ledger.list(ctx.projectId, 'Estimate')) {
+    selfPriced.set(String(estimate.state.packageId), Number(estimate.state.totalMinor ?? 0));
+  }
+
+  const schedules = ctx.ledger.list(ctx.projectId, 'PricingSchedule');
+  const pricings: SchedulePricing[] = schedules.map((schedule) => {
+    const packageId = String(schedule.state.packageId);
+    const award = awards.get(packageId);
+    return {
+      scheduleId: schedule.refId,
+      packageId,
+      packageName: packages.get(packageId) ?? packageId,
+      route: schedule.state.route as SchedulePricing['route'],
+      selfPricedMinor: selfPriced.get(packageId),
+      awardedMinor: award?.priceMinor,
+      awardedSupplier: award?.supplier,
+      provisionalSumsMinor: award?.provisionalSumsMinor,
+      exclusions: award?.exclusions,
+    };
+  });
+
+  // A package with no pricing schedule at all is the worst case of the same
+  // problem, and it is invisible to a consolidation that only reads schedules.
+  for (const [packageId, packageName] of packages) {
+    if (pricings.some((p) => p.packageId === packageId)) continue;
+    pricings.push({
+      scheduleId: `unscheduled:${packageId}`,
+      packageId,
+      packageName,
+      selfPricedMinor: selfPriced.get(packageId),
+      awardedMinor: awards.get(packageId)?.priceMinor,
+    });
+  }
+
+  const pricing = consolidate(pricings);
+  const masterPricingId = ulid();
+
+  write(ctx, {
+    eventType: 'MASTER_PRICING_CONSOLIDATED',
+    entity: { refType: 'MasterPricing', refId: masterPricingId },
+    nextState: {
+      id: masterPricingId,
+      projectId: ctx.projectId,
+      estimateId: input.estimateId,
+      note: input.note,
+      ...pricing,
+      consolidatedAt: new Date().toISOString(),
+      consolidatedBy: ctx.auth.actorId,
+    },
+  });
+
+  return { masterPricingId, pricing };
 }
