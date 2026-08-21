@@ -34,6 +34,33 @@ Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`
 These are implemented, covered by tests, and exercised through the running
 application. Do not rebuild them.
 
+**The unauthenticated console login, closed.** `POST /v1/console/session` was
+`public: true` with no production gate. It seeded a demonstration project and
+returned a working access token for `pm@meridian.example` to any anonymous
+caller — a PM identity, no credential, no MFA, to anyone who could reach the
+origin. Demonstrated against a running server before it was closed: the token
+authenticated subsequent requests and was stopped only by the role check on the
+particular command tried next.
+
+Its sibling `/v1/console/identities` already carried the gate, which is what
+made this the dangerous kind of hole — the pattern looked handled. Nothing in
+the frontend called the route at all; the console signs in through
+`/v1/auth/login` and `/v1/auth/mfa/verify` like any other client.
+
+Writing the test found a second problem. `config.env` is a snapshot taken at
+module load, so a production gate reading it could not be exercised in-process
+at all — the gate was correct in a real deployment and unverifiable everywhere
+else, including the two that already existed. `isProduction()` reads the
+environment fresh; the three request-time gates use it, and the boot-time
+configuration warnings keep the snapshot. Verified both ways: in-process, and
+against a server actually started with `NODE_ENV=production`, where both demo
+routes answer 403 and the MFA challenge code is withheld.
+
+The invariant is now stated rather than implied: **no public route may return
+an access token in production**, with the two that complete an authentication
+exempted by name, so a new public route handing out a token has to be added to
+that list deliberately.
+
 **Three deployables, one repository.** `backend/` is the service, `frontend/` is
 the browser application, `shared/` is the vocabulary both read. They were always
 separate — the frontend never imported a backend module and never could, because

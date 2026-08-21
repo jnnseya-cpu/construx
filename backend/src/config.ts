@@ -138,6 +138,21 @@ export const config = {
   },
 } as const;
 
+/**
+ * Whether this process is production, read fresh rather than from the boot
+ * snapshot in `config.env`.
+ *
+ * The two agree in every real deployment: `loadDotEnv()` has already populated
+ * `process.env` by the time `config` is built, so a `NODE_ENV` from either the
+ * environment or `.env` reaches both. The difference is that this can be
+ * exercised by a test, and the branches that depend on it are the ones that
+ * decide whether an anonymous caller receives an access token or an MFA code.
+ * A security gate nobody can test is a security gate nobody has checked.
+ */
+export function isProduction(): boolean {
+  return process.env.NODE_ENV === 'production';
+}
+
 /** Warn loudly rather than fail silently when production is misconfigured. */
 export function assertProductionSafety(): string[] {
   const warnings: string[] = [];

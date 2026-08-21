@@ -7,7 +7,7 @@ import { fleetManifest } from '../agents/runtime.ts';
 import type { ACUCaps } from '../billing/acu.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
 import { seatEconomics, TIERS } from '../billing/subscription.ts';
-import { config } from '../config.ts';
+import { config, isProduction } from '../config.ts';
 import * as consistency from '../domain/consistency.ts';
 import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
 import { DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
@@ -261,7 +261,7 @@ export const ROUTES: Route[] = [
         ...shapeMfaResponse(challenge),
         // The challenge code is returned only outside production, so the demo
         // and local development do not need an SMS gateway.
-        ...(config.env === 'production' ? {} : { devCode: challenge.code }),
+        ...(isProduction() ? {} : { devCode: challenge.code }),
         actorId: user.id,
       };
     },
@@ -945,7 +945,7 @@ export const ROUTES: Route[] = [
     public: true,
     description: 'List the seeded demonstration identities so any role can be signed into',
     handler: async (platform) => {
-      if (config.env === 'production') {
+      if (isProduction()) {
         throw new ForbiddenError('Demonstration identities are not available in production', 'DEMO_DISABLED');
       }
       const session = await getOrCreateConsoleSession(platform);
@@ -1031,6 +1031,15 @@ export const ROUTES: Route[] = [
     public: true,
     description: 'Bootstrap a console session against the seeded demonstration project',
     handler: async (platform) => {
+      // This route returns a usable access token to an anonymous caller. That
+      // is correct for a demonstration and is an authentication bypass in
+      // production — anyone who could reach the origin held a PM identity for
+      // the asking, with no credential and no MFA. Its sibling
+      // /v1/console/identities already carried this gate; this one did not.
+      if (isProduction()) {
+        throw new ForbiddenError('Demonstration sessions are not available in production', 'DEMO_DISABLED');
+      }
+
       // The console is a demonstration surface: on first call it seeds a full
       // lifecycle so there is something real to look at, then reuses it.
       const session = await getOrCreateConsoleSession(platform);
