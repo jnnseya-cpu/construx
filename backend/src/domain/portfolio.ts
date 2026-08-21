@@ -199,24 +199,24 @@ export function enterpriseCommand(ctx: EngineContext): EnterpriseCommand {
     const open = ctx.ledger.list(projectId, 'RiskRegisterItem').filter((r) => r.state.status === 'OPEN');
     row.openIssues = open.length;
     if (open.length > 0) {
-      // A single 0–100 figure, from expected value against contract value. It
-      // is a ranking device, not a currency — the money is carried alongside.
-      const exposure = open.reduce((sum, r) => sum + Number(r.state.expectedValueMinor ?? 0), 0);
-      const contract = Number(state.contractValueMinor ?? 0);
-      row.riskScore = contract > 0 ? Math.min(100, Math.round((exposure / contract) * 1000)) : undefined;
+      // The register already scores and grades each item — probability against
+      // a three-point impact, with thresholds proportionate to the contract.
+      // Re-deriving either here would produce a second opinion about the same
+      // fact, and the two would drift.
+      const worst = open.reduce((highest, r) => Math.max(highest, Number(r.state.score ?? 0)), 0);
+      row.riskScore = worst > 0 ? Math.round(worst) : undefined;
 
       for (const item of open) {
+        const grade = String(item.state.severity ?? '').toUpperCase();
         risks.push({
           projectId,
           projectName: name,
           title: String(item.state.title ?? ''),
-          severity:
-            Number(item.state.expectedValueMinor ?? 0) > contract * 0.02
-              ? 'HIGH'
-              : Number(item.state.expectedValueMinor ?? 0) > contract * 0.005
-                ? 'MEDIUM'
-                : 'LOW',
-          exposureMinor: Number(item.state.expectedValueMinor ?? 0),
+          severity: grade === 'HIGH' || grade === 'MEDIUM' || grade === 'LOW' ? grade : 'LOW',
+          // Expected cost: probability against the three-point impact, which is
+          // what the register computes. Not the worst case, which is carried
+          // separately and is a different question.
+          exposureMinor: Number(item.state.expectedCostMinor ?? 0),
           probability: Number(item.state.probability ?? 0),
         });
       }
