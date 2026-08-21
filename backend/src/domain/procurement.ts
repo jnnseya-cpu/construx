@@ -463,3 +463,191 @@ export function executeSubcontract(
 
   return { commitmentId };
 }
+
+/**
+ * Who was asked, who answered, and who has said nothing.
+ *
+ * Every fact this needs was already on the record — the invited list on the
+ * RFQ, the acknowledgements written against it, the submissions that name it —
+ * and nothing put them beside each other. From a screen that is
+ * indistinguishable from not tracking bidders at all, and it is the difference
+ * between "four returns received" and "four of nine, and the two who said they
+ * were bidding are not among them".
+ *
+ * The silence is the finding. A firm that declined is a normal outcome and
+ * tells you the package or the programme is wrong if enough of them do it. A
+ * firm that said it intended to bid and then did not return is a hole in the
+ * competition somebody should have chased on the Friday. And a firm that never
+ * acknowledged at all may simply not have received the enquiry — which is a
+ * question about the issue, not about the bidder.
+ *
+ * Nothing here is scored or ranked. Comparing prices is `evaluateSubmissions`,
+ * which is a different question asked after this one is answered.
+ */
+export type BidderPosition = {
+  supplierId: string;
+  supplierName?: string;
+  acknowledged: boolean;
+  acknowledgedAt?: string;
+  /** What they said they would do. Absent where they never acknowledged. */
+  intendToBid?: boolean;
+  returned: boolean;
+  returnedAt?: string;
+  submissionId?: string;
+  clarificationsRaised: number;
+  /**
+   * What this bidder is, in one word, so a list can be read rather than
+   * decoded. `BROKEN_PROMISE` is deliberately not called "declined": they said
+   * they would bid.
+   */
+  outcome: 'RETURNED' | 'DECLINED' | 'BROKEN_PROMISE' | 'SILENT' | 'AWAITED';
+};
+
+export type TenderReconciliation = {
+  rfqId: string;
+  reference: string;
+  status: RFQStatus;
+  returnDeadline: string;
+  /** Whether the deadline has passed, which changes what silence means. */
+  closed: boolean;
+  invited: number;
+  acknowledged: number;
+  intendingToBid: number;
+  returned: number;
+  bidders: BidderPosition[];
+  /**
+   * Returns that name this RFQ from a firm that was never invited. Reported
+   * rather than filtered: a return from an uninvited firm is either a data
+   * fault or a procurement irregularity, and both need somebody to look.
+   */
+  uninvitedReturns: string[];
+  /**
+   * The honest limit on this answer, where there is one.
+   *
+   * The register invites a firm by its supply-chain identifier and a submission
+   * arrives under the submitting party's identifier, and the platform holds
+   * nothing joining the two. Where *no* return matches *any* invitation that is
+   * not three irregularities, it is one missing join, and saying so beats
+   * publishing a reconciliation that reconciles nothing while looking as though
+   * it does.
+   */
+  unmatchable?: string;
+  summary: string;
+  /** Where the competition is thin enough that the award is exposed. */
+  concern?: string;
+};
+
+export function reconcileTenderResponses(
+  ctx: EngineContext,
+  rfqId: string,
+  today = new Date().toISOString(),
+): TenderReconciliation {
+  authorise(ctx, 'PROCUREMENT_AWARD', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const rfq = ctx.ledger.require({ refType: 'RFQ', refId: rfqId });
+  const invited = (rfq.state.invitedSupplierIds as string[]) ?? [];
+  const acknowledgements = (rfq.state.acknowledgements as Array<Record<string, unknown>>) ?? [];
+  const deadline = String(rfq.state.returnDeadline);
+  const closed = today > deadline;
+
+  const submissions = ctx.ledger
+    .list(ctx.projectId, 'SupplierSubmission')
+    .filter((record) => record.state.rfqId === rfqId);
+  const clarifications = ctx.ledger
+    .list(ctx.projectId, 'Clarification')
+    .filter((record) => record.state.rfqId === rfqId);
+
+  const bidders: BidderPosition[] = invited.map((supplierId) => {
+    const ack = acknowledgements.find((entry) => entry.supplierId === supplierId);
+    const submission = submissions.find((record) => record.state.supplierPartyId === supplierId);
+    const intendToBid = ack ? Boolean(ack.intendToBid) : undefined;
+
+    // Before the deadline an unreturned bid is not yet a failure; after it, the
+    // distinction between declining and going quiet is the whole point.
+    const outcome: BidderPosition['outcome'] = submission
+      ? 'RETURNED'
+      : intendToBid === false
+        ? 'DECLINED'
+        : !closed
+          ? 'AWAITED'
+          : intendToBid === true
+            ? 'BROKEN_PROMISE'
+            : 'SILENT';
+
+    return {
+      supplierId,
+      supplierName: submission ? String(submission.state.supplierName) : undefined,
+      acknowledged: ack !== undefined,
+      acknowledgedAt: ack ? String(ack.at) : undefined,
+      intendToBid,
+      returned: submission !== undefined,
+      returnedAt: submission ? String(submission.state.receivedAt) : undefined,
+      submissionId: submission?.refId,
+      clarificationsRaised: clarifications.filter((record) => record.state.supplierId === supplierId).length,
+      outcome,
+    };
+  });
+
+  const invitedSet = new Set(invited);
+  const uninvitedReturns = submissions
+    .filter((record) => !invitedSet.has(String(record.state.supplierPartyId)))
+    .map((record) => String(record.state.supplierName));
+
+  // No return matched any invitation, and returns exist. That is the missing
+  // join rather than a supply chain that ignored the enquiry, and reporting it
+  // as the latter would send somebody chasing three firms that did in fact bid.
+  const unmatchable =
+    submissions.length > 0 && submissions.length === uninvitedReturns.length && invited.length > 0
+      ? 'No return matches any invitation. A firm is invited by its supply-chain register identifier and submits ' +
+        'under its party identifier, and the platform holds nothing joining the two — so on this RFQ the outcomes ' +
+        'below are what the record supports and not what happened. Until a supplier record carries the party that ' +
+        'submits for it, this reconciliation cannot match a return to an invitation.'
+      : undefined;
+
+  const returned = bidders.filter((bidder) => bidder.returned).length;
+  const intendingToBid = bidders.filter((bidder) => bidder.intendToBid === true).length;
+  const broken = bidders.filter((bidder) => bidder.outcome === 'BROKEN_PROMISE');
+  const silent = bidders.filter((bidder) => bidder.outcome === 'SILENT');
+
+  // Three is the conventional floor for a comparable return, and below it the
+  // exposure is the award rather than the price: a single return is a
+  // negotiation, and an audit will read it as one.
+  const concern =
+    unmatchable !== undefined
+      ? undefined
+      : closed && returned === 0
+      ? 'Nothing was returned. The package goes back to market or the requirement changes; there is nothing here to award.'
+      : closed && returned === 1
+        ? 'One return is a negotiation, not a competition. Awarding on it is defensible only if the reason is recorded now rather than reconstructed later.'
+        : closed && returned === 2
+          ? 'Two returns give a price and no market. Enough to award, not enough to prove the price.'
+          : silent.length > invited.length / 2
+            ? `${silent.length} of ${invited.length} invited firms never acknowledged. That is a question about whether the enquiry reached them, not about the bidders.`
+            : undefined;
+
+  return {
+    rfqId,
+    reference: String(rfq.state.reference),
+    status: String(rfq.state.status) as RFQStatus,
+    returnDeadline: deadline,
+    closed,
+    invited: invited.length,
+    acknowledged: bidders.filter((bidder) => bidder.acknowledged).length,
+    intendingToBid,
+    returned,
+    bidders,
+    uninvitedReturns,
+    ...(unmatchable ? { unmatchable } : {}),
+    summary:
+      invited.length === 0
+        ? 'Nobody was invited, so there is nothing to reconcile.'
+        : `${returned} of ${invited.length} invited ${returned === 1 ? 'firm has' : 'firms have'} returned` +
+          `${closed ? ', and the deadline has passed' : `, with the deadline on ${deadline.slice(0, 10)}`}.` +
+          (broken.length > 0
+            ? ` ${broken.length} said ${broken.length === 1 ? 'it' : 'they'} intended to bid and did not return.`
+            : '') +
+          (uninvitedReturns.length > 0
+            ? ` ${uninvitedReturns.length} return${uninvitedReturns.length === 1 ? '' : 's'} came from a firm that was never invited.`
+            : ''),
+  };
+}

@@ -15,12 +15,12 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,259 passing, 0 failing, 0 skipped, across 64 files |
+| Tests | 1,279 passing, 0 failing, 0 skipped, across 65 files |
 | Typecheck | clean |
-| Backend | 103 TypeScript files, 48,782 lines |
-| Application | 32 ES modules, 10,031 lines (plus a service worker) |
-| API routes | 273 (25 of them public) |
-| Event types | 189 Golden Thread (closed) · 177 communication events (closed) |
+| Backend | 105 TypeScript files, 49,851 lines |
+| Application | 32 ES modules, 10,267 lines (plus a service worker) |
+| API routes | 278 (25 of them public) |
+| Event types | 190 Golden Thread (closed) · 177 communication events (closed) |
 | Entity types | 117, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
@@ -1065,6 +1065,67 @@ of eleven are ready" and "nine are ready" are different statements and only one
 can be checked. Where a lookahead has not been published it says so instead of
 inferring a window from the whole programme, which would answer a different
 question.
+
+**Letters, and what the contract does when nobody answers one.** The platform
+wrote exactly one kind of letter — a site instruction, as a side effect of
+marking up a drawing — and nothing said what a letter was for or what happened
+if nobody replied. On a construction project that is the whole game.
+
+`backend/src/domain/correspondence.ts` holds the matrix. Three rules, each a
+fact about the contract rather than a convention. **The recipient is
+contractual**: a notice served on the wrong party is not served, so serving one
+is refused rather than filed with a warning — a warning on a screen nobody reads
+is how a notice ends up invalid. **The period comes from the form**: an
+extension of time application is twelve weeks under JCT and six under FIDIC, and
+under a bespoke contract it carries none at all, which is reported as none
+rather than defaulted to something that looks contractual. **Silence has a
+consequence and it is written down**: under NEC 62.6 a quotation the project
+manager does not reply to is *accepted*, and the position reports that as a
+thing which has happened rather than as an overdue item — by then it is not
+outstanding, it is decided, and putting it in the chase list is how the decided
+ones get chased and the answerable ones get missed.
+
+The matrix is published at `GET /v1/correspondence/matrix` and the console
+builds its composer from it, because who a letter must go to is a rule and
+settled decision 6 says the interface holds no rule the API does not publish.
+Periods of under a week are reckoned through `reckonPeriod`, so NEC's one-week
+reply excludes the s.116(3) days.
+
+**Who was asked, and who answered.** Every fact was already on the record — the
+invited list on the RFQ, the acknowledgements written against it, the
+submissions naming it — and nothing stood them beside each other, which from a
+screen is indistinguishable from not tracking bidders at all.
+`reconcileTenderResponses` does. The word is the finding: a firm that declined
+is a normal outcome, a firm that said it would bid and then did not return is a
+hole somebody should have chased on the Friday, and a firm that never
+acknowledged may not have received the enquiry at all — a question about the
+issue rather than about the bidder. Nothing is ranked; comparing prices is a
+different question asked after this one.
+
+Two of the four remaining gap-matrix items turned out to be **built already**.
+Competency expiry has fed the obligations calendar since the calendar existed,
+and `issueRFQ` has always refused a package that is not `READY_TO_ISSUE`, which
+is the completeness gate before issue. Rebuilding either would have been the
+most expensive way to add nothing.
+
+**Two defects the work found, one fixed and one reported.**
+
+Fixed, because it made the change ship broken: on the Change & Claims screen the
+`COMMANDS` object and its click handler sat *after* a `return` inside
+`contractLabel`, so they were unreachable and **every command button on that page
+did nothing** — silently, with no console error, since the listener was never
+attached. Confirmed in a browser before and after. The two new correspondence
+buttons would have been dead on arrival beside the nine that already were.
+
+Reported rather than fixed: a firm is invited to an RFQ by its supply-chain
+register identifier and submits under its party identifier, and no `Supplier`
+record carries a party. The two identifier spaces have nothing joining them, so
+on the demo project every return looks uninvited and every invited firm looks
+silent — and both readings are wrong. The reconciliation says so on its own
+answer rather than publishing three false irregularities. Joining them means
+changing what a `Supplier` record is, and every award, subcontract and commitment
+is keyed on the party side of the gap; that is a change to working machinery and
+needs its own piece of work.
 
 **Running the asset, not listing it.** The FM centre was the weakest of the
 seven — four of nine panels partial and one absent — for one reason: the asset

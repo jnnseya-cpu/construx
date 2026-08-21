@@ -40,6 +40,13 @@ export async function procurement(root) {
   ]);
 
   const rfq = b.RFQ.at(-1);
+
+  // Who was asked against who answered. Every fact was already on the record
+  // and nothing stood them beside each other, which from a screen is
+  // indistinguishable from not tracking bidders at all.
+  const reconciliation = rfq
+    ? await api.get(`/v1/projects/${projectId}/procurement/rfq/${rfq._refId}/reconciliation`).catch(() => null)
+    : null;
   const evaluation = b.BidEvaluation.at(-1);
   const adjudication = b.Adjudication.at(-1);
   const subcontract = b.Subcontract.at(-1);
@@ -160,6 +167,62 @@ export async function procurement(root) {
           <div class="metric-sub">${subcontract ? `${subcontract.reference} · ${humanise(subcontract.status)}` : 'not awarded'}</div>
         </div>
       </div>
+
+      ${
+        !reconciliation || reconciliation.invited === 0
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Who was asked, and who answered</h3>
+              <div style="padding:8px 17px 0"><div class="metric-sub">${reconciliation.summary}</div></div>
+              ${
+                reconciliation.unmatchable
+                  ? html`<div style="padding:12px 17px 0"><div class="notice warn">
+                      <div><b>Returns cannot be matched to invitations</b><br>${reconciliation.unmatchable}</div>
+                    </div></div>`
+                  : reconciliation.concern
+                    ? html`<div style="padding:12px 17px 0"><div class="notice warn">
+                        <div><b>The competition is thin</b><br>${reconciliation.concern}</div>
+                      </div></div>`
+                    : ''
+              }
+              ${table({
+                headers: ['Invited firm', 'Acknowledged', 'Said they would bid', 'Returned', 'Queries', 'Outcome'],
+                align: ['', '', '', '', 'num', ''],
+                rows: reconciliation.bidders.map((bidder) => [
+                  bidder.supplierName ?? bidder.supplierId,
+                  bidder.acknowledgedAt ? date(bidder.acknowledgedAt) : badge('no reply', 'neutral'),
+                  bidder.intendToBid === undefined
+                    ? '—'
+                    : bidder.intendToBid
+                      ? badge('yes', 'ok')
+                      : badge('no', 'neutral'),
+                  bidder.returnedAt ? date(bidder.returnedAt) : '—',
+                  bidder.clarificationsRaised,
+                  // The word is the finding. "Declined" and "said they would bid
+                  // and then went quiet" are different facts about a supply chain.
+                  bidder.outcome === 'RETURNED'
+                    ? badge('returned', 'ok')
+                    : bidder.outcome === 'DECLINED'
+                      ? badge('declined', 'neutral')
+                      : bidder.outcome === 'BROKEN_PROMISE'
+                        ? badge('promised, then silent', 'bad')
+                        : bidder.outcome === 'SILENT'
+                          ? badge('never answered', 'warn')
+                          : badge('awaited', 'info'),
+                ]),
+              })}
+              ${
+                reconciliation.uninvitedReturns.length === 0 || reconciliation.unmatchable
+                  ? ''
+                  : html`<div style="padding:12px 17px 15px"><div class="notice err">
+                      <div>
+                        <b>${reconciliation.uninvitedReturns.length} return${reconciliation.uninvitedReturns.length === 1 ? '' : 's'} from a firm that was never invited</b><br>
+                        ${reconciliation.uninvitedReturns.join(', ')} — either a data fault or a procurement irregularity, and both need somebody to look.
+                      </div>
+                    </div></div>`
+              }
+            </div>`
+      }
 
       ${
         cheapestIsNotWinner

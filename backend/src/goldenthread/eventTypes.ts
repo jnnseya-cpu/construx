@@ -125,6 +125,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('RFI_RAISED', 'RFI', 'CREATE', 'DESIGN', { aiAllowed: true }),
   def('RFI_ANSWERED', 'RFI', 'UPDATE', 'DESIGN', { requiresEvidence: true }),
   def('CORRESPONDENCE_ISSUED', 'Correspondence', 'ISSUE', 'DESIGN', { aiAllowed: true, creates: true }),
+  // A reply is a distinct fact with its own author and its own date, and on the
+  // letters where silence is acceptance the date is the whole point. Recording
+  // it as another ISSUE would lose who answered and when.
+  def('CORRESPONDENCE_ANSWERED', 'Correspondence', 'UPDATE', 'DESIGN', { requiresEvidence: true }),
 
   // --- Tender & procurement -------------------------------------------------
   def('TAKEOFF_COMPLETED', 'Takeoff', 'AI_EXECUTE', 'PROCUREMENT', { aiAllowed: true, requiresEvidence: true }),

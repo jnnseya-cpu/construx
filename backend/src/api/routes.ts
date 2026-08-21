@@ -23,6 +23,7 @@ import type { Schema } from '../core/validate.ts';
 import * as business from '../domain/business.ts';
 import * as cdm from '../domain/cdm.ts';
 import * as portfolio from '../domain/portfolio.ts';
+import * as correspondence from '../domain/correspondence.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
@@ -227,6 +228,17 @@ function sourceOf(ctx: RequestContext): 'WEB' | 'PWA' | 'ANDROID' | 'IOS' | 'SYS
  */
 const CAPABILITY_AREAS: string[] = [
   ...new Set(Object.values(PERMISSION_MATRIX).flatMap((matrix) => Object.keys(matrix))),
+].sort();
+
+/**
+ * The parties a letter can be addressed to.
+ *
+ * Derived from the matrix rather than typed out beside it: the schema's enum and
+ * the rule that enforces it have to be the same list, or a party the console
+ * offers is a party the platform refuses.
+ */
+const CORRESPONDENCE_PARTIES: string[] = [
+  ...new Set(Object.values(correspondence.CORRESPONDENCE_TYPES).flatMap((d) => [...d.senders, ...d.recipients])),
 ].sort();
 
 /** The URL segment each perception task lives at. Kebab-case, as the API is. */
@@ -2785,6 +2797,14 @@ export const ROUTES: Route[] = [
       procurement.receiveSubmission(projectContext(platform, ctx), { ...body<Omit<Parameters<typeof procurement.receiveSubmission>[1], 'rfqId'>>(ctx), rfqId: ctx.params.rfqId as string }),
   },
   {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/procurement/rfq/:rfqId/reconciliation',
+    readOnly: true,
+    description: 'Who was invited, who answered, who returned, and who has said nothing',
+    handler: (platform, ctx) =>
+      procurement.reconcileTenderResponses(projectContext(platform, ctx), ctx.params.rfqId as string),
+  },
+  {
     method: 'POST',
     pattern: '/v1/projects/:projectId/procurement/rfq/:rfqId/award',
     description: 'Award the RFQ against an adjudication',
@@ -3850,6 +3870,82 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/rfi/position',
     description: 'The RFI register as a delay exhibit: what is overdue and for how long',
     handler: (platform, ctx) => bim.rfiPosition(projectContext(platform, ctx)),
+  },
+  // Contractual correspondence. The matrix is published rather than restated in
+  // the browser, for the same reason the permission matrix is: who a letter must
+  // be served on is a rule, and settled decision 6 says the interface holds no
+  // rule the API does not publish.
+  {
+    method: 'GET',
+    pattern: '/v1/correspondence/matrix',
+    readOnly: true,
+    description: 'Which letters may be written, who may send them, who they must be served on, and the reply period each form allows',
+    handler: (_platform, ctx) => {
+      auth(ctx);
+      return {
+        types: Object.entries(correspondence.CORRESPONDENCE_TYPES).map(([type, definition]) => ({
+          type,
+          ...definition,
+        })),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/correspondence',
+    description: 'Compose and issue a contractual letter, to the party the contract requires',
+    schema: {
+      type: 'object',
+      required: ['type', 'from', 'to', 'subject', 'body', 'author'],
+      properties: {
+        type: { type: 'string', enum: Object.keys(correspondence.CORRESPONDENCE_TYPES) },
+        from: { type: 'string', enum: CORRESPONDENCE_PARTIES },
+        to: { type: 'string', enum: CORRESPONDENCE_PARTIES },
+        subject: { type: 'string', minLength: 4 },
+        body: { type: 'string', minLength: 10 },
+        author: stringField,
+        linkedEntity: {
+          type: 'object',
+          required: ['refType', 'refId'],
+          properties: { refType: stringField, refId: stringField },
+          additionalProperties: false,
+        },
+        evidenceHash: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      correspondence.issueCorrespondence(
+        projectContext(platform, ctx),
+        body<Parameters<typeof correspondence.issueCorrespondence>[1]>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/correspondence/:correspondenceId/reply',
+    description: 'Answer a letter, and record whether the answer came within the period the contract allows',
+    schema: {
+      type: 'object',
+      required: ['body', 'author'],
+      properties: {
+        body: { type: 'string', minLength: 10 },
+        author: stringField,
+        evidenceHash: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      correspondence.respondToCorrespondence(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof correspondence.respondToCorrespondence>[1], 'correspondenceId'>>(ctx),
+        correspondenceId: ctx.params.correspondenceId as string,
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/correspondence/position',
+    readOnly: true,
+    description: 'What is awaiting a reply, what is past the contractual period, and what silence has already decided',
+    handler: (platform, ctx) => correspondence.correspondencePosition(projectContext(platform, ctx)),
   },
   {
     method: 'POST',

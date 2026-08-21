@@ -27,6 +27,14 @@ export async function contracts(root) {
   // a document put to signature under an area goes to whoever approves there,
   // and an area with nobody seated says so before anybody fills the form in.
   const ownership = await api.get('/v1/ownership').catch(() => ({ areas: [] }));
+
+  // Contractual correspondence, and the matrix that governs it. The matrix is
+  // fetched rather than restated here: who a letter must be served on is a rule,
+  // and the interface holds no rule the API does not publish.
+  const [letters, matrix] = await Promise.all([
+    api.get(`/v1/projects/${projectId}/correspondence/position`).catch(() => null),
+    api.get('/v1/correspondence/matrix').catch(() => ({ types: [] })),
+  ]);
   const evidenceHeld = await api
     .get(`/v1/projects/${projectId}/evidence`)
     .then((r) => r.entries.filter((entry) => entry.held))
@@ -94,6 +102,8 @@ export async function contracts(root) {
             { id: 'dispute', label: 'Give notice of adjudication', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
             { id: 'refer', label: 'Record a referral', permitted: can('CONTRACTS_CLAIMS', 'U'), reason: blockedReason('CONTRACTS_CLAIMS', 'U') },
             { id: 'decision', label: 'Record a decision', permitted: can('CONTRACTS_CLAIMS', 'U'), reason: blockedReason('CONTRACTS_CLAIMS', 'U') },
+            { id: 'letter', label: 'Write a letter', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
+            { id: 'reply', label: 'Answer a letter', permitted: can('DESIGN_INFORMATION', 'U'), reason: blockedReason('DESIGN_INFORMATION', 'U') },
             // Offered only where the deployment can actually witness one. A
             // control that always refuses is worse than one that is not there.
             ...(signing?.available
@@ -112,6 +122,56 @@ export async function contracts(root) {
               Recorded rather than hidden — the record is what supports an argument on waiver later.</div>
             </div>`
           : ''
+      }
+
+      ${
+        !letters || letters.total === 0
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Correspondence — what is awaiting a reply</h3>
+              <div style="padding:8px 17px 0"><div class="metric-sub">${letters.summary}</div></div>
+              ${
+                letters.deemedAccepted.length === 0
+                  ? ''
+                  : html`<div style="padding:12px 17px 0"><div class="notice err">
+                      <div>
+                        <b>${letters.deemedAccepted.length} decided by silence, not outstanding</b><br>
+                        ${letters.deemedAccepted
+                          .map(
+                            (entry) =>
+                              `${entry.reference} — ${entry.subject}: the reply was due ${entry.dueBy}, ${entry.daysSince} days ago. ${entry.consequence}`,
+                          )
+                          .join(' · ')}
+                      </div>
+                    </div></div>`
+              }
+              ${
+                letters.suite
+                  ? ''
+                  : html`<div style="padding:12px 17px 0"><div class="notice warn">
+                      <div><b>No response periods derived</b><br>${letters.suiteReason}</div>
+                    </div></div>`
+              }
+              ${table({
+                headers: ['Reference', 'Letter', 'Subject', 'Served on', 'Issued', 'Reply due', 'Clause'],
+                rows: letters.outstanding.map((entry) => [
+                  entry.reference,
+                  entry.typeLabel,
+                  entry.subject,
+                  humanise(entry.to),
+                  date(entry.issuedOn),
+                  entry.dueBy
+                    ? entry.overdue
+                      ? badge(`${Math.abs(entry.daysRemaining)} days late`, 'bad')
+                      : badge(`${entry.daysRemaining} days`, entry.daysRemaining <= 3 ? 'warn' : 'neutral')
+                    : // Said rather than left blank: an empty cell reads as an
+                      // oversight, and this is the contract's own silence.
+                      badge('no period', 'neutral'),
+                  entry.clause ? `${entry.clause.suite} ${entry.clause.clause}` : '—',
+                ]),
+                empty: 'Every letter has been answered',
+              })}
+            </div>`
       }
 
       <div class="grid g4" style="margin-bottom:14px">
@@ -611,20 +671,56 @@ export async function contracts(root) {
     button.disabled = false;
     button.textContent = 'Build evidence pack';
   });
-}
-
-/**
- * Contracts carry a suite and a form, and the form is often written to include
- * the suite ("NEC4 ECC Option C"). Both are valid entries, so the label is
- * composed rather than concatenated.
- */
-function contractLabel(contract) {
-  const suite = String(contract.suite ?? '').trim();
-  const form = String(contract.form ?? '').trim();
-  if (!form) return suite || 'Contract';
-  return form.startsWith(suite) ? form : `${suite} ${form}`.trim();
 
   const COMMANDS = {
+    // The letter types, their senders and their recipients all come from the
+    // published matrix. Typing them here would put a second copy of a
+    // contractual rule in the browser, and the copy is the one that goes stale.
+    letter: {
+      title: 'Write a letter',
+      intent:
+        'The contract decides who may write each letter and who it must be served on. Served on the wrong party a '
+        + 'notice is not served, so the platform refuses rather than filing it — and the reply period comes from the '
+        + 'form this project runs, or is reported as absent where the form imposes none.',
+      path: `/v1/projects/${projectId}/correspondence`,
+      submitLabel: 'Issue',
+      fields: [
+        { name: 'type', label: 'Letter', type: 'select',
+          options: (matrix.types ?? []).map((entry) => ({ value: entry.type, label: entry.label })) },
+        { name: 'from', label: 'From', type: 'select',
+          hint: 'Only the parties the contract lets write the chosen letter will be accepted.',
+          options: [...new Set((matrix.types ?? []).flatMap((entry) => entry.senders))].sort()
+            .map((party) => ({ value: party, label: humanise(party) })) },
+        { name: 'to', label: 'Served on', type: 'select',
+          options: [...new Set((matrix.types ?? []).flatMap((entry) => entry.recipients))].sort()
+            .map((party) => ({ value: party, label: humanise(party) })) },
+        { name: 'subject', label: 'Subject', type: 'text' },
+        { name: 'body', label: 'Letter', type: 'textarea', rows: 6 },
+        { name: 'author', label: 'Signed by', type: 'text', value: state.session.user.name },
+        { name: 'evidenceHash', label: 'The letter as sent', type: 'file', required: false,
+          hint: 'Optional. Without it the letter’s own text is hashed, which is still checkable later.' },
+      ],
+    },
+    reply: {
+      title: 'Answer a letter',
+      intent:
+        'A reply after the period has run is recorded as a reply and as late — the letter was answered, and whether '
+        + 'the lateness matters is a question about the contract. Where silence has already decided the point the '
+        + 'reply does not undo it, and the record says both things happened.',
+      path: (collected) => `/v1/projects/${projectId}/correspondence/${encodeURIComponent(collected.correspondenceId)}/reply`,
+      submitLabel: 'Reply',
+      fields: [
+        { name: 'correspondenceId', label: 'Letter', type: 'select',
+          options: (letters?.outstanding ?? []).map((entry) => ({
+            value: entry.id,
+            label: `${entry.reference} — ${entry.subject}${entry.dueBy ? ` (due ${entry.dueBy})` : ''}`,
+          })) },
+        { name: 'body', label: 'Reply', type: 'textarea', rows: 6 },
+        { name: 'author', label: 'Signed by', type: 'text', value: state.session.user.name },
+        { name: 'evidenceHash', label: 'The reply as sent', type: 'file', required: false },
+      ],
+      transform: ({ correspondenceId, ...rest }) => rest,
+    },
     signature: {
       title: 'Put a document to signature',
       intent:
@@ -850,4 +946,16 @@ function contractLabel(contract) {
     if (!spec) return;
     if (await command(spec)) await draw();
   });
+}
+
+/**
+ * Contracts carry a suite and a form, and the form is often written to include
+ * the suite ("NEC4 ECC Option C"). Both are valid entries, so the label is
+ * composed rather than concatenated.
+ */
+function contractLabel(contract) {
+  const suite = String(contract.suite ?? '').trim();
+  const form = String(contract.form ?? '').trim();
+  if (!form) return suite || 'Contract';
+  return form.startsWith(suite) ? form : `${suite} ${form}`.trim();
 }
