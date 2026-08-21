@@ -1,4 +1,4 @@
-import { api, entityBundle } from '../lib/api.js';
+import { api, entities, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { DISCIPLINE } from '../lib/enums.js';
 import { badge, date, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
@@ -15,6 +15,9 @@ import { blockedReason, can, draw, state } from '../app.js';
 
 export async function design(root) {
   const projectId = state.session.projectId;
+
+  // Activities, so a markup can name what its answer is holding up.
+  const tasks = await entities(projectId, 'Task').catch(() => []);
 
   const b = await entityBundle(projectId, [
     'Drawing',
@@ -107,17 +110,47 @@ export async function design(root) {
                   <div class="metric-sub">${money(exposure.dailyDamagesMinor)} per day under the contract</div>
                 </div>
                 <div>
-                  <div class="metric-sub">Exposure if critical</div>
-                  <div class="metric ${raw(exposure.exposureIfCriticalMinor > 0 ? 'bad' : 'good')}">
-                    ${money(exposure.exposureIfCriticalMinor)}
+                  <div class="metric-sub">${exposure.basis === 'COMPUTED' ? 'Exposure' : 'Exposure if critical'}</div>
+                  <div class="metric ${raw((exposure.basis === 'CONDITIONAL' ? exposure.exposureIfCriticalMinor : exposure.computedExposureMinor) > 0 ? 'bad' : 'good')}">
+                    ${money(exposure.basis === 'CONDITIONAL' ? exposure.exposureIfCriticalMinor : exposure.computedExposureMinor)}
                   </div>
-                  <div class="metric-sub">at the contract damages rate</div>
+                  <div class="metric-sub">
+                    ${
+                      exposure.basis === 'CONDITIONAL'
+                        ? 'conditional — no overdue RFI names an activity'
+                        : exposure.basis === 'COMPUTED'
+                          ? 'read off the network, not supposed'
+                          : `computed from ${exposure.linkedCount} of ${exposure.overdueCount}`
+                    }
+                  </div>
                 </div>
               </div>
               <div class="metric-sub" style="margin-top:11px">
                 ${exposure.qualification}
                 ${exposure.toMakeExact ? html`<br><b>To make it exact:</b> ${exposure.toMakeExact}` : ''}
               </div>
+              ${
+                (exposure.blockedActivities ?? []).length > 0
+                  ? html`<div style="margin-top:12px">
+                      ${table({
+                        headers: ['Activity', 'On critical path', 'Float', 'Days late', 'Beyond float', 'Questions'],
+                        align: ['', '', 'num', 'num', 'num', ''],
+                        rows: exposure.blockedActivities.map((a) => [
+                          a.taskName,
+                          a.onCriticalPath ? badge('critical', 'bad') : badge('has slack', 'neutral'),
+                          `${a.totalFloat}d`,
+                          `${a.daysOverdue}d`,
+                          `${a.daysBeyondFloat}d`,
+                          a.rfiReferences.join(', '),
+                        ]),
+                      })}
+                      <div class="metric-sub" style="margin-top:8px">
+                        One row per activity, not per question: two RFIs against the same activity hold it up once. Concurrent
+                        critical delays are not added either — the job finishes late by the worst of them.
+                      </div>
+                    </div>`
+                  : ''
+              }
             </div>`
           : ''
       }
@@ -423,6 +456,14 @@ export async function design(root) {
           { value: 'RFI', label: 'Raise as an RFI' },
           { value: 'INSTRUCTION', label: 'Raise as an instruction' },
         ] },
+        // The one field that turns the delay exposure from conditional into
+        // computed. Optional, because a question can genuinely precede the
+        // programme — the hint says what leaving it out costs rather than
+        // making it required and pushing people back to email.
+        { name: 'taskId', label: 'Activity held up', type: 'select', required: false,
+          placeholder: 'Not tied to an activity',
+          hint: 'Named here, the platform reads that activity’s own float off the network and prices the delay. Left blank, the exposure stays conditional.',
+          options: tasks.map((t) => ({ value: t._refId, label: t.name })) },
       ],
     },
     answer: {

@@ -3,6 +3,7 @@ import { admin } from './admin.js';
 import { audit } from './audit.js';
 import { autopilot } from './autopilot.js';
 import { billing } from './billing.js';
+import { commands } from './commands.js';
 import { commercial } from './commercial.js';
 import { communications } from './communications.js';
 import { contracts } from './contracts.js';
@@ -33,6 +34,7 @@ export const PAGES = {
   field,
   design,
   commercial,
+  commands,
   procurement,
   contracts,
   control,

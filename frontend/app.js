@@ -60,6 +60,11 @@ export const NAV = [
       { id: 'risk', label: 'Risk & Safety', area: 'RISK_REGISTER', icon: 'shield' },
       { id: 'handover', label: 'Handover & O&M', area: 'HANDOVER_OM', icon: 'key' },
       { id: 'audit', label: 'Golden Thread', area: 'EVIDENCE_AUDIT', icon: 'link' },
+      // Every write command, with a door generated from the platform's own
+      // schema. Under EVIDENCE_AUDIT read because the catalogue is a statement
+      // about what the platform accepts, not an authority to run any of it —
+      // each command still authorises itself when it is pressed.
+      { id: 'commands', label: 'All commands', area: 'EVIDENCE_AUDIT', icon: 'checklist' },
     ],
   },
   {

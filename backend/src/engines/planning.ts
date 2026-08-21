@@ -160,6 +160,34 @@ export function linkTasks(ctx: EngineContext, dependencies: Dependency[]): strin
   });
 }
 
+/**
+ * Float and criticality per activity, from the live network.
+ *
+ * Exported because the design-delay exposure needs to know whether the activity
+ * an RFI blocks is on the critical chain and how much slack it has of its own.
+ * Recomputed rather than read off the last baseline snapshot: the baseline is
+ * what was agreed, and the question "is this delaying the job today" is asked of
+ * the network as it stands.
+ */
+export function networkFloat(ctx: EngineContext): {
+  floatByTask: Map<string, number>;
+  critical: Set<string>;
+  activityNames: Map<string, string>;
+  hasNetwork: boolean;
+} {
+  const { activities, dependencies } = loadNetwork(ctx);
+  if (activities.length === 0) {
+    return { floatByTask: new Map(), critical: new Set(), activityNames: new Map(), hasNetwork: false };
+  }
+  const cpm = calculateCPM(activities, dependencies);
+  return {
+    floatByTask: new Map(cpm.activities.map((a) => [a.id, a.totalFloat])),
+    critical: new Set(cpm.criticalPath),
+    activityNames: new Map(cpm.activities.map((a) => [a.id, a.name])),
+    hasNetwork: true,
+  };
+}
+
 function loadNetwork(ctx: EngineContext): { activities: Activity[]; dependencies: Dependency[] } {
   const activities = ctx.ledger.list(ctx.projectId, 'Task').map((record) => ({
     id: record.refId,

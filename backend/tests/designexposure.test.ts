@@ -22,6 +22,33 @@ before(async () => {
 
 const bim = () => platform.context(seed.users.bim!.auth, seed.projectId, { source: 'WEB' });
 
+/** An RFI that is already late, optionally naming the activity it holds up. */
+function overdueRfi(dueDate: string, reference: string, taskId?: string, taskName?: string) {
+  const ctx = bim();
+  ctx.ledger.commit({
+    tenantId: seed.tenantId,
+    projectId: seed.projectId,
+    actor: { refType: 'User', refId: seed.users.bim!.id },
+    source: 'WEB',
+    correlationId: `test-${reference}`,
+    eventType: 'RFI_RAISED',
+    entity: { refType: 'RFI', refId: `rfi-${reference}` },
+    nextState: {
+      id: `rfi-${reference}`,
+      reference,
+      projectId: seed.projectId,
+      discipline: 'CIVILS',
+      question: 'Confirm the pile cap reinforcement at grid D2',
+      raisedAt: '2026-06-01T00:00:00.000Z',
+      dueDate,
+      // The activity the answer holds up, where the raiser named one.
+      linkedTaskId: taskId,
+      linkedTaskName: taskName,
+      status: 'OPEN',
+    },
+    timestamp: new Date().toISOString(),
+  });
+}
 describe('pricing the delay', () => {
   it('prices from the contract’s own damages rate, not an invented figure', () => {
     const exposure = designDelayExposure(bim());
@@ -104,29 +131,7 @@ describe('with information actually overdue', () => {
    * and it proves nothing about the arithmetic. These write an open, overdue RFI
    * straight to the ledger and check the money.
    */
-  function overdueRfi(dueDate: string, reference: string) {
-    const ctx = bim();
-    ctx.ledger.commit({
-      tenantId: seed.tenantId,
-      projectId: seed.projectId,
-      actor: { refType: 'User', refId: seed.users.bim!.id },
-      source: 'WEB',
-      correlationId: `test-${reference}`,
-      eventType: 'RFI_RAISED',
-      entity: { refType: 'RFI', refId: `rfi-${reference}` },
-      nextState: {
-        id: `rfi-${reference}`,
-        reference,
-        projectId: seed.projectId,
-        discipline: 'CIVILS',
-        question: 'Confirm the pile cap reinforcement at grid D2',
-        raisedAt: '2026-06-01T00:00:00.000Z',
-        dueDate,
-        status: 'OPEN',
-      },
-      timestamp: new Date().toISOString(),
-    });
-  }
+
 
   it('turns days overdue into money at the contract rate', () => {
     overdueRfi('2026-07-01', 'RFI-T001');
@@ -169,5 +174,104 @@ describe('with information actually overdue', () => {
     assert.equal(exposure.overdueCount, 0);
     assert.match(exposure.qualification, /no design information is overdue/i);
     assert.doesNotMatch(exposure.qualification, /float/i);
+  });
+});
+
+/**
+ * The activity reference, and what it is worth.
+ *
+ * An RFI carried a discipline and a drawing, which says what the question is
+ * about and not what it is stopping. So the exposure could only ever say "if
+ * the worst overdue RFI happens to sit on the critical path" — a real number
+ * behind a supposition. With the activity named, the platform reads that
+ * activity's own float off the network and knows whether it is on the critical
+ * chain, and the figure stops being conditional.
+ */
+describe('what the activity reference buys', () => {
+  let taskId: string;
+  let secondTaskId: string;
+
+  before(() => {
+    const tasks = platform.ledger.list(seed.projectId, 'Task');
+    taskId = tasks[0]!.refId;
+    secondTaskId = tasks[1]!.refId;
+  });
+
+  it('stays conditional while nothing names an activity', () => {
+    overdueRfi('2026-07-01', 'RFI-U001');
+    const exposure = designDelayExposure(bim(), '2026-07-31');
+
+    assert.equal(exposure.basis, 'CONDITIONAL');
+    assert.equal(exposure.linkedCount, 0);
+    assert.equal(exposure.computedExposureMinor, 0, 'an unlinked RFI priced something');
+    assert.match(exposure.qualification, /if the worst overdue RFI/i);
+  });
+
+  it('says how many are still conditional once some are linked', () => {
+    overdueRfi('2026-07-05', 'RFI-U002', taskId, 'Pile caps');
+    const exposure = designDelayExposure(bim(), '2026-07-31');
+
+    assert.equal(exposure.basis, 'PARTLY_COMPUTED');
+    assert.equal(exposure.linkedCount, 1);
+    assert.ok(exposure.unlinkedCount >= 1);
+    assert.match(String(exposure.toMakeExact), /do(es)? not name the activity/i);
+  });
+
+  it('reads the blocked activity’s own float rather than the project minimum', () => {
+    const exposure = designDelayExposure(bim(), '2026-07-31');
+    const blocked = exposure.blockedActivities.find((a) => a.taskId === taskId);
+
+    assert.ok(blocked, 'the linked activity is not reported as blocked');
+    assert.equal(blocked.daysBeyondFloat, Math.max(0, blocked.daysOverdue - blocked.totalFloat));
+    assert.deepEqual(blocked.rfiReferences, ['RFI-U002']);
+  });
+
+  it('does not delay one activity twice because two questions are against it', () => {
+    // Two RFIs on the same activity hold it up once. Totalling them invents a
+    // delay nobody has suffered, which is the same failure as summing across
+    // RFIs — one level down.
+    overdueRfi('2026-07-20', 'RFI-U003', taskId, 'Pile caps');
+    const exposure = designDelayExposure(bim(), '2026-07-31');
+    const blocked = exposure.blockedActivities.filter((a) => a.taskId === taskId);
+
+    assert.equal(blocked.length, 1, 'the same activity was reported twice');
+    assert.equal(blocked[0]!.rfiReferences.length, 2);
+    // Due 5 July and 20 July, read on 31 July: 26 days against 11. The worse
+    // question is what holds the activity up; the other one holds it up at the
+    // same time, not afterwards.
+    assert.equal(blocked[0]!.daysOverdue, 26);
+  });
+
+  it('does not add concurrent critical delays together', () => {
+    // Two critical activities each a week late do not make the job a fortnight
+    // late. Adding them reads as rigour and is thrown out by the first person
+    // who checks it.
+    overdueRfi('2026-07-25', 'RFI-U004', secondTaskId, 'Blinding');
+    const exposure = designDelayExposure(bim(), '2026-07-31');
+
+    const criticalBeyond = exposure.blockedActivities
+      .filter((a) => a.onCriticalPath)
+      .map((a) => a.daysBeyondFloat);
+    const worst = criticalBeyond.reduce((most, days) => Math.max(most, days), 0);
+
+    assert.equal(exposure.computedExposureMinor, worst * exposure.dailyDamagesMinor);
+    if (criticalBeyond.length > 1) {
+      const summed = criticalBeyond.reduce((total, days) => total + days, 0);
+      assert.notEqual(exposure.computedExposureMinor, summed * exposure.dailyDamagesMinor);
+    }
+  });
+
+  it('reports COMPUTED, and stops asking for the field, once every overdue RFI names one', () => {
+    // A fresh project so the unlinked fixtures above do not follow it.
+    const clean = platform.ledger
+      .list(seed.projectId, 'RFI')
+      .filter((r) => r.state.status !== 'ANSWERED' && typeof r.state.linkedTaskId !== 'string');
+    assert.ok(clean.length > 0, 'the fixture no longer has an unlinked RFI to distinguish the two states');
+
+    // Everything overdue on a date before the unlinked ones were due.
+    const exposure = designDelayExposure(bim(), '2026-06-15');
+    assert.equal(exposure.overdueCount, 0);
+    assert.equal(exposure.basis, 'CONDITIONAL');
+    assert.equal(exposure.qualification, 'No design information is overdue. Nothing is being consumed.');
   });
 });

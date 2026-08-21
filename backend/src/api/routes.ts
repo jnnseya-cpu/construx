@@ -1,4 +1,4 @@
-import { CONTINENT, SECTOR, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
+import { CHANGE_ORIGIN, CONTINENT, CONTRACT_FORM, DELAY_CAUSE, NOTICE_TYPE, SECTOR, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
 import { ask } from '../ai/conversation.ts';
 import * as signup from '../identity/signup.ts';
 import * as erasure from '../identity/erasure.ts';
@@ -655,12 +655,56 @@ export const ROUTES: Route[] = [
     method: 'PUT',
     pattern: '/v1/company/profile',
     description: 'Record the company profile the radar screens against',
+    schema: {
+      type: 'object',
+      required: ['legalName', 'turnoverMinorByYear', 'regions', 'sectors', 'valueBandMinor', 'insurances', 'accreditations', 'selfDeliveredTrades', 'capacity'],
+      properties: {
+        legalName: stringField,
+        // At least one year, because the radar sizes what the business can carry
+        // from turnover and will not invent it.
+        turnoverMinorByYear: { type: 'array', minItems: 1, items: { type: 'object' } },
+        netAssetsMinor: { type: 'integer' },
+        workingCapitalMinor: { type: 'integer' },
+        regions: { type: 'array', items: { type: 'string' } },
+        sectors: { type: 'array', items: { type: 'string' } },
+        cpvCodes: { type: 'array', items: { type: 'string' } },
+        valueBandMinor: {
+          type: 'object',
+          required: ['min', 'max'],
+          properties: { min: { type: 'integer', minimum: 0 }, max: { type: 'integer', minimum: 0 } },
+          additionalProperties: false,
+        },
+        insurances: { type: 'array', items: { type: 'object' } },
+        accreditations: { type: 'array', items: { type: 'string' } },
+        references: { type: 'array', items: { type: 'object' } },
+        selfDeliveredTrades: { type: 'array', items: { type: 'string' } },
+        targetMarginPercent: { type: 'number' },
+        capacity: { type: 'object' },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => radar.setCompanyProfile(tenantContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/radar/run',
     description: 'Screen a batch of tender notices against the company profile',
+    schema: {
+      type: 'object',
+      required: ['notices'],
+      properties: {
+        notices: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['reference', 'title', 'clientName', 'region', 'sector', 'estimatedValueMinor', 'deadline', 'scope', 'source'],
+          },
+        },
+        today: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => radar.runRadar(tenantContext(platform, ctx), body(ctx)),
   },
   {
@@ -734,12 +778,34 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/lessons',
     description: 'Capture a lesson against the project that produced it',
+    schema: {
+      type: 'object',
+      required: ['title', 'whatHappened', 'recommendation'],
+      properties: {
+        title: stringField,
+        // The two minimums the engine already enforces, stated at the edge so the
+        // form can say what it wants before the command is sent.
+        whatHappened: { type: 'string', minLength: 20 },
+        recommendation: { type: 'string', minLength: 20 },
+        category: { type: 'string' },
+        costImpactMinor: { type: 'integer' },
+        daysImpact: { type: 'integer' },
+        relatedControlItemId: { type: 'string' },
+        stage: { type: 'string' },
+      },
+    },
     handler: (platform, ctx) => control.captureLesson(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/pipeline/supply-chain-evidence',
     description: 'What the register says about the trades an opportunity needs',
+    schema: {
+      type: 'object',
+      required: ['trades'],
+      properties: { trades: { type: 'array', minItems: 1, items: { type: 'string' } } },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       business.supplyChainEvidence(tenantContext(platform, ctx), body<{ trades: string[] }>(ctx).trades ?? []),
   },
@@ -747,12 +813,35 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/pipeline/opportunities',
     description: 'Register an opportunity — the head of the delivery chain',
+    schema: {
+      type: 'object',
+      required: ['title', 'clientName', 'sectorType', 'estimatedValueMinor', 'source'],
+      properties: {
+        title: stringField,
+        clientName: stringField,
+        sectorType: { type: 'string', enum: values(SECTOR) },
+        estimatedValueMinor: { type: 'integer', minimum: 0 },
+        source: stringField,
+        submissionDueAt: stringField,
+        countryCode: stringField,
+        city: stringField,
+        notes: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => business.registerOpportunity(tenantContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/pipeline/opportunities/:opportunityId/qualify',
     description: 'Score an opportunity against the six weighted criteria',
+    schema: {
+      type: 'object',
+      // The ten factors are named by the qualification criteria, and a score
+      // outside 0–10 would silently skew the weighted total. The keys are checked
+      // by the engine against its own criteria list rather than restated here.
+      additionalProperties: { type: 'number', minimum: 0, maximum: 10 },
+    },
     handler: (platform, ctx) =>
       business.qualifyOpportunity(tenantContext(platform, ctx), ctx.params.opportunityId as string, body(ctx)),
   },
@@ -773,6 +862,33 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/pipeline/opportunities/:opportunityId/convert',
     description: 'Turn a won opportunity into a project, carrying the thread forward',
+    schema: {
+      type: 'object',
+      required: ['projectName', 'portfolioId', 'assetType', 'location', 'currency', 'plannedStart', 'plannedCompletion'],
+      properties: {
+        projectName: stringField,
+        portfolioId: stringField,
+        programmeId: stringField,
+        assetType: stringField,
+        location: {
+          type: 'object',
+          required: ['continentCode', 'countryCode', 'city'],
+          properties: {
+            continentCode: { type: 'string', enum: values(CONTINENT) },
+            countryCode: stringField,
+            city: stringField,
+          },
+          additionalProperties: false,
+        },
+        // The same closed list project creation uses. An unconstrained currency is
+        // a permanently broken record, because the ledger is append-only.
+        currency: { type: 'string', enum: Object.keys(CURRENCIES) },
+        contractValueMinor: { type: 'integer', minimum: 0 },
+        plannedStart: stringField,
+        plannedCompletion: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       business.convertToProject(tenantContext(platform, ctx), ctx.params.opportunityId as string, body(ctx)),
   },
@@ -794,24 +910,87 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/quality/plans',
     description: 'Create an inspection and test plan for a work package',
+    schema: {
+      type: 'object',
+      required: ['workPackageId', 'title', 'discipline', 'stages'],
+      properties: {
+        workPackageId: stringField,
+        title: stringField,
+        discipline: stringField,
+        specificationRef: stringField,
+        // Stage shape is defined by the quality engine and validated there; what
+        // this pins is that the plan cannot arrive without stages at all, which is
+        // an inspection plan that inspects nothing.
+        stages: { type: 'array', minItems: 1, items: { type: 'object' } },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => quality.createInspectionPlan(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/quality/inspections',
     description: 'Record an inspection against an ITP stage; a failure raises an NCR',
+    schema: {
+      type: 'object',
+      required: ['planId', 'stageReference', 'outcome', 'inspectedBy', 'comments', 'evidenceHash'],
+      properties: {
+        planId: stringField,
+        stageReference: stringField,
+        outcome: { type: 'string', enum: ['PASS', 'PASS_WITH_COMMENT', 'FAIL'] },
+        inspectedBy: stringField,
+        comments: { type: 'string' },
+        evidenceHash: stringField,
+        nonConformance: {
+          type: 'object',
+          required: ['description', 'severity', 'proposedAction'],
+          properties: {
+            description: { type: 'string', minLength: 10 },
+            severity: { type: 'string', enum: ['MINOR', 'MAJOR', 'CRITICAL'] },
+            proposedAction: { type: 'string', minLength: 10 },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => quality.recordInspection(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/quality/ncrs',
     description: 'Raise a non-conformance',
+    schema: {
+      type: 'object',
+      required: ['description', 'severity', 'proposedAction', 'evidenceHash'],
+      properties: {
+        description: { type: 'string', minLength: 10 },
+        severity: { type: 'string', enum: ['MINOR', 'MAJOR', 'CRITICAL'] },
+        proposedAction: { type: 'string', minLength: 10 },
+        inspectionId: stringField,
+        workPackageId: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => quality.raiseNCR(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/quality/ncrs/:ncrId/close',
     description: 'Close a non-conformance with a disposition and a justification',
+    schema: {
+      type: 'object',
+      required: ['disposition', 'justification', 'evidenceHash'],
+      properties: {
+        // USE_AS_IS and REPAIR are concessions against the specification, which is
+        // why the justification is not optional on any of them.
+        disposition: { type: 'string', enum: ['REWORK', 'REPAIR', 'USE_AS_IS', 'REJECT'] },
+        justification: { type: 'string', minLength: 10 },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       quality.closeNCR(projectContext(platform, ctx), ctx.params.ncrId as string, body(ctx)),
   },
@@ -819,6 +998,12 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/quality/snags/:snagId/close',
     description: 'Close a snag with photographic evidence',
+    schema: {
+      type: 'object',
+      required: ['evidenceHash', 'note'],
+      properties: { evidenceHash: stringField, note: { type: 'string', minLength: 4 } },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       quality.closeSnag(projectContext(platform, ctx), ctx.params.snagId as string, body(ctx)),
   },
@@ -850,12 +1035,52 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/supply-chain/suppliers',
     description: 'Register a supplier against one or more trades',
+    schema: {
+      type: 'object',
+      required: ['legalName', 'trades', 'contactName', 'contactEmail'],
+      properties: {
+        legalName: stringField,
+        tradingName: stringField,
+        companyNumber: stringField,
+        trades: { type: 'array', minItems: 1, items: { type: 'string' } },
+        contactName: stringField,
+        contactEmail: stringField,
+        countryCode: stringField,
+        regionsCovered: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => supplychain.registerSupplier(tenantContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/supply-chain/suppliers/:supplierId/prequalify',
     description: 'Assess a supplier and classify them Strategic, Approved, Conditional or Do Not Use',
+    schema: {
+      type: 'object',
+      required: ['insurances', 'safetyAccreditations', 'qualityAccreditations', 'riddorLastThreeYears', 'capacity', 'complianceConfirmed', 'evidenceHash'],
+      properties: {
+        identity: { type: 'object' },
+        financial: { type: 'object' },
+        insurances: { type: 'array', items: { type: 'object' } },
+        safetyAccreditations: { type: 'array', items: { type: 'string' } },
+        qualityAccreditations: { type: 'array', items: { type: 'string' } },
+        accidentFrequencyRate: { type: 'number', minimum: 0 },
+        riddorLastThreeYears: { type: 'integer', minimum: 0 },
+        enforcementNotices: { type: 'integer', minimum: 0 },
+        ramsCapability: { type: 'object' },
+        competenceCards: { type: 'array', items: { type: 'object' } },
+        training: { type: 'object' },
+        references: { type: 'array', items: { type: 'object' } },
+        capacity: { type: 'object' },
+        dayRates: { type: 'array', items: { type: 'object' } },
+        coverage: { type: 'object' },
+        complianceConfirmed: { type: 'boolean' },
+        performance: { type: 'object' },
+        evidenceHash: stringField,
+        packageValueMinor: { type: 'integer', minimum: 0 },
+      },
+    },
     handler: (platform, ctx) =>
       supplychain.prequalifySupplier(tenantContext(platform, ctx), ctx.params.supplierId as string, body(ctx)),
   },
@@ -863,6 +1088,12 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/supply-chain/suppliers/:supplierId/suspend',
     description: 'Suspend a supplier immediately, with a reason',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 4 } },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       supplychain.suspendSupplier(tenantContext(platform, ctx), ctx.params.supplierId as string, body(ctx)),
   },
@@ -872,6 +1103,28 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/frameworks/recommend',
     description: 'Size and shape a framework from turnover and what the business builds',
+    schema: {
+      type: 'object',
+      required: ['annualTurnoverMinor', 'projectTypes'],
+      properties: {
+        annualTurnoverMinor: { type: 'integer', minimum: 0 },
+        projectTypes: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'string',
+            enum: [
+              'HRB_RESIDENTIAL', 'RESIDENTIAL', 'COMMERCIAL_NEW_BUILD', 'FIT_OUT', 'REFURBISHMENT',
+              'CIVILS_INFRASTRUCTURE', 'INDUSTRIAL', 'REMEDIATION', 'MAINTENANCE',
+            ],
+          },
+        },
+        additionalTrades: { type: 'array', items: { type: 'string' } },
+        excludedTrades: { type: 'array', items: { type: 'string' } },
+        concurrentProjects: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
     handler: (_platform, ctx) => framework.recommendFramework(body(ctx)),
   },
   {
@@ -884,6 +1137,7 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/frameworks',
     description: 'Create a framework agreement with lots and a call-off rule',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (platform, ctx) => framework.createFramework(tenantContext(platform, ctx), body(ctx)),
   },
   {
@@ -897,6 +1151,18 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/frameworks/:frameworkId/members',
     description: 'Admit a prequalified supplier to a lot',
+    schema: {
+      type: 'object',
+      required: ['supplierId', 'lot', 'tier'],
+      properties: {
+        supplierId: stringField,
+        lot: stringField,
+        // The tier decides how a framework is sized and balanced, so it is a
+        // closed list rather than a label somebody types.
+        tier: { type: 'string', enum: ['LOCAL_SME', 'SPECIALIST', 'LARGE'] },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       framework.admitToFramework(tenantContext(platform, ctx), ctx.params.frameworkId as string, body(ctx)),
   },
@@ -904,6 +1170,16 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/frameworks/:frameworkId/call-off',
     description: 'Apply the framework call-off rule to a package and return who to invite',
+    schema: {
+      type: 'object',
+      required: ['lot', 'packageValueMinor'],
+      properties: {
+        lot: stringField,
+        packageValueMinor: { type: 'integer', minimum: 1 },
+        today: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       framework.callOff(tenantContext(platform, ctx), ctx.params.frameworkId as string, body(ctx)),
   },
@@ -911,6 +1187,18 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/frameworks/:frameworkId/awards',
     description: 'Record a framework award so rotation and concentration stay real',
+    schema: {
+      type: 'object',
+      required: ['supplierId', 'lot', 'valueMinor', 'packageReference', 'evidenceHash'],
+      properties: {
+        supplierId: stringField,
+        lot: stringField,
+        valueMinor: { type: 'integer', minimum: 1 },
+        packageReference: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       framework.recordFrameworkAward(tenantContext(platform, ctx), ctx.params.frameworkId as string, body(ctx)),
   },
@@ -932,12 +1220,46 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/cdm/documents',
     description: 'Draft a project-specific CDM document, naming any section it could not fill',
+    schema: {
+      type: 'object',
+      required: ['type', 'title'],
+      properties: {
+        type: {
+          type: 'string',
+          enum: [
+            'CONSTRUCTION_PHASE_PLAN', 'RAMS', 'COSHH_ASSESSMENT', 'TEMPORARY_WORKS_DESIGN_BRIEF',
+            'LIFTING_PLAN', 'WORKING_AT_HEIGHT_PLAN', 'FIRE_SAFETY_PLAN', 'EMERGENCY_ARRANGEMENTS',
+            'ENVIRONMENTAL_CONTROL_PLAN', 'WORK_EQUIPMENT_REGISTER', 'SITE_INDUCTION', 'TOOLBOX_TALK',
+          ],
+        },
+        title: stringField,
+        sections: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['heading', 'body'],
+            properties: { heading: stringField, body: { type: 'string' } },
+            additionalProperties: false,
+          },
+        },
+        workPackageId: stringField,
+        // Named where an agent produced the draft, so authorship is never ambiguous.
+        draftedByAgent: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => cdm.draftDocument(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/cdm/documents/:documentId/approve',
     description: 'Approve a CDM document — refused while a required section is unfilled',
+    schema: {
+      type: 'object',
+      required: ['comments'],
+      properties: { comments: { type: 'string', minLength: 4 } },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       cdm.approveDocument(projectContext(platform, ctx), ctx.params.documentId as string, body(ctx)),
   },
@@ -945,12 +1267,37 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/cdm/inductions',
     description: 'Record a site induction',
+    schema: {
+      type: 'object',
+      required: ['personId', 'personName', 'employer', 'inductedBy', 'competenciesChecked'],
+      properties: {
+        personId: stringField,
+        personName: stringField,
+        employer: stringField,
+        inductedBy: stringField,
+        competenciesChecked: { type: 'array', items: { type: 'string' } },
+        documentId: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => cdm.recordInduction(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/cdm/toolbox-talks',
     description: 'Record a toolbox talk and its attendance',
+    schema: {
+      type: 'object',
+      required: ['subject', 'deliveredBy', 'keyPoints', 'attendees'],
+      properties: {
+        subject: stringField,
+        deliveredBy: stringField,
+        keyPoints: { type: 'array', minItems: 1, items: { type: 'string' } },
+        attendees: { type: 'array', items: { type: 'string' } },
+        documentId: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => cdm.recordToolboxTalk(projectContext(platform, ctx), body(ctx)),
   },
 
@@ -996,18 +1343,69 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/safety/incidents',
     description: 'Record an incident, including whether it is RIDDOR reportable',
+    schema: {
+      type: 'object',
+      required: ['occurredAt', 'location', 'category', 'description', 'immediateAction', 'personsInvolved', 'riddorReportable', 'evidenceHash'],
+      properties: {
+        occurredAt: stringField,
+        location: stringField,
+        category: {
+          type: 'string',
+          enum: ['NEAR_MISS', 'FIRST_AID', 'MINOR_INJURY', 'LOST_TIME', 'RIDDOR_REPORTABLE', 'ENVIRONMENTAL', 'DANGEROUS_OCCURRENCE'],
+        },
+        description: { type: 'string', minLength: 10 },
+        immediateAction: { type: 'string', minLength: 4 },
+        // Identities, never names. The record references a person; it does not
+        // describe one.
+        personsInvolved: { type: 'array', items: { type: 'string' } },
+        riddorReportable: { type: 'boolean' },
+        lostTimeDays: { type: 'integer', minimum: 0 },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => safety.recordIncident(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/safety/training',
     description: 'Record completed training against a competency, with its expiry',
+    schema: {
+      type: 'object',
+      required: ['personId', 'competency', 'provider', 'completedOn', 'certificateHash'],
+      properties: {
+        personId: stringField,
+        competency: stringField,
+        provider: stringField,
+        completedOn: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        expiresOn: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        certificateHash: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => safety.recordTraining(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/risks/:riskId/mitigation',
     description: 'Add a mitigation to a risk and re-score the residual position',
+    schema: {
+      type: 'object',
+      required: ['description', 'owner', 'dueBy', 'costMinor', 'probabilityReduction', 'impactReduction', 'projectValueMinor', 'projectDurationDays'],
+      properties: {
+        description: { type: 'string', minLength: 10 },
+        owner: stringField,
+        dueBy: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        costMinor: { type: 'integer', minimum: 0 },
+        // Proportions, not percentages. A control removing 1.4 of a risk is a
+        // typing mistake that would otherwise reach the arithmetic.
+        probabilityReduction: { type: 'number', minimum: 0, maximum: 1 },
+        impactReduction: { type: 'number', minimum: 0, maximum: 1 },
+        projectValueMinor: { type: 'integer', minimum: 0 },
+        projectDurationDays: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       safety.setRiskMitigation(projectContext(platform, ctx), ctx.params.riskId as string, body(ctx)),
   },
@@ -1841,12 +2239,55 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/packages',
     description: 'Define a scope package',
+    schema: {
+      type: 'object',
+      required: ['name', 'discipline', 'scopeOfWorks', 'inclusions', 'exclusions', 'acceptanceCriteria', 'estimatedValueMinor', 'designResponsibility'],
+      properties: {
+        name: stringField,
+        discipline: stringField,
+        scopeOfWorks: { type: 'string', minLength: 10 },
+        // Inclusions and exclusions are required and may be empty. An empty list is
+        // a statement that nothing is excluded; an absent one is a package whose
+        // boundary nobody has thought about, and the two are argued over later.
+        inclusions: { type: 'array', items: { type: 'string' } },
+        exclusions: { type: 'array', items: { type: 'string' } },
+        acceptanceCriteria: { type: 'array', items: { type: 'string' } },
+        estimatedValueMinor: { type: 'integer', minimum: 0 },
+        designResponsibility: { type: 'string', enum: ['CLIENT', 'CONTRACTOR', 'SHARED'] },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => structure.createScopePackage(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/design-maturity',
     description: 'Assess design maturity for a package',
+    schema: {
+      type: 'object',
+      required: ['packageId', 'disciplineScores', 'informationGaps', 'assessorNotes'],
+      properties: {
+        packageId: stringField,
+        disciplineScores: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['discipline', 'ribaStage', 'completenessPercent', 'frozen'],
+            properties: {
+              discipline: stringField,
+              ribaStage: { type: 'integer', minimum: 0, maximum: 7 },
+              completenessPercent: { type: 'number', minimum: 0, maximum: 100 },
+              frozen: { type: 'boolean' },
+            },
+            additionalProperties: false,
+          },
+        },
+        informationGaps: { type: 'array', items: { type: 'string' } },
+        assessorNotes: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => structure.assessDesignMaturity(projectContext(platform, ctx), body(ctx)),
   },
 
@@ -1898,12 +2339,76 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/tender/takeoff',
     ai: { engine: 'TENDER', taskType: 'quantity_extraction', capability: 'PERCEPTION' },
     description: 'Engine A — run a take-off and create BoQ items',
+    schema: {
+      type: 'object',
+      required: ['packageId', 'sources', 'items', 'costCodePrefix'],
+      properties: {
+        packageId: stringField,
+        sources: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['discipline'],
+            properties: {
+              discipline: stringField,
+              sheetId: stringField,
+              drawingRef: { type: 'object' },
+              modelRef: { type: 'object' },
+            },
+          },
+        },
+        items: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['description', 'unit', 'quantity'],
+            properties: {
+              description: stringField,
+              unit: stringField,
+              quantity: { type: 'number' },
+              // Where the quantity came from. Traceability back to the sheet is
+              // what separates a measured item from an assertion.
+              sourceSheet: stringField,
+              measurementRule: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+        costCodePrefix: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => tender.runTakeoff(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/estimate',
     description: 'Engine A — build a bottom-up estimate across the twenty tender cost heads',
+    schema: {
+      type: 'object',
+      required: ['packageId', 'durationWeeks', 'lines', 'margin'],
+      properties: {
+        packageId: stringField,
+        durationWeeks: { type: 'integer', minimum: 1 },
+        // The twenty cost heads are a large nested shape owned by the cost model,
+        // which validates each head as it prices it and refuses a head that is
+        // neither priced nor excluded. Declared open here rather than restated:
+        // a copy of that shape in two places is the drift this schema exists to
+        // prevent.
+        lines: { type: 'array', minItems: 1, items: { type: 'object' } },
+        timeRelated: { type: 'array', items: { type: 'object' } },
+        quantified: { type: 'array', items: { type: 'object' } },
+        fees: { type: 'array', items: { type: 'object' } },
+        insurance: { type: 'object' },
+        risks: { type: 'array', items: { type: 'object' } },
+        contingencyBasis: { type: 'string', enum: ['EXPECTED', 'P80'] },
+        inflation: { type: 'object' },
+        margin: { type: 'object' },
+        exclusions: { type: 'array', items: { type: 'object' } },
+      },
+    },
     handler: (platform, ctx) => tender.buildEstimate(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -1916,6 +2421,12 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/estimate/:estimateId/reprice',
     description: 'Engine A — what the estimate becomes on a different programme',
+    schema: {
+      type: 'object',
+      required: ['durationWeeks'],
+      properties: { durationWeeks: { type: 'integer', minimum: 1 } },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       tender.repriceEstimate(
         projectContext(platform, ctx),
@@ -1928,12 +2439,59 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/tender/response',
     ai: { engine: 'TENDER', taskType: 'tender_response', capability: 'REASONING' },
     description: 'Engine A — price a client enquiry and draft the tender response',
+    schema: {
+      type: 'object',
+      required: ['enquiry', 'estimate'],
+      properties: {
+        enquiry: {
+          type: 'object',
+          required: ['clientReference', 'clientName', 'projectTitle', 'contractForm', 'returnBy', 'scopeNarrative', 'documents'],
+        },
+        estimate: { type: 'object', required: ['packageId', 'durationWeeks', 'lines', 'margin'] },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => tender.respondToTender(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/itt',
     description: 'Analyse an invitation to tender: compliance matrix and commercial terms',
+    schema: {
+      type: 'object',
+      required: ['reference', 'clientName', 'returnBy', 'estimatedValueMinor', 'durationWeeks', 'requirements', 'terms'],
+      properties: {
+        reference: stringField,
+        clientName: stringField,
+        returnBy: stringField,
+        estimatedValueMinor: { type: 'integer', minimum: 0 },
+        durationWeeks: { type: 'integer', minimum: 1 },
+        requirements: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['reference', 'category', 'requirement', 'mandatory', 'evidenceRequired'],
+            properties: {
+              reference: stringField,
+              category: stringField,
+              requirement: { type: 'string' },
+              mandatory: { type: 'boolean' },
+              weightingPercent: { type: 'number', minimum: 0, maximum: 100 },
+              evidenceRequired: { type: 'string' },
+              dueBy: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+        // The commercial terms carry optional fields whose absence is meaningful —
+        // no stated bond is different from a bond of zero — so the shape is open
+        // and the analyser reports what was not stated.
+        terms: { type: 'object' },
+        targetMarginPercent: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => itt.analyseITT(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -1957,6 +2515,26 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/estimate/:estimateId/funding',
     description: 'Peak funding requirement for this tender, against available working capital',
+    schema: {
+      type: 'object',
+      required: ['payment', 'supply', 'vat'],
+      properties: {
+        payment: {
+          type: 'object',
+          required: ['applicationDayOfMonth', 'paymentNoticeDays', 'payLessNoticeDaysBeforeFinal', 'finalDateDays'],
+        },
+        supply: {
+          type: 'object',
+          required: ['subcontractorPaymentDays', 'materialSupplierPaymentDays', 'materialsDepositPercent', 'materialsDepositLeadWeeks', 'plantPaymentDays'],
+        },
+        vat: { type: 'object', required: ['ratePercent', 'reverseCharge', 'returnIntervalWeeks', 'settlementLagWeeks'] },
+        // Spent before anybody is productive: hoarding, cabins, bonds, deposits.
+        mobilisationMinor: { type: 'integer', minimum: 0 },
+        availableWorkingCapitalMinor: { type: 'integer', minimum: 0 },
+        durationWeeks: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       tender.modelTenderFunding(projectContext(platform, ctx), ctx.params.estimateId as string, body(ctx)),
   },
@@ -1964,6 +2542,12 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/estimate/:estimateId/freeze',
     description: 'Engine A — freeze the estimate',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 4 } },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       tender.freezeEstimate(projectContext(platform, ctx), ctx.params.estimateId as string, body<{ reason: string }>(ctx).reason),
   },
@@ -1972,6 +2556,29 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/tender/package',
     ai: { engine: 'TENDER', taskType: 'package_composition', capability: 'REASONING' },
     description: 'Engine A — compose a tender package',
+    schema: {
+      type: 'object',
+      required: ['rfqId', 'packageId', 'scopeNarrative', 'designResponsibilityMatrix', 'attendances', 'paymentTerms', 'documents'],
+      properties: {
+        rfqId: stringField,
+        packageId: stringField,
+        scopeNarrative: { type: 'string', minLength: 10 },
+        designResponsibilityMatrix: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['element', 'responsibleParty'],
+            properties: { element: stringField, responsibleParty: stringField },
+            additionalProperties: false,
+          },
+        },
+        attendances: { type: 'array', items: { type: 'string' } },
+        paymentTerms: stringField,
+        programmeRef: { type: 'object' },
+        documents: { type: 'array', items: { type: 'object' } },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => tender.composeTenderPackage(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -1989,6 +2596,31 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/returns',
     description: 'Engine A — normalise supplier returns, rank variance and raise clarifications',
+    schema: {
+      type: 'object',
+      required: ['rfqId', 'baseline', 'returns'],
+      properties: {
+        rfqId: stringField,
+        // Both sides are priced schedules on the same references. That is what
+        // makes a variance a variance rather than two unrelated lists.
+        baseline: { type: 'array', minItems: 1, items: { type: 'object' } },
+        returns: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['submissionId', 'supplierName', 'lines'],
+            properties: {
+              submissionId: stringField,
+              supplierName: stringField,
+              lines: { type: 'array', items: { type: 'object' } },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
     ai: { engine: 'TENDER', taskType: 'return_variance_analysis', capability: 'REASONING' },
     handler: (platform, ctx) => tender.analyseReturns(projectContext(platform, ctx), body(ctx)),
   },
@@ -1996,18 +2628,95 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/evaluate',
     description: 'Engine A — evaluate bids deterministically',
+    schema: {
+      type: 'object',
+      required: ['rfqId', 'submissions'],
+      properties: {
+        rfqId: stringField,
+        submissions: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['submissionId', 'supplierPartyId', 'supplierName', 'priceMinor', 'durationDays', 'exclusions', 'contractExceptions', 'provisionalSumsMinor', 'insurancesHeld'],
+            properties: {
+              submissionId: stringField,
+              supplierPartyId: stringField,
+              supplierName: stringField,
+              priceMinor: { type: 'integer', minimum: 0 },
+              durationDays: { type: 'integer', minimum: 0 },
+              exclusions: { type: 'array', items: { type: 'string' } },
+              contractExceptions: { type: 'array', items: { type: 'string' } },
+              provisionalSumsMinor: { type: 'integer', minimum: 0 },
+              insurancesHeld: { type: 'array', items: { type: 'string' } },
+              peakLabour: { type: 'integer', minimum: 0 },
+              riskItems: { type: 'array', items: { type: 'object' } },
+            },
+          },
+        },
+        // The penalty profile decides how an exclusion is priced back in. Its
+        // shape belongs to the bid-scoring maths, which validates it there.
+        profile: { type: 'object' },
+        designMaturityScore: { type: 'number', minimum: 0, maximum: 100 },
+        packageLabourDemand: { type: 'number', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => tender.evaluateSubmissions(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/adjudicate',
     description: 'Engine A — adjudicate and select',
+    schema: {
+      type: 'object',
+      required: ['evaluationId', 'selectedSubmissionId', 'buyoutTargetMinor', 'rationale'],
+      properties: {
+        evaluationId: stringField,
+        selectedSubmissionId: stringField,
+        buyoutTargetMinor: { type: 'integer', minimum: 0 },
+        rationale: { type: 'string', minLength: 10 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => tender.adjudicate(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/bid-pack',
     description: 'Engine A — compile and lock the bid submission pack',
+    schema: {
+      type: 'object',
+      required: ['rfqId', 'estimateId', 'submissionLetter', 'qualifications', 'exclusions', 'prelimsNarrative', 'attachments'],
+      properties: {
+        rfqId: stringField,
+        estimateId: stringField,
+        submissionLetter: { type: 'string', minLength: 10 },
+        // Both required and both allowed to be empty. "We qualified nothing" is a
+        // commercial statement; a missing list is nobody having considered it.
+        qualifications: { type: 'array', items: { type: 'string' } },
+        exclusions: { type: 'array', items: { type: 'string' } },
+        prelimsNarrative: { type: 'string' },
+        attachments: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['name', 'ref'],
+            properties: {
+              name: stringField,
+              ref: {
+                type: 'object',
+                required: ['refType', 'refId'],
+                properties: { refType: stringField, refId: stringField },
+                additionalProperties: false,
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => tender.compileBidPack(projectContext(platform, ctx), body(ctx)),
   },
 
@@ -2015,12 +2724,34 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/procurement/rfq',
     description: 'Create an RFQ (design maturity gated)',
+    schema: {
+      type: 'object',
+      required: ['packageId', 'title', 'pricingBasis', 'returnDeadline', 'invitedSupplierIds', 'requiredInsurances', 'contractSuite'],
+      properties: {
+        packageId: stringField,
+        title: stringField,
+        pricingBasis: { type: 'string', enum: ['LUMP_SUM', 'REMEASURABLE', 'TARGET_COST', 'COST_REIMBURSABLE'] },
+        returnDeadline: stringField,
+        invitedSupplierIds: { type: 'array', minItems: 1, items: { type: 'string' } },
+        requiredInsurances: { type: 'array', items: { type: 'string' } },
+        contractSuite: stringField,
+        trade: stringField,
+        packageValueMinor: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => procurement.createRFQ(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/procurement/rfq/:rfqId/issue',
     description: 'Issue an RFQ to the invited supply chain',
+    schema: {
+      type: 'object',
+      required: ['tenderPackageId'],
+      properties: { tenderPackageId: stringField },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       procurement.issueRFQ(projectContext(platform, ctx), {
         rfqId: ctx.params.rfqId as string,
@@ -2031,6 +2762,25 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/procurement/rfq/:rfqId/submissions',
     description: 'Receive a supplier submission',
+    schema: {
+      type: 'object',
+      required: ['supplierPartyId', 'supplierName', 'priceMinor', 'durationDays', 'exclusions', 'contractExceptions', 'provisionalSumsMinor', 'insurancesHeld', 'submissionHash'],
+      properties: {
+        supplierPartyId: stringField,
+        supplierName: stringField,
+        priceMinor: { type: 'integer', minimum: 0 },
+        durationDays: { type: 'integer', minimum: 0 },
+        // Exclusions and exceptions are what make two prices incomparable, so both
+        // are required — an empty list is a claim, an absent one is a gap.
+        exclusions: { type: 'array', items: { type: 'string' } },
+        contractExceptions: { type: 'array', items: { type: 'string' } },
+        provisionalSumsMinor: { type: 'integer', minimum: 0 },
+        insurancesHeld: { type: 'array', items: { type: 'string' } },
+        peakLabour: { type: 'integer', minimum: 0 },
+        submissionHash: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       procurement.receiveSubmission(projectContext(platform, ctx), { ...body<Omit<Parameters<typeof procurement.receiveSubmission>[1], 'rfqId'>>(ctx), rfqId: ctx.params.rfqId as string }),
   },
@@ -2038,6 +2788,18 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/procurement/rfq/:rfqId/award',
     description: 'Award the RFQ against an adjudication',
+    schema: {
+      type: 'object',
+      required: ['adjudicationId', 'governanceApprovalRef', 'conditions'],
+      properties: {
+        // An award is made against an adjudication and a governance approval, never
+        // against a price. Both are required for exactly that reason.
+        adjudicationId: stringField,
+        governanceApprovalRef: stringField,
+        conditions: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       procurement.awardRFQ(projectContext(platform, ctx), { ...body<Omit<Parameters<typeof procurement.awardRFQ>[1], 'rfqId'>>(ctx), rfqId: ctx.params.rfqId as string }),
   },
@@ -2045,12 +2807,40 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/procurement/subcontract',
     description: 'Assemble a subcontract from the award',
+    schema: {
+      type: 'object',
+      required: ['rfqId', 'contractSuite', 'form', 'startDate', 'completionDate', 'retentionPercent', 'paymentTermsDays'],
+      properties: {
+        rfqId: stringField,
+        contractSuite: stringField,
+        form: stringField,
+        // What was actually agreed, against what was adjudicated. The delta is the
+        // negotiation, and it is carried rather than lost.
+        negotiatedValueMinor: { type: 'integer', minimum: 0 },
+        negotiationNotes: { type: 'string' },
+        startDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        completionDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        retentionPercent: { type: 'number', minimum: 0, maximum: 100 },
+        paymentTermsDays: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => procurement.assembleSubcontract(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/procurement/subcontract/:subcontractId/execute',
     description: 'Execute the subcontract and raise the commitment',
+    schema: {
+      type: 'object',
+      required: ['signedDocumentHash', 'signatureMethod', 'budgetCheckPassed'],
+      properties: {
+        signedDocumentHash: stringField,
+        signatureMethod: stringField,
+        budgetCheckPassed: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       procurement.executeSubcontract(projectContext(platform, ctx), {
         subcontractId: ctx.params.subcontractId as string,
@@ -2062,6 +2852,31 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/programme/tasks',
     description: 'Engine B — create activities',
+    schema: {
+      type: 'object',
+      required: ['tasks'],
+      properties: {
+        tasks: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['name', 'durationDays'],
+            properties: {
+              id: stringField,
+              activityCode: stringField,
+              name: stringField,
+              durationDays: { type: 'number', minimum: 0 },
+              workPackageId: stringField,
+              costCode: stringField,
+              optimisticDays: { type: 'number', minimum: 0 },
+              pessimisticDays: { type: 'number', minimum: 0 },
+            },
+          },
+        },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => ({
       taskIds: planning.createTasks(projectContext(platform, ctx), body<{ tasks: Parameters<typeof planning.createTasks>[1] }>(ctx).tasks),
     }),
@@ -2070,6 +2885,30 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/programme/dependencies',
     description: 'Engine B — link activities',
+    schema: {
+      type: 'object',
+      required: ['dependencies'],
+      properties: {
+        dependencies: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['predecessorId', 'successorId', 'type'],
+            properties: {
+              predecessorId: stringField,
+              successorId: stringField,
+              // Finish-to-start and its three siblings. A network built with a
+              // type outside these is not a network the CPM can traverse.
+              type: { type: 'string', enum: ['FS', 'SS', 'FF', 'SF'] },
+              lagDays: { type: 'number' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => ({
       dependencyIds: planning.linkTasks(
         projectContext(platform, ctx),
@@ -2092,6 +2931,16 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/programme/baseline',
     description: 'Engine B — approve a baseline',
+    schema: {
+      type: 'object',
+      required: ['version', 'reason', 'contractualCompletionDate'],
+      properties: {
+        version: stringField,
+        reason: { type: 'string', minLength: 4 },
+        contractualCompletionDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => planning.approveBaseline(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2099,6 +2948,17 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/programme/wbs',
     ai: { engine: 'PLANNING', taskType: 'wbs_generation', capability: 'REASONING' },
     description: 'Engine B — generate a work breakdown structure',
+    schema: {
+      type: 'object',
+      required: ['projectType', 'sectorType', 'scopeNarrative', 'targetDurationDays'],
+      properties: {
+        projectType: stringField,
+        sectorType: { type: 'string', enum: values(SECTOR) },
+        scopeNarrative: { type: 'string', minLength: 10 },
+        targetDurationDays: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => planning.generateWBS(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2106,6 +2966,15 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/programme/delay-forecast',
     ai: { engine: 'PLANNING', taskType: 'delay_risk_forecast', capability: 'REASONING' },
     description: 'Engine B — forecast delay risk with corrective measures',
+    schema: {
+      type: 'object',
+      required: ['dailyPreliminariesMinor', 'contractualDurationDays'],
+      properties: {
+        dailyPreliminariesMinor: { type: 'integer', minimum: 0 },
+        contractualDurationDays: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => planning.forecastDelay(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2124,6 +2993,23 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/programme/what-if',
     description: 'Engine B — what-if analysis (no state change)',
+    schema: {
+      type: 'object',
+      required: ['changes'],
+      properties: {
+        changes: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['taskId', 'newDurationDays'],
+            properties: { taskId: stringField, newDurationDays: { type: 'number', minimum: 0 } },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       planning.whatIf(projectContext(platform, ctx), body<{ changes: Parameters<typeof planning.whatIf>[1] }>(ctx).changes),
   },
@@ -2131,6 +3017,19 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/progress',
     description: 'Record measured progress against an activity',
+    schema: {
+      type: 'object',
+      required: ['taskId', 'percentComplete', 'elapsedDays', 'evidenceDescription', 'evidenceHash'],
+      properties: {
+        taskId: stringField,
+        percentComplete: { type: 'number', minimum: 0, maximum: 100 },
+        elapsedDays: { type: 'number', minimum: 0 },
+        quantityComplete: { type: 'number', minimum: 0 },
+        evidenceDescription: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => {
       planning.recordProgress(projectContext(platform, ctx), body(ctx));
       return { recorded: true };
@@ -2174,12 +3073,49 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/lookahead',
     description: 'Publish the lookahead. Work that is still constrained cannot be committed to.',
+    schema: {
+      type: 'object',
+      required: ['weekStarting', 'plannedTaskIds', 'commitments'],
+      properties: {
+        weekStarting: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        // Six is the usual window: long enough to clear a constraint, short enough
+        // to mean something.
+        weeks: { type: 'integer', minimum: 1, maximum: 12 },
+        plannedTaskIds: { type: 'array', items: { type: 'string' } },
+        commitments: { type: 'array', items: { type: 'object' } },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => planning.publishLookahead(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/lookahead/:lookaheadId/review',
     description: 'Review the week and compute Percent Plan Complete',
+    schema: {
+      type: 'object',
+      required: ['outcomes'],
+      properties: {
+        outcomes: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['taskId', 'completed'],
+            properties: {
+              taskId: stringField,
+              completed: { type: 'boolean' },
+              // The reason a promise broke is what makes PPC worth measuring; the
+              // engine holds the closed list and refuses one outside it.
+              reason: { type: 'string' },
+              note: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       planning.reviewLookahead(projectContext(platform, ctx), {
         ...body<Omit<Parameters<typeof planning.reviewLookahead>[1], 'lookaheadId'>>(ctx),
@@ -2311,18 +3247,57 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/cost/budget',
     description: 'Engine C — approve the cost baseline',
+    schema: {
+      type: 'object',
+      required: ['version', 'byCostCode', 'contingencyMinor', 'managementReserveMinor', 'tenderMarginPercent'],
+      properties: {
+        version: stringField,
+        byCostCode: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['costCode', 'description', 'budgetMinor'],
+            properties: { costCode: stringField, description: stringField, budgetMinor: { type: 'integer' } },
+            additionalProperties: false,
+          },
+        },
+        contingencyMinor: { type: 'integer', minimum: 0 },
+        managementReserveMinor: { type: 'integer', minimum: 0 },
+        tenderMarginPercent: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => cost.approveBudget(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/cost/actuals',
     description: 'Engine C — post actual cost',
+    schema: {
+      type: 'object',
+      required: ['costCode', 'amountMinor', 'date', 'sourceSystem', 'description'],
+      properties: {
+        costCode: stringField,
+        amountMinor: { type: 'integer' },
+        date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        sourceSystem: stringField,
+        description: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => ({ actualCostId: cost.postActualCost(projectContext(platform, ctx), body(ctx)) }),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/cost/evm',
     description: 'Engine C — take an earned value snapshot',
+    schema: {
+      type: 'object',
+      required: ['period', 'plannedValueMinor'],
+      properties: { period: stringField, plannedValueMinor: { type: 'integer', minimum: 0 } },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => cost.takeEVMSnapshot(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2330,12 +3305,33 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/cost/cvr',
     ai: { engine: 'RESOURCE_COST', taskType: 'cvr_analysis', capability: 'REASONING' },
     description: 'Engine C — publish the live CVR',
+    schema: {
+      type: 'object',
+      required: ['period', 'costToCompleteMinor', 'accrualsMinor'],
+      properties: {
+        period: stringField,
+        costToCompleteMinor: { type: 'integer', minimum: 0 },
+        accrualsMinor: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => cost.publishCVR(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/cost/cashflow',
     description: 'Engine C — forecast cashflow on an S-curve',
+    schema: {
+      type: 'object',
+      required: ['totalValueMinor', 'periods', 'paymentLagDays', 'retentionPercent'],
+      properties: {
+        totalValueMinor: { type: 'integer', minimum: 0 },
+        periods: { type: 'integer', minimum: 1 },
+        paymentLagDays: { type: 'integer', minimum: 0 },
+        retentionPercent: { type: 'number', minimum: 0, maximum: 100 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => cost.forecastCashflow(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2375,6 +3371,20 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/cost/application',
     description: 'Engine C — submit a payment application',
+    schema: {
+      type: 'object',
+      required: ['cycleId', 'cycleNumber', 'grossValuationMinor', 'variationsIncludedMinor', 'previouslyCertifiedMinor', 'retentionMinor', 'supportingEvidenceHash'],
+      properties: {
+        cycleId: stringField,
+        cycleNumber: { type: 'integer', minimum: 1 },
+        grossValuationMinor: { type: 'integer', minimum: 0 },
+        variationsIncludedMinor: { type: 'integer', minimum: 0 },
+        previouslyCertifiedMinor: { type: 'integer', minimum: 0 },
+        retentionMinor: { type: 'integer', minimum: 0 },
+        supportingEvidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => cost.submitApplication(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2508,6 +3518,43 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/risk',
     description: 'Engine D — register and score a risk',
+    schema: {
+      type: 'object',
+      required: ['id', 'title', 'category', 'probability', 'costImpact', 'scheduleImpactDays', 'projectValueMinor', 'projectDurationDays'],
+      properties: {
+        id: stringField,
+        title: stringField,
+        category: stringField,
+        // A proportion, not a percentage. A risk with a probability of 40 would
+        // otherwise be scored as forty times certain.
+        probability: { type: 'number', minimum: 0, maximum: 1 },
+        costImpact: {
+          type: 'object',
+          required: ['optimistic', 'mostLikely', 'pessimistic'],
+          properties: {
+            optimistic: { type: 'integer' },
+            mostLikely: { type: 'integer' },
+            pessimistic: { type: 'integer' },
+          },
+          additionalProperties: false,
+        },
+        scheduleImpactDays: {
+          type: 'object',
+          required: ['optimistic', 'mostLikely', 'pessimistic'],
+          properties: {
+            optimistic: { type: 'number' },
+            mostLikely: { type: 'number' },
+            pessimistic: { type: 'number' },
+          },
+          additionalProperties: false,
+        },
+        ownerPartyId: stringField,
+        mitigations: { type: 'array', items: { type: 'object' } },
+        projectValueMinor: { type: 'integer', minimum: 0 },
+        projectDurationDays: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => safety.registerRisk(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2544,12 +3591,53 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/safety/rams',
     ai: { engine: 'RISK_SAFETY', taskType: 'rams_drafting', capability: 'REASONING' },
     description: 'Engine D — draft a RAMS from the hazard library',
+    schema: {
+      type: 'object',
+      required: ['workPackageId', 'activityDescription', 'location', 'steps'],
+      properties: {
+        workPackageId: stringField,
+        activityDescription: { type: 'string', minLength: 10 },
+        location: stringField,
+        steps: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['description', 'activityType'],
+            properties: { description: stringField, activityType: stringField },
+            additionalProperties: false,
+          },
+        },
+        // A company's own hazard library takes precedence over the platform's, so
+        // it arrives with the request rather than being assumed.
+        companyHazardLibrary: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['activityType', 'hazards', 'controls'],
+            properties: {
+              activityType: stringField,
+              hazards: { type: 'array', items: { type: 'string' } },
+              controls: { type: 'array', items: { type: 'string' } },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => safety.draftRAMS(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/safety/rams/:ramsId/approve',
     description: 'Engine D — approve a RAMS',
+    schema: {
+      type: 'object',
+      required: ['reviewComments'],
+      properties: { reviewComments: { type: 'string', minLength: 4 } },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => {
       safety.approveRAMS(projectContext(platform, ctx), ctx.params.ramsId as string, body<{ reviewComments: string }>(ctx).reviewComments);
       return { approved: true };
@@ -2560,6 +3648,19 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/safety/observations',
     ai: { engine: 'RISK_SAFETY', taskType: 'hazard_classification', capability: 'PERCEPTION' },
     description: 'Engine D — log a safety observation',
+    schema: {
+      type: 'object',
+      required: ['description', 'location', 'mediaHash', 'observationType', 'reportedBy'],
+      properties: {
+        description: { type: 'string', minLength: 10 },
+        location: stringField,
+        mediaHash: stringField,
+        mediaUri: { type: 'string' },
+        observationType: { type: 'string', enum: ['UNSAFE_ACT', 'UNSAFE_CONDITION', 'NEAR_MISS', 'GOOD_PRACTICE'] },
+        reportedBy: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => safety.logSafetyObservation(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2567,6 +3668,16 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/safety/forecast',
     ai: { engine: 'RISK_SAFETY', taskType: 'safety_forecast', capability: 'REASONING' },
     description: 'Engine D — predictive safety forecast',
+    schema: {
+      type: 'object',
+      required: ['headcount', 'highRiskActivitiesPlanned', 'adverseWeatherDays'],
+      properties: {
+        headcount: { type: 'integer', minimum: 0 },
+        highRiskActivitiesPlanned: { type: 'integer', minimum: 0 },
+        adverseWeatherDays: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => safety.forecastSafetyRisk(projectContext(platform, ctx), body(ctx)),
   },
 
@@ -2575,12 +3686,68 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/bim/drawings',
     ai: { engine: 'BIM_TWIN', taskType: 'title_block_extraction', capability: 'PERCEPTION' },
     description: 'Engine E — register a drawing and supersede prior revisions',
+    schema: {
+      type: 'object',
+      required: ['fileHash'],
+      properties: {
+        fileHash: stringField,
+        fileUri: { type: 'string' },
+        // Either a parsed title block or the text to read one from. The engine
+        // refuses when neither arrives, and refuses again when the reading produces
+        // no drawing number.
+        titleBlock: {
+          type: 'object',
+          required: ['drawingNumber', 'title', 'revision', 'discipline'],
+          properties: {
+            drawingNumber: stringField,
+            title: stringField,
+            revision: stringField,
+            discipline: stringField,
+            scale: stringField,
+            drawnBy: stringField,
+            checkedBy: stringField,
+            issueDate: stringField,
+            status: stringField,
+          },
+          additionalProperties: false,
+        },
+        rawTitleBlockText: { type: 'string' },
+        packageIds: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => bim.registerDrawing(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/bim/markups',
     description: 'Engine E — add a markup, optionally converting it to an RFI or instruction',
+    schema: {
+      type: 'object',
+      required: ['drawingId', 'author', 'note'],
+      properties: {
+        drawingId: stringField,
+        author: stringField,
+        note: { type: 'string', minLength: 4 },
+        region: {
+          type: 'object',
+          required: ['x', 'y', 'width', 'height'],
+          properties: {
+            x: { type: 'number' },
+            y: { type: 'number' },
+            width: { type: 'number' },
+            height: { type: 'number' },
+          },
+          additionalProperties: false,
+        },
+        convertTo: { type: 'string', enum: ['RFI', 'INSTRUCTION', 'NONE'] },
+        // The activity the answer holds up. What turns the design-delay
+        // exposure from "if this is on the critical path" into a figure read
+        // off the network.
+        taskId: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => bim.addMarkup(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2624,6 +3791,21 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/bim/models',
     ai: { engine: 'BIM_TWIN', taskType: 'model_ingestion', capability: 'PERCEPTION' },
     description: 'Engine E — ingest a model',
+    schema: {
+      type: 'object',
+      required: ['fileHash', 'format', 'discipline', 'lod', 'elementCount'],
+      properties: {
+        fileHash: stringField,
+        fileUri: { type: 'string' },
+        format: { type: 'string', enum: ['IFC', 'RVT', 'NWD', 'DWG'] },
+        discipline: stringField,
+        // Level of detail, on the 100–500 scale. A model claiming LOD 6 is a typo
+        // that would otherwise be recorded as fact.
+        lod: { type: 'integer', minimum: 100, maximum: 500 },
+        elementCount: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => bim.ingestModel(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2656,6 +3838,33 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/bim/clashes',
     ai: { engine: 'BIM_TWIN', taskType: 'clash_triage', capability: 'REASONING' },
     description: 'Engine E — detect and triage clashes',
+    schema: {
+      type: 'object',
+      required: ['modelAId', 'modelBId', 'clashes'],
+      properties: {
+        modelAId: stringField,
+        modelBId: stringField,
+        clashes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['elementA', 'elementB', 'disciplineA', 'disciplineB', 'overlapVolume', 'location'],
+            properties: {
+              elementA: stringField,
+              elementB: stringField,
+              disciplineA: stringField,
+              disciplineB: stringField,
+              // Cubic metres. The objective severity driver, so it is a number and
+              // not a grade somebody assigns.
+              overlapVolume: { type: 'number', minimum: 0 },
+              location: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => bim.detectClashes(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2692,6 +3901,28 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/bim/twin',
     ai: { engine: 'BIM_TWIN', taskType: 'site_reality_comparison', capability: 'PERCEPTION' },
     description: 'Engine E — update the twin from site reality',
+    schema: {
+      type: 'object',
+      required: ['observationHash', 'source', 'zone', 'linkedTaskIds', 'observedElements'],
+      properties: {
+        observationHash: stringField,
+        observationUri: { type: 'string' },
+        source: { type: 'string', enum: ['DRONE', 'CCTV', 'MOBILE', 'IOT', 'LASER_SCAN'] },
+        zone: stringField,
+        linkedTaskIds: { type: 'array', items: { type: 'string' } },
+        observedElements: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['elementId', 'expectedStatus', 'observedStatus'],
+            properties: { elementId: stringField, expectedStatus: stringField, observedStatus: stringField },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => bim.updateTwinFromSite(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2699,6 +3930,12 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/bim/as-built',
     ai: { engine: 'BIM_TWIN', taskType: 'as_built_generation', capability: 'REASONING' },
     description: 'Engine E — generate the as-built record',
+    schema: {
+      type: 'object',
+      required: ['baseModelId'],
+      properties: { baseModelId: stringField },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => bim.generateAsBuilt(projectContext(platform, ctx), body(ctx)),
   },
 
@@ -2706,12 +3943,68 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/contracts',
     description: 'Engine F — create a contract',
+    schema: {
+      type: 'object',
+      required: ['suite', 'form', 'parties', 'contractSumMinor', 'commencementDate', 'completionDate', 'liquidatedDamagesPerDayMinor', 'ldCapPercent', 'retentionPercent', 'defectsLiabilityMonths'],
+      properties: {
+        // The same closed list the clause register knows how to cite against.
+        suite: { type: 'string', enum: values(CONTRACT_FORM) },
+        form: stringField,
+        parties: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['role', 'partyId', 'name'],
+            properties: { role: stringField, partyId: stringField, name: stringField },
+            additionalProperties: false,
+          },
+        },
+        contractSumMinor: { type: 'integer', minimum: 0 },
+        commencementDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        completionDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        liquidatedDamagesPerDayMinor: { type: 'integer', minimum: 0 },
+        ldCapPercent: { type: 'number', minimum: 0, maximum: 100 },
+        retentionPercent: { type: 'number', minimum: 0, maximum: 100 },
+        defectsLiabilityMonths: { type: 'integer', minimum: 0 },
+        sourceBidPackId: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => claims.createContract(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/contracts/from-bid',
     description: 'Engine F — convert a locked bid pack into a contract',
+    schema: {
+      type: 'object',
+      required: ['bidPackId', 'suite', 'form', 'parties', 'commencementDate', 'completionDate', 'liquidatedDamagesPerDayMinor', 'ldCapPercent', 'retentionPercent', 'defectsLiabilityMonths'],
+      properties: {
+        // No contract sum: it comes from the bid pack, which is the point of
+        // converting rather than re-keying.
+        bidPackId: stringField,
+        suite: { type: 'string', enum: values(CONTRACT_FORM) },
+        form: stringField,
+        parties: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['role', 'partyId', 'name'],
+            properties: { role: stringField, partyId: stringField, name: stringField },
+            additionalProperties: false,
+          },
+        },
+        commencementDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        completionDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        liquidatedDamagesPerDayMinor: { type: 'integer', minimum: 0 },
+        ldCapPercent: { type: 'number', minimum: 0, maximum: 100 },
+        retentionPercent: { type: 'number', minimum: 0, maximum: 100 },
+        defectsLiabilityMonths: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => claims.convertBidToContract(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2719,6 +4012,12 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/contracts/:contractId/intelligence',
     ai: { engine: 'CONTRACTS_CLAIMS', taskType: 'clause_extraction', capability: 'REASONING' },
     description: 'Engine F — extract clauses and register obligations',
+    schema: {
+      type: 'object',
+      required: ['contractText'],
+      properties: { contractText: { type: 'string', minLength: 20 } },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       claims.extractContractIntelligence(projectContext(platform, ctx), {
         contractId: ctx.params.contractId as string,
@@ -2729,6 +4028,24 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/changes',
     description: 'Engine F — submit a change request',
+    schema: {
+      type: 'object',
+      required: ['description', 'origin', 'noticeType', 'reason', 'impactedPackageIds', 'affectedSubcontractIds', 'supportingEvidenceHash'],
+      properties: {
+        description: { type: 'string', minLength: 10 },
+        origin: { type: 'string', enum: values(CHANGE_ORIGIN) },
+        // The claims engine's own list, which the console already offers.
+    noticeType: { type: 'string', enum: ['CCI', 'RFC', 'VE', 'SI', 'NCR_LINKED', 'DRAWING_REVISION'] },
+        reason: { type: 'string', minLength: 4 },
+        impactedPackageIds: { type: 'array', items: { type: 'string' } },
+        // Required and allowed to be empty. An empty list says the change touches
+        // no subcontract; an absent one says nobody looked, and the variation
+        // control matrix cannot tell those apart afterwards.
+        affectedSubcontractIds: { type: 'array', items: { type: 'string' } },
+        supportingEvidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => claims.submitChangeRequest(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2736,6 +4053,20 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/changes/:changeRequestId/impact',
     ai: { engine: 'CONTRACTS_CLAIMS', taskType: 'impact_assessment', capability: 'REASONING' },
     description: 'Engine F — assess change impact',
+    schema: {
+      type: 'object',
+      required: ['costImpactMinor', 'timeImpactDays', 'assessedBy'],
+      properties: {
+        costImpactMinor: { type: 'integer' },
+        timeImpactDays: { type: 'integer' },
+        assessedBy: stringField,
+        // Both sides of the impact, where the change reaches a package that is
+        // already bought. The variation control matrix is why these are
+        // recorded together rather than as two unrelated assessments.
+        affectedSubcontractIds: { type: 'array', items: { type: 'string' } },
+        notes: { type: 'string' },
+      },
+    },
     handler: (platform, ctx) =>
       claims.assessImpact(projectContext(platform, ctx), {
         changeRequestId: ctx.params.changeRequestId as string,
@@ -2746,12 +4077,40 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/variations',
     description: 'Engine F — instruct a variation',
+    schema: {
+      type: 'object',
+      required: ['changeRequestId', 'contractId', 'valuationMethod', 'valuedAmountMinor', 'timeImpactDays'],
+      properties: {
+        changeRequestId: stringField,
+        contractId: stringField,
+        valuationMethod: { type: 'string', enum: ['BOQ_RATES', 'STAR_RATE', 'DAYWORK', 'LUMP_SUM', 'FAIR_VALUATION'] },
+        valuedAmountMinor: { type: 'integer' },
+        timeImpactDays: { type: 'integer' },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => claims.instructVariation(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/variations/domestic',
     description: 'Engine F — flag a domestic variation from a trade application',
+    schema: {
+      type: 'object',
+      required: ['applicationId', 'subcontractId', 'description', 'claimedAmountMinor', 'claimedTimeDays', 'supportingEvidenceHash'],
+      properties: {
+        applicationId: stringField,
+        subcontractId: stringField,
+        description: { type: 'string', minLength: 10 },
+        claimedAmountMinor: { type: 'integer' },
+        claimedTimeDays: { type: 'integer' },
+        supportingEvidenceHash: stringField,
+        // The upstream change this cost belongs to. Naming it makes both sides of
+        // one change a single record rather than two that never meet.
+        changeRequestId: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => claims.flagDomesticVariation(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2847,6 +4206,22 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/delay-events',
     description: 'Engine F — record an evidenced delay event',
+    schema: {
+      type: 'object',
+      required: ['cause', 'description', 'start', 'end', 'criticalDelayDays', 'affectedTaskIds', 'noticeServed', 'evidenceHashes'],
+      properties: {
+        cause: { type: 'string', enum: values(DELAY_CAUSE) },
+        description: { type: 'string', minLength: 10 },
+        start: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        end: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        criticalDelayDays: { type: 'integer', minimum: 0 },
+        affectedTaskIds: { type: 'array', items: { type: 'string' } },
+        noticeServed: { type: 'boolean' },
+        noticeDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        evidenceHashes: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => claims.recordDelayEvent(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2854,6 +4229,18 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/claims',
     ai: { engine: 'CONTRACTS_CLAIMS', taskType: 'claim_assessment', capability: 'REASONING' },
     description: 'Engine F — assess a delay claim with concurrency',
+    schema: {
+      type: 'object',
+      required: ['contractId', 'claimType', 'claimedDays', 'claimedAmountMinor', 'dailyProlongationMinor'],
+      properties: {
+        contractId: stringField,
+        claimType: { type: 'string', enum: ['EOT', 'COST', 'LOSS_AND_EXPENSE'] },
+        claimedDays: { type: 'integer', minimum: 0 },
+        claimedAmountMinor: { type: 'integer', minimum: 0 },
+        dailyProlongationMinor: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => claims.assessDelayClaim(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2861,6 +4248,12 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/claims/:claimId/evidence-pack',
     ai: { engine: 'CONTRACTS_CLAIMS', taskType: 'evidence_pack_narrative', capability: 'REASONING' },
     description: 'Engine F — build a verifiable evidence pack',
+    schema: {
+      type: 'object',
+      required: ['from', 'to'],
+      properties: { from: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, to: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' } },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) =>
       claims.buildEvidencePack(projectContext(platform, ctx), {
         claimId: ctx.params.claimId as string,
@@ -2871,6 +4264,26 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/notices',
     description: 'Engine F — serve a contractual notice with time-bar check',
+    schema: {
+      type: 'object',
+      required: ['contractId', 'type', 'servedTo', 'content', 'triggerEventDate'],
+      properties: {
+        contractId: stringField,
+        type: { type: 'string', enum: values(NOTICE_TYPE) },
+        servedTo: stringField,
+        content: { type: 'string', minLength: 10 },
+        // The date the clock starts from. A notice served against a trigger date
+        // in the future is a time bar computed backwards.
+        triggerEventDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        relatedEntityRef: {
+          type: 'object',
+          required: ['refType', 'refId'],
+          properties: { refType: stringField, refId: stringField },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => claims.issueNotice(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2955,12 +4368,46 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/commissioning',
     description: 'Engine G — record a commissioning test',
+    schema: {
+      type: 'object',
+      required: ['systemId', 'systemName', 'testType', 'testStandard', 'result', 'readings', 'witnessedBy', 'certificateHash'],
+      properties: {
+        systemId: stringField,
+        systemName: stringField,
+        testType: stringField,
+        testStandard: stringField,
+        result: { type: 'string', enum: ['PASS', 'FAIL', 'PASS_WITH_OBSERVATIONS'] },
+        readings: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['parameter', 'expected', 'actual', 'withinTolerance'],
+            properties: {
+              parameter: stringField,
+              expected: stringField,
+              actual: stringField,
+              withinTolerance: { type: 'boolean' },
+            },
+            additionalProperties: false,
+          },
+        },
+        witnessedBy: stringField,
+        certificateHash: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => handover.recordCommissioningTest(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/commissioning/:testId/accept',
     description: 'Engine G — accept a commissioned system',
+    schema: {
+      type: 'object',
+      required: ['acceptedBy', 'acceptanceHash'],
+      properties: { acceptedBy: stringField, acceptanceHash: stringField },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => {
       const { acceptedBy, acceptanceHash } = body<{ acceptedBy: string; acceptanceHash: string }>(ctx);
       handover.acceptSystem(projectContext(platform, ctx), ctx.params.testId as string, acceptedBy, acceptanceHash);
@@ -2972,12 +4419,31 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/handover/pack',
     ai: { engine: 'HANDOVER_OM', taskType: 'handover_readiness', capability: 'REASONING' },
     description: 'Engine G — compile the handover pack',
+    schema: {
+      type: 'object',
+      required: ['receivingPartyId', 'receivingPartyName'],
+      properties: { receivingPartyId: stringField, receivingPartyName: stringField },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => handover.compileHandoverPack(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/handover/accept',
     description: 'Engine G — accept handover',
+    schema: {
+      type: 'object',
+      required: ['packId', 'acceptedBy', 'qualifications', 'acceptanceHash'],
+      properties: {
+        packId: stringField,
+        acceptedBy: stringField,
+        // Required and allowed to be empty: accepting with no qualifications is a
+        // statement, and it is a different one from nobody having been asked.
+        qualifications: { type: 'array', items: { type: 'string' } },
+        acceptanceHash: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => {
       handover.acceptHandover(projectContext(platform, ctx), body(ctx));
       return { accepted: true };
@@ -2987,6 +4453,25 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/assets',
     description: 'Engine G — register an asset',
+    schema: {
+      type: 'object',
+      required: ['assetTag', 'description', 'assetClass', 'manufacturer', 'modelNumber', 'installedAt', 'location', 'expectedLifeYears', 'replacementCostMinor'],
+      properties: {
+        assetTag: stringField,
+        description: stringField,
+        assetClass: stringField,
+        manufacturer: stringField,
+        modelNumber: stringField,
+        serialNumber: stringField,
+        installedAt: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        location: stringField,
+        expectedLifeYears: { type: 'integer', minimum: 1 },
+        replacementCostMinor: { type: 'integer', minimum: 0 },
+        parentAssetId: stringField,
+        linkedModelElementId: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => handover.registerAsset(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -2994,18 +4479,55 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/om/manual',
     ai: { engine: 'HANDOVER_OM', taskType: 'om_manual_generation', capability: 'PERCEPTION' },
     description: 'Engine G — publish an O&M manual',
+    schema: {
+      type: 'object',
+      required: ['assetIds', 'sourceDocumentHashes', 'systemName'],
+      properties: {
+        assetIds: { type: 'array', minItems: 1, items: { type: 'string' } },
+        sourceDocumentHashes: { type: 'array', items: { type: 'string' } },
+        systemName: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => handover.publishOMManual(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/defects',
     description: 'Engine G — raise a defect with warranty check',
+    schema: {
+      type: 'object',
+      required: ['location', 'description', 'severity', 'reportedBy', 'evidenceHash'],
+      properties: {
+        assetId: stringField,
+        location: stringField,
+        description: { type: 'string', minLength: 10 },
+        severity: { type: 'string', enum: ['MINOR', 'MAJOR', 'CRITICAL'] },
+        reportedBy: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => handover.raiseDefect(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/work-orders',
     description: 'Engine G — raise a work order',
+    schema: {
+      type: 'object',
+      required: ['assetId', 'type', 'description', 'priority', 'dueDate'],
+      properties: {
+        assetId: stringField,
+        type: { type: 'string', enum: ['PLANNED', 'REACTIVE', 'CORRECTIVE', 'STATUTORY'] },
+        description: { type: 'string', minLength: 4 },
+        priority: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH', 'EMERGENCY'] },
+        dueDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        linkedDefectId: stringField,
+        estimatedCostMinor: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => handover.raiseWorkOrder(projectContext(platform, ctx), body(ctx)),
   },
   {
@@ -3013,6 +4535,15 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/om/maintenance-forecast',
     ai: { engine: 'HANDOVER_OM', taskType: 'maintenance_forecast', capability: 'REASONING' },
     description: 'Engine G — predictive maintenance forecast',
+    schema: {
+      type: 'object',
+      required: ['horizonMonths', 'annualBudgetMinor'],
+      properties: {
+        horizonMonths: { type: 'integer', minimum: 1 },
+        annualBudgetMinor: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => handover.forecastMaintenance(projectContext(platform, ctx), body(ctx)),
   },
 
@@ -3184,6 +4715,16 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/exports/audit',
     description: 'Verifiable Golden Thread audit export with attestation',
+    schema: {
+      type: 'object',
+      properties: {
+        audience: { type: 'string' },
+        from: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        to: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        format: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => {
       const { audience, from, to, format } = body<{ audience?: ExportAudience; from?: string; to?: string; format?: ExportFormat }>(ctx);
       const actor = auth(ctx);
@@ -3582,6 +5123,7 @@ export const ROUTES: Route[] = [
     pattern: '/v1/evidence/:hash/link',
     readOnly: true,
     description: 'Mint an expiring link to a stored evidence file',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (platform, ctx) => {
       const actor = auth(ctx);
       const hash = ctx.params.hash as string;
@@ -3671,6 +5213,60 @@ export const ROUTES: Route[] = [
         ...body<{ corrections?: Record<string, unknown> }>(ctx),
       }),
   },
+  // --- The command catalogue -------------------------------------------------
+  //
+  // Every write route, with the schema that governs its body.
+  //
+  // This exists because 78 of 156 write routes had no console entry point: the
+  // capability was there and the door to it was not, which is the likeliest
+  // reason a reviewer concludes there is nowhere to put information in. The
+  // alternative was 78 hand-written forms, each restating a schema the platform
+  // already owns — settled decision 6 says the interface holds no rule the API
+  // does not publish, and a field list is a rule.
+  //
+  // So the console renders a door from the schema. Curated panels stay where
+  // they exist, because a good label and a real dropdown beat a generated one;
+  // everything else gets a generated door rather than no door.
+  //
+  // Authenticated, unlike `/v1/routes`. The route list is a catalogue of what
+  // exists; this is the shape of every request body the platform accepts, which
+  // is a different thing to hand to an anonymous caller.
+  {
+    method: 'GET',
+    pattern: '/v1/commands',
+    readOnly: true,
+    description: 'Every write command with the schema that governs it, so the console can render a door for each',
+    handler: (_platform, ctx) => {
+      auth(ctx);
+      const commands = ROUTES.filter((route) => route.method !== 'GET' && route.public !== true).map((route) => ({
+        id: `${route.method} ${route.pattern}`,
+        method: route.method,
+        path: route.pattern,
+        description: route.description,
+        // The path parameters a caller has to supply. `projectId` is the
+        // session's; the rest name a record and the form has to ask.
+        params: route.pattern
+          .split('/')
+          .filter((segment) => segment.startsWith(':'))
+          .map((segment) => segment.slice(1)),
+        schema: route.schema,
+        // A generated form must not be able to spend money silently: where a
+        // route reaches a provider the console quotes it first, exactly as a
+        // curated panel does.
+        ai: route.ai,
+        upload: route.upload === true,
+      }));
+
+      return {
+        commands,
+        // Said out loud rather than left to be counted. A route with no schema
+        // takes an unvalidated body, and a generated form for it can only offer
+        // free text — the console says so instead of implying a checked form.
+        withoutSchema: commands.filter((command) => !command.schema).length,
+      };
+    },
+  },
+
   // --- Signing ---------------------------------------------------------------
   //
   // A witnessed signature, and the record says so: the platform attests that an

@@ -1005,6 +1005,42 @@ rejection is surfaced rather than swallowed. And the queue is cleared on
 sign-out, because a site handset changes hands and one operative's record must
 not flush under another's token.
 
+**Every command has a door, and the door is generated from the schema.**
+Seventy-eight of the platform's one hundred and fifty-six write routes had no
+console entry point at all: a command the platform accepts, an engine behind it,
+a test proving the engine works, and no way for a person to reach any of it. Two
+reviews concluded there was "nowhere to put information in", and this was almost
+certainly why — not a missing feature, a missing door.
+
+`GET /v1/commands` publishes every write route with the schema that governs its
+body, and `frontend/lib/catalogue.js` turns one into the same `command()` spec a
+hand-written panel uses. That is settled decision 6 applied to field lists: the
+interface holds no rule the API does not publish, and a field list is a rule.
+Curated panels stay where they exist, because a dropdown of *this project's*
+current drawing revisions beats a text box called `drawingId`; what changed is
+that a route without one now has a door instead of nothing.
+
+The catalogue is authenticated, unlike `/v1/routes`. A list of what exists is a
+different thing to hand a stranger from the shape of every request body the
+platform accepts.
+
+**The request-validation debt is paid.** Ninety-five write routes accepted a body
+nothing checked — not at the edge, not at the ledger, and TypeScript types are
+erased under `erasableSyntaxOnly`. It was recorded as a register that could fall
+and never rise. Two things made paying it off unavoidable rather than tidy: an
+unvalidated body reaches a handler that writes to an append-only ledger, so a bad
+field is a permanent record rather than a bad request; and a generated door for a
+route with no schema is a form with no fields — a door onto a refusal, which
+reads as a broken product rather than an incomplete one. Every write route now
+publishes a schema, so the test asserts zero rather than a ceiling. A ceiling
+invites somebody to spend the headroom.
+
+Most of those schemas refuse unknown fields. The exceptions are the deeply
+nested ones — a tender estimate carries the twenty cost heads, whose shape
+belongs to the cost model and is validated there — and they declare their
+top-level fields and stay open rather than restating a shape in two places,
+which is the drift the schemas exist to prevent. A test holds the ratio.
+
 **The mark has one source and everything is derived from it.**
 `frontend/logo.svg` is the full mark — skyline, tower crane, ground line and the
 orange X. `frontend/logo-glyph.svg` is the reduced mark used everywhere the full
@@ -1984,7 +2020,7 @@ named so it is not mistaken for finished.
 | Area | Built | Missing |
 |---|---|---|
 | Take-off | Governs, evidences and prices measured items, traced to sheet and revision. Quantities can be read off a held drawing by a multimodal provider and confirmed before they become BoQ items | No provider call has been made from this environment, so the extraction path is verified against a stub rather than against a live model |
-| Drawing register | Title-block reading from the held drawing itself or from supplied text, supersession, markup→RFI | Same: the reading path is exercised against a stub, not a live provider |
+| Drawing register | Title-block reading from the held drawing itself or from supplied text, supersession, markup→RFI carrying the activity it blocks | Same: the reading path is exercised against a stub, not a live provider |
 | Model ingestion | Records the model, hash, discipline, LOD, element count as a governed event | IFC parsing, geometry hash, model diffing |
 | Digital twin | Reconciles observed against expected element status | Observations are structured input, not derived from imagery |
 | Evidence capture | Real SHA-256 over the real file, recorded against the event, and the file itself held in a tenant-scoped content-addressed store | Retention and deletion policy; no antivirus scan on upload |

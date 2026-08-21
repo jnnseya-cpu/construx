@@ -3,6 +3,7 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
+import { networkFloat } from './planning.ts';
 import {
   assessCoverage,
   extractClauses,
@@ -161,6 +162,22 @@ export function addMarkup(
     note: string;
     region?: { x: number; y: number; width: number; height: number };
     convertTo?: 'RFI' | 'INSTRUCTION' | 'NONE';
+    /**
+     * The activity the answer is holding up.
+     *
+     * One field, and it is the difference between a delay exposure that is
+     * conditional and one that is computed. An RFI carried a discipline and a
+     * drawing, which says what the question is about and not what it is
+     * stopping — so the exposure could only ever say "if the worst overdue RFI
+     * happens to sit on the critical path". With the activity named, the
+     * platform reads that activity's own float off the network and knows
+     * whether it is on the critical chain.
+     *
+     * Optional, because a question can genuinely precede the programme and
+     * refusing it would push people back to email. What it costs to leave out
+     * is stated on the exposure rather than hidden.
+     */
+    taskId?: string;
   },
 ): { markupId: string; derivedId?: string; derivedRef?: string } {
   authorise(ctx, 'DESIGN_INFORMATION', 'C', { lifecyclePhase: currentPhase(ctx) });
@@ -169,6 +186,12 @@ export function addMarkup(
   if (drawing.state.status === 'SUPERSEDED') {
     throw new DomainError('DRAWING_SUPERSEDED', 'Cannot mark up a superseded drawing; use the current revision');
   }
+
+  // Checked when given. An activity reference that names nothing would put a
+  // dead link into a record the exposure calculation then reads as fact.
+  const blockedTask = input.taskId
+    ? ctx.ledger.require({ refType: 'Task', refId: input.taskId })
+    : undefined;
 
   const markupId = ulid();
   const evidence = registerEvidence(ctx, {
@@ -216,6 +239,9 @@ export function addMarkup(
         linkedDrawingId: input.drawingId,
         linkedDrawingRevision: drawing.state.revision,
         linkedMarkupId: markupId,
+        // What the answer is holding up, where it is known.
+        linkedTaskId: blockedTask?.refId,
+        linkedTaskName: blockedTask ? String(blockedTask.state.name) : undefined,
         status: 'OPEN',
         dueDate: new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10),
       },
@@ -1080,7 +1106,7 @@ export type DesignDelayExposure = {
   /** Overdue RFIs, and the total days of information owed. */
   overdueCount: number;
   totalDaysOverdue: number;
-  /** The single worst, which is what sets the exposure. */
+  /** The single worst, which is what sets the conditional exposure. */
   worstDaysOverdue: number;
   /**
    * Days of programme slack before any delay reaches completion — the minimum
@@ -1093,9 +1119,42 @@ export type DesignDelayExposure = {
   dailyDamagesMinor: number;
   /** `daysBeyondFloatIfCritical` at the damages rate. Conditional, and labelled so. */
   exposureIfCriticalMinor: number;
-  /** Why the figure is conditional, in the words the console should print. */
+
+  /**
+   * How much of the figure is computed rather than assumed.
+   *
+   * `CONDITIONAL` — no overdue RFI names an activity, so the only honest
+   * statement is the old one: *if* the worst one is on the critical path.
+   * `PARTLY_COMPUTED` — some name an activity and some do not; the computed
+   * part is real and the rest is still conditional, and both are reported.
+   * `COMPUTED` — every overdue RFI names an activity, so the exposure is read
+   * off the network rather than supposed.
+   */
+  basis: 'CONDITIONAL' | 'PARTLY_COMPUTED' | 'COMPUTED';
+  /** Overdue RFIs that name the activity they are holding up. */
+  linkedCount: number;
+  /** Overdue RFIs that do not, and therefore cannot be priced. */
+  unlinkedCount: number;
+  /**
+   * The activities actually blocked, worst first, each with its own float.
+   *
+   * Per activity rather than per RFI: two questions against the same activity
+   * delay it once, and totalling them would invent a delay nobody has suffered.
+   */
+  blockedActivities: Array<{
+    taskId: string;
+    taskName: string;
+    onCriticalPath: boolean;
+    totalFloat: number;
+    daysOverdue: number;
+    daysBeyondFloat: number;
+    rfiReferences: string[];
+  }>;
+  /** What the record supports, at the damages rate. Zero where nothing is proven. */
+  computedExposureMinor: number;
+  /** Why the figure is what it is, in the words the console should print. */
   qualification: string;
-  /** The one change that would make it exact. */
+  /** The one change that would make it exact, where one remains. */
   toMakeExact?: string;
 };
 
@@ -1105,11 +1164,15 @@ export function designDelayExposure(
 ): DesignDelayExposure {
   authorise(ctx, 'DESIGN_INFORMATION', 'R');
 
-  const rfis = ctx.ledger.list(ctx.projectId, 'RFI').map((record) => record.state);
-  const overdue = rfis
-    .filter((r) => r.status !== 'ANSWERED' && typeof r.dueDate === 'string' && today > String(r.dueDate))
-    .map((r) => Math.max(0, Math.round((Date.parse(today) - Date.parse(String(r.dueDate))) / 86_400_000)));
+  const daysLate = (dueDate: unknown): number =>
+    Math.max(0, Math.round((Date.parse(today) - Date.parse(String(dueDate))) / 86_400_000));
 
+  const overdueRfis = ctx.ledger
+    .list(ctx.projectId, 'RFI')
+    .map((record) => record.state)
+    .filter((r) => r.status !== 'ANSWERED' && typeof r.dueDate === 'string' && today > String(r.dueDate));
+
+  const overdue = overdueRfis.map((r) => daysLate(r.dueDate));
   const totalDaysOverdue = overdue.reduce((sum, days) => sum + days, 0);
   const worstDaysOverdue = overdue.reduce((most, days) => Math.max(most, days), 0);
 
@@ -1128,6 +1191,71 @@ export function designDelayExposure(
 
   const daysBeyondFloatIfCritical = Math.max(0, worstDaysOverdue - floatDays);
 
+  // --- the computed half ------------------------------------------------------
+  //
+  // An RFI that names the activity it blocks can be priced against that
+  // activity's own float and its own place on the network, rather than against
+  // a project-wide minimum and a supposition.
+  const network = networkFloat(ctx);
+  const byTask = new Map<string, { taskId: string; taskName: string; daysOverdue: number; rfiReferences: string[] }>();
+
+  for (const rfi of overdueRfis) {
+    const taskId = typeof rfi.linkedTaskId === 'string' ? rfi.linkedTaskId : undefined;
+    if (!taskId) continue;
+    const late = daysLate(rfi.dueDate);
+    const existing = byTask.get(taskId);
+    if (existing) {
+      // The worst question against an activity is what holds it up; the second
+      // one does not hold it up again.
+      existing.daysOverdue = Math.max(existing.daysOverdue, late);
+      existing.rfiReferences.push(String(rfi.reference));
+    } else {
+      byTask.set(taskId, {
+        taskId,
+        taskName: String(rfi.linkedTaskName ?? network.activityNames.get(taskId) ?? taskId),
+        daysOverdue: late,
+        rfiReferences: [String(rfi.reference)],
+      });
+    }
+  }
+
+  const blockedActivities = [...byTask.values()]
+    .map((entry) => {
+      const onCriticalPath = network.critical.has(entry.taskId);
+      // An activity the network does not know carries no demonstrable float,
+      // which is the same conservative reading applied to a project with no
+      // baseline at all.
+      const totalFloat = network.floatByTask.get(entry.taskId) ?? 0;
+      return {
+        ...entry,
+        onCriticalPath,
+        totalFloat,
+        daysBeyondFloat: Math.max(0, entry.daysOverdue - totalFloat),
+      };
+    })
+    .sort((a, b) => b.daysBeyondFloat - a.daysBeyondFloat || b.daysOverdue - a.daysOverdue);
+
+  // The worst affected critical activity, not the sum of them.
+  //
+  // Two critical activities each a week late do not make the project a
+  // fortnight late — they are concurrent, and the job finishes late by the
+  // worse of the two. Adding them would produce a number that reads as rigour
+  // and would be thrown out by the first person who checked it. A proper
+  // time-impact analysis is the only thing that beats this, and it is not built.
+  const criticalDelay = blockedActivities
+    .filter((a) => a.onCriticalPath)
+    .reduce((worst, a) => Math.max(worst, a.daysBeyondFloat), 0);
+  const computedExposureMinor = criticalDelay * dailyDamagesMinor;
+
+  const linkedCount = overdueRfis.filter((r) => typeof r.linkedTaskId === 'string').length;
+  const unlinkedCount = overdueRfis.length - linkedCount;
+  const basis: DesignDelayExposure['basis'] =
+    overdueRfis.length === 0 || linkedCount === 0
+      ? 'CONDITIONAL'
+      : unlinkedCount === 0
+        ? 'COMPUTED'
+        : 'PARTLY_COMPUTED';
+
   return {
     overdueCount: overdue.length,
     totalDaysOverdue,
@@ -1136,22 +1264,40 @@ export function designDelayExposure(
     daysBeyondFloatIfCritical,
     dailyDamagesMinor,
     exposureIfCriticalMinor: daysBeyondFloatIfCritical * dailyDamagesMinor,
+    basis,
+    linkedCount,
+    unlinkedCount,
+    blockedActivities,
+    computedExposureMinor,
     qualification:
-      // Three states, not two. "Float absorbs the delay: 0 days of slack
-      // against 0 days overdue" is what the first version printed when nothing
-      // was overdue at all — technically true and it reads as a project running
-      // on empty float, which is close to the opposite of the truth.
+      // Four states now. "Float absorbs the delay: 0 days of slack against 0
+      // days overdue" is what the first version printed when nothing was
+      // overdue at all — technically true, and it reads as a project running on
+      // empty float, which is close to the opposite of the truth.
       overdue.length === 0
         ? 'No design information is overdue. Nothing is being consumed.'
-        : daysBeyondFloatIfCritical === 0
-          ? `Float absorbs it: ${floatDays} days of slack against ${worstDaysOverdue} days overdue.`
-          : `If the worst overdue RFI sits on the critical path. ${floatDays} days of float absorb the first part; the remaining ${daysBeyondFloatIfCritical} are priced at the contract damages rate.`,
-    // Only worth saying where there is something to be exact about.
-    ...(overdue.length > 0
+        : basis === 'CONDITIONAL'
+          ? daysBeyondFloatIfCritical === 0
+            ? `Float absorbs it: ${floatDays} days of slack against ${worstDaysOverdue} days overdue.`
+            : `If the worst overdue RFI sits on the critical path. ${floatDays} days of float absorb the first part; the remaining ${daysBeyondFloatIfCritical} are priced at the contract damages rate.`
+          : criticalDelay === 0
+            ? `${linkedCount} overdue question${linkedCount === 1 ? '' : 's'} name the activity held up, and none of those activities is on the critical path with its float spent. Nothing is demonstrably reaching completion.`
+            : `${criticalDelay} day${criticalDelay === 1 ? '' : 's'} beyond float on the critical path, read off the network rather than supposed — driven by ${
+                blockedActivities.find((a) => a.onCriticalPath && a.daysBeyondFloat === criticalDelay)?.taskName ?? 'a critical activity'
+              }. Concurrent critical delays are not added: the job finishes late by the worst of them.`,
+    // Only worth saying where something is still left to be exact about.
+    ...(unlinkedCount > 0
       ? {
           toMakeExact:
-            'An RFI carries a discipline and a drawing, not an activity. With an activity reference the exposure is computed rather than conditional — and only the RFIs actually on the critical chain would count.',
+            `${unlinkedCount} overdue RFI${unlinkedCount === 1 ? ' does' : 's do'} not name the activity held up, so ${
+              unlinkedCount === 1 ? 'it stays' : 'they stay'
+            } conditional. Naming the activity on the markup is what prices ${unlinkedCount === 1 ? 'it' : 'them'}.`,
         }
-      : {}),
+      : network.hasNetwork
+        ? {}
+        : {
+            toMakeExact:
+              'There is no programme network to read float from, so every activity is treated as having none. A baseline makes the same figure defensible.',
+          }),
   };
 }

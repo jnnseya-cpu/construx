@@ -142,46 +142,72 @@ describe('what the API refuses', () => {
   });
 });
 
-describe('the request-validation debt', () => {
+describe('request validation', () => {
   /**
-   * A register, in the same spirit as `NOT_EMITTED` in catalogue.test.ts: the
-   * number is allowed to fall and never to rise. `validateRequest` returns
-   * immediately when a route carries no schema, and no entity schema is
-   * registered on the ledger either, so for these routes nothing checks the
-   * request body at runtime — TypeScript types are erased under
-   * `erasableSyntaxOnly` and check nothing at all.
+   * The debt, and its repayment.
    *
-   * This is recorded rather than fixed here because writing the missing schemas
-   * is a separate, larger piece of work. What must not happen is that it grows
-   * quietly while nobody is counting.
+   * This was a register: ninety-seven write routes accepted a body nothing
+   * checked, recorded so the number could fall and never rise. `validateRequest`
+   * returns immediately when a route carries no schema, and TypeScript types are
+   * erased under `erasableSyntaxOnly`, so for those routes nothing checked the
+   * request body at all — not at the edge, not at the ledger.
+   *
+   * It is paid off. Every write route publishes a schema, which is why the
+   * assertion is now zero rather than a ceiling: a register is only worth
+   * keeping while there is something in it, and a ceiling invites somebody to
+   * spend the headroom.
+   *
+   * Two things made it worth doing beyond the obvious. An unvalidated body
+   * reaches a handler that writes to an append-only ledger, so a bad field is
+   * not a bad request — it is a permanent record. And the console now generates
+   * a command form from the published schema, so a route with no schema is a
+   * door that opens onto a refusal.
    */
-  const UNVALIDATED_WRITE_ROUTES = 98;
-
-  it('has no more unvalidated write routes than it did', () => {
+  it('leaves no write route accepting an unchecked body', () => {
     // An upload route is exempt because a JSON schema cannot say anything about
     // a file. What checks it instead is stricter than a schema and is tested:
     // the gateway refuses the body once it passes the configured ceiling, and
     // the store refuses bytes that do not hash to the address they claim.
-    const writes = ROUTES.filter((route) => route.method !== 'GET' && !route.upload);
-    const unvalidated = writes.filter((route) => !route.schema);
+    // Three public routes are exempt and each says why on the route itself.
+    // `POST /unsubscribe` deliberately ignores its body — the proof of intent
+    // is the signed token in the URL, and a mail provider's one-click post
+    // carries whatever fields that provider chooses; validating it would refuse
+    // an unsubscribe, which is the one thing that must never happen. The two
+    // console routes take no body at all and are gated out of production.
+    const bodyIgnored = new Set(['POST /unsubscribe', 'POST /v1/console/identities', 'POST /v1/console/session']);
 
-    assert.ok(
-      unvalidated.length <= UNVALIDATED_WRITE_ROUTES,
-      `${unvalidated.length} write routes accept an unvalidated body, up from ${UNVALIDATED_WRITE_ROUTES}. ` +
-        `New routes need a schema:\n  ${unvalidated.map((r) => `${r.method} ${r.pattern}`).join('\n  ')}`,
+    const unvalidated = ROUTES.filter(
+      (route) => route.method !== 'GET' && !route.upload && !route.schema,
+    )
+      .map((r) => `${r.method} ${r.pattern}`)
+      .filter((id) => !bodyIgnored.has(id));
+
+    assert.deepEqual(
+      unvalidated,
+      [],
+      `these write routes accept a body nothing checks:\n  ${unvalidated.join('\n  ')}`,
     );
+  });
 
-    assert.equal(
-      unvalidated.length,
-      UNVALIDATED_WRITE_ROUTES,
-      `${unvalidated.length} write routes are unvalidated, fewer than the recorded ${UNVALIDATED_WRITE_ROUTES}. ` +
-        'Lower the number in this test — the register is only useful while it is accurate.',
+  it('constrains what it can and says so where it cannot', () => {
+    // Not every schema can be closed. A tender estimate carries the twenty cost
+    // heads, whose shape belongs to the cost model and is validated there;
+    // restating it here would be the drift these schemas exist to prevent. Those
+    // schemas declare their top-level fields and stay open, which still enforces
+    // presence and type — the honest half of the check rather than none of it.
+    const writes = ROUTES.filter((route) => route.method !== 'GET' && route.schema);
+    const closed = writes.filter((route) => (route.schema as Record<string, unknown>).additionalProperties === false);
+
+    assert.ok(writes.length > 140, 'the write surface shrank unexpectedly');
+    assert.ok(
+      closed.length / writes.length > 0.8,
+      `only ${closed.length} of ${writes.length} write schemas refuse unknown fields; the rest should be the deep-nested exceptions, not the norm`,
     );
   });
 
   it('validates every route that takes money or identity', () => {
-    // The subset that cannot wait for the rest. A body that decides a payment,
-    // a seat, a role or a spend cap is checked before it reaches a handler.
+    // The subset that could never wait. A body that decides a payment, a seat,
+    // a role or a spend cap is checked before it reaches a handler.
     const critical = ROUTES.filter(
       (route) =>
         route.method !== 'GET' &&
