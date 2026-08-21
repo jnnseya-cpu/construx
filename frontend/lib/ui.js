@@ -227,6 +227,21 @@ export function toast(title, detail, tone = '') {
   setTimeout(() => el.remove(), 5200);
 }
 
+/**
+ * One entry in a `<select>` — either an option, or a group of them.
+ *
+ * A grouped entry carries its own `options` array and renders as `<optgroup>`.
+ * This exists because a construction reader scanning the sector list looks for
+ * "Building" and the nine ONS categories do not contain that word; the heading
+ * puts it where they look without adding a tenth value that overlaps three of
+ * the others. See `SECTOR_GROUP` in the shared vocabulary.
+ */
+function option(o) {
+  return o.options
+    ? html`<optgroup label="${o.label}">${o.options.map((child) => option(child))}</optgroup>`
+    : html`<option value="${o.value}">${o.label}</option>`;
+}
+
 /** A modal that resolves with the collected values, or null if dismissed. */
 export function modal({ title, fields, submitLabel = 'Confirm' }) {
   return new Promise((resolveModal) => {
@@ -239,7 +254,7 @@ export function modal({ title, fields, submitLabel = 'Confirm' }) {
           (f) => html`<div class="field">
             <label for="${f.name}">${f.label}</label>
             ${f.type === 'select'
-              ? html`<select id="${f.name}" name="${f.name}">${f.options.map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select>`
+              ? html`<select id="${f.name}" name="${f.name}">${f.options.map((o) => option(o))}</select>`
               : f.type === 'textarea'
                 ? html`<textarea id="${f.name}" name="${f.name}" rows="3">${f.value ?? ''}</textarea>`
                 : html`<input id="${f.name}" name="${f.name}" type="${f.type ?? 'text'}" value="${f.value ?? ''}">`}

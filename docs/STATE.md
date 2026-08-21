@@ -1406,6 +1406,28 @@ before the figure); it does not average across projects that cannot contribute
 to the average; and it does not sum two currencies, reporting `null` instead so
 the console has to say "mixed".
 
+**The enterprise can add to its own estate.** The same page could read the
+portfolio and not create anything in it: `POST /v1/portfolios` and
+`POST /v1/projects` existed with no console entry point, and the only place a
+portfolio's `enterpriseId` appeared was inside a portfolio that already existed.
+`GET /v1/enterprises` publishes it, and both commands are on the Enterprise &
+Portfolio page behind `ENTERPRISE_STRUCTURE:C` — locked with a stated reason for
+a role that does not hold it, in the same way as every other command bar.
+
+Two vocabularies were closed at the same time. `location` on a project was an
+unvalidated object, so `continentCode` accepted `EU`, `Europe`, `europe` and
+`eu` in one tenancy and no estate view could group on it; it now validates
+against `CONTINENT` — six regions, `AM` for the Americas — with the same
+argument that closed `currency`: the ledger is append-only, so each bad value is
+permanent. And `SECTOR_GROUPED` gives the nine ONS sectors three `<optgroup>`
+headings, so a reader looking for **Building** finds it without a tenth code
+being added that overlaps three of the others. The stored value is unchanged.
+
+Verified against a running server: a project created in Columbus, Ohio at
+`continentCode: 'AM'` in USD; `continentCode: 'Americas'` refused with a
+per-field problem+json error; and the estate's contract-value card switched to
+"mixed currencies" rather than adding dollars to pounds.
+
 **Every AI engine declares when it may run.** The routing matrix says which
 provider an engine reaches; it said nothing about applicability, so every engine
 was reachable in every phase. A handover engine could be asked to assemble an
@@ -1484,8 +1506,6 @@ parsing work, not wiring.
   recognition, defect detection, `PROGRESS_EXTRACTED_FROM_IMAGES`
 - **Audio and communication intelligence** — transcription, commitment and
   deadline extraction, `COMMITMENT_REGISTERED`, `DEADLINE_TRACKED`
-- **Guided project creation form** with canonical enums (projects are created
-  through the API)
 - **Deployment topology** — Terraform, Kong, MSK, RDS, S3
 - **Native Android and iOS clients** — the sync protocol and `ANDROID`/`IOS`
   event sources are built and tested server-side

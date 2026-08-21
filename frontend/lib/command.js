@@ -37,15 +37,17 @@ function control(field) {
   const required = field.required === false ? '' : 'required';
 
   if (field.type === 'select') {
-    const options = field.options ?? [];
+    // An entry carrying its own `options` is a heading, not a value — see
+    // `SECTOR_GROUPED`. Nothing about the submitted body changes; the grouping
+    // only affects where a reader's eye lands in a nine-item list.
+    const option = (o) =>
+      o.options
+        ? `<optgroup label="${esc(o.label)}">${o.options.map(option).join('')}</optgroup>`
+        : `<option value="${esc(o.value)}"${String(o.value) === String(field.value ?? '') ? ' selected' : ''}>${esc(o.label)}</option>`;
+
     return `<select id="${id}" name="${esc(field.name)}" ${required}>
       ${field.placeholder ? `<option value="">${esc(field.placeholder)}</option>` : ''}
-      ${options
-        .map(
-          (o) =>
-            `<option value="${esc(o.value)}"${String(o.value) === String(field.value ?? '') ? ' selected' : ''}>${esc(o.label)}</option>`,
-        )
-        .join('')}
+      ${(field.options ?? []).map(option).join('')}
     </select>`;
   }
 

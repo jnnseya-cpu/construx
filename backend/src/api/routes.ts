@@ -1,4 +1,4 @@
-import { SECTOR, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
+import { CONTINENT, SECTOR, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
 import { ask } from '../ai/conversation.ts';
 import * as signup from '../identity/signup.ts';
 import * as erasure from '../identity/erasure.ts';
@@ -1520,8 +1520,8 @@ export const ROUTES: Route[] = [
         name: stringField,
         enterpriseId: stringField,
         governanceModel: stringField,
-        continentCode: { type: 'string' },
-        countryCode: { type: 'string' },
+        continentCode: { type: 'string', enum: values(CONTINENT) },
+        countryCode: { type: 'string', minLength: 2, maxLength: 2 },
         city: { type: 'string' },
         targets: { type: 'object' },
         riskAppetite: { type: 'object' },
@@ -1535,6 +1535,18 @@ export const ROUTES: Route[] = [
         platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, { correlationId: ctx.correlationId }),
         body(ctx),
       ),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/enterprises',
+    description: 'List enterprises for the tenant',
+    // `POST /v1/portfolios` requires an `enterpriseId` and nothing published
+    // one, so the console could read the estate and not add to it: the only
+    // place the id appeared was inside a portfolio that already existed. The
+    // same `listByTenant` scoping as every other read on this page.
+    handler: (platform, ctx) => ({
+      enterprises: platform.ledger.listByTenant(auth(ctx).tenantId, 'Enterprise').map((r) => r.state),
+    }),
   },
   {
     method: 'GET',
@@ -1576,7 +1588,29 @@ export const ROUTES: Route[] = [
         // that happen to agree.
         sectorType: { type: 'string', enum: values(SECTOR) },
         assetType: stringField,
-        location: { type: 'object' },
+        // Same argument as `currency` below, one field earlier. This was an
+        // unvalidated object, so `continentCode` accepted `EU`, `Europe`,
+        // `europe` and `eu` in one tenancy and no estate view could group on
+        // it. The ledger is append-only, so each of those is permanent.
+        location: {
+          type: 'object',
+          required: ['continentCode', 'countryCode', 'city'],
+          properties: {
+            continentCode: { type: 'string', enum: values(CONTINENT) },
+            countryCode: { type: 'string', minLength: 2, maxLength: 2 },
+            city: stringField,
+            coordinates: {
+              type: 'object',
+              required: ['lat', 'lng'],
+              properties: {
+                lat: { type: 'number', minimum: -90, maximum: 90 },
+                lng: { type: 'number', minimum: -180, maximum: 180 },
+              },
+              additionalProperties: false,
+            },
+          },
+          additionalProperties: false,
+        },
         contractValueMinor: { type: 'integer', minimum: 0 },
         // Constrained to the currencies the platform actually counts in. It was
         // an unconstrained string, and a project created with a currency code

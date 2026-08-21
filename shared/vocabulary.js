@@ -162,6 +162,56 @@ export const LEGACY_SECTOR = {
 export const currentSector = (code) => LEGACY_SECTOR[code] ?? code;
 
 /**
+ * How the nine sectors group for a reader who is looking for "building".
+ *
+ * A frontend review found the sector picker credible in every respect except
+ * that a construction professional scanning it cannot find `Building`, which is
+ * how the industry names half the market. The wrong fix is to add `BUILDING`
+ * back as a tenth value: it was retired to `COMMERCIAL` deliberately (see
+ * `LEGACY_SECTOR`), it overlaps three of the nine, and reintroducing it would
+ * give the same job two codes and break the ONS alignment that lets a figure
+ * here be set against a published one.
+ *
+ * A grouping solves the finding without any of that. The picker shows
+ * `Building` as a heading over the three sectors it contains, the stored value
+ * is still one of the nine, and nothing downstream changes. `<optgroup>` is
+ * what the element is for.
+ */
+export const SECTOR_GROUPED = [
+  ['Building', ['RESIDENTIAL', 'COMMERCIAL', 'INDUSTRIAL']],
+  ['Civil and infrastructure', ['TRANSPORT', 'UTILITIES', 'ENERGY']],
+  ['Specialised and operational', ['FM', 'RMI', 'PROFESSIONAL']],
+].map(([label, codes]) => ({
+  label,
+  options: codes.map((code) => SECTOR.find((option) => option.value === code)),
+}));
+
+/**
+ * Where in the world the asset is.
+ *
+ * `continentCode` was a free string on the project command — validated as
+ * `{ type: 'string' }`, offered by no picker, and in practice always `EU`
+ * because that is what the seed wrote. A free string is not a region model; it
+ * is a field that will hold `EU`, `Europe`, `europe` and `eu` in the same
+ * tenancy within a month, and no estate view can group on it.
+ *
+ * The same review that asked for `Building` asked for America, and was right
+ * about the symptom while being one letter out on the cause: the list did not
+ * omit the Americas, there was no list. These are the six inhabited regions —
+ * `AM` is the Americas, singular, because a Toronto project and a São Paulo
+ * project are one commercial region for a business deciding where it operates,
+ * and splitting them would be a geography lesson rather than a control.
+ */
+export const CONTINENT = opts([
+  ['EU', 'Europe'],
+  ['AM', 'Americas'],
+  ['AF', 'Africa'],
+  ['AS', 'Asia'],
+  ['OC', 'Oceania'],
+  ['AN', 'Antarctica'],
+]);
+
+/**
  * Standard forms of contract. The same list the claims engine reasons about:
  * a picker offering a form the engine cannot interpret would produce notices
  * against clauses that do not exist.

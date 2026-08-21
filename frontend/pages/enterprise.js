@@ -1,7 +1,8 @@
 import { api } from '../lib/api.js';
 import { badge, date, html, humanise, money, pct, raw, render, statusTone, table } from '../lib/ui.js';
-import { state } from '../app.js';
-import { sectorLabel } from '../lib/enums.js';
+import { blockedReason, can, state } from '../app.js';
+import { command, commandBar } from '../lib/command.js';
+import { CONTINENT, SECTOR_GROUPED, sectorLabel, today } from '../lib/enums.js';
 
 /**
  * Enterprise & Portfolio.
@@ -13,17 +14,21 @@ import { sectorLabel } from '../lib/enums.js';
  */
 
 export async function enterprise(root) {
+  await draw();
+
+  async function draw() {
   // The portfolio position is computed by the API, not assembled here. Every
   // figure below carries the number of projects it was built from, because a
   // total that treats a missing CVR as zero is the most confident wrong number
   // a portfolio screen can print.
-  const [command, portfolios, gates] = await Promise.all([
+  const [position, portfolios, enterprises, gates] = await Promise.all([
     api.get('/v1/enterprise/command'),
     api.get('/v1/portfolios').catch(() => ({ portfolios: [] })),
+    api.get('/v1/enterprises').catch(() => ({ enterprises: [] })),
     api.get('/v1/lifecycle/gates').catch(() => ({ gates: [] })),
   ]);
 
-  const { estate, financial, delivery, risks, projects } = command;
+  const { estate, financial, delivery, risks, projects } = position;
   const currency = estate.currency ?? 'GBP';
   const mixed = estate.currency === null;
 
@@ -39,6 +44,27 @@ export async function enterprise(root) {
         <div>
           <h1>Enterprise &amp; Portfolio</h1>
           <p>${state.session.enterprise} — governance, structure and portfolio performance. Execution happens inside a project.</p>
+        </div>
+        <div class="actions cmd-bar">
+          ${raw(commandBar([
+            {
+              id: 'portfolio',
+              label: 'Create portfolio',
+              permitted: can('ENTERPRISE_STRUCTURE', 'C') && enterprises.enterprises.length > 0,
+              reason: enterprises.enterprises.length === 0
+                ? 'A portfolio belongs to an enterprise, and this tenancy has none.'
+                : blockedReason('ENTERPRISE_STRUCTURE', 'C'),
+            },
+            {
+              id: 'project',
+              label: 'Create project',
+              tone: '',
+              permitted: can('ENTERPRISE_STRUCTURE', 'C') && portfolios.portfolios.length > 0,
+              reason: portfolios.portfolios.length === 0
+                ? 'A project belongs to a portfolio. Create one first.'
+                : blockedReason('ENTERPRISE_STRUCTURE', 'C'),
+            },
+          ]))}
         </div>
       </div>
 
@@ -166,4 +192,109 @@ export async function enterprise(root) {
       </div>
     `,
   );
+
+  /**
+   * The two commands that put something into the estate.
+   *
+   * This page read the portfolio and could not add to it: `POST /v1/portfolios`
+   * and `POST /v1/projects` existed with no way to reach them from the console,
+   * so an enterprise admin could see the estate and not create a project in it.
+   *
+   * `location` is sent as the nested object the schema now requires, which is
+   * why `transform` exists here — the form is flat because a person fills in
+   * three boxes, and the command is nested because that is the shape the ledger
+   * stores.
+   */
+  const COMMANDS = {
+    portfolio: {
+      title: 'Create a portfolio',
+      intent: 'A portfolio is the reporting and governance boundary a project is created inside.',
+      path: '/v1/portfolios',
+      submitLabel: 'Create portfolio',
+      fields: [
+        { name: 'name', label: 'Portfolio name' },
+        {
+          name: 'enterpriseId',
+          label: 'Enterprise',
+          type: 'select',
+          options: enterprises.enterprises.map((e) => ({ value: e.id, label: e.name })),
+        },
+        {
+          name: 'governanceModel',
+          label: 'Governance model',
+          type: 'select',
+          options: [
+            { value: 'CENTRALISED', label: 'Centralised' },
+            { value: 'DEVOLVED', label: 'Devolved' },
+            { value: 'HYBRID', label: 'Hybrid' },
+          ],
+        },
+        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT },
+        { name: 'countryCode', label: 'Country code', hint: 'Two letters, ISO 3166-1 — GB, US, AE' },
+        { name: 'city', label: 'City' },
+        {
+          name: 'reportingCadence',
+          label: 'Reporting cadence',
+          type: 'select',
+          options: [
+            { value: 'MONTHLY', label: 'Monthly' },
+            { value: 'FORTNIGHTLY', label: 'Fortnightly' },
+            { value: 'WEEKLY', label: 'Weekly' },
+          ],
+        },
+      ],
+      transform: (f) => ({ ...f, countryCode: String(f.countryCode ?? '').toUpperCase() }),
+    },
+
+    project: {
+      title: 'Create a project',
+      intent: 'The project starts at CONCEPT. Every later phase is reached by meeting a gate, not by being set here.',
+      path: '/v1/projects',
+      submitLabel: 'Create project',
+      fields: [
+        {
+          name: 'portfolioId',
+          label: 'Portfolio',
+          type: 'select',
+          options: portfolios.portfolios.map((p) => ({ value: p.id, label: p.name })),
+        },
+        { name: 'name', label: 'Project name' },
+        // Grouped so a reader looking for "Building" finds it, while the value
+        // stored stays one of the nine ONS categories.
+        { name: 'sectorType', label: 'Sector', type: 'select', options: SECTOR_GROUPED },
+        { name: 'assetType', label: 'Asset type', hint: 'What is being built — "Reservoir spillway", "Distribution centre"' },
+        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT },
+        { name: 'countryCode', label: 'Country code', hint: 'Two letters, ISO 3166-1' },
+        { name: 'city', label: 'City' },
+        { name: 'contractValueMinor', label: 'Contract value', type: 'number', hint: 'In minor units — pence for GBP' },
+        {
+          name: 'currency',
+          label: 'Currency',
+          type: 'select',
+          options: [
+            { value: 'GBP', label: 'GBP — pound sterling' },
+            { value: 'EUR', label: 'EUR — euro' },
+            { value: 'USD', label: 'USD — US dollar' },
+            { value: 'AED', label: 'AED — UAE dirham' },
+          ],
+        },
+        { name: 'plannedStart', label: 'Planned start', type: 'date', value: today() },
+        { name: 'plannedCompletion', label: 'Planned completion', type: 'date' },
+      ],
+      transform: ({ continentCode, countryCode, city, contractValueMinor, ...rest }) => ({
+        ...rest,
+        contractValueMinor: Number(contractValueMinor),
+        location: { continentCode, countryCode: String(countryCode ?? '').toUpperCase(), city },
+      }),
+    },
+  };
+
+  root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-command]');
+    if (!button) return;
+    const spec = COMMANDS[button.dataset.command];
+    if (!spec) return;
+    if (await command(spec)) await draw();
+  });
+  }
 }
