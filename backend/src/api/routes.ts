@@ -62,6 +62,7 @@ import { FIELD_FORBIDDEN_EVENTS } from '../field/sync.ts';
 import { estateBurn } from '../billing/burn.ts';
 import * as evidence from '../evidence/registry.ts';
 import * as perception from '../engines/perception.ts';
+import * as signing from '../signing/signature.ts';
 import { ownershipMap } from '../identity/ownership.ts';
 import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode } from '../identity/roles.ts';
 import { authorise, AUTHZ_OPTIONS, currentPhase } from '../engines/context.ts';
@@ -216,6 +217,17 @@ function sourceOf(ctx: RequestContext): 'WEB' | 'PWA' | 'ANDROID' | 'IOS' | 'SYS
   if (client === 'pwa') return 'PWA';
   return 'WEB';
 }
+
+/**
+ * Every capability area, read from the permission matrix rather than restated.
+ *
+ * A signature request names the area its document belongs to, and that choice
+ * decides who may ask for it and who may sign. Listing the areas here by hand
+ * would be a second vocabulary that drifts from the one being enforced.
+ */
+const CAPABILITY_AREAS: string[] = [
+  ...new Set(Object.values(PERMISSION_MATRIX).flatMap((matrix) => Object.keys(matrix))),
+].sort();
 
 /** The URL segment each perception task lives at. Kebab-case, as the API is. */
 const PERCEPTION_PATHS: Record<perception.PerceptionTask, string> = {
@@ -3659,6 +3671,94 @@ export const ROUTES: Route[] = [
         ...body<{ corrections?: Record<string, unknown> }>(ctx),
       }),
   },
+  // --- Signing ---------------------------------------------------------------
+  //
+  // A witnessed signature, and the record says so: the platform attests that an
+  // identity it authenticated, with multi-factor satisfied, affirmed a named
+  // document hash at a recorded time. The signing key is the platform's, not the
+  // signatory's, so this is a simple electronic signature with an evidenced
+  // trail — not an advanced or qualified one, and it never claims to be.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/signatures',
+    readOnly: true,
+    description: 'Signature requests and signatures, each re-verified as it is read',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      authorise(engineCtx, 'EVIDENCE_AUDIT', 'R');
+      return signing.signatureRegister(engineCtx, platform.signing);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/signatures',
+    description: 'Ask named people to sign a document the platform holds',
+    schema: {
+      type: 'object',
+      required: ['documentHash', 'purpose', 'area', 'requiredSignatories'],
+      properties: {
+        documentHash: stringField,
+        purpose: { type: 'string', minLength: 4 },
+        // The capability area the document belongs to. It decides who may ask
+        // and who may sign, so it is chosen from the platform's own list rather
+        // than free text.
+        area: { type: 'string', enum: CAPABILITY_AREAS },
+        dueBy: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        requiredSignatories: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['actorId', 'name', 'capacity'],
+            properties: { actorId: stringField, name: stringField, capacity: stringField },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      signing.requestSignature(projectContext(platform, ctx), platform.signing, platform.evidence, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/signatures/:requestId/sign',
+    description: 'Sign a document, witnessed by the platform',
+    schema: {
+      type: 'object',
+      required: ['signatoryName', 'affirmation'],
+      properties: {
+        signatoryName: stringField,
+        capacity: stringField,
+        // What the person is agreeing to, in their words. A signature with no
+        // affirmation records a click.
+        affirmation: { type: 'string', minLength: 4 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      signing.signDocument(projectContext(platform, ctx), platform.signing, {
+        requestId: ctx.params.requestId as string,
+        ...body<{ signatoryName: string; affirmation: string }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/signatures/:requestId/decline',
+    description: 'Refuse to sign, saying why. The refusal is the record',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 4 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      signing.declineSignature(projectContext(platform, ctx), {
+        requestId: ctx.params.requestId as string,
+        ...body<{ reason: string }>(ctx),
+      }),
+  },
+
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/perception/:draftId/discard',

@@ -112,6 +112,11 @@ process.stdout.write(
         ? 'hashes only — no store configured, so the platform holds no files'
         : `${config.evidence.storePath} — up to ${Math.round(config.evidence.maxBytes / 1_048_576)}MB per object`
     }`,
+    `  Signing      ${
+      config.signing.privateKeyPem === ''
+        ? 'no key — every signature request will be refused'
+        : 'Ed25519 key loaded; signatures are witnessed by the platform, not by the signatory'
+    }`,
     `  AI mode      ${config.ai.mode}${config.ai.mode === 'local' ? ' (deterministic engines, no provider spend)' : ''}`,
     `  Newsletter   ${
       config.newsletter.enabled

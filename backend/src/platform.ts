@@ -1,5 +1,6 @@
 import { AIOrchestrator } from './ai/orchestrator.ts';
 import { EvidenceStore } from './evidence/store.ts';
+import { SigningAuthority } from './signing/signature.ts';
 import { ExportService } from './export/exporter.ts';
 import { SyncEngine } from './field/sync.ts';
 import { ACUWallet, type ACUCaps, type ACUEntry } from './billing/acu.ts';
@@ -72,6 +73,11 @@ export class Platform {
    * not hold it — a state the register reports rather than hides.
    */
   readonly evidence: EvidenceStore;
+  /**
+   * The key the platform witnesses signatures with. Unconfigured means signing
+   * is refused rather than done with a key nobody can verify against tomorrow.
+   */
+  readonly signing: SigningAuthority;
 
   readonly #wallets = new Map<string, ACUWallet>();
   /**
@@ -91,9 +97,14 @@ export class Platform {
   readonly #tenants = new Map<string, Tenant>();
   readonly #users = new Map<string, PlatformUser>();
 
-  constructor(orchestrator = new AIOrchestrator(), evidence = new EvidenceStore()) {
+  constructor(
+    orchestrator = new AIOrchestrator(),
+    evidence = new EvidenceStore(),
+    signing = new SigningAuthority(),
+  ) {
     this.orchestrator = orchestrator;
     this.evidence = evidence;
+    this.signing = signing;
     this.sync = new SyncEngine(this.ledger);
     // The exporter asks whether a tenant may take a document out; the platform
     // is what knows. A tenant with no subscription on record is refused rather

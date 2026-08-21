@@ -16,6 +16,22 @@ import { blockedReason, can, draw, state } from '../app.js';
 export async function contracts(root) {
   const projectId = state.session.projectId;
 
+  // Signatures. Fetched rather than assumed, because whether this deployment can
+  // witness one at all is a fact about the deployment: with no key configured
+  // the platform refuses rather than signing with something nothing can verify
+  // against tomorrow.
+  const signing = await api.get(`/v1/projects/${projectId}/signatures`).catch(() => null);
+
+  // Who can sign, resolved to named people rather than left as a capability.
+  // The same map the platform already uses to answer "who owns this decision" —
+  // a document put to signature under an area goes to whoever approves there,
+  // and an area with nobody seated says so before anybody fills the form in.
+  const ownership = await api.get('/v1/ownership').catch(() => ({ areas: [] }));
+  const evidenceHeld = await api
+    .get(`/v1/projects/${projectId}/evidence`)
+    .then((r) => r.entries.filter((entry) => entry.held))
+    .catch(() => []);
+
   const b = await entityBundle(projectId, [
     'Contract',
     'ContractClause',
@@ -78,6 +94,11 @@ export async function contracts(root) {
             { id: 'dispute', label: 'Give notice of adjudication', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
             { id: 'refer', label: 'Record a referral', permitted: can('CONTRACTS_CLAIMS', 'U'), reason: blockedReason('CONTRACTS_CLAIMS', 'U') },
             { id: 'decision', label: 'Record a decision', permitted: can('CONTRACTS_CLAIMS', 'U'), reason: blockedReason('CONTRACTS_CLAIMS', 'U') },
+            // Offered only where the deployment can actually witness one. A
+            // control that always refuses is worse than one that is not there.
+            ...(signing?.available
+              ? [{ id: 'signature', label: 'Put a document to signature', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') }]
+              : []),
           ]))}
           ${can('CONTRACTS_CLAIMS', 'X') ? html`<button class="btn ghost" id="assess">Reassess claim</button>` : ''}
           ${can('CONTRACTS_CLAIMS', 'I') ? html`<button class="btn quiet" id="pack">Build evidence pack</button>` : ''}
@@ -426,8 +447,107 @@ export async function contracts(root) {
           }
         </div>
       </div>
+
+      ${
+        signing
+          ? html`<div class="card pad0" style="margin-top:14px">
+              <div style="padding:15px 17px 0">
+                <h3>Signatures</h3>
+                <p class="metric-sub" style="margin-bottom:12px">
+                  <b>Witnessed by the platform, not by the signatory.</b> What a signature here proves is that an identity the
+                  platform authenticated, with multi-factor satisfied, affirmed a named document by its content hash at a recorded
+                  time. The signing key is the platform's, so this is a simple electronic signature with an evidenced trail — not
+                  an advanced or qualified electronic signature, and it is never described as one.
+                  ${
+                    signing.available
+                      ? ''
+                      : html`<br><b>No signing key is configured on this deployment</b>, so every signature request is refused.`
+                  }
+                </p>
+              </div>
+              ${table({
+                headers: ['Document', 'Purpose', 'Signatories', 'Status'],
+                rows: signing.requests.map((request) => [
+                  request.documentDescription,
+                  request.purpose,
+                  request.requiredSignatories
+                    .map((s) => `${s.name}${request.signedBy.includes(s.actorId) ? ' ✓' : ''}`)
+                    .join(', '),
+                  request.status === 'OPEN' && request.requiredSignatories.some((s) => s.actorId === state.session.user.id)
+                    && !request.signedBy.includes(state.session.user.id)
+                    ? html`<button class="btn sm" data-sign="${request.id}">Sign</button>
+                        <button class="btn quiet sm" data-decline-sign="${request.id}">Refuse</button>`
+                    : badge(humanise(request.status), statusTone(request.status)),
+                ]),
+                empty: 'Nothing has been put to signature on this project.',
+              })}
+              ${
+                signing.signatures.length > 0
+                  ? html`<div style="padding:0 17px 15px">
+                      <h3 style="margin-top:14px">Signed</h3>
+                      ${table({
+                        headers: ['Who', 'Capacity', 'What they agreed', 'When', 'Verifies'],
+                        rows: signing.signatures.map((s) => [
+                          s.signatoryName ?? s.signatory,
+                          s.declined ? '—' : (s.capacity ?? '—'),
+                          s.declined ? `Refused: ${s.reason}` : s.affirmation,
+                          date(s.signedAt ?? s.declinedAt),
+                          s.declined
+                            ? badge('refused', 'bad')
+                            : badge(s.verified ? 'verifies' : 'does not verify', s.verified ? 'good' : 'bad'),
+                        ]),
+                      })}
+                      <div class="metric-sub" style="margin-top:9px">
+                        Each signature is re-checked against the platform's public key as this page is read, rather than trusting a
+                        stored flag. A record whose value is that it can be checked years later needs the check to actually run.
+                      </div>
+                    </div>`
+                  : ''
+              }
+            </div>`
+          : ''
+      }
     `,
   );
+
+  root.addEventListener('click', async (event) => {
+    const signButton = event.target.closest('[data-sign]');
+    if (signButton) {
+      const affirmation = window.prompt(
+        'What are you agreeing to? This is recorded in your words, signed, and cannot be edited afterwards.',
+      );
+      if (!affirmation) return;
+      try {
+        await api.post(`/v1/projects/${projectId}/signatures/${signButton.dataset.sign}/sign`, {
+          signatoryName: state.session.user.name,
+          affirmation,
+        });
+        toast('Signed', 'Witnessed by the platform and recorded in the Golden Thread', 'ok');
+        await draw();
+      } catch (error) {
+        // The MFA refusal is the one worth naming rather than retitling: it is
+        // the strongest thing the ceremony asserts about who signed.
+        toast(
+          error.code === 'MFA_REQUIRED_TO_SIGN' ? 'Multi-factor required' : 'Not signed',
+          error.message,
+          error.code === 'MFA_REQUIRED_TO_SIGN' ? 'warn' : 'err',
+        );
+      }
+      return;
+    }
+
+    const refuseButton = event.target.closest('[data-decline-sign]');
+    if (refuseButton) {
+      const reason = window.prompt('Why are you not signing? The refusal is recorded and it ends the request.');
+      if (!reason) return;
+      try {
+        await api.post(`/v1/projects/${projectId}/signatures/${refuseButton.dataset.declineSign}/decline`, { reason });
+        await draw();
+      } catch (error) {
+        toast('Not recorded', error.message, 'err');
+      }
+    }
+  });
 
   document.getElementById('assess')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
@@ -505,6 +625,40 @@ function contractLabel(contract) {
   return form.startsWith(suite) ? form : `${suite} ${form}`.trim();
 
   const COMMANDS = {
+    signature: {
+      title: 'Put a document to signature',
+      intent:
+        'Witnessed by the platform: an authenticated identity with multi-factor satisfied affirms this document by its content hash. '
+        + 'The signing key is the platform\'s, not the signatory\'s, so this is a simple electronic signature with an evidenced trail — not a qualified one.',
+      path: `/v1/projects/${projectId}/signatures`,
+      submitLabel: 'Request signatures',
+      fields: [
+        { name: 'documentHash', label: 'Document', type: 'select',
+          options: evidenceHeld.map((entry) => ({ value: entry.hash, label: `${entry.description} · ${entry.type}` })) },
+        { name: 'purpose', label: 'What is being agreed', type: 'textarea', rows: 3,
+          hint: 'This is signed along with the document hash, so a signature agreeing one thing cannot be read as agreeing another.' },
+        { name: 'area', label: 'Whose decision this is', type: 'select',
+          hint: 'The request goes to whoever approves in that area.',
+          options: (ownership.areas ?? []).map((area) => ({
+            value: area.area,
+            label:
+              area.approve.length > 0
+                ? `${humanise(area.area)} — ${area.approve.map((person) => person.name).join(', ')}`
+                : `${humanise(area.area)} — nobody seated to sign`,
+          })) },
+      ],
+      // The signatories are resolved here rather than typed. Naming them by
+      // hand is how a certificate goes to somebody who left in March.
+      transform: ({ area, ...rest }) => ({
+        ...rest,
+        area,
+        requiredSignatories: ((ownership.areas ?? []).find((entry) => entry.area === area)?.approve ?? []).map((person) => ({
+          actorId: person.userId,
+          name: person.name,
+          capacity: humanise(person.role),
+        })),
+      }),
+    },
     dispute: {
       title: 'Give notice of adjudication',
       intent:

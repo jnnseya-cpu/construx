@@ -325,6 +325,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PERCEPTION_DRAFT_PRODUCED', 'PerceptionDraft', 'AI_EXECUTE', 'EVIDENCE', { aiAllowed: true, requiresEvidence: true, creates: true }),
   def('PERCEPTION_DRAFT_CONFIRMED', 'PerceptionDraft', 'APPROVE', 'EVIDENCE', { requiresEvidence: true }),
   def('PERCEPTION_DRAFT_DISCARDED', 'PerceptionDraft', 'REJECT', 'EVIDENCE', { requiresEvidence: true }),
+
+  // Signing. None of these is AI-authorable, and that is the point rather than
+  // an oversight: a signature is a person agreeing to something, and an agent
+  // whose mandate stops at PROPOSE cannot be the one who agreed.
+  def('SIGNATURE_REQUESTED', 'SignatureRequest', 'CREATE', 'GOVERNANCE', { requiresEvidence: true }),
+  def('SIGNATURE_REQUEST_PROGRESSED', 'SignatureRequest', 'UPDATE', 'GOVERNANCE', { requiresEvidence: true }),
+  def('SIGNATURE_REQUEST_SETTLED', 'SignatureRequest', 'UPDATE', 'GOVERNANCE', { requiresEvidence: true }),
+  def('DOCUMENT_SIGNED', 'Signature', 'APPROVE', 'GOVERNANCE', { requiresEvidence: true, creates: true }),
+  def('SIGNATURE_DECLINED', 'Signature', 'REJECT', 'GOVERNANCE', { requiresEvidence: true, creates: true }),
   def('EXPORT_GENERATED', 'Export', 'EXECUTE', 'EVIDENCE', { requiresEvidence: true }),
   def('REPLAY_SNAPSHOT_TAKEN', 'ReplaySnapshot', 'EXECUTE', 'EVIDENCE'),
 

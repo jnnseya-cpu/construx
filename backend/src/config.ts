@@ -85,6 +85,23 @@ export const config = {
     linkTtlSeconds: num('EVIDENCE_LINK_TTL_SECONDS', 300),
   },
 
+  /**
+   * The Ed25519 key the platform witnesses signatures with, as a PKCS8 PEM.
+   *
+   * Unset means signing is refused. Generating one at boot would be worse than
+   * refusing: every signature the platform had ever made would fail
+   * verification after the next restart, and it would fail silently.
+   *
+   *   openssl genpkey -algorithm ed25519 -out signing.pem
+   *
+   * Newlines in an environment variable are awkward, so `\n` is accepted and
+   * expanded — the alternative is operators pasting a one-line PEM that no
+   * parser accepts and reading it as a code fault.
+   */
+  signing: {
+    privateKeyPem: str('SIGNING_PRIVATE_KEY_PEM', '').replace(/\\n/g, '\n'),
+  },
+
   auth: {
     required: bool('GATEWAY_REQUIRE_AUTH', true),
     exposeMfa: bool('GATEWAY_AUTH_EXPOSE_MFA', true),
@@ -262,6 +279,11 @@ export function assertProductionSafety(): string[] {
     if (config.evidence.storePath === '') {
       warnings.push(
         'EVIDENCE_STORE_PATH is unset — the platform records evidence hashes but holds no files, so a chain is only as good as whoever still has the original',
+      );
+    }
+    if (config.signing.privateKeyPem === '') {
+      warnings.push(
+        'SIGNING_PRIVATE_KEY_PEM is unset — the platform cannot witness a signature, and every signing request will be refused',
       );
     }
     if (config.ledger.journalPath === '') {

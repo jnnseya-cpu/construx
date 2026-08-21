@@ -1149,6 +1149,81 @@ read as saying one has. What *has* been run end to end, in the suite, is
 extraction → draft → correction → confirmation → registered drawing, and in a
 browser, the honest refusal that a local deployment gives instead.
 
+---
+
+### Signing — a witnessed signature, and it says so
+
+`backend/src/signing/signature.ts`. The blueprint listed e-signature as a
+connector to SignWell or DocuSign. It is built here instead, on `node:crypto`
+Ed25519, because a signing service would have broken two settled decisions —
+zero runtime dependencies, and secrets that stay on the server — and neither
+needed bending. What a signing service sells beyond a signature is a certificate
+authority relationship this platform is not in, and pretending otherwise is the
+one thing that would actually matter.
+
+**What a signature here proves, stated on the record rather than implied.** The
+platform holds the key. A signature attests that an identity the platform
+authenticated, with multi-factor satisfied, affirmed a named document — by its
+content hash — at a recorded time, in their own words, and that the attestation
+is in an append-only chain. It does **not** attest that a key under the
+signatory's sole control was used, because there is no such key. Under eIDAS and
+its UK equivalent that makes this a *simple* electronic signature with unusually
+good evidence behind it — admissible, and what the overwhelming majority of
+construction documents are signed with in practice — and not an advanced or
+qualified one. Every record carries `assurance: WITNESSED_BY_PLATFORM` and a
+sentence saying so, so nobody has to have read this file.
+
+The rules, each with a test that tries to break it:
+
+- **A key is configured or signing is refused.** An ephemeral key generated at
+  boot would invalidate every signature the platform had ever made on the next
+  restart, silently. `SIGNING_PRIVATE_KEY_PEM` unset means requests are refused
+  at the request, not at the first signature — a request raised where it could
+  never complete reads as progress and produces nothing. A key that is not
+  Ed25519, or not a key at all, is refused the same way.
+- **You cannot put to signature a document the platform cannot show anybody.**
+  The bytes must be held, not merely hashed. A signature over the hash of a
+  document nobody has is a signature over a number — which is precisely the state
+  the whole platform was in before the object store existed.
+- **What is signed is a statement, canonicalised.** Request, document hash,
+  purpose, signatory, tenancy, project, time and assurance. Every field is there
+  because dropping it lets a signature be lifted somewhere it does not belong,
+  and each one is asserted to change the signed bytes. Canonical ordering means
+  verification is reproducible by anyone holding the record and the public key,
+  which travels on the signature so a later key rotation cannot silently
+  invalidate what it signed.
+- **Multi-factor or no signature.** The strongest thing this ceremony can assert
+  about who signed; without it a signature is made by whoever had the password.
+- **Only the people who were asked, once each, with something actually said.** A
+  blank affirmation records a click.
+- **A refusal is a record and it ends the request.** Somebody refusing to sign is
+  a materially different fact from nobody getting round to it, and a half-signed
+  document left open reads as progress toward an agreement that is not coming.
+- **The register verifies as it reads.** Every signature is re-checked against
+  the public key when the screen is drawn rather than trusting a stored flag: the
+  record's value is that it can be checked years later, and a check nobody runs
+  is a check that does not work.
+
+Signing takes *read* on the document's capability area, not approve. That was
+briefly `A` and it was wrong in a way worth recording: a quantity surveyor holds
+`PAYMENT_APPLICATIONS` create and not approve — they prepare the application, the
+employer certifies it — so requiring approve meant the person who prepared a
+certificate could not put their name to it. The authorisation that decides *who
+signs* is the request, made by somebody who does hold create in the area; what is
+checked at signing is that the signatory may see what they are signing.
+
+Signatories are resolved from the ownership map rather than typed, so a request
+goes to whoever actually holds approval in that area today — naming them by hand
+is how a certificate goes to somebody who left in March — and an area with nobody
+seated says so in the picker before the form is filled in.
+
+Verified in a browser end to end: a certificate filed and its file stored, put to
+signature by the surveyor, signed by the client representative with an
+affirmation in their own words, the request moving to COMPLETE and the signature
+verifying on the register. None of these events is AI-authorable, which is the
+same rule that keeps agents at PROPOSE: a signature is a person agreeing to
+something, and nothing else can be the one who agreed.
+
 Regenerate the assets with `node tools/icons.mjs` after any brand change; the
 generator parses `logo-glyph.svg` rather than restating it, and refuses any path
 it cannot render exactly. The PNG encoder is in that file: `node:zlib` is built

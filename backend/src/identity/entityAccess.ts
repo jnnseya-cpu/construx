@@ -156,6 +156,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // drawing, a take-off or an observation — and until somebody confirms it, it
   // must not be readable as though it were one.
   PerceptionDraft: { area: 'EVIDENCE_AUDIT' },
+  // A signature request names who must sign and on what; the signature is the
+  // record of their agreement. Both are audit material rather than the
+  // commercial or contractual document they concern, and are readable by
+  // everyone who may read the audit trail — which is what makes a signature
+  // checkable rather than merely asserted.
+  SignatureRequest: { area: 'EVIDENCE_AUDIT' },
+  Signature: { area: 'EVIDENCE_AUDIT' },
   Export: { area: 'EVIDENCE_AUDIT' },
   ReplaySnapshot: { area: 'EVIDENCE_AUDIT' },
   AIExecution: { area: 'AI_EXECUTION' },
