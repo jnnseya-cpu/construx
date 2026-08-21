@@ -1458,6 +1458,29 @@ Verified against a running server: a project created in Columbus, Ohio at
 per-field problem+json error; and the estate's contract-value card switched to
 "mixed currencies" rather than adding dollars to pounds.
 
+**The operator can see spend across the estate, and what it really earns.**
+Each tenant's wallet knew its own position and nothing put those positions side
+by side, which left the platform centre unable to answer the question the
+commercial model depends on. `GET /v1/admin/burn` reports four figures, each a
+different question: **runway** per tenant (null where a tenant is not spending,
+never a large number that reads as the healthiest account on the estate),
+**realised multiplier** across the estate, **concentration** — the share of
+revenue from the largest single tenant, which the arithmetic alone never
+reveals — and **absorbed margin**.
+
+Absorbed margin was found by running it. The seeded estate reported a realised
+multiplier of 3.806x against a configured 4x, which looks like a
+misconfiguration and is not: `settle()` caps a charge at the amount held, so a
+customer is never billed above what was reserved and disclosed, and an execution
+that overruns its estimate costs the platform the difference. The figure
+reconciles exactly — `(784 + 40) / 206 = 4.000` — and it is an
+estimation-quality signal rather than a leak. Without it the low multiplier
+invites the wrong diagnosis and the wrong fix.
+
+The view keeps the same boundary as the tenant estate view: spend and margin
+only. An ACU entry names a module and a feature, both billing facts, and never
+the content of the work that produced the charge.
+
 **The estate answers "what changed" and "when will it finish".** Both existed
 per project and neither was aggregated, so a portfolio reader learned them one
 project at a time.

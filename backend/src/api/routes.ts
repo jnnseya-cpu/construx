@@ -59,6 +59,7 @@ import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { createMfaChallenge, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
 import { FIELD_FORBIDDEN_EVENTS } from '../field/sync.ts';
+import { estateBurn } from '../billing/burn.ts';
 import { ownershipMap } from '../identity/ownership.ts';
 import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode } from '../identity/roles.ts';
 import { authorise, AUTHZ_OPTIONS, currentPhase } from '../engines/context.ts';
@@ -390,6 +391,34 @@ export const ROUTES: Route[] = [
           };
         }),
       };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/burn',
+    description: 'AI spend, realised margin and runway across every tenancy (platform operator only)',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may see estate spend', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      // Spend and margin, and nothing about what any tenant is building — the
+      // same boundary the tenant estate view keeps. An ACU entry names a module
+      // and a feature, both of which are billing facts; it never carries the
+      // content of the work that produced the charge.
+      const windowDays = ctx.query.get('windowDays') ? Number(ctx.query.get('windowDays')) : undefined;
+      return estateBurn(
+        platform.tenants().map((tenant) => {
+          const wallet = platform.wallet(tenant.id);
+          return {
+            tenantId: tenant.id,
+            legalName: tenant.legalName,
+            availableMinor: wallet.availableMinor(),
+            entries: wallet.entries(),
+          };
+        }),
+        windowDays,
+      );
     },
   },
   {

@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { badge, date, html, humanise, money, raw, render, table } from '../lib/ui.js';
+import { badge, date, html, humanise, money, pct, raw, render, table } from '../lib/ui.js';
 import { state } from '../app.js';
 
 /**
@@ -15,12 +15,13 @@ export async function admin(root) {
   const roles = state.session.user.roles ?? [];
   const isOperator = roles.includes('PLATFORM_ADMIN');
 
-  const [routes, plane, matrix, logs, estate] = await Promise.all([
+  const [routes, plane, matrix, logs, estate, burn] = await Promise.all([
     api.get('/v1/routes').catch(() => ({ routes: [] })),
     api.get('/v1/ai/control-plane').catch(() => null),
     api.get('/v1/permissions/matrix').catch(() => ({ matrix: {} })),
     isOperator ? api.get('/v1/admin/logs').catch(() => null) : Promise.resolve(null),
     isOperator ? api.get('/v1/admin/tenants').catch(() => null) : Promise.resolve(null),
+    isOperator ? api.get('/v1/admin/burn').catch(() => null) : Promise.resolve(null),
   ]);
 
   const areas = new Set();
@@ -72,6 +73,83 @@ export async function admin(root) {
           <div class="metric-sub">${logs?.metrics ? `p95 ${logs.metrics.p95DurationMs}ms` : 'operator access required'}</div>
         </div>
       </div>
+
+      ${
+        burn
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">AI spend across the estate — last ${burn.windowDays} days</h3>
+              <div class="grid g4" style="padding:12px 17px 0">
+                <div>
+                  <div class="metric-sub">Billed</div>
+                  <div class="metric">${money(burn.billedMinor)}</div>
+                  <div class="metric-sub">${money(burn.dailyBurnMinor)} per day</div>
+                </div>
+                <div>
+                  <div class="metric-sub">Provider cost</div>
+                  <div class="metric">${money(burn.rawCostMinor)}</div>
+                  <div class="metric-sub">margin ${money(burn.marginMinor)}</div>
+                </div>
+                <div>
+                  <div class="metric-sub">Realised multiplier</div>
+                  <div class="metric ${raw(burn.realisedMultiplier === null ? '' : burn.realisedMultiplier < 3 ? 'warn' : 'good')}">
+                    ${burn.realisedMultiplier === null ? '—' : `${burn.realisedMultiplier}x`}
+                  </div>
+                  <div class="metric-sub">
+                    ${
+                      burn.realisedMultiplier === null
+                        ? 'Nothing spent in the window'
+                        : burn.absorbedMinor > 0
+                          ? html`${money(burn.absorbedMinor)} absorbed — executions that overran their estimate`
+                          : 'what was charged, not what is configured'
+                    }
+                  </div>
+                </div>
+                <div>
+                  <div class="metric-sub">Concentration</div>
+                  <div class="metric ${raw(burn.concentration !== null && burn.concentration > 0.6 ? 'warn' : '')}">
+                    ${burn.concentration === null ? '—' : pct(burn.concentration * 100, 0)}
+                  </div>
+                  <div class="metric-sub">from the largest single tenant</div>
+                </div>
+              </div>
+              ${table({
+                headers: ['Tenant', 'Billed', 'Provider cost', 'Realised', 'Absorbed', 'Per day', 'Available', 'Runway'],
+                align: ['', 'num', 'num', 'num', 'num', 'num', 'num', 'num'],
+                rows: burn.tenants.map((t) => [
+                  t.legalName,
+                  money(t.billedMinor),
+                  money(t.rawCostMinor),
+                  t.realisedMultiplier === null ? '—' : `${t.realisedMultiplier}x`,
+                  t.absorbedMinor > 0 ? money(t.absorbedMinor) : '—',
+                  money(t.dailyBurnMinor),
+                  money(t.availableMinor),
+                  // Null is not a long runway. A tenant that is not spending has
+                  // no runway to report, and a large number would read as the
+                  // healthiest account on the estate.
+                  t.runwayDays === null
+                    ? html`<span class="metric-sub">not spending</span>`
+                    : t.runwayDays <= burn.windowDays
+                      ? badge(`${t.runwayDays}d`, t.runwayDays <= 7 ? 'bad' : 'warn')
+                      : `${t.runwayDays}d`,
+                ]),
+                empty: 'No tenancy has spent in this window',
+              })}
+              <div style="padding:0 17px 15px"><div class="metric-sub">
+                ${
+                  burn.runningOut.length > 0
+                    ? html`<b>${burn.runningOut.length} tenanc${burn.runningOut.length === 1 ? 'y' : 'ies'} lose AI service inside the window</b>
+                        at the current rate: ${burn.runningOut.map((t) => `${t.legalName} (${t.runwayDays}d)`).join(', ')}.`
+                    : 'No tenancy runs out of credit inside the window at its current rate.'
+                }
+                Absorbed margin is an estimation-quality signal, not a leak: a charge is capped at the amount held, so
+                a customer is never billed above what was reserved and disclosed, and an execution that overruns its
+                estimate costs the platform the difference.
+                Spend and margin only — an ACU entry names a module and a feature, both billing facts, and never the
+                content of the work that produced the charge.
+              </div></div>
+            </div>`
+          : ''
+      }
 
       ${
         estate
