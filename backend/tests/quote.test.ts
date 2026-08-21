@@ -269,39 +269,45 @@ describe('the estimate says where it came from', () => {
     assert.equal(quote.highChargeMinor, Math.ceil(200 * quote.multiplier));
   });
 
-  it('prices history at today’s multiplier rather than the one it was charged at', () => {
-    // The volume incentive lowers the multiplier as monthly spend rises. A
-    // charge settled at 3.0x says nothing about what the same work costs at
-    // 2.5x, so the history is kept raw and repriced.
+  it('keeps history raw and reprices it, rather than caching what was charged', () => {
+    // The property: a settled charge is not the unit of history. Raw provider
+    // cost is stored and the quote is always ceil(raw x the current multiplier),
+    // so if the rate ever moves the history reprices with it.
+    //
+    // This used to prove that by switching the volume incentive on and watching
+    // the rate drop. The bands are now flat at 4x by decision, so the
+    // demonstration inverts: flipping the switch must change nothing at all.
+    // That is the stronger assertion — a flag that silently discounted would be
+    // how a sub-4x rate came back without anyone deciding it should.
     const w = wallet(10_000_000);
     const hold = w.reserve({
       aiRequestId: 'req-1',
-      // Above the first volume band, so enabling the incentive actually moves
-      // the rate rather than landing back on the standard multiplier.
       estimatedRawCostMinor: 250_000,
       module: 'PLANNING',
       feature: 'delay_risk_forecast',
     });
     w.settle(hold.holdId, 250_000, 'OPENAI');
 
-    const before = orchestrator.quote({
-      capability: 'REASONING',
-      engine: 'PLANNING',
-      taskType: 'delay_risk_forecast',
-      wallet: w,
-    });
+    const ask = () =>
+      orchestrator.quote({
+        capability: 'REASONING',
+        engine: 'PLANNING',
+        taskType: 'delay_risk_forecast',
+        wallet: w,
+      });
 
+    const before = ask();
     w.setVolumeIncentive(true);
-    const after = orchestrator.quote({
-      capability: 'REASONING',
-      engine: 'PLANNING',
-      taskType: 'delay_risk_forecast',
-      wallet: w,
-    });
+    const after = ask();
 
     assert.equal(before.estimatedRawCostMinor, after.estimatedRawCostMinor, 'the same measurement');
-    assert.ok(after.multiplier < before.multiplier, 'at a better rate');
-    assert.ok(after.estimatedChargeMinor < before.estimatedChargeMinor);
+    assert.equal(after.multiplier, 4, 'the incentive produced a rate below the headline');
+    assert.equal(after.multiplier, before.multiplier, 'the rate moved when nothing should move it');
+    assert.equal(after.estimatedChargeMinor, before.estimatedChargeMinor);
+
+    // And the charge really is derived from the raw figure, not carried over
+    // from the settled entry.
+    assert.equal(after.estimatedChargeMinor, Math.ceil(after.estimatedRawCostMinor * 4));
   });
 
   it('shows what the balance would be afterwards, and refuses to show a negative one', () => {

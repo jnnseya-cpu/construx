@@ -89,19 +89,29 @@ export type ACUAlert = {
 };
 
 /**
- * Volume incentive: large consumers get a lower effective multiplier while the
- * platform stays profitable. Thresholds are on monthly *raw* AI spend.
+ * Volume bands. **Every band is 4×.**
  *
- * Rebased when the headline rate moved from 3x to 4x, keeping the same shape of
- * discount rather than leaving the bands where they were — which would have
- * made every large customer cheaper than the headline by accident, and quietly
- * turned the volume incentive into a way to pay less than the stated price
- * without qualifying for anything.
+ * These previously stepped 4.0 → 3.6 → 3.3, so a large consumer paid below the
+ * headline rate. That was a deliberate volume incentive and it has been
+ * removed by decision: the price is 4× and there is no rate below it anywhere
+ * in the platform. A tenant spending a million a month is charged at exactly
+ * the same multiplier as one spending ten pounds.
+ *
+ * The table is kept rather than deleted, and this is the load-bearing part.
+ * `effectiveMultiplier` reads it, the wallet reads that, and every charge is
+ * stamped with the multiplier it was raised at — so if a band is ever
+ * reintroduced the plumbing is already in place and audited, and the discount
+ * would show up in the realised multiplier on the operator's estate view rather
+ * than hiding inside a total. Deleting the mechanism would mean rebuilding it
+ * blind and re-deriving what it does to margin.
+ *
+ * The floor in `minimumMultiplier` still guards it: nothing here can take a
+ * charge below the company's profit rule, whatever the bands say.
  */
-const VOLUME_BANDS: Array<{ upToRawMinor: number; multiplier: number }> = [
+export const VOLUME_BANDS: Array<{ upToRawMinor: number; multiplier: number }> = [
   { upToRawMinor: 200_000, multiplier: 4.0 },
-  { upToRawMinor: 1_000_000, multiplier: 3.6 },
-  { upToRawMinor: Number.POSITIVE_INFINITY, multiplier: 3.3 },
+  { upToRawMinor: 1_000_000, multiplier: 4.0 },
+  { upToRawMinor: Number.POSITIVE_INFINITY, multiplier: 4.0 },
 ];
 
 /**
@@ -493,7 +503,7 @@ export class ACUWallet {
    *
    * Raw rather than billed, because the multiplier moves with monthly volume:
    * a charge settled last month at 3.0x says nothing about what the same work
-   * costs today at 2.5x. Re-applying the current multiplier to a raw history
+   * costs today at a different rate. Re-applying the current multiplier to a raw history
    * gives a figure that is comparable with the one the next reservation will
    * compute.
    */

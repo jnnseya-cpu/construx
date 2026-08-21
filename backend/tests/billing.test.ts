@@ -132,9 +132,28 @@ describe('volume incentive', () => {
     assert.equal(effectiveMultiplier(100_000, true), 4.0);
   });
 
-  it('steps down for larger consumers while staying above cost', () => {
-    assert.equal(effectiveMultiplier(500_000, true), 3.6);
-    assert.equal(effectiveMultiplier(5_000_000, true), 3.3);
+  it('charges 4x at every level of spend, with no step down', () => {
+    // The bands stepped 4.0 → 3.6 → 3.3 and were flattened by decision: the
+    // price is 4x and there is no rate below it anywhere in the platform. A
+    // tenant spending a million a month pays the same multiplier as one
+    // spending ten pounds.
+    for (const spend of [0, 100_000, 500_000, 5_000_000, Number.MAX_SAFE_INTEGER]) {
+      assert.equal(
+        effectiveMultiplier(spend, true),
+        4.0,
+        `a monthly spend of ${spend} was not charged at the headline rate`,
+      );
+    }
+  });
+
+  it('is the same rate whether or not the incentive is switched on', () => {
+    // The mechanism is retained and audited so a band could be reintroduced
+    // deliberately. Until one is, the switch changes nothing — which is the
+    // property worth asserting, because a flag that silently discounts is how
+    // a sub-4x rate would come back without anyone deciding it should.
+    for (const spend of [0, 500_000, 5_000_000]) {
+      assert.equal(effectiveMultiplier(spend, true), effectiveMultiplier(spend, false));
+    }
   });
 
   it('never discounts through the floor, whatever the bands say', () => {
@@ -246,10 +265,25 @@ describe('seat pricing', () => {
     assert.equal(PACKAGES.PROFESSIONAL_DELIVERY.includedSeats, 25);
   });
 
-  it('offers the three ACU bundles, each better value than the last', () => {
+  it('offers the three ACU bundles at one rate, because 4x is the rate', () => {
+    // This asserted that each bundle was better value than the last, which was
+    // true when the yield was hardcoded at a 3x-era ladder. With a flat
+    // multiplier a bundle is a convenience — fewer transactions, one purchase
+    // order — and not a discount, and the catalogue must not imply otherwise.
     const rate = (b: { priceMinor: number; usableAcus: number }) => b.usableAcus / b.priceMinor;
-    assert.ok(rate(ACU_BUNDLES.GROWTH) > rate(ACU_BUNDLES.STARTER));
-    assert.ok(rate(ACU_BUNDLES.SCALE) > rate(ACU_BUNDLES.GROWTH));
+    assert.equal(rate(ACU_BUNDLES.GROWTH), rate(ACU_BUNDLES.STARTER));
+    assert.equal(rate(ACU_BUNDLES.SCALE), rate(ACU_BUNDLES.GROWTH));
+  });
+
+  it('publishes a yield derived from the multiplier, not a stale number', () => {
+    // The defect this replaces: 10,000 / 40,000 / 110,000 ACUs were advertised
+    // — the figures a 3x markup produces — while billing ran at 4x, so the
+    // catalogue promised a third more than the engine would ever deliver.
+    for (const bundle of Object.values(ACU_BUNDLES)) {
+      assert.equal(bundle.multiplier, 4);
+      assert.equal(bundle.usableAcus, Math.floor(bundle.priceMinor / 4));
+    }
+    assert.equal(ACU_BUNDLES.STARTER.usableAcus, 7_500);
   });
 
   it('keeps AI out of the package, whatever the package', () => {

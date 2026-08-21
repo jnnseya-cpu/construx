@@ -162,16 +162,28 @@ describe('rule 3 — provider cost is charged at 4x', () => {
     }
   });
 
-  it('keeps the volume incentive a discount from 4x that still clears the profit rule', () => {
-    assert.equal(effectiveMultiplier(0, false), 4);
-    assert.equal(effectiveMultiplier(100_000, true), 4);
-    assert.ok(effectiveMultiplier(5_000_000, true) < 4, 'the incentive stopped being an incentive');
+  it('charges 4x at every level of spend, and never less', () => {
+    // This asserted the opposite — that a large consumer was discounted below
+    // the headline. The bands were flattened by decision: 4x is the price and
+    // no rate below it exists anywhere in the platform.
+    for (const spend of [0, 100_000, 5_000_000, Number.MAX_SAFE_INTEGER]) {
+      for (const incentive of [true, false]) {
+        assert.equal(
+          effectiveMultiplier(spend, incentive),
+          4,
+          `spend ${spend} with incentive ${incentive} was not charged at 4x`,
+        );
+      }
+    }
+  });
 
-    // Even the deepest discount leaves more than the required profit.
-    const deepest = effectiveMultiplier(5_000_000, true);
+  it('clears the profit rule at the rate it actually charges', () => {
+    // The floor is still the guard. It mattered more when the bands discounted;
+    // it matters now as the thing that stops a future edit selling at a loss.
+    const rate = effectiveMultiplier(5_000_000, true);
     assert.ok(
-      profitPercent(100, 100 * deepest) >= config.billing.minimumProfitPercent,
-      `the deepest volume band leaves ${profitPercent(100, 100 * deepest)}% profit`,
+      profitPercent(100, 100 * rate) >= config.billing.minimumProfitPercent,
+      `charging at ${rate}x leaves ${profitPercent(100, 100 * rate)}% profit`,
     );
   });
 });

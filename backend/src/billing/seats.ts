@@ -1,3 +1,5 @@
+import { minimumMultiplier } from './acu.ts';
+import { config } from '../config.ts';
 import type { Role } from '../identity/roles.ts';
 
 /**
@@ -180,15 +182,79 @@ export type BundleName = 'STARTER' | 'GROWTH' | 'SCALE';
 export type BundleDefinition = {
   bundle: BundleName;
   priceMinor: number;
-  /** Approximate ACUs the bundle yields once the markup is applied. */
+  /**
+   * ACUs the bundle yields at the headline multiplier, **derived** from the
+   * price rather than stated.
+   *
+   * It was a hardcoded figure and it had gone stale: the three bundles
+   * advertised 10,000 / 40,000 / 110,000 ACUs, which are the numbers a 3×
+   * markup produces. The platform charges at 4×, so £300 buys 7,500 ACUs and
+   * the published figure overstated every bundle by a third.
+   *
+   * No money was misposted — a top-up credits the price and spend is billed at
+   * the effective multiplier, so this figure only ever appeared on the pricing
+   * catalogue. That is precisely what made it worth fixing: it is a promise to
+   * a customer that the billing engine was never going to keep, and the
+   * customer would find out when the bundle ran out a third early.
+   *
+   * Deriving it means the multiplier decides both what is charged and what a
+   * bundle is worth, so the two cannot disagree again. A volume incentive can
+   * only make a bundle go **further** than this, never less far, so the figure
+   * is a floor and is described as one.
+   */
   usableAcus: number;
+  /** The markup this bundle buys ACUs at. Lower is a bigger discount. */
+  multiplier: number;
 };
 
-export const ACU_BUNDLES: Record<BundleName, BundleDefinition> = {
-  STARTER: { bundle: 'STARTER', priceMinor: 30_000, usableAcus: 10_000 },
-  GROWTH: { bundle: 'GROWTH', priceMinor: 100_000, usableAcus: 40_000 },
-  SCALE: { bundle: 'SCALE', priceMinor: 250_000, usableAcus: 110_000 },
+/**
+ * The price of each bundle. What it buys is computed from the headline
+ * multiplier — **4×, flat, for every bundle**.
+ *
+ * Two earlier versions of this were wrong in opposite directions and both are
+ * worth recording.
+ *
+ * The original hardcoded 10,000 / 40,000 / 110,000 ACUs. Those are the numbers
+ * a 3× markup produces, and they had gone stale when the multiplier moved to
+ * 4×: the catalogue promised a third more than the billing engine would ever
+ * deliver. No money was misposted — a top-up credits the price and spend is
+ * billed at the effective multiplier, so the figure only ever appeared on the
+ * pricing page — but it was a promise to a customer that could not be kept.
+ *
+ * The second version derived the yield from `VOLUME_BANDS`, which then stepped
+ * down to 3.6 and 3.3 so a larger bundle stayed better value. That
+ * reintroduced the sub-4× rates the pricing decision exists to rule out; the
+ * bands are now flat at 4× too.
+ *
+ * The rate is 4×. A consequence follows and is stated rather than hidden: with
+ * a flat multiplier every bundle yields exactly the same ACUs per pound, so a
+ * bundle is a convenience — fewer transactions, one purchase order — and not a
+ * discount. Nothing in the product should imply otherwise.
+ */
+const BUNDLE_PRICES: Record<BundleName, number> = {
+  STARTER: 30_000,
+  GROWTH: 100_000,
+  SCALE: 250_000,
 };
+
+export const ACU_BUNDLES: Record<BundleName, BundleDefinition> = Object.fromEntries(
+  (Object.keys(BUNDLE_PRICES) as BundleName[]).map((bundle) => {
+    // Never below the profit floor, so an edit to the multiplier cannot sell AI
+    // at a loss through this path.
+    const multiplier = Math.max(config.billing.markupMultiplier, minimumMultiplier());
+    return [
+      bundle,
+      {
+        bundle,
+        priceMinor: BUNDLE_PRICES[bundle],
+        multiplier,
+        // Floor down: a bundle advertising one ACU more than it delivers is the
+        // same defect in miniature.
+        usableAcus: Math.floor(BUNDLE_PRICES[bundle] / multiplier),
+      },
+    ];
+  }),
+) as Record<BundleName, BundleDefinition>;
 
 /**
  * Roles that never consume a paid seat: the platform operator is not a customer

@@ -1458,6 +1458,36 @@ Verified against a running server: a project created in Columbus, Ohio at
 per-field problem+json error; and the estate's contract-value card switched to
 "mixed currencies" rather than adding dollars to pounds.
 
+**4× everywhere, and no rate below it.** Confirmed as a pricing decision and
+applied through the whole billing path.
+
+Three things were carrying a 3× assumption. The **volume bands** stepped
+4.0 → 3.6 → 3.3, so a large consumer paid below the headline; they are now flat
+at 4.0. The table is kept rather than deleted, because `effectiveMultiplier`
+reads it and every charge is stamped with the rate it was raised at — a band
+reintroduced deliberately would show up in the operator's realised multiplier
+rather than hiding in a total, and deleting the mechanism would mean rebuilding
+it blind. The **go-to-market documents** advertised a 3× markup and are
+corrected. And the **ACU bundles** hardcoded 10,000 / 40,000 / 110,000 usable
+ACUs — the figures a 3× markup produces — while billing ran at 4×.
+
+That last one is the one worth reading. No money was misposted: a top-up credits
+the price and spend is billed at the effective multiplier, so the figure only
+ever appeared on the pricing catalogue. That is exactly what made it worth
+fixing — a promise to a customer the billing engine was never going to keep, and
+the customer would have found out when the bundle ran out a third early. The
+yield is now derived from the multiplier, floored at the profit rule, so the two
+cannot disagree again: £300 buys 7,500 ACUs, £1,000 buys 25,000, £2,500 buys
+62,500.
+
+A consequence follows and is stated rather than hidden: with a flat multiplier
+every bundle is the same value per pound, so a bundle is a convenience — fewer
+transactions, one purchase order — and not a discount. Four tests asserted the
+old ladder and were rewritten to assert the new rule, which is the stronger one:
+switching the volume incentive on must now change nothing at all, because a flag
+that silently discounts is how a sub-4× rate would come back without anyone
+deciding it should.
+
 **Permits to work, gated on the competency register.** The register existed —
 qualifications with issue and expiry dates, marked `EXPIRED` on read — and
 nothing consulted it. A permit could name an operative whose confined-space
