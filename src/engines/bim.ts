@@ -373,6 +373,210 @@ export async function detectClashes(
 }
 
 /**
+ * How a clash stopped being a clash.
+ *
+ * The distinction between these is the whole point of recording it. A register
+ * that says "resolved" and nothing else cannot tell design work from a
+ * detection artefact, and the two mean opposite things about the model.
+ */
+export type ClashResolutionMethod =
+  /** A discipline moved. The one that moved bears the cost, so it is named. */
+  | 'MODEL_REVISED'
+  /** Real geometry, acceptable overlap — insulation, tolerance, a permitted penetration. */
+  | 'WITHIN_TOLERANCE'
+  /** The detection run was wrong. No design work happened. */
+  | 'NOT_A_CLASH'
+  /** Built around on site. The model no longer describes what was built. */
+  | 'RESOLVED_ON_SITE';
+
+/**
+ * Close a clash out.
+ *
+ * Detection without closeout gives a register that only ever grows, which is
+ * worse than no register: a number that only rises stops being read, and the
+ * critical clash sitting in it goes to site.
+ *
+ * The commercially significant fact is not that a clash was resolved but *how*,
+ * and for a model revision *which discipline moved* — that is who pays for the
+ * rework, and it is the fact everybody stops being able to establish about six
+ * months later. So it is required at the point where somebody still knows it,
+ * rather than reconstructed from a model diff that this build cannot perform.
+ */
+export function resolveClash(
+  ctx: EngineContext,
+  input: {
+    clashId: string;
+    method: ClashResolutionMethod;
+    /** Which of the two clashing disciplines moved. Required for a model revision. */
+    movedDiscipline?: string;
+    /** The model the resolution now lives in. Required for a model revision. */
+    resolvedInModelId?: string;
+    justification: string;
+    resolvedBy: string;
+    evidenceHash: string;
+  },
+  now = new Date(),
+): {
+  clashId: string;
+  severity: string;
+  daysOpen: number;
+  method: ClashResolutionMethod;
+  /** True where closing this way left the model describing something that was not built. */
+  modelNowOutOfDate: boolean;
+} {
+  authorise(ctx, 'BIM_TWIN', 'A', { lifecyclePhase: currentPhase(ctx) });
+
+  const clash = ctx.ledger.require({ refType: 'Clash', refId: input.clashId });
+  if (clash.state.status === 'RESOLVED') {
+    throw new DomainError('CLASH_ALREADY_RESOLVED', `Clash ${input.clashId} has already been closed out`);
+  }
+
+  const severity = String(clash.state.severity ?? 'LOW');
+  const disciplineA = String(clash.state.disciplineA ?? '');
+  const disciplineB = String(clash.state.disciplineB ?? '');
+
+  if (input.justification.trim().length < 15) {
+    throw new DomainError('CLASH_JUSTIFICATION_INSUBSTANTIAL', 'Say what was done about it, in terms a coordinator can check');
+  }
+
+  if (input.method === 'MODEL_REVISED') {
+    if (!input.resolvedInModelId) {
+      throw new DomainError('CLASH_RESOLUTION_UNANCHORED', 'A model revision has to name the model the fix is in');
+    }
+    ctx.ledger.require({ refType: 'Model', refId: input.resolvedInModelId });
+
+    // The clash is between two disciplines. If neither moved, this is not the
+    // clash that was fixed, and the register would carry a resolution that
+    // points at the wrong work.
+    const moved = (input.movedDiscipline ?? '').toUpperCase();
+    if (moved !== disciplineA.toUpperCase() && moved !== disciplineB.toUpperCase()) {
+      throw new DomainError(
+        'CLASH_DISCIPLINE_NOT_IN_CLASH',
+        `${input.movedDiscipline ?? 'No discipline'} is not party to this clash — it is between ${disciplineA} and ${disciplineB}`,
+      );
+    }
+  }
+
+  // Dismissing a critical clash as a detection artefact is the cheapest way to
+  // make a register look healthy, and the one that puts a real clash on site.
+  // It is allowed — false positives are common and real — but it costs an
+  // explanation proportionate to what is being waved through.
+  if (input.method === 'NOT_A_CLASH' && severity === 'CRITICAL' && input.justification.trim().length < 60) {
+    throw new DomainError(
+      'CRITICAL_CLASH_DISMISSAL_UNEXPLAINED',
+      'Dismissing a critical clash as a false positive needs the reason set out in full, not a note',
+    );
+  }
+
+  const detectedAt = String(clash.state.detectedAt ?? now.toISOString());
+  const daysOpen = Math.max(0, Math.round((now.getTime() - Date.parse(detectedAt)) / 86_400_000));
+  const modelNowOutOfDate = input.method === 'RESOLVED_ON_SITE';
+
+  const evidence = registerEvidence(ctx, {
+    type: 'CLASH_RESOLUTION',
+    hash: input.evidenceHash,
+    description: `Resolution of ${severity} clash between ${disciplineA} and ${disciplineB}`,
+    linkedEntities: [{ refType: 'Clash', refId: input.clashId }],
+  });
+
+  write(ctx, {
+    eventType: 'CLASH_RESOLVED',
+    entity: { refType: 'Clash', refId: input.clashId },
+    nextState: {
+      ...clash.state,
+      status: 'RESOLVED',
+      resolutionMethod: input.method,
+      movedDiscipline: input.method === 'MODEL_REVISED' ? input.movedDiscipline : undefined,
+      resolvedInModelId: input.resolvedInModelId,
+      resolutionJustification: input.justification,
+      resolvedBy: input.resolvedBy,
+      resolvedAt: now.toISOString(),
+      daysOpen,
+      // Carried on the record rather than derived later: as-built generation
+      // needs to know the model was left behind, and by then nobody will
+      // remember which closeouts happened on site.
+      modelNowOutOfDate,
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return { clashId: input.clashId, severity, daysOpen, method: input.method, modelNowOutOfDate };
+}
+
+/**
+ * The clash register as a coordination position rather than a count.
+ *
+ * Two figures matter and neither is the total. **Critical clashes still open**
+ * is what goes to site if nothing happens. **Closeouts that left the model
+ * behind** is the as-built liability nobody is looking at, because each one is
+ * a place where the record and the building have quietly parted company.
+ */
+export function clashPosition(
+  ctx: EngineContext,
+  now = new Date(),
+): {
+  total: number;
+  open: number;
+  openCritical: number;
+  resolved: number;
+  byMethod: Record<string, number>;
+  /** Critical clashes closed as detection artefacts. The metric people game. */
+  dismissedCritical: number;
+  /** Closeouts that left the model describing something that was not built. */
+  modelOutOfDate: number;
+  averageDaysToResolve?: number;
+  oldestOpenDays?: number;
+  summary: string;
+} {
+  authorise(ctx, 'BIM_TWIN', 'R');
+
+  const clashes = ctx.ledger.list(ctx.projectId, 'Clash').map((record) => record.state);
+  const open = clashes.filter((c) => c.status !== 'RESOLVED');
+  const resolved = clashes.filter((c) => c.status === 'RESOLVED');
+
+  const byMethod: Record<string, number> = {};
+  for (const clash of resolved) {
+    const method = String(clash.resolutionMethod ?? 'UNRECORDED');
+    byMethod[method] = (byMethod[method] ?? 0) + 1;
+  }
+
+  const openCritical = open.filter((c) => c.severity === 'CRITICAL').length;
+  const dismissedCritical = resolved.filter((c) => c.severity === 'CRITICAL' && c.resolutionMethod === 'NOT_A_CLASH').length;
+  const modelOutOfDate = resolved.filter((c) => c.modelNowOutOfDate === true).length;
+
+  const averageDaysToResolve =
+    resolved.length === 0
+      ? undefined
+      : Number((resolved.reduce((sum, c) => sum + Number(c.daysOpen ?? 0), 0) / resolved.length).toFixed(1));
+
+  const openAges = open
+    .map((c) => Math.max(0, Math.round((now.getTime() - Date.parse(String(c.detectedAt ?? now.toISOString()))) / 86_400_000)))
+    .sort((a, b) => b - a);
+
+  const summary =
+    clashes.length === 0
+      ? 'No clash detection has been run.'
+      : openCritical > 0
+        ? `${openCritical} critical clash${openCritical === 1 ? '' : 'es'} still open. A critical clash that reaches site is rework at installed cost.`
+        : modelOutOfDate > 0
+          ? `All critical clashes closed, but ${modelOutOfDate} ${modelOutOfDate === 1 ? 'was' : 'were'} resolved on site — the model no longer describes what was built there.`
+          : `${open.length} open, none critical.`;
+
+  return {
+    total: clashes.length,
+    open: open.length,
+    openCritical,
+    resolved: resolved.length,
+    byMethod,
+    dismissedCritical,
+    modelOutOfDate,
+    averageDaysToResolve,
+    oldestOpenDays: openAges[0],
+    summary,
+  };
+}
+
+/**
  * Update the digital twin from site reality. The twin is only useful if it
  * diverges from the design model when the site does — a twin that always agrees
  * with the model is just the model.

@@ -1513,6 +1513,76 @@ export const ROUTES: Route[] = [
         to: ctx.query.get('to') ?? new Date().toISOString().slice(0, 10),
       }),
   },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/observations',
+    description: 'Capture an observation from a site walk — quality, progress, access, materials',
+    schema: {
+      type: 'object',
+      required: ['category', 'description', 'location', 'observedBy', 'requiresAction', 'evidenceHash'],
+      properties: {
+        category: {
+          type: 'string',
+          enum: ['QUALITY', 'PROGRESS', 'HOUSEKEEPING', 'ACCESS', 'ENVIRONMENTAL', 'WORKMANSHIP', 'MATERIALS'],
+        },
+        description: { type: 'string', minLength: 10 },
+        location: stringField,
+        taskId: stringField,
+        observedBy: stringField,
+        requiresAction: { type: 'boolean' },
+        actionOwner: stringField,
+        actionByDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planning.captureSiteObservation(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/observations/:observationId/close',
+    description: 'Close a site observation, saying what was done about it',
+    schema: {
+      type: 'object',
+      required: ['actionTaken', 'closedBy'],
+      properties: {
+        actionTaken: { type: 'string', minLength: 10 },
+        closedBy: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      planning.closeSiteObservation(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof planning.closeSiteObservation>[1], 'observationId'>>(ctx),
+        observationId: ctx.params.observationId as string,
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/observations/position',
+    description: 'The walk register ordered by what is overdue rather than by what is recent',
+    handler: (platform, ctx) => planning.siteWalkPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/work-packages',
+    description: 'Create a work package by hand, without generating a WBS',
+    schema: {
+      type: 'object',
+      required: ['wbsCode', 'title', 'indicativeDurationDays'],
+      properties: {
+        wbsCode: stringField,
+        title: stringField,
+        parentWorkPackageId: stringField,
+        indicativeDurationDays: { type: 'number', minimum: 1 },
+        scopeNarrative: stringField,
+        responsibleParty: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => planning.createWorkPackage(projectContext(platform, ctx), body(ctx)),
+  },
 
   {
     method: 'POST',
@@ -1766,6 +1836,35 @@ export const ROUTES: Route[] = [
     ai: { engine: 'BIM_TWIN', taskType: 'clash_triage', capability: 'REASONING' },
     description: 'Engine E — detect and triage clashes',
     handler: (platform, ctx) => bim.detectClashes(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bim/clashes/:clashId/resolve',
+    description: 'Engine E — close a clash out, naming how and which discipline moved',
+    schema: {
+      type: 'object',
+      required: ['method', 'justification', 'resolvedBy', 'evidenceHash'],
+      properties: {
+        method: { type: 'string', enum: ['MODEL_REVISED', 'WITHIN_TOLERANCE', 'NOT_A_CLASH', 'RESOLVED_ON_SITE'] },
+        movedDiscipline: stringField,
+        resolvedInModelId: stringField,
+        justification: { type: 'string', minLength: 15 },
+        resolvedBy: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bim.resolveClash(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof bim.resolveClash>[1], 'clashId'>>(ctx),
+        clashId: ctx.params.clashId as string,
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/bim/clashes/position',
+    description: 'The clash register as a coordination position: what is still critical and where the model was left behind',
+    handler: (platform, ctx) => bim.clashPosition(projectContext(platform, ctx)),
   },
   {
     method: 'POST',

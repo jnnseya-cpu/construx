@@ -35,6 +35,91 @@ export type TaskInput = {
   pessimisticDays?: number;
 };
 
+/**
+ * Create a work package by hand.
+ *
+ * Until now a work package could only appear as a by-product of AI-generated
+ * WBS, which quietly made the model a prerequisite for having a scope
+ * breakdown. Most projects arrive with one already — from the contract
+ * documents, an employer's requirements, or the last job of the same shape —
+ * and a planner should not have to run a generator to type it in.
+ *
+ * Manual packages are marked as such. Which of them a person defined and which
+ * a model proposed is a question that gets asked at every baseline review, and
+ * it cannot be answered later from a list that treats them the same.
+ */
+export function createWorkPackage(
+  ctx: EngineContext,
+  input: {
+    wbsCode: string;
+    title: string;
+    /** Where this sits under an existing package. Absent means top level. */
+    parentWorkPackageId?: string;
+    indicativeDurationDays: number;
+    scopeNarrative?: string;
+    responsibleParty?: string;
+  },
+): { workPackageId: string; wbsCode: string; depth: number } {
+  authorise(ctx, 'WORKPACKAGES_TASKS', 'C', { lifecyclePhase: currentPhase(ctx) });
+
+  const existing = ctx.ledger.list(ctx.projectId, 'WorkPackage');
+  const code = input.wbsCode.trim();
+
+  if (code.length === 0) throw new DomainError('WBS_CODE_REQUIRED', 'A work package needs a WBS code to be referred to by');
+
+  // The same defect as a duplicate activity code, one level up: two packages
+  // sharing a code means every cost and every task rolled up under it lands in
+  // an arbitrary one of them.
+  const clash = existing.find((record) => String(record.state.wbsCode).toLowerCase() === code.toLowerCase());
+  if (clash) {
+    throw new DomainError('WBS_CODE_IN_USE', `WBS code ${code} is already used by "${String(clash.state.title)}"`);
+  }
+
+  let depth = 0;
+  if (input.parentWorkPackageId) {
+    // Walk up from the parent. A cycle cannot be created by a new leaf, but a
+    // parent id pointing at a package on a broken chain would produce a
+    // hierarchy that no roll-up can terminate on.
+    let cursor = ctx.ledger.require({ refType: 'WorkPackage', refId: input.parentWorkPackageId });
+    const seen = new Set<string>([input.parentWorkPackageId]);
+    depth = 1;
+    while (typeof cursor.state.parentWorkPackageId === 'string') {
+      const next = String(cursor.state.parentWorkPackageId);
+      if (seen.has(next)) {
+        throw new DomainError('WBS_HIERARCHY_CYCLIC', 'The parent package sits on a cyclic chain and cannot be built on');
+      }
+      seen.add(next);
+      cursor = ctx.ledger.require({ refType: 'WorkPackage', refId: next });
+      depth += 1;
+    }
+  }
+
+  const workPackageId = ulid();
+  write(ctx, {
+    eventType: 'WORKPACKAGE_CREATED',
+    entity: { refType: 'WorkPackage', refId: workPackageId },
+    nextState: {
+      id: workPackageId,
+      projectId: ctx.projectId,
+      wbsCode: code,
+      title: input.title,
+      parentWorkPackageId: input.parentWorkPackageId,
+      depth,
+      sequence: existing.length + 1,
+      indicativeDurationDays: Math.max(1, Math.round(input.indicativeDurationDays)),
+      scopeNarrative: input.scopeNarrative,
+      responsibleParty: input.responsibleParty,
+      status: 'PROPOSED',
+      origin: 'MANUAL',
+      // A person with the permission defined it deliberately. The approval flag
+      // exists because a generated package is a proposal; this is not one.
+      requiresPlannerApproval: false,
+    },
+  });
+
+  return { workPackageId, wbsCode: code, depth };
+}
+
 export function createTasks(ctx: EngineContext, tasks: TaskInput[]): string[] {
   authorise(ctx, 'WORKPACKAGES_TASKS', 'C', { lifecyclePhase: currentPhase(ctx) });
 
@@ -726,6 +811,223 @@ export type ConstraintCategory =
   | 'PREDECESSOR'
   | 'INFORMATION'
   | 'APPROVAL';
+
+// --- Site walk ---------------------------------------------------------------
+
+/**
+ * What a walk turns up. Deliberately not safety — that has its own route, its
+ * own sensitivity and its own classification, and folding the two together
+ * would put safety observations behind the wrong permission.
+ */
+export type SiteObservationCategory =
+  | 'QUALITY'
+  | 'PROGRESS'
+  | 'HOUSEKEEPING'
+  | 'ACCESS'
+  | 'ENVIRONMENTAL'
+  | 'WORKMANSHIP'
+  | 'MATERIALS';
+
+/**
+ * Capture an observation from a site walk.
+ *
+ * Deterministic and free. A walk produces twenty of these in an hour, and
+ * charging AI against each one would teach people not to record them — which
+ * costs far more than the classification is worth. The judgement here is the
+ * walker's, and it is already in their head at the moment they are standing in
+ * front of the thing.
+ *
+ * Evidence is required because an observation without a photograph is an
+ * assertion, and the whole reason to record one is that somebody will want to
+ * see the state of the work on the day it was seen.
+ */
+export function captureSiteObservation(
+  ctx: EngineContext,
+  input: {
+    category: SiteObservationCategory;
+    description: string;
+    location: string;
+    /** The activity it was seen against, where the walker can name one. */
+    taskId?: string;
+    observedBy: string;
+    /** Set where somebody has to do something about it. */
+    requiresAction: boolean;
+    actionOwner?: string;
+    actionByDate?: string;
+    evidenceHash: string;
+  },
+  now = new Date(),
+): { observationId: string; reference: string; requiresAction: boolean } {
+  authorise(ctx, 'FIELD_EXECUTION', 'C', { lifecyclePhase: currentPhase(ctx) });
+
+  if (input.description.trim().length < 10) {
+    throw new DomainError('OBSERVATION_INSUBSTANTIAL', 'Say what was seen, in terms somebody who was not there can act on');
+  }
+
+  // An action nobody owns is not an action. The same rule the constraints log
+  // runs on, for the same reason: it is what stops the list becoming wallpaper.
+  if (input.requiresAction && (!input.actionOwner || !input.actionByDate)) {
+    throw new DomainError(
+      'OBSERVATION_ACTION_UNOWNED',
+      'An observation that requires action needs an owner and a date it is needed by',
+    );
+  }
+
+  if (input.taskId) ctx.ledger.require({ refType: 'Task', refId: input.taskId });
+
+  const observationId = ulid();
+  const sequence = ctx.ledger.list(ctx.projectId, 'SiteObservation').length + 1;
+  const reference = `OBS-${String(sequence).padStart(4, '0')}`;
+
+  const evidence = registerEvidence(ctx, {
+    type: 'SITE_OBSERVATION_MEDIA',
+    hash: input.evidenceHash,
+    description: `${input.category} observation at ${input.location}`,
+    linkedEntities: input.taskId ? [{ refType: 'Task', refId: input.taskId }] : [],
+  });
+
+  write(ctx, {
+    eventType: 'SITE_OBSERVATION_CAPTURED',
+    entity: { refType: 'SiteObservation', refId: observationId },
+    nextState: {
+      id: observationId,
+      projectId: ctx.projectId,
+      reference,
+      category: input.category,
+      description: input.description,
+      location: input.location,
+      taskId: input.taskId,
+      observedBy: input.observedBy,
+      observedAt: now.toISOString(),
+      requiresAction: input.requiresAction,
+      actionOwner: input.actionOwner,
+      actionByDate: input.actionByDate,
+      status: input.requiresAction ? 'OPEN' : 'NOTED',
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return { observationId, reference, requiresAction: input.requiresAction };
+}
+
+/**
+ * Close an observation out, saying what was done.
+ *
+ * The same argument as the clash register and the constraints log: a list that
+ * only grows stops being read. An observation that required action and was
+ * never closed is the one that matters, and it can only be found if closing is
+ * possible.
+ */
+export function closeSiteObservation(
+  ctx: EngineContext,
+  input: { observationId: string; actionTaken: string; closedBy: string; evidenceHash?: string },
+  now = new Date(),
+): { observationId: string; reference: string; daysOpen: number; closedLate: boolean } {
+  authorise(ctx, 'FIELD_EXECUTION', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const observation = ctx.ledger.require({ refType: 'SiteObservation', refId: input.observationId });
+  if (observation.state.status === 'CLOSED') {
+    throw new DomainError('OBSERVATION_ALREADY_CLOSED', `${String(observation.state.reference)} is already closed`);
+  }
+  if (input.actionTaken.trim().length < 10) {
+    throw new DomainError('OBSERVATION_ACTION_INSUBSTANTIAL', 'Say what was actually done about it');
+  }
+
+  const observedAt = String(observation.state.observedAt);
+  const daysOpen = Math.max(0, Math.round((now.getTime() - Date.parse(observedAt)) / 86_400_000));
+  const actionByDate = typeof observation.state.actionByDate === 'string' ? observation.state.actionByDate : undefined;
+  const closedLate = actionByDate !== undefined && now.toISOString().slice(0, 10) > actionByDate;
+
+  const evidenceRefs = input.evidenceHash
+    ? [
+        registerEvidence(ctx, {
+          type: 'SITE_OBSERVATION_CLOSEOUT',
+          hash: input.evidenceHash,
+          description: `Closeout of ${String(observation.state.reference)}`,
+          linkedEntities: [{ refType: 'SiteObservation', refId: input.observationId }],
+        }),
+      ]
+    : undefined;
+
+  write(ctx, {
+    eventType: 'SITE_OBSERVATION_CLOSED',
+    entity: { refType: 'SiteObservation', refId: input.observationId },
+    nextState: {
+      ...observation.state,
+      status: 'CLOSED',
+      actionTaken: input.actionTaken,
+      closedBy: input.closedBy,
+      closedAt: now.toISOString(),
+      daysOpen,
+      closedLate,
+    },
+    evidenceRefs,
+  });
+
+  return { observationId: input.observationId, reference: String(observation.state.reference), daysOpen, closedLate };
+}
+
+/**
+ * The walk register, ordered by what is overdue rather than by what is recent.
+ */
+export function siteWalkPosition(
+  ctx: EngineContext,
+  today = new Date().toISOString().slice(0, 10),
+): {
+  total: number;
+  open: number;
+  byCategory: Record<string, number>;
+  overdue: Array<{ reference: string; category: string; description: string; actionOwner?: string; actionByDate?: string; daysOverdue: number }>;
+  closedLate: number;
+  averageDaysToClose?: number;
+  summary: string;
+} {
+  authorise(ctx, 'FIELD_EXECUTION', 'R');
+
+  const observations = ctx.ledger.list(ctx.projectId, 'SiteObservation').map((record) => record.state);
+  const open = observations.filter((o) => o.status === 'OPEN');
+
+  const byCategory: Record<string, number> = {};
+  for (const observation of open) {
+    const category = String(observation.category);
+    byCategory[category] = (byCategory[category] ?? 0) + 1;
+  }
+
+  const overdue = open
+    .filter((o) => typeof o.actionByDate === 'string' && today > String(o.actionByDate))
+    .map((o) => ({
+      reference: String(o.reference),
+      category: String(o.category),
+      description: String(o.description),
+      actionOwner: o.actionOwner === undefined ? undefined : String(o.actionOwner),
+      actionByDate: String(o.actionByDate),
+      daysOverdue: Math.round((Date.parse(today) - Date.parse(String(o.actionByDate))) / 86_400_000),
+    }))
+    .sort((a, b) => b.daysOverdue - a.daysOverdue);
+
+  const closed = observations.filter((o) => o.status === 'CLOSED');
+  const averageDaysToClose =
+    closed.length === 0
+      ? undefined
+      : Number((closed.reduce((sum, o) => sum + Number(o.daysOpen ?? 0), 0) / closed.length).toFixed(1));
+
+  const summary =
+    observations.length === 0
+      ? 'No site walk recorded.'
+      : overdue.length > 0
+        ? `${overdue.length} observation${overdue.length === 1 ? '' : 's'} past the date somebody agreed to deal with them, the oldest by ${overdue[0]!.daysOverdue} days.`
+        : `${open.length} open, none overdue.`;
+
+  return {
+    total: observations.length,
+    open: open.length,
+    byCategory,
+    overdue,
+    closedLate: closed.filter((o) => o.closedLate === true).length,
+    averageDaysToClose,
+    summary,
+  };
+}
 
 /**
  * Raise a constraint against an activity.

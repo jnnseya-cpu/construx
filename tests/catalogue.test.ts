@@ -59,11 +59,8 @@ const NOT_EMITTED: Record<string, string> = {
   // --- Not yet built --------------------------------------------------------
   USER_ROLE_ASSIGNED: 'Role assignment is an identity-service operation and does not currently reach the project ledger.',
   POLICY_UPDATED: 'The permission matrix is code, not data, so there is nothing to record a change to.',
-  WORKPACKAGE_CREATED: 'Work packages are produced by WBS_GENERATED. Manual creation is not built.',
   MASTER_PRICING_CONSOLIDATED: 'Tender stage 6, the consolidated view across pricing routes, is not built.',
-  SITE_OBSERVATION_CAPTURED: 'A general site observation from a walk, distinct from a safety observation. Not built.',
   DISPUTE_OPENED: 'Adjudication and dispute handling are not built.',
-  CLASH_RESOLVED: 'A clash can be detected and recorded; closing one out is not built.',
 };
 
 async function sourceFiles(dir: string): Promise<string[]> {

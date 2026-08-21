@@ -118,6 +118,17 @@ export const OBSERVATION_TYPE = opts([
   ['GOOD_PRACTICE', 'Good practice'],
 ]);
 
+/** A site walk, deliberately not a safety observation — that has its own list. */
+export const SITE_OBSERVATION_CATEGORY = opts([
+  ['QUALITY', 'Quality'],
+  ['WORKMANSHIP', 'Workmanship'],
+  ['PROGRESS', 'Progress'],
+  ['ACCESS', 'Access'],
+  ['MATERIALS', 'Materials'],
+  ['HOUSEKEEPING', 'Housekeeping'],
+  ['ENVIRONMENTAL', 'Environmental'],
+]);
+
 export const WEATHER_CONDITION = opts([
   ['DRY', 'Dry'],
   ['LIGHT_RAIN', 'Light rain'],

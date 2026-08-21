@@ -457,6 +457,29 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   });
   step(`BIM: 2 models ingested, ${clashes.clashIds.length} clashes triaged (${clashes.critical} critical)`);
 
+  // Two of the three closed out, by different routes, because the distinction
+  // is the point: one cost design work and named the discipline that moved, the
+  // other was built around on site and left the model describing something that
+  // was not built. The critical one stays open — that is the register doing its
+  // job rather than the demo looking tidy.
+  bim.resolveClash(bimCtx, {
+    clashId: clashes.clashIds[1]!,
+    method: 'MODEL_REVISED',
+    movedDiscipline: 'ELECTRICAL',
+    resolvedInModelId: mepModel.modelId,
+    justification: 'Cable tray dropped to 2,750mm soffit and rerouted clear of the slab downstand; MEP model reissued.',
+    resolvedBy: bimLead.name,
+    evidenceHash: hash('clash-002-resolution-mep-rev-c'),
+  });
+  bim.resolveClash(bimCtx, {
+    clashId: clashes.clashIds[2]!,
+    method: 'RESOLVED_ON_SITE',
+    justification: 'Duct offset 120mm below the ceiling grid on site to clear the hanger; model not updated to suit.',
+    resolvedBy: 'Meridian — mechanical supervisor',
+    evidenceHash: hash('clash-003-site-resolution-photo'),
+  });
+  step('2 clashes closed out — one by model revision, one on site with the model left behind');
+
   const clashRfi = bim.addMarkup(bimCtx, {
     drawingId: drawing.drawingId,
     author: bimLead.name,
@@ -1187,6 +1210,103 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     new Date('2026-08-18T09:00:00.000Z'),
   );
   step('Constraints log opened — one design constraint cleared four days late, one long-lead material still open');
+
+  // A site walk. Deliberately mixed: one closed on time, one closed late, one
+  // still open and past the date somebody agreed to — which is the only one
+  // that matters and the one a list sorted by date would bury.
+  const walk: Array<{
+    category: planning.SiteObservationCategory;
+    description: string;
+    location: string;
+    taskIndex?: number;
+    requiresAction: boolean;
+    actionOwner?: string;
+    actionByDate?: string;
+    observedOn: string;
+    closed?: { actionTaken: string; on: string };
+  }> = [
+    {
+      category: 'WORKMANSHIP',
+      description: 'Blockwork to the east elevation is out of plumb by roughly 15mm over three courses.',
+      location: 'Inlet works, east elevation',
+      taskIndex: 2,
+      requiresAction: true,
+      actionOwner: 'Groundworks foreman',
+      actionByDate: '2026-08-14',
+      observedOn: '2026-08-10T07:40:00.000Z',
+      closed: { actionTaken: 'Three courses taken down and rebuilt to line; re-checked and accepted.', on: '2026-08-13T16:00:00.000Z' },
+    },
+    {
+      category: 'MATERIALS',
+      description: 'Cement delivery left unsheeted overnight next to the batching area.',
+      location: 'Laydown area',
+      requiresAction: true,
+      actionOwner: 'Materials controller',
+      actionByDate: '2026-08-12',
+      observedOn: '2026-08-11T07:20:00.000Z',
+      closed: { actionTaken: 'Affected bags quarantined and returned to supplier; remaining stock palletised and sheeted.', on: '2026-08-17T09:00:00.000Z' },
+    },
+    {
+      category: 'ACCESS',
+      description: 'Scaffold access to the south face is obstructed by stacked shutter panels.',
+      location: 'Filter gallery, south face',
+      taskIndex: 3,
+      requiresAction: true,
+      actionOwner: 'Site manager',
+      actionByDate: '2026-08-18',
+      observedOn: '2026-08-14T07:30:00.000Z',
+    },
+    {
+      category: 'HOUSEKEEPING',
+      description: 'Offcuts and banding accumulating around the rebar stack; noted to the gang at the briefing.',
+      location: 'Rebar laydown',
+      requiresAction: false,
+      observedOn: '2026-08-14T07:35:00.000Z',
+    },
+  ];
+
+  for (const observation of walk) {
+    const captured = planning.captureSiteObservation(
+      qaqcCtx,
+      {
+        category: observation.category,
+        description: observation.description,
+        location: observation.location,
+        taskId: observation.taskIndex === undefined ? undefined : (taskIds[observation.taskIndex] as string),
+        observedBy: qaqc.name,
+        requiresAction: observation.requiresAction,
+        actionOwner: observation.actionOwner,
+        actionByDate: observation.actionByDate,
+        evidenceHash: hash(`observation-${observation.location}-${observation.observedOn}`),
+      },
+      new Date(observation.observedOn),
+    );
+
+    if (observation.closed) {
+      planning.closeSiteObservation(
+        qaqcCtx,
+        {
+          observationId: captured.observationId,
+          actionTaken: observation.closed.actionTaken,
+          closedBy: observation.actionOwner ?? qaqc.name,
+          evidenceHash: hash(`observation-closeout-${captured.reference}`),
+        },
+        new Date(observation.closed.on),
+      );
+    }
+  }
+  step('Site walk: 4 observations, 2 closed (one late), 1 access obstruction still open past its date');
+
+  // A work package somebody typed in, alongside the generated ones. Temporary
+  // works never come out of a generator — they come out of the contract and a
+  // temporary works coordinator.
+  planning.createWorkPackage(plannerCtx, {
+    wbsCode: 'TW-100',
+    title: 'Temporary works — north cofferdam',
+    indicativeDurationDays: 24,
+    scopeNarrative: 'Design, install, monitor and remove the sheet-piled cofferdam to the north inlet chamber.',
+    responsibleParty: 'Temporary works coordinator',
+  });
 
   const weeks: Array<{ start: string; commit: number[]; outcomes: Array<{ i: number; done: boolean; reason?: planning.NonCompletionReason }> }> = [
     {

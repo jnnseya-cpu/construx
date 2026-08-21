@@ -37,6 +37,10 @@ export async function design(root) {
   // The register read as a delay exhibit rather than a count: how long questions
   // stayed open, and whether the answers arrived after they were needed.
   const rfi = await api.get(`/v1/projects/${projectId}/rfi/position`).catch(() => null);
+
+  // Not the count. What is still critical, and where a closeout left the model
+  // describing something that was not built.
+  const clashes = await api.get(`/v1/projects/${projectId}/bim/clashes/position`).catch(() => null);
   const deviations = b.DigitalTwinState.reduce((sum, s) => sum + Number(s.deviationCount ?? 0), 0);
 
   render(
@@ -52,6 +56,7 @@ export async function design(root) {
             { id: 'drawing', label: 'Register drawing', tone: '', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
             { id: 'markup', label: 'Add markup', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
             { id: 'answer', label: 'Answer an RFI', permitted: can('DESIGN_INFORMATION', 'U'), reason: blockedReason('DESIGN_INFORMATION', 'U') },
+            { id: 'resolve-clash', label: 'Close a clash', permitted: can('BIM_TWIN', 'A'), reason: blockedReason('BIM_TWIN', 'A') },
           ]))}
         </div>
       </div>
@@ -160,6 +165,31 @@ export async function design(root) {
             ]),
             empty: 'No open clashes',
           })}
+          ${
+            clashes
+              ? html`<div style="padding:0 17px 15px">
+                  <div class="metric-sub">${clashes.summary}</div>
+                  ${
+                    clashes.modelOutOfDate > 0
+                      ? html`<div class="notice warn" style="margin-top:10px">
+                          <div><b>${clashes.modelOutOfDate} clash(es) resolved on site.</b><br>
+                          The model still shows the design in those places. As-built generation inherits the difference, and nobody
+                          finds it until somebody drills into it.</div>
+                        </div>`
+                      : ''
+                  }
+                  ${
+                    clashes.dismissedCritical > 0
+                      ? html`<div class="notice err" style="margin-top:10px">
+                          <div><b>${clashes.dismissedCritical} critical clash(es) closed as detection artefacts.</b><br>
+                          Each one carries a written reason. They are worth reading, because this is the cheapest way to make a
+                          clash register look healthy.</div>
+                        </div>`
+                      : ''
+                  }
+                </div>`
+              : ''
+          }
         </div>
 
         <div class="card pad0">
@@ -263,6 +293,36 @@ export async function design(root) {
           { value: 'true', label: 'Yes — the design changes' },
         ] },
         { name: 'evidenceHash', label: 'Answer document', type: 'file' },
+      ],
+    },
+    'resolve-clash': {
+      title: 'Close a clash',
+      intent:
+        'For a model revision, name the discipline that moved. That is who bears the rework, and it is the fact nobody can establish six months later.',
+      path: (collected) => `/v1/projects/${projectId}/bim/clashes/${collected.clashId}/resolve`,
+      transform: ({ clashId, ...rest }) => rest,
+      submitLabel: 'Close out',
+      fields: [
+        { name: 'clashId', label: 'Clash', type: 'select',
+          options: openClashes.map((c) => ({
+            value: c._refId,
+            label: `${c.severity} · ${c.location} · ${humanise(c.disciplineA)}/${humanise(c.disciplineB)}`,
+          })) },
+        { name: 'method', label: 'How was it resolved', type: 'select', options: [
+          { value: 'MODEL_REVISED', label: 'A discipline moved — model revised' },
+          { value: 'WITHIN_TOLERANCE', label: 'Within tolerance — real geometry, acceptable overlap' },
+          { value: 'NOT_A_CLASH', label: 'Not a clash — the detection run was wrong' },
+          { value: 'RESOLVED_ON_SITE', label: 'Built around on site — model not updated' },
+        ] },
+        { name: 'movedDiscipline', label: 'Which discipline moved', type: 'select', required: false,
+          placeholder: 'Only for a model revision', options: DISCIPLINE },
+        { name: 'resolvedInModelId', label: 'Resolved in model', type: 'select', required: false,
+          placeholder: 'Only for a model revision',
+          options: b.Model.map((m) => ({ value: m._refId, label: `${m.discipline ?? 'Federated'} · LOD ${m.lod ?? '—'}` })) },
+        { name: 'justification', label: 'What was done', type: 'textarea',
+          hint: 'A coordinator has to be able to check it. Dismissing a critical clash as a false positive needs the reason in full.' },
+        { name: 'resolvedBy', label: 'Resolved by', type: 'text', value: state.session.user.name },
+        { name: 'evidenceHash', label: 'Evidence', type: 'file' },
       ],
     },
   };

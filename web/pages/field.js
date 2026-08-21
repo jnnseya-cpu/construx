@@ -1,6 +1,6 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
-import { OBSERVATION_TYPE, WEATHER_CONDITION, today } from '../lib/enums.js';
+import { OBSERVATION_TYPE, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, today } from '../lib/enums.js';
 import { badge, date, days, html, humanise, pct, raw, render, statusTone, table, time, track } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -35,6 +35,11 @@ export async function field(root) {
     .get(`/v1/projects/${projectId}/site-diary/position`)
     .catch(() => null);
 
+  // The walk register ordered by what is overdue. Sorted by date, the one that
+  // matters is the one furthest down.
+  const walk = await api.get(`/v1/projects/${projectId}/observations/position`).catch(() => null);
+  const openObservations = b.SiteObservation.filter((o) => o.status === 'OPEN');
+
   const measured = b.Task.filter((t) => Number(t.percentComplete ?? 0) > 0);
   const complete = b.Task.filter((t) => Number(t.percentComplete ?? 0) >= 100);
   const openSnags = b.Snag.filter((s) => s.status !== 'CLOSED');
@@ -64,6 +69,8 @@ export async function field(root) {
               { id: 'progress', label: 'Record progress', tone: '', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
               { id: 'observation', label: 'Log safety observation', permitted: can('SAFETY_RAMS', 'C'), reason: blockedReason('SAFETY_RAMS', 'C') },
               { id: 'work-order', label: 'Raise work order', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
+              { id: 'walk', label: 'Log site observation', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
+              { id: 'close-walk', label: 'Close an observation', permitted: can('FIELD_EXECUTION', 'U'), reason: blockedReason('FIELD_EXECUTION', 'U') },
             ]),
           )}
         </div>
@@ -189,6 +196,16 @@ export async function field(root) {
           : ''
       }
 
+      ${
+        walk && walk.overdue.length > 0
+          ? html`<div class="notice warn">
+              <div><b>${walk.overdue.length} site observation(s) past the date somebody agreed to deal with them.</b><br>
+              ${walk.overdue[0].reference} — ${walk.overdue[0].description} · ${walk.overdue[0].actionOwner ?? 'unowned'},
+              ${walk.overdue[0].daysOverdue} days over.</div>
+            </div>`
+          : ''
+      }
+
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
           <h3 style="padding:15px 17px 0">Progress by activity</h3>
@@ -250,6 +267,27 @@ export async function field(root) {
         </div>
 
         <div class="card pad0">
+          <h3 style="padding:15px 17px 0">Site walk</h3>
+          ${table({
+            headers: ['Ref', 'Category', 'What was seen', 'Owner', 'By', 'Status'],
+            rows: b.SiteObservation.map((o) => [
+              o.reference,
+              badge(humanise(o.category), 'neutral'),
+              String(o.description).slice(0, 54) + (String(o.description).length > 54 ? '…' : ''),
+              o.actionOwner ?? '—',
+              o.actionByDate ? date(o.actionByDate) : '—',
+              o.status === 'CLOSED'
+                ? badge(o.closedLate ? `closed ${o.daysOpen}d — late` : `closed ${o.daysOpen}d`, o.closedLate ? 'warn' : 'ok')
+                : badge(humanise(o.status), statusTone(o.status)),
+            ]),
+            empty: 'No site walk recorded',
+          })}
+          ${walk ? html`<div class="metric-sub" style="padding:0 17px 15px">${walk.summary}</div>` : ''}
+        </div>
+      </div>
+
+      <div class="grid g2">
+        <div class="card pad0">
           <h3 style="padding:15px 17px 0">Evidence register</h3>
           ${table({
             headers: ['Type', 'Description', 'Captured', 'Hash'],
@@ -309,6 +347,51 @@ export async function field(root) {
           { value: 'URGENT', label: 'Urgent' },
           { value: 'EMERGENCY', label: 'Emergency' },
         ] },
+      ],
+    },
+    walk: {
+      title: 'Log site observation',
+      intent:
+        'What a walk turns up — quality, access, materials, housekeeping. Free: a walk produces twenty of these in an hour, and charging for them teaches people not to record them.',
+      path: `/v1/projects/${projectId}/observations`,
+      // A select yields a string; the endpoint takes a boolean and refuses
+      // anything else. An action with no owner is refused by the platform, not
+      // hidden by the form.
+      transform: ({ requiresAction, ...rest }) => ({ ...rest, requiresAction: requiresAction === 'true' }),
+      submitLabel: 'Log',
+      fields: [
+        { name: 'category', label: 'Category', type: 'select', options: SITE_OBSERVATION_CATEGORY },
+        { name: 'description', label: 'What was seen', type: 'textarea',
+          hint: 'In terms somebody who was not there can act on' },
+        { name: 'location', label: 'Location', type: 'text', placeholder: 'Filter gallery, south face' },
+        { name: 'taskId', label: 'Against activity', type: 'select', required: false, placeholder: 'Not activity-specific',
+          options: b.Task.map((t) => ({ value: t._refId, label: `${t.activityCode} · ${t.name}` })) },
+        { name: 'observedBy', label: 'Observed by', type: 'text', value: state.session.user.name },
+        { name: 'requiresAction', label: 'Does somebody have to do something?', type: 'select', options: [
+          { value: 'false', label: 'No — noted for the record' },
+          { value: 'true', label: 'Yes — needs an owner and a date' },
+        ] },
+        { name: 'actionOwner', label: 'Action owner', type: 'text', required: false },
+        { name: 'actionByDate', label: 'Needed by', type: 'date', required: false },
+        { name: 'evidenceHash', label: 'Photograph', type: 'file',
+          hint: 'An observation without one is an assertion' },
+      ],
+    },
+    'close-walk': {
+      title: 'Close an observation',
+      intent: 'Say what was actually done. A register that only grows stops being read.',
+      path: (collected) => `/v1/projects/${projectId}/observations/${collected.observationId}/close`,
+      transform: ({ observationId, ...rest }) => rest,
+      submitLabel: 'Close',
+      fields: [
+        { name: 'observationId', label: 'Observation', type: 'select',
+          options: openObservations.map((o) => ({
+            value: o._refId,
+            label: `${o.reference} · ${String(o.description).slice(0, 46)}`,
+          })) },
+        { name: 'actionTaken', label: 'What was done', type: 'textarea' },
+        { name: 'closedBy', label: 'Closed by', type: 'text', value: state.session.user.name },
+        { name: 'evidenceHash', label: 'Closeout evidence', type: 'file', required: false },
       ],
     },
   };
