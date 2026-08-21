@@ -625,7 +625,10 @@ describe('10 · Quality is assurance, not a defect list', () => {
 
   it('stops the work while a hold point is outstanding, and says which', () => {
     const ctx = ctxFor('qaqc');
-    assert.equal(quality.openHoldPoints(ctx).length, 2);
+    // Scoped to this package. The project also carries the seeded concrete ITP,
+    // and a count across everything would say nothing about whether *this* work
+    // can proceed — which is the question being asked.
+    assert.equal(quality.openHoldPoints(ctx).filter((h) => h.workPackageId === 'wp-clarifier-1').length, 2);
 
     throwsCode(() => quality.assertHoldPointsClear(ctx, 'wp-clarifier-1'), 'HOLD_POINT_OPEN');
   });
@@ -680,7 +683,11 @@ describe('10 · Quality is assurance, not a defect list', () => {
     });
 
     assert.equal(second.stageReleased, true);
-    assert.equal(quality.openHoldPoints(ctx).length, 0, 'a passed hold point is still holding');
+    assert.equal(
+      quality.openHoldPoints(ctx).filter((h) => h.workPackageId === 'wp-clarifier-1').length,
+      0,
+      'a passed hold point is still holding',
+    );
     assert.doesNotThrow(() => quality.assertHoldPointsClear(ctx, 'wp-clarifier-1'));
   });
 
@@ -704,13 +711,16 @@ describe('10 · Quality is assurance, not a defect list', () => {
   });
 
   it('reports a conformance position rather than a feeling', () => {
+    // Across the project, which now carries the seeded concrete ITP as well as
+    // the clarifier plan written above: six stages, two of them passed here,
+    // and the concrete plan's own hold point still open.
     const position = quality.qualityPosition(ctxFor('qaqc'));
 
-    assert.equal(position.plans, 1);
-    assert.equal(position.stagesTotal, 3);
+    assert.equal(position.plans, 2);
+    assert.equal(position.stagesTotal, 6);
     assert.equal(position.stagesPassed, 2);
-    assert.equal(position.conformancePercent, 66.67);
-    assert.equal(position.holdPointsOpen, 0);
+    assert.equal(position.conformancePercent, 33.33);
+    assert.equal(position.holdPointsOpen, 1, 'the concrete reinforcement release has not been inspected');
   });
 });
 

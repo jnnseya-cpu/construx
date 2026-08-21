@@ -32,9 +32,6 @@ import { EVENT_TYPES } from '../src/goldenthread/eventTypes.ts';
  */
 const NOT_EMITTED: Record<string, string> = {
   // --- Design and specification: waiting on ingestion that is not built -----
-  SPECIFICATION_INGESTED:
-    'Specification intelligence needs OCR and clause chunking, which is in the not-built list rather than deferred here.',
-  SPEC_CLAUSE_EXTRACTED: 'Same pipeline as SPECIFICATION_INGESTED.',
 
   // --- The AI and ACU lifecycle --------------------------------------------
   //

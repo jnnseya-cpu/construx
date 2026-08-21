@@ -226,6 +226,13 @@ export function recordInspection(
 export type HoldPointStatus = {
   planId: string;
   planReference: string;
+  /**
+   * The work this hold point stops. Without it a count of open hold points
+   * tells nobody where to go — and the project-wide count is exactly what a
+   * screen shows.
+   */
+  workPackageId: string;
+  planTitle: string;
   stageReference: string;
   description: string;
   status: string;
@@ -243,6 +250,8 @@ export function openHoldPoints(ctx: EngineContext): HoldPointStatus[] {
         .map((stage) => ({
           planId: String(plan.state.id),
           planReference: String(plan.state.reference),
+          workPackageId: String(plan.state.workPackageId),
+          planTitle: String(plan.state.title),
           stageReference: stage.reference,
           description: stage.description,
           status: stage.status,

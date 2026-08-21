@@ -1877,6 +1877,31 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/specifications',
+    ai: { engine: 'BIM_TWIN', taskType: 'specification_reading', capability: 'REASONING' },
+    description: 'Engine E — read a specification section for what it requires, from supplied text',
+    schema: {
+      type: 'object',
+      required: ['sectionRef', 'title', 'revision', 'specificationText', 'documentHash'],
+      properties: {
+        sectionRef: stringField,
+        title: stringField,
+        revision: stringField,
+        specificationText: { type: 'string', minLength: 100 },
+        documentHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => bim.ingestSpecification(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/specifications/coverage',
+    description: 'Which specified tests, submittals and hold points have an inspection stage against them',
+    handler: (platform, ctx) => bim.specificationCoverage(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/bim/clashes',
     ai: { engine: 'BIM_TWIN', taskType: 'clash_triage', capability: 'REASONING' },
     description: 'Engine E — detect and triage clashes',

@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 770 passing, 0 failing, across 36 files |
+| Tests | 795 passing, 0 failing, across 37 files |
 | Typecheck | clean |
-| Backend | 79 TypeScript files, 34,724 lines |
+| Backend | 80 TypeScript files, 35,542 lines |
 | Application | 25 ES modules, 7,070 lines (plus a service worker) |
-| API routes | 208 |
+| API routes | 210 |
 | Event types | 172, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
@@ -138,6 +138,36 @@ beyond the ceiling rather than assuming it), and a command touching more than
 eight records, which is treated as a batch — a take-off creating forty bill
 items made all forty siblings of each other and produced 5,736 links on the
 first run.
+
+**The specification, read for what it requires.** `SPECIFICATION_INGESTED` and
+`SPEC_CLAUSE_EXTRACTED` were in the catalogue with nothing able to emit them.
+The specification decides whether work is acceptable and nobody reads it until
+there is an argument; the clauses that cost money are not the ones describing a
+material — those get priced — but the ones imposing a step before or during the
+work: a sample to be approved, a test to be passed, a hold point nobody may
+build through.
+
+Classification is deterministic, from the words the clause uses, so the same
+text gives the same answer twice and anybody can see why a clause was read as it
+was. Order matters — a clause saying both "inspected" and "shall not be covered"
+is a hold point, and reading it as a test loses the fact that work stops. The
+imperative counts as mandatory, because NBS-style specifications write
+obligations as instructions and treating *Submit the mix design* as advisory
+would let most of a specification through as optional.
+
+The join is the point. `specificationCoverage` matches verification clauses
+against ITP acceptance criteria — the field the plan template already asks for —
+and reports what has no inspection stage against it. That gap is invisible to
+both sides: the quality manager reads the ITP, the engineer reads the
+specification, and it exists only between the two. Where an acceptance criterion
+is written as prose the report says uncovered rather than guessing, and the bare
+clause number only matches where the criterion names no other section —
+specifications number 3.4 in every section they have, and matching on the number
+alone reported a dozen sections as covered by one plan.
+
+Reads supplied text, on the same terms as contract clause extraction. OCR is not
+built and a scanned specification cannot be read here; the record says
+`source: 'SUPPLIED_TEXT'` so nobody relying on it has to guess.
 
 **Registers that close.** Clashes, site observations and the scope breakdown
 could previously only grow. Clash closeout records how, and for a model revision

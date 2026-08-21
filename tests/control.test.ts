@@ -276,10 +276,40 @@ describe('The standard against a real project', () => {
       justification: 'Scope defined and funding released for design',
     });
 
+    // A second new project of the same shape. Two jobs at the same stage both
+    // missing the same thing is the pattern the standard exists to catch, and
+    // it cannot be seen from either project's own report — which is the whole
+    // argument for measuring every project the same way.
+    const second = structure.createProject(admin, {
+      portfolioId: String(portfolios[0]!.state.id),
+      name: 'Derwent intake refurbishment',
+      sectorType: 'INFRASTRUCTURE',
+      assetType: 'Raw water intake',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Consett' },
+      contractValueMinor: 410_000_000,
+      currency: 'GBP',
+      plannedStart: '2027-03-01',
+      plannedCompletion: '2028-02-28',
+    }).projectId;
+    structure.createScopePackage(platform.context(seed.users.pm!.auth, second, { source: 'WEB' }), {
+      name: 'Intake civils',
+      discipline: 'CIVILS',
+      scopeOfWorks: 'Refurbishment of the raw water intake screens and penstocks',
+      inclusions: ['Screen replacement'],
+      exclusions: ['Reservoir drawdown'],
+      acceptanceCriteria: ['Leakage testing to specification'],
+      estimatedValueMinor: 320_000_000,
+      designResponsibility: 'SHARED',
+    });
+    structure.transitionPhase(platform.context(seed.users.admin!.auth, second, { source: 'WEB' }), {
+      to: 'DESIGN',
+      justification: 'Scope defined and funding released for design',
+    });
+
     const estate = control.estateControl(admin);
 
     assert.equal(estate.standardItems, CONTROL_ITEMS.length);
-    assert.equal(estate.projects.length, 2);
+    assert.equal(estate.projects.length, 3);
     // Worst first, so the view opens on the project that needs attention.
     assert.ok((estate.projects[0]!.completenessPercent ?? 101) <= (estate.projects[1]!.completenessPercent ?? 101));
 
@@ -288,16 +318,20 @@ describe('The standard against a real project', () => {
     assert.ok(estate.notTracked.length > 0);
     assert.equal(new Set(estate.notTracked.map((n) => n.id)).size, estate.notTracked.length);
 
-    // Both projects are missing specifications and constraints. That neither
-    // project team could have seen is the whole argument for one standard.
+    // What neither project team could have seen is the whole argument for one
+    // standard: a gap that exists on both jobs is a business problem, and each
+    // team looking at its own report would call it a local one.
     assert.ok(estate.systemicGaps.length > 0, 'nothing was found across both projects');
     for (const gap of estate.systemicGaps) {
       assert.ok(gap.missingOn > 1, 'a gap on one project is not systemic');
-      assert.equal(gap.ofProjects, 2);
+      assert.equal(gap.ofProjects, 3);
       assert.ok(controlItem(gap.id), `${gap.id} is not a control item`);
     }
-    assert.ok(estate.systemicGaps.some((g) => g.id === 'PRE.SPECIFICATIONS'));
-    assert.ok(estate.observations.some((o) => o.includes('missing on 2 of 2 projects')));
+    assert.ok(
+      estate.systemicGaps.some((g) => g.id === 'PRE.SPECIFICATIONS' && g.missingOn === 2),
+      'neither new project has a specification, and the seeded one now does',
+    );
+    assert.ok(estate.observations.some((o) => o.includes('missing on 2 of 3 projects')));
   });
 });
 

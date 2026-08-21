@@ -3,6 +3,12 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
+import {
+  assessCoverage,
+  extractClauses,
+  type ExtractedClause,
+  type SpecificationCoverage,
+} from './maths/specification.ts';
 
 /**
  * Engine E — BIM & Digital Twin.
@@ -854,4 +860,174 @@ export function rfiPosition(
         : `${overdue.length} overdue, the oldest ${overdue[0]!.daysOpen} days. Unanswered information is the most common ground for a design-delay claim.`;
 
   return { total: rfis.length, open: open.length, overdue, answeredLate, averageDaysToAnswer, designChanges, summary };
+}
+
+// --- Specification -----------------------------------------------------------
+
+/**
+ * Ingest a specification and extract what it requires.
+ *
+ * The specification decides whether work is acceptable, and it is the document
+ * nobody reads until there is an argument. The clauses that cost money are not
+ * the ones describing a material — those get priced — but the ones imposing a
+ * step *before or during* the work: a sample to be approved, a test to be
+ * passed, a hold point nobody may build through. Miss one and the work is
+ * built, and then it is a non-conformance, a delay, and an argument about who
+ * should have known.
+ *
+ * Extraction is deterministic and the classification comes from the words the
+ * clause uses, so the same document produces the same clauses twice and anybody
+ * can see why a clause was classified as it was. The model characterises the
+ * section; it does not decide what any clause requires.
+ *
+ * **This reads supplied text.** OCR and table extraction are not built, and a
+ * specification arriving as a scanned PDF cannot be read here — the same terms
+ * contract clause extraction already works on, stated rather than implied.
+ */
+export async function ingestSpecification(
+  ctx: EngineContext,
+  input: {
+    /** The work section, as the specification numbers it — E10, A12, "Section 5". */
+    sectionRef: string;
+    title: string;
+    revision: string;
+    specificationText: string;
+    documentHash: string;
+  },
+): Promise<{
+  specificationId: string;
+  clauseIds: string[];
+  clauses: number;
+  requiringVerification: number;
+  acuConsumed: number;
+}> {
+  // Import, as drawing registration is and as the event action says. Reading a
+  // document into the platform is the same act whichever document it is.
+  authorise(ctx, 'DESIGN_INFORMATION', 'I', { lifecyclePhase: currentPhase(ctx) });
+
+  if (input.specificationText.trim().length < 100) {
+    throw new DomainError(
+      'SPECIFICATION_TOO_SHORT',
+      'There is not enough text here to be a specification section. Scanned documents cannot be read — OCR is not built.',
+    );
+  }
+
+  const extracted = extractClauses(input.specificationText, input.sectionRef);
+  if (extracted.length === 0) {
+    throw new DomainError(
+      'NO_CLAUSES_FOUND',
+      'No clause in this text states a requirement. Check it is the specification rather than a contents page or a covering letter.',
+    );
+  }
+
+  const evidence = registerEvidence(ctx, {
+    type: 'SPECIFICATION_DOCUMENT',
+    hash: input.documentHash,
+    description: `${input.sectionRef} ${input.title} revision ${input.revision}`,
+  });
+
+  const specificationId = ulid();
+  const clauseIds: string[] = [];
+  const requiringVerification = extracted.filter((c) => c.requiresVerification).length;
+
+  const result = await runAI(ctx, {
+    engine: 'BIM_TWIN',
+    taskType: 'specification_reading',
+    capability: 'REASONING',
+    inputRefs: [evidence],
+    request: {
+      task: 'Characterise what this specification section demands of the contractor and where the risk in it sits',
+      payload: {
+        sectionRef: input.sectionRef,
+        title: input.title,
+        clauses: extracted.slice(0, 40).map((c) => ({ clauseRef: c.clauseRef, kind: c.kind, mandatory: c.mandatory })),
+        totalClauses: extracted.length,
+      },
+    },
+    toWrites: (output) => {
+      const writes: Array<{ eventType: string; entity: EntityRef; nextState: Record<string, unknown>; evidenceRefs?: EntityRef[] }> = [
+        {
+          eventType: 'SPECIFICATION_INGESTED',
+          entity: { refType: 'Specification', refId: specificationId },
+          nextState: {
+            id: specificationId,
+            projectId: ctx.projectId,
+            sectionRef: input.sectionRef,
+            title: input.title,
+            revision: input.revision,
+            documentHash: input.documentHash,
+            clauseCount: extracted.length,
+            requiringVerification,
+            narrative: String(output.narrative ?? ''),
+            ingestedAt: new Date().toISOString(),
+            // The source is text somebody supplied, not a document the platform
+            // read. Anyone relying on this needs to know which.
+            source: 'SUPPLIED_TEXT',
+          },
+          evidenceRefs: [evidence],
+        },
+      ];
+
+      for (const clause of extracted) {
+        const clauseId = ulid();
+        clauseIds.push(clauseId);
+        writes.push({
+          eventType: 'SPEC_CLAUSE_EXTRACTED',
+          entity: { refType: 'SpecClause', refId: clauseId },
+          nextState: {
+            id: clauseId,
+            projectId: ctx.projectId,
+            specificationId,
+            specificationRef: input.sectionRef,
+            ...clause,
+          },
+          evidenceRefs: [evidence],
+        });
+      }
+
+      return writes;
+    },
+  });
+
+  return {
+    specificationId,
+    clauseIds,
+    clauses: extracted.length,
+    requiringVerification,
+    acuConsumed: result.acuConsumed,
+  };
+}
+
+/**
+ * Which specified verification steps have an inspection stage against them.
+ *
+ * The join that makes the extraction worth doing. A clause requiring a test,
+ * with no ITP stage naming it, is work that will be built and then argued
+ * about — and neither the quality manager reading the ITP nor the engineer
+ * reading the specification can see it, because it only exists between the two.
+ */
+export function specificationCoverage(ctx: EngineContext): SpecificationCoverage {
+  authorise(ctx, 'DESIGN_INFORMATION', 'R');
+
+  const clauses = ctx.ledger.list(ctx.projectId, 'SpecClause').map((record) => ({
+    clauseRef: String(record.state.clauseRef),
+    text: String(record.state.text),
+    kind: record.state.kind as ExtractedClause['kind'],
+    mandatory: record.state.mandatory === true,
+    standards: (record.state.standards ?? []) as string[],
+    requiresVerification: record.state.requiresVerification === true,
+    triggers: (record.state.triggers ?? []) as string[],
+    specificationRef: String(record.state.specificationRef),
+  }));
+
+  // Every acceptance criterion across every plan. The ITP template already asks
+  // for "the specification or drawing clause the inspection is against", so
+  // this is the field that was put there for exactly this join.
+  const criteria = ctx.ledger.list(ctx.projectId, 'InspectionPlan').flatMap((plan) => {
+    const stages = (plan.state.stages ?? []) as Array<{ acceptanceCriteria?: string }>;
+    const planRef = plan.state.specificationRef === undefined ? [] : [String(plan.state.specificationRef)];
+    return [...planRef, ...stages.map((stage) => String(stage.acceptanceCriteria ?? ''))];
+  });
+
+  return assessCoverage(clauses, criteria, ctx.ledger.list(ctx.projectId, 'Specification').length);
 }

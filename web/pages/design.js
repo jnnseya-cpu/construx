@@ -41,6 +41,11 @@ export async function design(root) {
   // Not the count. What is still critical, and where a closeout left the model
   // describing something that was not built.
   const clashes = await api.get(`/v1/projects/${projectId}/bim/clashes/position`).catch(() => null);
+
+  // What the specification demands against what the inspection plans actually
+  // check. The gap exists only between the two documents, so neither the
+  // quality manager nor the engineer can see it on their own.
+  const spec = await api.get(`/v1/projects/${projectId}/specifications/coverage`).catch(() => null);
   const deviations = b.DigitalTwinState.reduce((sum, s) => sum + Number(s.deviationCount ?? 0), 0);
 
   render(
@@ -57,6 +62,7 @@ export async function design(root) {
             { id: 'markup', label: 'Add markup', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
             { id: 'answer', label: 'Answer an RFI', permitted: can('DESIGN_INFORMATION', 'U'), reason: blockedReason('DESIGN_INFORMATION', 'U') },
             { id: 'resolve-clash', label: 'Close a clash', permitted: can('BIM_TWIN', 'A'), reason: blockedReason('BIM_TWIN', 'A') },
+            { id: 'specification', label: 'Read a specification', permitted: can('DESIGN_INFORMATION', 'I'), reason: blockedReason('DESIGN_INFORMATION', 'I') },
           ]))}
         </div>
       </div>
@@ -149,6 +155,36 @@ export async function design(root) {
           </div>
         </div>
       </div>
+
+      ${
+        spec && spec.specifications > 0
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Specification against the inspection plans</h3>
+              <div style="padding:0 17px"><div class="metric-sub">
+                ${spec.clauses} clauses read, ${spec.requiringVerification} of which impose a test, a submittal or a hold point.
+                A clause requiring one with no inspection stage against it is work that gets built and then argued about —
+                and it is invisible to both sides, because the gap exists only between the two documents.
+              </div></div>
+              <div class="grid g4" style="padding:13px 17px 4px">
+                <div><div class="metric ${raw(spec.coveragePercent >= 90 ? 'good' : spec.coveragePercent >= 50 ? 'warn' : 'bad')}">${pct(spec.coveragePercent, 0)}</div><div class="metric-sub">verification clauses inspected</div></div>
+                <div><div class="metric">${spec.covered}<span style="font-size:16px;color:var(--text-3)"> / ${spec.requiringVerification}</span></div><div class="metric-sub">covered by an ITP stage</div></div>
+                <div><div class="metric ${raw(spec.gaps.filter((g) => g.mandatory).length > 0 ? 'bad' : '')}">${spec.gaps.filter((g) => g.mandatory).length}</div><div class="metric-sub">mandatory and uncovered</div></div>
+                <div><div class="metric">${spec.advisoryGaps}</div><div class="metric-sub">advisory — a should, not a shall</div></div>
+              </div>
+              ${table({
+                headers: ['Clause', 'Requires', 'What it says', 'If nobody notices'],
+                rows: spec.gaps.map((g) => [
+                  g.clauseRef,
+                  badge(humanise(g.kind), g.mandatory ? (g.kind === 'HOLD_POINT' ? 'bad' : 'warn') : 'neutral'),
+                  String(g.text).slice(0, 70) + (String(g.text).length > 70 ? '…' : ''),
+                  g.consequence,
+                ]),
+                empty: 'Every specified test, submittal and hold point has an inspection stage against it.',
+              })}
+              <div style="padding:8px 17px 15px"><div class="metric-sub">${spec.summary}</div></div>
+            </div>`
+          : ''
+      }
 
       <div class="grid g2">
         <div class="card pad0">
@@ -294,6 +330,23 @@ export async function design(root) {
         ] },
         { name: 'evidenceHash', label: 'Answer document', type: 'file' },
       ],
+    },
+    specification: {
+      title: 'Read a specification',
+      intent:
+        'Paste the section. Clauses are classified by the words they use, so the same text gives the same answer twice — and a scan cannot be read, because OCR is not built.',
+      path: `/v1/projects/${projectId}/specifications`,
+      aiCost: true,
+      submitLabel: 'Read',
+      fields: [
+        { name: 'sectionRef', label: 'Section', type: 'text', placeholder: 'E10',
+          hint: 'As the specification numbers it. Clause references are built from this.' },
+        { name: 'title', label: 'Title', type: 'text', placeholder: 'In situ concrete' },
+        { name: 'revision', label: 'Revision', type: 'text', placeholder: 'C' },
+        { name: 'specificationText', label: 'The text', type: 'textarea', rows: 10 },
+        { name: 'documentHash', label: 'Source document', type: 'file' },
+      ],
+      transform: ({ documentHash, ...rest }) => ({ ...rest, documentHash }),
     },
     'resolve-clash': {
       title: 'Close a clash',

@@ -11,6 +11,7 @@ import * as claimsEngine from './engines/claims.ts';
 import * as cost from './engines/cost.ts';
 import * as handover from './engines/handover.ts';
 import * as planning from './engines/planning.ts';
+import * as quality from './engines/quality.ts';
 import * as safety from './engines/safety.ts';
 import { scoreRisk } from './engines/maths/risk.ts';
 import * as tender from './engines/tender.ts';
@@ -479,6 +480,43 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     evidenceHash: hash('clash-003-site-resolution-photo'),
   });
   step('2 clashes closed out — one by model revision, one on site with the model left behind');
+
+  // The specification, read for what it demands rather than what it says. Four
+  // clauses impose a step before or during the work; the inspection plan below
+  // covers two of them, which is the finding the demo is supposed to show.
+  const concreteSpec = await bim.ingestSpecification(bimCtx, {
+    sectionRef: 'E10',
+    title: 'In situ concrete',
+    revision: 'C',
+    specificationText: [
+      'E10 IN SITU CONCRETE',
+      '',
+      '3.1  Concrete shall comply with BS EN 206 and BS 8500-2, and shall be supplied',
+      '     by a plant holding current third party product conformity certification.',
+      '',
+      '3.2  Submit the concrete mix design to the Engineer for approval not less than',
+      '     20 working days before the first pour is scheduled to take place.',
+      '',
+      '3.3  A trial panel of the fair faced finish shall be constructed and approved',
+      '     before any permanent fair faced concrete is placed on the works.',
+      '',
+      '3.4  Reinforcement shall not be covered until it has been inspected and released',
+      '     by the Engineer. This is a hold point.',
+      '',
+      '3.5  Cube testing shall be carried out in accordance with BS EN 12390-3 at a',
+      '     rate of one set per 50 cubic metres or part thereof placed in any one day.',
+      '',
+      '3.6  Formwork should be struck in a manner that avoids shock loading, having',
+      '     regard to the ambient temperature at the time of striking.',
+      '',
+      '3.7  The finished surface tolerance shall be Class H20 measured in accordance',
+      '     with the National Structural Concrete Specification.',
+    ].join('\n'),
+    documentHash: hash('specification-e10-rev-c'),
+  });
+  step(
+    `Specification E10 read: ${concreteSpec.clauses} clauses, ${concreteSpec.requiringVerification} imposing a test, submittal or hold point`,
+  );
 
   const clashRfi = bim.addMarkup(bimCtx, {
     drawingId: drawing.drawingId,
@@ -1296,6 +1334,41 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     }
   }
   step('Site walk: 4 observations, 2 closed (one late), 1 access obstruction still open past its date');
+
+  // The inspection plan written against that specification. Two of the four
+  // verification clauses are covered; the mix design submittal and the fair
+  // faced trial panel are not, which is the gap the coverage report finds and
+  // which neither the ITP nor the specification shows on its own.
+  quality.createInspectionPlan(qaqcCtx, {
+    workPackageId: packageId,
+    title: 'In situ concrete — clarifier walls',
+    discipline: 'CIVILS',
+    specificationRef: 'E10',
+    stages: [
+      {
+        reference: 'S1',
+        description: 'Reinforcement inspection before covering',
+        acceptanceCriteria: 'E10/3.4 — reinforcement inspected and released by the Engineer',
+        type: 'HOLD',
+        responsible: 'Engineer',
+      },
+      {
+        reference: 'S2',
+        description: 'Cube sampling at the specified rate',
+        acceptanceCriteria: 'E10/3.5 — one set per 50m3 to BS EN 12390-3',
+        type: 'WITNESS',
+        responsible: 'QA engineer',
+      },
+      {
+        reference: 'S3',
+        description: 'Surface finish check after striking',
+        acceptanceCriteria: 'E10/3.7 — Class H20 to the NSCS',
+        type: 'REVIEW',
+        responsible: 'QA engineer',
+      },
+    ],
+  });
+  step('ITP written against E10 — 2 of 4 verification clauses covered, the mix design and trial panel are not');
 
   // A work package somebody typed in, alongside the generated ones. Temporary
   // works never come out of a generator — they come out of the contract and a
