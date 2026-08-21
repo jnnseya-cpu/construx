@@ -1,4 +1,8 @@
 import { authorise, type EngineContext } from '../engines/context.ts';
+import { lookupEventType, type EventGroup } from '../goldenthread/eventTypes.ts';
+import { classifyEntity } from '../identity/entityAccess.ts';
+import { evaluateAccess } from '../identity/abac.ts';
+import { AUTHZ_OPTIONS } from '../engines/context.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
 
 /**
@@ -83,6 +87,249 @@ export type EnterpriseCommand = {
 
 function phaseOf(state: Record<string, unknown>): LifecyclePhase {
   return String(state.phase ?? 'CONCEPT') as LifecyclePhase;
+}
+
+/**
+ * What changed across the tenancy in a window.
+ *
+ * The per-project timeline already existed; nothing answered the question at
+ * enterprise scale, which is the one a director actually asks on a Monday. The
+ * naive version — every event in the tenancy for seven days — is thousands of
+ * rows and answers nothing, because most of what a construction platform records
+ * is routine and correct.
+ *
+ * So this counts rather than lists, grouped by the event catalogue's own
+ * `EventGroup`. A group's count is the honest headline ("commercial: 14
+ * movements"), and the sample beneath it is what to look at first. Grouping is
+ * read from the catalogue rather than invented here, so a new event type lands
+ * in the right group without this file being touched.
+ *
+ * Access is evaluated per event with the same rule the audit feed uses: an
+ * event whose entity the caller may not read is counted but not described. A
+ * change feed that leaked one line of a record the reader cannot open would be
+ * the way around every capability boundary in the system, and one that silently
+ * dropped it would under-report the estate.
+ */
+export type ChangeWindow = {
+  from: string;
+  to: string;
+  /** Every event in the window, whether or not it could be described. */
+  total: number;
+  groups: Array<{
+    group: EventGroup;
+    count: number;
+    /** Counted but not readable by this caller. Stated, never silently dropped. */
+    withheld: number;
+    /** The most recent readable changes in the group, newest first. */
+    sample: Array<{
+      timestamp: string;
+      eventType: string;
+      projectId: string;
+      projectName: string;
+      entity: string;
+    }>;
+  }>;
+};
+
+/**
+ * Completion confidence across the estate.
+ *
+ * Monte Carlo completion existed per project and nothing rolled it up, so a
+ * portfolio reader could learn that one project has a 12% chance of finishing
+ * on time only by opening it, one at a time.
+ *
+ * **What this deliberately does not do is simulate the portfolio.** Two projects
+ * do not share a critical path, so there is no "portfolio P80" that means
+ * anything — adding two distributions that describe unrelated networks produces
+ * a number with a confidence interval and no referent. What a director actually
+ * needs is the count: how many projects miss their contractual date at P80, and
+ * what those projects are worth.
+ *
+ * It also states its own cost. A simulation per project is real work, so the
+ * iteration count is lower than a single-project run would use and the response
+ * says how many iterations produced it. A forecast whose precision is unstated
+ * invites more confidence than it earned.
+ */
+export type PortfolioForecast = {
+  /** Projects with a network to simulate, of the total. Read this first. */
+  coverage: { simulated: number; of: number };
+  iterations: number;
+  /** Projects whose P80 duration exceeds their contractual duration. */
+  lateAtP80: number;
+  /** Contract value of those projects. What is at stake, not what is lost. */
+  exposedContractValueMinor: number;
+  currency: string | null;
+  projects: Array<{
+    projectId: string;
+    name: string;
+    p50Days: number;
+    p80Days: number;
+    /** From the project's own dates. Absent where the project has none. */
+    contractualDurationDays?: number;
+    /** Days by which P80 exceeds the contractual duration. Absent if not late. */
+    overrunAtP80Days?: number;
+  }>;
+  /** Projects that could not be simulated, with the reason. Named, not dropped. */
+  notSimulated: Array<{ projectId: string; name: string; reason: string }>;
+};
+
+export function portfolioForecast(
+  ctx: EngineContext,
+  simulate: (projectId: string, iterations: number, contractualDurationDays?: number) => { p50: number; p80: number },
+  iterations = 500,
+): PortfolioForecast {
+  authorise(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+
+  const projects = ctx.ledger.listByTenant(ctx.tenantId, 'Project');
+  const rows: PortfolioForecast['projects'] = [];
+  const notSimulated: PortfolioForecast['notSimulated'] = [];
+  const currencies = new Set<string>();
+
+  let lateAtP80 = 0;
+  let exposedContractValueMinor = 0;
+
+  for (const record of projects) {
+    const name = String(record.state.name ?? record.refId);
+    const contractual = contractualDays(record.state);
+
+    let result;
+    try {
+      result = simulate(record.refId, iterations, contractual);
+    } catch (error) {
+      // A project at CONCEPT has no network, and that is not a failure — it is
+      // the correct answer to "when will it finish". Named rather than dropped,
+      // because a coverage figure with no explanation is the thing a reader
+      // cannot act on.
+      notSimulated.push({
+        projectId: record.refId,
+        name,
+        reason: error instanceof Error ? error.message : 'Could not be simulated',
+      });
+      continue;
+    }
+
+    const row: PortfolioForecast['projects'][number] = {
+      projectId: record.refId,
+      name,
+      p50Days: Math.round(result.p50),
+      p80Days: Math.round(result.p80),
+      ...(contractual === undefined ? {} : { contractualDurationDays: contractual }),
+    };
+
+    if (contractual !== undefined && result.p80 > contractual) {
+      row.overrunAtP80Days = Math.round(result.p80 - contractual);
+      lateAtP80 += 1;
+      exposedContractValueMinor += Number(record.state.contractValueMinor ?? 0);
+      currencies.add(String(record.state.currency ?? 'GBP'));
+    }
+
+    rows.push(row);
+  }
+
+  // Worst overrun first. A portfolio list ordered by anything else buries the
+  // project the reader opened the screen for.
+  rows.sort((a, b) => (b.overrunAtP80Days ?? -1) - (a.overrunAtP80Days ?? -1));
+
+  return {
+    coverage: { simulated: rows.length, of: projects.length },
+    iterations,
+    lateAtP80,
+    exposedContractValueMinor,
+    // Null rather than a guess, exactly as the financial position does it: no
+    // exposed project, or exposure in more than one currency, both give null
+    // rather than a total that reads as authoritative and is not.
+    currency: currencies.size === 1 ? [...currencies][0]! : null,
+    projects: rows,
+    notSimulated,
+  };
+}
+
+/**
+ * The contractual span, in the same units the simulation answers in.
+ *
+ * The project's dates are calendar dates and the network is in working days, so
+ * the two cannot be compared directly — a 913-day contract is not a 913-day
+ * programme, and treating it as one flatters every project on the estate by
+ * about forty percent.
+ *
+ * Five working days in seven is the approximation, applied here rather than
+ * left implicit. It ignores public holidays, which is the right trade at
+ * portfolio level: the question is "does this project miss its date at P80",
+ * and eight bank holidays do not change that answer for a project that is
+ * hundreds of days out. `businessDaysBetween` in the Construction Act engine is
+ * the exact reckoning and is used where exactness is what is at stake — a
+ * statutory payment deadline, where a day either way is the whole question.
+ */
+function contractualDays(state: Record<string, unknown>): number | undefined {
+  const start = Date.parse(String(state.plannedStart ?? ''));
+  const end = Date.parse(String(state.plannedCompletion ?? ''));
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return undefined;
+  const calendarDays = (end - start) / 86_400_000;
+  return Math.round((calendarDays * 5) / 7);
+}
+
+export function changeWindow(ctx: EngineContext, from: string, to: string, sampleSize = 4): ChangeWindow {
+  authorise(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+
+  const names = new Map<string, string>();
+  for (const record of ctx.ledger.listByTenant(ctx.tenantId, 'Project')) {
+    names.set(record.refId, String(record.state.name ?? record.refId));
+  }
+  // Tenant-level governance — creating a portfolio, changing a role, updating a
+  // policy — is committed against a pseudo-project rather than a real one, so
+  // it has no name in the Project list. Naming it here is not cosmetic: without
+  // this the busiest group on the panel is labelled with a raw identifier, and
+  // a reader cannot tell governance from a project they have never heard of.
+  names.set(`${ctx.tenantId}-governance`, 'Enterprise governance');
+
+  const grouped = new Map<EventGroup, { count: number; withheld: number; sample: ChangeWindow['groups'][number]['sample'] }>();
+  const events = ctx.ledger.events({ tenantId: ctx.tenantId, from, until: to });
+
+  // Newest first, so a sample of four is the four most recent rather than the
+  // four oldest — which on a busy week is the difference between "what changed"
+  // and "what changed a week ago".
+  for (const event of [...events].reverse()) {
+    const definition = lookupEventType(event.eventType);
+    if (!definition) continue;
+
+    const bucket = grouped.get(definition.group) ?? { count: 0, withheld: 0, sample: [] };
+    bucket.count += 1;
+
+    const classification = classifyEntity(event.entity.refType);
+    const readable =
+      classification === undefined ||
+      evaluateAccess(
+        ctx.auth,
+        classification.area,
+        'R',
+        { tenantId: ctx.tenantId, projectId: event.projectId, dataSensitivity: classification.sensitivity },
+        AUTHZ_OPTIONS,
+      ).decision === 'ALLOW';
+
+    if (!readable) bucket.withheld += 1;
+    else if (bucket.sample.length < sampleSize) {
+      bucket.sample.push({
+        timestamp: event.timestamp,
+        eventType: event.eventType,
+        projectId: event.projectId,
+        projectName: names.get(event.projectId) ?? event.projectId,
+        entity: event.entity.refType,
+      });
+    }
+
+    grouped.set(definition.group, bucket);
+  }
+
+  return {
+    from,
+    to,
+    total: events.length,
+    groups: [...grouped.entries()]
+      .map(([group, bucket]) => ({ group, ...bucket }))
+      // Busiest first: the group that moved most is what a portfolio reader
+      // should look at, and alphabetical order would bury it.
+      .sort((a, b) => b.count - a.count || a.group.localeCompare(b.group)),
+  };
 }
 
 /** Latest record of a type on a project, or undefined. */

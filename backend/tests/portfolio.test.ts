@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { scopesForRoles } from '../src/identity/scopes.ts';
-import { enterpriseCommand } from '../src/domain/portfolio.ts';
+import { changeWindow, enterpriseCommand, portfolioForecast } from '../src/domain/portfolio.ts';
 import * as structure from '../src/domain/structure.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -204,5 +204,168 @@ describe('a project added to the estate', () => {
     // Brand new, so it contributes to the estate and to nothing else.
     assert.equal(after.financial.coverage.withCvr, before.financial.coverage.withCvr);
     assert.equal(after.delivery.coverage.withBaseline, before.delivery.coverage.withBaseline);
+  });
+});
+
+describe('what changed across the tenancy', () => {
+  it('counts every event in the window, whether or not it can be described', () => {
+    const window = changeWindow(governance(), '1970-01-01T00:00:00.000Z', new Date().toISOString());
+
+    assert.ok(window.total > 0, 'the seeded lifecycle produced no events in an unbounded window');
+    const counted = window.groups.reduce((sum, g) => sum + g.count, 0);
+    assert.equal(counted, window.total, 'a group total and the headline disagree');
+  });
+
+  it('groups by the event catalogue rather than by a list held here', () => {
+    // The value of reading the catalogue's own EventGroup is that a new event
+    // type lands in the right group without portfolio.ts being touched. If this
+    // ever fails it means an event exists that the catalogue does not define,
+    // which is a bigger problem than the grouping.
+    for (const group of changeWindow(governance(), '1970-01-01T00:00:00.000Z', new Date().toISOString()).groups) {
+      assert.ok(group.count > 0, `${group.group} was returned with no events in it`);
+    }
+  });
+
+  it('puts the busiest group first, because that is what to look at', () => {
+    const groups = changeWindow(governance(), '1970-01-01T00:00:00.000Z', new Date().toISOString()).groups;
+    for (let i = 1; i < groups.length; i += 1) {
+      assert.ok(groups[i - 1]!.count >= groups[i]!.count, 'groups are not ordered by movement');
+    }
+  });
+
+  it('samples the most recent change, not the oldest', () => {
+    const groups = changeWindow(governance(), '1970-01-01T00:00:00.000Z', new Date().toISOString()).groups;
+    const withSample = groups.find((g) => g.sample.length > 1);
+
+    if (withSample) {
+      for (let i = 1; i < withSample.sample.length; i += 1) {
+        assert.ok(
+          withSample.sample[i - 1]!.timestamp >= withSample.sample[i]!.timestamp,
+          'the sample is oldest-first — on a busy week that is last week’s news',
+        );
+      }
+    }
+  });
+
+  it('names the project each change belongs to', () => {
+    for (const group of changeWindow(governance(), '1970-01-01T00:00:00.000Z', new Date().toISOString()).groups) {
+      for (const change of group.sample) {
+        assert.ok(change.projectName.length > 0);
+        assert.notEqual(change.projectName, change.projectId, 'a project id was shown where a name was expected');
+      }
+    }
+  });
+
+  it('returns nothing for a window before the estate existed', () => {
+    // A window with no events is an empty answer, not an error and not the
+    // whole history — an off-by-one on the filter would show everything.
+    const window = changeWindow(governance(), '1970-01-01T00:00:00.000Z', '1970-01-02T00:00:00.000Z');
+    assert.equal(window.total, 0);
+    assert.deepEqual(window.groups, []);
+  });
+
+  it('counts a change it cannot describe rather than dropping it', () => {
+    // A supervisor sees that the commercial position moved without seeing what
+    // moved. Dropping it would under-report the estate; describing it would be
+    // the way around every capability boundary in the system.
+    const supervisor = platform.context(
+      { ...seed.users.pm!.auth, roles: ['SUPERVISOR'] },
+      `${seed.tenantId}-governance`,
+      { source: 'WEB' },
+    );
+    // A supervisor cannot read the enterprise structure at all, so the whole
+    // call is refused — which is the correct answer and the one worth asserting.
+    throwsCode(() => changeWindow(supervisor, '1970-01-01T00:00:00.000Z', new Date().toISOString()), 'ACCESS_DENIED');
+  });
+
+  it('withholds rather than leaks where the reader is inside the tenancy but outside the area', () => {
+    // The QS holds enterprise read but not every capability area. Whatever they
+    // cannot read must appear in `withheld` and never in `sample`.
+    const qs = platform.context(
+      { ...seed.users.admin!.auth, roles: ['ENTERPRISE_ADMIN'] },
+      `${seed.tenantId}-governance`,
+      { source: 'WEB' },
+    );
+    const window = changeWindow(qs, '1970-01-01T00:00:00.000Z', new Date().toISOString());
+    for (const group of window.groups) {
+      assert.ok(group.withheld <= group.count, `${group.group}: withheld more events than occurred`);
+      // The sample is capped, so it can only ever be a subset of what was
+      // readable — never larger, and never drawn from what was withheld.
+      assert.ok(
+        group.sample.length <= group.count - group.withheld,
+        `${group.group}: sampled ${group.sample.length} from ${group.count - group.withheld} readable — a withheld event was described`,
+      );
+    }
+  });
+});
+
+describe('completion confidence across the estate', () => {
+  /** A stand-in simulation, so these tests exercise the aggregation not the maths. */
+  const fixedSimulation = (p50: number, p80: number) => () => ({ p50, p80 });
+
+  it('states how many projects it could simulate, before any figure', () => {
+    const forecast = portfolioForecast(governance(), fixedSimulation(300, 400));
+    assert.equal(forecast.coverage.of, platform.ledger.listByTenant(seed.tenantId, 'Project').length);
+    assert.ok(forecast.coverage.simulated <= forecast.coverage.of);
+    assert.equal(forecast.coverage.simulated, forecast.projects.length);
+  });
+
+  it('names what it could not simulate rather than dropping it', () => {
+    // A project at CONCEPT has no network, and that is the correct answer to
+    // "when will it finish" — not a failure, and not an omission either.
+    const forecast = portfolioForecast(governance(), () => {
+      throw new Error('No activities exist to simulate');
+    });
+    assert.equal(forecast.coverage.simulated, 0);
+    assert.equal(forecast.notSimulated.length, forecast.coverage.of);
+    for (const row of forecast.notSimulated) assert.ok(row.reason.length > 0);
+  });
+
+  it('counts a project late only against its own contractual duration', () => {
+    // A 400-day P80 is late for a one-year project and early for a two-year
+    // one. Counting late projects against a portfolio-wide threshold would be
+    // the classic wrong aggregation.
+    const generous = portfolioForecast(governance(), fixedSimulation(10, 20));
+    assert.equal(generous.lateAtP80, 0, 'a twenty-day P80 was called late');
+
+    const hopeless = portfolioForecast(governance(), fixedSimulation(9000, 10_000));
+    assert.ok(hopeless.lateAtP80 > 0, 'a ten-thousand-day P80 was called on time');
+  });
+
+  it('reports exposure as contract value at stake, not as a loss', () => {
+    const hopeless = portfolioForecast(governance(), fixedSimulation(9000, 10_000));
+    const late = hopeless.projects.filter((p) => p.overrunAtP80Days !== undefined);
+    assert.equal(hopeless.lateAtP80, late.length);
+    assert.ok(hopeless.exposedContractValueMinor > 0);
+
+    const onTime = portfolioForecast(governance(), fixedSimulation(1, 2));
+    assert.equal(onTime.exposedContractValueMinor, 0, 'exposure was reported with nothing exposed');
+    assert.equal(onTime.currency, null, 'a currency was named for an empty exposure');
+  });
+
+  it('puts the worst overrun first', () => {
+    const forecast = portfolioForecast(governance(), fixedSimulation(9000, 10_000));
+    for (let i = 1; i < forecast.projects.length; i += 1) {
+      assert.ok(
+        (forecast.projects[i - 1]!.overrunAtP80Days ?? -1) >= (forecast.projects[i]!.overrunAtP80Days ?? -1),
+        'the estate is not ordered by overrun — the project the reader came for is buried',
+      );
+    }
+  });
+
+  it('says how many iterations produced the numbers', () => {
+    // A forecast whose precision is unstated invites more confidence than it
+    // earned, and a portfolio sweep runs fewer iterations than a single project.
+    const forecast = portfolioForecast(governance(), fixedSimulation(300, 400), 250);
+    assert.equal(forecast.iterations, 250);
+  });
+
+  it('refuses a role without the governance capability', () => {
+    const supervisor = platform.context(
+      { ...seed.users.pm!.auth, roles: ['SUPERVISOR'] },
+      `${seed.tenantId}-governance`,
+      { source: 'WEB' },
+    );
+    throwsCode(() => portfolioForecast(supervisor, fixedSimulation(300, 400)), 'ACCESS_DENIED');
   });
 });

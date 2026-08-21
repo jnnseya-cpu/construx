@@ -1458,6 +1458,42 @@ Verified against a running server: a project created in Columbus, Ohio at
 per-field problem+json error; and the estate's contract-value card switched to
 "mixed currencies" rather than adding dollars to pounds.
 
+**The estate answers "what changed" and "when will it finish".** Both existed
+per project and neither was aggregated, so a portfolio reader learned them one
+project at a time.
+
+`GET /v1/enterprise/changes` windows the ledger across the tenancy and **counts
+rather than lists** — every event in a tenancy for a week is thousands of rows
+and answers nothing. Grouping is read from the event catalogue's own
+`EventGroup`, so a new event type lands in the right group without
+`portfolio.ts` being touched, and the busiest group sorts first because what
+moved most is what to look at. Access is evaluated per event with the same rule
+the audit feed uses: an event whose entity the caller may not read is **counted
+and marked withheld**, never described and never dropped. Against the seeded
+estate an enterprise admin sees 361 movements with 29 withheld in delivery and
+11 in governance — the entity-access boundary holding inside an aggregate.
+
+Tenant-level governance commits against a `{tenantId}-governance` pseudo-project
+with no entry in the project list, so it was labelled with a raw identifier
+until it was named. Not cosmetic: the reader could not tell governance from a
+project they had never heard of.
+
+`GET /v1/enterprise/forecast` runs the completion simulation per project and
+counts how many miss their contractual date at P80, with the contract value of
+those projects. **It does not simulate the portfolio.** Two projects do not
+share a critical path, so a combined distribution has a confidence interval and
+no referent. It also states its own precision — iterations per project — because
+a forecast whose precision is unstated invites more confidence than it earned.
+
+One correctness trap found while verifying it: CPM answers in working days and a
+project's dates are calendar dates, so comparing them directly flatters every
+project on the estate by about forty percent. The contractual span is converted
+at five days in seven, stated in the code rather than left implicit. Public
+holidays are ignored deliberately — at portfolio level the question is whether a
+project misses its date at P80, and eight days do not change that for a project
+hundreds of days out. `businessDaysBetween` remains the exact reckoning where
+exactness is the whole question, as it is for a statutory payment deadline.
+
 **Every actionable item can name a person.** The permission matrix resolves a
 *capability* — it says a planner may approve a baseline. It does not say which
 planner, and an item that names nobody is an item nobody picks up. `ownership.ts`

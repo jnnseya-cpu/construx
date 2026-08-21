@@ -21,12 +21,14 @@ export async function enterprise(root) {
   // figure below carries the number of projects it was built from, because a
   // total that treats a missing CVR as zero is the most confident wrong number
   // a portfolio screen can print.
-  const [position, portfolios, enterprises, gates, ownership] = await Promise.all([
+  const [position, portfolios, enterprises, gates, ownership, changes, forecast] = await Promise.all([
     api.get('/v1/enterprise/command'),
     api.get('/v1/portfolios').catch(() => ({ portfolios: [] })),
     api.get('/v1/enterprises').catch(() => ({ enterprises: [] })),
     api.get('/v1/lifecycle/gates').catch(() => ({ gates: [] })),
     api.get('/v1/ownership').catch(() => ({ areas: [] })),
+    api.get('/v1/enterprise/changes').catch(() => null),
+    api.get('/v1/enterprise/forecast').catch(() => null),
   ]);
 
   const { estate, financial, delivery, risks, projects } = position;
@@ -176,6 +178,72 @@ export async function enterprise(root) {
           as confident and be wrong.
         </div>
       </div>
+
+      ${
+        changes && changes.total > 0
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">What changed — last seven days</h3>
+              ${table({
+                headers: ['Area', 'Movements', 'Most recent'],
+                align: ['', 'num', ''],
+                rows: changes.groups.map((g) => [
+                  humanise(g.group),
+                  // The count is the honest headline; the sample is what to
+                  // look at. A change the reader may not open is counted and
+                  // said to be withheld, never described and never dropped.
+                  g.withheld > 0
+                    ? html`${g.count} <span class="metric-sub">${g.withheld} withheld</span>`
+                    : String(g.count),
+                  g.sample.length === 0
+                    ? '—'
+                    : html`${humanise(g.sample[0].eventType)}
+                        <span class="metric-sub">${g.sample[0].projectName} · ${date(g.sample[0].timestamp)}</span>`,
+                ]),
+              })}
+              <div class="metric-sub" style="padding:0 17px 14px">
+                ${changes.total} movement${changes.total === 1 ? '' : 's'} across the estate, grouped by the event
+                catalogue. Busiest first — what moved most is what to look at.
+              </div>
+            </div>`
+          : ''
+      }
+
+      ${
+        forecast
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Completion confidence</h3>
+              ${table({
+                headers: ['Project', 'P50 (wd)', 'P80 (wd)', 'Contract (wd)', 'Overrun at P80'],
+                align: ['', 'num', 'num', 'num', 'num'],
+                rows: forecast.projects.map((p) => [
+                  p.name,
+                  String(p.p50Days),
+                  String(p.p80Days),
+                  p.contractualDurationDays === undefined ? '—' : String(p.contractualDurationDays),
+                  p.overrunAtP80Days === undefined
+                    ? badge('On time', 'ok')
+                    : badge(`+${p.overrunAtP80Days}d`, 'bad'),
+                ]),
+                empty: 'No project has a network to simulate',
+              })}
+              <div class="metric-sub" style="padding:0 17px 14px">
+                ${forecast.lateAtP80} of ${forecast.coverage.simulated} miss their date at P80${
+                  forecast.exposedContractValueMinor > 0 && forecast.currency
+                    ? ` · ${money(forecast.exposedContractValueMinor, forecast.currency)} of contract value exposed`
+                    : ''
+                }.
+                From ${forecast.iterations} iterations per project.
+                ${
+                  forecast.notSimulated.length > 0
+                    ? html`<br>Not simulated: ${forecast.notSimulated.map((n) => n.name).join(', ')} — no network to run.`
+                    : ''
+                }
+                There is no portfolio P80: two projects do not share a critical path, so a combined figure would
+                have a confidence interval and no meaning.
+              </div>
+            </div>`
+          : ''
+      }
 
       <div class="card pad0" style="margin-bottom:14px">
         <h3 style="padding:15px 17px 0">Who owns the decision</h3>

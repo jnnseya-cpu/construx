@@ -1536,6 +1536,48 @@ export const ROUTES: Route[] = [
         platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, { correlationId: ctx.correlationId }),
       ),
   },
+  {
+    method: 'GET',
+    pattern: '/v1/enterprise/forecast',
+    description: 'Completion confidence across the estate — how many projects miss their date at P80',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      // The simulation is injected rather than imported by the domain module,
+      // so portfolio.ts stays free of the planning engine and of the platform
+      // needed to build a per-project context. Each project is simulated under
+      // its own context, so a project the caller cannot read the programme of
+      // is refused there and reported as not simulated — not silently included.
+      return portfolio.portfolioForecast(
+        platform.context(actor, `${actor.tenantId}-governance`, { correlationId: ctx.correlationId }),
+        (projectId, iterations, contractualDurationDays) =>
+          planning.simulateProgramme(
+            platform.context(actor, projectId, { correlationId: ctx.correlationId }),
+            { iterations, contractualDurationDays },
+          ),
+        ctx.query.get('iterations') ? Number(ctx.query.get('iterations')) : undefined,
+      );
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/enterprise/changes',
+    description: 'What changed across the tenancy in a window, grouped and counted',
+    readOnly: true,
+    // Seven days by default because that is the period a portfolio review
+    // covers. Counted rather than listed: every event in a tenancy for a week
+    // is thousands of rows and answers nothing.
+    handler: (platform, ctx) => {
+      const to = ctx.query.get('to') ?? new Date().toISOString();
+      const from =
+        ctx.query.get('from') ?? new Date(Date.parse(to) - 7 * 86_400_000).toISOString();
+      return portfolio.changeWindow(
+        platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, { correlationId: ctx.correlationId }),
+        from,
+        to,
+      );
+    },
+  },
 
   // --------------------------------------------------------------- structure
   {

@@ -144,6 +144,12 @@ const DISPLAY_NAMES = {
   BILLING_ACU: 'Billing and ACU',
   AI_EXECUTION: 'AI execution',
   HANDOVER_OM: 'Handover and O&M',
+  // Event-catalogue groups. `AI_BILLING` rendered as "Ai billing" on the
+  // enterprise change panel — the same class of defect as `RMI` becoming "Rmi",
+  // and the reason `sectorLabel` exists rather than calling `humanise`.
+  AI_BILLING: 'AI and billing',
+  PROJECT_CONTROL: 'Project control',
+  BUSINESS_DEVELOPMENT: 'Business development',
 };
 
 /** Left alone, because sentence-casing them makes them harder to read. */
