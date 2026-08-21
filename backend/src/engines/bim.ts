@@ -84,11 +84,27 @@ export async function registerDrawing(
 
     acuConsumed = result.acuConsumed;
     const output = result.output;
+
+    // Refused rather than filled in. This used to fall back to
+    // `UNPARSED-<id> / Untitled / P01 / GENERAL`, which put a title block into
+    // the drawing register that no drawing has ever carried — and against a
+    // provider that cannot read a title block at all, that fabrication was the
+    // *only* outcome. A drawing with an invented number is also a drawing
+    // nothing can supersede, because supersession keys on the number.
+    if (typeof output.drawingNumber !== 'string' || output.drawingNumber.trim() === '') {
+      throw new DomainError(
+        'TITLE_BLOCK_NOT_READ',
+        'The title block could not be read. Supply a parsed title block rather than registering a drawing without one.',
+        422,
+      );
+    }
+
     titleBlock = {
-      drawingNumber: String(output.drawingNumber ?? `UNPARSED-${drawingId.slice(-6)}`),
-      title: String(output.title ?? 'Untitled'),
-      revision: String(output.revision ?? 'P01'),
-      discipline: String(output.discipline ?? 'GENERAL'),
+      drawingNumber: output.drawingNumber.trim(),
+      title: typeof output.title === 'string' && output.title.trim() !== '' ? output.title.trim() : 'Untitled',
+      revision: typeof output.revision === 'string' && output.revision.trim() !== '' ? output.revision.trim() : 'P01',
+      discipline:
+        typeof output.discipline === 'string' && output.discipline.trim() !== '' ? output.discipline.trim() : 'GENERAL',
     };
   }
 

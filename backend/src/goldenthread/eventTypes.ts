@@ -314,6 +314,17 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
 
   // --- Evidence & integrity -------------------------------------------------
   def('EVIDENCE_REGISTERED', 'EvidenceItem', 'CREATE', 'EVIDENCE', { requiresEvidence: false }),
+
+  // What a model read out of a held file, and what a person did about it. Three
+  // events rather than one because a draft that was rejected is as much a part
+  // of the record as one that was accepted: "the machine read this and we did
+  // not agree" is exactly the question asked three years later.
+  //
+  // Only the first is AI-authored. Confirming an extraction is a human act with
+  // a human's name on it, which is the same rule that keeps agents at PROPOSE.
+  def('PERCEPTION_DRAFT_PRODUCED', 'PerceptionDraft', 'AI_EXECUTE', 'EVIDENCE', { aiAllowed: true, requiresEvidence: true, creates: true }),
+  def('PERCEPTION_DRAFT_CONFIRMED', 'PerceptionDraft', 'APPROVE', 'EVIDENCE', { requiresEvidence: true }),
+  def('PERCEPTION_DRAFT_DISCARDED', 'PerceptionDraft', 'REJECT', 'EVIDENCE', { requiresEvidence: true }),
   def('EXPORT_GENERATED', 'Export', 'EXECUTE', 'EVIDENCE', { requiresEvidence: true }),
   def('REPLAY_SNAPSHOT_TAKEN', 'ReplaySnapshot', 'EXECUTE', 'EVIDENCE'),
 

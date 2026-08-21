@@ -1089,6 +1089,66 @@ One gap is stated rather than hidden. A file whose operation was rejected
 outright waits on the device indefinitely, so `pendingFiles()` is exposed for a
 screen to show what a handset is still carrying; no such screen exists yet.
 
+**Every command that takes evidence now stores the file behind it.** The console
+already hashed a chosen file in the browser and put the hash in the event;
+`frontend/lib/command.js` now sends the bytes after the command has been
+accepted — after, and never as a condition of it, because a failed upload must
+not undo a record the platform has already committed. What does not land is
+queued on the device and retried on the next sync, and the person is told their
+handset is carrying it rather than told their record failed.
+
+---
+
+### Perception ingestion — reading a file the platform holds
+
+Drawing take-off, title-block reading and voice capture were three rows on the
+gap matrix and they are one problem: take a file, ask a model that can actually
+look at or listen to it, and turn the answer into something a person confirms.
+`backend/src/engines/perception.ts` is that pipeline; the tasks differ only in
+prompt, schema and where a confirmed answer goes.
+
+It became possible only once the object store existed. Before it, the platform
+held a hash and not the file, so there was nothing to show a model — the
+title-block path worked from `rawTitleBlockText`, meaning somebody had already
+read the drawing by hand.
+
+**Nothing here invents an extraction, and that closed a live defect.** The local
+adapter derives its answers from a hash of its inputs; it cannot read a drawing.
+Asked to anyway it returns a confident, deterministic, entirely fictional title
+block — and `registerDrawing` used to write it into the register as
+`UNPARSED-<id> / Untitled / P01 / GENERAL`. On every `AI_MODE=local` deployment
+that fabrication was the *only* possible outcome, and the resulting drawing could
+never be superseded, because supersession keys on the number. An adapter now
+declares whether it is multimodal, a perception command against one that is not
+is refused with the reason, and `registerDrawing` throws `TITLE_BLOCK_NOT_READ`
+rather than filling the fields in.
+
+**An extraction is a draft, never a record.** `PERCEPTION_DRAFT_PRODUCED` is
+AI-authored and goes no further. Confirming it runs the ordinary domain command —
+`registerDrawing`, `runTakeoff`, `captureSiteObservation` — with the same
+authorisation, the same phase gate and the same events a person typing the values
+would trigger. The authority to start an extraction and to confirm one is the
+authority the *downstream command* exercises, following `approveProposal`'s
+precedent, rather than a second permission model for the same writes. Corrections
+are recorded separately from what the model returned, which is the field a
+take-off argued over in three years is answered by. A rejected draft is kept:
+"the machine read this and we did not agree" is exactly the question asked later.
+
+**The file goes to the provider as media.** `ProviderRequest.media` carries the
+bytes and each adapter places them where its own API expects — an `inline_data`
+part for Gemini, an `input_image` block for OpenAI. Base64 stringified into the
+text prompt would be the same bytes charged at text rates and read by nothing,
+and the built request bodies are asserted in the suite for exactly that reason.
+The cost estimate counts the media, so a large file is not quoted at a small
+file's price.
+
+**Not verified against a live provider.** The remote adapters are written to both
+vendors' documented multimodal shapes and exercised against a stub. No call to
+OpenAI or Gemini has been made from this environment, and nothing above should be
+read as saying one has. What *has* been run end to end, in the suite, is
+extraction → draft → correction → confirmation → registered drawing, and in a
+browser, the honest refusal that a local deployment gives instead.
+
 Regenerate the assets with `node tools/icons.mjs` after any brand change; the
 generator parses `logo-glyph.svg` rather than restating it, and refuses any path
 it cannot render exactly. The PNG encoder is in that file: `node:zlib` is built
@@ -1848,8 +1908,8 @@ named so it is not mistaken for finished.
 
 | Area | Built | Missing |
 |---|---|---|
-| Take-off | Governs, evidences and prices measured items, traced to sheet and revision | Quantities are supplied by the caller, not read from a drawing |
-| Drawing register | Title-block structuring from supplied text, supersession, markup→RFI | OCR from the image |
+| Take-off | Governs, evidences and prices measured items, traced to sheet and revision. Quantities can be read off a held drawing by a multimodal provider and confirmed before they become BoQ items | No provider call has been made from this environment, so the extraction path is verified against a stub rather than against a live model |
+| Drawing register | Title-block reading from the held drawing itself or from supplied text, supersession, markup→RFI | Same: the reading path is exercised against a stub, not a live provider |
 | Model ingestion | Records the model, hash, discipline, LOD, element count as a governed event | IFC parsing, geometry hash, model diffing |
 | Digital twin | Reconciles observed against expected element status | Observations are structured input, not derived from imagery |
 | Evidence capture | Real SHA-256 over the real file, recorded against the event, and the file itself held in a tenant-scoped content-addressed store | Retention and deletion policy; no antivirus scan on upload |
@@ -1872,8 +1932,10 @@ parsing work, not wiring.
   address is the hash and the store never trusts the declaration
 - **Vision pipeline** — progress estimation, PPE compliance, equipment
   recognition, defect detection, `PROGRESS_EXTRACTED_FROM_IMAGES`
-- **Audio and communication intelligence** — transcription, commitment and
-  deadline extraction, `COMMITMENT_REGISTERED`, `DEADLINE_TRACKED`
+- **Audio and communication intelligence** — commitment and deadline extraction,
+  `COMMITMENT_REGISTERED`, `DEADLINE_TRACKED`. Transcription of a site voice note
+  into a confirmed observation is built, through the perception pipeline; what is
+  absent is reading obligations out of correspondence
 - **Deployment topology** — Terraform, Kong, MSK, RDS, S3
 - **Native Android and iOS clients** — the installed PWA covers the field case
   today, including offline capture, and the `ANDROID`/`IOS` event sources exist

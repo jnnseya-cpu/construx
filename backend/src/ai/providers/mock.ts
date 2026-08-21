@@ -28,6 +28,13 @@ function seededUnit(seed: number, index: number): number {
 class MockAdapter implements AIProviderAdapter {
   readonly name: AIProvider;
   readonly capability: ProviderCapability;
+  /**
+   * False, and load-bearing. This adapter derives its answers from a hash of
+   * its inputs; it cannot read a drawing or hear a voice note. Saying so is
+   * what lets the perception pipeline refuse rather than return a confident
+   * fabrication that the drawing register would then carry as fact.
+   */
+  readonly multimodal = false;
   #healthy = true;
 
   constructor(name: AIProvider, capability: ProviderCapability) {

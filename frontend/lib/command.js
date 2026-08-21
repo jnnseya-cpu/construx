@@ -1,4 +1,5 @@
-import { api, ApiError } from './api.js';
+import { api, ApiError, hashFile } from './api.js';
+import { queueFile } from './outbox.js';
 import { esc, exact, toast } from './ui.js';
 
 /**
@@ -18,18 +19,45 @@ import { esc, exact, toast } from './ui.js';
 const FIELD_TYPES = new Set(['text', 'number', 'date', 'select', 'textarea', 'hidden']);
 
 /**
- * Hash a file the way the ledger does: SHA-256 over the bytes, prefixed.
+ * The hash is computed in the browser over the real bytes and becomes the
+ * evidence reference in the event. `hashFile` lives in the API client, which is
+ * where the wire format is decided; this file used to carry its own copy.
  *
- * This is the real anchor, computed from the real file, in the browser. What is
- * not built is the object store the file itself would go to — so the platform
- * records that a document with this hash was the evidence, and a later holder
- * of the file can prove it is the same one. That is the half of the evidence
- * chain this build can honestly complete.
+ * The file itself now follows the record. It could not before — the platform
+ * held hashes and no object store — and a hash alone is a chain that lasts
+ * exactly as long as somebody outside the platform still has the document.
  */
-export async function hashFile(file) {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
-  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-  return `sha256:${hex}`;
+
+/**
+ * Send the files behind the hashes this command just committed.
+ *
+ * Failures are queued rather than surfaced as errors: the command succeeded,
+ * and telling somebody their record failed because an upload retried would be
+ * false. What is worth saying is when a file is being carried on the device.
+ */
+async function storeEvidence(files) {
+  const carried = [];
+  for (const { hash, file } of files) {
+    try {
+      await api.upload(`/v1/evidence/${encodeURIComponent(hash)}`, file);
+    } catch {
+      try {
+        await queueFile(file);
+        carried.push(file.name);
+      } catch {
+        // No IndexedDB — a private window, or storage refused. The record and
+        // its hash still stand; the file does not follow it.
+        carried.push(file.name);
+      }
+    }
+  }
+  if (carried.length > 0) {
+    toast(
+      'Held on this device',
+      `${carried.join(', ')} could not be stored yet. The record is filed; the file will follow on the next sync.`,
+      'warn',
+    );
+  }
 }
 
 function control(field) {
@@ -73,7 +101,7 @@ function control(field) {
     placeholder="${esc(field.placeholder ?? '')}"${step}${min}${max} ${required}>`;
 }
 
-async function collect(host, fields) {
+async function collect(host, fields, files = []) {
   const body = {};
   for (const field of fields) {
     if (field.type === 'file') {
@@ -83,8 +111,12 @@ async function collect(host, fields) {
         if (field.required === false) continue;
         throw new ApiError({ title: 'EVIDENCE_REQUIRED', detail: `${field.label} is required` }, 400);
       }
-      body[field.name] = await hashFile(file);
+      const hash = await hashFile(file);
+      body[field.name] = hash;
       if (field.nameInto) body[field.nameInto] = file.name;
+      // Held for after the command succeeds. The upload is refused until a
+      // ledger record names the hash, and this command is what creates it.
+      files.push({ hash, file });
       continue;
     }
 
@@ -203,11 +235,18 @@ export function command({ title, intent, path, fields, submitLabel = 'Submit', t
       submit.disabled = true;
       submit.textContent = 'Working…';
 
+      const files = [];
       try {
-        const collected = await collect(host, fields);
+        const collected = await collect(host, fields, files);
         const payload = transform ? transform(collected) : collected;
         const response = await api.post(typeof path === 'function' ? path(collected) : path, payload);
         toast(title, 'Recorded in the Golden Thread', 'ok');
+        // Afterwards, and never as a condition of the command. The record is
+        // what the chain is made of; the file is what makes it useful in three
+        // years, and a failed upload must not undo a command the platform has
+        // already accepted. Anything that does not land is queued on the device
+        // and retried on the next sync rather than lost.
+        void storeEvidence(files);
         close(response);
       } catch (error) {
         showProblem(error);

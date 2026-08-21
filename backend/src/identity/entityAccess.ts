@@ -151,6 +151,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
 
   // Evidence and AI
   EvidenceItem: { area: 'EVIDENCE_AUDIT' },
+  // What a model read out of a held file. Classified under evidence rather than
+  // under the area it will eventually feed, because a draft is not yet a
+  // drawing, a take-off or an observation — and until somebody confirms it, it
+  // must not be readable as though it were one.
+  PerceptionDraft: { area: 'EVIDENCE_AUDIT' },
   Export: { area: 'EVIDENCE_AUDIT' },
   ReplaySnapshot: { area: 'EVIDENCE_AUDIT' },
   AIExecution: { area: 'AI_EXECUTION' },

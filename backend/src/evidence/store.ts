@@ -171,6 +171,19 @@ export class EvidenceStore {
     return this.configured && HASH.test(hash) && existsSync(this.#pathFor(tenantId, hash));
   }
 
+  /**
+   * The media type of a held object, without reading the object.
+   *
+   * The register needs it to say which files can be read by a perception task,
+   * and reading a 40MB drawing to learn it is a PDF would make listing a
+   * project's evidence proportional to the size of everything in it.
+   */
+  contentTypeOf(tenantId: string, hash: string): string | undefined {
+    if (!this.has(tenantId, hash)) return undefined;
+    const typeFile = `${this.#pathFor(tenantId, hash)}.type`;
+    return existsSync(typeFile) ? readFileSync(typeFile, 'utf8') : 'application/octet-stream';
+  }
+
   get(tenantId: string, hash: string): { bytes: Buffer; contentType: string } {
     if (!this.configured) {
       throw new DomainError('EVIDENCE_NOT_STORED', 'The platform holds no bytes for this evidence', 404);

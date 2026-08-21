@@ -1,7 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { DISCIPLINE } from '../lib/enums.js';
-import { badge, date, html, humanise, money, pct, raw, render, statusTone, table } from '../lib/ui.js';
+import { badge, date, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -51,6 +51,19 @@ export async function design(root) {
   // quality manager nor the engineer can see it on their own.
   const spec = await api.get(`/v1/projects/${projectId}/specifications/coverage`).catch(() => null);
   const deviations = b.DigitalTwinState.reduce((sum, s) => sum + Number(s.deviationCount ?? 0), 0);
+
+  // Reading a drawing rather than being told what it says. Both are fetched
+  // rather than assumed: whether this deployment has a provider that can look
+  // at a file is a fact about the deployment, and which evidence the platform
+  // actually holds is a fact about the project.
+  const [perception, evidence] = await Promise.all([
+    api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
+    api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
+  ]);
+  const readable = (evidence?.entries ?? []).filter(
+    (entry) => entry.held && ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'].includes(entry.contentType ?? ''),
+  );
+  const openDrafts = (perception?.drafts ?? []).filter((d) => d.status === 'DRAFT');
 
   render(
     root,
@@ -270,6 +283,66 @@ export async function design(root) {
           }
         </div>
 
+        ${
+          perception
+            ? html`<div class="card pad0">
+                <div style="padding:15px 17px 0">
+                  <h3>Read a drawing</h3>
+                  <p class="metric-sub" style="margin-bottom:12px">
+                    The title block and the quantities, read off the sheet the platform holds rather than typed in from it.
+                    Nothing read this way reaches the register on its own — an extraction is a draft until somebody confirms it,
+                    and confirming runs the same command as entering it by hand.
+                  </p>
+                  ${
+                    perception.capability.available
+                      ? ''
+                      : html`<div class="notice warn" style="margin-bottom:12px">
+                          <div><b>Not available on this deployment.</b><br>${perception.capability.reason}
+                          A drawing is not read here at all — rather than read badly and filed as fact.</div>
+                        </div>`
+                  }
+                </div>
+                ${
+                  perception.capability.available
+                    ? table({
+                        headers: ['Evidence', 'Type', 'Read'],
+                        rows: readable.slice(0, 12).map((entry) => [
+                          entry.description,
+                          entry.contentType,
+                          html`<button class="btn quiet sm" data-read="TITLE_BLOCK" data-hash="${entry.hash}">Title block</button>
+                            <button class="btn quiet sm" data-read="DRAWING_TAKEOFF" data-hash="${entry.hash}">Quantities</button>`,
+                        ]),
+                        empty: evidence?.storeConfigured
+                          ? 'No drawing files are held yet. A hash on its own cannot be read.'
+                          : 'This deployment holds no evidence files, so there is nothing to read.',
+                      })
+                    : ''
+                }
+                ${
+                  openDrafts.length > 0
+                    ? html`<div style="padding:0 17px 15px">
+                        <h3 style="margin-top:14px">Awaiting confirmation</h3>
+                        ${table({
+                          headers: ['Read', 'What it says', 'Confidence', ''],
+                          rows: openDrafts.map((draft) => [
+                            humanise(draft.task),
+                            draft.task === 'TITLE_BLOCK'
+                              ? `${draft.extraction.drawingNumber ?? '—'} rev ${draft.extraction.revision ?? '—'} · ${draft.extraction.title ?? ''}`
+                              : draft.task === 'DRAWING_TAKEOFF'
+                                ? `${(draft.extraction.items ?? []).length} measured item(s)`
+                                : String(draft.extraction.transcript ?? '').slice(0, 70),
+                            draft.confidence !== undefined && draft.confidence !== null ? pct(draft.confidence * 100) : '—',
+                            html`<button class="btn sm" data-confirm="${draft.id}">Confirm</button>
+                              <button class="btn quiet sm" data-discard="${draft.id}">Reject</button>`,
+                          ]),
+                        })}
+                      </div>`
+                    : ''
+                }
+              </div>`
+            : ''
+        }
+
         <div class="card pad0">
           <h3 style="padding:15px 17px 0">RFIs raised from markups</h3>
           ${table({
@@ -421,6 +494,58 @@ export async function design(root) {
       ],
     },
   };
+
+  root.addEventListener('click', async (event) => {
+    const read = event.target.closest('[data-read]');
+    if (read) {
+      // Written out rather than interpolated. One route per task is what makes
+      // each one quotable, and a path assembled from a variable is a path
+      // nothing can check against the route table.
+      const path =
+        read.dataset.read === 'TITLE_BLOCK'
+          ? `/v1/projects/${projectId}/perception/title-block`
+          : `/v1/projects/${projectId}/perception/take-off`;
+      read.disabled = true;
+      read.textContent = 'Reading…';
+      try {
+        await api.post(path, { hash: read.dataset.hash });
+        await draw();
+      } catch (error) {
+        // A refusal here is usually a true statement about the file or the
+        // deployment, so it is shown as it was given rather than retitled.
+        toast('Not read', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
+        read.disabled = false;
+        read.textContent = read.dataset.read === 'TITLE_BLOCK' ? 'Title block' : 'Quantities';
+      }
+      return;
+    }
+
+    const confirmDraft = event.target.closest('[data-confirm]');
+    if (confirmDraft) {
+      confirmDraft.disabled = true;
+      try {
+        await api.post(`/v1/projects/${projectId}/perception/${confirmDraft.dataset.confirm}/confirm`, {});
+        toast('Confirmed', 'Filed through the same command as entering it by hand', 'ok');
+        await draw();
+      } catch (error) {
+        toast('Not confirmed', error.message, 'err');
+        confirmDraft.disabled = false;
+      }
+      return;
+    }
+
+    const discardDraft = event.target.closest('[data-discard]');
+    if (discardDraft) {
+      const reason = window.prompt('Why is this reading wrong? It stays in the record either way.');
+      if (!reason) return;
+      try {
+        await api.post(`/v1/projects/${projectId}/perception/${discardDraft.dataset.discard}/discard`, { reason });
+        await draw();
+      } catch (error) {
+        toast('Not rejected', error.message, 'err');
+      }
+    }
+  });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

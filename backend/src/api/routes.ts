@@ -61,6 +61,7 @@ import { classifyEntity } from '../identity/entityAccess.ts';
 import { FIELD_FORBIDDEN_EVENTS } from '../field/sync.ts';
 import { estateBurn } from '../billing/burn.ts';
 import * as evidence from '../evidence/registry.ts';
+import * as perception from '../engines/perception.ts';
 import { ownershipMap } from '../identity/ownership.ts';
 import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode } from '../identity/roles.ts';
 import { authorise, AUTHZ_OPTIONS, currentPhase } from '../engines/context.ts';
@@ -215,6 +216,13 @@ function sourceOf(ctx: RequestContext): 'WEB' | 'PWA' | 'ANDROID' | 'IOS' | 'SYS
   if (client === 'pwa') return 'PWA';
   return 'WEB';
 }
+
+/** The URL segment each perception task lives at. Kebab-case, as the API is. */
+const PERCEPTION_PATHS: Record<perception.PerceptionTask, string> = {
+  TITLE_BLOCK: 'title-block',
+  DRAWING_TAKEOFF: 'take-off',
+  VOICE_NOTE: 'voice-note',
+};
 
 const stringField = { type: 'string', minLength: 1 } as const;
 
@@ -3579,6 +3587,93 @@ export const ROUTES: Route[] = [
       }
       return platform.evidence.signedUrl(actor.tenantId, hash);
     },
+  },
+
+  // --- Perception ingestion --------------------------------------------------
+  //
+  // Reading a file the platform holds: a drawing title block, quantities off a
+  // sheet, a site voice note. One pipeline, three tasks. An extraction is
+  // always a draft — confirming it runs the ordinary domain command, so
+  // machine-read data reaches the register through the same door as typed data.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/perception',
+    readOnly: true,
+    description: 'What this deployment can read from a file, and the drafts awaiting confirmation',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      authorise(engineCtx, 'EVIDENCE_AUDIT', 'R');
+      return {
+        capability: perception.perceptionCapability(engineCtx),
+        drafts: perception.drafts(engineCtx),
+      };
+    },
+  },
+  // One route per task rather than one route with a task parameter. The cost of
+  // an AI action is quoted from the route it is on, and a single route carrying
+  // three different engines and three different cost profiles cannot be quoted
+  // at all — which would make this the one AI action in the platform that
+  // spends money without showing a price first.
+  ...(Object.entries(perception.PERCEPTION_TASKS) as Array<[perception.PerceptionTask, (typeof perception.PERCEPTION_TASKS)[perception.PerceptionTask]]>)
+    .map(([task, definition]): Route => ({
+      method: 'POST',
+      pattern: `/v1/projects/:projectId/perception/${PERCEPTION_PATHS[task]}`,
+      description: `${definition.label} — reads a stored evidence file and produces a draft for confirmation`,
+      schema: {
+        type: 'object',
+        required: ['hash'],
+        properties: { hash: stringField },
+        additionalProperties: false,
+      },
+      ai: { engine: definition.engine, taskType: definition.taskType, capability: 'PERCEPTION' },
+      handler: (platform, ctx) =>
+        perception.extract(projectContext(platform, ctx), platform.evidence, {
+          ...body<{ hash: string }>(ctx),
+          task,
+        }),
+    })),
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/perception/:draftId/confirm',
+    description: 'Confirm an extraction, with corrections, and run the domain command it feeds',
+    schema: {
+      type: 'object',
+      properties: {
+        // The shape of a correction is the shape of the extraction, which
+        // differs per task — a title block, an array of measured items, a
+        // transcript — so this is checked by the engine against the draft's own
+        // task rather than pinned here. What the schema does enforce is that
+        // nothing else arrives: the three fields below name where a confirmed
+        // extraction is filed, and a stray property in this body would be a
+        // caller trying to redirect it.
+        corrections: { type: 'object' },
+        packageId: stringField,
+        costCodePrefix: stringField,
+        observedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      perception.confirm(projectContext(platform, ctx), {
+        draftId: ctx.params.draftId as string,
+        ...body<{ corrections?: Record<string, unknown> }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/perception/:draftId/discard',
+    description: 'Reject an extraction, saying why. What the model read stays in the record',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 4 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      perception.discard(projectContext(platform, ctx), {
+        draftId: ctx.params.draftId as string,
+        ...body<{ reason: string }>(ctx),
+      }),
   },
 ];
 

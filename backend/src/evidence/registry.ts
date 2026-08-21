@@ -31,6 +31,8 @@ export type EvidenceRegisterEntry = {
   linkedEntities: EntityRef[];
   /** Whether the platform holds the file, or only the assertion about it. */
   held: boolean;
+  /** What the held file is. Absent when the platform holds no file. */
+  contentType?: string;
 };
 
 type EvidenceState = {
@@ -91,6 +93,9 @@ export function projectRegister(
         capturedBy: state.capturedBy,
         linkedEntities: state.linkedEntities ?? [],
         held: store.has(tenantId, state.hash),
+        // Only for what is held. A media type against a file nobody has would
+        // be a guess presented as a fact about a document.
+        contentType: store.contentTypeOf(tenantId, state.hash),
       };
     })
     .sort((a, b) => (a.capturedAt === b.capturedAt ? (a.id < b.id ? -1 : 1) : a.capturedAt < b.capturedAt ? 1 : -1));

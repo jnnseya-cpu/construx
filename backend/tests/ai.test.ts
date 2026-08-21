@@ -22,11 +22,15 @@ import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../sr
 function stubProvider(
   name: 'OPENAI' | 'GEMINI',
   capability: 'REASONING' | 'PERCEPTION',
-  options: { healthy?: boolean; throws?: boolean; cost?: number } = {},
+  options: { healthy?: boolean; throws?: boolean; cost?: number; multimodal?: boolean } = {},
 ): AIProviderAdapter & { calls: number } {
   const provider = {
     name,
     capability,
+    // Whether an adapter can be handed a file at all. Default false, matching
+    // the local adapter: a perception command that would be refused in a local
+    // run must be refused in a test that did not deliberately say otherwise.
+    multimodal: options.multimodal ?? false,
     calls: 0,
     estimateCostMinor: () => options.cost ?? 100,
     healthy: () => options.healthy ?? true,

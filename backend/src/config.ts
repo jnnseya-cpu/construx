@@ -127,6 +127,14 @@ export const config = {
     perceptionProvider: str('AI_PERCEPTION_PROVIDER', 'GEMINI'),
     openaiKey: str('OPENAI_API_KEY', ''),
     geminiKey: str('GEMINI_API_KEY', ''),
+    /**
+     * The largest file that may be sent to a provider in one perception
+     * request. Smaller than the evidence store's own ceiling on purpose: the
+     * store holds a 50MB scanned drawing set quite happily, and no provider
+     * accepts one inline. A file over this is refused with that reason rather
+     * than sent and rejected by the vendor.
+     */
+    perceptionMaxBytes: num('AI_PERCEPTION_MAX_BYTES', 20 * 1_048_576),
   },
 
   billing: {

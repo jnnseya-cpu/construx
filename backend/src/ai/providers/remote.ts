@@ -12,7 +12,7 @@ import type { AIProviderAdapter, ProviderCapability, ProviderRequest, ProviderRe
  *     accepted as state; it can only ever be narrative attached to a record.
  *   - Cost is read back from the provider's own usage accounting and converted
  *     to minor units. That figure — not an estimate — is what the ACU ledger
- *     debits, so the 3x rule stays anchored to real spend.
+ *     debits, so the 4x rule stays anchored to real spend.
  */
 
 type PricingTable = { inputPerMillion: number; outputPerMillion: number };
@@ -42,6 +42,22 @@ function estimateTokens(payload: unknown): number {
   return Math.ceil(canonicalize(payload).length / 4);
 }
 
+/**
+ * What the attached file is worth in input tokens.
+ *
+ * Providers bill media by tiles or by seconds rather than by base64 length, and
+ * the exact rule differs per vendor and changes. This is a deliberate
+ * over-estimate at roughly one token per 750 bytes of original file: the figure
+ * sizes a pre-flight hold, and a hold that is too small is the failure that
+ * matters — the settled charge comes from the provider's own usage accounting
+ * either way.
+ */
+function mediaTokens(request: ProviderRequest): number {
+  if (!request.media) return 0;
+  const bytes = Math.ceil((request.media.base64.length * 3) / 4);
+  return Math.ceil(bytes / 750);
+}
+
 type Endpoint = {
   url: string;
   headers: (key: string) => Record<string, string>;
@@ -61,7 +77,19 @@ const OPENAI_ENDPOINT: Endpoint = {
           'You are a construction domain analysis engine. Respond only with JSON matching the supplied schema. ' +
           'Never invent quantities, dates or costs that are not derivable from the supplied payload.',
       },
-      { role: 'user', content: JSON.stringify({ task: request.task, payload: request.payload }) },
+      {
+        role: 'user',
+        content: request.media
+          ? [
+              { type: 'input_text', text: JSON.stringify({ task: request.task, payload: request.payload }) },
+              // A data URL, which is what this API accepts for an inline image.
+              // Audio is not accepted on this endpoint, which is why the
+              // perception pipeline checks the media type against the task
+              // before it gets here rather than discovering it in a 400.
+              { type: 'input_image', image_url: `data:${request.media.contentType};base64,${request.media.base64}` },
+            ]
+          : JSON.stringify({ task: request.task, payload: request.payload }),
+      },
     ],
     text: request.responseSchema
       ? { format: { type: 'json_schema', name: 'engine_output', schema: request.responseSchema, strict: false } }
@@ -86,7 +114,19 @@ const GEMINI_ENDPOINT: Endpoint = {
   url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent',
   headers: (key) => ({ 'x-goog-api-key': key, 'Content-Type': 'application/json' }),
   body: (request) => ({
-    contents: [{ role: 'user', parts: [{ text: JSON.stringify({ task: request.task, payload: request.payload }) }] }],
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { text: JSON.stringify({ task: request.task, payload: request.payload }) },
+          // Native inline media. Base64 stringified into the text part would be
+          // the same bytes charged at text rates and looked at by nothing.
+          ...(request.media
+            ? [{ inline_data: { mime_type: request.media.contentType, data: request.media.base64 } }]
+            : []),
+        ],
+      },
+    ],
     generationConfig: {
       responseMimeType: 'application/json',
       ...(request.responseSchema ? { responseSchema: request.responseSchema } : {}),
@@ -108,6 +148,8 @@ const GEMINI_ENDPOINT: Endpoint = {
 export class RemoteProviderAdapter implements AIProviderAdapter {
   readonly name: AIProvider;
   readonly capability: ProviderCapability;
+  /** Both endpoints below place media in their own API's native form. */
+  readonly multimodal = true;
   readonly #endpoint: Endpoint;
   readonly #apiKey: string;
   #consecutiveFailures = 0;
@@ -126,7 +168,11 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
 
   estimateCostMinor(request: ProviderRequest): number {
     const modelClass = request.modelClass ?? this.#defaultModelClass();
-    const inputTokens = estimateTokens(request.payload) + 400;
+    // Media counts. A 4MB photograph carries orders of magnitude more input
+    // than the JSON describing it, and an estimate that ignored it would size
+    // the ACU hold from the wrong number entirely — the customer would be
+    // quoted pennies and charged pounds.
+    const inputTokens = estimateTokens(request.payload) + mediaTokens(request) + 400;
     // Assume output is a quarter of input until the call reports otherwise.
     return priceFor(modelClass, inputTokens, Math.ceil(inputTokens / 4));
   }
@@ -187,6 +233,17 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
     return this.capability === 'PERCEPTION' ? 'perception-standard' : 'reasoning-standard';
   }
 }
+
+/**
+ * The two request shapes, exported so a test can check that a file is attached
+ * where each vendor expects it.
+ *
+ * No call to either vendor has been made from this repository, so the alternative
+ * to inspecting the built body is inspecting nothing: an `inline_data` part that
+ * had silently become a text part would look identical from the outside and cost
+ * the same, while the model saw no drawing at all.
+ */
+export const ENDPOINTS = { OPENAI: OPENAI_ENDPOINT, GEMINI: GEMINI_ENDPOINT };
 
 export const remoteReasoning = new RemoteProviderAdapter('OPENAI', 'REASONING');
 export const remotePerception = new RemoteProviderAdapter('GEMINI', 'PERCEPTION');
