@@ -28,6 +28,11 @@ export async function autopilot(root) {
   ]);
 
   const open = proposals.proposals ?? [];
+  // The API already sorts mine-first; these are only for the count in the
+  // header, so the reader knows how much of the queue is theirs before they
+  // start scrolling it.
+  const mine = open.filter((p) => p.mine);
+  const theirs = open.filter((p) => !p.mine);
   const lastRun = (runs.entities ?? []).at(-1)?.state;
   const urgent = open.filter((p) => p.finding.severity === 'URGENT');
   const actionable = open.filter((p) => p.command);
@@ -88,7 +93,20 @@ export async function autopilot(root) {
               Either the fleet has not run, or it looked and found nothing it wanted to raise. Both are stated rather than assumed —
               the last pass above says which.
             </div></div>`
-          : html`<div id="queue">${open.map(proposalCard)}</div>`
+          : html`<div id="queue">
+              ${
+                mine.length > 0
+                  ? html`<div class="metric-sub" style="margin-bottom:10px">
+                      <b>${mine.length} awaiting your decision</b>${
+                        theirs.length > 0 ? ` · ${theirs.length} for other roles, shown below` : ''
+                      }
+                    </div>`
+                  : html`<div class="metric-sub" style="margin-bottom:10px">
+                      Nothing here is yours to decide. ${open.length} open for other roles.
+                    </div>`
+              }
+              ${open.map(proposalCard)}
+            </div>`
       }
 
       <div class="card pad0" style="margin-top:14px">
@@ -185,6 +203,18 @@ function proposalCard(proposal) {
     <div style="display:flex;gap:11px;align-items:flex-start;margin-bottom:11px">
       ${badge(finding.severity, tone)}
       ${badge(humanise(proposal.agent), 'neutral')}
+      ${
+        // Whose decision this is, read from the raising agent's own mandate.
+        // An item that is not yours is marked rather than hidden: somebody has
+        // to be able to see that a design decision has sat for a week, and a
+        // queue that hides everything outside its owner's remit makes a stalled
+        // item invisible to everyone except the person already not acting on it.
+        proposal.mine
+          ? badge('Yours to decide', 'ai')
+          : proposal.approvers?.length
+            ? badge(`Decided by ${proposal.approvers.join(' / ')}`, 'neutral')
+            : ''
+      }
       <div style="margin-left:auto" class="metric-sub">raised ${time(proposal.raisedAt)}</div>
     </div>
 

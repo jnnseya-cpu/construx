@@ -300,11 +300,55 @@ export function markExecuted(ctx: EngineContext, proposalId: string, result: Rec
 }
 
 /** Everything currently awaiting a decision, most urgent first. */
-export function pendingProposals(ctx: EngineContext): AgentProposal[] {
+/**
+ * A proposal with the one thing the reader needs before anything else: whether
+ * it is theirs to decide.
+ *
+ * The queue was undifferentiated — every open proposal, every role, one list.
+ * That is four command centres sharing a panel that answers "what needs action
+ * today" with somebody else's work. A QS scrolling past four design proposals
+ * to find the variation is a QS who stops opening the panel.
+ *
+ * `mine` is read from the raising agent's own mandate, which already names the
+ * roles that may approve it. Nothing new is asserted here and no capability is
+ * granted: approval is still checked at the point of approval. This only says
+ * whose queue an item belongs in, which is a question the data could always
+ * answer and nothing was asking.
+ *
+ * A proposal that is not the caller's is marked rather than hidden. Somebody
+ * needs to be able to see that a design decision has been sitting for a week,
+ * and a queue that hides everything outside its owner's remit makes a stalled
+ * item invisible to everyone but the person who is already not acting on it.
+ */
+export type QueuedProposal = AgentProposal & {
+  /** True where a role the caller holds may approve this agent's proposals. */
+  mine: boolean;
+  /** Roles that may decide it. Named so an item that is not yours says who. */
+  approvers: string[];
+};
+
+export function pendingProposals(ctx: EngineContext): QueuedProposal[] {
   const order = { URGENT: 0, ATTENTION: 1, INFO: 2 } as const;
-  return openProposals(ctx).sort(
-    (a, b) => order[a.finding.severity] - order[b.finding.severity] || a.raisedAt.localeCompare(b.raisedAt),
-  );
+  const roles = new Set(ctx.auth.roles);
+
+  return openProposals(ctx)
+    .map((proposal) => {
+      const approvers = agentByName(proposal.agent)?.mandate.approvers ?? [];
+      return {
+        ...proposal,
+        approvers: [...approvers],
+        mine: approvers.some((role) => roles.has(role)),
+      };
+    })
+    .sort(
+      (a, b) =>
+        // Mine first, then severity, then oldest. Severity ahead of ownership
+        // would put somebody else's urgent item above the reader's own overdue
+        // one, which is the ordering that made the panel unusable.
+        Number(b.mine) - Number(a.mine) ||
+        order[a.finding.severity] - order[b.finding.severity] ||
+        a.raisedAt.localeCompare(b.raisedAt),
+    );
 }
 
 /** The fleet as published to a client, so the UI never hardcodes the roster. */

@@ -1458,6 +1458,37 @@ Verified against a running server: a project created in Columbus, Ohio at
 per-field problem+json error; and the estate's contract-value card switched to
 "mixed currencies" rather than adding dollars to pounds.
 
+**The AI says who it is, and the queue says whose it is.** Two halves of the
+same defect: the behaviour was already role-specific and the presentation was
+not.
+
+`ENGINE_CONTRACTS` now carries a `name` alongside the purpose and phases, so the
+copilot can say "Commercial analyst — say where the margin is going" rather than
+`RESOURCE_COST`. The engine codes are the platform's, not the industry's; a QS
+asked to trust a database column is being asked the wrong question. The console
+lists every mode before the question is typed, with what each reads and whether
+a charged run of it is bound to this phase.
+
+That last column was mislabelled on the first attempt and the fix is worth
+recording. It read "Available", which contradicted the product: a QS asking
+about margin at OPERATIONS gets a real answer grounded in the final account,
+even though `runAI` would refuse a charged commercial run in that phase. Asking
+reads project state and spends nothing, so there is no charge to gate. The
+column is about charged engine runs and now says so.
+
+`pendingProposals` marks each item `mine`, read from the raising agent's own
+mandate, which already names the roles that may approve it. Nothing new is
+asserted and no capability is granted — approval is still checked at approval.
+Ordering is mine-first, then severity, then oldest: severity ahead of ownership
+was what made the panel unusable, putting another role's urgent item above the
+reader's own overdue one. Verified as the QS on the seeded project: two items
+theirs, nine for other roles, and their INFO item correctly sorts above another
+role's URGENT one.
+
+An item that is not yours is **marked, never hidden**. A queue that filtered by
+role would make a stalled design decision invisible to everyone except the
+person already not acting on it.
+
 **The operator can see spend across the estate, and what it really earns.**
 Each tenant's wallet knew its own position and nothing put those positions side
 by side, which left the platform centre unable to answer the question the

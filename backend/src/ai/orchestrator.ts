@@ -97,6 +97,16 @@ export type EngineContract = {
   /** What the engine is asked to decide, in the language of the person asking. */
   purpose: string;
   /** The lifecycle phases in which this engine may run. */
+  /**
+   * What to call this engine to a person.
+   *
+   * The engine codes are the platform's, not the industry's. A QS asked to
+   * trust `RESOURCE_COST` is being asked to trust a database column; told they
+   * are talking to a commercial analyst, they know what it is for and what it
+   * is not. Held here rather than in the console so the name, the purpose and
+   * the phases it runs in cannot drift apart.
+   */
+  name: string;
   activeInPhases: LifecyclePhase[];
   /** What it reads. Named so a reviewer can see the provenance of an answer. */
   inputs: string[];
@@ -116,12 +126,14 @@ const ALL_PHASES: LifecyclePhase[] = [
 
 export const ENGINE_CONTRACTS: Record<Engine, EngineContract> = {
   TENDER: {
+    name: 'Estimator',
     purpose: 'Price the work and say what the commercial risk in it is',
     activeInPhases: ['CONCEPT', 'DESIGN', 'TENDER'],
     inputs: ['Scope packages', 'Drawings and models', 'Cost intelligence from settled projects'],
     outputs: ['Estimate by cost head', 'Priced risk allowances', 'Bid/no-bid factors'],
   },
   PLANNING: {
+    name: 'Planner',
     purpose: 'Say when the work will finish and what would recover it',
     // Not in CONCEPT: there is no programme to reason about before a scope
     // exists, and a critical path computed from nothing reads as a forecast.
@@ -130,24 +142,28 @@ export const ENGINE_CONTRACTS: Record<Engine, EngineContract> = {
     outputs: ['Delay forecast with confidence', 'Critical path', 'Costed recovery options'],
   },
   RESOURCE_COST: {
+    name: 'Commercial analyst',
     purpose: 'Say where the margin is going and what it will cost to complete',
     activeInPhases: ['TENDER', 'CONSTRUCTION', 'COMMISSIONING'],
     inputs: ['Budget and cost codes', 'Committed and actual cost', 'Progress measurements'],
     outputs: ['Earned value position', 'Cost to complete', 'Margin erosion by cause'],
   },
   RISK_SAFETY: {
+    name: 'Risk and safety adviser',
     purpose: 'Say what is likely to go wrong and whether the controls are adequate',
     activeInPhases: ALL_PHASES,
     inputs: ['Risk register', 'Incidents and observations', 'RAMS and method statements'],
     outputs: ['Exposure by category', 'Control adequacy findings', 'Mitigation proposals'],
   },
   BIM_TWIN: {
+    name: 'Design coordinator',
     purpose: 'Say where the design conflicts with itself or with what was built',
     activeInPhases: ['DESIGN', 'TENDER', 'CONSTRUCTION', 'COMMISSIONING', 'HANDOVER'],
     inputs: ['Models and drawing register', 'Clash records', 'Site observations'],
     outputs: ['Clash severity and sequencing', 'Design-to-as-built deltas'],
   },
   CONTRACTS_CLAIMS: {
+    name: 'Contracts adviser',
     purpose: 'Say what the contract entitles and what the evidence supports',
     // From TENDER, because the form of contract is chosen before it is signed
     // and the notice regime it imposes starts mattering immediately.
@@ -156,12 +172,14 @@ export const ENGINE_CONTRACTS: Record<Engine, EngineContract> = {
     outputs: ['Entitlement assessment', 'Time-bar position', 'Claim pack with references'],
   },
   HANDOVER_OM: {
+    name: 'Asset manager',
     purpose: 'Say whether the asset can be operated and what it will need',
     activeInPhases: ['COMMISSIONING', 'HANDOVER', 'OPERATIONS'],
     inputs: ['Asset register', 'Commissioning results', 'Warranties and defects'],
     outputs: ['Handover readiness and gaps', 'Maintenance strategy', 'Lifecycle replacement plan'],
   },
   EXECUTIVE: {
+    name: 'Board reporter',
     purpose: 'Say what across the portfolio needs a decision this week',
     // Everywhere, deliberately: a portfolio spans projects in different phases,
     // so binding this would bind it to whichever project was asked about.

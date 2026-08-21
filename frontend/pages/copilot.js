@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { html, raw, render, toast } from '../lib/ui.js';
+import { badge, html, humanise, raw, render, table, toast } from '../lib/ui.js';
 import { state } from '../app.js';
 
 /**
@@ -22,6 +22,26 @@ const SUGGESTIONS = [
 ];
 
 export async function copilot(root) {
+  // Published by the platform, not declared here: each engine's name, what it
+  // is for, and the phases it may run in. The gap this closes is that the
+  // behaviour was already role-specific and the *presentation* was not —
+  // nothing told a QS they were talking to a commercial analyst rather than a
+  // general assistant, so the specialism was invisible at the point of use.
+  const plane = await api.get('/v1/ai/control-plane').catch(() => null);
+  const contracts = plane?.engineContracts ?? {};
+  const phase = state.project?.phase;
+
+  const modes = Object.entries(contracts).map(([engine, contract]) => ({
+    engine,
+    ...contract,
+    // Whether a *charged* engine run may execute in this phase — `runAI`
+    // refuses one outside its phases before any ACU is held. It is not whether
+    // the copilot will answer: asking reads project state and spends nothing,
+    // so a commercial question at OPERATIONS is answered from the final account
+    // even though a paid commercial run would be refused there.
+    runsHere: phase === undefined || (contract.activeInPhases ?? []).includes(phase),
+  }));
+
   render(
     root,
     html`
@@ -40,6 +60,32 @@ export async function copilot(root) {
       <div class="chips" style="margin-bottom:20px" id="suggestions">
         ${SUGGESTIONS.map((s) => html`<button class="chip" data-q="${s}" style="cursor:pointer">${s}</button>`)}
       </div>
+
+      ${
+        modes.length > 0
+          ? html`<div class="card pad0" style="margin-bottom:20px">
+              <h3 style="padding:15px 17px 0">Who you are actually talking to</h3>
+              ${table({
+                headers: ['Mode', 'What it is for', 'What it reads', 'Engine runs here'],
+                rows: modes.map((m) => [
+                  html`<b>${m.name}</b>`,
+                  m.purpose,
+                  html`<span class="metric-sub">${(m.inputs ?? []).join(' · ')}</span>`,
+                  m.runsHere
+                    ? badge('Yes', 'ok')
+                    : badge(`Not in ${humanise(phase ?? '')}`, 'neutral'),
+                ]),
+              })}
+              <div class="metric-sub" style="padding:0 17px 14px">
+                One question, routed to the specialist that can answer it. The last column is about <b>charged engine
+                runs</b>: one outside its phase is refused before anything is reserved, because an answer assembled
+                from nothing is worse than a refusal. Asking here spends nothing and reads project state, so a
+                commercial question during operations is still answered — from the final account rather than from a
+                live cost report.
+              </div>
+            </div>`
+          : ''
+      }
 
       <div class="chat" id="chat"></div>
     `,
@@ -74,7 +120,14 @@ export async function copilot(root) {
         )
         .join('');
 
-      const engine = answer.intent ? `<div class="src" style="margin-bottom:7px">${escapeHtml(answer.intent.engine)} engine · match ${answer.intent.match}</div>` : '';
+      // Named, not coded. `RESOURCE_COST` is a database column; "Commercial
+      // analyst" is a thing a quantity surveyor can decide whether to trust.
+      const contract = answer.intent ? contracts[answer.intent.engine] : undefined;
+      const engine = answer.intent
+        ? `<div class="src" style="margin-bottom:7px"><b>${escapeHtml(contract?.name ?? answer.intent.engine)}</b>${
+            contract?.purpose ? ` · ${escapeHtml(contract.purpose.toLowerCase())}` : ''
+          } · match ${escapeHtml(String(answer.intent.match))}</div>`
+        : '';
 
       // The answer text already lists the grounding facts as bullets, and they
       // are rendered again below with their sources. Keep the prose, drop the
