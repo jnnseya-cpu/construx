@@ -1601,6 +1601,35 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   });
   step('Three payment cycles run: two certified and paid, the third certified short and outstanding');
 
+  // The dispute that follows from the certificate above, referred to statutory
+  // adjudication. Live rather than concluded: the referral is in, the twenty-
+  // eight days are running, and the demo shows a clock nobody can afford to
+  // stop watching rather than a closed file.
+  // Named for what it is. The platform has a tender `adjudication` too — the
+  // commercial decision closing a bid evaluation — and they share a word and
+  // nothing else.
+  const statutoryAdjudication = claimsEngine.openDispute(qsCtx, {
+    contractId: mainContract.contractId,
+    natureOfDispute:
+      'The valuation of the increased wall thickness instruction, and the contractor\'s entitlement to an extension of time for the design information that followed it.',
+    redressSought:
+      'A decision that the variation is valued at £3,266,500 and that the completion date is extended by 18 days.',
+    disputedAmountMinor: 326_650_000,
+    referringParty: 'Meridian Infrastructure Group',
+    respondingParty: 'Ashworth Water Authority',
+    noticeDate: '2026-08-10',
+    relatedApplicationId: application3.applicationId,
+    evidenceHash: hash('notice-of-adjudication-app-3'),
+  });
+  claimsEngine.referDispute(qsCtx, {
+    disputeId: statutoryAdjudication.disputeId,
+    adjudicatorName: 'H. Vance FRICS FCIArb',
+    nominatingBody: 'RICS Dispute Resolution Service',
+    referralDate: '2026-08-17',
+    evidenceHash: hash('referral-app-3'),
+  });
+  step(`${statutoryAdjudication.reference} referred to adjudication — 28 days to a decision from 17 August`);
+
   claimsEngine.flagDomesticVariation(qsCtx, {
     applicationId: 'SUB-APP-003',
     subcontractId: subcontract.subcontractId,

@@ -5,6 +5,13 @@ import type { EntityRef } from '../goldenthread/types.ts';
 import { replayTimeline } from '../goldenthread/replay.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
 import { assessClaim, attributeDelay, CAUSE_LIABILITY, type DelayCause, type DelayEventInput } from './maths/claims.ts';
+import {
+  assessCostsProvision,
+  assessProcedure,
+  buildTimetable,
+  type DisputeTimetable,
+  type ProcedureFinding,
+} from './maths/adjudication.ts';
 
 /**
  * Engine F — Contracts, Change & Claims.
@@ -1518,4 +1525,342 @@ export function issueNotice(
   });
 
   return { noticeId, reference, withinTimeBar, daysElapsed };
+}
+
+// --- Statutory adjudication --------------------------------------------------
+
+/**
+ * Open a dispute by recording the notice of adjudication.
+ *
+ * The statutory right under s.108(1) arises *at any time*, which is the whole
+ * point of it: a party cannot be made to wait for practical completion, for a
+ * final account, or for a contractual escalation ladder to be climbed. The
+ * platform does not gate this on anything, because the Act does not.
+ *
+ * What it does is start the clock and say what happens if it runs out. Both
+ * ends of the timetable are fatal in different directions, and both are missed
+ * by people who were watching the merits instead of the dates.
+ */
+export function openDispute(
+  ctx: EngineContext,
+  input: {
+    contractId: string;
+    natureOfDispute: string;
+    redressSought: string;
+    disputedAmountMinor?: number;
+    referringParty: string;
+    respondingParty: string;
+    noticeDate: string;
+    /** Where the dispute is a failure to pay a notified sum, the application it arises from. */
+    relatedApplicationId?: string;
+    evidenceHash: string;
+  },
+): { disputeId: string; reference: string; timetable: DisputeTimetable; findings: ProcedureFinding[] } {
+  authorise(ctx, 'CONTRACTS_CLAIMS', 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'LEGAL_L4' });
+
+  const contract = ctx.ledger.require({ refType: 'Contract', refId: input.contractId });
+  if (input.natureOfDispute.trim().length < 20) {
+    throw new DomainError(
+      'DISPUTE_NOT_DEFINED',
+      'The notice has to say what the dispute is. An adjudicator has jurisdiction over the dispute referred and nothing else, so a vague notice is a jurisdictional gift to the other side.',
+    );
+  }
+  if (input.redressSought.trim().length < 10) {
+    throw new DomainError('DISPUTE_REDRESS_UNSTATED', 'The notice has to say what is being asked for');
+  }
+
+  const sequence = ctx.ledger.list(ctx.projectId, 'Dispute').length + 1;
+  const reference = formatRef('ADJ', sequence);
+  const timetable = buildTimetable({ noticeDate: input.noticeDate });
+  const disputeId = ulid();
+
+  const evidence = registerEvidence(ctx, {
+    type: 'NOTICE_OF_ADJUDICATION',
+    hash: input.evidenceHash,
+    description: `${reference}: ${input.natureOfDispute.slice(0, 80)}`,
+    linkedEntities: [{ refType: 'Contract', refId: input.contractId }],
+  });
+
+  write(ctx, {
+    eventType: 'DISPUTE_OPENED',
+    entity: { refType: 'Dispute', refId: disputeId },
+    nextState: {
+      id: disputeId,
+      projectId: ctx.projectId,
+      reference,
+      contractId: input.contractId,
+      contractSuite: contract.state.suite,
+      natureOfDispute: input.natureOfDispute,
+      redressSought: input.redressSought,
+      disputedAmountMinor: input.disputedAmountMinor,
+      referringParty: input.referringParty,
+      respondingParty: input.respondingParty,
+      noticeDate: input.noticeDate,
+      relatedApplicationId: input.relatedApplicationId,
+      timetable,
+      status: 'NOTICE_GIVEN',
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return {
+    disputeId,
+    reference,
+    timetable,
+    findings: assessProcedure(timetable, { status: 'NOTICE_GIVEN' }, new Date().toISOString().slice(0, 10)),
+  };
+}
+
+/**
+ * Record the appointment and the referral.
+ *
+ * A referral served outside the seven days does not extinguish the right — a
+ * fresh notice can be given, because the right arises at any time — but it does
+ * put this reference in jeopardy. So it is recorded rather than refused: the
+ * platform's job is to tell the party what they have done, not to pretend it
+ * did not happen and leave them to find out from the responding party's
+ * jurisdictional challenge.
+ */
+export function referDispute(
+  ctx: EngineContext,
+  input: {
+    disputeId: string;
+    adjudicatorName: string;
+    /** Who appointed, where the parties did not agree — RICS, TeCSA, ICE and so on. */
+    nominatingBody?: string;
+    referralDate: string;
+    evidenceHash: string;
+  },
+): { disputeId: string; reference: string; timetable: DisputeTimetable; findings: ProcedureFinding[] } {
+  authorise(ctx, 'CONTRACTS_CLAIMS', 'U', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'LEGAL_L4' });
+
+  const dispute = ctx.ledger.require({ refType: 'Dispute', refId: input.disputeId });
+  if (dispute.state.status !== 'NOTICE_GIVEN') {
+    throw new DomainError(
+      'DISPUTE_ALREADY_REFERRED',
+      `${String(dispute.state.reference)} is already at ${String(dispute.state.status)}`,
+    );
+  }
+
+  const timetable = buildTimetable({
+    noticeDate: String(dispute.state.noticeDate),
+    referralDate: input.referralDate,
+  });
+
+  const evidence = registerEvidence(ctx, {
+    type: 'REFERRAL_NOTICE',
+    hash: input.evidenceHash,
+    description: `${String(dispute.state.reference)} referred to ${input.adjudicatorName}`,
+    linkedEntities: [{ refType: 'Dispute', refId: input.disputeId }],
+  });
+
+  write(ctx, {
+    eventType: 'DISPUTE_REFERRED',
+    entity: { refType: 'Dispute', refId: input.disputeId },
+    nextState: {
+      ...dispute.state,
+      adjudicatorName: input.adjudicatorName,
+      nominatingBody: input.nominatingBody,
+      referralDate: input.referralDate,
+      timetable,
+      status: 'REFERRED',
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return {
+    disputeId: input.disputeId,
+    reference: String(dispute.state.reference),
+    timetable,
+    findings: assessProcedure(timetable, { status: 'REFERRED' }, new Date().toISOString().slice(0, 10)),
+  };
+}
+
+/**
+ * Record the adjudicator's decision.
+ *
+ * Recorded whether or not it is in time, for the same reason a late notice is:
+ * a decision reached one day outside the period is a nullity, and that is a
+ * fact somebody needs in front of them before they pay against it. The platform
+ * says so; it does not refuse the record and leave the question open.
+ *
+ * A decision is binding *until* the dispute is finally determined by legal
+ * proceedings, arbitration or agreement. Temporarily binding is still binding,
+ * which is the part parties reliably misunderstand — it must be complied with
+ * in the meantime whatever either of them thinks of it.
+ */
+export function recordAdjudicatorDecision(
+  ctx: EngineContext,
+  input: {
+    disputeId: string;
+    decisionDate: string;
+    /** Which party the decision favoured, and what it awarded. */
+    inFavourOf: string;
+    awardedAmountMinor?: number;
+    awardedDays?: number;
+    /** Extension of the decision period, where one was agreed. */
+    extensionDays?: number;
+    extensionAgreedBy?: 'REFERRING_PARTY' | 'BOTH_PARTIES';
+    extensionAgreedDate?: string;
+    /** How the adjudicator apportioned their own fees. */
+    adjudicatorFeesMinor?: number;
+    feesBorneBy?: string;
+    evidenceHash: string;
+  },
+): {
+  disputeId: string;
+  reference: string;
+  timetable: DisputeTimetable;
+  enforceable: boolean;
+  findings: ProcedureFinding[];
+} {
+  authorise(ctx, 'CONTRACTS_CLAIMS', 'U', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'LEGAL_L4' });
+
+  const dispute = ctx.ledger.require({ refType: 'Dispute', refId: input.disputeId });
+  if (dispute.state.status !== 'REFERRED') {
+    throw new DomainError(
+      'DISPUTE_NOT_REFERRED',
+      `${String(dispute.state.reference)} is at ${String(dispute.state.status)}. A decision follows a referral.`,
+    );
+  }
+
+  const timetable = buildTimetable({
+    noticeDate: String(dispute.state.noticeDate),
+    referralDate: String(dispute.state.referralDate),
+    extensionDays: input.extensionDays,
+    extensionAgreedBy: input.extensionAgreedBy,
+    extensionAgreedDate: input.extensionAgreedDate,
+  });
+
+  const findings = assessProcedure(timetable, { decisionDate: input.decisionDate, status: 'DECIDED' }, input.decisionDate);
+  const enforceable = !findings.some((f) => f.severity === 'CRITICAL' && f.authority.includes('s.108(2)(c)'));
+
+  const evidence = registerEvidence(ctx, {
+    type: 'ADJUDICATOR_DECISION',
+    hash: input.evidenceHash,
+    description: `${String(dispute.state.reference)} decided in favour of ${input.inFavourOf}`,
+    linkedEntities: [{ refType: 'Dispute', refId: input.disputeId }],
+  });
+
+  write(ctx, {
+    eventType: 'DISPUTE_DECIDED',
+    entity: { refType: 'Dispute', refId: input.disputeId },
+    nextState: {
+      ...dispute.state,
+      decisionDate: input.decisionDate,
+      inFavourOf: input.inFavourOf,
+      awardedAmountMinor: input.awardedAmountMinor,
+      awardedDays: input.awardedDays,
+      extensionDays: input.extensionDays,
+      extensionAgreedBy: input.extensionAgreedBy,
+      adjudicatorFeesMinor: input.adjudicatorFeesMinor,
+      feesBorneBy: input.feesBorneBy,
+      timetable,
+      enforceable,
+      // Temporarily binding is still binding. It is complied with until the
+      // dispute is finally determined, and "final" does not mean this.
+      bindingUntilFinallyDetermined: enforceable,
+      status: 'DECIDED',
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return { disputeId: input.disputeId, reference: String(dispute.state.reference), timetable, enforceable, findings };
+}
+
+export type DisputePosition = {
+  total: number;
+  live: number;
+  disputes: Array<{
+    disputeId: string;
+    reference: string;
+    status: string;
+    natureOfDispute: string;
+    referringParty: string;
+    disputedAmountMinor?: number;
+    nextDeadline?: string;
+    daysToNextDeadline?: number;
+    findings: ProcedureFinding[];
+  }>;
+  /** Sum in dispute across everything live. Redacted where the reader has no commercial clearance. */
+  amountInDisputeMinor?: number;
+  costsProvisionFindings: ProcedureFinding[];
+  summary: string;
+};
+
+/**
+ * Where every dispute stands, and what is about to expire.
+ *
+ * Ordered by the deadline that is nearest, because that is the only ordering
+ * that reflects what happens if nobody looks at this today.
+ */
+export function disputePosition(
+  ctx: EngineContext,
+  today = new Date().toISOString().slice(0, 10),
+): DisputePosition {
+  authorise(ctx, 'CONTRACTS_CLAIMS', 'R', { dataSensitivity: 'LEGAL_L4' });
+
+  const records = ctx.ledger.list(ctx.projectId, 'Dispute').map((record) => record.state);
+  const live = records.filter((d) => d.status !== 'DECIDED' && d.status !== 'WITHDRAWN');
+
+  const disputes = records
+    .map((dispute) => {
+      const timetable = dispute.timetable as DisputeTimetable;
+      const findings = assessProcedure(
+        timetable,
+        { decisionDate: dispute.decisionDate as string | undefined, status: String(dispute.status) },
+        today,
+      );
+
+      const nextDeadline =
+        dispute.status === 'NOTICE_GIVEN'
+          ? timetable.referralDeadline
+          : dispute.status === 'REFERRED'
+            ? (timetable.extendedDecisionDeadline ?? timetable.decisionDeadline)
+            : undefined;
+
+      return {
+        // Carried so a screen can act on the record it is showing rather than
+        // looking it up again by reference.
+        disputeId: String(dispute.id),
+        reference: String(dispute.reference),
+        status: String(dispute.status),
+        natureOfDispute: String(dispute.natureOfDispute),
+        referringParty: String(dispute.referringParty),
+        disputedAmountMinor: dispute.disputedAmountMinor as number | undefined,
+        nextDeadline,
+        daysToNextDeadline:
+          nextDeadline === undefined ? undefined : Math.round((Date.parse(nextDeadline) - Date.parse(today)) / 86_400_000),
+        findings,
+      };
+    })
+    .sort((a, b) => (a.nextDeadline ?? '9999').localeCompare(b.nextDeadline ?? '9999'));
+
+  // The contract's costs provision, read once across the project rather than
+  // per dispute — it is a term of the contract, not a fact about a reference.
+  const contract = ctx.ledger.list(ctx.projectId, 'Contract').at(-1);
+  const costsProvisionFindings = contract
+    ? assessCostsProvision({ contractAllocatesPartiesCosts: contract.state.allocatesAdjudicationCosts === true })
+    : [];
+
+  const critical = disputes.filter((d) => d.findings.some((f) => f.severity === 'CRITICAL'));
+  const soonest = disputes.find((d) => d.daysToNextDeadline !== undefined);
+
+  const summary =
+    records.length === 0
+      ? 'No dispute has been referred to adjudication.'
+      : critical.length > 0
+        ? `${critical.length} of ${records.length} adjudication${records.length === 1 ? '' : 's'} has a procedural defect that would be taken against it.`
+        : soonest
+          ? `${live.length} live. ${soonest.reference} next: ${soonest.daysToNextDeadline} days to ${soonest.nextDeadline}.`
+          : `${records.length} concluded, none live.`;
+
+  return {
+    total: records.length,
+    live: live.length,
+    disputes,
+    amountInDisputeMinor: live.reduce((sum, d) => sum + Number(d.disputedAmountMinor ?? 0), 0),
+    costsProvisionFindings,
+    summary,
+  };
 }

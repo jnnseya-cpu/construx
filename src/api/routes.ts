@@ -2044,6 +2044,83 @@ export const ROUTES: Route[] = [
     description: 'Engine F — serve a contractual notice with time-bar check',
     handler: (platform, ctx) => claims.issueNotice(projectContext(platform, ctx), body(ctx)),
   },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/disputes',
+    description: 'Give notice of adjudication under HGCRA s.108 and start the statutory timetable',
+    schema: {
+      type: 'object',
+      required: ['contractId', 'natureOfDispute', 'redressSought', 'referringParty', 'respondingParty', 'noticeDate', 'evidenceHash'],
+      properties: {
+        contractId: stringField,
+        natureOfDispute: { type: 'string', minLength: 20 },
+        redressSought: { type: 'string', minLength: 10 },
+        disputedAmountMinor: { type: 'number', minimum: 0 },
+        referringParty: stringField,
+        respondingParty: stringField,
+        noticeDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        relatedApplicationId: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => claims.openDispute(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/disputes/:disputeId/refer',
+    description: 'Record the appointment and the referral, against the seven-day period',
+    schema: {
+      type: 'object',
+      required: ['adjudicatorName', 'referralDate', 'evidenceHash'],
+      properties: {
+        adjudicatorName: stringField,
+        nominatingBody: stringField,
+        referralDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      claims.referDispute(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof claims.referDispute>[1], 'disputeId'>>(ctx),
+        disputeId: ctx.params.disputeId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/disputes/:disputeId/decision',
+    description: 'Record the adjudicator’s decision and whether it was reached in time',
+    schema: {
+      type: 'object',
+      required: ['decisionDate', 'inFavourOf', 'evidenceHash'],
+      properties: {
+        decisionDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        inFavourOf: stringField,
+        awardedAmountMinor: { type: 'number', minimum: 0 },
+        awardedDays: { type: 'number', minimum: 0 },
+        extensionDays: { type: 'number', minimum: 0 },
+        extensionAgreedBy: { type: 'string', enum: ['REFERRING_PARTY', 'BOTH_PARTIES'] },
+        extensionAgreedDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        adjudicatorFeesMinor: { type: 'number', minimum: 0 },
+        feesBorneBy: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      claims.recordAdjudicatorDecision(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof claims.recordAdjudicatorDecision>[1], 'disputeId'>>(ctx),
+        disputeId: ctx.params.disputeId as string,
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/disputes/position',
+    description: 'Every adjudication, ordered by the deadline that expires soonest',
+    handler: (platform, ctx) =>
+      claims.disputePosition(projectContext(platform, ctx), ctx.query.get('today') ?? undefined),
+  },
 
   {
     method: 'POST',

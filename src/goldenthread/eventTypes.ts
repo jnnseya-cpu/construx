@@ -252,6 +252,8 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('CLAIM_ASSESSED', 'Claim', 'AI_EXECUTE', 'CONTRACTS_CLAIMS', { aiAllowed: true, requiresEvidence: true }),
   def('CLAIM_EVIDENCEPACK_BUILT', 'Claim', 'AI_EXECUTE', 'CONTRACTS_CLAIMS', { aiAllowed: true, requiresEvidence: true }),
   def('DISPUTE_OPENED', 'Dispute', 'CREATE', 'CONTRACTS_CLAIMS', { requiresEvidence: true }),
+  def('DISPUTE_REFERRED', 'Dispute', 'UPDATE', 'CONTRACTS_CLAIMS', { requiresEvidence: true }),
+  def('DISPUTE_DECIDED', 'Dispute', 'UPDATE', 'CONTRACTS_CLAIMS', { requiresEvidence: true }),
 
   // --- Risk, safety, compliance --------------------------------------------
   def('RISK_REGISTERED', 'RiskRegisterItem', 'CREATE', 'RISK_SAFETY', { aiAllowed: true }),

@@ -37,6 +37,10 @@ export async function contracts(root) {
   // which is exactly why they get missed.
   const calendar = await api.get(`/v1/projects/${projectId}/obligations/calendar`).catch(() => null);
 
+  // Statutory adjudication. The timetable is the point: both ends of it are
+  // fatal in different directions, and neither is about who is right.
+  const disputes = await api.get(`/v1/projects/${projectId}/disputes/position`).catch(() => null);
+
   const contract = b.Contract.filter((c) => c.status === 'EXECUTED').at(-1) ?? b.Contract.at(-1);
   const claim = b.Claim.at(-1);
   const attribution = claim?.attribution;
@@ -64,6 +68,9 @@ export async function contracts(root) {
             { id: 'delay', label: 'Record delay event', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
             { id: 'notice', label: 'Serve notice', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
             { id: 'obligation', label: 'Register obligation', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
+            { id: 'dispute', label: 'Give notice of adjudication', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
+            { id: 'refer', label: 'Record a referral', permitted: can('CONTRACTS_CLAIMS', 'U'), reason: blockedReason('CONTRACTS_CLAIMS', 'U') },
+            { id: 'decision', label: 'Record a decision', permitted: can('CONTRACTS_CLAIMS', 'U'), reason: blockedReason('CONTRACTS_CLAIMS', 'U') },
           ]))}
           ${can('CONTRACTS_CLAIMS', 'X') ? html`<button class="btn ghost" id="assess">Reassess claim</button>` : ''}
           ${can('CONTRACTS_CLAIMS', 'I') ? html`<button class="btn quiet" id="pack">Build evidence pack</button>` : ''}
@@ -215,6 +222,60 @@ export async function contracts(root) {
               <div style="padding:10px 17px 15px">
                 <div class="notice ${raw(calendar.overdue.length > 0 || calendar.running.some((r) => r.lost) ? 'warn' : 'ok')}">${calendar.summary}</div>
               </div>
+            </div>`
+          : ''
+      }
+
+      ${
+        disputes && disputes.total > 0
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Adjudication — HGCRA 1996 s.108</h3>
+              <div style="padding:0 17px"><div class="metric-sub">
+                A party may refer a dispute at any time. Seven days from the notice to secure an appointment and serve the
+                referral; twenty-eight from the referral to a decision. Miss the first and the appointment is a nullity;
+                miss the second and the decision is. Neither is about who is right.
+              </div></div>
+              ${table({
+                headers: ['Ref', 'Dispute', 'Referring', 'In dispute', 'Next deadline', 'Status'],
+                align: ['', '', '', 'num', '', ''],
+                rows: disputes.disputes.map((d) => [
+                  d.reference,
+                  String(d.natureOfDispute).slice(0, 58) + (String(d.natureOfDispute).length > 58 ? '…' : ''),
+                  d.referringParty,
+                  d.disputedAmountMinor ? money(d.disputedAmountMinor) : '—',
+                  d.nextDeadline
+                    ? html`${date(d.nextDeadline)} · ${badge(
+                        `${d.daysToNextDeadline}d`,
+                        d.daysToNextDeadline < 0 ? 'bad' : d.daysToNextDeadline <= 7 ? 'warn' : 'neutral',
+                      )}`
+                    : '—',
+                  badge(humanise(d.status), statusTone(d.status)),
+                ]),
+              })}
+              ${
+                disputes.disputes.flatMap((d) => d.findings.filter((f) => f.severity !== 'INFO').map((f) => ({ ...f, ref: d.reference })))
+                  .length > 0
+                  ? html`<div style="padding:6px 17px 4px">
+                      ${disputes.disputes.flatMap((d) =>
+                        d.findings
+                          .filter((f) => f.severity !== 'INFO')
+                          .map(
+                            (f) => html`<div class="notice ${raw(f.severity === 'CRITICAL' ? 'err' : 'warn')}" style="margin-bottom:9px">
+                              <div><b>${d.reference} · ${f.authority}</b><br>${f.finding}<br>
+                              <span style="color:var(--text-3)">${f.consequence}</span></div>
+                            </div>`,
+                          ),
+                      )}
+                    </div>`
+                  : ''
+              }
+              ${(disputes.costsProvisionFindings ?? []).map(
+                (f) => html`<div style="padding:0 17px 9px"><div class="notice err">
+                  <div><b>${f.authority}</b><br>${f.finding}<br>
+                  <span style="color:var(--text-3)">${f.consequence}</span></div>
+                </div></div>`,
+              )}
+              <div style="padding:4px 17px 15px"><div class="metric-sub">${disputes.summary}</div></div>
             </div>`
           : ''
       }
@@ -402,6 +463,75 @@ function contractLabel(contract) {
   return form.startsWith(suite) ? form : `${suite} ${form}`.trim();
 
   const COMMANDS = {
+    dispute: {
+      title: 'Give notice of adjudication',
+      intent:
+        'The right arises at any time — no waiting for practical completion or for an escalation ladder. Seven days from this notice to secure an appointment and serve the referral.',
+      path: `/v1/projects/${projectId}/disputes`,
+      submitLabel: 'Give notice',
+      fields: [
+        { name: 'contractId', label: 'Contract', type: 'select', options: b.Contract.map((c) => ({ value: c._refId, label: `${c.form} · ${c.suite}` })) },
+        { name: 'natureOfDispute', label: 'What the dispute is', type: 'textarea', rows: 4,
+          hint: 'The adjudicator has jurisdiction over the dispute referred and nothing else. A vague notice is a gift to the other side.' },
+        { name: 'redressSought', label: 'What is being asked for', type: 'textarea' },
+        { name: 'disputedAmountMinor', label: 'Sum in dispute', type: 'number', money: true, required: false },
+        { name: 'referringParty', label: 'Referring party', type: 'text' },
+        { name: 'respondingParty', label: 'Responding party', type: 'text' },
+        { name: 'noticeDate', label: 'Date of the notice', type: 'date', value: today() },
+        { name: 'evidenceHash', label: 'Notice of adjudication', type: 'file' },
+      ],
+    },
+    refer: {
+      title: 'Record a referral',
+      intent:
+        'The appointment and the referral, against the seven-day period. A referral served late does not lose the right — a fresh notice can be given — but it puts this reference in jeopardy.',
+      path: (collected) => `/v1/projects/${projectId}/disputes/${collected.disputeId}/refer`,
+      transform: ({ disputeId, ...rest }) => rest,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'disputeId', label: 'Dispute', type: 'select',
+          options: (disputes?.disputes ?? [])
+            .filter((d) => d.status === 'NOTICE_GIVEN')
+            .map((d) => ({ value: d.disputeId, label: `${d.reference} · ${String(d.natureOfDispute).slice(0, 44)}` })) },
+        { name: 'adjudicatorName', label: 'Adjudicator', type: 'text' },
+        { name: 'nominatingBody', label: 'Nominating body', type: 'text', required: false,
+          placeholder: 'Where the parties did not agree — RICS, TeCSA, ICE' },
+        { name: 'referralDate', label: 'Date referred', type: 'date', value: today() },
+        { name: 'evidenceHash', label: 'Referral notice', type: 'file' },
+      ],
+    },
+    decision: {
+      title: 'Record a decision',
+      intent:
+        'Recorded whether or not it was reached in time. A decision one day outside the period is a nullity, and that is a fact somebody needs in front of them before they pay against it.',
+      path: (collected) => `/v1/projects/${projectId}/disputes/${collected.disputeId}/decision`,
+      transform: ({ disputeId, extensionAgreedBy, ...rest }) => ({
+        ...rest,
+        ...(extensionAgreedBy && extensionAgreedBy !== 'NONE' ? { extensionAgreedBy } : {}),
+      }),
+      submitLabel: 'Record',
+      fields: [
+        { name: 'disputeId', label: 'Dispute', type: 'select',
+          options: (disputes?.disputes ?? [])
+            .filter((d) => d.status === 'REFERRED')
+            .map((d) => ({ value: d.disputeId, label: `${d.reference} · ${String(d.natureOfDispute).slice(0, 44)}` })) },
+        { name: 'decisionDate', label: 'Date of the decision', type: 'date', value: today() },
+        { name: 'inFavourOf', label: 'In favour of', type: 'text' },
+        { name: 'awardedAmountMinor', label: 'Amount awarded', type: 'number', money: true, required: false },
+        { name: 'awardedDays', label: 'Days awarded', type: 'number', required: false },
+        { name: 'extensionDays', label: 'Extension of the decision period', type: 'number', required: false,
+          hint: 'Up to 14 days on the referring party’s consent alone; longer needs both parties, agreed after referral' },
+        { name: 'extensionAgreedBy', label: 'Extension agreed by', type: 'select', required: false, options: [
+          { value: 'NONE', label: 'No extension' },
+          { value: 'REFERRING_PARTY', label: 'The referring party' },
+          { value: 'BOTH_PARTIES', label: 'Both parties' },
+        ] },
+        { name: 'extensionAgreedDate', label: 'Extension agreed on', type: 'date', required: false },
+        { name: 'adjudicatorFeesMinor', label: 'Adjudicator’s fees', type: 'number', money: true, required: false },
+        { name: 'feesBorneBy', label: 'Fees borne by', type: 'text', required: false },
+        { name: 'evidenceHash', label: 'Decision', type: 'file' },
+      ],
+    },
     obligation: {
       title: 'Register obligation',
       intent:

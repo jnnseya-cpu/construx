@@ -60,7 +60,6 @@ const NOT_EMITTED: Record<string, string> = {
   USER_ROLE_ASSIGNED: 'Role assignment is an identity-service operation and does not currently reach the project ledger.',
   POLICY_UPDATED: 'The permission matrix is code, not data, so there is nothing to record a change to.',
   MASTER_PRICING_CONSOLIDATED: 'Tender stage 6, the consolidated view across pricing routes, is not built.',
-  DISPUTE_OPENED: 'Adjudication and dispute handling are not built.',
 };
 
 async function sourceFiles(dir: string): Promise<string[]> {

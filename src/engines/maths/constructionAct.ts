@@ -20,6 +20,13 @@
  * as what it is. Contracts that count in business days of their own (adjudication
  * timetables, many JCT provisions) can use the same calendar directly.
  *
+ * With one statutory exception, in s.116(3): a period of **less than seven
+ * days** excludes Christmas Day, Good Friday and bank holidays — but not
+ * weekends. The exception turns on the length of the period rather than on
+ * which period it is, which is what makes it easy to miss, and the Scheme's
+ * five-day payment notice period falls inside it. `reckonPeriod` is the only
+ * place that decides; nothing should count a statutory period by hand.
+ *
  * **Nothing here invents a rate.** Statutory interest under the Late Payment of
  * Commercial Debts (Interest) Act 1998 runs at the Bank of England base rate
  * plus 8%, and the base rate is a fact about the outside world that this
@@ -95,13 +102,8 @@ function isWeekend(date: Date): boolean {
  * guessed at. A calendar that silently omitted one would be wrong in exactly
  * the year somebody most needed it; one that invented one would be worse.
  */
-export function bankHolidays(year: number, jurisdiction: UkJurisdiction = 'ENGLAND_WALES'): string[] {
-  const easter = easterSunday(year);
-  const fixed: Date[] = [];
-  const moveable: Date[] = [];
-
-  // Fixed-date holidays take a substitute weekday when they fall at a weekend.
-  fixed.push(utc(year, 1, 1));
+function fixedDateHolidays(year: number, jurisdiction: UkJurisdiction): Date[] {
+  const fixed: Date[] = [utc(year, 1, 1)];
   if (jurisdiction === 'SCOTLAND') fixed.push(utc(year, 1, 2));
   if (jurisdiction === 'NORTHERN_IRELAND') {
     fixed.push(utc(year, 3, 17)); // St Patrick's Day
@@ -110,6 +112,14 @@ export function bankHolidays(year: number, jurisdiction: UkJurisdiction = 'ENGLA
   if (jurisdiction === 'SCOTLAND') fixed.push(utc(year, 11, 30)); // St Andrew's Day
   fixed.push(utc(year, 12, 25));
   fixed.push(utc(year, 12, 26));
+  return fixed;
+}
+
+export function bankHolidays(year: number, jurisdiction: UkJurisdiction = 'ENGLAND_WALES'): string[] {
+  const easter = easterSunday(year);
+  // Fixed-date holidays take a substitute weekday when they fall at a weekend.
+  const fixed = fixedDateHolidays(year, jurisdiction);
+  const moveable: Date[] = [];
 
   moveable.push(addDaysTo(easter, -2)); // Good Friday
   if (jurisdiction !== 'SCOTLAND') moveable.push(addDaysTo(easter, 1)); // Easter Monday
@@ -183,6 +193,85 @@ export function businessDayOnOrAfter(date: string, calendar: BusinessCalendar = 
     candidate = addDaysTo(candidate, 1);
   }
   return iso(candidate);
+}
+
+/**
+ * Reckon a statutory period the way s.116 of the Act requires.
+ *
+ * This is the exception to "the statute counts days, not business days", and it
+ * is a narrow one that is easy to miss because it turns on the *length* of the
+ * period rather than on which period it is.
+ *
+ * **s.116(2)** — the period begins immediately after the specified date. Day
+ * one is the day after, which is ordinary date arithmetic.
+ *
+ * **s.116(3)** — where the period is **less than seven days**, it does not
+ * include Christmas Day, Good Friday, or a day which is a bank holiday. Note
+ * what that does *not* say: Saturdays and Sundays still count. The subsection
+ * excludes three named categories, not the weekend, and treating it as a
+ * business-day count would push every short deadline too far out.
+ *
+ * Christmas Day and Good Friday are named separately from bank holidays in the
+ * statute because in England and Wales they are common law holidays rather than
+ * bank holidays. That distinction matters here: when 25 December falls on a
+ * Saturday the bank holiday is the following Monday, but 25 December itself is
+ * still excluded from the count, even though a Saturday would otherwise be
+ * counted.
+ *
+ * Only forward periods are reckoned this way. A pay less notice is required
+ * "not later than N days before the final date", which is not an act required
+ * to be done within a period after a date, and the Scheme's seven-day period
+ * would fall outside s.116(3) in any event.
+ */
+export function reckonPeriod(fromDate: string, days: number, calendar: BusinessCalendar = DEFAULT_CALENDAR): string {
+  if (days <= 0) return fromDate.slice(0, 10);
+
+  let candidate = parse(fromDate);
+
+  // Seven days or more: plain calendar days, and the deadline never moves.
+  if (days >= 7) return iso(addDaysTo(candidate, days));
+
+  let remaining = days;
+  while (remaining > 0) {
+    candidate = addDaysTo(candidate, 1);
+    if (!excludedFromShortPeriod(candidate, calendar)) remaining -= 1;
+  }
+  return iso(candidate);
+}
+
+/**
+ * Christmas Day, Good Friday, or a bank holiday — the three s.116(3) names.
+ *
+ * Wider than the business-day calendar, and deliberately so. That calendar
+ * answers "was the office open", so when Boxing Day falls on a Saturday it
+ * carries only the substitute Monday: nothing is lost, because Saturday was
+ * never a working day. Here it would be lost. s.116(3) counts Saturdays, so a
+ * bank holiday that falls on one has to be excluded explicitly or it is
+ * silently counted — and the deadline comes out a day early.
+ */
+function excludedFromShortPeriod(date: Date, calendar: BusinessCalendar): boolean {
+  const day = iso(date);
+  const year = date.getUTCFullYear();
+
+  if (calendar.additionalHolidays.includes(day)) return true;
+  // The substitutes, Good Friday, Easter Monday and the Monday holidays.
+  if (holidaySet(year, calendar).has(day)) return true;
+
+  // Christmas Day, whatever weekday it lands on. The statute names the day
+  // itself — it is a common law holiday rather than a bank holiday, which is
+  // exactly why s.116(3) lists it separately from them.
+  if (date.getUTCMonth() === 11 && date.getUTCDate() === 25) return true;
+
+  // The remaining fixed-date bank holidays are appointed "if it be not a
+  // Sunday" (Banking and Financial Dealings Act 1971, Sch 1), so the original
+  // is a holiday on a Saturday even though the substitute Monday is one too.
+  if (date.getUTCDay() !== 0) {
+    for (const fixed of fixedDateHolidays(year, calendar.jurisdiction)) {
+      if (iso(fixed) === day) return true;
+    }
+  }
+
+  return false;
 }
 
 /** Count business days forward. Used by contract terms that count that way; never by the statute. */

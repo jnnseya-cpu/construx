@@ -1,3 +1,5 @@
+import { reckonPeriod, type BusinessCalendar } from './constructionAct.ts';
+
 /**
  * Delay attribution, entitlement assessment and payment-cycle arithmetic.
  *
@@ -346,11 +348,19 @@ function addDays(iso: string, days: number): string {
  * Generate a statutory payment cycle. Missing a payment or pay-less notice
  * deadline has direct cash consequences, so the dates are computed and tracked
  * rather than left in someone's calendar.
+ *
+ * The payment notice deadline is reckoned under s.116 rather than by adding
+ * days, because the Scheme's period is five days and s.116(3) excludes
+ * Christmas Day, Good Friday and bank holidays from any period shorter than
+ * seven. Counting it plainly produces a deadline earlier than the statute
+ * allows — which would have this platform tell a payee they were entitled to
+ * the notified sum when the payer was still in time.
  */
 export function generatePaymentCycle(
   startDate: string,
   cycles: number,
   terms: PaymentTerms,
+  calendar?: BusinessCalendar,
 ): PaymentCyclePeriod[] {
   const periods: PaymentCyclePeriod[] = [];
   const start = new Date(`${startDate.slice(0, 10)}T00:00:00.000Z`);
@@ -375,7 +385,7 @@ export function generatePaymentCycle(
       periodEnd: periodEnd.toISOString().slice(0, 10),
       applicationDate: dueDateIso,
       dueDate: dueDateIso,
-      paymentNoticeDeadline: addDays(dueDateIso, terms.paymentNoticeDays),
+      paymentNoticeDeadline: reckonPeriod(dueDateIso, terms.paymentNoticeDays, calendar),
       payLessNoticeDeadline: addDays(finalDate, -terms.payLessNoticeDaysBeforeFinal),
       finalDateForPayment: finalDate,
     });

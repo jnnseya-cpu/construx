@@ -12,6 +12,7 @@ import {
   businessDaysBetween,
   compliancePosition,
   isBusinessDay,
+  reckonPeriod,
   SCHEME_DEFAULTS,
   type CycleInput,
 } from '../src/engines/maths/constructionAct.ts';
@@ -91,6 +92,63 @@ describe('the business day calendar', () => {
     assert.equal(addBusinessDays('2026-04-02', 5), '2026-04-13');
     assert.equal(businessDaysBetween('2026-04-02', '2026-04-13'), 5);
     assert.equal(businessDaysBetween('2026-04-13', '2026-04-02'), -5, 'and it is signed');
+  });
+});
+
+describe('s.116 — the exception that turns on how long the period is', () => {
+  it('counts seven days or more plainly, holidays and all', () => {
+    // The general rule. The Act says days and a court reads days, so a deadline
+    // landing on a bank holiday stays there and the serve-by date deals with it.
+    assert.equal(reckonPeriod('2026-12-21', 7), '2026-12-28', 'the Boxing Day substitute, unmoved');
+    assert.equal(reckonPeriod('2026-04-01', 17), '2026-04-18', 'straight through Easter');
+  });
+
+  it('excludes Christmas, Good Friday and bank holidays from a period under seven days', () => {
+    // The Scheme's payment notice period is five days, which puts it inside
+    // s.116(3). Counting it plainly lands on 26 December; the statute does not.
+    assert.equal(reckonPeriod('2026-12-21', 5), '2026-12-29');
+  });
+
+  it('still counts Saturdays and Sundays', () => {
+    // s.116(3) names three categories and the weekend is not among them.
+    // Treating it as a business-day count pushes every short deadline out.
+    assert.equal(reckonPeriod('2026-06-04', 5), '2026-06-09', 'straight across a weekend');
+    assert.notEqual(reckonPeriod('2026-06-04', 5), addBusinessDays('2026-06-04', 5));
+  });
+
+  it('excludes Christmas Day even when it falls at a weekend', () => {
+    // 25 December 2027 is a Saturday. The business day calendar carries only
+    // the substitute, because Saturday was never a working day — but here a
+    // Saturday counts, so the day itself has to be excluded explicitly.
+    assert.ok(!bankHolidays(2027).includes('2027-12-25'));
+    assert.equal(reckonPeriod('2027-12-23', 3), '2027-12-29');
+  });
+
+  it('excludes Boxing Day on a Saturday, which is a bank holiday all the same', () => {
+    // 26 December 2026 is a Saturday. It is appointed "if it be not a Sunday",
+    // so it is a holiday and the Monday substitute is another.
+    assert.equal(reckonPeriod('2026-12-24', 1), '2026-12-27', 'past Christmas Day and Boxing Day, onto the Sunday');
+  });
+
+  it('is jurisdiction-aware, because the holidays are', () => {
+    // New Year's Day 2027 is a Friday, so it is excluded in both. Then the
+    // paths part: 2 January is a Saturday, an ordinary counting day in England
+    // and a bank holiday in Scotland.
+    const scotland = { jurisdiction: 'SCOTLAND' as const, additionalHolidays: [] };
+    assert.equal(reckonPeriod('2026-12-31', 1), '2027-01-02', 'England: the Saturday counts');
+    assert.equal(reckonPeriod('2026-12-31', 1, scotland), '2027-01-03', 'Scotland: 2 January is excluded too');
+  });
+
+  it('honours a proclaimed one-off holiday nobody can derive', () => {
+    // A coronation or a jubilee is created by proclamation and cannot be
+    // derived from a rule, so it is supplied rather than guessed at.
+    const withJubilee = { jurisdiction: 'ENGLAND_WALES' as const, additionalHolidays: ['2026-06-08'] };
+    assert.equal(reckonPeriod('2026-06-06', 2), '2026-06-08');
+    assert.equal(reckonPeriod('2026-06-06', 2, withJubilee), '2026-06-09');
+  });
+
+  it('returns the date itself for a period of nothing', () => {
+    assert.equal(reckonPeriod('2026-06-05', 0), '2026-06-05');
   });
 });
 
