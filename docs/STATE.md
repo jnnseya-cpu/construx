@@ -1458,6 +1458,34 @@ Verified against a running server: a project created in Columbus, Ohio at
 per-field problem+json error; and the estate's contract-value card switched to
 "mixed currencies" rather than adding dollars to pounds.
 
+**Permits to work, gated on the competency register.** The register existed —
+qualifications with issue and expiry dates, marked `EXPIRED` on read — and
+nothing consulted it. A permit could name an operative whose confined-space
+ticket lapsed eight months ago, and the platform would record it as a control.
+
+This is the one command in the codebase that **refuses rather than records**,
+and the exception is deliberate. Everything else preserves the record and flags
+the problem, because a refused write is evidence destroyed. A permit is
+different: the permit *is* the authorisation. Issuing one against an expired
+ticket does not document a risk, it creates the very authority the ticket was
+the basis for. There is nothing to preserve, because the thing being written is
+the harm.
+
+Expiry is checked against the permit's own end date rather than today. A ticket
+valid this morning that lapses on the Wednesday does not cover a permit running
+to Friday — the failure a today-check misses entirely. Every named operative is
+checked, not the first: a gang of six where the fifth ticket lapsed is the
+realistic case. An activity accepts any of the qualifications that recognise it
+(work at height is IPAF or PASMA or a general ticket, not one card), and the
+requirements are published so a form can explain a refusal rather than just
+issue one.
+
+Three other second-tier gap-matrix items turned out to be **already built** and
+were not rebuilt: CVR completeness confidence (computed in `publishCVR`, alerted
+on when low, shown in the console), negotiation delta between the adjudicated
+figure and the executed subcontract (`negotiatedValueMinor` on award), and
+sequential correspondence numbering (markup → instruction).
+
 **Late design information is priced.** The design centre could say how many
 RFIs were overdue and by how long; it could not say what that was worth, which
 is the only form in which the number reaches a commercial conversation.

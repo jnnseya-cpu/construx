@@ -1,6 +1,7 @@
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
-import { ulid } from '../core/ids.ts';
+import { formatRef, ulid } from '../core/ids.ts';
+import { assertOrder } from '../domain/dates.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
 import { contingencyRequirement, forecastSafety, scoreRisk, type RiskInput, type SafetySignal } from './maths/risk.ts';
 
@@ -729,4 +730,158 @@ export function safetyPosition(ctx: EngineContext): {
     training: { records: training.length, expired: training.filter((t) => t.expired).length },
     ramsApproved: ctx.ledger.list(ctx.projectId, 'RAMS').filter((r) => r.state.status === 'APPROVED').length,
   };
+}
+
+/**
+ * Permits to work, gated on the competency register that already exists.
+ *
+ * A permit is an authorisation to do something that would otherwise be unsafe:
+ * hot work, confined space entry, work at height, live electrical, excavation
+ * near services. What makes it a control rather than paperwork is that it names
+ * the people, and the people have to be competent for the activity.
+ *
+ * The register was already there — `recordCompetency` holds qualifications with
+ * issue and expiry dates and marks them `EXPIRED` — and nothing consulted it.
+ * So a permit could be issued naming an operative whose confined-space ticket
+ * lapsed eight months ago, and the platform would record it as a control.
+ *
+ * ---
+ *
+ * **Why this refuses rather than warns.** Almost everything else in this
+ * codebase records and flags rather than blocking, because a record that is
+ * refused is evidence destroyed. A permit is the exception, and deliberately:
+ * the permit *is* the authorisation. Issuing one against an expired ticket does
+ * not document a risk — it creates the very authority that the ticket was the
+ * basis for. There is nothing to preserve, because the thing being written is
+ * the harm.
+ *
+ * **Why expiry is checked against the permit's own dates, not today.** A permit
+ * valid for a fortnight needs the qualification to be in date for the whole
+ * fortnight. Checking against today would authorise work on a ticket that
+ * lapses on the Wednesday.
+ */
+export type PermitActivity =
+  | 'HOT_WORK'
+  | 'CONFINED_SPACE'
+  | 'WORK_AT_HEIGHT'
+  | 'LIVE_ELECTRICAL'
+  | 'EXCAVATION'
+  | 'LIFTING_OPERATIONS';
+
+/** The qualification an activity requires. Absent means no specific ticket. */
+const REQUIRED_COMPETENCY: Record<PermitActivity, string[]> = {
+  HOT_WORK: ['Hot work'],
+  CONFINED_SPACE: ['Confined space'],
+  WORK_AT_HEIGHT: ['Work at height', 'IPAF', 'PASMA'],
+  LIVE_ELECTRICAL: ['Electrical', 'JIB'],
+  EXCAVATION: ['Excavation', 'CPCS'],
+  LIFTING_OPERATIONS: ['Appointed person', 'Slinger', 'CPCS'],
+};
+
+export function issuePermit(
+  ctx: EngineContext,
+  input: {
+    activity: PermitActivity;
+    location: string;
+    /** Operatives the permit authorises. Every one is checked. */
+    operativeIds: string[];
+    validFrom: string;
+    validTo: string;
+    /** The RAMS this permit works under. A permit without one is a signature. */
+    ramsId: string;
+    precautions: string;
+    evidenceHash: string;
+  },
+): { permitId: string; reference: string; authorisedOperatives: number } {
+  authorise(ctx, 'SAFETY_RAMS', 'A', { lifecyclePhase: currentPhase(ctx) });
+
+  if (input.operativeIds.length === 0) {
+    throw new DomainError('PERMIT_NO_OPERATIVES', 'A permit must name the people it authorises');
+  }
+  assertOrder(input.validFrom, input.validTo, 'validFrom', 'validTo');
+
+  // The RAMS must exist and be approved. A permit under a draft method
+  // statement authorises work against a method nobody has accepted.
+  const rams = ctx.ledger.require({ refType: 'RAMS', refId: input.ramsId });
+  if (rams.state.status !== 'APPROVED') {
+    throw new DomainError(
+      'PERMIT_RAMS_NOT_APPROVED',
+      'The method statement this permit works under has not been approved',
+    );
+  }
+
+  const required = REQUIRED_COMPETENCY[input.activity] ?? [];
+  const competencies = ctx.ledger.list(ctx.projectId, 'Competency').map((record) => record.state);
+  const failures: string[] = [];
+
+  for (const operativeId of input.operativeIds) {
+    const held = competencies.filter((c) => c.operativeId === operativeId);
+    const matching = held.filter((c) =>
+      required.some((needed) => String(c.qualification ?? '').toLowerCase().includes(needed.toLowerCase())),
+    );
+
+    if (matching.length === 0) {
+      failures.push(`${operativeId} holds no ${required.join(' or ')} qualification`);
+      continue;
+    }
+    // In date for the whole permit, not merely today. A ticket lapsing on the
+    // Wednesday does not cover a permit that runs to Friday.
+    const coversPermit = matching.some((c) => String(c.expiresAt ?? '') >= input.validTo);
+    if (!coversPermit) {
+      const latest = matching
+        .map((c) => String(c.expiresAt ?? ''))
+        .sort()
+        .at(-1);
+      failures.push(`${operativeId}: qualification expires ${latest}, before the permit ends ${input.validTo}`);
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new DomainError(
+      'PERMIT_COMPETENCY_NOT_HELD',
+      `The permit cannot be issued: ${failures.join('; ')}`,
+      422,
+    );
+  }
+
+  const permitId = ulid();
+  const reference = formatRef('PTW', ctx.ledger.list(ctx.projectId, 'Permit').length + 1);
+
+  const evidence = registerEvidence(ctx, {
+    type: 'PERMIT_AUTHORITY',
+    hash: input.evidenceHash,
+    description: `${input.activity} permit at ${input.location} issued by ${ctx.auth.actorId}`,
+    linkedEntities: [{ refType: 'RAMS', refId: input.ramsId }],
+  });
+
+  write(ctx, {
+    eventType: 'PERMIT_ISSUED',
+    entity: { refType: 'Permit', refId: permitId },
+    evidenceRefs: [evidence],
+    nextState: {
+      id: permitId,
+      reference,
+      projectId: ctx.projectId,
+      activity: input.activity,
+      location: input.location,
+      operativeIds: input.operativeIds,
+      validFrom: input.validFrom,
+      validTo: input.validTo,
+      ramsId: input.ramsId,
+      precautions: input.precautions,
+      issuedBy: ctx.auth.actorId,
+      issuedAt: new Date().toISOString(),
+      status: 'ISSUED',
+    },
+  });
+
+  return { permitId, reference, authorisedOperatives: input.operativeIds.length };
+}
+
+/** Which competencies an activity requires. Published so a form can say why. */
+export function permitRequirements(): Array<{ activity: PermitActivity; requires: string[] }> {
+  return (Object.keys(REQUIRED_COMPETENCY) as PermitActivity[]).map((activity) => ({
+    activity,
+    requires: REQUIRED_COMPETENCY[activity],
+  }));
 }

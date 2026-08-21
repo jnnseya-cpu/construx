@@ -297,6 +297,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('INCIDENT_RECORDED', 'Incident', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),
   def('SAFETY_FORECAST_PRODUCED', 'SafetyForecast', 'AI_EXECUTE', 'RISK_SAFETY', { aiAllowed: true }),
   def('COMPETENCY_RECORDED', 'Competency', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),
+  // A permit is an authorisation to do something that would otherwise be unsafe.
+  // Evidence is mandatory and no AI actor may issue one: a permit signed by a
+  // model is not a competent person's signature, which is the same rule the
+  // catalogue already applies to a method statement.
+  def('PERMIT_ISSUED', 'Permit', 'ISSUE', 'RISK_SAFETY', { requiresEvidence: true, creates: true }),
   def('TRAINING_COMPLETED', 'TrainingRecord', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),
 
   // --- BIM & digital twin ---------------------------------------------------

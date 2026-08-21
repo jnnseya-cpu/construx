@@ -929,6 +929,37 @@ export const ROUTES: Route[] = [
 
   // -------------------------------------------------------------------- HSEQ
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/safety/permits',
+    description: 'Issue a permit to work, refused where an operative is not competent for the whole permit',
+    schema: {
+      type: 'object',
+      required: ['activity', 'location', 'operativeIds', 'validFrom', 'validTo', 'ramsId', 'precautions', 'evidenceHash'],
+      properties: {
+        activity: {
+          type: 'string',
+          enum: ['HOT_WORK', 'CONFINED_SPACE', 'WORK_AT_HEIGHT', 'LIVE_ELECTRICAL', 'EXCAVATION', 'LIFTING_OPERATIONS'],
+        },
+        location: stringField,
+        operativeIds: { type: 'array', minItems: 1, items: stringField },
+        validFrom: stringField,
+        validTo: stringField,
+        ramsId: stringField,
+        precautions: { type: 'string', minLength: 10 },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => safety.issuePermit(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/safety/permit-requirements',
+    description: 'Which competency each permitted activity requires',
+    readOnly: true,
+    handler: () => ({ requirements: safety.permitRequirements() }),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/safety/position',
     description: 'Safety position: incidents, escalations, lost time and training currency',

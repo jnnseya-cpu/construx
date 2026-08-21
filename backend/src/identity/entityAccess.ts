@@ -48,6 +48,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   RFI: { area: 'DESIGN_INFORMATION' },
   Clarification: { area: 'DESIGN_INFORMATION' },
   Correspondence: { area: 'DESIGN_INFORMATION' },
+  // A permit names who is authorised to do a high-risk activity and on whose
+  // competence. Same area as the RAMS it depends on.
+  Permit: { area: 'SAFETY_RAMS' },
   DesignMaturityAssessment: { area: 'DESIGN_INFORMATION' },
 
   // BIM and twin
