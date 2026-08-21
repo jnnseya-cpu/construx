@@ -101,10 +101,8 @@ export const config = {
     /**
      * Hard economic rule: 1 unit of provider cost is charged at 4.
      *
-     * Revenue 4, cost 1, so the gross margin on AI is 75% and the markup is
-     * 300%. Those are two names for the same arithmetic and are worth keeping
-     * straight, because "100% margin" and "100% markup" differ by a factor of
-     * two and both get said in the same conversation.
+     * The company keeps £3 of every £4 it takes — 300% profit on what it paid
+     * the provider, against a required minimum of 100%.
      */
     markupMultiplier: num('ACU_MARKUP_MULTIPLIER', 4),
     /**
@@ -133,7 +131,7 @@ export const config = {
      * The share of every subscription payment credited to the tenant's AI
      * wallet. The rest carries no provider cost against it.
      */
-    subscriptionAcuAllocationPercent: num('ACU_SUBSCRIPTION_ALLOCATION_PERCENT', 30),
+    subscriptionAcuAllocationPercent: num('ACU_SUBSCRIPTION_ALLOCATION_PERCENT', 20),
     freeTrialGrantMinor: num('FREE_TRIAL_GRANT_MINOR', 500),
   },
 

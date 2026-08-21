@@ -23,8 +23,7 @@ import { Platform } from '../src/platform.ts';
  *   1. **No AI work without available ACUs.** Not a warning, not an overdraft.
  *   2. **£1 buys 100 ACUs.** One ACU is one minor unit.
  *   3. **Provider cost is charged at 4x.**
- *   4. **A configured share of a subscription payment — 30%, or 20% — is
- *      credited as AI allowance.**
+ *   4. **20% of a subscription payment is credited as AI allowance.**
  *
  * And the profit rule that sits under all of them: **the company takes at
  * least 100% profit on every AI transaction**. It is a floor expressed as a
@@ -177,36 +176,22 @@ describe('rule 3 — provider cost is charged at 4x', () => {
   });
 });
 
-describe('rule 4 — a share of a subscription buys AI allowance', () => {
+describe('rule 4 — 20% of a subscription buys AI allowance', () => {
   it('allocates the configured share of the plan price', () => {
     const rate = config.billing.subscriptionAcuAllocationPercent;
     assert.equal(subscriptionAcuAllocationMinor(100_000), 100_000 * (rate / 100));
     assert.equal(subscriptionAcuAllocationMinor(95_000), Math.floor(95_000 * (rate / 100)));
   });
 
-  it('is a rate, so 20% and 30% are the same mechanism with a different number', () => {
-    // Both were named as acceptable. Neither is special-cased: the allocation
-    // is one arithmetic path and the rate is configuration, so switching is a
-    // deployment change rather than a code change.
-    for (const [percent, expected] of [
-      [20, 19_000],
-      [30, 28_500],
-    ] as const) {
-      const previous = process.env.ACU_SUBSCRIPTION_ALLOCATION_PERCENT;
-      try {
-        // Computed directly rather than through config, which is a boot
-        // snapshot — the arithmetic is what is under test.
-        assert.equal(Math.floor((95_000 * percent) / 100), expected, `${percent}% of £950`);
-      } finally {
-        if (previous === undefined) delete process.env.ACU_SUBSCRIPTION_ALLOCATION_PERCENT;
-        else process.env.ACU_SUBSCRIPTION_ALLOCATION_PERCENT = previous;
-      }
-    }
+  it('allocates twenty per cent', () => {
+    assert.equal(config.billing.subscriptionAcuAllocationPercent, 20);
+    assert.equal(subscriptionAcuAllocationMinor(95_000), 19_000, '20% of £950 is £190');
+    assert.equal(subscriptionAcuAllocationMinor(220_000), 44_000, '20% of £2,200 is £440');
   });
 
   it('rounds down, because a fraction of an ACU cannot be spent', () => {
-    // 3333 * 0.3 = 999.9. Rounding up would credit money that does not exist.
-    assert.equal(subscriptionAcuAllocationMinor(3_333), 999);
+    // 3333 * 0.2 = 666.6. Rounding up would credit money that does not exist.
+    assert.equal(subscriptionAcuAllocationMinor(3_333), 666);
   });
 
   it('allocates nothing on a free plan', () => {
@@ -297,15 +282,16 @@ describe('what the allowance actually buys', () => {
     const providerSpend = allowanceMinor / config.billing.markupMultiplier;
 
     assert.equal(plan, 95_000, '£950/month');
-    assert.equal(allowanceMinor, 28_500, '£285 of AI allowance');
-    assert.equal(acusFromMinor(allowanceMinor), 28_500, '28,500 ACUs');
-    assert.equal(providerSpend, 7_125, '£71.25 of provider cost');
+    assert.equal(allowanceMinor, 19_000, '£190 of AI allowance at 20%');
+    assert.equal(acusFromMinor(allowanceMinor), 19_000, '19,000 ACUs');
+    assert.equal(providerSpend, 4_750, '£47.50 of provider cost');
 
-    // Which is where the margin on the whole plan comes from: the platform
-    // takes £950 and, if the customer spends the allowance to the last ACU,
-    // pays a provider £71.25.
-    const worstCaseCost = providerSpend;
-    assert.equal(plan - worstCaseCost, 87_875, '£878.75 retained if the allowance is fully consumed');
-    assert.ok((plan - worstCaseCost) / plan > 0.92, 'the plan margin fell below 92%');
+    // The worst case for the platform is the customer spending the allowance
+    // to the last ACU: it takes £950 and pays a provider £47.50.
+    assert.equal(plan - providerSpend, 90_250, '£902.50 retained if the allowance is fully consumed');
+    assert.ok(
+      profitPercent(providerSpend, plan) >= config.billing.minimumProfitPercent,
+      'the plan itself fell below the required profit',
+    );
   });
 });
