@@ -3,6 +3,7 @@ import type { Server } from 'node:http';
 import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
 import { ROUTES } from '../src/api/routes.ts';
+import { SITE_PAGES } from '../src/site/index.ts';
 import { Platform } from '../src/platform.ts';
 
 /**
@@ -38,9 +39,11 @@ after(() => server.close());
 /**
  * Run a block with NODE_ENV set, restoring it afterwards.
  *
- * `config` is read at module load, so this cannot flip the loaded value — the
- * production checks read `config.env` fresh on each call, which is why the
- * gates below are written that way rather than as a constant computed at boot.
+ * `config.env` is a snapshot taken at module load, so setting the variable here
+ * cannot reach it. The request-time gates call `isProduction()`, which reads
+ * `process.env` fresh — that is the whole reason it exists, and why these
+ * assertions are possible at all rather than only in a separately booted
+ * process.
  */
 async function asProduction<T>(run: () => Promise<T>): Promise<T> {
   const previous = process.env.NODE_ENV;
@@ -60,17 +63,33 @@ describe('what an anonymous caller can obtain', () => {
     // assertions below, and a public route added without a thought here should
     // fail in both places rather than neither.
     const publicRoutes = ROUTES.filter((r) => r.public).map((r) => `${r.method} ${r.pattern}`).sort();
-    assert.deepEqual(publicRoutes, [
+    const sitePaths = new Set(SITE_PAGES.map((p) => `GET ${p.path}`));
+    const publicApi = publicRoutes.filter((id) => !sitePaths.has(id));
+
+    assert.deepEqual(publicApi, [
       'GET /healthz',
       'GET /readyz',
       'GET /unsubscribe',
+      'GET /v1/signup/account-types',
       'POST /unsubscribe',
       'POST /v1/auth/login',
       'POST /v1/auth/mfa/verify',
       'POST /v1/auth/refresh',
       'POST /v1/console/identities',
       'POST /v1/console/session',
+      'POST /v1/signup',
+      'POST /v1/signup/verify',
     ]);
+
+    // Every marketing page is public and none of them is an API surface. They
+    // are derived rather than listed so adding a page is not a security edit,
+    // while adding a public *endpoint* still is.
+    for (const definition of SITE_PAGES) {
+      assert.ok(
+        publicRoutes.includes(`GET ${definition.path}`),
+        `${definition.path} is in the site navigation but is not a public route`,
+      );
+    }
   });
 
   it('issues no access token from a public route in production, except by completing authentication', async () => {

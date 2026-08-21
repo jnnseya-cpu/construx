@@ -1,5 +1,7 @@
 import { SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
 import { ask } from '../ai/conversation.ts';
+import * as signup from '../identity/signup.ts';
+import * as site from '../site/index.ts';
 import * as notifications from '../notifications/catalogue.ts';
 import { CATEGORIES, CATEGORY_TITLES, NOTIFICATION_EVENTS } from '../notifications/catalogue.ts';
 import * as notifyEngine from '../notifications/notify.ts';
@@ -59,7 +61,7 @@ import { authorise, AUTHZ_OPTIONS, currentPhase } from '../engines/context.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import type { Platform } from '../platform.ts';
 import type { ExportAudience, ExportFormat } from '../export/exporter.ts';
-import { metrics, recentLogs, type RequestContext } from './middleware.ts';
+import { metrics, recentLogs, type HtmlPolicy, type RequestContext } from './middleware.ts';
 import { gatewayMetrics, securityEvents, securitySummary, type SecurityEventKind } from './telemetry.ts';
 
 /**
@@ -78,6 +80,8 @@ export type Route = {
   public?: boolean;
   /** Handler returns a complete HTML page rather than a JSON payload. */
   html?: boolean;
+  /** Which content-security policy an html route is served under. */
+  htmlPolicy?: HtmlPolicy;
   /**
    * Handler returns bytes and the headers to send them under, rather than a
    * JSON payload. A PDF cannot be base64 in a JSON envelope and still be a file
@@ -201,6 +205,19 @@ const stringField = { type: 'string', minLength: 1 } as const;
  * only ever cause one of these to happen, and adding to this map is a
  * deliberate act rather than a side effect of naming a function.
  */
+/**
+ * Branding for platform-to-stranger mail.
+ *
+ * A registration has no tenancy yet, so there is no customer branding to use.
+ * This is CONSTRUX writing as itself, which is what the message actually is.
+ */
+const PLATFORM_BRANDING = {
+  clientName: 'CONSTRUX.AI',
+  primaryColour: '#ff6600',
+  documentReferencePrefix: 'CXA',
+  legalFooter: 'CONSTRUX.AI — construction operating system',
+} as const;
+
 const AGENT_COMMANDS: Record<string, (ctx: ReturnType<typeof projectContext>, input: Record<string, unknown>) => Promise<unknown>> = {
   'planning:forecastDelay': (ctx, input) => planning.forecastDelay(ctx, input as never),
   'cost:publishCVR': (ctx, input) => cost.publishCVR(ctx, input as never),
@@ -1027,6 +1044,149 @@ export const ROUTES: Route[] = [
       // drifting from it.
       writePhaseGates: WRITE_PHASE_GATES,
     }),
+  },
+
+  // ------------------------------------------------------------- public site
+  //
+  // Server-rendered rather than client-rendered, unlike the console. These
+  // pages are read by people deciding whether to trust the product, by search
+  // crawlers and by link previews — all of which see markup, not the script
+  // that would have produced it.
+  ...site.SITE_PAGES.map((definition) => ({
+    method: 'GET' as const,
+    pattern: definition.path,
+    public: true,
+    html: true,
+    htmlPolicy: 'PUBLIC_SITE' as const,
+    description: `Public site — ${definition.label}`,
+    handler: (platform: Platform, ctx: RequestContext) => site.render(definition.path, platform, ctx),
+  })),
+
+  // ------------------------------------------------------------------ signup
+  {
+    method: 'GET',
+    pattern: '/v1/signup/account-types',
+    public: true,
+    description: 'Every account type, what it includes, and whether it is self-serve',
+    handler: () => ({
+      accountTypes: signup.accountTypes(),
+      currencies: Object.values(CURRENCIES),
+      jurisdictions: Object.values(JURISDICTIONS),
+      note:
+        'Enterprise is provisioned with an agreement rather than a form. Selecting it registers an enquiry.',
+    }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/signup',
+    public: true,
+    description: 'Begin a registration. Answers identically whether or not the address is already in use',
+    schema: {
+      type: 'object',
+      required: ['email', 'contactName', 'organisationName', 'jurisdiction', 'currency', 'package'],
+      properties: {
+        email: { type: 'string', minLength: 3, maxLength: 254 },
+        contactName: { type: 'string', minLength: 2, maxLength: 120 },
+        organisationName: { type: 'string', minLength: 2, maxLength: 200 },
+        jurisdiction: { type: 'string', enum: Object.keys(JURISDICTIONS) },
+        currency: { type: 'string', enum: Object.keys(CURRENCIES) },
+        package: { type: 'string', enum: signup.SELF_SERVE_PACKAGES },
+      },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const input = body<Parameters<typeof signup.register>[1]>(ctx);
+      const started = signup.register(platform, input);
+
+      // Both branches send mail. The branch that found an existing account
+      // tells its owner that one exists rather than creating a second — which
+      // is the only way to warn the real owner without telling the caller
+      // whether the address is registered.
+      const recipient = {
+        id: `registration:${started.registration?.id ?? 'existing'}`,
+        name: input.contactName,
+        email: input.email,
+        tenantId: 'platform',
+      };
+
+      if (started.outcome === 'NEW' && started.registration && started.token) {
+        await notifyEngine.notify(platform, {
+          code: 'account.registration.requested',
+          recipients: [recipient],
+          payload: {
+            enterprise: input.organisationName,
+            actionUrl: signup.verificationUrl(started.registration.id, started.token),
+            actionLabel: 'Confirm your account',
+            detail:
+              `Confirm this address to finish setting up ${input.organisationName}. ` +
+              `The link is good for ${signup.VERIFICATION_TTL_MINUTES / 60} hours.`,
+          },
+          branding: PLATFORM_BRANDING,
+          actorId: 'signup',
+          correlationId: ctx.correlationId,
+        });
+      } else {
+        await notifyEngine.notify(platform, {
+          code: 'account.registration.received',
+          recipients: [recipient],
+          payload: {
+            actionUrl: '/app',
+            actionLabel: 'Sign in',
+            detail:
+              'An account already exists for this address, so no new one was created. ' +
+              'If this was you, sign in. If it was not, you can ignore this message — nothing has changed.',
+          },
+          branding: PLATFORM_BRANDING,
+          actorId: 'signup',
+          correlationId: ctx.correlationId,
+        });
+      }
+
+      return started.receipt;
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/signup/verify',
+    public: true,
+    description: 'Prove the address and provision the tenancy. Returns an account, never a session',
+    schema: {
+      type: 'object',
+      required: ['registrationId', 'token'],
+      properties: { registrationId: stringField, token: stringField },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const { registrationId, token } = body<{ registrationId: string; token: string }>(ctx);
+      const activation = signup.verify(platform, { registrationId, token, correlationId: ctx.correlationId });
+      const user = platform.user(activation.userId);
+
+      await notifyEngine.notify(platform, {
+        code: 'account.verification.successful',
+        recipients: [{ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }],
+        payload: {
+          enterprise: activation.enterpriseName,
+          actionUrl: '/app',
+          actionLabel: 'Sign in',
+          detail: `${activation.enterpriseName} is set up and you are its administrator.`,
+        },
+        branding: platform.exports.branding(activation.tenantId),
+        actorId: 'signup',
+        correlationId: ctx.correlationId,
+      });
+
+      // Deliberately no tokens. Completing a registration produces an account,
+      // not a session — the person signs in through /v1/auth/login and MFA like
+      // any other client. Returning a token here would rebuild the anonymous
+      // login hole through a different door.
+      return {
+        status: 'VERIFIED',
+        enterpriseName: activation.enterpriseName,
+        email: user.email,
+        signInPath: '/app',
+        message: 'Your account is ready. Sign in with this address to continue.',
+      };
+    },
   },
 
   // ----------------------------------------------------------- notifications

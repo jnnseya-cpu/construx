@@ -272,14 +272,43 @@ export function sendJson(res: ServerResponse, ctx: RequestContext, status: numbe
  * contained and the content-security-policy forbids everything except the
  * inline styling it carries.
  */
-export function sendHtml(res: ServerResponse, ctx: RequestContext, status: number, html: string): void {
+/**
+ * Content-security policies for the two kinds of page this server returns.
+ *
+ * `SELF_CONTAINED` is the unsubscribe page: no stylesheet, no script, no
+ * images, and it stays that tight because a page reached from a link in an
+ * email is the one most likely to be attacked.
+ *
+ * `PUBLIC_SITE` is the marketing pages, which do load a stylesheet and one
+ * script — both from this origin and nowhere else. There is no `unsafe-inline`
+ * for script: the mobile-menu handler lives in `/site.js` precisely so this
+ * policy does not need one. Discovered by loading the pages in a real browser,
+ * where the strict policy blocked the stylesheet and every page rendered
+ * unstyled while the markup tests passed.
+ */
+const CSP = {
+  SELF_CONTAINED: "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+  PUBLIC_SITE:
+    "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; " +
+    "font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+} as const;
+
+export type HtmlPolicy = keyof typeof CSP;
+
+export function sendHtml(
+  res: ServerResponse,
+  ctx: RequestContext,
+  status: number,
+  html: string,
+  policy: HtmlPolicy = 'SELF_CONTAINED',
+): void {
   res.writeHead(status, {
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Length': Buffer.byteLength(html),
     'x-trace-id': ctx.traceId,
     'x-correlation-id': ctx.correlationId,
     'Cache-Control': 'no-store',
-    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+    'Content-Security-Policy': CSP[policy],
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
     'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',

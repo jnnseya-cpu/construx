@@ -22,6 +22,7 @@ import {
 import { resolveLocale } from '../domain/locale.ts';
 import { truncateAddress } from './telemetry.ts';
 import { matchRoute, ROUTES } from './routes.ts';
+import { renderLanding } from '../site/index.ts';
 import { serveStatic } from './static.ts';
 
 /**
@@ -41,7 +42,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..', '..');
 const WEB_ROOT = join(REPO_ROOT, 'frontend');
 const APP_SHELL = join(WEB_ROOT, 'index.html');
-const LANDING = join(WEB_ROOT, 'landing.html');
 // The canonical vocabulary, served as the same bytes the route schemas
 // validate against. Mounted separately rather than copied into the frontend:
 // a copy is the thing this is meant to prevent.
@@ -105,10 +105,13 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
 
   try {
     // The marketing page is the front door; the application lives at /app.
+    // Rendered rather than read from disk: every figure on it comes from the
+    // route table and the event catalogues, so a landing page cannot drift
+    // into claiming a number the product does not have.
     if (ctx.method === 'GET' && (ctx.path === '/' || ctx.path === '/landing')) {
-      const html = await readFile(LANDING, 'utf8');
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'x-trace-id': traceId });
-      res.end(html);
+      // Through the same helper as the rest of the site so it gets the same
+      // security headers. It was writing its own head with none of them.
+      sendHtml(res, ctx, 200, renderLanding(), 'PUBLIC_SITE');
       logRequest(ctx, 200);
       return;
     }
@@ -189,7 +192,7 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     if (matched.route.html) {
       // A page is 200 even when it is the result of a POST — 201 Created would
       // describe a resource, and there is no resource here to point at.
-      sendHtml(res, ctx, 200, String(result));
+      sendHtml(res, ctx, 200, String(result), matched.route.htmlPolicy);
       logRequest(ctx, 200);
       return;
     }

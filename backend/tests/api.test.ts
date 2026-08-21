@@ -3,6 +3,7 @@ import type { Server } from 'node:http';
 import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
 import { ROUTES } from '../src/api/routes.ts';
+import { SITE_PAGES } from '../src/site/index.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -97,17 +98,33 @@ describe('the routing table itself', () => {
     // make to this file, and it is one word long. Pin the list.
     const publicRoutes = ROUTES.filter((r) => r.public).map((r) => `${r.method} ${r.pattern}`).sort();
 
-    assert.deepEqual(publicRoutes, [
+    const sitePaths = new Set(SITE_PAGES.map((p) => `GET ${p.path}`));
+    const publicApi = publicRoutes.filter((id) => !sitePaths.has(id));
+
+    assert.deepEqual(publicApi, [
       'GET /healthz',
       'GET /readyz',
       'GET /unsubscribe',
+      'GET /v1/signup/account-types',
       'POST /unsubscribe',
       'POST /v1/auth/login',
       'POST /v1/auth/mfa/verify',
       'POST /v1/auth/refresh',
       'POST /v1/console/identities',
       'POST /v1/console/session',
+      'POST /v1/signup',
+      'POST /v1/signup/verify',
     ]);
+
+    // Every marketing page is public and none of them is an API surface. They
+    // are derived rather than listed so adding a page is not a security edit,
+    // while adding a public *endpoint* still is.
+    for (const definition of SITE_PAGES) {
+      assert.ok(
+        publicRoutes.includes(`GET ${definition.path}`),
+        `${definition.path} is in the site navigation but is not a public route`,
+      );
+    }
   });
 });
 

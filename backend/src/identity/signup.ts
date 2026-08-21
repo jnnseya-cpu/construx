@@ -1,0 +1,336 @@
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { config } from '../config.ts';
+import { ulid } from '../core/ids.ts';
+import { DomainError, NotFoundError, ValidationError } from '../core/errors.ts';
+import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
+import type { Platform } from '../platform.ts';
+import { PACKAGES, type PackageTier } from '../billing/seats.ts';
+import type { Role } from './roles.ts';
+
+/**
+ * Public registration.
+ *
+ * The one place an unauthenticated stranger creates state. Everything about it
+ * is written on the assumption that the caller is hostile until an address is
+ * proved, because on a public endpoint that is the only safe assumption.
+ *
+ * ---
+ *
+ * **A registration is not an account.** It is a pending record with a hashed
+ * token against it. Nothing is charged, no seat is consumed, no tenancy exists
+ * and no credential works until an address has been proved. The alternative —
+ * creating the tenant first and marking it unverified — means anybody can
+ * create unlimited tenancies by typing addresses they do not own, and every one
+ * of them lands in the billing tables.
+ *
+ * **Registering an address that already exists returns the same answer as
+ * registering a new one.** A public endpoint that distinguishes the two is an
+ * account-enumeration oracle: it tells an attacker which of a leaked address
+ * list are customers here. The person who genuinely owns the address gets an
+ * email either way — a verification link, or a note that an account already
+ * exists and how to get back into it.
+ *
+ * **Verification tokens are stored hashed.** The token goes to the address and
+ * only the HMAC is kept, so a dump of platform state does not let the holder
+ * activate somebody else's registration. Comparison is constant-time.
+ *
+ * **No token, no session.** Completing a registration produces an account, not
+ * an authenticated session; the person then signs in through the ordinary
+ * `/v1/auth/login` and MFA path like every other client. This is the invariant
+ * the console-session hole broke, and the public-surface test enforces it.
+ */
+
+/** How long a verification link is good for. */
+export const VERIFICATION_TTL_MINUTES = 60 * 24;
+
+/**
+ * The account types a stranger may select.
+ *
+ * Deliberately not every `PackageTier`. `ENTERPRISE` is sold, negotiated and
+ * provisioned — a self-serve route into it would create tenancies nobody has
+ * agreed terms with, on a package whose price is "contact us". Asking for it
+ * registers an enterprise *enquiry* instead, which is the honest version of the
+ * same button.
+ */
+export const SELF_SERVE_PACKAGES: PackageTier[] = ['FREE_TRIAL', 'CORE_PROJECT', 'PROFESSIONAL_DELIVERY'];
+
+export type AccountType = {
+  package: PackageTier;
+  label: string;
+  targetCustomer: string;
+  /** `null` is unlimited, and is kept as null: zero would read as "none". */
+  includedSeats: number | null;
+  monthlyPriceMinor: number;
+  storageGb: number | null;
+  export: boolean;
+  apiAccess: boolean;
+  /** Whether a stranger can provision this without talking to anybody. */
+  selfServe: boolean;
+};
+
+/** Every account type, with what it includes and whether it is self-serve. */
+export function accountTypes(): AccountType[] {
+  return (Object.keys(PACKAGES) as PackageTier[]).map((code) => {
+    const definition = PACKAGES[code];
+    return {
+      package: code,
+      label: definition.label,
+      targetCustomer: definition.targetCustomer,
+      includedSeats: definition.includedSeats,
+      monthlyPriceMinor: definition.monthlyPriceMinor,
+      storageGb: definition.storageGb,
+      export: definition.export,
+      apiAccess: definition.apiAccess,
+      selfServe: SELF_SERVE_PACKAGES.includes(code),
+    };
+  });
+}
+
+export type RegistrationStatus = 'PENDING_VERIFICATION' | 'VERIFIED' | 'EXPIRED' | 'SUPERSEDED';
+
+export type Registration = {
+  id: string;
+  /** Lower-cased. The address is the identity of a registration. */
+  email: string;
+  contactName: string;
+  organisationName: string;
+  jurisdiction: string;
+  currency: string;
+  package: PackageTier;
+  status: RegistrationStatus;
+  createdAt: string;
+  expiresAt: string;
+  verifiedAt?: string;
+  /** Set once the registration has been turned into a tenancy. */
+  tenantId?: string;
+  userId?: string;
+};
+
+/** What a caller gets back. Never the token, and never whether the address was new. */
+export type RegistrationReceipt = {
+  registrationId?: string;
+  status: 'SENT';
+  message: string;
+  /** Outside production only, so local work needs no mailbox. */
+  devToken?: string;
+};
+
+const registrations = new Map<string, Registration>();
+/** id → HMAC of the token. The token itself is never stored. */
+const tokenHashes = new Map<string, string>();
+
+/** Cleared between tests and on restart; registrations are pending state, not a record. */
+export function resetRegistrations(): void {
+  registrations.clear();
+  tokenHashes.clear();
+}
+
+function hashToken(token: string): string {
+  return createHmac('sha256', config.auth.jwtSecret).update(token).digest('hex');
+}
+
+function tokensMatch(supplied: string, expected: string): boolean {
+  const a = Buffer.from(hashToken(supplied), 'hex');
+  const b = Buffer.from(expected, 'hex');
+  // Length must match before timingSafeEqual, which throws on a mismatch.
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function normaliseEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+export function findByEmail(email: string): Registration | undefined {
+  const wanted = normaliseEmail(email);
+  return [...registrations.values()].find((r) => r.email === wanted && r.status === 'PENDING_VERIFICATION');
+}
+
+export function registration(id: string): Registration | undefined {
+  return registrations.get(id);
+}
+
+export function pendingRegistrations(): Registration[] {
+  return [...registrations.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/**
+ * Begin a registration.
+ *
+ * Returns the same receipt whether or not the address is already in use. The
+ * caller cannot tell, and that is the point.
+ */
+export function register(
+  platform: Platform,
+  input: {
+    email: string;
+    contactName: string;
+    organisationName: string;
+    jurisdiction: string;
+    currency: string;
+    package: PackageTier;
+  },
+): { receipt: RegistrationReceipt; outcome: 'NEW' | 'ALREADY_REGISTERED'; registration?: Registration; token?: string } {
+  const email = normaliseEmail(input.email);
+
+  if (!EMAIL.test(email)) throw new ValidationError('A valid email address is required');
+  if (input.contactName.trim().length < 2) throw new ValidationError('A contact name is required');
+  if (input.organisationName.trim().length < 2) throw new ValidationError('An organisation name is required');
+  if (!CURRENCIES[input.currency]) {
+    throw new ValidationError(`${input.currency} is not a currency the platform counts in`);
+  }
+  if (!JURISDICTIONS[input.jurisdiction]) {
+    throw new ValidationError(`${input.jurisdiction} is not a jurisdiction the platform holds rules for`);
+  }
+  if (!SELF_SERVE_PACKAGES.includes(input.package)) {
+    throw new DomainError(
+      'PACKAGE_NOT_SELF_SERVE',
+      `${PACKAGES[input.package]?.label ?? input.package} is provisioned with an agreement rather than a form. ` +
+        'Register an enterprise enquiry instead.',
+    );
+  }
+
+  // The uniform receipt. Identical in both branches, deliberately.
+  const receipt: RegistrationReceipt = {
+    status: 'SENT',
+    message:
+      'If that address can receive mail, a message is on its way. ' +
+      'Follow the link inside it to finish setting up the account.',
+  };
+
+  // Already a user? Say nothing different. The address owner is told by email.
+  if (platform.userByEmail(email)) {
+    return { receipt, outcome: 'ALREADY_REGISTERED' };
+  }
+
+  // A second attempt supersedes the first rather than creating a duplicate, so
+  // an impatient person who presses the button twice does not end up with two
+  // live links and a confusing pair of emails.
+  for (const existing of registrations.values()) {
+    if (existing.email === email && existing.status === 'PENDING_VERIFICATION') {
+      existing.status = 'SUPERSEDED';
+      // The hash is kept rather than deleted. Somebody holding the older token
+      // is the genuine address owner clicking their first email, and they get
+      // "a newer link was issued" instead of "not valid", which is the
+      // difference between a person retrying and a person giving up. A caller
+      // without the token still gets an undifferentiated 404, so this explains
+      // nothing to anybody who did not receive the mail.
+    }
+  }
+
+  const id = ulid();
+  const token = randomBytes(32).toString('base64url');
+  const now = new Date();
+
+  const record: Registration = {
+    id,
+    email,
+    contactName: input.contactName.trim(),
+    organisationName: input.organisationName.trim(),
+    jurisdiction: input.jurisdiction,
+    currency: input.currency,
+    package: input.package,
+    status: 'PENDING_VERIFICATION',
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + VERIFICATION_TTL_MINUTES * 60_000).toISOString(),
+  };
+
+  registrations.set(id, record);
+  tokenHashes.set(id, hashToken(token));
+
+  return {
+    receipt: { ...receipt, registrationId: id, ...(config.env === 'production' ? {} : { devToken: token }) },
+    outcome: 'NEW',
+    registration: record,
+    token,
+  };
+}
+
+/** The link that goes in the verification email. */
+export function verificationUrl(registrationId: string, token: string): string {
+  return `${config.publicBaseUrl}/verify?r=${encodeURIComponent(registrationId)}&t=${encodeURIComponent(token)}`;
+}
+
+export type Activation = {
+  registration: Registration;
+  tenantId: string;
+  userId: string;
+  enterpriseName: string;
+};
+
+/**
+ * Complete a registration: prove the address, then create the tenancy.
+ *
+ * The tenancy is created here and not at `register()` because until this point
+ * nobody has shown they own the address. The administrator is the first user
+ * and holds `ENTERPRISE_ADMIN` — somebody has to be able to invite the rest,
+ * and it is their organisation.
+ */
+export function verify(
+  platform: Platform,
+  input: { registrationId: string; token: string; correlationId: string },
+): Activation {
+  const record = registrations.get(input.registrationId);
+  const expected = tokenHashes.get(input.registrationId);
+
+  // A missing registration and a wrong token answer the same way. Distinguishing
+  // them tells a caller which ids are real.
+  if (!record || !expected) throw new NotFoundError('That verification link is not valid');
+  if (!tokensMatch(input.token, expected)) throw new NotFoundError('That verification link is not valid');
+
+  if (record.status === 'VERIFIED') {
+    throw new DomainError('ALREADY_VERIFIED', 'That account has already been set up. Sign in instead.');
+  }
+  if (record.status === 'SUPERSEDED') {
+    throw new DomainError('LINK_SUPERSEDED', 'A newer verification link was issued. Use the most recent email.');
+  }
+  if (new Date(record.expiresAt).getTime() < Date.now()) {
+    record.status = 'EXPIRED';
+    tokenHashes.delete(record.id);
+    throw new DomainError('LINK_EXPIRED', 'That verification link has expired. Request a new one.');
+  }
+
+  // Between registering and verifying, somebody else may have taken the address
+  // through another route. The registration loses; it never held it.
+  if (platform.userByEmail(record.email)) {
+    throw new DomainError('EMAIL_IN_USE', 'An account already exists for that address. Sign in instead.');
+  }
+
+  const { tenant } = platform.createTenant({
+    legalName: record.organisationName,
+    jurisdiction: record.jurisdiction,
+    defaultCurrency: record.currency,
+    tier: 'FREE_TRIAL',
+    package: record.package,
+    enterpriseName: record.organisationName,
+  });
+
+  const roles: Role[] = ['ENTERPRISE_ADMIN'];
+  const user = platform.createUser({
+    tenantId: tenant.id,
+    name: record.contactName,
+    email: record.email,
+    roles,
+  });
+
+  // Branding is a precondition for every export, and refusing to export is the
+  // correct behaviour rather than substituting a default. Seeding the
+  // organisation's own name gives a working starting point they can replace,
+  // and nothing here invents a logo.
+  platform.exports.setBranding(tenant.id, {
+    clientName: record.organisationName,
+    primaryColour: '#ff6600',
+    documentReferencePrefix: record.organisationName.slice(0, 3).toUpperCase().padEnd(3, 'X'),
+    legalFooter: `${record.organisationName} · registered in ${record.jurisdiction}`,
+  });
+
+  record.status = 'VERIFIED';
+  record.verifiedAt = new Date().toISOString();
+  record.tenantId = tenant.id;
+  record.userId = user.id;
+  // The token is spent. Keeping it would leave a second working link.
+  tokenHashes.delete(record.id);
+
+  return { registration: record, tenantId: tenant.id, userId: user.id, enterpriseName: record.organisationName };
+}

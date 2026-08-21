@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 880 passing, 0 failing, across 42 files |
+| Tests | 901 passing, 0 failing, across 43 files |
 | Typecheck | clean |
 | Backend | 81 TypeScript files, 35,927 lines |
 | Application | 25 ES modules, 7,199 lines (plus a service worker) |
-| API routes | 219 |
+| API routes | 234 (13 of them the public site) |
 | Event types | 175 Golden Thread (closed) · 177 communication events (closed) |
 | Entity types | 111, all classified for access |
 | Runtime dependencies | none |
@@ -33,6 +33,64 @@ Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`
 
 These are implemented, covered by tests, and exercised through the running
 application. Do not rebuild them.
+
+**Public registration, and every account type.** `POST /v1/signup` is the only
+endpoint where an unauthenticated stranger creates state, so it is written on
+the assumption the caller is hostile until an address is proved.
+
+A registration is **not** an account: a pending record with a hashed token
+against it, and no tenancy, no seat and no billing record until somebody proves
+they own the address. Creating the tenant first and marking it unverified would
+let anybody create unlimited tenancies by typing addresses they do not own, and
+every one would land in the billing tables.
+
+Registering an address that already exists returns a **byte-identical** receipt
+to registering a new one. A public endpoint that distinguishes the two tells an
+attacker which of a leaked address list are customers. The address owner is
+warned either way — a verification link, or a note that an account already
+exists — which is the only way to warn the real owner without answering the
+attacker's question. Tokens are stored as an HMAC and compared in constant
+time, and a spent token is deleted so a link cannot be replayed.
+
+**Verifying returns an account, never a session.** The person then signs in
+through `/v1/auth/login` and MFA like any other client. Returning a token here
+would have rebuilt the console-session hole through a different door, which is
+why the public-surface invariant covers it.
+
+Account types are published from `PACKAGES` rather than typed into the page.
+`ENTERPRISE` is marked **not self-serve** rather than hidden — hiding it would
+make the pricing page a lie about what the product offers — and the route
+schema refuses it, because a package provisioned with an agreement should not
+be reachable from a form. An unlimited allowance stays `null` and is rendered
+as "Unlimited"; zero would read as "none".
+
+**The public site: twelve pages and a landing page.** Server-rendered, unlike
+the console. These are read by people deciding whether to trust the product, by
+crawlers and by link previews — all of which see markup, not the script that
+would have produced it. Nothing loads from another origin: no stock imagery, no
+font CDN, no analytics tag. Every visual is CSS or inline SVG, so the first
+paint cannot be blocked and the reader is not watched.
+
+Every figure on the site is read from the product — route count, both event
+catalogues, package definitions. A landing page is the easiest place for a
+number to drift into fiction because nobody tests prose, so these are not
+prose. The blog carries the real engineering notes from this work, including
+the defects; the contact page has no form, because a form posting into a queue
+nobody wired up is worse than an address.
+
+Two defects found by loading the pages in a real browser, neither of which any
+markup test would have caught:
+
+- **Every marketing page rendered unstyled.** `sendHtml` served one CSP —
+  `default-src 'none'` — written for the self-contained unsubscribe page, so
+  the stylesheet, the favicon and the script were all blocked. There are two
+  policies now: the unsubscribe page keeps the tight one, and the site gets
+  `style-src 'self'; script-src 'self'` with **no** `unsafe-inline` — the
+  mobile-menu handler moved to `/site.js` precisely so none is needed. The
+  landing page was also writing its own headers with no CSP at all and now goes
+  through the same helper.
+- **The primary call to action had invisible text.** `.prose a` at specificity
+  (0,1,1) beat `.btn` at (0,1,0), so the button rendered orange-on-orange.
 
 **Communication Event Architecture.** One engine, **177 events across 15
 categories**, fanning out over email, in-app, SMS, push and WhatsApp.
