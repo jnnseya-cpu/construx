@@ -433,3 +433,61 @@ img, svg { max-width: 100%; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .track i { width: var(--w); }
 }
+
+/* --- Landing imagery ------------------------------------------------------
+   Slots render only when the file exists (see frontend/media/README.md), so
+   every rule here has to survive the figure being absent — which it does,
+   because an absent figure emits no element at all rather than an empty one. */
+
+.plate, .band, .column, .portrait-plate { margin: 0; }
+
+.plate img, .band img, .column img, .portrait-plate img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+/* Full-width product plate, sitting between two sections. Negative top margin
+   pulls it into the hero's lower gradient rather than sitting on a seam. */
+.plate.wide {
+  max-width: 1200px;
+  margin: -40px auto 0;
+  padding: 0 22px;
+}
+
+/* Band inside a section, above its heading. */
+.band {
+  max-width: 1100px;
+  margin: 0 auto 42px;
+}
+
+/* Portrait figures alongside body content. Floated rather than gridded so the
+   surrounding prose wraps and the section keeps its existing layout — these
+   sections were designed before there were images to place in them. */
+.column {
+  float: left;
+  width: min(320px, 40vw);
+  margin: 4px 28px 18px 0;
+}
+.column.right {
+  float: right;
+  margin: 4px 0 18px 28px;
+}
+
+.portrait-plate {
+  width: min(360px, 70vw);
+  margin: 0 auto 30px;
+}
+
+/* Below the point where a floated 320px column leaves usable measure, the
+   float becomes a squeeze. Stack instead. */
+@media (max-width: 760px) {
+  .column, .column.right {
+    float: none;
+    width: 100%;
+    margin: 0 0 24px;
+  }
+  .plate.wide { margin-top: -18px; }
+}

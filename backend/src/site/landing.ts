@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { esc } from '../messaging/render.ts';
 import { EVENT_TYPES } from '../goldenthread/eventTypes.ts';
 import { NOTIFICATION_EVENTS } from '../notifications/catalogue.ts';
@@ -13,12 +16,17 @@ import { page } from './layout.ts';
  *
  * Two constraints shaped every decision here.
  *
- * **Nothing loads from anywhere else.** No stock photography, no font CDN, no
- * analytics tag. Every visual is CSS and inline SVG generated here, which is
- * why the page is dense: gradients, grid work, a drawn site section and an
- * animated chain are cheaper and sharper than any image, and they cannot be
- * blocked, cached stale, or slow the first paint. It also means the page has
- * no third party watching the people who read it.
+ * **Nothing loads from anywhere else.** No font CDN, no analytics tag, no
+ * third-party host of any kind. The structural visuals are CSS and inline SVG
+ * generated here — gradients, grid work, a drawn site section, an animated
+ * chain — which is why the page is dense: they are cheaper and sharper than an
+ * image and cannot be blocked, cached stale, or slow the first paint.
+ *
+ * Photography was originally excluded outright. It is now allowed on one
+ * condition: the file is ours and served from this origin, under the same
+ * `img-src 'self'` policy as everything else. That keeps the part of the
+ * original rule that actually protects somebody — no third party learns who
+ * read this page. See `frontend/media/README.md` for the slots.
  *
  * **Every figure is read from the product.** Route count, event catalogue
  * sizes, engine names. A landing page is the easiest place for a number to
@@ -39,6 +47,39 @@ const ENGINES = [
   ['Design', 'Revisions, clash closeout with evidence, and clause extraction from the specification as supplied.'],
   ['Operations', 'Reliability-adjusted maintenance forecasting against the asset the record actually describes.'],
 ];
+
+/**
+ * Landing imagery, rendered only where the file is really there.
+ *
+ * A slot with no file renders nothing at all — no broken icon, no empty frame
+ * reserving space for an image that is never coming. The alternative is a page
+ * that looks finished and is not, which is the failure this codebase spends
+ * most of its effort avoiding.
+ *
+ * Presence is read once at module load. The landing page renders on every
+ * visit and a stat per visit buys the reader nothing, so a newly added file
+ * needs a restart to appear.
+ */
+const MEDIA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'frontend', 'media');
+
+function figure(
+  file: string,
+  alt: string,
+  dimensions: { width: number; height: number },
+  className: string,
+): string {
+  if (!existsSync(join(MEDIA_DIR, file))) return '';
+
+  // width and height reserve the space before the bytes arrive, so the page
+  // does not reflow under the reader as each image lands. `loading="lazy"`
+  // is deliberately absent on the first plate — it is above the fold on a
+  // laptop, and lazily loading what is already visible delays it.
+  return `<figure class="${className}">
+      <img src="/media/${esc(file)}" alt="${esc(alt)}"
+           width="${dimensions.width}" height="${dimensions.height}"
+           decoding="async" loading="lazy">
+    </figure>`;
+}
 
 export function landing(): string {
   const routes = ROUTES.length;
@@ -171,8 +212,21 @@ export function landing(): string {
   </div>
 </section>
 
+${figure(
+  'command-centre.png',
+  'The CONSTRUX project command centre: cost performance against budget, schedule performance against plan, forecast at completion, and open risk by severity, above a progress S-curve and a cost breakdown.',
+  { width: 2400, height: 1600 },
+  'plate wide',
+)}
+
 <section class="proof">
   <div class="wrap">
+    ${figure(
+      'broken-workflows.png',
+      'A construction manager on site. Three failures named: projects losing money silently, models that do not build, and claims treated as the problem rather than the symptom.',
+      { width: 2400, height: 1600 },
+      'band',
+    )}
     <h2 class="section-h">Not a document store with a search box</h2>
     <p class="section-lede">
       Three things separate a record that survives a dispute from a folder that does not.
@@ -217,6 +271,12 @@ export function landing(): string {
       computed, deterministic, and the same answer twice.
     </p>
     <div class="engine-grid">
+      ${figure(
+        'visibility-control.png',
+        'One platform connecting people, process and data across every stage of construction.',
+        { width: 1120, height: 1400 },
+        'column',
+      )}
       ${ENGINES.map(
         ([name, body], i) => `<article class="engine" style="--i:${i}">
         <h3>${esc(name!)}</h3><p>${esc(body!)}</p>
@@ -228,6 +288,12 @@ export function landing(): string {
 
 <section class="statute">
   <div class="wrap narrow">
+    ${figure(
+      'control-every-variable.png',
+      'Control every variable, deliver every time: the outcomes CONSTRUX is measured against.',
+      { width: 1120, height: 1400 },
+      'column right',
+    )}
     <div class="statute-mark">HGCRA 1996 · s.108 · s.111 · s.116</div>
     <h2>The statute that decides who gets paid</h2>
     <p>
@@ -250,6 +316,12 @@ export function landing(): string {
 
 <section class="cta-band big">
   <div class="wrap">
+    ${figure(
+      'founder.png',
+      'Justin Nseya MCIOB, construction and project management leader, on site.',
+      { width: 1120, height: 1400 },
+      'portrait-plate',
+    )}
     <h2>Start with a record you can defend</h2>
     <p>A trial governs, records and computes. No card, no call, no sales qualification step.</p>
     <div class="cta-row">

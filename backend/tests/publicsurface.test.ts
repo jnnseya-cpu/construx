@@ -208,3 +208,49 @@ describe('HEAD, which is what probes actually send', () => {
     assert.equal(response.status, 404);
   });
 });
+
+/**
+ * Landing imagery.
+ *
+ * Five slots render an image when the file is present in `frontend/media/` and
+ * nothing at all when it is not. The "nothing at all" half is what needs a
+ * test: the failure it prevents is a page that reserves space for an image
+ * that is never coming, or shows a browser's broken-image icon on the first
+ * screen a customer ever sees.
+ */
+describe('landing imagery', () => {
+  it('emits no img element for a slot with no file behind it', async () => {
+    const reply = await fetch(`${base}/`);
+    const html = await reply.text();
+
+    const { readdirSync } = await import('node:fs');
+    const { dirname, join } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const mediaDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'frontend', 'media');
+    const present = readdirSync(mediaDir).filter((f) => !f.endsWith('.md'));
+
+    const rendered = [...html.matchAll(/<img src="\/media\/([^"]+)"/g)].map((m) => m[1]!);
+    assert.deepEqual(
+      rendered.sort(),
+      present.sort(),
+      'the page rendered an image for a file that is not there, or omitted one that is',
+    );
+  });
+
+  it('gives every rendered image alt text and reserved dimensions', async () => {
+    const html = await (await fetch(`${base}/`)).text();
+
+    for (const tag of html.match(/<img src="\/media\/[^>]+>/g) ?? []) {
+      assert.match(tag, /alt="[^"]{20,}"/, `alt text is missing or too short to be useful:\n${tag}`);
+      assert.match(tag, /width="\d+"/, `no reserved width, so the page will reflow:\n${tag}`);
+      assert.match(tag, /height="\d+"/, `no reserved height, so the page will reflow:\n${tag}`);
+    }
+  });
+
+  it('serves media from this origin only, which is what the policy permits', async () => {
+    const html = await (await fetch(`${base}/`)).text();
+    // img-src is 'self' and data:. An absolute URL to any other host would be
+    // blocked by the browser silently, which is the worst way to find out.
+    assert.equal(/<img[^>]+src="https?:\/\//.test(html), false, 'an image is referenced from another host');
+  });
+});
