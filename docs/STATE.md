@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,246 passing, 0 failing, 5 skipped, across 64 files |
+| Tests | 1,251 passing, 0 failing, 0 skipped, across 64 files |
 | Typecheck | clean |
 | Backend | 103 TypeScript files, 48,782 lines |
 | Application | 32 ES modules, 10,031 lines (plus a service worker) |
@@ -2063,9 +2063,14 @@ warns when it is unset in production, because it cannot see the replica count.
 
 The bucket arithmetic is tested against a real `redis-server`, including two
 clients sharing one bucket; a fake reimplementing the Lua would be testing the
-fake. Where no Redis is reachable those tests **skip loudly** and CI fails on
-the skip, because a green tick against an unexercised security control is worse
-than no test.
+fake. **The test run starts its own server** — an ephemeral port, persistence
+off, killed afterwards — because a test that skips in every run verifies
+nothing, and these five skipped in every run. `redis-server` is a binary rather
+than a dependency: nothing imports it, `package.json` does not name it, and the
+platform still boots with no `node_modules`. `TEST_REDIS_URL` overrides where CI
+already runs one. Where the binary is genuinely absent the group still **skips
+loudly** and CI fails on the skip, because a green tick against an unexercised
+security control is worse than no test.
 
 **Both HTML responses carry the policy layer.** The application shell used to
 write its own response head, which made it the one page on the server with no

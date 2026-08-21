@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:net';
 import { after, describe, it } from 'node:test';
 import { SharedLimiter } from '../src/api/sharedlimiter.ts';
@@ -18,16 +19,27 @@ import { SharedLimiter } from '../src/api/sharedlimiter.ts';
  * testing the fake. The failure paths cannot be produced by a healthy server at
  * all, so those use a socket that misbehaves deliberately.
  *
- * If no Redis is reachable the first group **skips loudly** rather than
- * passing. A limiter test that quietly reports success on a machine with no
- * backend is worse than no test: it is a green tick against an unexercised
- * security control.
+ * **The run starts its own Redis.** These five tests skipped in every run for
+ * want of a server, which meant the bucket arithmetic — a security control —
+ * was verified nowhere. `redis-server` is a binary, not a dependency: nothing
+ * imports it, `package.json` does not name it, and the platform still boots with
+ * no `node_modules`. So the test starts one on an ephemeral port, in memory with
+ * persistence off, and kills it afterwards. Where the binary is genuinely
+ * absent the group still **skips loudly** rather than passing, because a limiter
+ * test that quietly reports success on a machine with no backend is worse than
+ * no test: it is a green tick against an unexercised security control.
  */
 
-const REDIS_URL = process.env.TEST_REDIS_URL ?? 'redis://127.0.0.1:6399';
+/** A port nobody is on: bound, read, released. */
+async function freePort(): Promise<number> {
+  const probe = await listening(() => {});
+  const found = port(probe);
+  await new Promise((resolve) => probe.close(resolve));
+  return found;
+}
 
-async function redisReachable(): Promise<boolean> {
-  const limiter = new SharedLimiter({ url: REDIS_URL, connectTimeoutMs: 300 });
+async function reachable(url: string): Promise<boolean> {
+  const limiter = new SharedLimiter({ url, connectTimeoutMs: 300 });
   try {
     await limiter.consume(`probe:${Date.now()}`, { max: 10, burst: 0, windowSeconds: 60 });
     return true;
@@ -39,19 +51,60 @@ async function redisReachable(): Promise<boolean> {
 }
 
 /**
- * Probed at module scope, not in `before`.
+ * Start a server this run owns, unless the environment points at one.
+ *
+ * `TEST_REDIS_URL` wins where it is set, so CI can aim these at whatever it
+ * already runs. Otherwise the process here is ours: no persistence, no config
+ * file, and a port that was free a moment ago.
+ */
+async function startRedis(): Promise<{ url: string; child?: ChildProcess } | null> {
+  if (process.env.TEST_REDIS_URL) {
+    const url = process.env.TEST_REDIS_URL;
+    return (await reachable(url)) ? { url } : null;
+  }
+
+  const chosen = await freePort();
+  const child = spawn(
+    'redis-server',
+    ['--port', String(chosen), '--save', '', '--appendonly', 'no', '--bind', '127.0.0.1'],
+    { stdio: 'ignore' },
+  );
+
+  let spawnFailed = false;
+  child.once('error', () => {
+    spawnFailed = true;
+  });
+
+  const url = `redis://127.0.0.1:${chosen}`;
+  // Redis is listening within a few milliseconds; the loop is for a slow or
+  // loaded machine, and gives up rather than hanging the suite.
+  for (let attempt = 0; attempt < 40 && !spawnFailed; attempt += 1) {
+    if (await reachable(url)) return { url, child };
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  child.kill('SIGKILL');
+  return null;
+}
+
+/**
+ * Started at module scope, not in `before`.
  *
  * `it(name, { skip })` reads the option when the test is *declared*, which is
- * while the module body runs — before any `before` hook. Computing `available`
- * in a hook left every Redis test permanently skipped while reporting success,
- * which is the exact failure this file is written to avoid.
+ * while the module body runs — before any `before` hook. Computing this in a
+ * hook left every Redis test permanently skipped while reporting success, which
+ * is the exact failure this file is written to avoid.
  */
-const available = await redisReachable();
+const backend = await startRedis();
+const available = backend !== null;
+const REDIS_URL = backend?.url ?? 'redis://127.0.0.1:6399';
 if (!available) {
   process.stdout.write(
-    `# SKIPPED: no Redis at ${REDIS_URL}. The shared limiter's arithmetic is NOT verified in this run.\n`,
+    '# SKIPPED: no redis-server binary and no reachable TEST_REDIS_URL. ' +
+      "The shared limiter's arithmetic is NOT verified in this run.\n",
   );
 }
+after(() => backend?.child?.kill('SIGTERM'));
 
 describe('the bucket, against a real Redis', () => {
   const limiter = new SharedLimiter({ url: REDIS_URL });
