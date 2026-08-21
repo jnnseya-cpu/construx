@@ -1,0 +1,15 @@
+# Everything the image does not need. Keeping this tight is not only about size:
+# node_modules from the host would shadow the production install, and .env would
+# bake a developer's secrets into a published layer.
+node_modules
+.git
+.env
+.env.*
+!.env.example
+data
+dist
+*.log
+frontend/shots
+frontend/landing-full.*
+docs/go-to-market
+tools

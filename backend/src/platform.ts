@@ -1,7 +1,7 @@
 import { AIOrchestrator } from './ai/orchestrator.ts';
 import { ExportService } from './export/exporter.ts';
 import { SyncEngine } from './field/sync.ts';
-import { ACUWallet, type ACUCaps } from './billing/acu.ts';
+import { ACUWallet, type ACUCaps, type ACUEntry } from './billing/acu.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
 import { assignIdentity, packageForTier, revokeIdentity, TIERS, type Subscription, type SubscriptionTier } from './billing/subscription.ts';
 import { PACKAGES, UNCHARGED_ROLES, type PackageTier } from './billing/seats.ts';
@@ -56,6 +56,19 @@ export class Platform {
   readonly exports: ExportService;
 
   readonly #wallets = new Map<string, ACUWallet>();
+  /**
+   * Where wallet entries are made durable. Attached to every wallet the
+   * platform creates, so a tenancy provisioned after boot is journalled too —
+   * the failure this prevents is a wallet that is durable only if it happened
+   * to exist when the process started.
+   */
+  #walletSink: ((entry: ACUEntry) => void) | undefined;
+
+  /** Attach the durable sink for ACU entries. Applies to existing wallets too. */
+  attachWalletSink(sink: (entry: ACUEntry) => void): void {
+    this.#walletSink = sink;
+    for (const wallet of this.#wallets.values()) wallet.attachSink(sink);
+  }
   readonly #subscriptions = new Map<string, Subscription>();
   readonly #tenants = new Map<string, Tenant>();
   readonly #users = new Map<string, PlatformUser>();
@@ -139,6 +152,7 @@ export class Platform {
     this.#subscriptions.set(tenantId, subscription);
 
     const wallet = new ACUWallet(tenantId, { volumeIncentive: input.tier === 'ENTERPRISE' || input.tier === 'SOVEREIGN' });
+    if (this.#walletSink) wallet.attachSink(this.#walletSink);
     // Every tenant, paid or trial, starts with the trial grant so AI can be
     // tried without a payment method — and stops when it runs out.
     wallet.grantTrialCredit();
@@ -461,6 +475,72 @@ export class Platform {
     const tenant = this.#tenants.get(tenantId);
     if (!tenant) throw new NotFoundError(`Tenant ${tenantId} not found`);
     return tenant;
+  }
+
+  /**
+   * Rebuild the identity and billing model from a restored ledger.
+   *
+   * The ledger restores projects; this restores the people who can reach them.
+   * Without it a journal replay produced 363 events, 293 entities and nobody
+   * who could sign in — the projects were there and orphaned, because tenants,
+   * users, subscriptions and wallets live in these maps rather than in the
+   * chain.
+   *
+   * Every one of them is already written to the ledger as an entity, so this
+   * is a projection over records that exist, not a second store. It runs after
+   * `ledger.restore()` and before the gateway listens.
+   */
+  rehydrate(walletEntries: ReadonlyMap<string, readonly ACUEntry[]> = new Map()): {
+    tenants: number;
+    users: number;
+    subscriptions: number;
+    wallets: number;
+  } {
+    for (const record of this.ledger.entitiesOfType('Tenant')) {
+      const state = record.state as unknown as Tenant;
+      this.#tenants.set(state.id, state);
+    }
+
+    for (const record of this.ledger.entitiesOfType('User')) {
+      const state = record.state as unknown as PlatformUser;
+      this.#users.set(state.id, state);
+    }
+
+    for (const record of this.ledger.entitiesOfType('Subscription')) {
+      const state = record.state as unknown as Subscription;
+      // The entity is re-committed on every seat assignment, so the restored
+      // copy already carries the current identities; recomputing them from the
+      // users would be a second opinion about the same fact.
+      this.#subscriptions.set(state.tenantId, {
+        ...state,
+        startedAt: state.startedAt ?? new Date().toISOString(),
+        renewsAt: state.renewsAt ?? new Date(Date.now() + 30 * 86_400_000).toISOString(),
+      });
+    }
+
+    for (const record of this.ledger.entitiesOfType('ACUWallet')) {
+      const tenantId = record.tenantId;
+      const subscription = this.#subscriptions.get(tenantId);
+      const wallet = new ACUWallet(tenantId, {
+        volumeIncentive: subscription?.tier === 'ENTERPRISE' || subscription?.tier === 'SOVEREIGN',
+      });
+      // Folded from the entries rather than read from a stored total. A stored
+      // balance is a second source of truth for the same money, and the two
+      // disagree the first time either is rebuilt. No trial grant is re-issued
+      // here: the original grant is one of the entries.
+      wallet.restoreEntries(walletEntries.get(tenantId) ?? []);
+      // Attached after the replay, so restoring does not re-journal what is
+      // already on disk.
+      if (this.#walletSink) wallet.attachSink(this.#walletSink);
+      this.#wallets.set(tenantId, wallet);
+    }
+
+    return {
+      tenants: this.#tenants.size,
+      users: this.#users.size,
+      subscriptions: this.#subscriptions.size,
+      wallets: this.#wallets.size,
+    };
   }
 
   tenants(): Tenant[] {

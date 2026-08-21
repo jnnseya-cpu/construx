@@ -1,0 +1,39 @@
+# Local parity with the deployed container, and a self-hosted option.
+#
+# The volume is the point. Without it the container is writable and ephemeral,
+# and the record dies with the container — which is exactly the failure the
+# journal exists to prevent, reintroduced by the orchestration.
+
+services:
+  construx:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - '8080:8080'
+    environment:
+      NODE_ENV: production
+      PORT: '8080'
+      LEDGER_JOURNAL_PATH: /data/ledger.jsonl
+      # Never 'false' outside a throwaway environment: it lets the process
+      # acknowledge an event that has not reached the disk.
+      LEDGER_JOURNAL_FSYNC: 'true'
+      PUBLIC_BASE_URL: http://localhost:8080
+      # Required. The service warns loudly at boot if this is the development
+      # default, because every token it has ever signed would be forgeable.
+      GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:?set GATEWAY_JWT_SECRET before starting}
+      AI_MODE: ${AI_MODE:-local}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+    volumes:
+      - ledger:/data
+    restart: unless-stopped
+    # Long enough for a journal replay on a large record; the readiness probe
+    # is what decides when traffic may arrive.
+    stop_grace_period: 30s
+
+volumes:
+  ledger:

@@ -15,14 +15,14 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 901 passing, 0 failing, across 43 files |
+| Tests | 922 passing, 0 failing, across 44 files |
 | Typecheck | clean |
 | Backend | 81 TypeScript files, 35,927 lines |
 | Application | 25 ES modules, 7,199 lines (plus a service worker) |
 | API routes | 234 (13 of them the public site) |
 | Event types | 175 Golden Thread (closed) · 177 communication events (closed) |
 | Entity types | 111, all classified for access |
-| Runtime dependencies | none |
+| Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
 Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`).
@@ -33,6 +33,75 @@ Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`
 
 These are implemented, covered by tests, and exercised through the running
 application. Do not rebuild them.
+
+**Durability. The ledger survives a restart.** It was an in-process array: for a
+platform whose whole claim is an append-only, citable audit chain, that was not
+a limitation but the product not existing between deploys.
+
+The Golden Thread is already an append-only hash-chained log, so the journal is
+that same log on disk — one JSON object per line, no second schema, no index.
+Restoring is replaying, which the platform already did and already tested.
+
+**Write-ahead, not write-behind.** The event is flushed *before* the ledger
+mutates anything; if the write fails, `commit()` throws and no state changed.
+That ordering is why it is not a `subscribe()` projection — subscribers run
+after the commit and their failures are deliberately swallowed, which is right
+for a projection and exactly wrong for durability. `commit()` stays synchronous
+because it is called from several hundred places and making it async would be a
+rewrite of the domain layer to buy nothing.
+
+**Restore verifies rather than trusts.** Every chain hash is recomputed from its
+predecessor and every state hash from the applied patch, so an altered journal
+is refused and the process does not start — which is correct, because a platform
+that boots on a broken chain will be asked to prove something from it later. A
+torn final line is a crash mid-append, not corruption: that event was never
+acknowledged, so it is dropped and reported. An unparseable line *anywhere else*
+refuses to load.
+
+**Two defects found by actually restarting a process, neither visible in
+tests.** The first: replay reported `363 events restored into 293 entities` and
+then answered "No user with that email address" to every sign-in. Tenants,
+users, subscriptions and wallets live in the platform's own maps, not the chain
+— so the record came back complete, verified and orphaned. `Platform.rehydrate()`
+projects them back from the entities the ledger already holds.
+
+The second is about money. The ACU wallet is a fold over its entries, and those
+entries are deliberately **not** Golden Thread events — spend is its own
+double-entry ledger by a settled decision. Restoring the chain without them
+would have replayed the top-ups and forgotten the debits, so every wallet came
+back richer than it should be and the platform gave away AI it had already paid
+a provider for. Wallet entries are journalled beside the ledger with an `.acu`
+suffix, the balance is folded from them rather than stored, and `#record` now
+writes before it moves the balance so a failed write leaves neither. Holds are
+deliberately not restored: a hold belongs to an AI call that died with the
+process, and reinstating it reserves money against work that will never run.
+
+Verified end to end across a genuine process restart: 363 events into 293
+entities, 11 users, sign-in works, the balance comes back at exactly 499,912
+minor with 588 billed, the project created before the stop is present, and the
+chain replays `VERIFIED` with zero failures.
+
+**Deployment.** One container, one process, one port, one volume, on a managed
+platform. `deploy/Dockerfile` is a single stage because there is nothing to
+compile; `npm ci --omit=dev` runs only to keep the empty runtime dependency set
+provable. `tini` is PID 1 because Node as PID 1 ignores `SIGTERM` by default,
+which would skip the graceful shutdown and make every deploy look like a crash.
+The health check probes `/readyz` rather than `/healthz`, because a container
+marked ready during a journal replay answers "no such project" for projects that
+exist. `docs/RUNBOOK.md` carries build, release, rollback, restart, backup,
+restore and secrets, and states plainly what this topology does not have —
+horizontal scale is impossible while one process owns the journal file.
+
+Verified by running the service exactly as the image does — production
+environment, no `node_modules` present at all — which is also the strongest
+available check that the zero-dependency decision still holds. The image itself
+was **not** built here: this environment has the Docker CLI but no daemon. CI
+builds it and boots it on every push.
+
+That run found one more defect: **HEAD returned 404 on every path**, including
+`/healthz`. Uptime monitors, load balancers and link checkers probe with HEAD,
+and a platform whose health probe defaults to it would have read a healthy
+service as a permanent outage. HEAD now routes as GET.
 
 **Public registration, and every account type.** `POST /v1/signup` is the only
 endpoint where an unauthenticated stranger creates state, so it is written on
@@ -1239,8 +1308,14 @@ parsing work, not wiring.
 - **Native Android and iOS clients** — the sync protocol and `ANDROID`/`IOS`
   event sources are built and tested server-side
 - **External data feeds** — commodity pricing, weather, credit reference
-- **Persistence** — the ledger is in-process; Postgres with RLS and append-only
-  rules is designed for, not implemented
+- **Postgres, RLS and horizontal scale** — the ledger is durable now (an
+  append-only journal on a volume, verified on restore), but one process owns
+  the file. Two containers writing to one volume would interleave events and
+  break the chain, so scaling out needs the Postgres design rather than another
+  replica. Point-in-time recovery is limited to the backup interval, and there
+  is no automatic failover
+- **Log shipping, metrics store and alerting** — structured JSON goes to stdout
+  and counters are exposed; nothing collects them
 
 ---
 

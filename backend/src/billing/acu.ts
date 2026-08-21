@@ -18,6 +18,29 @@ import { ulid } from '../core/ids.ts';
 
 export type ACUEntryType = 'TOP_UP' | 'HOLD' | 'DEBIT' | 'RELEASE' | 'GRANT' | 'REFUND';
 
+/**
+ * What each entry type does to the balance, in one place.
+ *
+ * `HOLD` and `RELEASE` are recorded but move nothing: a hold reserves against
+ * the *available* balance without spending it, which is why `available()`
+ * subtracts held funds rather than the balance doing so. Getting this wrong in
+ * two places is how a ledger drifts, so it is written once and both the live
+ * path and the restore path fold through it.
+ */
+export function balanceEffect(entry: { type: ACUEntryType; billedMinor: number }): number {
+  switch (entry.type) {
+    case 'TOP_UP':
+    case 'GRANT':
+    case 'REFUND':
+      return entry.billedMinor;
+    case 'DEBIT':
+      return -entry.billedMinor;
+    case 'HOLD':
+    case 'RELEASE':
+      return 0;
+  }
+}
+
 export type ACUEntry = {
   id: string;
   tenantId: string;
@@ -124,6 +147,7 @@ export class ACUWallet {
   readonly #holds = new Map<string, Hold>();
   readonly #alerts: ACUAlert[] = [];
   #raisedAlertKeys = new Set<string>();
+  #sink: ((entry: ACUEntry) => void) | undefined;
 
   constructor(tenantId: string, options: { volumeIncentive?: boolean } = {}) {
     this.tenantId = tenantId;
@@ -136,21 +160,25 @@ export class ACUWallet {
     if (!Number.isInteger(amountMinor) || amountMinor <= 0) {
       throw new DomainError('ACU_INVALID_AMOUNT', 'Top-up must be a positive integer in minor units');
     }
-    this.#balanceMinor += amountMinor;
-    return this.#record({ type: 'TOP_UP', billedMinor: amountMinor, rawCostMinor: 0, acuUnits: 0, effectiveMultiplier: 0, note });
+    return this.#record(
+      { type: 'TOP_UP', billedMinor: amountMinor, rawCostMinor: 0, acuUnits: 0, effectiveMultiplier: 0, note },
+      amountMinor,
+    );
   }
 
   /** The free-trial grant. Same enforcement as paid credit, no auto top-up. */
   grantTrialCredit(amountMinor = config.billing.freeTrialGrantMinor): ACUEntry {
-    this.#balanceMinor += amountMinor;
-    return this.#record({
-      type: 'GRANT',
-      billedMinor: amountMinor,
-      rawCostMinor: 0,
-      acuUnits: 0,
-      effectiveMultiplier: 0,
-      note: 'Free trial ACU grant',
-    });
+    return this.#record(
+      {
+        type: 'GRANT',
+        billedMinor: amountMinor,
+        rawCostMinor: 0,
+        acuUnits: 0,
+        effectiveMultiplier: 0,
+        note: 'Free trial ACU grant',
+      },
+      amountMinor,
+    );
   }
 
   setCaps(caps: ACUCaps): void {
@@ -276,7 +304,6 @@ export class ACUWallet {
     // the customer is never charged more than was reserved and disclosed.
     const chargedMinor = Math.min(billedMinor, hold.heldMinor);
 
-    this.#balanceMinor -= chargedMinor;
     this.#holds.delete(holdId);
 
     const entry = this.#record({
@@ -291,7 +318,7 @@ export class ACUWallet {
       module: hold.module,
       feature: hold.feature,
       aiRequestId: hold.aiRequestId,
-    });
+    }, -chargedMinor);
 
     this.#evaluateAlerts();
     return entry;
@@ -474,14 +501,62 @@ export class ACUWallet {
     }
   }
 
-  #record(partial: Omit<ACUEntry, 'id' | 'tenantId' | 'timestamp'>): ACUEntry {
+  /**
+   * The single funnel for every entry, and the only place the balance moves.
+   *
+   * Order is deliberate: the entry is made durable *first*, then recorded, then
+   * the balance follows. If the sink throws, nothing has changed — no entry, no
+   * balance movement — and the command fails. Mutating the balance first and
+   * writing afterwards would leave a wallet whose in-memory balance is lower
+   * than anything the disk can prove, which on restart silently refunds the
+   * customer money the provider was already paid.
+   */
+  #record(partial: Omit<ACUEntry, 'id' | 'tenantId' | 'timestamp'>, balanceDeltaMinor = 0): ACUEntry {
     const entry: ACUEntry = {
       id: ulid(),
       tenantId: this.tenantId,
       timestamp: new Date().toISOString(),
       ...partial,
     };
+    this.#sink?.(entry);
     this.#entries.push(entry);
+    this.#balanceMinor += balanceDeltaMinor;
     return entry;
+  }
+
+  /**
+   * Where each entry is written before it counts.
+   *
+   * Absent means in-process only. A wallet with no sink is correct in a test
+   * and is money that disappears on restart anywhere else.
+   */
+  attachSink(sink: (entry: ACUEntry) => void): void {
+    this.#sink = sink;
+  }
+
+  /**
+   * Rebuild from durable entries.
+   *
+   * The balance is recomputed by folding the entries rather than being read
+   * from a stored total — a stored total is a second source of truth for the
+   * same money, and the two disagree the first time either is rebuilt. Holds
+   * are deliberately *not* restored: a hold belongs to an in-flight AI call
+   * that died with the process, and reinstating it would reserve money against
+   * work that will never run.
+   */
+  restoreEntries(entries: readonly ACUEntry[]): void {
+    for (const entry of entries) {
+      this.#entries.push(entry);
+      this.#balanceMinor += balanceEffect(entry);
+    }
+  }
+
+  /** Every entry, for journalling and for reconciliation against invoices. */
+  allEntries(): readonly ACUEntry[] {
+    return this.#entries;
+  }
+
+  restoreCaps(caps: ACUCaps): void {
+    this.#caps = caps;
   }
 }

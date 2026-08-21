@@ -5,6 +5,7 @@ import { ulid } from '../core/ids.ts';
 import { assertValid, type Schema } from '../core/validate.ts';
 import { lookupEventType } from './eventTypes.ts';
 import type { ActorRef, EntityRef, EventSource, GoldenThreadEvent, AIEventBlock, PolicyBlock } from './types.ts';
+import type { Journal } from './journal.ts';
 
 /**
  * The Golden Thread ledger: append-only, hash-chained, and the only route by
@@ -75,6 +76,23 @@ export class GoldenThreadLedger {
   readonly #subscribers: LedgerSubscriber[] = [];
   /** eventId de-duplication — replayed sync batches must be idempotent. */
   readonly #seenEventIds = new Set<string>();
+  /**
+   * Durable log, when one is configured. Absent means in-process only, which
+   * is correct for a test and is data loss on restart anywhere else.
+   */
+  #journal: Journal | undefined;
+
+  /**
+   * Attach a journal. Every subsequent commit is written and flushed to it
+   * before any in-memory state changes.
+   */
+  attachJournal(journal: Journal): void {
+    this.#journal = journal;
+  }
+
+  get journal(): Journal | undefined {
+    return this.#journal;
+  }
 
   subscribe(subscriber: LedgerSubscriber): void {
     this.#subscribers.push(subscriber);
@@ -195,6 +213,11 @@ export class GoldenThreadLedger {
       version: (existing?.version ?? 0) + 1,
     };
 
+    // Write-ahead. If this throws, nothing below runs and no state changed —
+    // which is the whole point. Acknowledging a commit that is not on disk
+    // means telling somebody their payment notice was issued and losing it.
+    this.#journal?.append(event);
+
     this.#events.push(event);
     this.#seenEventIds.add(eventId);
     this.#entities.set(key, record);
@@ -210,6 +233,82 @@ export class GoldenThreadLedger {
     }
 
     return { event, record };
+  }
+
+  /**
+   * Rebuild state from a journal, verifying the chain as it goes.
+   *
+   * Not a fast path that trusts the file. Each event's chain hash is
+   * recomputed from its predecessor and each state hash from the applied
+   * patch, so a journal edited by hand — or corrupted on disk — is refused
+   * rather than loaded. A record that verifies against nothing is worse than no
+   * record, because somebody will rely on it.
+   *
+   * Deliberately does not re-run authorisation or domain validation. Those
+   * decisions were made when the event was committed, by an actor whose
+   * permissions may since have changed; re-evaluating them now would rewrite
+   * history according to today's permission matrix.
+   */
+  restore(events: readonly GoldenThreadEvent[]): { restored: number; entities: number } {
+    for (const [index, event] of events.entries()) {
+      const key = entityKey(event.entity);
+      const existing = this.#entities.get(key);
+      const beforeState = existing?.state;
+
+      const beforeHash = beforeState === undefined ? EMPTY_STATE_HASH : hashState(beforeState);
+      if (event.beforeHash !== beforeHash) {
+        throw new DomainError(
+          'JOURNAL_CHAIN_BROKEN',
+          `Journal event ${index + 1} (${event.eventId}) expects prior state ${event.beforeHash} for ` +
+            `${event.entity.refType} ${event.entity.refId}, but replay produced ${beforeHash}. ` +
+            'An event is missing, reordered, or the file has been altered.',
+        );
+      }
+
+      const afterState = applyPatch<Record<string, unknown>>((beforeState ?? {}) as Record<string, unknown>, event.diff);
+      const afterHash = hashState(afterState);
+      if (event.afterHash !== afterHash) {
+        throw new DomainError(
+          'JOURNAL_STATE_MISMATCH',
+          `Journal event ${index + 1} (${event.eventId}) records state hash ${event.afterHash}, ` +
+            `but applying its own patch produces ${afterHash}. The event has been altered.`,
+        );
+      }
+
+      const previousChainHash = this.#chainHeads.get(event.projectId) ?? EMPTY_STATE_HASH;
+      if (event.previousChainHash !== previousChainHash) {
+        throw new DomainError(
+          'JOURNAL_CHAIN_BROKEN',
+          `Journal event ${index + 1} (${event.eventId}) chains from ${event.previousChainHash}, ` +
+            `but the head of project ${event.projectId} is ${previousChainHash}.`,
+        );
+      }
+
+      const expectedChainHash = sha256(`${previousChainHash}\n${chainBody(event)}`);
+      if (event.chainHash !== expectedChainHash) {
+        throw new DomainError(
+          'JOURNAL_CHAIN_BROKEN',
+          `Journal event ${index + 1} (${event.eventId}) carries chain hash ${event.chainHash}, ` +
+            `but recomputing it gives ${expectedChainHash}. The record has been tampered with.`,
+        );
+      }
+
+      this.#events.push(event);
+      this.#seenEventIds.add(event.eventId);
+      this.#entities.set(key, {
+        refType: event.entity.refType,
+        refId: event.entity.refId,
+        tenantId: event.tenantId,
+        projectId: event.projectId,
+        state: afterState,
+        stateHash: afterHash,
+        lastEventId: event.eventId,
+        version: (existing?.version ?? 0) + 1,
+      });
+      this.#chainHeads.set(event.projectId, event.chainHash);
+    }
+
+    return { restored: events.length, entities: this.#entities.size };
   }
 
   /** Idempotent ingestion of an event minted elsewhere (offline device, replica). */
@@ -232,6 +331,18 @@ export class GoldenThreadLedger {
     return [...this.#entities.values()]
       .filter((r) => r.projectId === projectId && r.refType === refType)
       .sort((a, b) => (a.refId < b.refId ? -1 : a.refId > b.refId ? 1 : 0));
+  }
+
+  /**
+   * Every record of a type, across all projects and tenancies.
+   *
+   * Only for rebuilding platform-level state at boot, which is why it takes no
+   * tenant: at that moment there is no caller to scope it to. Nothing serving a
+   * request may use it — `list` and `listByTenant` are the scoped reads, and
+   * every request path goes through one of those.
+   */
+  entitiesOfType(refType: string): EntityRecord[] {
+    return [...this.#entities.values()].filter((r) => r.refType === refType);
   }
 
   listByTenant(tenantId: string, refType: string): EntityRecord[] {

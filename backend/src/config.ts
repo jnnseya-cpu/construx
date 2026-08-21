@@ -50,6 +50,21 @@ export const config = {
   env: str('NODE_ENV', 'development'),
   port: num('PORT', 8080),
 
+  /**
+   * Durability. An empty path means the ledger is in-process only, which is
+   * correct for a test run and is total data loss on restart anywhere else —
+   * so `assertProductionSafety` refuses to stay quiet about it.
+   */
+  ledger: {
+    journalPath: str('LEDGER_JOURNAL_PATH', ''),
+    /**
+     * Flush to the platter on every event. Switchable only so a suite writing
+     * thousands of events is not paying for a power-cut guarantee it does not
+     * need. Never turn this off in a deployment.
+     */
+    fsync: bool('LEDGER_JOURNAL_FSYNC', true),
+  },
+
   auth: {
     required: bool('GATEWAY_REQUIRE_AUTH', true),
     exposeMfa: bool('GATEWAY_AUTH_EXPOSE_MFA', true),
@@ -159,6 +174,16 @@ export function assertProductionSafety(): string[] {
   if (config.env === 'production') {
     if (config.auth.jwtSecret === 'construx-development-secret') {
       warnings.push('GATEWAY_JWT_SECRET is still the development default');
+    }
+    if (config.ledger.journalPath === '') {
+      // The loudest thing this function says, because it is the only one that
+      // loses the entire record rather than degrading a feature.
+      warnings.push(
+        'LEDGER_JOURNAL_PATH is unset — the ledger is in memory only and EVERY RECORD IS LOST ON RESTART',
+      );
+    }
+    if (!config.ledger.fsync) {
+      warnings.push('LEDGER_JOURNAL_FSYNC is disabled — events may be acknowledged before reaching the disk');
     }
     if (config.ai.mode !== 'production') {
       warnings.push(`AI_MODE is "${config.ai.mode}" in a production environment`);

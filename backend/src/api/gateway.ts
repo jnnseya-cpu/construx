@@ -88,10 +88,17 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
   const { traceId, correlationId } = buildTrace(req);
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
+  // HEAD is GET without a body. Node discards the body on a HEAD response by
+  // itself, so routing it as GET is the whole fix — and it matters because
+  // uptime monitors, load balancers and link checkers probe with HEAD, and
+  // /healthz answering 404 to one of those reads as an outage.
+  const requested = req.method ?? 'GET';
+  const method = requested === 'HEAD' ? 'GET' : requested;
+
   const ctx: RequestContext = {
     traceId,
     correlationId,
-    method: req.method ?? 'GET',
+    method,
     path: url.pathname,
     params: {},
     query: url.searchParams,

@@ -178,3 +178,33 @@ describe('the demonstration surface in production', () => {
     assert.ok(!/"devCode"/.test(text), 'the MFA challenge code was returned in production');
   });
 });
+
+describe('HEAD, which is what probes actually send', () => {
+  /**
+   * Uptime monitors, load balancers and link checkers probe with HEAD. The
+   * router matched on the exact method, so every path answered 404 to one —
+   * including `/healthz`, which on a platform whose health probe defaults to
+   * HEAD reads as a permanent outage of a healthy service.
+   *
+   * Node discards the body of a HEAD response by itself, so routing it as GET
+   * is the whole fix.
+   */
+  it('answers HEAD wherever it answers GET', async () => {
+    for (const path of ['/healthz', '/readyz', '/', '/about', '/status', '/v1/signup/account-types']) {
+      const head = await fetch(`${base}${path}`, { method: 'HEAD' });
+      const get = await fetch(`${base}${path}`);
+      assert.equal(head.status, get.status, `HEAD ${path} answered ${head.status} where GET answered ${get.status}`);
+    }
+  });
+
+  it('sends no body with a HEAD response', async () => {
+    const response = await fetch(`${base}/healthz`, { method: 'HEAD' });
+    assert.equal(await response.text(), '', 'a HEAD response carried a body');
+  });
+
+  it('still refuses HEAD on a path that has no GET', async () => {
+    // /v1/signup is POST-only. HEAD must not become a way to reach it.
+    const response = await fetch(`${base}/v1/signup`, { method: 'HEAD' });
+    assert.equal(response.status, 404);
+  });
+});

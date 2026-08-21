@@ -1,0 +1,69 @@
+# Typecheck and the full suite on every push and pull request.
+#
+# There is nothing to build, so there is no build step to test — what CI checks
+# is what the reviewer cannot: that the suite passes from a clean checkout with
+# no leftover state, and from a working directory CI chose rather than the one a
+# developer happened to be in. Two tests used to hold a cwd-relative path and
+# passed only because `npm test` ran from the repository root; a CI step is
+# exactly what finds that class of defect.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the engines field and the container base image. Native type
+          # stripping is what makes the no-build-step decision work, and it is
+          # version-sensitive.
+          node-version: '22.18'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # Proves the container builds from a clean context and that the
+      # .dockerignore has not started excluding something the image needs.
+      - name: Build the image
+        run: docker build -f deploy/Dockerfile -t construx:ci .
+
+      - name: Boot the image and check readiness
+        run: |
+          docker run -d --name construx-ci -p 8080:8080 \
+            -e GATEWAY_JWT_SECRET=ci-only-not-a-real-secret \
+            -e LEDGER_JOURNAL_PATH=/data/ledger.jsonl \
+            construx:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/readyz > /dev/null; then
+              echo "ready after ${i}s"
+              # The demonstration surface must be closed in a production image.
+              status=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+                -H 'content-type: application/json' -d '{}' \
+                http://localhost:8080/v1/console/session)
+              test "$status" = "403" || { echo "console session returned $status, expected 403"; exit 1; }
+              curl -fsS http://localhost:8080/ > /dev/null
+              docker logs construx-ci
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "the container never became ready"
+          docker logs construx-ci
+          exit 1
