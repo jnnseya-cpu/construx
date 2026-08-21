@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1026 passing, 0 failing, across 50 files |
+| Tests | 1042 passing, 0 failing, across 51 files |
 | Typecheck | clean |
 | Backend | 81 TypeScript files, 35,927 lines |
 | Application | 25 ES modules, 7,199 lines (plus a service worker) |
@@ -1390,6 +1390,21 @@ written against `/v1/supply-chain/suppliers` when the route is
 rendered perfectly with an empty picker and no error. It also holds a floor
 under the number of input forms and evidence fields, so a module cannot quietly
 stop accepting work.
+
+**The portfolio position is computed, not assembled in a browser.** The console
+built its enterprise view by listing projects and then fetching entities per
+project — an N+1 that put the aggregation rule in the client, where nothing
+tests it and every page wanting the same number computed it again slightly
+differently. `GET /v1/enterprise/command` computes it from the ledger under the
+governance capability, so a delivery role holding project access does not
+thereby hold a view across the business.
+
+Three things it refuses to do, because each produces a wrong number that looks
+exactly like a right one: it does not count a project with no published CVR as
+zero (it reports coverage — how many projects each figure is built from —
+before the figure); it does not average across projects that cannot contribute
+to the average; and it does not sum two currencies, reporting `null` instead so
+the console has to say "mixed".
 
 **Every AI engine declares when it may run.** The routing matrix says which
 provider an engine reaches; it said nothing about applicability, so every engine

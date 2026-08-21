@@ -22,6 +22,7 @@ import { DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
 import type { Schema } from '../core/validate.ts';
 import * as business from '../domain/business.ts';
 import * as cdm from '../domain/cdm.ts';
+import * as portfolio from '../domain/portfolio.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
@@ -1491,6 +1492,20 @@ export const ROUTES: Route[] = [
         actor: session.email,
       };
     },
+  },
+
+  {
+    method: 'GET',
+    pattern: '/v1/enterprise/command',
+    description: 'The portfolio position across every project in the tenancy, computed from the ledger',
+    readOnly: true,
+    handler: (platform, ctx) =>
+      portfolio.enterpriseCommand(
+        // Enterprise scope, on the tenant governance pseudo-project. Not any
+        // one project's context: a view across the estate is a governance
+        // capability, not the sum of project-level access.
+        platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, { correlationId: ctx.correlationId }),
+      ),
   },
 
   // --------------------------------------------------------------- structure
