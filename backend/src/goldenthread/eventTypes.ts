@@ -228,6 +228,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PAYMENT_CERTIFIED', 'PaymentCertificate', 'APPROVE', 'COMMERCIAL', { requiresEvidence: true, creates: true }),
   def('APPLICATION_CERTIFIED', 'PaymentApplication', 'APPROVE', 'COMMERCIAL'),
   def('LEDGER_ENTRY_POSTED', 'LedgerEntry', 'CREATE', 'COMMERCIAL'),
+  // Set-off against a subcontractor. Evidence is mandatory: a contra charge
+  // without a record of the cost it recovers is a deduction the payer cannot
+  // substantiate, and it is the first thing an adjudicator asks for.
+  def('CONTRA_CHARGE_RAISED', 'ContraCharge', 'CREATE', 'COMMERCIAL', { requiresEvidence: true }),
 
   // --- Agent runtime --------------------------------------------------------
   def('AGENT_RUN_COMPLETED', 'AgentRun', 'EXECUTE', 'AI_BILLING', { aiAllowed: true, creates: true }),

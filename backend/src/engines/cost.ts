@@ -1,6 +1,7 @@
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
-import { ulid } from '../core/ids.ts';
+import { formatRef, ulid } from '../core/ids.ts';
+import { assertNotFuture } from '../domain/dates.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
 import { calculateCVR, calculateEVM, sCurveDistribution, type CVRInput } from './maths/evm.ts';
 import { checkNoticeCompliance, generatePaymentCycle, type PaymentTerms } from './maths/claims.ts';
@@ -731,6 +732,9 @@ export function ledgerPosition(ctx: EngineContext): {
   certifiedMinor: number;
   paidMinor: number;
   retentionHeldMinor: number;
+  /** Set off against subcontractors, and how much of it will actually stand. */
+  contraChargedMinor: number;
+  contraEnforceableMinor: number;
   exceptions: Array<{ type: string; detail: string; entityRef: string }>;
 } {
   authorise(ctx, 'BUDGET_COST', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
@@ -743,6 +747,11 @@ export function ledgerPosition(ctx: EngineContext): {
   const certified = certificates.reduce((s, c) => s + Number(c.state.certifiedMinor ?? 0), 0);
   const paid = entries.filter((e) => e.state.type === 'PAYMENT').reduce((s, e) => s + Number(e.state.amountMinor ?? 0), 0);
   const retention = certificates.reduce((s, c) => s + Number(c.state.retentionMinor ?? 0), 0);
+  const contras = ctx.ledger.list(ctx.projectId, 'ContraCharge');
+  const contraCharged = contras.reduce((s, c) => s + Number(c.state.amountMinor ?? 0), 0);
+  const contraEnforceable = contras
+    .filter((c) => c.state.enforceable === true)
+    .reduce((s, c) => s + Number(c.state.amountMinor ?? 0), 0);
 
   const exceptions: Array<{ type: string; detail: string; entityRef: string }> = [];
 
@@ -765,6 +774,19 @@ export function ledgerPosition(ctx: EngineContext): {
       });
     }
   }
+  for (const contra of contras) {
+    if (contra.state.enforceable !== true) {
+      // Not a deduction — an intention to deduct. Under the Construction Act a
+      // payer cannot pay less than the notified sum without a valid pay less
+      // notice, so this money comes back at adjudication and is then chased
+      // separately. A forecast that counts it as recovered is wrong.
+      exceptions.push({
+        type: 'UNNOTIFIED_SET_OFF',
+        detail: `Contra charge ${String(contra.state.reference)} — ${String(contra.state.barrier ?? 'no effective pay less notice')}`,
+        entityRef: contra.refId,
+      });
+    }
+  }
   if (certified > committed && committed > 0) {
     exceptions.push({
       type: 'OVERCERTIFICATION',
@@ -778,6 +800,202 @@ export function ledgerPosition(ctx: EngineContext): {
     certifiedMinor: certified,
     paidMinor: paid,
     retentionHeldMinor: retention,
+    contraChargedMinor: contraCharged,
+    contraEnforceableMinor: contraEnforceable,
     exceptions,
+  };
+}
+
+/**
+ * Contra charges: recovering a cost from the party that caused it.
+ *
+ * A main contractor cleans up after a subcontractor who left, hires plant the
+ * subcontract said the subcontractor would provide, or puts right work that
+ * failed inspection. The cost is real and it belongs to the subcontractor, and
+ * the way it comes back is a deduction from what they are paid.
+ *
+ * **The rule this enforces is the one that decides whether the money is
+ * actually recovered.** Under the Construction Act a payer may not pay less
+ * than the notified sum without a valid pay less notice given in time. So a
+ * contra charge raised without one is not a deduction — it is an intention to
+ * deduct, and at adjudication it is money the payer has to hand back and then
+ * chase separately. Contractors lose this argument constantly, and they lose it
+ * on the notice rather than on the merits: the charge is usually justified and
+ * the notice was late.
+ *
+ * The charge is therefore recorded either way and its **enforceability** is
+ * computed rather than asserted. Refusing to record an unnotified charge would
+ * destroy the evidence of the cost, which is the thing needed to recover it by
+ * the route that remains open.
+ */
+export type ContraReason =
+  | 'REMEDIAL_WORK'
+  | 'ATTENDANCE'
+  | 'PLANT_AND_EQUIPMENT'
+  | 'CLEANING_AND_WASTE'
+  | 'DELAY_TO_FOLLOWING_TRADES'
+  | 'MATERIALS_SUPPLIED'
+  | 'STATUTORY_OR_SAFETY';
+
+export function raiseContraCharge(
+  ctx: EngineContext,
+  input: {
+    /** The subcontract the charge is set off against. */
+    subcontractId: string;
+    reason: ContraReason;
+    amountMinor: number;
+    /** What was done, when, and why it was the subcontractor's cost to bear. */
+    narrative: string;
+    incurredOn: string;
+    /** The record of the cost — a hire invoice, a labour allocation, a photograph. */
+    evidenceHash: string;
+    /** The pay less notice that gives effect to the deduction, where one exists. */
+    payLessNoticeId?: string;
+  },
+): { contraChargeId: string; reference: string; enforceable: boolean; reason?: string } {
+  authorise(ctx, 'PAYMENT_APPLICATIONS', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  if (input.amountMinor <= 0) {
+    throw new DomainError('CONTRA_AMOUNT_INVALID', 'A contra charge must be a positive amount');
+  }
+  // A charge cannot recover a cost that has not been incurred. Dated in the
+  // future it is a forecast, and a forecast is not a set-off.
+  assertNotFuture(input.incurredOn, 'incurredOn');
+
+  const subcontract = ctx.ledger.require({ refType: 'Subcontract', refId: input.subcontractId });
+
+  // --- Is it actually a deduction? ------------------------------------------
+  let enforceable = false;
+  let barrier: string | undefined = 'No pay less notice — the deduction cannot be made from a notified sum';
+
+  if (input.payLessNoticeId) {
+    const notice = ctx.ledger.get({ refType: 'PayLessNotice', refId: input.payLessNoticeId });
+    if (!notice) {
+      barrier = 'The pay less notice referenced does not exist';
+    } else if (notice.state.effective !== true) {
+      // Recorded and ineffective — given late, or without a basis of
+      // calculation. Either way it gives no effect to the set-off.
+      barrier = 'The pay less notice is ineffective, so it gives no effect to the deduction';
+    } else {
+      enforceable = true;
+      barrier = undefined;
+    }
+  }
+
+  const contraChargeId = ulid();
+  // Sequential per project, so a reference is quotable in a letter. Taken from
+  // the count already recorded rather than from a counter that would have to be
+  // stored and could drift from the ledger it describes.
+  const reference = formatRef('CON', ctx.ledger.list(ctx.projectId, 'ContraCharge').length + 1);
+
+  const evidence = registerEvidence(ctx, {
+    type: 'CONTRA_CHARGE_SUPPORT',
+    hash: input.evidenceHash,
+    description: `${input.reason} contra charge against subcontract ${input.subcontractId}`,
+    linkedEntities: [{ refType: 'Subcontract', refId: input.subcontractId }],
+  });
+
+  write(ctx, {
+    eventType: 'CONTRA_CHARGE_RAISED',
+    entity: { refType: 'ContraCharge', refId: contraChargeId },
+    evidenceRefs: [evidence],
+    nextState: {
+      id: contraChargeId,
+      reference,
+      projectId: ctx.projectId,
+      subcontractId: input.subcontractId,
+      supplierId: subcontract.state.supplierId,
+      reason: input.reason,
+      amountMinor: input.amountMinor,
+      narrative: input.narrative,
+      incurredOn: input.incurredOn,
+      payLessNoticeId: input.payLessNoticeId,
+      // Computed, not supplied. A field the caller could set would be a field
+      // the caller sets to true.
+      enforceable,
+      barrier,
+      raisedAt: new Date().toISOString(),
+    },
+  });
+
+  return { contraChargeId, reference, enforceable, ...(barrier === undefined ? {} : { reason: barrier }) };
+}
+
+/**
+ * The contra position: what has been charged, and how much of it will stand.
+ *
+ * The distinction is the whole value. A contractor looking at £180,000 of contra
+ * charges believes they have recovered £180,000; if £140,000 of it was raised
+ * without a pay less notice, they have recovered £40,000 and have a debt claim
+ * for the rest. Those are very different positions and only one of them is in
+ * the forecast.
+ */
+export type ContraPosition = {
+  raisedMinor: number;
+  enforceableMinor: number;
+  /** Raised without an effective pay less notice. Recoverable, but not by set-off. */
+  atRiskMinor: number;
+  bySupplier: Array<{
+    supplierId: string;
+    subcontractId: string;
+    raisedMinor: number;
+    enforceableMinor: number;
+    charges: Array<{
+      reference: string;
+      reason: ContraReason;
+      amountMinor: number;
+      incurredOn: string;
+      enforceable: boolean;
+      barrier?: string;
+    }>;
+  }>;
+};
+
+export function contraPosition(ctx: EngineContext): ContraPosition {
+  authorise(ctx, 'PAYMENT_APPLICATIONS', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const charges = ctx.ledger.list(ctx.projectId, 'ContraCharge');
+  const grouped = new Map<string, ContraPosition['bySupplier'][number]>();
+
+  let raisedMinor = 0;
+  let enforceableMinor = 0;
+
+  for (const record of charges) {
+    const state = record.state;
+    const amount = Number(state.amountMinor ?? 0);
+    const enforceable = state.enforceable === true;
+    const subcontractId = String(state.subcontractId ?? '');
+
+    raisedMinor += amount;
+    if (enforceable) enforceableMinor += amount;
+
+    const group = grouped.get(subcontractId) ?? {
+      supplierId: String(state.supplierId ?? ''),
+      subcontractId,
+      raisedMinor: 0,
+      enforceableMinor: 0,
+      charges: [],
+    };
+    group.raisedMinor += amount;
+    if (enforceable) group.enforceableMinor += amount;
+    group.charges.push({
+      reference: String(state.reference ?? ''),
+      reason: String(state.reason ?? 'REMEDIAL_WORK') as ContraReason,
+      amountMinor: amount,
+      incurredOn: String(state.incurredOn ?? ''),
+      enforceable,
+      ...(typeof state.barrier === 'string' ? { barrier: state.barrier } : {}),
+    });
+    grouped.set(subcontractId, group);
+  }
+
+  return {
+    raisedMinor,
+    enforceableMinor,
+    atRiskMinor: raisedMinor - enforceableMinor,
+    // Most at risk first: the money that will not stand is the work.
+    bySupplier: [...grouped.values()].sort(
+      (a, b) => b.raisedMinor - b.enforceableMinor - (a.raisedMinor - a.enforceableMinor),
+    ),
   };
 }

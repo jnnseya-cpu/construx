@@ -95,6 +95,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   PaymentApplication: { area: 'PAYMENT_APPLICATIONS', sensitivity: 'COMMERCIAL_L3' },
   PaymentCycle: { area: 'PAYMENT_APPLICATIONS', sensitivity: 'COMMERCIAL_L3' },
   PaymentNotice: { area: 'PAYMENT_APPLICATIONS', sensitivity: 'COMMERCIAL_L3' },
+  // A set-off names a subcontractor's failure and its cost. Same area and
+  // sensitivity as the payment records it deducts from — reading it is reading
+  // the commercial position of that supplier.
+  ContraCharge: { area: 'PAYMENT_APPLICATIONS', sensitivity: 'COMMERCIAL_L3' },
   PayLessNotice: { area: 'PAYMENT_APPLICATIONS', sensitivity: 'COMMERCIAL_L3' },
   PaymentCertificate: { area: 'PAYMENT_APPLICATIONS', sensitivity: 'COMMERCIAL_L3' },
   LedgerEntry: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },

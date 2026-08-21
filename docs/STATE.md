@@ -1458,6 +1458,35 @@ Verified against a running server: a project created in Columbus, Ohio at
 per-field problem+json error; and the estate's contract-value card switched to
 "mixed currencies" rather than adding dollars to pounds.
 
+**Contra charges, and the notice that decides whether they are money.** The gap
+matrix listed the purchase ledger as absent; most of it was not.
+`ledgerPosition` already gave committed against certified against paid, with
+retention held and a three-type exception queue. What was genuinely missing was
+set-off.
+
+`raiseContraCharge` records a deduction against a subcontract, and the rule it
+enforces is the one that decides whether the money is recovered. Under the
+Construction Act a payer may not pay less than the notified sum without a valid
+pay less notice given in time, so a contra raised without one is not a deduction
+— it is an intention to deduct, handed back at adjudication and then chased
+separately. Contractors lose this argument on the notice rather than on the
+merits: the charge is usually justified and the notice was late.
+
+So enforceability is **computed, not supplied** — a field the caller could set
+is a field the caller sets to true — and an unnotified charge is recorded rather
+than refused, because refusing would destroy the evidence of the cost, which is
+what is needed to recover it by the route that remains open. A notice that
+exists but is ineffective (late, or with no basis of calculation) gives no
+effect either, and the console offers only effective notices in the picker.
+
+Both figures reach the commercial ledger. £180,000 charged reads as £180,000
+recovered; if most of it was raised without a notice, that is a debt claim
+rather than a deduction, and only one of those belongs in a forecast.
+
+Adding the entity caught its own omission: `entityAccess` had no classification
+for `ContraCharge`, which would have left it un-withholdable in the audit feed
+and the change window. The suite failed on it before anything shipped.
+
 **Every obligation cites the clause that created it.** The calendar knew what
 was due and when, and cited the contract as a whole. That is enough to work from
 and not enough to argue from: a contract administrator challenged on a retention

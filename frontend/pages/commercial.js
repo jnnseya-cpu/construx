@@ -35,6 +35,10 @@ export async function commercial(root) {
       'PaymentCertificate',
       'LedgerEntry',
       'Variation',
+      // For the contra form: the subcontracts a charge can be set off against,
+      // and the pay less notices that can give effect to one.
+      'Subcontract',
+      'PayLessNotice',
     ]),
     api.get(`/v1/projects/${projectId}/cost/ledger`).catch(() => null),
   ]);
@@ -82,6 +86,7 @@ export async function commercial(root) {
             { id: 'actual', label: 'Post actual cost', tone: '', permitted: can('BUDGET_COST', 'C'), reason: blockedReason('BUDGET_COST', 'C') },
             { id: 'application', label: 'Submit application', permitted: can('PAYMENT_APPLICATIONS', 'C'), reason: blockedReason('PAYMENT_APPLICATIONS', 'C') },
             { id: 'payless', label: 'Issue pay less notice', permitted: can('PAYMENT_APPLICATIONS', 'A'), reason: blockedReason('PAYMENT_APPLICATIONS', 'A') },
+            { id: 'contra', label: 'Raise contra charge', permitted: can('PAYMENT_APPLICATIONS', 'C'), reason: blockedReason('PAYMENT_APPLICATIONS', 'C') },
           ]))}
           ${can('BUDGET_COST', 'X') ? html`<button class="btn ghost" id="publish-cvr">Publish CVR</button>` : ''}
           ${can('BUDGET_COST', 'R') ? html`<button class="btn quiet" id="evm">Take EVM snapshot</button>` : ''}
@@ -169,6 +174,25 @@ export async function commercial(root) {
                     <div class="row"><span class="lbl">Certified</span><span class="val">${money(ledger.certifiedMinor)}</span></div>
                     <div class="row"><span class="lbl">Paid</span><span class="val">${money(ledger.paidMinor)}</span></div>
                     <div class="row"><span class="lbl">Retention held</span><span class="val">${money(ledger.retentionHeldMinor)}</span></div>
+                    ${
+                      // Both figures, always. £180K charged reads as £180K
+                      // recovered; if most of it was raised without a pay less
+                      // notice it comes back at adjudication and is then chased
+                      // separately, and only one of those numbers belongs in a
+                      // forecast.
+                      ledger.contraChargedMinor > 0
+                        ? html`<div class="row">
+                              <span class="lbl">Contra charged</span>
+                              <span class="val">${money(ledger.contraChargedMinor)}</span>
+                            </div>
+                            <div class="row">
+                              <span class="lbl">Contra enforceable</span>
+                              <span class="val ${raw(ledger.contraEnforceableMinor < ledger.contraChargedMinor ? 'bad' : '')}">
+                                ${money(ledger.contraEnforceableMinor)}
+                              </span>
+                            </div>`
+                        : ''
+                    }
                   </div>
                   ${
                     ledger.exceptions.length > 0
@@ -363,6 +387,63 @@ export async function commercial(root) {
   });
 
   const COMMANDS = {
+    contra: {
+      title: 'Raise a contra charge',
+      intent:
+        'A deduction only where a valid pay less notice gives effect to it. Without one this is recorded as a cost to recover by another route, not as money taken.',
+      path: `/v1/projects/${projectId}/cost/contra`,
+      submitLabel: 'Raise charge',
+      fields: [
+        {
+          name: 'subcontractId',
+          label: 'Subcontract',
+          type: 'select',
+          options: (bundle.Subcontract ?? []).map((sc) => ({
+            value: sc.id,
+            label: `${sc.reference ?? sc.id.slice(-6)} · ${sc.supplierName ?? sc.supplierId ?? ''}`,
+          })),
+        },
+        {
+          name: 'reason',
+          label: 'Reason',
+          type: 'select',
+          options: [
+            { value: 'REMEDIAL_WORK', label: 'Remedial work' },
+            { value: 'ATTENDANCE', label: 'Attendance' },
+            { value: 'PLANT_AND_EQUIPMENT', label: 'Plant and equipment' },
+            { value: 'CLEANING_AND_WASTE', label: 'Cleaning and waste' },
+            { value: 'DELAY_TO_FOLLOWING_TRADES', label: 'Delay to following trades' },
+            { value: 'MATERIALS_SUPPLIED', label: 'Materials supplied' },
+            { value: 'STATUTORY_OR_SAFETY', label: 'Statutory or safety' },
+          ],
+        },
+        { name: 'amountMinor', label: 'Amount', type: 'number', hint: 'In minor units — pence for GBP' },
+        {
+          name: 'narrative',
+          label: 'What was done, and why it is their cost',
+          type: 'textarea',
+          hint: 'The first thing an adjudicator asks for. A charge nobody can explain is one that comes back.',
+        },
+        { name: 'incurredOn', label: 'Incurred on', type: 'date', value: today() },
+        {
+          name: 'payLessNoticeId',
+          label: 'Pay less notice giving effect to it',
+          type: 'select',
+          required: false,
+          placeholder: 'None — recorded as unenforceable',
+          options: (bundle.PayLessNotice ?? [])
+            .filter((n) => n.effective)
+            .map((n) => ({ value: n.id, label: `${n.reference ?? n.id.slice(-6)} · ${n.issuedDate ?? ''}` })),
+          hint: 'Only an effective notice is offered. Without one the charge is an intention to deduct.',
+        },
+        { name: 'evidenceHash', label: 'Evidence of the cost', type: 'file' },
+      ],
+      transform: (f) => ({
+        ...f,
+        amountMinor: Number(f.amountMinor),
+        ...(f.payLessNoticeId ? {} : { payLessNoticeId: undefined }),
+      }),
+    },
     actual: {
       title: 'Post actual cost',
       intent: 'Against a cost code on the approved baseline, so budget-against-actual moves the moment the spend is known.',
