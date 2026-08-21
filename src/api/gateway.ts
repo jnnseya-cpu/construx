@@ -174,6 +174,23 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
       return;
     }
 
+    // A file, not a payload. Sent with the headers that make a browser save it
+    // under the document's own reference rather than a route name.
+    if (matched.route.binary) {
+      const file = result as { contentType: string; filename: string; bytes: Uint8Array };
+      res.writeHead(200, {
+        'Content-Type': file.contentType,
+        'Content-Length': file.bytes.byteLength,
+        'Content-Disposition': `attachment; filename="${file.filename}"`,
+        'x-trace-id': ctx.traceId,
+        'x-correlation-id': ctx.correlationId,
+        'Cache-Control': 'no-store',
+      });
+      res.end(Buffer.from(file.bytes));
+      logRequest(ctx, 200);
+      return;
+    }
+
     const payload = result ?? { ok: true };
 
     storeIdempotent(ctx.idempotencyKey, status, payload);

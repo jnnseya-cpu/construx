@@ -73,6 +73,12 @@ export type Route = {
   /** Handler returns a complete HTML page rather than a JSON payload. */
   html?: boolean;
   /**
+   * Handler returns bytes and the headers to send them under, rather than a
+   * JSON payload. A PDF cannot be base64 in a JSON envelope and still be a file
+   * somebody's browser saves with the right name.
+   */
+  binary?: boolean;
+  /**
    * A POST that creates nothing and changes nothing — answered 200, not 201.
    *
    * The method is POST because the question does not fit in a path, not because
@@ -2402,6 +2408,34 @@ export const ROUTES: Route[] = [
         correlationId: ctx.correlationId,
       });
       return format === 'HTML' ? { ...document, html: platform.exports.toHtml(document) } : document;
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/exports/report.pdf',
+    binary: true,
+    description: 'The same report as a PDF file, rendered from the document that was hashed',
+    schema: {
+      type: 'object',
+      properties: {
+        audience: { type: 'string', enum: ['INTERNAL', 'CLIENT', 'SUPPLIER', 'REGULATOR', 'INSURER', 'ADJUDICATOR', 'COURT'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const { audience } = body<{ audience?: ExportAudience }>(ctx);
+      const actor = auth(ctx);
+      const document = platform.exports.projectReport(actor, ctx.params.projectId as string, {
+        audience: actor.roles.includes('REGULATOR') ? 'REGULATOR' : (audience ?? 'CLIENT'),
+        format: 'PDF',
+        correlationId: ctx.correlationId,
+      });
+
+      return {
+        contentType: 'application/pdf',
+        filename: `${document.reference}.pdf`,
+        bytes: platform.exports.toPdf(document),
+      };
     },
   },
   {

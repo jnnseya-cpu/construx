@@ -103,14 +103,20 @@ describe('redaction by audience', () => {
     const internal = textOf(report('pm', 'INTERNAL'));
     const redacted = textOf(report('pm', 'REGULATOR'));
 
-    const moneyIn = (text: string) =>
-      [...text.matchAll(/\b\d{6,}\b/g)].map((m) => m[0]).filter((n) => Number(n) > 100_000);
+    // Both forms. Money is now rendered in the project's currency, so a
+    // formatted figure is what a reader would actually see — and a bare
+    // minor-unit run would be a regression to the thing the localisation work
+    // removed, so it is still caught.
+    const moneyIn = (text: string) => [
+      ...[...text.matchAll(/[£$€¥]\s?[\d,.]+[KMB]?/g)].map((m) => m[0]),
+      ...[...text.matchAll(/\b\d{6,}\b/g)].map((m) => m[0]).filter((n) => Number(n) > 100_000),
+    ];
 
     assert.ok(moneyIn(internal).length > 0, 'the internal report quotes no figures at all — check the fixture');
     assert.deepEqual(
       moneyIn(redacted),
       [],
-      `a redacted export still quotes minor-unit figures: ${moneyIn(redacted).join(', ')}`,
+      `a redacted export still quotes figures: ${moneyIn(redacted).join(', ')}`,
     );
   });
 });

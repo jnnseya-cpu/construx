@@ -4,6 +4,8 @@ import { ulid } from '../core/ids.ts';
 import type { GoldenThreadLedger } from '../goldenthread/ledger.ts';
 import { replayProject, replayTimeline } from '../goldenthread/replay.ts';
 import type { AuthContext } from '../identity/auth.ts';
+import { formatMoney } from '../domain/locale.ts';
+import { renderPdf } from './pdf.ts';
 
 /**
  * Export service.
@@ -248,6 +250,11 @@ export class ExportService {
     // Commercial detail is withheld from audiences that have no entitlement to it.
     const commercialVisible = input.audience !== 'REGULATOR' && input.audience !== 'SUPPLIER';
 
+    // The project's own currency, not the platform's default. A report on a
+    // Gulf or Japanese job showing sterling would be wrong in a way nobody
+    // would spot until somebody paid against it.
+    const currency = String(project.state.currency ?? 'GBP');
+
     const blocks: DocumentBlock[] = [
       { kind: 'HEADING', level: 2, text: 'Project' },
       {
@@ -277,7 +284,14 @@ export class ExportService {
           kind: 'KEY_VALUES',
           rows: [
             { label: 'CPI / SPI', value: evm ? `${String(evm.costPerformanceIndex)} / ${String(evm.schedulePerformanceIndex)}` : '—' },
-            { label: 'Forecast final cost', value: cvr ? String(cvr.forecastFinalCostMinor) : '—' },
+            // In the reader's currency, not in minor units. This document goes
+            // to an adjudicator or a court, and "1793000000" is not a figure
+            // anybody can act on — it reads as a hundred times the truth to
+            // whoever does not know the convention.
+            {
+              label: 'Forecast final cost',
+              value: cvr ? formatMoney(Number(cvr.forecastFinalCostMinor), currency) : '—',
+            },
             { label: 'Forecast margin', value: cvr ? `${String(cvr.forecastMarginPercent)}%` : '—' },
           ],
         },
@@ -303,7 +317,7 @@ export class ExportService {
           : ['Risk', 'Category', 'Severity'],
         rows: risks.slice(0, 20).map((r) => {
           const row = [String(r.state.title), String(r.state.category), String(r.state.severity)];
-          return commercialVisible ? [...row, String(r.state.expectedCostMinor)] : row;
+          return commercialVisible ? [...row, formatMoney(Number(r.state.expectedCostMinor ?? 0), currency)] : row;
         }),
       },
     );
@@ -406,6 +420,18 @@ export class ExportService {
   }
 
   /** Render a document model to self-contained HTML, branded. */
+  /**
+   * Render to PDF.
+   *
+   * The format an adjudicator, an insurer or a court asks for. Rendered from
+   * the same document model the HTML comes from and hashed before either — what
+   * a reader holds is the content that was attested, rather than whatever a
+   * browser's print pipeline made of it.
+   */
+  toPdf(document: ExportDocument): Uint8Array {
+    return renderPdf(document);
+  }
+
   toHtml(document: ExportDocument): string {
     const escape = (text: string): string =>
       text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

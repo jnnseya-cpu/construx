@@ -35,6 +35,7 @@ export async function audit(root) {
         <div class="actions">
           <button class="btn" id="replay">Run verification replay</button>
           ${can('EVIDENCE_AUDIT', 'I') ? html`<button class="btn quiet" id="export">Export audit pack</button>` : ''}
+          ${can('EVIDENCE_AUDIT', 'I') ? html`<button class="btn quiet" id="pdf">Download report PDF</button>` : ''}
         </div>
       </div>
 
@@ -233,6 +234,23 @@ export async function audit(root) {
     }
     button.disabled = false;
     button.textContent = 'Run verification replay';
+  });
+
+  document.getElementById('pdf')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = 'Rendering…';
+    try {
+      // Rendered from the same document the hash was taken over, rather than
+      // from whatever a browser's print pipeline makes of the page.
+      const { filename } = await api.download(`/v1/projects/${projectId}/exports/report.pdf`, { audience: 'ADJUDICATOR' });
+      toast('Report downloaded', `${filename} — branded, hashed and recorded as an export`, 'ok');
+    } catch (error) {
+      if (error.code === 'EXPORT_NOT_ENTITLED') toast('Not on this plan', error.message, 'warn');
+      else toast('Could not render', error.message, 'err');
+    }
+    button.disabled = false;
+    button.textContent = 'Download report PDF';
   });
 
   document.getElementById('export')?.addEventListener('click', async (event) => {

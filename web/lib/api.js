@@ -104,10 +104,51 @@ async function request(method, path, body, options = {}) {
   return payload;
 }
 
+/**
+ * Fetch a file and hand it to the browser to save.
+ *
+ * Separate from `request` because the response is bytes, not JSON — parsing a
+ * PDF as JSON throws on the first byte, and a failure that reads as a syntax
+ * error tells nobody what went wrong. A refusal still arrives as problem+json,
+ * so that path is read as JSON and surfaced as the denial it is.
+ */
+async function download(path, body, options = {}) {
+  const attempt = { ...options, idempotencyKey: crypto.randomUUID() };
+  let response = await send('POST', path, body ?? {}, attempt, session.get()?.accessToken);
+
+  if (response.status === 401 && !options.anonymous) {
+    const token = await rotate();
+    if (token) response = await send('POST', path, body ?? {}, attempt, token);
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new ApiError(text ? JSON.parse(text) : {}, response.status);
+  }
+
+  // The filename the platform chose, which is the document's own reference.
+  // Falling back to the route name would put "report.pdf" in every downloads
+  // folder and make two of them indistinguishable.
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'document.pdf';
+
+  const url = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+
+  return { filename };
+}
+
 export const api = {
   get: (path, options) => request('GET', path, undefined, options),
   post: (path, body, options) => request('POST', path, body ?? {}, options),
   put: (path, body, options) => request('PUT', path, body ?? {}, options),
+  download,
 };
 
 // --- domain helpers ---------------------------------------------------------

@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 812 passing, 0 failing, across 38 files |
+| Tests | 829 passing, 0 failing, across 39 files |
 | Typecheck | clean |
 | Backend | 81 TypeScript files, 35,927 lines |
 | Application | 25 ES modules, 7,199 lines (plus a service worker) |
-| API routes | 211 |
+| API routes | 212 |
 | Event types | 172, closed catalogue |
 | Entity types | 108, all classified for access |
 | Runtime dependencies | none |
@@ -192,6 +192,41 @@ decision.
 
 A package with no pricing schedule at all is included, which a consolidation
 reading only schedules would miss entirely.
+
+**PDF, written by hand.** The format an adjudicator, an insurer or a court asks
+for, and the one the exporter could not produce. "Print the web page" is not an
+answer when the document carries a content hash: a browser's print pipeline
+re-flows the content, so what was hashed and what was printed are not the same
+artefact.
+
+`src/export/pdf.ts` writes the file directly — objects, content streams, and the
+byte-offset cross-reference table that is the only part a reader is strict
+about. Text uses the standard 14 fonts, which every reader has and none of which
+need embedding; that is what makes it possible with no dependency, and it is
+also why Adobe's published AFM widths are present as data. Without real widths
+lines break in the wrong place and text runs off the page, and an approximation
+is not good enough for a document going to a court.
+
+Headings, paragraphs, key-value pairs, lists and tables lay out on A4. Pages
+break where the content runs out of room and table headers repeat across the
+break. Every page carries the client's name, the document reference, the page
+number against the total and the content hash — a page separated from an
+evidence bundle should still say what it belongs to. Em dashes, curly quotes and
+currency symbols are mapped to WinAnsi rather than mangled; a character with no
+representation becomes a visible question mark rather than being dropped
+silently, because a sentence that reads correctly and says something different
+is worse.
+
+`POST /v1/projects/:id/exports/report.pdf` returns the file itself under the
+document's own reference, through a `binary` route flag — base64 in a JSON
+envelope is not a file a browser saves with the right name. Building it found
+that the report was putting **raw minor units** in front of an adjudicator:
+"1793000000" reads as a hundred times the truth to anybody who does not know the
+convention. Money is now formatted in the project's own currency, not the
+platform default.
+
+What this does not do is typeset. No hyphenation, no kerning, no widow control,
+no vector graphics. That is stated rather than implied.
 
 **Registers that close.** Clashes, site observations and the scope breakdown
 could previously only grow. Clash closeout records how, and for a model revision
@@ -1031,7 +1066,6 @@ named so it is not mistaken for finished.
 | Evidence capture | Real SHA-256 over the real file, recorded against the event | No object store for the file itself |
 | Clause extraction | From supplied text | OCR and table extraction |
 | 4D scheduling | Twin states link to task ids | No visualisation |
-| PDF export | Structured document model and HTML rendering | PDF rendering |
 | Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded | No bounce processing or suppression list; DKIM belongs at the relay, where the key should live |
 
 ---
