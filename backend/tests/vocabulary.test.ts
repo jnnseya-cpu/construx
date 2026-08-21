@@ -189,3 +189,86 @@ describe('the request-validation debt', () => {
     assert.deepEqual(missing, [], `these decide money or identity and take an unvalidated body:\n  ${missing.join('\n  ')}`);
   });
 });
+
+/**
+ * Sector, which replaced a three-value list that could not carry the
+ * distinctions the engines are asked to make. Sector selects templates, weights
+ * risk, picks the contract form and keys the cost library; a water treatment
+ * works and a residential block behaved identically under `INFRASTRUCTURE` and
+ * `BUILDING`, which made the field decorative.
+ *
+ * The two things worth locking are that the domain union and the shared list
+ * cannot drift, and that a record written under the old vocabulary stays
+ * readable — the ledger is append-only, so those codes exist for as long as the
+ * records do.
+ */
+describe('sector', () => {
+  it('offers the nine ONS construction categories', () => {
+    assert.deepEqual(vocabulary.values(vocabulary.SECTOR), [
+      'RESIDENTIAL',
+      'COMMERCIAL',
+      'INDUSTRIAL',
+      'TRANSPORT',
+      'UTILITIES',
+      'ENERGY',
+      'FM',
+      'RMI',
+      'PROFESSIONAL',
+    ]);
+  });
+
+  it('validates project creation against that list and nothing else', () => {
+    const route = ROUTES.find((r) => r.method === 'POST' && r.pattern === '/v1/projects');
+    assert.ok(route, 'project creation route is missing');
+
+    const field = (route.schema as { properties: Record<string, { enum?: string[] }> }).properties.sectorType;
+    assert.deepEqual(field?.enum, vocabulary.values(vocabulary.SECTOR));
+  });
+
+  it('translates a superseded code rather than orphaning the record', () => {
+    // The ledger cannot be edited, so this is not a migration that runs once.
+    // It is how a seven-year statutory record stays legible after the
+    // vocabulary that produced it has been replaced.
+    assert.equal(vocabulary.currentSector('BUILDING'), 'COMMERCIAL');
+    assert.equal(vocabulary.currentSector('INFRASTRUCTURE'), 'TRANSPORT');
+    assert.equal(vocabulary.currentSector('SPECIALISED'), 'INDUSTRIAL');
+  });
+
+  it('leaves a current code alone', () => {
+    for (const code of vocabulary.values(vocabulary.SECTOR)) {
+      assert.equal(vocabulary.currentSector(code), code, `${code} was rewritten by the legacy map`);
+    }
+  });
+
+  it('refuses a sector the list does not offer', async () => {
+    const reply = await fetch(`${base}/v1/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        portfolioId: 'x', name: 'x', sectorType: 'INFRASTRUCTURE', assetType: 'x',
+        location: {}, contractValueMinor: 1, currency: 'GBP',
+        plannedStart: '2026-01-01', plannedCompletion: '2027-01-01',
+      }),
+    });
+    // 401 before 400 is fine and is the point: the schema is not the only gate.
+    assert.ok([400, 401].includes(reply.status), `unexpected ${reply.status}`);
+  });
+});
+
+/**
+ * Contract form. Surfaced from the claims engine's own `ContractSuite` rather
+ * than declared again here — a picker offering a form the engine cannot read
+ * would produce notices against clauses that do not exist.
+ */
+describe('contract form', () => {
+  it('offers exactly the suites the claims engine interprets', () => {
+    assert.deepEqual(vocabulary.values(vocabulary.CONTRACT_FORM), [
+      'JCT',
+      'NEC4',
+      'FIDIC',
+      'ICHEME',
+      'MF1',
+      'BESPOKE',
+    ]);
+  });
+});

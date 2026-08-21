@@ -1,6 +1,7 @@
 import { api } from '../lib/api.js';
 import { badge, date, html, humanise, money, pct, raw, render, statusTone, table } from '../lib/ui.js';
 import { state } from '../app.js';
+import { sectorLabel } from '../lib/enums.js';
 
 /**
  * Enterprise & Portfolio.
@@ -81,7 +82,7 @@ export async function enterprise(root) {
           align: ['', '', '', 'num', '', ''],
           rows: projects.projects.map((p) => [
             p.name,
-            humanise(p.sectorType),
+            sectorLabel(p.sectorType),
             `${p.location?.city ?? ''}, ${p.location?.countryCode ?? ''}`,
             money(p.contractValueMinor, p.currency),
             badge(humanise(p.phase), p.phase === 'OPERATIONS' ? 'ok' : 'info'),

@@ -111,3 +111,66 @@ export const WEATHER_CONDITION = opts([
   ['SNOW', 'Snow'],
   ['HEAT', 'Excessive heat'],
 ]);
+
+/**
+ * Sector, on the classification the industry and its statistics already use.
+ *
+ * It replaces a three-value list — `BUILDING | INFRASTRUCTURE | SPECIALISED` —
+ * that could not carry the distinctions the platform is asked to reason about.
+ * Sector drives template selection, risk weighting, contract form and the cost
+ * library, and none of those behave the same way for a water treatment works
+ * and a residential block. Calling both `INFRASTRUCTURE` or both `BUILDING`
+ * makes the sector field decorative.
+ *
+ * The nine are the ONS construction-output categories, so a figure produced
+ * here can be set against a published one without a mapping table in between.
+ * `RMI` is repair, maintenance and improvement — existing-asset work, which
+ * prices and programmes unlike new build and is why it is its own category
+ * rather than a flag on the others.
+ */
+export const SECTOR = opts([
+  ['RESIDENTIAL', 'Residential'],
+  ['COMMERCIAL', 'Commercial'],
+  ['INDUSTRIAL', 'Industrial'],
+  ['TRANSPORT', 'Transport'],
+  ['UTILITIES', 'Utilities'],
+  ['ENERGY', 'Energy'],
+  ['FM', 'Facilities management'],
+  ['RMI', 'Repair, maintenance and improvement'],
+  ['PROFESSIONAL', 'Professional services'],
+]);
+
+/**
+ * Sector codes that predate the list above, and what each becomes on read.
+ *
+ * The ledger is append-only, so a record committed under the old vocabulary
+ * keeps the code it was written with — it cannot be edited and should not be.
+ * Reading is where the translation belongs. `SPECIALISED` has no honest single
+ * answer, so it goes to `INDUSTRIAL`, the category it was used for in practice.
+ *
+ * This map is not a migration that will one day be run and deleted. It is how
+ * old records stay readable for as long as they exist, which for a seven-year
+ * statutory record is longer than the vocabulary that replaced them.
+ */
+export const LEGACY_SECTOR = {
+  BUILDING: 'COMMERCIAL',
+  INFRASTRUCTURE: 'TRANSPORT',
+  SPECIALISED: 'INDUSTRIAL',
+};
+
+/** Resolve any sector code — current or superseded — to a current one. */
+export const currentSector = (code) => LEGACY_SECTOR[code] ?? code;
+
+/**
+ * Standard forms of contract. The same list the claims engine reasons about:
+ * a picker offering a form the engine cannot interpret would produce notices
+ * against clauses that do not exist.
+ */
+export const CONTRACT_FORM = opts([
+  ['JCT', 'JCT'],
+  ['NEC4', 'NEC4'],
+  ['FIDIC', 'FIDIC'],
+  ['ICHEME', 'IChemE'],
+  ['MF1', 'MF/1'],
+  ['BESPOKE', 'Bespoke'],
+]);

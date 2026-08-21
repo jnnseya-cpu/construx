@@ -319,7 +319,7 @@ describe('the trend, which is the only PPC worth reading', () => {
     const { projectId } = structure.createProject(admin, {
       portfolioId: String(portfolios[0]!.state.id),
       name: 'Lookahead trend blank slate',
-      sectorType: 'INFRASTRUCTURE',
+      sectorType: 'TRANSPORT',
       assetType: 'Pumping station',
       location: { continentCode: 'EU', countryCode: 'GB', city: 'Leeds' },
       contractValueMinor: 120_000_000,

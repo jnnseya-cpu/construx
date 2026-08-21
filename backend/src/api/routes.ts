@@ -1,4 +1,4 @@
-import { SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
+import { SECTOR, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
 import { ask } from '../ai/conversation.ts';
 import * as signup from '../identity/signup.ts';
 import * as site from '../site/index.ts';
@@ -1429,7 +1429,10 @@ export const ROUTES: Route[] = [
         portfolioId: stringField,
         programmeId: { type: 'string' },
         name: stringField,
-        sectorType: { type: 'string', enum: ['BUILDING', 'INFRASTRUCTURE', 'SPECIALISED'] },
+        // From the shared vocabulary, so the picker the browser renders and the
+        // enum this validates against are the same bytes rather than two lists
+        // that happen to agree.
+        sectorType: { type: 'string', enum: values(SECTOR) },
         assetType: stringField,
         location: { type: 'object' },
         contractValueMinor: { type: 'integer', minimum: 0 },

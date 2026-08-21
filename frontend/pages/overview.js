@@ -1,6 +1,7 @@
 import { api, entityBundle, isWithheld } from '../lib/api.js';
 import { badge, date, days, html, money, pct, raw, render, statusTone, table, time, humanise } from '../lib/ui.js';
 import { state } from '../app.js';
+import { sectorLabel } from '../lib/enums.js';
 
 /**
  * Project Command Centre.
@@ -84,7 +85,7 @@ export async function overview(root) {
       <div class="view-head">
         <div>
           <h1>${project.name}</h1>
-          <p>${humanise(project.sectorType)} · ${project.assetType} · ${project.location.city}, ${project.location.countryCode}</p>
+          <p>${sectorLabel(project.sectorType)} · ${project.assetType} · ${project.location.city}, ${project.location.countryCode}</p>
         </div>
         <div class="actions">
           <button class="btn ghost" data-nav="copilot">Ask the copilot</button>

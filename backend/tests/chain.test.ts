@@ -144,7 +144,7 @@ describe('1 · Business development', () => {
     const { opportunityId } = business.registerOpportunity(ctx, {
       title: 'Riverside flood alleviation',
       clientName: 'Environment Agency',
-      sectorType: 'INFRASTRUCTURE',
+      sectorType: 'TRANSPORT',
       estimatedValueMinor: 2_400_000_00,
       source: 'Framework mini-competition',
     });
@@ -163,7 +163,7 @@ describe('1 · Business development', () => {
     const { opportunityId } = business.registerOpportunity(ctx, {
       title: 'Speculative office fit-out',
       clientName: 'Unknown developer',
-      sectorType: 'BUILDING',
+      sectorType: 'COMMERCIAL',
       estimatedValueMinor: 800_000_00,
       source: 'Cold approach',
     });
@@ -204,7 +204,7 @@ describe('1 · Business development', () => {
       business.registerOpportunity(ctx, {
         title,
         clientName: 'Assorted clients',
-        sectorType: 'BUILDING',
+        sectorType: 'COMMERCIAL',
         estimatedValueMinor: valueMinor,
         source: 'Tender portal',
       }).opportunityId;
@@ -272,7 +272,7 @@ describe('1 · Business development', () => {
     const id = business.registerOpportunity(other, {
       title: 'Anything at all',
       clientName: 'A client',
-      sectorType: 'BUILDING',
+      sectorType: 'COMMERCIAL',
       estimatedValueMinor: 500_000_00,
       source: 'Relationship',
     }).opportunityId;
@@ -293,7 +293,7 @@ describe('1 → 5 · Business development hands to project management', () => {
     const { opportunityId } = business.registerOpportunity(ctx, {
       title: 'Ashworth WTW Phase 3',
       clientName: 'Meridian Water',
-      sectorType: 'INFRASTRUCTURE',
+      sectorType: 'TRANSPORT',
       estimatedValueMinor: 12_000_000_00,
       source: 'Repeat client',
       countryCode: 'GB',
@@ -330,7 +330,7 @@ describe('1 → 5 · Business development hands to project management', () => {
     const { opportunityId } = business.registerOpportunity(ctx, {
       title: 'Declined scheme',
       clientName: 'A client',
-      sectorType: 'BUILDING',
+      sectorType: 'COMMERCIAL',
       estimatedValueMinor: 100_000_00,
       source: 'Portal',
     });

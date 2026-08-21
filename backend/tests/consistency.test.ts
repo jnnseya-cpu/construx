@@ -34,7 +34,7 @@ function bareProject(name: string): string {
   return structure.createProject(admin, {
     portfolioId: String(portfolios[0]!.state.id),
     name,
-    sectorType: 'INFRASTRUCTURE',
+    sectorType: 'TRANSPORT',
     assetType: 'Pumping station',
     location: { continentCode: 'EU', countryCode: 'GB', city: 'Derby' },
     contractValueMinor: 500_000_00,

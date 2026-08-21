@@ -31,7 +31,7 @@ const profile = (over: Partial<radar.CompanyProfile> = {}): radar.CompanyProfile
   netAssetsMinor: 1_500_000_00,
   workingCapitalMinor: 400_000_00,
   regions: ['Manchester', 'Leeds'],
-  sectors: ['INFRASTRUCTURE'],
+  sectors: ['TRANSPORT'],
   cpvCodes: ['45232400'],
   valueBandMinor: { min: 200_000_00, max: 4_000_000_00 },
   insurances: [
@@ -40,8 +40,8 @@ const profile = (over: Partial<radar.CompanyProfile> = {}): radar.CompanyProfile
   ],
   accreditations: ['CHAS', 'ISO 9001'],
   references: [
-    { clientName: 'A Water Co', projectName: 'Pumping station', sector: 'INFRASTRUCTURE', valueMinor: 900_000_00, completedYear: 2024, verified: true },
-    { clientName: 'B Council', projectName: 'Depot', sector: 'BUILDING', valueMinor: 300_000_00, completedYear: 2023, verified: false },
+    { clientName: 'A Water Co', projectName: 'Pumping station', sector: 'TRANSPORT', valueMinor: 900_000_00, completedYear: 2024, verified: true },
+    { clientName: 'B Council', projectName: 'Depot', sector: 'COMMERCIAL', valueMinor: 300_000_00, completedYear: 2023, verified: false },
   ],
   selfDeliveredTrades: ['GROUNDWORKS', 'CONCRETE'],
   targetMarginPercent: { min: 8, max: 12 },
@@ -54,7 +54,7 @@ const notice = (over: Partial<radar.OpportunityNotice> = {}): radar.OpportunityN
   title: 'Pumping station refurbishment',
   clientName: 'A Water Co',
   region: 'Manchester',
-  sector: 'INFRASTRUCTURE',
+  sector: 'TRANSPORT',
   cpvCodes: ['45232400'],
   estimatedValueMinor: 1_200_000_00,
   durationWeeks: 30,
@@ -77,7 +77,7 @@ describe('Screening a notice against the company', () => {
     assert.equal(result.eligible, true);
     assert.equal(result.qualification.recommendation, 'BID');
     assert.ok(result.strengths.some((s) => s.includes('Manchester')));
-    assert.ok(result.strengths.some((s) => s.includes('INFRASTRUCTURE reference')));
+    assert.ok(result.strengths.some((s) => s.includes('TRANSPORT reference')));
     assert.ok(result.strengths.some((s) => s.includes('CPV')));
     assert.equal(result.competition, 'LOW');
   });
@@ -109,19 +109,19 @@ describe('Screening a notice against the company', () => {
   it('never counts an unverified reference as capability', () => {
     // The building reference on the profile is unverified. Claiming it is
     // exactly the kind of thing a bid gets disqualified for.
-    const result = screen({}, { sector: 'BUILDING', requirements: { experience: [{ sector: 'BUILDING', minimumProjects: 1 }] } });
+    const result = screen({}, { sector: 'COMMERCIAL', requirements: { experience: [{ sector: 'COMMERCIAL', minimumProjects: 1 }] } });
 
     assert.equal(result.eligible, false);
-    assert.ok(result.risks.some((r) => r.includes('No verified corporate reference in BUILDING')));
-    assert.ok(!result.strengths.some((s) => s.includes('BUILDING reference')));
+    assert.ok(result.risks.some((r) => r.includes('No verified corporate reference in COMMERCIAL')));
+    assert.ok(!result.strengths.some((s) => s.includes('COMMERCIAL reference')));
   });
 
   it('states the value threshold it applied, so the failure does not contradict the strength', () => {
     // Without the threshold in the reason, "0 references" sits next to "1
     // verified reference" and the reader cannot tell which is wrong.
-    const result = screen({}, { requirements: { experience: [{ sector: 'INFRASTRUCTURE', minimumProjects: 1, minimumValueMinor: 2_000_000_00 }] } });
+    const result = screen({}, { requirements: { experience: [{ sector: 'TRANSPORT', minimumProjects: 1, minimumValueMinor: 2_000_000_00 }] } });
 
-    const failure = result.eligibilityFailures.find((f) => f.requirement.includes('INFRASTRUCTURE'))!;
+    const failure = result.eligibilityFailures.find((f) => f.requirement.includes('TRANSPORT'))!;
     assert.match(failure.requirement, /at £2,000,000\+/);
     assert.match(failure.reason, /1 verified reference in sector, largest £900,000/);
   });
@@ -134,7 +134,7 @@ describe('Screening a notice against the company', () => {
   });
 
   it('offers to partner the package when the reference is what is missing', () => {
-    const result = screen({}, { sector: 'BUILDING', requirements: { experience: [{ sector: 'BUILDING', minimumProjects: 2 }] } });
+    const result = screen({}, { sector: 'COMMERCIAL', requirements: { experience: [{ sector: 'COMMERCIAL', minimumProjects: 2 }] } });
     assert.ok(result.mitigations.some((m) => m.includes('Partner or subcontract')));
     assert.ok(result.mitigations.some((m) => m.includes('named personnel experience')));
   });

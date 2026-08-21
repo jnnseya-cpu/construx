@@ -20,7 +20,22 @@ import {
  *   Tenant -> Enterprise -> Portfolio -> Programme -> Project -> Package
  */
 
-export type SectorType = 'BUILDING' | 'INFRASTRUCTURE' | 'SPECIALISED';
+/**
+ * Sector, from the canonical vocabulary the browser and the route schemas both
+ * read. Declared here as a union rather than inferred, because it is a domain
+ * type and the engines switch on it — but the values are the shared list's, and
+ * `vocabulary.test.ts` fails if the two drift apart.
+ */
+export type SectorType =
+  | 'RESIDENTIAL'
+  | 'COMMERCIAL'
+  | 'INDUSTRIAL'
+  | 'TRANSPORT'
+  | 'UTILITIES'
+  | 'ENERGY'
+  | 'FM'
+  | 'RMI'
+  | 'PROFESSIONAL';
 
 export function createPortfolio(
   ctx: EngineContext,

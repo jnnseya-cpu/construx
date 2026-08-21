@@ -242,7 +242,7 @@ describe('The standard against a real project', () => {
     const { projectId } = structure.createProject(admin, {
       portfolioId: String(portfolios[0]!.state.id),
       name: 'Kielder spillway strengthening',
-      sectorType: 'INFRASTRUCTURE',
+      sectorType: 'TRANSPORT',
       assetType: 'Reservoir spillway',
       location: { continentCode: 'EU', countryCode: 'GB', city: 'Hexham' },
       contractValueMinor: 940_000_000,
@@ -283,7 +283,7 @@ describe('The standard against a real project', () => {
     const second = structure.createProject(admin, {
       portfolioId: String(portfolios[0]!.state.id),
       name: 'Derwent intake refurbishment',
-      sectorType: 'INFRASTRUCTURE',
+      sectorType: 'TRANSPORT',
       assetType: 'Raw water intake',
       location: { continentCode: 'EU', countryCode: 'GB', city: 'Consett' },
       contractValueMinor: 410_000_000,

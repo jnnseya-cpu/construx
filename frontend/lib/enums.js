@@ -18,14 +18,32 @@
 
 export {
   CHANGE_ORIGIN,
+  CONTRACT_FORM,
   DELAY_CAUSE,
   DISCIPLINE,
   NOTICE_TYPE,
   OBSERVATION_TYPE,
   RISK_CATEGORY,
+  SECTOR,
   SITE_OBSERVATION_CATEGORY,
   WEATHER_CONDITION,
 } from '/shared/vocabulary.js';
+
+import { SECTOR as SECTOR_LIST, currentSector } from '/shared/vocabulary.js';
+
+/**
+ * The display name for a sector code, including one written under the previous
+ * vocabulary.
+ *
+ * `humanise()` cannot do this job. It title-cases a token, so `RMI` renders as
+ * "Rmi" and `FM` as "Fm", and it has no idea that `INFRASTRUCTURE` is a code
+ * this list no longer contains. The label belongs to the vocabulary that owns
+ * the code.
+ */
+export function sectorLabel(code) {
+  const current = currentSector(code);
+  return SECTOR_LIST.find((option) => option.value === current)?.label ?? String(code ?? '');
+}
 
 /** Today as an ISO date, for defaulting date pickers without a clock in markup. */
 export function today() {

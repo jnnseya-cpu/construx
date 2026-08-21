@@ -137,7 +137,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     {
       title: 'Ashworth Water Treatment Works — Phase 2',
       clientName: 'Northern Water Authority',
-      sectorType: 'INFRASTRUCTURE',
+      sectorType: 'UTILITIES',
       valueMinor: 1_850_000_000,
       source: 'Framework mini-competition',
       scores: {
@@ -150,7 +150,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     {
       title: 'Coastal outfall renewal, Whitby',
       clientName: 'Coastal Drainage Board',
-      sectorType: 'INFRASTRUCTURE',
+      sectorType: 'UTILITIES',
       valueMinor: 620_000_000,
       source: 'Tender portal',
       scores: {
@@ -163,7 +163,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     {
       title: 'Speculative office fit-out, Leeds',
       clientName: 'Aldgate Developments',
-      sectorType: 'BUILDING',
+      sectorType: 'COMMERCIAL',
       valueMinor: 84_000_000,
       source: 'Cold approach',
       scores: {
@@ -176,7 +176,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     {
       title: 'Reservoir spillway strengthening, Kielder',
       clientName: 'Northern Water Authority',
-      sectorType: 'INFRASTRUCTURE',
+      sectorType: 'UTILITIES',
       valueMinor: 940_000_000,
       source: 'Repeat client',
       scores: {
@@ -189,7 +189,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     {
       title: 'Marine berth reconstruction, Immingham',
       clientName: 'Humber Ports Group',
-      sectorType: 'INFRASTRUCTURE',
+      sectorType: 'TRANSPORT',
       valueMinor: 2_300_000_000,
       source: 'Invitation',
       scores: {
@@ -238,7 +238,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     netAssetsMinor: 1_950_000_000,
     workingCapitalMinor: 900_000_000,
     regions: ['Manchester', 'Leeds', 'Liverpool', 'Sheffield', 'Hexham'],
-    sectors: ['INFRASTRUCTURE', 'BUILDING'],
+    sectors: ['UTILITIES', 'TRANSPORT', 'COMMERCIAL'],
     cpvCodes: ['45232400', '45252100', '45231300'],
     valueBandMinor: { min: 500_000_00, max: 4_000_000_000 },
     insurances: [
@@ -248,9 +248,9 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     ],
     accreditations: ['CHAS', 'Constructionline Gold', 'ISO 9001', 'ISO 45001'],
     references: [
-      { clientName: 'Northern Water Authority', projectName: 'Ashworth WTW Phase 1', sector: 'INFRASTRUCTURE', valueMinor: 1_400_000_000, completedYear: 2024, verified: true },
-      { clientName: 'Coastal Drainage Board', projectName: 'Seaton pumping station', sector: 'INFRASTRUCTURE', valueMinor: 620_000_000, completedYear: 2023, verified: true },
-      { clientName: 'Pennine Councils', projectName: 'Depot rationalisation', sector: 'BUILDING', valueMinor: 310_000_000, completedYear: 2023, verified: true },
+      { clientName: 'Northern Water Authority', projectName: 'Ashworth WTW Phase 1', sector: 'TRANSPORT', valueMinor: 1_400_000_000, completedYear: 2024, verified: true },
+      { clientName: 'Coastal Drainage Board', projectName: 'Seaton pumping station', sector: 'TRANSPORT', valueMinor: 620_000_000, completedYear: 2023, verified: true },
+      { clientName: 'Pennine Councils', projectName: 'Depot rationalisation', sector: 'COMMERCIAL', valueMinor: 310_000_000, completedYear: 2023, verified: true },
     ],
     selfDeliveredTrades: ['GROUNDWORKS', 'CONCRETE', 'DRAINAGE'],
     targetMarginPercent: { min: 8, max: 12 },
@@ -265,7 +265,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
         title: 'Reservoir spillway strengthening, Kielder',
         clientName: 'Northern Water Authority',
         region: 'Hexham',
-        sector: 'INFRASTRUCTURE',
+        sector: 'TRANSPORT',
         cpvCodes: ['45232400'],
         estimatedValueMinor: 940_000_000,
         durationWeeks: 74,
@@ -275,7 +275,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
           minimumTurnoverMinor: 5_000_000_000,
           insurances: [{ type: 'Public liability', minimumLimitMinor: 1_000_000_000 }],
           accreditations: ['CHAS'],
-          experience: [{ sector: 'INFRASTRUCTURE', minimumProjects: 2, minimumValueMinor: 500_000_000 }],
+          experience: [{ sector: 'TRANSPORT', minimumProjects: 2, minimumValueMinor: 500_000_000 }],
         },
         estimatedBidders: 4,
         source: 'Find a Tender',
@@ -285,7 +285,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
         title: 'Secondary school refurbishment, Birmingham',
         clientName: 'Midlands Education Trust',
         region: 'Birmingham',
-        sector: 'BUILDING',
+        sector: 'COMMERCIAL',
         estimatedValueMinor: 38_000_000,
         durationWeeks: 14,
         deadline: '2026-03-27',
@@ -293,7 +293,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
         requirements: {
           minimumTurnoverMinor: 1_000_000_000,
           accreditations: ['CHAS'],
-          experience: [{ sector: 'BUILDING', minimumProjects: 3 }],
+          experience: [{ sector: 'COMMERCIAL', minimumProjects: 3 }],
         },
         estimatedBidders: 6,
         source: 'Contracts Finder',
@@ -303,7 +303,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
         title: 'Trunk road widening, M62 J20-22',
         clientName: 'National Highways',
         region: 'Rochdale',
-        sector: 'INFRASTRUCTURE',
+        sector: 'TRANSPORT',
         estimatedValueMinor: 18_000_000_000,
         durationWeeks: 156,
         deadline: '2026-05-08',
@@ -320,7 +320,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
         title: 'Water treatment inlet works, Liverpool',
         clientName: 'Mersey Water',
         region: 'Liverpool',
-        sector: 'INFRASTRUCTURE',
+        sector: 'TRANSPORT',
         cpvCodes: ['45252100'],
         estimatedValueMinor: 2_100_000_000,
         durationWeeks: 88,
@@ -329,7 +329,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
         requirements: {
           minimumTurnoverMinor: 6_000_000_000,
           insurances: [{ type: 'Professional indemnity', minimumLimitMinor: 500_000_000 }],
-          experience: [{ sector: 'INFRASTRUCTURE', minimumProjects: 2 }],
+          experience: [{ sector: 'TRANSPORT', minimumProjects: 2 }],
         },
         estimatedBidders: 12,
         source: 'Client framework',
@@ -339,7 +339,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
         title: 'Hospital energy centre, Norwich',
         clientName: 'East Anglia NHS Trust',
         region: 'Norwich',
-        sector: 'BUILDING',
+        sector: 'COMMERCIAL',
         estimatedValueMinor: 620_000_000,
         durationWeeks: 62,
         deadline: '2026-04-30',
@@ -347,7 +347,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
         requirements: {
           minimumTurnoverMinor: 3_000_000_000,
           accreditations: ['CHAS', 'ISO 14001'],
-          experience: [{ sector: 'BUILDING', minimumProjects: 2, minimumValueMinor: 400_000_000 }],
+          experience: [{ sector: 'COMMERCIAL', minimumProjects: 2, minimumValueMinor: 400_000_000 }],
         },
         estimatedBidders: 8,
         source: 'Find a Tender',
@@ -383,7 +383,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     portfolioId,
     programmeId,
     name: 'Ashworth Water Treatment Works — Phase 2',
-    sectorType: 'INFRASTRUCTURE',
+    sectorType: 'UTILITIES',
     assetType: 'Water treatment facility',
     location: { continentCode: 'EU', countryCode: 'GB', city: 'Manchester' },
     contractValueMinor: 1_850_000_000,
