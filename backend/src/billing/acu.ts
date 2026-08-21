@@ -91,19 +91,65 @@ export type ACUAlert = {
 /**
  * Volume incentive: large consumers get a lower effective multiplier while the
  * platform stays profitable. Thresholds are on monthly *raw* AI spend.
+ *
+ * Rebased when the headline rate moved from 3x to 4x, keeping the same shape of
+ * discount rather than leaving the bands where they were — which would have
+ * made every large customer cheaper than the headline by accident, and quietly
+ * turned the volume incentive into a way to pay less than the stated price
+ * without qualifying for anything.
  */
 const VOLUME_BANDS: Array<{ upToRawMinor: number; multiplier: number }> = [
-  { upToRawMinor: 200_000, multiplier: 3.0 },
-  { upToRawMinor: 1_000_000, multiplier: 2.7 },
-  { upToRawMinor: Number.POSITIVE_INFINITY, multiplier: 2.5 },
+  { upToRawMinor: 200_000, multiplier: 4.0 },
+  { upToRawMinor: 1_000_000, multiplier: 3.6 },
+  { upToRawMinor: Number.POSITIVE_INFINITY, multiplier: 3.3 },
 ];
 
+/**
+ * What a unit of provider cost is charged at, for this tenant, this month.
+ *
+ * Two rules, and the second is a guard rather than a policy: the headline rate
+ * is 4x, the volume incentive may discount it, and nothing may take it below
+ * `minimumMultiplier`. That floor is what makes "the platform never sells AI
+ * at a loss" a property of the code rather than a property of whoever last
+ * edited the bands — a band table is exactly the kind of constant somebody
+ * tunes without re-deriving what it does to the margin.
+ */
 export function effectiveMultiplier(monthlyRawSpendMinor: number, volumeIncentiveEnabled: boolean): number {
-  if (!volumeIncentiveEnabled) return config.billing.markupMultiplier;
+  const floor = config.billing.minimumMultiplier;
+  if (!volumeIncentiveEnabled) return Math.max(config.billing.markupMultiplier, floor);
   for (const band of VOLUME_BANDS) {
-    if (monthlyRawSpendMinor <= band.upToRawMinor) return band.multiplier;
+    if (monthlyRawSpendMinor <= band.upToRawMinor) return Math.max(band.multiplier, floor);
   }
-  return config.billing.markupMultiplier;
+  return Math.max(config.billing.markupMultiplier, floor);
+}
+
+/**
+ * The ACU credit a subscription payment buys.
+ *
+ * A fixed share of what the customer pays for the plan is credited to their AI
+ * wallet; the rest carries no provider cost against it. Rounded *down* to a
+ * whole minor unit, because an ACU is a minor unit and a fraction of one cannot
+ * be spent — rounding up would credit money that does not exist.
+ */
+export function subscriptionAcuAllocationMinor(monthlyPriceMinor: number): number {
+  if (!Number.isInteger(monthlyPriceMinor) || monthlyPriceMinor <= 0) return 0;
+  return Math.floor((monthlyPriceMinor * config.billing.subscriptionAcuAllocationPercent) / 100);
+}
+
+/**
+ * ACUs from money, and money from ACUs.
+ *
+ * One ACU is one minor unit, so £1 is 100 ACUs. The conversion is a function
+ * rather than a bare multiplication at each call site because it is the kind of
+ * arithmetic that gets inlined slightly differently in five places and then
+ * disagrees with itself.
+ */
+export function acusFromMinor(minorUnits: number): number {
+  return Math.floor(minorUnits / config.billing.acuUnitMinor);
+}
+
+export function minorFromAcus(acus: number): number {
+  return acus * config.billing.acuUnitMinor;
 }
 
 export type Hold = {
@@ -179,6 +225,45 @@ export class ACUWallet {
       },
       amountMinor,
     );
+  }
+
+  /**
+   * Credit the AI allowance a subscription payment buys.
+   *
+   * Recorded as its own entry type-note rather than as a top-up, so the invoice
+   * can tell the two apart: a top-up is money the customer chose to spend on
+   * AI, and this is the share of a plan they already paid for. Reconciliation
+   * needs to know which is which, and so does anybody asking why the balance
+   * moved without a purchase.
+   */
+  allocateFromSubscription(monthlyPriceMinor: number, period: string): ACUEntry | undefined {
+    const amountMinor = subscriptionAcuAllocationMinor(monthlyPriceMinor);
+    // A free plan allocates nothing. Recording a zero entry would put a line on
+    // the invoice saying the customer received nothing, which is noise.
+    if (amountMinor <= 0) return undefined;
+
+    // Once per period, and the period is the key rather than a call count.
+    // Invoices get reissued — a correction, a retry, an operator pressing the
+    // button twice — and each reissue crediting another month of AI would hand
+    // out an allowance nobody paid for.
+    if (this.hasAllocationFor(period)) return undefined;
+
+    return this.#record(
+      {
+        type: 'GRANT',
+        billedMinor: amountMinor,
+        rawCostMinor: 0,
+        acuUnits: acusFromMinor(amountMinor),
+        effectiveMultiplier: 0,
+        note: `Subscription AI allowance (${config.billing.subscriptionAcuAllocationPercent}% of the plan) — ${period}`,
+      },
+      amountMinor,
+    );
+  }
+
+  /** Whether this period's subscription allowance has already been credited. */
+  hasAllocationFor(period: string): boolean {
+    return this.#entries.some((entry) => entry.type === 'GRANT' && entry.note?.endsWith(`— ${period}`) === true);
   }
 
   setCaps(caps: ACUCaps): void {

@@ -29,7 +29,9 @@ describe('ACU wallet', () => {
   });
 
   it('halts AI execution once credit is exhausted', () => {
-    const w = wallet(300);
+    // Sized from the multiplier rather than from a literal, so the fixture
+    // follows the price instead of quietly encoding last quarter's.
+    const w = wallet(100 * config.billing.markupMultiplier);
     const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
     w.settle(hold.holdId, 100, 'OPENAI');
     assert.equal(w.snapshot().availableMinor, 0);
@@ -38,10 +40,13 @@ describe('ACU wallet', () => {
   });
 
   it('ring-fences held funds so a second call cannot spend them', () => {
-    const w = wallet(600);
+    // Two calls' worth of credit at the current rate, so the fixture tracks
+    // the price rather than restating a number from a previous one.
+    const charge = 100 * config.billing.markupMultiplier;
+    const w = wallet(charge * 2);
     w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
-    assert.equal(w.snapshot().heldMinor, 300);
-    assert.equal(w.snapshot().availableMinor, 300);
+    assert.equal(w.snapshot().heldMinor, charge);
+    assert.equal(w.snapshot().availableMinor, charge);
     throwsCode(() => w.reserve({ aiRequestId: 'req-2', estimatedRawCostMinor: 200 }), 'ACU_EXHAUSTED');
   });
 
@@ -87,7 +92,12 @@ describe('ACU wallet', () => {
 
   it('raises alerts once per threshold', () => {
     const w = wallet(100_000);
-    w.setCaps({ monthlyMinor: 1_000 });
+    // Sized so three calls at the current rate land at 90% of the cap: high
+    // enough to cross the 50% and 80% thresholds, low enough that nothing
+    // breaches — a breach would halt execution and this test would be
+    // measuring the cap rather than the alerts.
+    const charge = 100 * config.billing.markupMultiplier;
+    w.setCaps({ monthlyMinor: Math.ceil((charge * 3) / 0.9) });
     for (const request of ['r1', 'r2', 'r3']) {
       const hold = w.reserve({ aiRequestId: request, estimatedRawCostMinor: 100 });
       w.settle(hold.holdId, 100, 'OPENAI');
@@ -119,12 +129,24 @@ describe('ACU wallet', () => {
 
 describe('volume incentive', () => {
   it('holds the full multiplier at low monthly spend', () => {
-    assert.equal(effectiveMultiplier(100_000, true), 3.0);
+    assert.equal(effectiveMultiplier(100_000, true), 4.0);
   });
 
   it('steps down for larger consumers while staying above cost', () => {
-    assert.equal(effectiveMultiplier(500_000, true), 2.7);
-    assert.equal(effectiveMultiplier(5_000_000, true), 2.5);
+    assert.equal(effectiveMultiplier(500_000, true), 3.6);
+    assert.equal(effectiveMultiplier(5_000_000, true), 3.3);
+  });
+
+  it('never discounts through the floor, whatever the bands say', () => {
+    // The guard that makes "the platform never sells AI at a loss" a property
+    // of the code rather than of whoever last tuned the band table. Every rate
+    // the incentive can produce is at or above the floor.
+    for (const spend of [0, 100_000, 500_000, 5_000_000, Number.MAX_SAFE_INTEGER]) {
+      assert.ok(
+        effectiveMultiplier(spend, true) >= config.billing.minimumMultiplier,
+        `a monthly spend of ${spend} priced below the ${config.billing.minimumMultiplier}x floor`,
+      );
+    }
   });
 
   it('is off unless enabled for the tenant', () => {
@@ -258,9 +280,9 @@ describe('invoicing', () => {
 
     const invoice = buildInvoice(subscription, w, new Date().toISOString().slice(0, 7));
     assert.equal(invoice.subscriptionMinor, PACKAGES.PROFESSIONAL_DELIVERY.monthlyPriceMinor);
-    assert.equal(invoice.aiUsageMinor, 300);
+    assert.equal(invoice.aiUsageMinor, 100 * config.billing.markupMultiplier);
     assert.equal(invoice.aiRawCostMinor, 100);
-    assert.equal(invoice.effectiveMultiplier, 3);
+    assert.equal(invoice.effectiveMultiplier, config.billing.markupMultiplier);
     assert.equal(invoice.totalMinor, invoice.subscriptionMinor + invoice.aiUsageMinor);
     assert.ok(invoice.commercialTerms.some((t) => t.includes('no AI usage entitlement')));
   });

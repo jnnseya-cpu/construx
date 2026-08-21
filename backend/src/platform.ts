@@ -156,6 +156,14 @@ export class Platform {
     // Every tenant, paid or trial, starts with the trial grant so AI can be
     // tried without a payment method — and stops when it runs out.
     wallet.grantTrialCredit();
+    // A paid plan additionally credits its AI allowance for the first period.
+    // A free plan allocates nothing and therefore has only the trial grant,
+    // which is the whole reason AI stops working on a trial that runs out
+    // rather than continuing on credit nobody paid for.
+    wallet.allocateFromSubscription(
+      PACKAGES[subscription.package].monthlyPriceMinor,
+      new Date().toISOString().slice(0, 7),
+    );
     this.#wallets.set(tenantId, wallet);
 
     const systemActor = { refType: 'System' as const, refId: 'platform' };
@@ -649,7 +657,16 @@ export class Platform {
   }
 
   issueInvoice(tenantId: string, period: string): Invoice {
-    const invoice = buildInvoice(this.subscription(tenantId), this.wallet(tenantId), period, this.tenant(tenantId).defaultCurrency);
+    const subscription = this.subscription(tenantId);
+
+    // Billing the period is what buys the period's AI allowance, so it is
+    // credited here rather than on a timer. The wallet refuses a second
+    // allocation for the same period, which is what makes a reissued invoice
+    // safe — an invoice gets corrected and retried, and each retry handing out
+    // another month of AI would be free money.
+    this.wallet(tenantId).allocateFromSubscription(PACKAGES[subscription.package].monthlyPriceMinor, period);
+
+    const invoice = buildInvoice(subscription, this.wallet(tenantId), period, this.tenant(tenantId).defaultCurrency);
 
     this.ledger.commit({
       tenantId,

@@ -5,6 +5,7 @@ import { throwsCode } from './helpers.ts';
 import { createGateway } from '../src/api/gateway.ts';
 import { ROUTES } from '../src/api/routes.ts';
 import { ACUWallet } from '../src/billing/acu.ts';
+import { config } from '../src/config.ts';
 import { AIOrchestrator } from '../src/ai/orchestrator.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
@@ -164,13 +165,17 @@ describe('the quote agrees with the reservation it precedes', () => {
   });
 
   it('accounts for funds already held by a call in flight', () => {
-    const w = wallet(2_400);
+    // Sized from the multiplier so the arithmetic follows the price rather
+    // than restating a number from an earlier one. A first call of 300 raw is
+    // held; a second of 500 raw costs exactly what is left and is affordable,
+    // and at 501 it is not — the quote has to know before it is offered rather
+    // than after the click.
+    const rate = config.billing.markupMultiplier;
+    const w = wallet(800 * rate);
     w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 300 });
 
-    // 900 held of 2,400 leaves 1,500. A second action at 500 raw costs exactly
-    // that and is affordable; at 501 it is not, and the quote has to know
-    // before it is offered rather than after the click.
-    assert.equal(w.snapshot().availableMinor, 1_500);
+    assert.equal(w.snapshot().heldMinor, 300 * rate);
+    assert.equal(w.snapshot().availableMinor, 500 * rate);
     assert.equal(w.quote(500).blockedReason, undefined);
     assert.ok(w.quote(501).blockedReason);
   });

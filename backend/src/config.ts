@@ -98,9 +98,33 @@ export const config = {
   },
 
   billing: {
-    /** Hard economic rule: GBP/USD 1 of provider cost is charged at 3. */
-    markupMultiplier: num('ACU_MARKUP_MULTIPLIER', 3),
+    /**
+     * Hard economic rule: 1 unit of provider cost is charged at 4.
+     *
+     * Revenue 4, cost 1, so the gross margin on AI is 75% and the markup is
+     * 300%. Those are two names for the same arithmetic and are worth keeping
+     * straight, because "100% margin" and "100% markup" differ by a factor of
+     * two and both get said in the same conversation.
+     */
+    markupMultiplier: num('ACU_MARKUP_MULTIPLIER', 4),
+    /**
+     * The floor the volume incentive may never discount through: the platform
+     * always at least doubles its money on a provider call. 100% markup.
+     */
+    minimumMultiplier: num('ACU_MINIMUM_MULTIPLIER', 2),
+    /**
+     * One ACU is one minor unit, so £1 buys 100 ACUs and $1 buys 100. Stated
+     * as its own value rather than assumed, because a currency with a
+     * different exponent — a yen has no minor unit, a dinar has three — would
+     * otherwise silently change what an ACU is worth.
+     */
     acuUnitMinor: num('ACU_UNIT_MINOR', 1),
+    acuPerMajorUnit: num('ACU_PER_MAJOR_UNIT', 100),
+    /**
+     * The share of every subscription payment credited to the tenant's AI
+     * wallet. The rest carries no provider cost against it.
+     */
+    subscriptionAcuAllocationPercent: num('ACU_SUBSCRIPTION_ALLOCATION_PERCENT', 30),
     freeTrialGrantMinor: num('FREE_TRIAL_GRANT_MINOR', 500),
   },
 

@@ -1,5 +1,6 @@
 import { esc } from '../messaging/render.ts';
 import { PACKAGES } from '../billing/seats.ts';
+import { config } from '../config.ts';
 import { formatMoney } from '../domain/locale.ts';
 import { NOTIFICATION_EVENTS, CATEGORIES } from '../notifications/catalogue.ts';
 import { EVENT_TYPES } from '../goldenthread/eventTypes.ts';
@@ -546,6 +547,11 @@ export function getStarted(): string {
         <ul class="plan-list">
           <li>${t.includedSeats === null ? 'Unlimited identities' : `${t.includedSeats} identities included`}</li>
           <li>${t.storageGb === null ? 'Unlimited storage' : `${t.storageGb} GB storage`}</li>
+          <li>${
+            t.aiAllowanceAcus > 0
+              ? `<b>${t.aiAllowanceAcus.toLocaleString('en-GB')} ACUs</b> of AI included each month`
+              : `${config.billing.freeTrialGrantMinor.toLocaleString('en-GB')} trial ACUs, once`
+          }</li>
           <li class="${t.export ? 'yes' : 'no'}">${t.export ? 'Branded export and print' : 'No export or print'}</li>
           <li class="${t.apiAccess ? 'yes' : 'no'}">${t.apiAccess ? 'API access' : 'No API access'}</li>
         </ul>
@@ -563,6 +569,23 @@ export function getStarted(): string {
 
 <section class="prose">
   <div class="wrap narrow">
+    <h2>How AI is paid for</h2>
+    <p>
+      Every plan credits <b>${config.billing.subscriptionAcuAllocationPercent}% of what you pay</b> to your AI wallet
+      each month. £1 buys 100 ACUs, so a £950 plan includes £285 — 28,500 ACUs — of AI. Provider cost is charged at
+      ${config.billing.markupMultiplier}×, so that allowance covers £71.25 of actual model spend.
+    </p>
+    <p>
+      <b>When the ACUs run out, AI stops.</b> Not a warning, not an overdraft, not a surprise line on next month's
+      invoice — the work is refused and the platform says why. Every AI action is priced before you press the button,
+      from what that action has actually cost on your account rather than from a list price, and you can set a monthly
+      cap per account or per project that halts spend at a number you chose.
+    </p>
+    <p>
+      Top up whenever you want more. Unused allowance is exactly what it looks like: credit on the account, recorded
+      as its own entry so an invoice can tell an allowance from a purchase.
+    </p>
+
     <h2>What a trial does and does not include</h2>
     <p>
       A trial governs, records and computes — the whole product minus the thing you would take to a client. Every

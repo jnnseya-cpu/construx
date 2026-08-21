@@ -4,6 +4,7 @@ import { ulid } from '../core/ids.ts';
 import { DomainError, NotFoundError, ValidationError } from '../core/errors.ts';
 import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
 import type { Platform } from '../platform.ts';
+import { acusFromMinor, subscriptionAcuAllocationMinor } from '../billing/acu.ts';
 import { PACKAGES, type PackageTier } from '../billing/seats.ts';
 import type { Role } from './roles.ts';
 
@@ -66,6 +67,10 @@ export type AccountType = {
   apiAccess: boolean;
   /** Whether a stranger can provision this without talking to anybody. */
   selfServe: boolean;
+  /** The share of the plan credited to the AI wallet, in minor units. */
+  aiAllowanceMinor: number;
+  /** The same figure in ACUs. One ACU is one minor unit, so £1 is 100. */
+  aiAllowanceAcus: number;
 };
 
 /** Every account type, with what it includes and whether it is self-serve. */
@@ -82,6 +87,11 @@ export function accountTypes(): AccountType[] {
       export: definition.export,
       apiAccess: definition.apiAccess,
       selfServe: SELF_SERVE_PACKAGES.includes(code),
+      // Published rather than left implicit: a customer choosing a plan is
+      // choosing an AI budget, and a plan that does not say how much AI it
+      // includes is one they will discover the answer to when it stops.
+      aiAllowanceMinor: subscriptionAcuAllocationMinor(definition.monthlyPriceMinor),
+      aiAllowanceAcus: acusFromMinor(subscriptionAcuAllocationMinor(definition.monthlyPriceMinor)),
     };
   });
 }
