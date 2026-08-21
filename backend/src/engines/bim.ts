@@ -1031,3 +1031,111 @@ export function specificationCoverage(ctx: EngineContext): SpecificationCoverage
 
   return assessCoverage(clauses, criteria, ctx.ledger.list(ctx.projectId, 'Specification').length);
 }
+
+/**
+ * What late design information is costing.
+ *
+ * The design command centre could say how many RFIs were overdue and by how
+ * long. It could not say what that was worth, which is the only form in which
+ * the number reaches a commercial conversation — "eleven RFIs overdue" gets
+ * noted, "£412,500 of exposure" gets acted on.
+ *
+ * ---
+ *
+ * **What this refuses to fabricate.** An RFI carries a discipline and a linked
+ * drawing; it carries no activity reference. So nothing in the record proves
+ * which RFI sits on the critical path, and a figure that assumed every overdue
+ * RFI delays completion would be a large confident number built on an
+ * assumption the data does not support.
+ *
+ * The exposure is therefore reported as **conditional and bounded**: this is
+ * what the worst overdue RFI costs *if* it sits on the critical chain, at the
+ * contract's own damages rate, and the response says so in the same breath as
+ * the figure. Float is subtracted first, because days absorbed by float cost
+ * nothing — that is what float is for, and a model that charged for them would
+ * overstate every project with slack in it.
+ *
+ * **And it names what would make it exact.** An activity reference on an RFI
+ * turns every figure here from conditional into computed. That is a one-field
+ * change to the capture command and it is worth more than any refinement of the
+ * arithmetic, so it is reported rather than left as a comment nobody reads.
+ */
+export type DesignDelayExposure = {
+  /** Overdue RFIs, and the total days of information owed. */
+  overdueCount: number;
+  totalDaysOverdue: number;
+  /** The single worst, which is what sets the exposure. */
+  worstDaysOverdue: number;
+  /**
+   * Days of programme slack before any delay reaches completion — the minimum
+   * total float across the critical and near-critical activities.
+   */
+  floatDays: number;
+  /** Days by which the worst RFI exceeds the float. Zero while float absorbs it. */
+  daysBeyondFloatIfCritical: number;
+  /** Damages per day under the contract. The anchor for the money. */
+  dailyDamagesMinor: number;
+  /** `daysBeyondFloatIfCritical` at the damages rate. Conditional, and labelled so. */
+  exposureIfCriticalMinor: number;
+  /** Why the figure is conditional, in the words the console should print. */
+  qualification: string;
+  /** The one change that would make it exact. */
+  toMakeExact?: string;
+};
+
+export function designDelayExposure(
+  ctx: EngineContext,
+  today = new Date().toISOString().slice(0, 10),
+): DesignDelayExposure {
+  authorise(ctx, 'DESIGN_INFORMATION', 'R');
+
+  const rfis = ctx.ledger.list(ctx.projectId, 'RFI').map((record) => record.state);
+  const overdue = rfis
+    .filter((r) => r.status !== 'ANSWERED' && typeof r.dueDate === 'string' && today > String(r.dueDate))
+    .map((r) => Math.max(0, Math.round((Date.parse(today) - Date.parse(String(r.dueDate))) / 86_400_000)));
+
+  const totalDaysOverdue = overdue.reduce((sum, days) => sum + days, 0);
+  const worstDaysOverdue = overdue.reduce((most, days) => Math.max(most, days), 0);
+
+  // Float from the programme rather than from an assumption. Where no baseline
+  // exists there is no float to spend, and treating that as zero float is the
+  // conservative reading — it is also the true one: a project with no baseline
+  // cannot demonstrate slack.
+  const baseline = ctx.ledger.list(ctx.projectId, 'ProgrammeBaseline').at(-1);
+  const nearCritical = (baseline?.state.nearCritical ?? []) as Array<{ totalFloat?: number }>;
+  const floatDays = nearCritical.length > 0
+    ? Math.max(0, Math.min(...nearCritical.map((a) => Number(a.totalFloat ?? 0))))
+    : 0;
+
+  const contract = ctx.ledger.list(ctx.projectId, 'Contract').at(-1);
+  const dailyDamagesMinor = Number(contract?.state.liquidatedDamagesPerDayMinor ?? 0);
+
+  const daysBeyondFloatIfCritical = Math.max(0, worstDaysOverdue - floatDays);
+
+  return {
+    overdueCount: overdue.length,
+    totalDaysOverdue,
+    worstDaysOverdue,
+    floatDays,
+    daysBeyondFloatIfCritical,
+    dailyDamagesMinor,
+    exposureIfCriticalMinor: daysBeyondFloatIfCritical * dailyDamagesMinor,
+    qualification:
+      // Three states, not two. "Float absorbs the delay: 0 days of slack
+      // against 0 days overdue" is what the first version printed when nothing
+      // was overdue at all — technically true and it reads as a project running
+      // on empty float, which is close to the opposite of the truth.
+      overdue.length === 0
+        ? 'No design information is overdue. Nothing is being consumed.'
+        : daysBeyondFloatIfCritical === 0
+          ? `Float absorbs it: ${floatDays} days of slack against ${worstDaysOverdue} days overdue.`
+          : `If the worst overdue RFI sits on the critical path. ${floatDays} days of float absorb the first part; the remaining ${daysBeyondFloatIfCritical} are priced at the contract damages rate.`,
+    // Only worth saying where there is something to be exact about.
+    ...(overdue.length > 0
+      ? {
+          toMakeExact:
+            'An RFI carries a discipline and a drawing, not an activity. With an activity reference the exposure is computed rather than conditional — and only the RFIs actually on the critical chain would count.',
+        }
+      : {}),
+  };
+}

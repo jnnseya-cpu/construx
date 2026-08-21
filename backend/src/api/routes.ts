@@ -2549,6 +2549,14 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'GET',
+    pattern: '/v1/projects/:projectId/rfi/exposure',
+    description: 'What late design information is costing, priced at the contract damages rate',
+    readOnly: true,
+    handler: (platform, ctx) =>
+      bim.designDelayExposure(projectContext(platform, ctx), ctx.query.get('today') ?? undefined),
+  },
+  {
+    method: 'GET',
     pattern: '/v1/projects/:projectId/rfi/position',
     description: 'The RFI register as a delay exhibit: what is overdue and for how long',
     handler: (platform, ctx) => bim.rfiPosition(projectContext(platform, ctx)),

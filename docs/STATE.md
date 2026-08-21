@@ -1458,6 +1458,28 @@ Verified against a running server: a project created in Columbus, Ohio at
 per-field problem+json error; and the estate's contract-value card switched to
 "mixed currencies" rather than adding dollars to pounds.
 
+**Late design information is priced.** The design centre could say how many
+RFIs were overdue and by how long; it could not say what that was worth, which
+is the only form in which the number reaches a commercial conversation.
+
+What the endpoint refuses to fabricate is the load-bearing part. An RFI carries
+a discipline and a linked drawing and **no activity reference**, so nothing in
+the record proves which RFI sits on the critical path. A figure that assumed
+every overdue RFI delays completion would be a large confident number built on
+an assumption the data does not support. So the exposure is reported as
+conditional and bounded — what the *worst single* RFI costs *if* it sits on the
+critical chain, at the contract's own damages rate — and the qualification
+travels with the figure rather than living in a comment.
+
+Float is subtracted first, because days absorbed by float cost nothing; that is
+what float is for. And the response names the one change that would make it
+exact: an activity reference on an RFI turns every figure from conditional into
+computed, which is worth more than any refinement of the arithmetic.
+
+Three overdue RFIs at 30, 20 and 10 days are not sixty days of delay. The
+exposure takes the worst, never the sum — a test asserts it, because summing is
+the arithmetic that produces an eye-catching wrong number.
+
 **Contra charges, and the notice that decides whether they are money.** The gap
 matrix listed the purchase ledger as absent; most of it was not.
 `ledgerPosition` already gave committed against certified against paid, with

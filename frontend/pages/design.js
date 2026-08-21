@@ -1,7 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { DISCIPLINE } from '../lib/enums.js';
-import { badge, date, html, humanise, pct, raw, render, statusTone, table } from '../lib/ui.js';
+import { badge, date, html, humanise, money, pct, raw, render, statusTone, table } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -38,6 +38,10 @@ export async function design(root) {
   // stayed open, and whether the answers arrived after they were needed.
   const rfi = await api.get(`/v1/projects/${projectId}/rfi/position`).catch(() => null);
 
+  // What the late information is worth. "Eleven RFIs overdue" gets noted;
+  // a figure in money gets acted on.
+  const exposure = await api.get(`/v1/projects/${projectId}/rfi/exposure`).catch(() => null);
+
   // Not the count. What is still critical, and where a closeout left the model
   // describing something that was not built.
   const clashes = await api.get(`/v1/projects/${projectId}/bim/clashes/position`).catch(() => null);
@@ -66,6 +70,44 @@ export async function design(root) {
           ]))}
         </div>
       </div>
+
+      ${
+        exposure && exposure.overdueCount > 0
+          ? html`<div class="card" style="margin-bottom:14px">
+              <h3>What the late design information is costing</h3>
+              <div class="grid g4" style="margin-top:10px">
+                <div>
+                  <div class="metric-sub">Overdue</div>
+                  <div class="metric">${exposure.overdueCount}</div>
+                  <div class="metric-sub">worst ${exposure.worstDaysOverdue}d late</div>
+                </div>
+                <div>
+                  <div class="metric-sub">Programme float</div>
+                  <div class="metric">${exposure.floatDays}d</div>
+                  <div class="metric-sub">before any delay reaches completion</div>
+                </div>
+                <div>
+                  <div class="metric-sub">Beyond float</div>
+                  <div class="metric ${raw(exposure.daysBeyondFloatIfCritical > 0 ? 'bad' : 'good')}">
+                    ${exposure.daysBeyondFloatIfCritical}d
+                  </div>
+                  <div class="metric-sub">${money(exposure.dailyDamagesMinor)} per day under the contract</div>
+                </div>
+                <div>
+                  <div class="metric-sub">Exposure if critical</div>
+                  <div class="metric ${raw(exposure.exposureIfCriticalMinor > 0 ? 'bad' : 'good')}">
+                    ${money(exposure.exposureIfCriticalMinor)}
+                  </div>
+                  <div class="metric-sub">at the contract damages rate</div>
+                </div>
+              </div>
+              <div class="metric-sub" style="margin-top:11px">
+                ${exposure.qualification}
+                ${exposure.toMakeExact ? html`<br><b>To make it exact:</b> ${exposure.toMakeExact}` : ''}
+              </div>
+            </div>`
+          : ''
+      }
 
       ${
         criticalClashes.length > 0
