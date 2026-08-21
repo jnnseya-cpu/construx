@@ -1,3 +1,4 @@
+import { SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
 import { ask } from '../ai/conversation.ts';
 import type { Engine } from '../ai/orchestrator.ts';
 import type { ProviderCapability } from '../ai/providers/types.ts';
@@ -1114,7 +1115,14 @@ export const ROUTES: Route[] = [
         assetType: stringField,
         location: { type: 'object' },
         contractValueMinor: { type: 'integer', minimum: 0 },
-        currency: stringField,
+        // Constrained to the currencies the platform actually counts in. It was
+        // an unconstrained string, and a project created with a currency code
+        // that does not exist is not a bad field — it is a permanently broken
+        // record. The ledger is append-only, so the value cannot be corrected,
+        // and every read that formats money against it raises CurrencyError.
+        // Verified against a running server before this was changed:
+        // currency "not-a-currency" was accepted and the project created.
+        currency: { type: 'string', enum: Object.keys(CURRENCIES) },
         plannedStart: stringField,
         plannedCompletion: stringField,
       },
@@ -1542,7 +1550,7 @@ export const ROUTES: Route[] = [
           type: 'object',
           required: ['conditions', 'workingStopped'],
           properties: {
-            conditions: { type: 'string', minLength: 1 },
+            conditions: { type: 'string', enum: values(WEATHER_CONDITION) },
             temperatureC: { type: 'number' },
             workingStopped: { type: 'boolean' },
             hoursLost: { type: 'number', minimum: 0 },
@@ -1583,10 +1591,8 @@ export const ROUTES: Route[] = [
       type: 'object',
       required: ['category', 'description', 'location', 'observedBy', 'requiresAction', 'evidenceHash'],
       properties: {
-        category: {
-          type: 'string',
-          enum: ['QUALITY', 'PROGRESS', 'HOUSEKEEPING', 'ACCESS', 'ENVIRONMENTAL', 'WORKMANSHIP', 'MATERIALS'],
-        },
+        // The same list the site-walk dropdown offers, not a second copy of it.
+        category: { type: 'string', enum: values(SITE_OBSERVATION_CATEGORY) },
         description: { type: 'string', minLength: 10 },
         location: stringField,
         taskId: stringField,
@@ -1681,6 +1687,33 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/cost/payment-cycle',
     description: 'Engine C — generate the statutory payment cycle',
+    // This one decides statutory dates, so it is validated even though the
+    // surrounding routes are not yet. `cycles` drives a loop in a single-
+    // threaded process and was unbounded; `startDate` reached `new Date()`
+    // unchecked, and an unparseable one writes Invalid Date into an append-only
+    // record that cannot afterwards be corrected.
+    schema: {
+      type: 'object',
+      required: ['contractId', 'startDate', 'cycles', 'terms', 'direction'],
+      properties: {
+        contractId: stringField,
+        startDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}' },
+        cycles: { type: 'integer', minimum: 1, maximum: 120 },
+        direction: { type: 'string', enum: ['UPSTREAM', 'DOWNSTREAM'] },
+        terms: {
+          type: 'object',
+          required: ['applicationDayOfMonth', 'paymentNoticeDays', 'payLessNoticeDaysBeforeFinal', 'finalDateDays'],
+          properties: {
+            applicationDayOfMonth: { type: 'integer', minimum: 1, maximum: 28 },
+            paymentNoticeDays: { type: 'integer', minimum: 0, maximum: 90 },
+            payLessNoticeDaysBeforeFinal: { type: 'integer', minimum: 0, maximum: 90 },
+            finalDateDays: { type: 'integer', minimum: 0, maximum: 365 },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
     handler: (platform, ctx) => cost.generatePaymentSchedule(projectContext(platform, ctx), body(ctx)),
   },
   {

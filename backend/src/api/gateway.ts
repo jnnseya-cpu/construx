@@ -38,9 +38,15 @@ import { serveStatic } from './static.ts';
 // Anchored to this module rather than to the working directory, so the service
 // starts the same way from a container, a systemd unit or a developer's shell.
 const HERE = dirname(fileURLToPath(import.meta.url));
-const WEB_ROOT = join(HERE, '..', '..', '..', 'frontend');
+const REPO_ROOT = join(HERE, '..', '..', '..');
+const WEB_ROOT = join(REPO_ROOT, 'frontend');
 const APP_SHELL = join(WEB_ROOT, 'index.html');
 const LANDING = join(WEB_ROOT, 'landing.html');
+// The canonical vocabulary, served as the same bytes the route schemas
+// validate against. Mounted separately rather than copied into the frontend:
+// a copy is the thing this is meant to prevent.
+const SHARED_ROOT = join(REPO_ROOT, 'shared');
+const SHARED_PREFIX = '/shared/';
 
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
 
@@ -115,6 +121,16 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
       res.end(html);
       logRequest(ctx, 200);
       return;
+    }
+
+    // The shared vocabulary, from its own root. Served ahead of the frontend so
+    // a file placed at frontend/shared/ could never shadow it.
+    if (ctx.method === 'GET' && ctx.path.startsWith(SHARED_PREFIX)) {
+      const result = await serveStatic(SHARED_ROOT, ctx.path.slice(SHARED_PREFIX.length - 1), res, traceId);
+      if (result.served) {
+        logRequest(ctx, 200);
+        return;
+      }
     }
 
     // Static assets: stylesheets, client modules, images.
