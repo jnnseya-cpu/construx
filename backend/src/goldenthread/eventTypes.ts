@@ -349,6 +349,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('WORK_ORDER_RAISED', 'WorkOrder', 'CREATE', 'HANDOVER_OM'),
   def('WORK_ORDER_CLOSED', 'WorkOrder', 'APPROVE', 'HANDOVER_OM', { requiresEvidence: true }),
   def('MAINTENANCE_FORECAST_PRODUCED', 'MaintenanceForecast', 'AI_EXECUTE', 'HANDOVER_OM', { aiAllowed: true }),
+  // What the asset costs to run. The one FM question with no record behind it:
+  // everything else on that centre was derivable and this had to be captured,
+  // because deriving a cost nobody recorded is inventing one.
+  def('OPERATING_COST_RECORDED', 'OperatingCost', 'CREATE', 'HANDOVER_OM', { requiresEvidence: true }),
 
   // --- AI & billing ---------------------------------------------------------
   def('AI_REQUEST_QUEUED', 'AIRequest', 'CREATE', 'AI_BILLING'),

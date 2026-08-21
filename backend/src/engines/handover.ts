@@ -589,6 +589,326 @@ export async function forecastMaintenance(
 }
 
 /** Snag with trade dispatch by cost code — the routing that gets it actually fixed. */
+/**
+ * What it costs to run the asset.
+ *
+ * The one genuinely absent panel on the FM centre: nothing captured energy or
+ * reactive-maintenance spend, so "what is costing money" had no record to read.
+ * Everything else in that centre was derivable from records that existed; this
+ * was not, and deriving it would have meant inventing it.
+ *
+ * Recorded per period against the whole facility or one asset. Per asset where
+ * it can be attributed, because "the building used £40,000 of electricity" is a
+ * bill and "chiller 2 used £9,000 of it" is a decision about whether to replace
+ * it — and lifecycle replacement is the question this register exists to answer.
+ */
+export type OperatingCostCategory = 'ENERGY' | 'WATER' | 'REACTIVE_MAINTENANCE' | 'PLANNED_MAINTENANCE' | 'CONSUMABLES' | 'STATUTORY_INSPECTION' | 'CLEANING' | 'SECURITY';
+
+export function recordOperatingCost(
+  ctx: EngineContext,
+  input: {
+    period: string;
+    category: OperatingCostCategory;
+    amountMinor: number;
+    /** Attributed to one asset where it can be. Absent means the whole facility. */
+    assetId?: string;
+    /** Consumption in the category's own unit — kWh, m³. Money alone hides a tariff rise. */
+    quantity?: number;
+    unit?: string;
+    narrative: string;
+    evidenceHash: string;
+  },
+): { costId: string } {
+  authorise(ctx, 'HANDOVER_OM', 'C', { lifecyclePhase: currentPhase(ctx) });
+
+  if (input.assetId) ctx.ledger.require({ refType: 'AssetRegisterItem', refId: input.assetId });
+  if (input.amountMinor < 0) {
+    throw new DomainError('OPERATING_COST_NEGATIVE', 'A negative operating cost is a credit note, and belongs on the invoice it corrects');
+  }
+
+  const evidence = registerEvidence(ctx, {
+    type: 'OPERATING_COST_EVIDENCE',
+    hash: input.evidenceHash,
+    description: `${input.category} for ${input.period}: ${input.narrative.slice(0, 60)}`,
+    linkedEntities: input.assetId ? [{ refType: 'AssetRegisterItem', refId: input.assetId }] : [],
+  });
+
+  const costId = ulid();
+  write(ctx, {
+    eventType: 'OPERATING_COST_RECORDED',
+    entity: { refType: 'OperatingCost', refId: costId },
+    nextState: {
+      id: costId,
+      projectId: ctx.projectId,
+      ...input,
+      recordedBy: ctx.auth.actorId,
+      recordedAt: new Date().toISOString(),
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return { costId };
+}
+
+/**
+ * The operating position: what is happening, what is at risk, what it costs.
+ *
+ * Four of the FM centre's nine panels were partial for one reason — the asset
+ * register was listable and nothing aggregated it. A list of assets is not an
+ * operating position any more than a list of events is an audit.
+ *
+ * Two judgements are worth stating because they decide what the numbers mean.
+ *
+ * **Reactive against planned is the headline, not total spend.** A facility
+ * spending more in total but less of it reactively is being run better, and a
+ * total alone cannot tell those apart. Where the split cannot be computed — no
+ * cost recorded at all — the ratio is null rather than zero, because zero
+ * reactive spend and no records are opposite facts.
+ *
+ * **An asset past its expected life is reported as due rather than failed.**
+ * Plenty of plant runs long past its design life; what the register can honestly
+ * say is that its replacement is no longer a surprise, and what that would cost.
+ */
+export type OperatingPosition = {
+  assets: { total: number; byClass: Array<{ assetClass: string; count: number; replacementCostMinor: number }> };
+  /** Replacement value of everything at or past its expected life. */
+  lifeExpired: { count: number; replacementCostMinor: number; assets: Array<{ assetTag: string; description: string; installedAt: string; expectedLifeYears: number; replacementCostMinor: number }> };
+  warranties: { active: number; expiringWithin90Days: number; expired: number };
+  workOrders: { open: number; overdue: number; byPriority: Array<{ priority: string; open: number; overdue: number }> };
+  defects: { open: number; underWarranty: number; notCovered: number };
+  cost: {
+    recorded: boolean;
+    totalMinor: number;
+    byCategory: Array<{ category: string; amountMinor: number }>;
+    reactiveMinor: number;
+    plannedMinor: number;
+    /** Reactive as a share of maintenance spend. Null where nothing is recorded. */
+    reactiveShare: number | null;
+  };
+  summary: string;
+  /** What is absent from the answer, where anything is. */
+  notRecorded?: string;
+};
+
+export function operatingPosition(
+  ctx: EngineContext,
+  today = new Date().toISOString().slice(0, 10),
+): OperatingPosition {
+  authorise(ctx, 'HANDOVER_OM', 'R');
+
+  const assets = ctx.ledger.list(ctx.projectId, 'AssetRegisterItem').map((record) => record.state);
+  const byClass = new Map<string, { count: number; replacementCostMinor: number }>();
+  const lifeExpired: OperatingPosition['lifeExpired']['assets'] = [];
+
+  for (const asset of assets) {
+    const assetClass = String(asset.assetClass ?? 'Unclassified');
+    const entry = byClass.get(assetClass) ?? { count: 0, replacementCostMinor: 0 };
+    entry.count += 1;
+    entry.replacementCostMinor += Number(asset.replacementCostMinor ?? 0);
+    byClass.set(assetClass, entry);
+
+    const installed = String(asset.installedAt ?? '').slice(0, 10);
+    const life = Number(asset.expectedLifeYears ?? 0);
+    if (installed !== '' && life > 0) {
+      const due = new Date(Date.parse(installed));
+      due.setUTCFullYear(due.getUTCFullYear() + life);
+      if (due.toISOString().slice(0, 10) <= today) {
+        lifeExpired.push({
+          assetTag: String(asset.assetTag),
+          description: String(asset.description),
+          installedAt: installed,
+          expectedLifeYears: life,
+          replacementCostMinor: Number(asset.replacementCostMinor ?? 0),
+        });
+      }
+    }
+  }
+
+  const inNinetyDays = new Date(Date.parse(today) + 90 * 86_400_000).toISOString().slice(0, 10);
+  const warrantyRecords = ctx.ledger.list(ctx.projectId, 'Warranty').map((record) => record.state);
+  const warranties = {
+    active: warrantyRecords.filter((w) => String(w.expiryDate) > today).length,
+    expiringWithin90Days: warrantyRecords.filter((w) => String(w.expiryDate) > today && String(w.expiryDate) <= inNinetyDays).length,
+    expired: warrantyRecords.filter((w) => String(w.expiryDate) <= today).length,
+  };
+
+  const orders = ctx.ledger.list(ctx.projectId, 'WorkOrder').map((record) => record.state);
+  const open = orders.filter((o) => o.status !== 'CLOSED');
+  const priorities = ['EMERGENCY', 'HIGH', 'MEDIUM', 'LOW'];
+  const workOrders = {
+    open: open.length,
+    overdue: open.filter((o) => String(o.dueDate ?? '') !== '' && String(o.dueDate) < today).length,
+    byPriority: priorities.map((priority) => ({
+      priority,
+      open: open.filter((o) => o.priority === priority).length,
+      overdue: open.filter((o) => o.priority === priority && String(o.dueDate ?? '') !== '' && String(o.dueDate) < today).length,
+    })),
+  };
+
+  const defectRecords = ctx.ledger.list(ctx.projectId, 'Defect').map((record) => record.state);
+  const openDefects = defectRecords.filter((d) => d.status !== 'CLOSED');
+  const defects = {
+    open: openDefects.length,
+    underWarranty: openDefects.filter((d) => d.warrantyCovered === true).length,
+    notCovered: openDefects.filter((d) => d.warrantyCovered !== true).length,
+  };
+
+  const costs = ctx.ledger.list(ctx.projectId, 'OperatingCost').map((record) => record.state);
+  const byCategory = new Map<string, number>();
+  for (const cost of costs) {
+    const category = String(cost.category);
+    byCategory.set(category, (byCategory.get(category) ?? 0) + Number(cost.amountMinor ?? 0));
+  }
+  const reactiveMinor = byCategory.get('REACTIVE_MAINTENANCE') ?? 0;
+  const plannedMinor = byCategory.get('PLANNED_MAINTENANCE') ?? 0;
+  const maintenanceMinor = reactiveMinor + plannedMinor;
+
+  const cost = {
+    recorded: costs.length > 0,
+    totalMinor: [...byCategory.values()].reduce((sum, amount) => sum + amount, 0),
+    byCategory: [...byCategory.entries()]
+      .map(([category, amountMinor]) => ({ category, amountMinor }))
+      .sort((a, b) => b.amountMinor - a.amountMinor),
+    reactiveMinor,
+    plannedMinor,
+    // Null rather than zero. No records and no reactive spend are opposite facts.
+    reactiveShare: maintenanceMinor > 0 ? Number((reactiveMinor / maintenanceMinor).toFixed(3)) : null,
+  };
+
+  return {
+    assets: {
+      total: assets.length,
+      byClass: [...byClass.entries()]
+        .map(([assetClass, entry]) => ({ assetClass, ...entry }))
+        .sort((a, b) => b.replacementCostMinor - a.replacementCostMinor),
+    },
+    lifeExpired: {
+      count: lifeExpired.length,
+      replacementCostMinor: lifeExpired.reduce((sum, a) => sum + a.replacementCostMinor, 0),
+      assets: lifeExpired.sort((a, b) => b.replacementCostMinor - a.replacementCostMinor),
+    },
+    warranties,
+    workOrders,
+    defects,
+    cost,
+    summary:
+      assets.length === 0
+        ? 'No assets are registered, so there is nothing to operate yet.'
+        : `${assets.length} assets, ${workOrders.open} open work order${workOrders.open === 1 ? '' : 's'} of which ${workOrders.overdue} ${
+            workOrders.overdue === 1 ? 'is' : 'are'
+          } overdue. ${
+            defects.notCovered > 0
+              ? `${defects.notCovered} open defect${defects.notCovered === 1 ? '' : 's'} ${defects.notCovered === 1 ? 'is' : 'are'} outside warranty and will be paid for here.`
+              : 'Every open defect is under warranty.'
+          }`,
+    ...(cost.recorded
+      ? {}
+      : {
+          notRecorded:
+            'No operating cost has been recorded, so what the asset costs to run is unknown rather than zero. ' +
+            'Energy, water and maintenance spend are captured per period against the facility or one asset.',
+        }),
+  };
+}
+
+/**
+ * What needs doing, in the order it needs doing.
+ *
+ * The FM centre had no maintenance queue at all, which meant "what needs action
+ * today" had nothing behind it. This is not a new record — it is the work orders
+ * and the defects already in the ledger, ordered by the only thing that decides
+ * order on a live asset: whether it is a statutory obligation, then whether it is
+ * an emergency, then how late it is.
+ *
+ * A statutory inspection outranks an emergency repair, which looks wrong for a
+ * day and is right for a year: missing a statutory date is an offence, and the
+ * emergency will still be an emergency an hour later.
+ */
+export type MaintenanceQueueItem = {
+  kind: 'WORK_ORDER' | 'DEFECT';
+  id: string;
+  reference: string;
+  description: string;
+  assetTag?: string;
+  priority: string;
+  dueDate?: string;
+  daysOverdue: number;
+  statutory: boolean;
+  /** Who pays: a defect under warranty is somebody else's cost. */
+  warrantyCovered?: boolean;
+};
+
+export function maintenanceQueue(
+  ctx: EngineContext,
+  today = new Date().toISOString().slice(0, 10),
+): { items: MaintenanceQueueItem[]; overdue: number; statutoryOverdue: number; summary: string } {
+  authorise(ctx, 'HANDOVER_OM', 'R');
+
+  const assetTags = new Map(
+    ctx.ledger.list(ctx.projectId, 'AssetRegisterItem').map((record) => [record.refId, String(record.state.assetTag)]),
+  );
+  const lateBy = (due: unknown): number => {
+    const date = String(due ?? '');
+    if (date === '' || date >= today) return 0;
+    return Math.max(0, Math.round((Date.parse(today) - Date.parse(date)) / 86_400_000));
+  };
+
+  const items: MaintenanceQueueItem[] = [
+    ...ctx.ledger
+      .list(ctx.projectId, 'WorkOrder')
+      .filter((record) => record.state.status !== 'CLOSED')
+      .map((record) => ({
+        kind: 'WORK_ORDER' as const,
+        id: record.refId,
+        reference: String(record.state.reference),
+        description: String(record.state.description),
+        assetTag: assetTags.get(String(record.state.assetId)),
+        priority: String(record.state.priority),
+        dueDate: String(record.state.dueDate ?? ''),
+        daysOverdue: lateBy(record.state.dueDate),
+        statutory: record.state.type === 'STATUTORY',
+      })),
+    ...ctx.ledger
+      .list(ctx.projectId, 'Defect')
+      .filter((record) => record.state.status !== 'CLOSED')
+      .map((record) => ({
+        kind: 'DEFECT' as const,
+        id: record.refId,
+        reference: String(record.state.reference),
+        description: String(record.state.description),
+        assetTag: assetTags.get(String(record.state.assetId)),
+        priority: String(record.state.severity),
+        daysOverdue: 0,
+        statutory: false,
+        warrantyCovered: record.state.warrantyCovered === true,
+      })),
+  ];
+
+  const rank = (item: MaintenanceQueueItem): number => {
+    if (item.statutory) return 0;
+    return { EMERGENCY: 1, CRITICAL: 1, HIGH: 2, MAJOR: 2, MEDIUM: 3, MINOR: 4, LOW: 4 }[item.priority] ?? 3;
+  };
+
+  items.sort((a, b) => rank(a) - rank(b) || b.daysOverdue - a.daysOverdue);
+
+  const overdue = items.filter((item) => item.daysOverdue > 0).length;
+  const statutoryOverdue = items.filter((item) => item.statutory && item.daysOverdue > 0).length;
+
+  return {
+    items,
+    overdue,
+    statutoryOverdue,
+    summary:
+      items.length === 0
+        ? 'Nothing is outstanding against the asset register.'
+        : `${items.length} outstanding, ${overdue} overdue${
+            statutoryOverdue > 0
+              ? `. ${statutoryOverdue} of those ${statutoryOverdue === 1 ? 'is a statutory inspection' : 'are statutory inspections'}, which is an offence rather than a backlog.`
+              : '. Nothing statutory is late.'
+          }`,
+  };
+}
+
 export function raiseSnag(
   ctx: EngineContext,
   input: {

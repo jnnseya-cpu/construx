@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1042 passing, 0 failing, across 51 files |
+| Tests | 1,246 passing, 0 failing, 5 skipped, across 64 files |
 | Typecheck | clean |
-| Backend | 81 TypeScript files, 35,927 lines |
-| Application | 25 ES modules, 7,199 lines (plus a service worker) |
-| API routes | 238 (13 of them the public site) |
-| Event types | 175 Golden Thread (closed) · 177 communication events (closed) |
-| Entity types | 111, all classified for access |
+| Backend | 103 TypeScript files, 48,782 lines |
+| Application | 32 ES modules, 10,031 lines (plus a service worker) |
+| API routes | 271 (25 of them public) |
+| Event types | 189 Golden Thread (closed) · 177 communication events (closed) |
+| Entity types | 117, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -1065,6 +1065,47 @@ of eleven are ready" and "nine are ready" are different statements and only one
 can be checked. Where a lookahead has not been published it says so instead of
 inferring a window from the whole programme, which would answer a different
 question.
+
+**Running the asset, not listing it.** The FM centre was the weakest of the
+seven — four of nine panels partial and one absent — for one reason: the asset
+register was listable and nothing aggregated it. A list of assets is not an
+operating position any more than a list of events is an audit.
+`operatingPosition` and `maintenanceQueue` aggregate what was already there;
+`recordOperatingCost` captures what was not. The absent panel is the instructive
+one. "What is costing money" had no record behind it at all — nothing captured
+energy or reactive-maintenance spend — so the honest options were to capture it
+or to keep saying nothing. Deriving it would have meant inventing it. Reactive
+share leads rather than total spend, because a facility spending more in total
+and less of it reactively is being run better and a total cannot tell those
+apart; a facility with no cost records reports unknown rather than zero; and a
+statutory inspection ranks above an emergency, which looks wrong for a day and is
+right for a year.
+
+**Cash as the record says it will be, not as the tender assumed.** The
+commercial centre said "cash-flow model exists at bid stage; no live forward
+cashflow", and the two are different documents. `forwardCashflow` reads the
+record; the S-curve stays a bid document. What it reports is the *low point* —
+peak funding is what closes companies, and a project that ends level having been
+£2m down in March still had to find £2m in March.
+
+Four refusals keep it from becoming a second, quieter bid model. The run rate is
+the mean of certificates that exist, and a project with nothing certified is told
+so rather than handed the tender figure — a bid assumption presented as a reading
+of the record is the worst thing this could do. A certified sum lands on the
+period its own final date falls in, at its own value, rather than being averaged
+into a mean. A period whose certificate is already paid contributes nothing
+instead of also being projected: the seed pays ahead of its final dates, and
+counting both overstated the closing position by more than the contract sum. And
+the projection stops at what is left to certify — where the run rate exhausts the
+contract early that is reported as a finding, because either the rate or the
+programme is then wrong.
+
+The outflow side is measured the same way or declared unmeasured. Nothing is
+certified down the chain on the demo project, and dividing the subcontract
+commitments across the remaining periods would have produced a confident outgoing
+line with no certificate behind it. Direction comes from certificate →
+application → cycle, because a payment entry records no direction of its own and
+inferring one from the entry would be inventing a field rather than reading one.
 
 **The mark has one source and everything is derived from it.**
 `frontend/logo.svg` is the full mark — skyline, tower crane, ground line and the

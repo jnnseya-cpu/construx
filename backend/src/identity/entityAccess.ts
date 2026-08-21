@@ -155,6 +155,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // under the area it will eventually feed, because a draft is not yet a
   // drawing, a take-off or an observation — and until somebody confirms it, it
   // must not be readable as though it were one.
+  OperatingCost: { area: 'HANDOVER_OM' },
   PerceptionDraft: { area: 'EVIDENCE_AUDIT' },
   // A signature request names who must sign and on what; the signature is the
   // record of their agreement. Both are audit material rather than the

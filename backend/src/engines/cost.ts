@@ -727,6 +727,335 @@ export function paymentCycleFacts(
  * Commercial ledger bridge — committed vs certified vs paid, with the exception
  * queue that closes the gap between the QS and finance.
  */
+/**
+ * Forward cash, read off the live record rather than modelled at bid stage.
+ *
+ * The commercial centre answered "what will happen next" with a cash-flow model
+ * built before the job started. That model is the right thing at tender — peak
+ * funding is what closes companies, and it has to be priced before anybody signs
+ * — and it is the wrong thing at month nine, when the record knows what has
+ * actually been certified and paid and the model still does not.
+ *
+ * Three rules keep this from becoming a second, quieter bid model.
+ *
+ * **The run rate is measured, never assumed.** What lands in a future period is
+ * the average net certification per completed cycle, taken from certificates
+ * that exist. A project with nothing certified yet has no run rate, and the
+ * answer says so rather than reaching for the tender figure — a forecast built
+ * from the bid, presented as a forecast from the record, is the most misleading
+ * thing this could do.
+ *
+ * **Certified-and-unpaid is not a forecast.** It is money owed on a date the
+ * contract already fixed, so it lands on that date at its own value and is
+ * reported separately from anything projected.
+ *
+ * **The low point is the answer.** Peak funding is what the finance director
+ * needs, and it is the *worst* cumulative position across the horizon rather
+ * than the closing one — a project that ends level having been £2m down in
+ * March still had to find £2m in March.
+ */
+export type ForwardCashflow = {
+  /** Whether the record supports a forecast at all. */
+  derivable: boolean;
+  reason?: string;
+  /** Owed on a date the contract already fixed. Not projected. */
+  certifiedUnpaidMinor: number;
+  /** Measured from completed cycles, not from the tender. */
+  measuredFromCycles: number;
+  averageNetCertifiedMinor: number;
+  /**
+   * What goes out, measured the same way as what comes in — or stated as
+   * unmeasured, which is the honest answer before the first subcontract
+   * certificate. A cumulative line built from inflow alone is a useful number
+   * and a dangerous one, so it says which it is.
+   */
+  outflow: {
+    measured: boolean;
+    reason?: string;
+    /** Certified down the chain and not yet paid — an outgoing debt on a fixed date. */
+    certifiedUnpaidMinor: number;
+    averagePerPeriodMinor: number;
+    measuredFromCertificates: number;
+  };
+  periods: Array<{
+    period: number;
+    dueDate: string;
+    finalDateForPayment: string;
+    /**
+     * Fixed where it is already certified, nil where that certificate has been
+     * settled early, projected where nothing has been certified at all.
+     */
+    basis: 'CERTIFIED' | 'SETTLED' | 'PROJECTED';
+    inMinor: number;
+    outMinor: number;
+    netMinor: number;
+    cumulativeMinor: number;
+  }>;
+  /**
+   * A run rate cannot keep running past the contract sum. What remains
+   * certifiable, and the period at which projecting the run rate would exhaust
+   * it — which is itself a finding, because either the rate or the programme is
+   * then wrong.
+   */
+  headroom: {
+    known: boolean;
+    reason?: string;
+    contractValueMinor: number;
+    certifiedToDateMinor: number;
+    remainingCertifiableMinor: number;
+    exhaustsAtPeriod?: number;
+  };
+  /** The worst cumulative position, which is what has to be funded. */
+  lowPointMinor: number;
+  lowPointDate?: string;
+  closingMinor: number;
+  summary: string;
+};
+
+export function forwardCashflow(
+  ctx: EngineContext,
+  today = new Date().toISOString().slice(0, 10),
+): ForwardCashflow {
+  authorise(ctx, 'BUDGET_COST', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const cycles = ctx.ledger.list(ctx.projectId, 'PaymentCycle');
+  const upstream = cycles.filter((cycle) => cycle.state.direction === 'UPSTREAM');
+  const downstreamCycleIds = new Set(
+    cycles.filter((cycle) => cycle.state.direction === 'DOWNSTREAM').map((cycle) => cycle.refId),
+  );
+
+  // Which way a certificate points is a property of the cycle it belongs to, and
+  // the only route to it is certificate → application → cycle. A payment entry
+  // records no direction of its own, so inferring one from the entry would be
+  // inventing a field rather than reading one.
+  const applicationCycle = new Map(
+    ctx.ledger
+      .list(ctx.projectId, 'PaymentApplication')
+      .map((application) => [application.refId, String(application.state.cycleId ?? '')]),
+  );
+  const certificates = ctx.ledger.list(ctx.projectId, 'PaymentCertificate').map((record) => record.state);
+  const isDownstream = (certificate: Record<string, unknown>): boolean =>
+    downstreamCycleIds.has(applicationCycle.get(String(certificate.applicationId ?? '')) ?? '');
+
+  const entries = ctx.ledger.list(ctx.projectId, 'LedgerEntry').map((record) => record.state);
+  const paidCertificateIds = new Set(
+    entries.filter((entry) => entry.type === 'PAYMENT').map((entry) => String(entry.certificateId ?? '')),
+  );
+  const unpaid = (certificate: Record<string, unknown>): boolean => !paidCertificateIds.has(String(certificate.id));
+
+  const receivable = certificates.filter((certificate) => !isDownstream(certificate));
+  const payable = certificates.filter(isDownstream);
+
+  const certifiedUnpaidMinor = receivable
+    .filter(unpaid)
+    .reduce((sum, certificate) => sum + Number(certificate.certifiedMinor ?? 0), 0);
+
+  const netCertified = receivable.map((certificate) => Number(certificate.certifiedMinor ?? 0));
+  const averageNetCertifiedMinor =
+    netCertified.length > 0
+      ? Math.round(netCertified.reduce((sum, value) => sum + value, 0) / netCertified.length)
+      : 0;
+
+  const payableMinor = payable.map((certificate) => Number(certificate.certifiedMinor ?? 0));
+  const outflow: ForwardCashflow['outflow'] = {
+    measured: payableMinor.length > 0,
+    ...(payableMinor.length > 0
+      ? {}
+      : {
+          reason:
+            'Nothing has been certified down the chain yet, so the outflow side is unmeasured. ' +
+            'The cumulative line is what comes in, not what is left — subcontract commitments will draw against it.',
+        }),
+    certifiedUnpaidMinor: payable
+      .filter(unpaid)
+      .reduce((sum, certificate) => sum + Number(certificate.certifiedMinor ?? 0), 0),
+    averagePerPeriodMinor:
+      payableMinor.length > 0
+        ? Math.round(payableMinor.reduce((sum, value) => sum + value, 0) / payableMinor.length)
+        : 0,
+    measuredFromCertificates: payableMinor.length,
+  };
+
+  // A run rate cannot keep running past the contract sum. Without an executed
+  // contract there is no ceiling to apply, and inventing one would be worse than
+  // saying the projection is uncapped.
+  const contract = ctx.ledger.list(ctx.projectId, 'Contract').find((record) => record.state.status === 'EXECUTED');
+  const contractValueMinor = Number(contract?.state.contractSumMinor ?? 0);
+  const variationsMinor = ctx.ledger
+    .list(ctx.projectId, 'Variation')
+    .filter((variation) => variation.state.status === 'AGREED')
+    .reduce((sum, variation) => sum + Number(variation.state.valuedAmountMinor ?? 0), 0);
+  const certifiedToDateMinor = netCertified.reduce((sum, value) => sum + value, 0);
+  const ceilingMinor = contractValueMinor + variationsMinor;
+  const headroom: ForwardCashflow['headroom'] = {
+    known: contractValueMinor > 0,
+    ...(contractValueMinor > 0
+      ? {}
+      : {
+          reason:
+            'No executed contract carries a sum, so there is no ceiling on the projection. ' +
+            'The run rate is applied to every remaining period, which will overstate a project approaching completion.',
+        }),
+    contractValueMinor: ceilingMinor,
+    certifiedToDateMinor,
+    remainingCertifiableMinor: contractValueMinor > 0 ? Math.max(0, ceilingMinor - certifiedToDateMinor) : 0,
+  };
+
+  const empty = (reason: string): ForwardCashflow => ({
+    derivable: false,
+    reason,
+    certifiedUnpaidMinor,
+    headroom,
+    measuredFromCycles: netCertified.length,
+    averageNetCertifiedMinor,
+    outflow,
+    periods: [],
+    lowPointMinor: 0,
+    closingMinor: 0,
+    summary: reason,
+  });
+
+  if (upstream.length === 0) {
+    return empty('No upstream payment cycle is generated, so there are no dates to project cash against.');
+  }
+  if (netCertified.length === 0) {
+    // The refusal that matters. Falling back to the tender model here would
+    // present a bid assumption as a reading of the record.
+    return empty(
+      'Nothing has been certified yet, so there is no measured run rate. ' +
+        'The tender cash model is the right answer until the first certificate — this one reads the record, and the record is empty.',
+    );
+  }
+
+  const upstreamPeriods = (upstream[0]?.state.periods ?? []) as Array<{
+    cycleNumber: number;
+    dueDate: string;
+    finalDateForPayment: string;
+  }>;
+
+  const future = upstreamPeriods.filter((period) => period.finalDateForPayment > today);
+  let cumulative = 0;
+  let lowPointMinor = 0;
+  let lowPointDate: string | undefined;
+
+  /**
+   * Put a certificate on the period its own final date falls in.
+   *
+   * Matching on cycle number would be wrong the moment a subcontract runs a
+   * different schedule from the main contract, and the date is the thing the
+   * bank cares about anyway. A certificate already past its final date is
+   * overdue rather than gone, so it lands on the first period still open.
+   */
+  const bucket = (items: Array<{ minor: number; finalDate: string }>): number[] => {
+    const buckets = new Array<number>(future.length).fill(0);
+    if (future.length === 0) return buckets;
+    for (const item of items) {
+      const found = future.findIndex((period) => period.finalDateForPayment >= item.finalDate);
+      // Due beyond the horizon: carried at the end rather than dropped. Money
+      // that falls off the bottom of a cashflow is the classic way to make one
+      // look survivable.
+      const index = found < 0 ? future.length - 1 : found;
+      buckets[index] = buckets[index]! + item.minor;
+    }
+    return buckets;
+  };
+
+  const dated = (list: typeof certificates): Array<{ minor: number; finalDate: string }> =>
+    list.map((certificate) => ({
+      minor: Number(certificate.certifiedMinor ?? 0),
+      finalDate: String(certificate.finalDateForPayment ?? today),
+    }));
+
+  const certifiedIn = bucket(dated(receivable.filter(unpaid)));
+  const certifiedOut = bucket(dated(payable.filter(unpaid)));
+  // A certificate already paid means that period's money has moved. Projecting
+  // a run rate onto it as well would count the same valuation twice — which is
+  // exactly what happens on a project paying ahead of its final dates.
+  const settledIn = bucket(dated(receivable.filter((certificate) => !unpaid(certificate))));
+  const settledOut = bucket(dated(payable.filter((certificate) => !unpaid(certificate))));
+
+  let projectedRemaining = headroom.known ? headroom.remainingCertifiableMinor : Number.POSITIVE_INFINITY;
+  let exhaustsAtPeriod: number | undefined;
+
+  const periods = future.map((period, index) => {
+    let basis: 'CERTIFIED' | 'SETTLED' | 'PROJECTED';
+    let inMinor: number;
+
+    if (certifiedIn[index]! > 0) {
+      // Owed on a date the contract already fixed, at its own value.
+      basis = 'CERTIFIED';
+      inMinor = certifiedIn[index]!;
+    } else if (settledIn[index]! > 0) {
+      basis = 'SETTLED';
+      inMinor = 0;
+    } else {
+      basis = 'PROJECTED';
+      inMinor = Math.min(averageNetCertifiedMinor, Math.max(0, projectedRemaining));
+      projectedRemaining -= inMinor;
+      if (inMinor < averageNetCertifiedMinor && exhaustsAtPeriod === undefined) {
+        exhaustsAtPeriod = period.cycleNumber;
+      }
+    }
+
+    const outMinor =
+      certifiedOut[index]! > 0
+        ? certifiedOut[index]!
+        : settledOut[index]! > 0
+          ? 0
+          : outflow.measured
+            ? outflow.averagePerPeriodMinor
+            : 0;
+
+    const netMinor = inMinor - outMinor;
+    cumulative += netMinor;
+
+    if (cumulative < lowPointMinor) {
+      lowPointMinor = cumulative;
+      lowPointDate = period.finalDateForPayment;
+    }
+
+    return {
+      period: period.cycleNumber,
+      dueDate: period.dueDate,
+      finalDateForPayment: period.finalDateForPayment,
+      basis,
+      inMinor,
+      outMinor,
+      netMinor,
+      cumulativeMinor: cumulative,
+    };
+  });
+
+  headroom.exhaustsAtPeriod = exhaustsAtPeriod;
+
+  return {
+    derivable: true,
+    certifiedUnpaidMinor,
+    measuredFromCycles: netCertified.length,
+    averageNetCertifiedMinor,
+    outflow,
+    headroom,
+    periods,
+    lowPointMinor,
+    lowPointDate,
+    closingMinor: cumulative,
+    summary:
+      periods.length === 0
+        ? 'Every payment period has passed its final date, so there is nothing left to project.'
+        : `${periods.length} period${periods.length === 1 ? '' : 's'} remaining, projected from ${netCertified.length} completed ${
+            netCertified.length === 1 ? 'certification' : 'certifications'
+          } rather than from the tender. ${
+            lowPointMinor < 0
+              ? `The position is worst on ${lowPointDate}, and that is the figure to fund — a project that ends level having been down in March still had to find the money in March.`
+              : 'The cumulative position stays positive throughout.'
+          }${
+            exhaustsAtPeriod !== undefined
+              ? ` The run rate exhausts what is left to certify at period ${exhaustsAtPeriod}, well inside the schedule — either the rate or the programme is wrong, and the periods after it project nothing.`
+              : ''
+          }${headroom.known ? '' : ` ${headroom.reason}`}${outflow.measured ? '' : ` ${outflow.reason}`}`,
+  };
+}
+
 export function ledgerPosition(ctx: EngineContext): {
   committedMinor: number;
   certifiedMinor: number;

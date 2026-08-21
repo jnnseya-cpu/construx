@@ -27,6 +27,14 @@ export async function handover(root) {
     'OMManual',
   ]);
 
+  // The operating position, which is what an FM opens this screen for. A list of
+  // assets is not an operating position any more than a list of events is an
+  // audit, and four of this centre's nine panels were partial for that reason.
+  const [position, queue] = await Promise.all([
+    api.get(`/v1/projects/${projectId}/om/position`).catch(() => null),
+    api.get(`/v1/projects/${projectId}/om/queue`).catch(() => null),
+  ]);
+
   const pack = b.HandoverPack.at(-1);
   const forecast = b.MaintenanceForecast.at(-1);
   const openDefects = b.Defect.filter((d) => d.status !== 'CLOSED');
@@ -196,6 +204,89 @@ export async function handover(root) {
               <div style="padding:0 17px 15px"><div class="metric-sub">
                 An asset with a history of failures reaches the end of its useful life earlier than its nominal date, so failure history pulls the replacement forward.
               </div></div>
+            </div>`
+          : ''
+      }
+
+      ${
+        position
+          ? html`<div class="card pad0" style="margin-top:14px">
+              <div style="padding:15px 17px 0">
+                <h3>Operating position</h3>
+                <p class="metric-sub" style="margin-bottom:12px">${position.summary}</p>
+                <div class="grid g4" style="margin-bottom:12px">
+                  <div>
+                    <div class="metric-sub">Assets</div>
+                    <div class="metric">${position.assets.total}</div>
+                    <div class="metric-sub">${money(position.assets.byClass.reduce((sum, c) => sum + c.replacementCostMinor, 0))} to replace</div>
+                  </div>
+                  <div>
+                    <div class="metric-sub">Past expected life</div>
+                    <div class="metric ${raw(position.lifeExpired.count > 0 ? 'warn' : 'good')}">${position.lifeExpired.count}</div>
+                    <div class="metric-sub">${money(position.lifeExpired.replacementCostMinor)} — due, not failed</div>
+                  </div>
+                  <div>
+                    <div class="metric-sub">Open work orders</div>
+                    <div class="metric ${raw(position.workOrders.overdue > 0 ? 'bad' : 'good')}">${position.workOrders.open}</div>
+                    <div class="metric-sub">${position.workOrders.overdue} overdue</div>
+                  </div>
+                  <div>
+                    <div class="metric-sub">Defects outside warranty</div>
+                    <div class="metric ${raw(position.defects.notCovered > 0 ? 'bad' : 'good')}">${position.defects.notCovered}</div>
+                    <div class="metric-sub">${position.defects.underWarranty} covered by somebody else</div>
+                  </div>
+                </div>
+                ${
+                  position.cost.recorded
+                    ? html`<div class="split-list" style="margin-bottom:12px">
+                        <div class="row"><span class="lbl">Recorded operating cost</span><span class="val">${money(position.cost.totalMinor)}</span></div>
+                        <div class="row"><span class="lbl">Reactive maintenance</span><span class="val">${money(position.cost.reactiveMinor)}</span></div>
+                        <div class="row"><span class="lbl">Planned maintenance</span><span class="val">${money(position.cost.plannedMinor)}</span></div>
+                        <div class="row"><span class="lbl">Reactive share of maintenance</span>
+                          <span class="val">${position.cost.reactiveShare === null ? 'not computable' : pct(position.cost.reactiveShare * 100)}</span></div>
+                      </div>
+                      <div class="metric-sub" style="margin-bottom:12px">
+                        The share matters more than the total: a facility spending more overall but less of it reactively is
+                        being run better, and a total alone cannot tell the two apart.
+                      </div>`
+                    : html`<div class="notice info" style="margin-bottom:12px"><div>${position.notRecorded}</div></div>`
+                }
+              </div>
+              ${table({
+                headers: ['Asset class', 'Count', 'Replacement value'],
+                align: ['', 'num', 'num'],
+                rows: position.assets.byClass.map((c) => [c.assetClass, c.count, money(c.replacementCostMinor)]),
+                empty: 'No assets registered.',
+              })}
+            </div>`
+          : ''
+      }
+
+      ${
+        queue && queue.items.length > 0
+          ? html`<div class="card pad0" style="margin-top:14px">
+              <div style="padding:15px 17px 0">
+                <h3>What needs doing</h3>
+                <p class="metric-sub" style="margin-bottom:12px">
+                  ${queue.summary} Statutory inspections sort above emergencies — that looks wrong for a day and is right for
+                  a year, because a missed statutory date is an offence and the emergency will still be an emergency in an hour.
+                </p>
+              </div>
+              ${table({
+                headers: ['Reference', 'What', 'Asset', 'Priority', 'Due', 'Late by', 'Who pays'],
+                align: ['', '', '', '', '', 'num', ''],
+                rows: queue.items.slice(0, 20).map((item) => [
+                  item.reference,
+                  String(item.description).slice(0, 60),
+                  item.assetTag ?? '—',
+                  item.statutory ? badge('statutory', 'bad') : badge(humanise(item.priority), statusTone(item.priority)),
+                  item.dueDate ? date(item.dueDate) : '—',
+                  item.daysOverdue > 0 ? `${item.daysOverdue}d` : '—',
+                  item.kind === 'DEFECT'
+                    ? item.warrantyCovered ? badge('warranty', 'good') : badge('us', 'warn')
+                    : '—',
+                ]),
+              })}
             </div>`
           : ''
       }

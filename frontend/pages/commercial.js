@@ -22,7 +22,7 @@ const SOURCE_LABEL = {
 export async function commercial(root) {
   const projectId = state.session.projectId;
 
-  const [bundle, ledger] = await Promise.all([
+  const [bundle, ledger, forward] = await Promise.all([
     entityBundle(projectId, [
       'CVR',
       'EarnedValueSnapshot',
@@ -41,6 +41,9 @@ export async function commercial(root) {
       'PayLessNotice',
     ]),
     api.get(`/v1/projects/${projectId}/cost/ledger`).catch(() => null),
+    // Cash as the record now says it will be, rather than as the tender assumed.
+    // The S-curve above is a bid document and stays one; this is measured.
+    api.get(`/v1/projects/${projectId}/cost/forward-cashflow`).catch(() => null),
   ]);
 
   const cvr = bundle.CVR.at(-1);
@@ -267,6 +270,93 @@ export async function commercial(root) {
               : html`<div class="empty"><b>No forecast</b>Generate a cashflow forecast to see the S-curve.</div>`
           }
         </div>
+      </div>
+
+      <div class="card pad0" style="margin-top:14px">
+        <h3 style="padding:15px 17px 0">Forward cashflow — measured, not tendered</h3>
+        ${
+          !forward
+            ? html`<div style="padding:0 17px 15px"><div class="empty"><b>Not available</b>The forward position could not be read.</div></div>`
+            : !forward.derivable
+              ? html`<div style="padding:12px 17px 15px">
+                  <div class="notice">
+                    <div>
+                      <b>Nothing to project yet</b><br>${forward.reason}
+                      ${forward.certifiedUnpaidMinor > 0
+                        ? html`<br>${money(forward.certifiedUnpaidMinor)} is certified and unpaid, which is owed rather than forecast.`
+                        : ''}
+                    </div>
+                  </div>
+                </div>`
+              : html`
+                  <div class="grid g3" style="padding:12px 17px 0">
+                    <div>
+                      <div class="metric-sub">Worst cumulative position</div>
+                      <div class="metric ${raw(forward.lowPointMinor < 0 ? 'bad' : 'good')}">${money(forward.lowPointMinor)}</div>
+                      <div class="metric-sub">
+                        ${forward.lowPointMinor < 0
+                          ? `on ${date(forward.lowPointDate)} — this is the figure to fund`
+                          : 'the cumulative position never goes negative'}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="metric-sub">Certified and unpaid</div>
+                      <div class="metric ${raw(forward.certifiedUnpaidMinor > 0 ? 'warn' : '')}">${money(forward.certifiedUnpaidMinor)}</div>
+                      <div class="metric-sub">owed on a date the contract fixed, shown on that period at its own value</div>
+                    </div>
+                    <div>
+                      <div class="metric-sub">Run rate per period</div>
+                      <div class="metric">${money(forward.averageNetCertifiedMinor)}</div>
+                      <div class="metric-sub">mean of ${forward.measuredFromCycles} certification${forward.measuredFromCycles === 1 ? '' : 's'}</div>
+                    </div>
+                  </div>
+                  ${
+                    forward.outflow.measured
+                      ? ''
+                      : html`<div style="padding:12px 17px 0"><div class="notice warn">
+                          <div><b>Inflow only</b><br>${forward.outflow.reason}</div>
+                        </div></div>`
+                  }
+                  ${
+                    !forward.headroom.known
+                      ? html`<div style="padding:12px 17px 0"><div class="notice warn">
+                          <div><b>Uncapped projection</b><br>${forward.headroom.reason}</div>
+                        </div></div>`
+                      : forward.headroom.exhaustsAtPeriod !== undefined
+                        ? html`<div style="padding:12px 17px 0"><div class="notice warn">
+                            <div>
+                              <b>The run rate outruns the contract at period ${forward.headroom.exhaustsAtPeriod}</b><br>
+                              ${money(forward.headroom.remainingCertifiableMinor)} is left to certify against
+                              ${money(forward.headroom.contractValueMinor)} of contract and agreed variations.
+                              Either the rate or the programme is wrong; the periods after it project nothing rather than
+                              money the contract cannot pay.
+                            </div>
+                          </div></div>`
+                        : ''
+                  }
+                  ${table({
+                    headers: ['Period', 'Final date', 'Basis', 'In', 'Out', 'Net', 'Cumulative'],
+                    align: ['', '', '', 'num', 'num', 'num', 'num'],
+                    rows: forward.periods.map((period) => [
+                      `#${period.period}`,
+                      date(period.finalDateForPayment),
+                      period.basis === 'CERTIFIED'
+                        ? badge('certified', 'ok')
+                        : period.basis === 'SETTLED'
+                          ? badge('settled', 'info')
+                          : badge('projected', 'neutral'),
+                      money(period.inMinor),
+                      period.outMinor > 0 ? money(-period.outMinor) : '—',
+                      money(period.netMinor),
+                      period.cumulativeMinor < 0
+                        ? html`<span style="color:var(--critical)">${money(period.cumulativeMinor)}</span>`
+                        : money(period.cumulativeMinor),
+                    ]),
+                    empty: 'Every payment period has passed its final date',
+                  })}
+                  <div style="padding:12px 17px 15px"><div class="metric-sub">${forward.summary}</div></div>
+                `
+        }
       </div>
 
       <div class="card pad0" style="margin-top:14px">

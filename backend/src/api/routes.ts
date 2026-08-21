@@ -3513,6 +3513,13 @@ export const ROUTES: Route[] = [
     description: 'Engine C — committed vs certified vs paid, with exceptions',
     handler: (platform, ctx) => cost.ledgerPosition(projectContext(platform, ctx)),
   },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/cost/forward-cashflow',
+    readOnly: true,
+    description: 'Cash in and out over the payment periods that remain, measured from what has been certified',
+    handler: (platform, ctx) => cost.forwardCashflow(projectContext(platform, ctx)),
+  },
 
   {
     method: 'POST',
@@ -3771,6 +3778,50 @@ export const ROUTES: Route[] = [
         ...body<Omit<Parameters<typeof bim.answerRFI>[1], 'rfiId'>>(ctx),
         rfiId: ctx.params.rfiId as string,
       }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/om/position',
+    readOnly: true,
+    description: 'The operating position — assets, warranties, work orders, defects and what it costs to run',
+    handler: (platform, ctx) => handover.operatingPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/om/queue',
+    readOnly: true,
+    description: 'What needs doing against the asset register, statutory first and then by lateness',
+    handler: (platform, ctx) => handover.maintenanceQueue(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/om/operating-cost',
+    description: 'Record what the asset cost to run in a period — energy, water, maintenance, statutory',
+    schema: {
+      type: 'object',
+      required: ['period', 'category', 'amountMinor', 'narrative', 'evidenceHash'],
+      properties: {
+        period: stringField,
+        category: {
+          type: 'string',
+          enum: [
+            'ENERGY', 'WATER', 'REACTIVE_MAINTENANCE', 'PLANNED_MAINTENANCE',
+            'CONSUMABLES', 'STATUTORY_INSPECTION', 'CLEANING', 'SECURITY',
+          ],
+        },
+        amountMinor: { type: 'integer', minimum: 0 },
+        // Attributed to one asset where it can be. "The building used £40,000
+        // of electricity" is a bill; "chiller 2 used £9,000 of it" is a
+        // decision about whether to replace it.
+        assetId: stringField,
+        quantity: { type: 'number', minimum: 0 },
+        unit: stringField,
+        narrative: { type: 'string', minLength: 4 },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => handover.recordOperatingCost(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'GET',
