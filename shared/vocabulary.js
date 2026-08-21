@@ -174,3 +174,17 @@ export const CONTRACT_FORM = opts([
   ['MF1', 'MF/1'],
   ['BESPOKE', 'Bespoke'],
 ]);
+
+/**
+ * How a package is priced. The choice changes what a submission means: a lump
+ * sum is a fixed offer, a remeasurable price is a rate against quantities
+ * nobody has finalised, and a target cost shares the pain and gain. Comparing
+ * two submissions on different bases without saying so is the classic way an
+ * award gets challenged.
+ */
+export const PRICING_BASIS = opts([
+  ['LUMP_SUM', 'Lump sum'],
+  ['REMEASURABLE', 'Remeasurable'],
+  ['TARGET_COST', 'Target cost'],
+  ['COST_REIMBURSABLE', 'Cost reimbursable'],
+]);

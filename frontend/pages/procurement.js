@@ -1,6 +1,8 @@
-import { entityBundle, isWithheld } from '../lib/api.js';
+import { api, entityBundle, isWithheld } from '../lib/api.js';
+import { command, commandBar } from '../lib/command.js';
+import { CONTRACT_FORM, PRICING_BASIS, today } from '../lib/enums.js';
 import { badge, date, days, exact, html, humanise, money, pct, raw, render, statusTone, table } from '../lib/ui.js';
-import { state } from '../app.js';
+import { blockedReason, can, draw, state } from '../app.js';
 
 /**
  * Tender & Procurement.
@@ -12,6 +14,13 @@ import { state } from '../app.js';
 
 export async function procurement(root) {
   const projectId = state.session.projectId;
+
+  // The supplier register, for the invite list. createRFQ refuses an enquiry
+  // containing anyone unprequalified — the whole enquiry, not the ineligible
+  // firms — so offering a free-text field here would produce a refusal the
+  // person could not have predicted.
+  // Only the eligible ones, which is what this endpoint returns by default.
+  const suppliers = await api.get('/v1/supply-chain').catch(() => ({ suppliers: [] }));
 
   const b = await entityBundle(projectId, [
     'RFQ',
@@ -61,6 +70,14 @@ export async function procurement(root) {
         <div>
           <h1>Tender &amp; Procurement</h1>
           <p>Take-off through award as a state machine. Every transition is a Golden Thread event, so the commercial basis of the award survives the people who made it.</p>
+        </div>
+        <div class="actions cmd-bar">
+          ${raw(commandBar([
+            { id: 'rfq', label: 'Raise RFQ', tone: '', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
+            { id: 'issue', label: 'Issue RFQ', permitted: can('PROCUREMENT_AWARD', 'U'), reason: blockedReason('PROCUREMENT_AWARD', 'U') },
+            { id: 'submission', label: 'Record submission', permitted: can('SUPPLIER_SUBMISSION', 'C'), reason: blockedReason('SUPPLIER_SUBMISSION', 'C') },
+            { id: 'award', label: 'Award', permitted: can('PROCUREMENT_AWARD', 'A'), reason: blockedReason('PROCUREMENT_AWARD', 'A') },
+          ]))}
         </div>
       </div>
 
@@ -373,6 +390,124 @@ export async function procurement(root) {
       </div>
     `,
   );
+
+  /**
+   * The four transitions that move a package from enquiry to award.
+   *
+   * Every option list is drawn from records that exist — packages from the
+   * scope, suppliers from the register, submissions from what came back. A
+   * picker offering something the command will reject looks authoritative and
+   * is worse than a free-text box.
+   */
+  const COMMANDS = {
+    rfq: {
+      title: 'Raise an RFQ',
+      intent:
+        'Design maturity is checked before the enquiry goes out, and every invited firm must be on the register and currently prequalified. ' +
+        'An ineligible firm refuses the whole enquiry rather than being dropped from it.',
+      path: `/v1/projects/${projectId}/procurement/rfq`,
+      submitLabel: 'Raise',
+      fields: [
+        { name: 'packageId', label: 'Package', type: 'select',
+          options: b.ScopePackage.map((p) => ({ value: p._refId, label: `${p.name} · ${p.discipline}` })) },
+        { name: 'title', label: 'Enquiry title', type: 'text' },
+        { name: 'pricingBasis', label: 'Pricing basis', type: 'select', options: PRICING_BASIS,
+          hint: 'Two submissions on different bases are not comparable, which is how an award gets challenged.' },
+        { name: 'contractSuite', label: 'Form of contract', type: 'select', options: CONTRACT_FORM },
+        { name: 'returnDeadline', label: 'Returns by', type: 'date', min: today() },
+        { name: 'trade', label: 'Trade', type: 'text', required: false,
+          hint: 'Checked against each invited firm\u2019s assessed trades' },
+        { name: 'packageValueMinor', label: 'Package value', type: 'number', money: true, required: false,
+          hint: 'Nobody is invited beyond their assessed capacity' },
+        { name: 'invited', label: 'Invite', type: 'select',
+          options: (suppliers.suppliers ?? []).map((sup) => ({ value: sup.id, label: sup.name })) },
+        { name: 'requiredInsurances', label: 'Required insurances', type: 'text',
+          placeholder: 'Public liability, Employers liability', hint: 'Comma separated' },
+      ],
+      transform: (v) => ({
+        packageId: v.packageId,
+        title: v.title,
+        pricingBasis: v.pricingBasis,
+        contractSuite: v.contractSuite,
+        returnDeadline: v.returnDeadline,
+        trade: v.trade,
+        packageValueMinor: v.packageValueMinor,
+        invitedSupplierIds: [v.invited],
+        requiredInsurances: String(v.requiredInsurances ?? '').split(',').map((x) => x.trim()).filter(Boolean),
+      }),
+    },
+    issue: {
+      title: 'Issue the enquiry',
+      intent: 'Sends the RFQ to the invited firms against a tender package. The issue is the event the return deadline runs from.',
+      path: (collected) => `/v1/projects/${projectId}/procurement/rfq/${collected.rfqId}/issue`,
+      submitLabel: 'Issue',
+      fields: [
+        { name: 'rfqId', label: 'RFQ', type: 'select',
+          options: b.RFQ.map((r) => ({ value: r._refId, label: `${r.reference} · ${r.title}` })) },
+        { name: 'tenderPackageId', label: 'Tender package', type: 'select',
+          options: b.TenderPackage.map((p) => ({ value: p._refId, label: p.reference ?? p._refId })) },
+      ],
+      transform: ({ rfqId, ...rest }) => rest,
+    },
+    submission: {
+      title: 'Record a submission',
+      intent:
+        'What the firm actually offered, including what it excluded. Exclusions define what was not priced and carry into the subcontract \u2014 ' +
+        'scope excluded here and not carried reappears later as a variation.',
+      path: (collected) => `/v1/projects/${projectId}/procurement/rfq/${collected.rfqId}/submissions`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'rfqId', label: 'Against RFQ', type: 'select',
+          options: b.RFQ.map((r) => ({ value: r._refId, label: `${r.reference} · ${r.title}` })) },
+        { name: 'supplierPartyId', label: 'Supplier', type: 'select',
+          options: (suppliers.suppliers ?? []).map((sup) => ({ value: sup.id, label: sup.name })) },
+        { name: 'supplierName', label: 'Supplier name', type: 'text' },
+        { name: 'priceMinor', label: 'Price', type: 'number', money: true },
+        { name: 'durationDays', label: 'Duration (days)', type: 'number', min: 1 },
+        { name: 'provisionalSumsMinor', label: 'Provisional sums', type: 'number', money: true },
+        { name: 'peakLabour', label: 'Peak labour', type: 'number', required: false },
+        { name: 'exclusions', label: 'Exclusions', type: 'textarea', rows: 2, required: false, hint: 'One per line' },
+        { name: 'contractExceptions', label: 'Contract exceptions', type: 'textarea', rows: 2, required: false, hint: 'One per line' },
+        { name: 'insurancesHeld', label: 'Insurances held', type: 'text', hint: 'Comma separated' },
+        { name: 'submissionHash', label: 'Submission document', type: 'file' },
+      ],
+      transform: ({ rfqId, exclusions, contractExceptions, insurancesHeld, ...rest }) => ({
+        ...rest,
+        exclusions: String(exclusions ?? '').split('\n').map((x) => x.trim()).filter(Boolean),
+        contractExceptions: String(contractExceptions ?? '').split('\n').map((x) => x.trim()).filter(Boolean),
+        insurancesHeld: String(insurancesHeld ?? '').split(',').map((x) => x.trim()).filter(Boolean),
+      }),
+    },
+    award: {
+      title: 'Award the package',
+      intent:
+        'The award is made against an adjudication, not against a price. The governance reference is what an auditor asks for first, ' +
+        'and any condition attached to the approval is recorded with it.',
+      path: (collected) => `/v1/projects/${projectId}/procurement/rfq/${collected.rfqId}/award`,
+      submitLabel: 'Award',
+      fields: [
+        { name: 'rfqId', label: 'RFQ', type: 'select',
+          options: b.RFQ.map((r) => ({ value: r._refId, label: `${r.reference} · ${r.title}` })) },
+        { name: 'adjudicationId', label: 'Adjudication', type: 'select',
+          options: b.Adjudication.map((a) => ({ value: a._refId, label: `${a.reference ?? a._refId}` })) },
+        { name: 'governanceApprovalRef', label: 'Governance approval reference', type: 'text',
+          hint: 'The board or delegated authority decision this award is made under' },
+        { name: 'conditions', label: 'Conditions', type: 'textarea', rows: 2, required: false, hint: 'One per line' },
+      ],
+      transform: ({ rfqId, conditions, ...rest }) => ({
+        ...rest,
+        conditions: String(conditions ?? '').split('\n').map((x) => x.trim()).filter(Boolean),
+      }),
+    },
+  };
+
+  root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-command]');
+    if (!button) return;
+    const spec = COMMANDS[button.dataset.command];
+    if (!spec) return;
+    if (await command(spec)) await draw();
+  });
 }
 
 function badgeText(status) {

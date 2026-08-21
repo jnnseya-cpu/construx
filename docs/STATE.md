@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1001 passing, 0 failing, across 48 files |
+| Tests | 1026 passing, 0 failing, across 50 files |
 | Typecheck | clean |
 | Backend | 81 TypeScript files, 35,927 lines |
 | Application | 25 ES modules, 7,199 lines (plus a service worker) |
@@ -1368,6 +1368,28 @@ capability matrix — asking to be erased is not a permission somebody else
 grants you, and the mobile stores require the route to exist. What the screen
 says is kept and removed is read from `GET /v1/me/erasure`, so the wording
 shown before the button is pressed is the same rule the platform applies.
+
+**Procurement takes input, and no console form can be dead.** Tender &
+Procurement had no input surface at all: raise an enquiry, issue it, record a
+submission and award were API-only. All four are now on the page, drawing their
+options from records that exist — packages from the scope, suppliers from the
+register, submissions from what came back.
+
+They are permission- and phase-gated like everything else, which is visible
+rather than hidden: on the seeded project, which sits at OPERATIONS, all four
+read *"Procurement award cannot be written during the Operations phase"*. That
+is the lifecycle gate doing its job, and it is also why a reviewer looking at
+the demonstration project concludes there is nowhere to put information in —
+**the seed ends at the end of the lifecycle, so most write surfaces are
+correctly locked when the console is first opened.**
+
+`consoleforms.test.ts` now checks every path the console calls against the route
+table. It found a dead one immediately: the procurement supplier picker was
+written against `/v1/supply-chain/suppliers` when the route is
+`/v1/supply-chain`, and because the fetch carried a `.catch(() => [])` the page
+rendered perfectly with an empty picker and no error. It also holds a floor
+under the number of input forms and evidence fields, so a module cannot quietly
+stop accepting work.
 
 **Every AI engine declares when it may run.** The routing matrix says which
 provider an engine reaches; it said nothing about applicability, so every engine
