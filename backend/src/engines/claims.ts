@@ -5,6 +5,7 @@ import type { EntityRef } from '../goldenthread/types.ts';
 import { replayTimeline } from '../goldenthread/replay.ts';
 import { assertNotFuture, assertOrder } from '../domain/dates.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
+import { clauseFor, clauseRegister, type ClauseCitation } from './maths/contractClauses.ts';
 import { assessClaim, attributeDelay, CAUSE_LIABILITY, type DelayCause, type DelayEventInput } from './maths/claims.ts';
 import {
   assessCostsProvision,
@@ -1168,6 +1169,17 @@ export type CalendarEntry = {
    */
   recoverable: boolean;
   entityRef?: EntityRef;
+  /**
+   * The clause of the governing form that imposes this, where the form is a
+   * standard one. Absent for a bespoke contract, which has whatever numbering
+   * its drafter chose — a confident citation of a clause that may not exist is
+   * worse than none, because it gets quoted in a letter.
+   *
+   * The difference between a reminder and a position: a contract administrator
+   * challenged on a retention release answers "clause 4.20.3", not "the system
+   * said so".
+   */
+  clause?: ClauseCitation;
 };
 
 export type ObligationCalendar = {
@@ -1298,6 +1310,19 @@ export function obligationFacts(
 
   const contracts = ledger.list(projectId, 'Contract');
 
+  /**
+   * The governing form, for citing clauses.
+   *
+   * Taken from the first contract on the project. A project running two
+   * standard forms — a JCT main contract over an NEC framework — would cite the
+   * wrong one for half its obligations, so where the suites differ nothing is
+   * cited at all. Silence beats a confident wrong clause reference.
+   */
+  const suites = new Set(contracts.map((c) => String(c.state.suite ?? 'BESPOKE')));
+  const governingSuite = suites.size === 1 ? ([...suites][0] as ContractSuite) : undefined;
+  const cite = (reference: string, category: string): ClauseCitation | undefined =>
+    governingSuite ? clauseFor(governingSuite, reference, category) : undefined;
+
   for (const contract of contracts) {
     const completion = typeof contract.state.completionDate === 'string' ? contract.state.completionDate.slice(0, 10) : undefined;
     const defectsMonths = Number(contract.state.defectsLiabilityMonths ?? 0);
@@ -1318,6 +1343,7 @@ export function obligationFacts(
         // before, and afterwards the position is simply different.
         recoverable: true,
         entityRef: { refType: 'Contract', refId: contract.refId },
+        clause: cite('DLP-EXPIRY', 'DEFECTS_LIABILITY'),
       });
 
       // Retention is released in two halves, and the second is the one that
@@ -1335,6 +1361,7 @@ export function obligationFacts(
           status: classify(completion, false),
           recoverable: true,
           entityRef: { refType: 'Contract', refId: contract.refId },
+          clause: cite('RET-FIRST', 'RETENTION'),
         });
         entries.push({
           reference: 'RET-SECOND',
@@ -1347,6 +1374,7 @@ export function obligationFacts(
           status: classify(expiry, false),
           recoverable: true,
           entityRef: { refType: 'Contract', refId: contract.refId },
+          clause: cite('RET-SECOND', 'RETENTION'),
         });
       }
     }
@@ -1874,5 +1902,130 @@ export function disputePosition(
     amountInDisputeMinor: live.reduce((sum, d) => sum + Number(d.disputedAmountMinor ?? 0), 0),
     costsProvisionFindings,
     summary,
+  };
+}
+
+/**
+ * The executed contract as a register of commercial terms.
+ *
+ * The terms were always stored — LD rate, LD cap, retention, defects liability
+ * — as fields on the Contract record. What did not exist was a place to read
+ * them as a position: percentages without the money they come to, dates without
+ * the date they resolve to, and no citation of the clause each one sits under.
+ *
+ * Three things this does that reading the record does not.
+ *
+ * It resolves percentages into money. A 5% retention on a £18.5m contract is
+ * £925,000, and nobody argues about a percentage — they argue about the sum.
+ *
+ * It resolves durations into dates. A twelve-month defects liability period is
+ * a date, and the date is the thing somebody has to diarise.
+ *
+ * It cites the clause. A contract administrator challenged on a retention
+ * release answers "clause 4.20.3", not "the system said so". Where the form is
+ * bespoke, no clause is cited: a bespoke contract has whatever numbering its
+ * drafter chose, and a confident wrong citation is evidence that gets quoted.
+ */
+export type ContractTerm = {
+  term: string;
+  /** The figure as the contract states it — "5%", "12 months", "£4,500/day". */
+  stated: string;
+  /** What it resolves to in money, where it resolves to money. */
+  valueMinor?: number;
+  /** What it resolves to as a date, where it resolves to a date. */
+  resolvesTo?: string;
+  clause?: ClauseCitation;
+};
+
+export type ContractTermsRegister = {
+  contractId: string;
+  suite: ContractSuite;
+  form: string;
+  contractSumMinor: number;
+  status: string;
+  terms: ContractTerm[];
+  /**
+   * Obligations in the calendar that this form has no clause for. Named rather
+   * than left blank: an obligation with no citation is one that cannot be
+   * argued from, and knowing which they are is the point.
+   */
+  uncited: string[];
+};
+
+export function contractTerms(ctx: EngineContext, contractId: string): ContractTermsRegister {
+  authorise(ctx, 'CONTRACTS_CLAIMS', 'R', { dataSensitivity: 'LEGAL_L4' });
+
+  const record = ctx.ledger.require({ refType: 'Contract', refId: contractId });
+  const state = record.state;
+  const suite = String(state.suite ?? 'BESPOKE') as ContractSuite;
+  const sum = Number(state.contractSumMinor ?? 0);
+  const cite = (reference: string, category: string) => clauseFor(suite, reference, category);
+
+  const terms: ContractTerm[] = [];
+
+  const ldPerDay = Number(state.liquidatedDamagesPerDayMinor ?? 0);
+  if (ldPerDay > 0) {
+    const capPercent = Number(state.ldCapPercent ?? 0);
+    const capMinor = Number(state.ldCapMinor ?? Math.round(sum * (capPercent / 100)));
+    terms.push({
+      term: 'Liquidated damages',
+      // `stated` is how the contract expresses the term, not a second rendering
+      // of the number — the console shows the money from `valueMinor` and this
+      // beside it, so formatting the figure here printed it twice.
+      stated: 'per day of delay',
+      valueMinor: ldPerDay,
+      clause: cite('LIQUIDATED_DAMAGES', 'LIQUIDATED_DAMAGES'),
+    });
+    terms.push({
+      term: 'Liquidated damages cap',
+      stated: `${capPercent}% of the contract sum`,
+      valueMinor: capMinor,
+      clause: cite('LIQUIDATED_DAMAGES', 'LIQUIDATED_DAMAGES'),
+    });
+    // The days of delay the cap buys — the figure that decides whether damages
+    // are a deterrent or a rounding error on a project this size.
+    terms.push({
+      term: 'Days of delay to reach the cap',
+      stated: `${Math.floor(capMinor / ldPerDay)} days`,
+    });
+  }
+
+  const retentionPercent = Number(state.retentionPercent ?? 0);
+  if (retentionPercent > 0) {
+    terms.push({
+      term: 'Retention',
+      stated: `${retentionPercent}% of the contract sum`,
+      valueMinor: Math.round(sum * (retentionPercent / 100)),
+      clause: cite('RET-FIRST', 'RETENTION'),
+    });
+  }
+
+  const defectsMonths = Number(state.defectsLiabilityMonths ?? 0);
+  const completion = typeof state.completionDate === 'string' ? state.completionDate.slice(0, 10) : undefined;
+  if (defectsMonths > 0) {
+    terms.push({
+      term: 'Defects liability',
+      stated: `${defectsMonths} months from completion`,
+      ...(completion ? { resolvesTo: addMonths(completion, defectsMonths) } : {}),
+      clause: cite('DLP-EXPIRY', 'DEFECTS_LIABILITY'),
+    });
+  }
+
+  // What the calendar carries for this project that the form has no clause for.
+  const cited = new Set(clauseRegister(suite).map((entry) => entry.obligation));
+  const uncited = [...new Set(
+    obligationFacts(ctx.ledger, ctx.projectId).entries
+      .filter((entry) => !cited.has(entry.reference) && !cited.has(entry.category))
+      .map((entry) => entry.category),
+  )].sort();
+
+  return {
+    contractId,
+    suite,
+    form: String(state.form ?? suite),
+    contractSumMinor: sum,
+    status: String(state.status ?? 'DRAFT'),
+    terms,
+    uncited,
   };
 }

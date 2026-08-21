@@ -42,6 +42,13 @@ export async function contracts(root) {
   const disputes = await api.get(`/v1/projects/${projectId}/disputes/position`).catch(() => null);
 
   const contract = b.Contract.filter((c) => c.status === 'EXECUTED').at(-1) ?? b.Contract.at(-1);
+
+  // The commercial terms as a position rather than as fields: percentages
+  // resolved into money, durations into dates, each citing the clause it sits
+  // under. Nobody argues about a percentage; they argue about the sum.
+  const terms = contract?.id
+    ? await api.get(`/v1/projects/${projectId}/contracts/${contract.id}/terms`).catch(() => null)
+    : null;
   const claim = b.Claim.at(-1);
   const attribution = claim?.attribution;
 
@@ -188,10 +195,16 @@ export async function contracts(root) {
                 apart because a list mixing the two is unusable.
               </div></div>
               ${table({
-                headers: ['Ref', 'Category', 'Obligation', 'Owner', 'Due', 'Days'],
-                align: ['', '', '', '', '', 'num'],
+                headers: ['Ref', 'Clause', 'Category', 'Obligation', 'Owner', 'Due', 'Days'],
+                align: ['', '', '', '', '', '', 'num'],
                 rows: calendar.entries.map((e) => [
                   e.reference,
+                  // The difference between a reminder and a position. A dash
+                  // where the form is bespoke: a confident wrong clause number
+                  // is evidence that gets quoted in a letter.
+                  e.clause
+                    ? html`<span class="mono" title="${e.clause.note ?? ''}">${e.clause.suite} ${e.clause.clause}</span>`
+                    : '—',
                   humanise(e.category),
                   String(e.description).slice(0, 78) + (String(e.description).length > 78 ? '…' : ''),
                   e.owner,
@@ -365,12 +378,41 @@ export async function contracts(root) {
           <h3>Contract terms</h3>
           ${
             contract
-              ? html`<div class="split-list">
-                  <div class="row"><span class="lbl">Contract sum</span><span class="val">${money(contract.contractSumMinor)}</span></div>
-                  <div class="row"><span class="lbl">LDs per day</span><span class="val">${money(contract.liquidatedDamagesPerDayMinor)}</span></div>
-                  <div class="row"><span class="lbl">LD cap</span><span class="val">${money(contract.ldCapMinor)} (${pct(contract.ldCapPercent, 0)})</span></div>
-                  <div class="row"><span class="lbl">Retention</span><span class="val">${pct(contract.retentionPercent, 0)}</span></div>
-                  <div class="row"><span class="lbl">Defects liability</span><span class="val">${contract.defectsLiabilityMonths} months</span></div>
+              ? html`${
+                  // Percentages resolved into money and durations into dates,
+                  // each citing the clause it sits under. The raw fields below
+                  // stay as the fallback where the register cannot be read.
+                  terms
+                    ? html`<div class="split-list" style="margin-bottom:11px">
+                        <div class="row"><span class="lbl">Contract sum</span><span class="val">${money(terms.contractSumMinor)}</span></div>
+                        ${terms.terms.map((t) => html`<div class="row">
+                          <span class="lbl">
+                            ${t.term}
+                            ${t.clause ? html`<span class="metric-sub mono" title="${t.clause.note ?? ''}"> ${t.clause.suite} ${t.clause.clause}</span>` : ''}
+                          </span>
+                          <span class="val">
+                            ${t.valueMinor !== undefined ? money(t.valueMinor) : t.resolvesTo ? date(t.resolvesTo) : t.stated}
+                            ${t.valueMinor !== undefined || t.resolvesTo ? html`<span class="metric-sub"> ${t.stated}</span>` : ''}
+                          </span>
+                        </div>`)}
+                      </div>
+                      ${
+                        terms.uncited.length > 0
+                          ? html`<div class="metric-sub" style="margin-bottom:11px">
+                              No clause in ${terms.form} for: ${terms.uncited.map(humanise).join(', ')} —
+                              these obligations are real and cannot be argued from a clause number.
+                            </div>`
+                          : ''
+                      }`
+                    : html`<div class="split-list">
+                        <div class="row"><span class="lbl">Contract sum</span><span class="val">${money(contract.contractSumMinor)}</span></div>
+                        <div class="row"><span class="lbl">LDs per day</span><span class="val">${money(contract.liquidatedDamagesPerDayMinor)}</span></div>
+                        <div class="row"><span class="lbl">LD cap</span><span class="val">${money(contract.ldCapMinor)} (${pct(contract.ldCapPercent, 0)})</span></div>
+                        <div class="row"><span class="lbl">Retention</span><span class="val">${pct(contract.retentionPercent, 0)}</span></div>
+                        <div class="row"><span class="lbl">Defects liability</span><span class="val">${contract.defectsLiabilityMonths} months</span></div>
+                      </div>`
+                }
+                <div class="split-list">
                   <div class="row"><span class="lbl">Clauses extracted</span><span class="val">${b.ContractClause.length}</span></div>
                 </div>
                 ${

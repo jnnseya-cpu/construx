@@ -2727,6 +2727,14 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'GET',
+    pattern: '/v1/projects/:projectId/contracts/:contractId/terms',
+    description: 'The executed contract as a register of commercial terms, each citing its clause',
+    readOnly: true,
+    handler: (platform, ctx) =>
+      claims.contractTerms(projectContext(platform, ctx), ctx.params.contractId as string),
+  },
+  {
+    method: 'GET',
     pattern: '/v1/projects/:projectId/variations/register',
     description: 'Engine F — the variation control matrix, both sides of every change',
     handler: (platform, ctx) => claims.variationRegister(projectContext(platform, ctx)),

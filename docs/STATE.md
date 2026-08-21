@@ -1458,6 +1458,32 @@ Verified against a running server: a project created in Columbus, Ohio at
 per-field problem+json error; and the estate's contract-value card switched to
 "mixed currencies" rather than adding dollars to pounds.
 
+**Every obligation cites the clause that created it.** The calendar knew what
+was due and when, and cited the contract as a whole. That is enough to work from
+and not enough to argue from: a contract administrator challenged on a retention
+release answers "clause X16.2", not "the system said so".
+
+`contractClauses.ts` maps each obligation to its clause under JCT 2016, NEC4,
+FIDIC 2017, IChemE and MF/1. It is a table rather than an extraction because the
+fact is about the standard form, not about the words on a page — a JCT contract
+with an amended clause 4.20 is still JCT, and the register has to point at the
+clause the parties would turn to. Two refusals: **BESPOKE is empty**, because a
+bespoke contract has whatever numbering its drafter chose and a confident wrong
+citation is evidence that gets quoted in a letter; and an obligation a form does
+not have is left unmapped rather than pointed at the nearest thing — NEC has no
+loss and expense, it assesses a change to Defined Cost. Where a project runs two
+different standard forms nothing is cited at all.
+
+`GET /v1/projects/:projectId/contracts/:contractId/terms` reads the executed
+contract as a position rather than as fields. It resolves percentages into money
+— nobody argues about a percentage, they argue about the sum — durations into
+the dates somebody has to diarise, and derives the figure no field carries: how
+many days of delay the LD cap buys. On the seeded NEC4 contract that is £12.5K
+per day against a £2.05M cap, so **164 days**, which is what decides whether
+damages are a deterrent on a project that size. It also names the obligations
+the form has no clause for, because one that cannot be argued from a clause
+number is exactly the one worth knowing about.
+
 **The AI says who it is, and the queue says whose it is.** Two halves of the
 same defect: the behaviour was already role-specific and the presentation was
 not.
