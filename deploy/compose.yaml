@@ -4,8 +4,24 @@
 # and the record dies with the container — which is exactly the failure the
 # journal exists to prevent, reintroduced by the orchestration.
 
+# Named explicitly rather than taken from the directory. Compose otherwise uses
+# the folder's name, so a repository cloned to `app/` becomes project `app` —
+# and on a host that already runs a project called `app`, a `docker compose
+# down` issued from the wrong directory reaches for the wrong containers.
+name: construx
+
 services:
   construx:
+    # Deterministic, because the runbook and the backup script address this
+    # container by name: `docker exec construx …`. Left to compose it would be
+    # `<project>-construx-1`, which varies with the directory it was cloned
+    # into, and the first sign of trouble would be a backup script that has been
+    # silently failing since the day it was written.
+    #
+    # It also makes a second replica impossible, which is the correct
+    # constraint: two processes appending to one journal interleave their writes
+    # and break the hash chain.
+    container_name: construx
     build:
       context: ..
       dockerfile: deploy/Dockerfile

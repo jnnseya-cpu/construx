@@ -91,6 +91,15 @@ describe('the deployed container receives the settings a deployment is told it c
     }
   });
 
+  it('names the container deterministically, because the runbook addresses it by name', () => {
+    // `docker exec construx …` is how the backup script reads the journal out.
+    // Left to compose the name is `<project>-construx-1`, which varies with the
+    // directory the repository was cloned into — so the backup script would
+    // fail on a name that does not exist, quietly, every hour.
+    assert.match(compose, /\n {4}container_name: construx\n/, 'the container must be named construx');
+    assert.match(compose, /\nname: construx\n/, 'the compose project must be named, not inherited from the folder');
+  });
+
   it('lets the host port move without exposing the container more widely', () => {
     // A VPS is rarely empty. Another application already holding 8080 stops
     // this container dead on start, and the tempting fix — publishing on
