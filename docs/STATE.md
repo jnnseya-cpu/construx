@@ -161,6 +161,53 @@ is photographs — roughly 7GB per active project per month at capture size, abo
 and a half years of one busy site, and it is evidence rather than models that
 decides when the volume has to grow.
 
+**Marketing measurement: Meta Pixel and Google tag, on the public site only.**
+`ANALYTICS_META_PIXEL_ID` and `ANALYTICS_GOOGLE_TAG_ID` in `backend/src/config.ts`,
+both empty by default. With neither set the whole feature is inert — no script
+served, no banner, and a content-security-policy character-for-character the one
+that existed before it. That default matters: a tag that arms itself at boot
+reports a developer's page views into a live ad account, which is the same
+argument that keeps the newsletter sender off.
+
+**The console is deliberately outside it, and a test proves it.** `/app` paths
+carry tenant, project and entity identifiers, so a page view from inside the
+console tells two advertising networks which projects a customer runs and how
+fast they are moving. There is nothing to optimise there either — the conversion
+was won at the door. `APP_SHELL` is a separate policy that the vendor hosts never
+enter, `frontend/index.html` never loads the loader, and both are asserted
+rather than assumed.
+
+**Nothing loads before consent.** Both vendors set cookies that are not necessary
+to provide the service, which under PECR means asking first rather than
+reporting while the banner is still on screen. The banner is server-rendered and
+`hidden` — one built by script never appears for the people most likely to care
+— and both buttons are real. An event raised before the answer is *held* rather
+than dropped, because somebody can click a package while the banner is up and
+that is the step that matters most; it replays on accept and is discarded on
+decline.
+
+**The vendors' snippets are not used.** Both publish inline `<script>` blocks,
+which here would mean `unsafe-inline` in `script-src` across every page — a real
+protection traded for the convenience of pasting. `frontend/analytics.js` loads
+them from this origin instead, and the markup carries only two identifiers on a
+tag. Those identifiers are validated to the character sets the vendors actually
+issue and dropped otherwise, rather than escaped: the honest answer to "this id
+contains a quote" is that it is not an id.
+
+Verified in a real browser against a running server with both ids set: fourteen
+behaviours including nothing requested before a choice, an event held across the
+banner, both vendors loading on accept, a decline remembered rather than
+re-asked, zero policy violations, and the console loading no tracker *even with
+consent granted*.
+
+What this cannot do is stated rather than hidden: **a confirmed registration
+cannot be attributed from the browser**, because confirmation happens inside the
+console where no pixel runs. The click to the signup form is the last measurable
+step. Closing that gap properly is server-to-server — Meta's Conversions API and
+GA4's Measurement Protocol, fired from the same code that writes the activation
+to the ledger, which is both more accurate than a browser and unaffected by ad
+blockers. Not built.
+
 **The domain is `construxvg.com`**, and the go-live document is written against
 its real DNS rather than a placeholder. Three facts about that zone changed what
 the steps say. Its nameservers are Hostinger's own parking pair, so the panel is

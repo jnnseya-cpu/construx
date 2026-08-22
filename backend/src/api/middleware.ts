@@ -5,6 +5,7 @@ import { AuthError, RateLimitError, ValidationError, toProblem, DomainError } fr
 import { assertValid, type Schema } from '../core/validate.ts';
 import { counters, latency, recordSecurityEvent, truncateAddress } from './telemetry.ts';
 import { verifyToken, type AuthContext } from '../identity/auth.ts';
+import { analyticsCspHosts } from '../site/analytics.ts';
 import type { SharedLimiter } from './sharedlimiter.ts';
 
 /**
@@ -360,8 +361,31 @@ export function sendJson(res: ServerResponse, ctx: RequestContext, status: numbe
  */
 const CSP = {
   SELF_CONTAINED: "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+  /**
+   * The marketing pages, which load a stylesheet and scripts from this origin
+   * and — only if an operator configured a measurement id — from the two
+   * vendors those ids belong to.
+   *
+   * The widening is conditional on purpose. With no id set, `analyticsCspHosts`
+   * returns empty strings and this is character-for-character the policy it was
+   * before measurement existed: a deployment that does not advertise should not
+   * be running a policy that permits advertising scripts. `connect-src` is
+   * absent entirely in that case, because the site makes no requests of its own.
+   *
+   * Note what is never added: `unsafe-inline` for script. Meta and Google both
+   * publish their tags as inline blocks, which is exactly why those are not
+   * used — `/analytics.js` loads them from this origin instead, so the policy
+   * keeps a protection that pasting a snippet would have traded away across
+   * every page of the site.
+   *
+   * This cannot reach the console. `APP_SHELL` below is a separate entry, no
+   * measurement tag is served there, and that is the point rather than an
+   * oversight.
+   */
   PUBLIC_SITE:
-    "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; " +
+    `default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'${analyticsCspHosts().script}; ` +
+    `img-src 'self' data:${analyticsCspHosts().img}; ` +
+    (analyticsCspHosts().connect ? `connect-src 'self'${analyticsCspHosts().connect}; ` : '') +
     "font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   /**
    * The application shell. It was being written with no security headers at all

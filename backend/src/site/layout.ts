@@ -1,4 +1,5 @@
 import { esc } from '../messaging/render.ts';
+import { analyticsScriptTag, consentBanner } from './analytics.ts';
 
 /**
  * The public site's chrome.
@@ -126,7 +127,9 @@ function footer(): string {
     </div>
   </div>
 </footer>
-<script src="/site.js" defer></script>`;
+${consentBanner()}
+<script src="/site.js" defer></script>
+${analyticsScriptTag()}`;
 }
 
 /** Wrap page content in the site chrome. */

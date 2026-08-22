@@ -240,6 +240,30 @@ export const config = {
   /** Absolute origin used in email links. Email cannot resolve a relative path. */
   publicBaseUrl: str('PUBLIC_BASE_URL', `http://localhost:${num('PORT', 8080)}`),
 
+  /**
+   * Marketing measurement on the public site.
+   *
+   * Both are empty by default and everything downstream is inert while they
+   * are: no third-party script is emitted, no consent banner appears, and the
+   * content-security-policy stays as tight as it was. A deployment that does
+   * not advertise should not be paying for a policy that permits advertising
+   * scripts, and a development machine should never be sending page views to
+   * somebody's ad account.
+   *
+   * **Scope is the public site and the signup funnel, and stops there.** The
+   * signed-in console is deliberately outside it: its paths carry tenant,
+   * project and entity identifiers, so a page view sent from `/app` hands a
+   * customer's commercial position — which projects, how many, moving how fast
+   * — to two advertising networks. There is also nothing to measure there. The
+   * conversion happened at the door.
+   */
+  analytics: {
+    /** Meta (Facebook) pixel id. Digits. */
+    metaPixelId: str('ANALYTICS_META_PIXEL_ID', ''),
+    /** Google tag id — `G-XXXXXXX` for GA4, `GT-XXXXXXX` for a Google tag. */
+    googleTagId: str('ANALYTICS_GOOGLE_TAG_ID', ''),
+  },
+
   newsletter: {
     /**
      * Off unless switched on. A marketing sender that arms itself at boot would
