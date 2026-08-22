@@ -301,6 +301,39 @@ export function isProduction(): boolean {
   return process.env.NODE_ENV === 'production';
 }
 
+/**
+ * Whether outbound mail claims a domain this deployment does not serve.
+ *
+ * The from address on every email — the signup confirmation included, despite
+ * the `NEWSLETTER_` prefix on the variable — defaults to a domain a given
+ * deployment may not own. A provider asked to send as a domain it does not
+ * carry either refuses outright or sends mail that fails SPF at the far end,
+ * and the visible symptom is never "email is misconfigured": it is nobody being
+ * able to finish signing up, which is a far more expensive thing to diagnose.
+ *
+ * Compared against the public origin because that is the domain the deployment
+ * has already declared as its own. A subdomain sender (`mail.example.com`
+ * against `example.com`) is accepted: that is a normal transactional setup and
+ * the parent domain's SPF is what authorises it.
+ */
+export function foreignSenderDomain(
+  fromAddress: string,
+  publicBaseUrl: string,
+): { sender: string; origin: string } | null {
+  const sender = fromAddress.split('@')[1]?.toLowerCase() ?? '';
+  let origin = '';
+  try {
+    origin = new URL(publicBaseUrl).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    // A malformed PUBLIC_BASE_URL is its own problem and leaves nothing to
+    // compare against. Staying quiet is better than blaming the from address.
+    return null;
+  }
+  if (!sender || !origin) return null;
+  if (sender === origin || sender.endsWith(`.${origin}`)) return null;
+  return { sender, origin };
+}
+
 /** Warn loudly rather than fail silently when production is misconfigured. */
 export function assertProductionSafety(): string[] {
   const warnings: string[] = [];
@@ -344,6 +377,13 @@ export function assertProductionSafety(): string[] {
       // Unsubscribe links carry a signed token. Over http they are readable in
       // transit, and a mail client following one leaks it to every hop.
       warnings.push('PUBLIC_BASE_URL is not https — unsubscribe links would be sent over cleartext');
+    }
+    const foreign = foreignSenderDomain(config.newsletter.fromAddress, config.publicBaseUrl);
+    if (foreign) {
+      warnings.push(
+        `NEWSLETTER_FROM_ADDRESS sends as "${foreign.sender}" but this deployment serves "${foreign.origin}" — ` +
+          'every email, including the signup confirmation, will fail SPF unless that domain authorises this sender',
+      );
     }
   }
   if (config.smtp.host && config.smtp.pass === '' && config.smtp.user !== '') {

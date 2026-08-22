@@ -156,9 +156,34 @@ that surprises people: **a BIM model never lands on the volume.** `ingestModel`
 records the file's hash, format, discipline, LOD and element count and an
 optional `fileUri`, so a 1.5GB federated IFC costs a few hundred bytes and the
 model stays in the common data environment that versions it. What fills a disk
-is photographs — roughly 7GB per active project per month, of which site
-photography is the large majority — so 100GB is months rather than years, and it
-is evidence rather than models that decides when the volume has to grow.
+is photographs — roughly 7GB per active project per month at capture size, about
+1.8GB as actually stored now the console re-encodes them — so 100GB is about four
+and a half years of one busy site, and it is evidence rather than models that
+decides when the volume has to grow.
+
+**The domain is `construxvg.com`**, and the go-live document is written against
+its real DNS rather than a placeholder. Three facts about that zone changed what
+the steps say. Its nameservers are Hostinger's own parking pair, so the panel is
+the right place to edit it. It already carries `A` and `AAAA` records pointing at
+a parking page, which makes the cutover an edit rather than an addition — and
+leaving the stale `AAAA` behind would send every visitor on a mobile connection
+to the parking page while the site looked correct from a desk, which is the most
+common way a cutover appears to half-work. And it already carries Hostinger `MX`
+records and a matching SPF, which is why the recommendation for launch is to send
+through that mailbox: it needs no new provider, no verification wait and no DNS
+change at all.
+
+That last point exposed a real trap. `NEWSLETTER_FROM_ADDRESS` is the from
+address on **every** outbound email despite its name — `notifications/notify.ts`
+uses it for the signup confirmation — and it defaults to `hello@construx.ai`,
+which this deployment does not serve. Left alone, Hostinger would be asked to
+send as a domain it does not carry, the confirmation would fail SPF at the
+receiving end, and the symptom would not look like mail at all: it would look
+like people registering and never appearing. `foreignSenderDomain` in
+`config.ts` now compares the sender against the public origin and
+`assertProductionSafety` warns at boot. It accepts a subdomain sender, because
+that is how a transactional provider is normally set up and a warning people
+learn to ignore is worse than no warning.
 
 Writing it found `deploy/compose.yaml` setting neither `EVIDENCE_STORE_PATH` nor
 `SIGNING_PRIVATE_KEY_PEM`, so following the shipped compose file produced a

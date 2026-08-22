@@ -193,7 +193,7 @@ gates traffic.
 
 ```
                      ┌───────────────────────────────────────┐
-   yourdomain.com    │  Hostinger VPS                        │
+   construxvg.com    │  Hostinger VPS                        │
    ──────────────►   │                                       │
         :443         │  Caddy  :80 :443   ── TLS, redirect    │
                      │     │                                 │
@@ -223,11 +223,18 @@ ON YOUR OWN MACHINE
   2  openssl genpkey -algorithm ed25519 \
        -out signing.pem && cat signing.pem        -> save as SIGNING_PRIVATE_KEY_PEM
   3  get SMTP host, user, password on port 587    -> required, see step 8
+                                                    the Hostinger mailbox on
+                                                    construxvg.com already works
 
 IN HOSTINGER'S PANEL
-  4  create a KVM VPS, Ubuntu 24.04               -> note the IPv4
-  5  DNS zone: A @ -> that IP, TTL 300
-  6  DNS zone: A www -> that IP, TTL 300
+  4  create a KVM VPS, Ubuntu 24.04               -> note the IPv4 AND the IPv6
+  5  DNS zone: CHANGE A @   194.36.185.146 -> that IP, TTL 300
+  6  DNS zone: CHANGE A www 194.36.185.146 -> that IP, TTL 300
+  6a DNS zone: CHANGE AAAA @ -> the VPS IPv6, or DELETE the record
+                                                 -> leaving the old one sends
+                                                    every mobile visitor to the
+                                                    parking page
+  6b DNS zone: leave MX and TXT exactly as they are
 
 ON THE VPS, AS root
   7  adduser construx
@@ -251,8 +258,10 @@ ON THE VPS, AS construx
  22  docker compose -f deploy/compose.yaml logs -f -> read it, no [config warning]
  23  curl -fsS http://127.0.0.1:8080/readyz        -> expect 200
 
- 24  dig +short A yourdomain.com                   -> must return this VPS's IP
+ 24  dig +short A construxvg.com                   -> must return this VPS's IP
                                                      before going on
+ 24a dig +short AAAA construxvg.com                -> the VPS IPv6, or nothing.
+                                                     NOT 2a02:4780:...
  25  nano /srv/construx/Caddyfile                  -> the three lines in step 5
  26  docker run -d --name caddy --restart unless-stopped --network host \
        -v /srv/construx/Caddyfile:/etc/caddy/Caddyfile:ro \
@@ -260,10 +269,10 @@ ON THE VPS, AS construx
  27  docker logs caddy                             -> certificate obtained
 
 FROM ANYWHERE ELSE
- 28  curl -I http://yourdomain.com                 -> 301 to https
- 29  curl -fsS https://yourdomain.com/readyz       -> 200
+ 28  curl -I http://construxvg.com                 -> 301 to https
+ 29  curl -fsS https://construxvg.com/readyz       -> 200
  30  curl -sI -X POST \
-       https://yourdomain.com/v1/console/session   -> 403
+       https://construxvg.com/v1/console/session   -> 403
  31  curl --max-time 5 http://<vps-ip>:8080/healthz-> must NOT connect
 
 ON THE VPS
@@ -273,9 +282,9 @@ ON THE VPS
  35  arrange to copy /srv/construx/backups OFF this machine
 
 IN A BROWSER
- 36  https://yourdomain.com/signup                 -> register the company
+ 36  https://construxvg.com/signup                 -> register the company
  37  confirm from the email                        -> this is why step 3 mattered
- 38  https://yourdomain.com/app                    -> sign in
+ 38  https://construxvg.com/app                    -> sign in
 ```
 
 Four places the order is not a preference:
@@ -308,9 +317,25 @@ You also need, before you finish:
 
 - **SMTP credentials** on port 587 with a username and password. This is not
   optional — see step 8, the first account cannot be created without working
-  email. Use a transactional provider or Hostinger's own mail hosting. Do not
-  run your own mail server on the VPS; most providers block outbound port 25 and
-  a fresh IP has no sending reputation.
+  email. Do not run your own mail server on the VPS; most providers block
+  outbound port 25 and a fresh IP has no sending reputation.
+
+  **For launch, use the Hostinger mailbox the domain already has.**
+  `construxvg.com` already delivers through `mx1.hostinger.com` and its SPF
+  record already authorises Hostinger to send. Using that mailbox's SMTP means
+  no new account, no domain verification wait and **no DNS change at all** —
+  which is why it is the right choice on day one.
+
+  Move to a transactional provider (Postmark, Resend, SES) when volume or
+  deliverability justifies it, not before. When you do, the SPF record must be
+  extended to authorise them as well:
+
+  ```
+  v=spf1 include:_spf.mail.hostinger.com include:<provider> ~all
+  ```
+
+  One `v=spf1` record, both includes. A second TXT record beginning `v=spf1` is
+  a permanent error and fails *both* senders — it is the usual way this breaks.
 - **AI provider keys**, only if you are going live with real AI. You do not have
   to. `AI_MODE=local` runs every engine deterministically with no provider
   spend, which is a legitimate soft-launch: the platform is fully usable and the
@@ -360,29 +385,53 @@ curl --max-time 5 http://<vps-ip>:8080/healthz    # must fail to connect
 Do this **now**, not at the end: DNS takes time to propagate, and the
 certificate in step 5 cannot be issued until the name resolves to this machine.
 
-In Hostinger's panel, open the DNS zone for the domain and set:
+**The nameservers are Hostinger's**, so Hostinger's panel is the right place to
+make this change — the zone is live and being read:
 
-| Type | Name | Value | TTL |
+```
+NS   pixel.dns-parking.com, byte.dns-parking.com
+```
+
+`dns-parking.com` is Hostinger's own parking pair. Nothing needs moving.
+
+**The zone is not empty, and that changes this from adding records to editing
+them.** What it holds today:
+
+| Type | Name | Currently | Do |
 |---|---|---|---|
-| `A` | `@` | your VPS IPv4 | 300 |
-| `A` | `www` | your VPS IPv4 | 300 |
-| `AAAA` | `@` | your VPS IPv6, if it has one | 300 |
+| `A` | `@` | `194.36.185.146` — the parking page | **Change** to the VPS IPv4 |
+| `A` | `www` | `194.36.185.146` — the parking page | **Change** to the VPS IPv4 |
+| `AAAA` | `@` | `2a02:4780:a:1577:0:17dd:b1da:10` — parking | **Change** to the VPS IPv6, or **delete** |
+| `MX` | `@` | `mx1`/`mx2.hostinger.com` | **Leave alone** |
+| `TXT` | `@` | `v=spf1 include:_spf.mail.hostinger.com ~all` | **Leave alone for now** — see step 8 |
+
+Three things about that table matter more than they look.
+
+**Do not delete the `AAAA` record and forget it.** If `A` points at the VPS and
+`AAAA` still points at the parking address, every visitor on an IPv6 connection
+— most phones on mobile data — reaches the parking page while the site looks
+perfectly fine from your desk. It is the single most common way a cutover
+appears to half-work. Either set it to the VPS's own IPv6 or remove it; do not
+leave the old one.
+
+**Do not touch the `MX` records.** Mail for `construxvg.com` is already
+delivered by Hostinger, and changing the `A` record does not affect it — mail
+follows `MX`, not `A`. Deleting or "tidying" them stops your email that
+afternoon.
+
+**The `TXT` SPF record is Hostinger-only**, which is exactly right if the
+platform sends through the Hostinger mailbox this domain already has — and that
+is what step 1 recommends for launch, precisely because it needs no DNS change.
+It only has to be edited if you move to a transactional provider later.
 
 Use a 300-second TTL for the go-live so a mistake is five minutes from being
 undone rather than a day. Raise it once you are settled.
 
-**If the domain's nameservers point somewhere other than Hostinger** — Cloudflare
-is the common case — then Hostinger's DNS zone is not being read, and you must
-make this change wherever the nameservers point instead. Check first:
+Then wait for it — the old parking address is cached, so this is not instant:
 
 ```bash
-dig +short NS yourdomain.com
-```
-
-Then wait for it:
-
-```bash
-dig +short A yourdomain.com    # must return your VPS IP before step 5
+dig +short A construxvg.com       # must return your VPS IP before step 5
+dig +short AAAA construxvg.com    # must return the VPS IPv6, or nothing at all
 ```
 
 ---
@@ -412,15 +461,28 @@ SIGNING_PRIVATE_KEY_PEM=<the PEM, newlines as \n, on one line>
 
 # The public origin. Every link sent by email is built from this, so it is the
 # https address people will use — not the address the container binds to.
-PUBLIC_BASE_URL=https://yourdomain.com
+PUBLIC_BASE_URL=https://construxvg.com
 
 # Email. Required before the first account can be created.
-SMTP_HOST=<host>
+# Hostinger already carries mail for this domain, so this is its own SMTP:
+# the user is the FULL mailbox address, not a short name. Confirm the host in
+# Hostinger's panel under Emails -> configuration settings before pasting it.
+SMTP_HOST=smtp.hostinger.com
 SMTP_PORT=587
 SMTP_SECURE=false
 SMTP_REQUIRE_TLS=true
-SMTP_USER=<user>
-SMTP_PASS=<pass>
+SMTP_USER=no-reply@construxvg.com
+SMTP_PASS=<the mailbox password>
+
+# Who the mail says it is from. Despite the NEWSLETTER_ prefix this is the from
+# address on EVERY outbound email, the signup confirmation included, and its
+# default is hello@construx.ai — the wrong domain for this deployment. Left as
+# the default, Hostinger is being asked to send as a domain it does not carry
+# and whose SPF record does not authorise it, so the confirmation email is
+# rejected or filtered and nobody can finish signing up. Make it the mailbox
+# that is actually authenticating above.
+NEWSLETTER_FROM_NAME=CONSTRUX.AI
+NEWSLETTER_FROM_ADDRESS=no-reply@construxvg.com
 
 # local = deterministic engines, no spend. Change to production when you are
 # ready to pay providers, and set the two keys.
@@ -464,7 +526,7 @@ Caddy, because it obtains and renews the certificate itself and the whole
 configuration is four lines. Create `/srv/construx/Caddyfile`:
 
 ```
-yourdomain.com, www.yourdomain.com {
+construxvg.com, www.construxvg.com {
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:8080
 }
@@ -490,11 +552,11 @@ provided step 3 has propagated. Watch `docker logs caddy` if it does not.
 
 | Check | Expected |
 |---|---|
-| `curl -I http://yourdomain.com` | `301` to https |
-| `curl -fsS https://yourdomain.com/readyz` | `200` |
-| `curl -sI https://yourdomain.com/v1/console/session -X POST` | `403` — the console is not open to strangers |
-| `https://yourdomain.com/` | the landing page, valid certificate |
-| `https://yourdomain.com/app` | the console sign-in |
+| `curl -I http://construxvg.com` | `301` to https |
+| `curl -fsS https://construxvg.com/readyz` | `200` |
+| `curl -sI https://construxvg.com/v1/console/session -X POST` | `403` — the console is not open to strangers |
+| `https://construxvg.com/` | the landing page, valid certificate |
+| `https://construxvg.com/app` | the console sign-in |
 | `docker compose logs \| grep 'config warning'` | nothing |
 
 The 403 matters and CI checks it on every build for a reason: it is the one
@@ -551,7 +613,7 @@ the account can never be confirmed — and the screen will not tell you that,
 because to a caller a real registration and a duplicate one answer identically
 by design.
 
-1. Go to `https://yourdomain.com/signup`.
+1. Go to `https://construxvg.com/signup`.
 2. Register the operating company. Confirm from the email.
 3. Sign in at `/app` and check the identity you have.
 
