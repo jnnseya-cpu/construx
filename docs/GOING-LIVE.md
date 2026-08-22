@@ -57,6 +57,64 @@ the record lives in RAM and the evidence store accepts objects up to 50 MB
 each, so headroom is cheaper than a migration. Disk is dominated by evidence,
 not by the journal — the journal is JSON lines.
 
+### What actually lands on the disk
+
+Three classes of thing, and only one of them is big.
+
+**BIM models do not land on it at all.** `ingestModel` records the file's hash,
+its format, discipline, LOD and element count, and optionally a `fileUri`
+pointing at where the file really lives. A 1.5 GB federated IFC therefore costs
+the volume a few hundred bytes. The model stays in the common data environment
+that versions and coordinates it, and the platform records *which* model was the
+basis of a decision rather than becoming a second copy of it.
+
+Say that out loud before anybody expects otherwise: **this is not a model
+server.** There is no viewer, no upload path for an `.rvt`, and no route that
+accepts one. If a model needs opening, it is opened where models are kept.
+
+**Evidence and documents do land on it**, through the one upload route, capped
+at `EVIDENCE_MAX_BYTES` (50 MB default). Drawings, photographs, certificates,
+delivery tickets, test results, scanned O&M content. This is what fills a disk,
+and photographs are most of it:
+
+| Per active project, per month | Roughly |
+|---|---|
+| Site photographs — 100/day at 3 MB, 22 days | 6.6 GB |
+| Drawings issued and revised — 60 at 5 MB | 300 MB |
+| Certificates, tickets, test results — 200 at 1 MB | 200 MB |
+| **Total** | **~7 GB** |
+
+So 100 GB is roughly fourteen months of one busy site, or four to five months of
+three. That is months rather than years, and it is the number to plan against —
+not the size of the models, which never arrive.
+
+**The ledger is negligible** beside either. It is JSON lines, and a project
+generating a hundred thousand events writes tens of megabytes.
+
+### When the disk becomes the constraint
+
+In order of preference:
+
+1. **Grow the volume.** Hostinger VPS plans scale, and this is one instance with
+   one disk, so it is the simplest move by a distance.
+2. **Move the store behind object storage.** `backend/src/evidence/store.ts` is
+   an interface with a filesystem driver; S3 or Backblaze B2 becomes a second
+   driver and the semantics do not change. Designed for, not built — see
+   `docs/STATE.md`.
+3. **Retention will not save you.** Nothing the ledger names is deletable, by
+   policy: an evidence record can be argued over for as long as the contract can
+   be sued on. The only removable bytes are objects no record names, and the
+   upload path cannot create those.
+
+### Memory, and why it is a different question
+
+The whole ledger is rebuilt into memory at boot, so RAM tracks the number of
+events rather than the number of users or the size of the documents. Events are
+small; 8 GB is comfortable well past the point the disk becomes the problem.
+What grows with the record is **boot time**, because every event is replayed and
+every hash reverified on the way up — which is why readiness, not liveness,
+gates traffic.
+
 ```
                      ┌───────────────────────────────────────┐
    yourdomain.com    │  Hostinger VPS                        │
@@ -75,6 +133,84 @@ not by the journal — the journal is JSON lines.
                      │     evidence/                         │
                      └───────────────────────────────────────┘
 ```
+
+---
+
+## The whole thing, as a list
+
+Every command in order, for someone who wants to follow rather than read. The
+sections after this explain each one and say where the order is load-bearing.
+
+```
+ON YOUR OWN MACHINE
+  1  openssl rand -base64 48                      -> save as GATEWAY_JWT_SECRET
+  2  openssl genpkey -algorithm ed25519 \
+       -out signing.pem && cat signing.pem        -> save as SIGNING_PRIVATE_KEY_PEM
+  3  get SMTP host, user, password on port 587    -> required, see step 8
+
+IN HOSTINGER'S PANEL
+  4  create a KVM VPS, Ubuntu 24.04               -> note the IPv4
+  5  DNS zone: A @ -> that IP, TTL 300
+  6  DNS zone: A www -> that IP, TTL 300
+
+ON THE VPS, AS root
+  7  adduser construx
+  8  usermod -aG sudo construx
+  9  nano /etc/ssh/sshd_config                    -> PermitRootLogin no
+                                                     PasswordAuthentication no
+ 10  systemctl restart ssh
+ 11  ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw enable
+ 12  curl -fsSL https://get.docker.com | sh
+ 13  usermod -aG docker construx
+ 14  exit                                          -> log back in as construx
+
+ON THE VPS, AS construx
+ 15  sudo mkdir -p /srv/construx
+ 16  sudo chown construx:construx /srv/construx
+ 17  cd /srv/construx
+ 18  git clone https://github.com/jnnseya-cpu/construx.git app
+ 19  cd app
+ 20  nano .env                                     -> the block in step 4 below
+ 21  docker compose -f deploy/compose.yaml --env-file .env up -d --build
+ 22  docker compose -f deploy/compose.yaml logs -f -> read it, no [config warning]
+ 23  curl -fsS http://127.0.0.1:8080/readyz        -> expect 200
+
+ 24  dig +short A yourdomain.com                   -> must return this VPS's IP
+                                                     before going on
+ 25  nano /srv/construx/Caddyfile                  -> the three lines in step 5
+ 26  docker run -d --name caddy --restart unless-stopped --network host \
+       -v /srv/construx/Caddyfile:/etc/caddy/Caddyfile:ro \
+       -v caddy_data:/data -v caddy_config:/config caddy:2
+ 27  docker logs caddy                             -> certificate obtained
+
+FROM ANYWHERE ELSE
+ 28  curl -I http://yourdomain.com                 -> 301 to https
+ 29  curl -fsS https://yourdomain.com/readyz       -> 200
+ 30  curl -sI -X POST \
+       https://yourdomain.com/v1/console/session   -> 403
+ 31  curl --max-time 5 http://<vps-ip>:8080/healthz-> must NOT connect
+
+ON THE VPS
+ 32  nano /srv/construx/backup.sh                  -> the script in step 7
+ 33  chmod +x /srv/construx/backup.sh
+ 34  crontab -e                                    -> 0 * * * * /srv/construx/backup.sh
+ 35  arrange to copy /srv/construx/backups OFF this machine
+
+IN A BROWSER
+ 36  https://yourdomain.com/signup                 -> register the company
+ 37  confirm from the email                        -> this is why step 3 mattered
+ 38  https://yourdomain.com/app                    -> sign in
+```
+
+Four places the order is not a preference:
+
+- **6 before 25.** Caddy cannot be issued a certificate until the name resolves
+  to the machine asking for it.
+- **3 before 36.** No SMTP, no confirmation email, no account — ever.
+- **20 before 21.** `PUBLIC_BASE_URL` is baked into every link the platform
+  emails, so it has to be the https origin before anybody signs up.
+- **32 before you get busy.** The first week is when a backup is least likely to
+  exist and most likely to be needed.
 
 ---
 

@@ -151,6 +151,15 @@ account comes through the public signup, which emails a confirmation link:
 working SMTP is a prerequisite for having a user at all, not a feature to add
 later.
 
+It also answers the sizing question the topology invites, which turns on a fact
+that surprises people: **a BIM model never lands on the volume.** `ingestModel`
+records the file's hash, format, discipline, LOD and element count and an
+optional `fileUri`, so a 1.5GB federated IFC costs a few hundred bytes and the
+model stays in the common data environment that versions it. What fills a disk
+is photographs — roughly 7GB per active project per month, of which site
+photography is the large majority — so 100GB is months rather than years, and it
+is evidence rather than models that decides when the volume has to grow.
+
 Writing it found `deploy/compose.yaml` setting neither `EVIDENCE_STORE_PATH` nor
 `SIGNING_PRIVATE_KEY_PEM`, so following the shipped compose file produced a
 deployment that recorded evidence hashes without holding the files and refused
