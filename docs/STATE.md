@@ -1213,6 +1213,35 @@ rule reproduces the three existing figures exactly (5 GB, 100 GB, 500 GB) and
 sizes the fourth at 4 TB. A test asserts it, so a package added later cannot be
 priced with an allowance that trips its own flag in month nine.
 
+**What the allowances cost, and what the block earns.** A block is 100 GB held
+twice — live plus the off-machine backup the runbook requires — so every figure
+below is 200 GB-months of underlying cost.
+
+| Package | Included | Cost on B2 | On a VPS volume | Share of that plan's revenue |
+|---|---|---|---|---|
+| Trial | 5 GB | £0.05 | £0.44 | no revenue |
+| Core Project | 100 GB | £0.95 | £8.80 | 0.10% – 0.93% |
+| Professional Delivery | 500 GB | £4.74 | £44.00 | 0.22% – 2.00% |
+| Enterprise | 4 TB | £37.92 | £352.00 | 0.58% – 5.42% |
+
+Included storage costs under one per cent of subscription revenue on object
+storage and up to five on a VPS volume, so **where the bytes live moves the
+number nine times more than how many are allowed does**. The £15 block is a 16x
+markup on B2, 4x on S3 and 1.7x on a VPS volume — which makes the price a bet on
+the storage backend rather than on the customer, and moving the store to a
+volume without revisiting it converts the margin quietly. The config comment
+says so beside the number.
+
+Two consequences worth stating. **S3 is ruled out by egress, not by storage
+cost**: one customer pulling a 4 TB archive is about £284, seven times what
+holding it for a month costs, and B2 and R2 charge nothing for the same read.
+And **the retention policy has a hole on the free tier** — nothing the ledger
+names is deletable, which is right for a tenant with a contract and a limitation
+period, and wrong for an abandoned trial that has neither. A thousand abandoned
+trials is £19 a month on B2 and £176 on a volume, for ever. Nothing is built for
+this yet and the policy question is a commercial one rather than an engineering
+one.
+
 Three things it is careful about. **What stops is supplying bytes**, never
 recording an event, certifying a payment or signing a document: a full disk must
 not stop a contract being administered, and the evidence hash still reaches the

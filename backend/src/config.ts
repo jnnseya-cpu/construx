@@ -202,6 +202,24 @@ export const config = {
      * Here rather than in the pricing table for the same reason every other
      * commercial number is: a rate is configuration, not a constant somebody
      * has to redeploy to change.
+     *
+     * **The default assumes object storage, and is wrong without it.** A block
+     * is 100 GB held twice — the live copy and the off-machine backup the
+     * runbook requires — so the underlying cost is 200 GB-months. At
+     * object-storage rates that is about £0.95 (Backblaze B2) to £3.63 (S3),
+     * making £15 a 4x to 16x markup. On a VPS block volume the same 200 GB
+     * costs about £8.80 and £15 is a 1.7x markup at 41% gross, which is thin
+     * for a permanent obligation.
+     *
+     * So this figure is a bet on where evidence lives. Moving the store to a
+     * VPS volume without revisiting it converts the margin quietly rather than
+     * loudly, which is the failure mode worth naming here.
+     *
+     * Egress does not appear in the price and should not need to: B2 and R2
+     * charge nothing for it. On S3 a single customer pulling a 4 TB archive
+     * costs about £284 in egress alone, seven times what holding it costs for a
+     * month — which is the argument against S3 rather than an argument for a
+     * higher price.
      */
     storageBlockPriceMinor: num('STORAGE_BLOCK_PRICE_MINOR', 1_500),
   },
