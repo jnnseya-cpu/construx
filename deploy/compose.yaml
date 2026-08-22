@@ -46,8 +46,14 @@ services:
     # ACU_MARKUP_MULTIPLIER in .env, see no error, and get the built-in default.
     # `.env` cannot reach the image any other way — .dockerignore excludes it on
     # purpose, so that no published layer ever carries somebody's secrets.
+    # `../.env`, not `.env`. Compose resolves this relative to the project
+    # directory, which defaults to the directory holding the compose file — so
+    # `.env` here means `deploy/.env`, a file that has never existed and that
+    # nothing tells anybody to create. The failure is
+    # `env file …/deploy/.env not found`, on a host where `.env` is sitting
+    # correctly in the repository root two lines away.
     env_file:
-      - .env
+      - ../.env
     environment:
       # Only what belongs to the container rather than to the deployment. These
       # deliberately override .env, because they name paths inside the image and

@@ -65,10 +65,14 @@ describe('the deployed container receives the settings a deployment is told it c
     // `.dockerignore` excludes `.env` from the image on purpose, so no published
     // layer carries anybody's secrets. env_file is therefore the only way the
     // file reaches the process at all.
+    //
+    // `../.env` rather than `.env`: compose resolves the path against the
+    // project directory, which is the folder holding this compose file. `.env`
+    // would mean `deploy/.env`, which nothing creates and nothing documents.
     assert.match(
       compose,
-      /\n {4}env_file:\n {6}- \.env\n/,
-      'compose must load .env with env_file — without it, only the variables listed under environment: reach the container',
+      /\n {4}env_file:\n {6}- \.\.\/\.env\n/,
+      'compose must load ../.env with env_file — without it, only the variables listed under environment: reach the container, and a bare .env resolves inside deploy/',
     );
   });
 

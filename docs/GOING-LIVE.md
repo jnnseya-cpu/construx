@@ -290,7 +290,7 @@ ON THE VPS, AS construx
  19  cd app
  20  nano .env                                     -> the block in step 4 below
  21  docker compose -f deploy/compose.yaml --env-file .env up -d --build
- 22  docker compose -f deploy/compose.yaml logs -f -> read it, no [config warning]
+ 22  docker logs -f construx                       -> read it, no [config warning]
  23  curl -fsS http://127.0.0.1:8080/readyz        -> expect 200
 
  24  dig +short A construxvg.com                   -> must return this VPS's IP
@@ -528,7 +528,7 @@ AI_MODE=local
 
 ```bash
 docker compose -f deploy/compose.yaml --env-file .env up -d --build
-docker compose -f deploy/compose.yaml logs -f
+docker logs -f construx
 ```
 
 **Read the boot block.** It states exactly what this deployment is, and it is
