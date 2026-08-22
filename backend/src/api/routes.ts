@@ -1,5 +1,6 @@
 import { CHANGE_ORIGIN, CONTINENT, CONTRACT_FORM, DELAY_CAUSE, NOTICE_TYPE, SECTOR, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
 import { ask } from '../ai/conversation.ts';
+import * as storage from '../billing/storage.ts';
 import * as signup from '../identity/signup.ts';
 import * as erasure from '../identity/erasure.ts';
 import * as site from '../site/index.ts';
@@ -66,7 +67,8 @@ import * as perception from '../engines/perception.ts';
 import * as signing from '../signing/signature.ts';
 import { ownershipMap } from '../identity/ownership.ts';
 import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode } from '../identity/roles.ts';
-import { authorise, AUTHZ_OPTIONS, currentPhase } from '../engines/context.ts';
+import { authorise, AUTHZ_OPTIONS, currentPhase, write } from '../engines/context.ts';
+import { ulid } from '../core/ids.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import type { Platform } from '../platform.ts';
 import type { ExportAudience, ExportFormat } from '../export/exporter.ts';
@@ -247,6 +249,23 @@ const PERCEPTION_PATHS: Record<perception.PerceptionTask, string> = {
   DRAWING_TAKEOFF: 'take-off',
   VOICE_NOTE: 'voice-note',
 };
+
+/**
+ * A tenancy's storage position: what the package allows plus what was bought,
+ * against what the volume actually holds.
+ *
+ * Assembled here rather than inside the billing module because it needs three
+ * things that live in three places — the subscription, the ledger and the
+ * object store — and the billing module should not have to know how to reach
+ * any of them.
+ */
+function storagePositionFor(platform: Platform, tenantId: string): storage.StoragePosition {
+  return storage.storagePosition({
+    tier: platform.subscription(tenantId).package,
+    usedBytes: platform.evidence.usage(tenantId),
+    purchasedBlocks: storage.purchasedBlocks(platform.ledger, tenantId),
+  });
+}
 
 const stringField = { type: 'string', minLength: 1 } as const;
 
@@ -5226,6 +5245,86 @@ export const ROUTES: Route[] = [
     },
   },
   {
+    method: 'GET',
+    pattern: '/v1/storage',
+    readOnly: true,
+    description: 'What this tenancy holds against what its plan allows, and what the next upload will do',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+      }
+      // Readable by anyone in the tenancy who can see the billing area. Somebody
+      // whose upload is about to be refused should be able to find out why
+      // without asking an administrator.
+      authorise(
+        platform.context(actor, `${actor.tenantId}-governance`, { correlationId: ctx.correlationId }),
+        'BILLING_ACU',
+        'R',
+      );
+      return storagePositionFor(platform, actor.tenantId);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/storage/capacity',
+    description: 'Buy storage capacity in 100 GB blocks, charged monthly for as long as it is held',
+    schema: {
+      type: 'object',
+      required: ['blocks'],
+      properties: {
+        // A ceiling on one purchase, not on the total. Buying a hundred blocks
+        // in one click is more likely to be a stuck finger than an intention,
+        // and the second purchase is one more click.
+        blocks: { type: 'integer', minimum: 1, maximum: 20 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+      }
+      // Committing the tenancy to a recurring charge is an approval, not a read.
+      const engineCtx = platform.context(actor, `${actor.tenantId}-governance`, {
+        correlationId: ctx.correlationId,
+        source: sourceOf(ctx),
+      });
+      authorise(engineCtx, 'BILLING_ACU', 'U');
+
+      const { blocks } = body<{ blocks: number }>(ctx);
+      const before = storagePositionFor(platform, actor.tenantId);
+      if (before.limitBytes === null) {
+        throw new DomainError(
+          'STORAGE_UNCAPPED',
+          'This package is uncapped, so there is no capacity to add. Buying a block would charge for something already included.',
+          409,
+        );
+      }
+
+      const entitlementId = ulid();
+      const monthlyPriceMinor = blocks * config.billing.storageBlockPriceMinor;
+      write(engineCtx, {
+        eventType: 'STORAGE_CAPACITY_PURCHASED',
+        entity: { refType: 'StorageEntitlement', refId: entitlementId },
+        nextState: {
+          id: entitlementId,
+          tenantId: actor.tenantId,
+          blocks,
+          gb: blocks * storage.STORAGE_BLOCK_GB,
+          monthlyPriceMinor,
+          // Recorded on the entitlement so a later reading of the record does
+          // not have to guess which price was in force when it was bought.
+          blockPriceMinorAtPurchase: config.billing.storageBlockPriceMinor,
+          purchasedAt: new Date().toISOString(),
+          purchasedBy: actor.actorId,
+        },
+      });
+
+      return { entitlementId, blocks, monthlyPriceMinor, position: storagePositionFor(platform, actor.tenantId) };
+    },
+  },
+  {
     method: 'DELETE',
     pattern: '/v1/evidence/:hash',
     description: 'Remove bytes no evidence record names. Anything the ledger names is refused.',
@@ -5289,7 +5388,14 @@ export const ROUTES: Route[] = [
       const capturedBy = (record.state as { capturedBy?: string }).capturedBy;
       if (capturedBy !== actor.actorId) authorise(engineCtx, 'EVIDENCE_AUDIT', 'I');
 
-      const stored = platform.evidence.put(actor.tenantId, hash, ctx.rawBody ?? Buffer.alloc(0), mediaType(ctx.contentType));
+      // Capacity, checked before the write rather than after it. The plan's
+      // allowance was published on the pricing page from the first day and
+      // enforced nowhere, which made it a promise the billing engine was never
+      // going to keep.
+      const incoming = ctx.rawBody ?? Buffer.alloc(0);
+      storage.assertCapacity(storagePositionFor(platform, actor.tenantId), incoming.length);
+
+      const stored = platform.evidence.put(actor.tenantId, hash, incoming, mediaType(ctx.contentType));
 
       // No ledger event is written, and that is deliberate rather than an
       // omission. The hash was committed by the domain command that registered

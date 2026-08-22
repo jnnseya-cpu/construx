@@ -190,6 +190,20 @@ export const config = {
      */
     subscriptionAcuAllocationPercent: num('ACU_SUBSCRIPTION_ALLOCATION_PERCENT', 20),
     freeTrialGrantMinor: num('FREE_TRIAL_GRANT_MINOR', 500),
+    /**
+     * What one 100 GB block of extra storage costs per month.
+     *
+     * Recurring, not one-off, and that is the whole design. The record is
+     * append-only, so storage a tenant buys is storage the platform holds for
+     * as long as the contract can be sued on — selling that for a single
+     * payment prices a permanent obligation as a transaction, and the liability
+     * compounds with every block sold.
+     *
+     * Here rather than in the pricing table for the same reason every other
+     * commercial number is: a rate is configuration, not a constant somebody
+     * has to redeploy to change.
+     */
+    storageBlockPriceMinor: num('STORAGE_BLOCK_PRICE_MINOR', 1_500),
   },
 
   privacy: {

@@ -18,7 +18,16 @@ export type TierDefinition = {
   /** null = unlimited named identities. */
   includedIdentities: number | null;
   monthlyPriceUsd: number;
-  storageGb: number | null;
+  /**
+   * Storage is deliberately absent here.
+   *
+   * This table carried its own `storageGb` — 50, 250, 1000 against the packages'
+   * 100, 500, unlimited — for the same customer, and the package is what the
+   * pricing page publishes and what `billing/storage.ts` now enforces. Two
+   * numbers for one entitlement is how a tenant gets sold one figure and
+   * metered against another. The package owns it; read `PACKAGES[...].storageGb`
+   * through `packageForTier`.
+   */
   /** Isolated tenancy database + dedicated key material. */
   isolatedTenancy: boolean;
 };
@@ -29,7 +38,6 @@ export const TIERS: Record<SubscriptionTier, TierDefinition> = {
     targetCustomer: 'Evaluation',
     includedIdentities: 3,
     monthlyPriceUsd: 0,
-    storageGb: 5,
     isolatedTenancy: false,
   },
   SOLO: {
@@ -37,7 +45,6 @@ export const TIERS: Record<SubscriptionTier, TierDefinition> = {
     targetCustomer: 'Freelancers / planners',
     includedIdentities: 3,
     monthlyPriceUsd: 39,
-    storageGb: 50,
     isolatedTenancy: false,
   },
   TEAM: {
@@ -45,7 +52,6 @@ export const TIERS: Record<SubscriptionTier, TierDefinition> = {
     targetCustomer: 'SMEs / subcontractors',
     includedIdentities: 20,
     monthlyPriceUsd: 149,
-    storageGb: 250,
     isolatedTenancy: false,
   },
   BUSINESS: {
@@ -53,7 +59,6 @@ export const TIERS: Record<SubscriptionTier, TierDefinition> = {
     targetCustomer: 'Large contractors',
     includedIdentities: 100,
     monthlyPriceUsd: 399,
-    storageGb: 1000,
     isolatedTenancy: false,
   },
   ENTERPRISE: {
@@ -61,7 +66,6 @@ export const TIERS: Record<SubscriptionTier, TierDefinition> = {
     targetCustomer: 'EPCs',
     includedIdentities: null,
     monthlyPriceUsd: 1200,
-    storageGb: null,
     isolatedTenancy: false,
   },
   SOVEREIGN: {
@@ -69,7 +73,6 @@ export const TIERS: Record<SubscriptionTier, TierDefinition> = {
     targetCustomer: 'Ministries / cities',
     includedIdentities: null,
     monthlyPriceUsd: 1500,
-    storageGb: null,
     isolatedTenancy: true,
   },
 };

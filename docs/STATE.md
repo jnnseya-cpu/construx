@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,282 passing, 0 failing, 0 skipped, across 65 files |
+| Tests | 1,296 passing, 0 failing, 0 skipped, across 66 files |
 | Typecheck | clean |
 | Backend | 105 TypeScript files, 49,851 lines |
 | Application | 32 ES modules, 10,267 lines (plus a service worker) |
-| API routes | 278 (25 of them public) |
-| Event types | 190 Golden Thread (closed) · 177 communication events (closed) |
-| Entity types | 117, all classified for access |
+| API routes | 280 (25 of them public) |
+| Event types | 191 Golden Thread (closed) · 177 communication events (closed) |
+| Entity types | 118, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -1179,6 +1179,42 @@ against the seed, because a test that only passes on broken data stops testing
 the day the data is fixed. And a submission from an unrecognised party is still
 accepted, since refusing it would make the ledger's own history unreplayable
 through the command path.
+
+**Storage became an entitlement instead of a claim.** Every package declared a
+`storageGb`, the pricing page printed it, the billing screen printed it, and
+**nothing enforced it** — the same shape of defect as the ACU bundle that
+advertised a third more credit than the multiplier would yield. A tenant on the
+hundred-gigabyte plan could upload a terabyte, and the first anyone would know
+is a volume filling up.
+
+`backend/src/billing/storage.ts` meters it: the allowance is the package plus
+blocks bought, usage is measured from the object store, 70% raises a flag and
+100% refuses the write with a 507. A hard stop rather than an overage invoice,
+because nothing the ledger names is deletable — usage only ever rises, there is
+no state an over-quota tenant returns to, and billing for the overage is a bill
+that grows for ever against storage the platform can never reclaim.
+
+Three things it is careful about. **What stops is supplying bytes**, never
+recording an event, certifying a payment or signing a document: a full disk must
+not stop a contract being administered, and the evidence hash still reaches the
+ledger with the record saying the file is not held. **The incoming file is
+measured, not just the running total**, so a tenant a megabyte under the line
+cannot cross it with a forty-megabyte drawing set and leave the next upload to
+fail for it. And **an uncapped package reports null rather than a large
+number** — a sentinel is a cap somebody eventually hits, and hitting it looks
+like a defect rather than a decision.
+
+Usage is measured from the volume and is deliberately not an event: bytes on
+disk are a measurement, and an event asserting one would be a second source of
+truth for a number the filesystem already holds. Capacity *bought* is the
+opposite — money changed hands — so `STORAGE_CAPACITY_PURCHASED` is on the
+record and the entitlement is summed from it rather than kept in a counter.
+
+Writing it found `TIERS` carrying its own `storageGb` — 50, 250, 1000 against
+the packages' 100, 500, uncapped, for the same customer. The package is what the
+pricing page publishes and what is now enforced, so the legacy figures are
+removed: two numbers for one entitlement is how a tenant gets sold one and
+metered against the other.
 
 **Running the asset, not listing it.** The FM centre was the weakest of the
 seven — four of nine panels partial and one absent — for one reason: the asset

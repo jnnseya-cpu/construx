@@ -13,14 +13,24 @@ import { can, refreshContext, state } from '../app.js';
  */
 
 export async function billing(root) {
-  const [wallet, attribution, plane, seats] = await Promise.all([
+  const [wallet, attribution, plane, seats, storage] = await Promise.all([
     api.get('/v1/billing/wallet'),
     api.get('/v1/billing/attribution'),
     api.get('/v1/ai/control-plane').catch(() => null),
     // What the package actually includes. A platform that refuses an export on
     // plan grounds and has no screen saying what the plan covers is a dead end.
     api.get('/v1/billing/seats').catch(() => null),
+    // What is actually held against what the plan allows. Fetched rather than
+    // computed from the package, because a tenancy that has bought capacity has
+    // an allowance the package alone does not describe.
+    api.get('/v1/storage').catch(() => null),
   ]);
+
+  /** Bytes, at the scale a person reads them. */
+  const gb = (bytes) => {
+    const value = Number(bytes ?? 0) / 1024 ** 3;
+    return value >= 10 || value === 0 ? `${Math.round(value)} GB` : `${value.toFixed(1)} GB`;
+  };
 
   const effective = wallet.monthRawSpendMinor === 0 ? 0 : wallet.monthBilledMinor / wallet.monthRawSpendMinor;
   const totalBilled = attribution.attribution.reduce((sum, a) => sum + a.billedMinor, 0);
@@ -68,7 +78,15 @@ export async function billing(root) {
                   seats.package.includedSeats === null ? 'unlimited' : seats.package.includedSeats
                 }</span></div>
                 <div class="row"><span class="lbl">Storage</span><span class="val">${
-                  seats.package.storageGb === null ? 'unlimited' : `${seats.package.storageGb} GB`
+                  storage
+                    ? storage.limitBytes === null
+                      ? 'uncapped'
+                      : `${gb(storage.usedBytes)} of ${gb(storage.limitBytes)}${
+                          storage.purchasedBlocks > 0 ? ` · ${storage.purchasedGb} GB bought` : ''
+                        }`
+                    : seats.package.storageGb === null
+                      ? 'unlimited'
+                      : `${seats.package.storageGb} GB`
                 }</span></div>
                 <div class="row"><span class="lbl">Export, download and print</span><span class="val">${
                   seats.package.export ? badge('included', 'good') : badge('not on this plan', 'warn')
@@ -90,6 +108,48 @@ export async function billing(root) {
               }
             </div>`
           : ''
+      }
+
+      ${
+        !storage
+          ? ''
+          : html`<div class="card" style="margin-bottom:14px">
+              <h3>Storage</h3>
+              <p class="metric-sub" style="margin-bottom:12px">${storage.summary}</p>
+              ${
+                storage.limitBytes === null
+                  ? ''
+                  : html`
+                      ${raw(track(storage.percentUsed, storage.state === 'FULL' ? 'bad' : storage.state === 'WARNING' ? 'warn' : 'good'))}
+                      <div class="split-list" style="margin-top:12px">
+                        <div class="row"><span class="lbl">Held</span><span class="val">${gb(storage.usedBytes)}</span></div>
+                        <div class="row"><span class="lbl">Allowance</span><span class="val">${gb(storage.limitBytes)}${
+                          storage.purchasedBlocks > 0
+                            ? ` (${storage.includedGb} GB included + ${storage.purchasedGb} GB bought)`
+                            : ' included'
+                        }</span></div>
+                        <div class="row"><span class="lbl">Remaining</span><span class="val ${raw(storage.state === 'FULL' ? 'bad' : '')}">${gb(storage.remainingBytes)}</span></div>
+                      </div>
+                    `
+              }
+              ${
+                storage.state === 'OK'
+                  ? ''
+                  : html`<div class="notice ${raw(storage.state === 'FULL' ? 'err' : 'warn')}" style="margin-top:12px">
+                      <div>
+                        <b>${storage.state === 'FULL' ? 'Uploads are being refused' : 'Approaching the limit'}</b><br>
+                        Another ${storage.nextBlock.gb} GB is ${money(storage.nextBlock.priceMinor)} a month and would
+                        take this tenancy to ${storage.nextBlock.wouldTakeTo}. It is charged for as long as it is held,
+                        because the record is append-only and nothing stored is ever deleted to make room.
+                      </div>
+                    </div>
+                    ${
+                      can('BILLING_ACU', 'U')
+                        ? html`<button class="btn" id="buy-storage" style="margin-top:11px">Add ${storage.nextBlock.gb} GB — ${money(storage.nextBlock.priceMinor)}/month</button>`
+                        : ''
+                    }`
+              }
+            </div>`
       }
 
       <div class="grid g4" style="margin-bottom:14px">
@@ -187,6 +247,20 @@ export async function billing(root) {
       </div>
     `,
   );
+
+  document.getElementById('buy-storage')?.addEventListener('click', async () => {
+    // Named as recurring in the confirmation, because it is. A person clicking
+    // through a one-off-looking button and finding a monthly line on the
+    // invoice is how a support ticket starts.
+    if (!confirm(`Add ${storage.nextBlock.gb} GB for ${money(storage.nextBlock.priceMinor)} every month, for as long as it is held?`)) return;
+    try {
+      const result = await api.post('/v1/storage/capacity', { blocks: 1 });
+      toast('Capacity added', `Now ${gb(result.position.limitBytes)}, charged ${money(result.monthlyPriceMinor)} a month`, 'ok');
+      await billing(root);
+    } catch (error) {
+      toast('Could not add capacity', error.message, 'err');
+    }
+  });
 
   document.getElementById('topup')?.addEventListener('click', async () => {
     try {

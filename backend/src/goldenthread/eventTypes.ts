@@ -105,6 +105,12 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SUBSCRIPTION_ACTIVATED', 'Subscription', 'CREATE', 'GOVERNANCE'),
   def('POLICY_UPDATED', 'PermissionPolicy', 'UPDATE', 'GOVERNANCE'),
   def('ACU_CAPS_SET', 'ACUWallet', 'UPDATE', 'GOVERNANCE'),
+  // Capacity bought is a commercial fact with money behind it, so it belongs on
+  // the record rather than in a counter. Usage is measured from the volume and
+  // is not an event: bytes on disk are a measurement, and an event asserting
+  // one would be a second source of truth for a number the filesystem already
+  // holds.
+  def('STORAGE_CAPACITY_PURCHASED', 'StorageEntitlement', 'CREATE', 'GOVERNANCE', { creates: true }),
 
   // --- Portfolio / project structure ---------------------------------------
   def('PORTFOLIO_CREATED', 'Portfolio', 'CREATE', 'PROJECT_CONTROL'),

@@ -81,6 +81,8 @@ export class EvidenceStore {
   readonly #maxBytes: number;
   readonly #linkTtlSeconds: number;
   readonly #secret: string;
+  /** Bytes per tenancy, lazily filled and maintained by put and discard. */
+  readonly #usage = new Map<string, number>();
 
   constructor(
     root: string = config.evidence.storePath,
@@ -159,6 +161,12 @@ export class EvidenceStore {
     // labelled on the way in.
     writeFileSync(`${target}.type`, contentType);
 
+    // Only here, after the write that actually added bytes. The idempotent
+    // branch above returns before this point, so storing the same object twice
+    // is counted once — which is what the offline outbox's retries depend on.
+    const known = this.#usage.get(tenantId);
+    if (known !== undefined) this.#usage.set(tenantId, known + bytes.length);
+
     return {
       hash: claimedHash,
       bytes: bytes.length,
@@ -206,6 +214,27 @@ export class EvidenceStore {
       bytes,
       contentType: existsSync(typeFile) ? readFileSync(typeFile, 'utf8') : 'application/octet-stream',
     };
+  }
+
+  // --- metering -------------------------------------------------------------
+
+  /**
+   * Bytes held for one tenancy.
+   *
+   * Cached, because this is asked on the path of every upload and the honest
+   * answer costs a directory walk. The cache is populated lazily on first ask
+   * and maintained by `put` and `discard`, which are the only two things that
+   * change the answer — so it rebuilds itself naturally after a restart rather
+   * than needing to be persisted, and there is no second copy of the number to
+   * drift from the volume.
+   */
+  usage(tenantId: string): number {
+    const cached = this.#usage.get(tenantId);
+    if (cached !== undefined) return cached;
+
+    const total = this.list(tenantId).reduce((sum, object) => sum + object.bytes, 0);
+    this.#usage.set(tenantId, total);
+    return total;
   }
 
   // --- retention ------------------------------------------------------------
@@ -264,12 +293,21 @@ export class EvidenceStore {
   discard(tenantId: string, hash: string): boolean {
     if (!this.configured) return false;
     const target = this.#pathFor(tenantId, hash);
+    // Measured before the unlink, because afterwards there is nothing to stat.
+    const freed = existsSync(target) ? statSync(target).size : 0;
     let removed = false;
     for (const path of [target, `${target}.type`, `${target}.partial`]) {
       if (existsSync(path)) {
         rmSync(path);
         removed = removed || path === target || path === `${target}.partial`;
       }
+    }
+    // Give the bytes back to the meter, but only where it has already been
+    // populated: an untouched cache must stay untouched, or the next read
+    // returns a total that was never measured.
+    if (removed) {
+      const known = this.#usage.get(tenantId);
+      if (known !== undefined) this.#usage.set(tenantId, Math.max(0, known - freed));
     }
     return removed;
   }
