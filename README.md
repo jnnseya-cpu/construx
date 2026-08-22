@@ -169,7 +169,7 @@ shared/                  read by both, owned by neither
   vocabulary.js          the canonical enumerations
 
 deploy/                  Dockerfile, compose, environment template
-docs/                    state, architecture, traceability, runbook
+docs/                    state, architecture, traceability, going live, runbook
 tools/                   browser walker used to verify every page renders
 ```
 

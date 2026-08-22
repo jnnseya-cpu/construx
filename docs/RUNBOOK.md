@@ -3,6 +3,10 @@
 How this system is built, released, operated and recovered. `docs/STATE.md`
 says what exists; this says how to run it.
 
+**First deploy?** `docs/GOING-LIVE.md` is the one-time path: choosing a host,
+pointing a domain, TLS, and the first account. This document is everything
+after that.
+
 ---
 
 ## Where things go

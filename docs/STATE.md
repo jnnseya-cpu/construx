@@ -140,6 +140,24 @@ exist. `docs/RUNBOOK.md` carries build, release, rollback, restart, backup,
 restore and secrets, and states plainly what this topology does not have —
 horizontal scale is impossible while one process owns the journal file.
 
+`docs/GOING-LIVE.md` is the one-time path the runbook assumes has already been
+walked: choosing a host, pointing a domain, obtaining a certificate and creating
+the first account. It exists because three things about this deployment are
+routinely assumed to be otherwise. There is no separate front end to host — one
+process serves the site, the console and the API from one origin. There is no
+second instance — two containers on one volume interleave their writes and break
+the chain. And a fresh deployment has nobody who can sign in, so the first
+account comes through the public signup, which emails a confirmation link:
+working SMTP is a prerequisite for having a user at all, not a feature to add
+later.
+
+Writing it found `deploy/compose.yaml` setting neither `EVIDENCE_STORE_PATH` nor
+`SIGNING_PRIVATE_KEY_PEM`, so following the shipped compose file produced a
+deployment that recorded evidence hashes without holding the files and refused
+every signature — both of which `assertProductionSafety` warns about at boot,
+and neither of which anybody would have chosen. Both are now set, on the same
+volume as the journal.
+
 Verified by running the service exactly as the image does — production
 environment, no `node_modules` present at all — which is also the strongest
 available check that the zero-dependency decision still holds. The image itself

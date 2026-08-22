@@ -10,7 +10,12 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     ports:
-      - '8080:8080'
+      # Bound to the loopback deliberately. Docker publishes ports by writing
+      # its own iptables rules, which are evaluated *before* ufw's — so
+      # '8080:8080' here would reach the internet on a host whose firewall
+      # allows only 80 and 443, and serve the console over plain http beside
+      # the https one. A reverse proxy on the same host reaches this fine.
+      - '127.0.0.1:8080:8080'
     environment:
       NODE_ENV: production
       PORT: '8080'
@@ -18,7 +23,17 @@ services:
       # Never 'false' outside a throwaway environment: it lets the process
       # acknowledge an event that has not reached the disk.
       LEDGER_JOURNAL_FSYNC: 'true'
-      PUBLIC_BASE_URL: http://localhost:8080
+      # On the same volume as the journal, and for the same reason. Left unset
+      # the platform records evidence hashes and holds no files — a chain that
+      # lasts exactly as long as whoever took the photograph still has it.
+      EVIDENCE_STORE_PATH: /data/evidence
+      # Unset means every signature request is refused. Generate once and keep
+      # it: a new key invalidates every signature already made.
+      #   openssl genpkey -algorithm ed25519 -out signing.pem
+      SIGNING_PRIVATE_KEY_PEM: ${SIGNING_PRIVATE_KEY_PEM:-}
+      # Built into every link sent by email, so it is the public https origin in
+      # any real deployment — not the address the container binds.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       # Required. The service warns loudly at boot if this is the development
       # default, because every token it has ever signed would be forgeable.
       GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:?set GATEWAY_JWT_SECRET before starting}
