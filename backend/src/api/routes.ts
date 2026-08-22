@@ -446,8 +446,37 @@ export const ROUTES: Route[] = [
             monthlyPriceUsd: definition.monthlyPriceUsd,
             isolatedTenancy: definition.isolatedTenancy,
             wallet: platform.wallet(tenant.id).snapshot(),
+            // How much of the volume this tenancy is using, and how close it is
+            // to the point where its next upload is refused. Bytes held, not
+            // what they contain — the operator layer sees the meter, never the
+            // evidence.
+            storage: storagePositionFor(platform, tenant.id),
           };
         }),
+        // The estate total, because the decision it informs is not about any
+        // one tenant. This deployment holds evidence on a local volume, which
+        // is right for a pilot and cannot hold a Professional Delivery tenancy
+        // at 500 GB, let alone an Enterprise one at 4 TB. Somebody has to be
+        // able to see the line coming.
+        estate: (() => {
+          const positions = platform.tenants().map((tenant) => storagePositionFor(platform, tenant.id));
+          const heldBytes = positions.reduce((sum, position) => sum + position.usedBytes, 0);
+          const committedBytes = positions.reduce((sum, position) => sum + position.limitBytes, 0);
+          return {
+            tenancies: positions.length,
+            heldBytes,
+            /**
+             * What the estate has *promised*, against what it is using.
+             *
+             * The number that matters for the volume, and the one that arrives
+             * without warning: a single Enterprise tenancy commits 4 TB the day
+             * it signs, whatever it has uploaded so far.
+             */
+            committedBytes,
+            atWarning: positions.filter((position) => position.state === 'WARNING').length,
+            atLimit: positions.filter((position) => position.state === 'FULL').length,
+          };
+        })(),
       };
     },
   },

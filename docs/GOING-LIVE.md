@@ -91,20 +91,62 @@ not the size of the models, which never arrive.
 **The ledger is negligible** beside either. It is JSON lines, and a project
 generating a hundred thousand events writes tens of megabytes.
 
-### When the disk becomes the constraint
+### Where the bytes live, now and later
 
-In order of preference:
+**Now: the VPS volume.** Already built, no new vendor, no new dependency, and
+correct for the trial and the first two or three pilot tenancies. The margin on
+sold capacity is thin here — see the table below — and at pilot volume that is a
+few pounds a month in absolute terms, so it does not matter yet.
 
-1. **Grow the volume.** Hostinger VPS plans scale, and this is one instance with
-   one disk, so it is the simplest move by a distance.
-2. **Move the store behind object storage.** `backend/src/evidence/store.ts` is
-   an interface with a filesystem driver; S3 or Backblaze B2 becomes a second
-   driver and the semantics do not change. Designed for, not built — see
-   `docs/STATE.md`.
-3. **Retention will not save you.** Nothing the ledger names is deletable, by
-   policy: an evidence record can be argued over for as long as the contract can
-   be sued on. The only removable bytes are objects no record names, and the
-   upload path cannot create those.
+**Leave when any one of these fires**, whichever comes first. All three are
+visible on `GET /v1/admin/tenants`, which reports every tenancy's meter and the
+estate totals beside them:
+
+- Estate-wide held bytes pass ~60 GB, on a 100 GB volume that also carries the
+  journal and the operating system.
+- The first Professional Delivery tenancy — 500 GB does not fit.
+- Any Enterprise tenancy — 4 TB obviously does not.
+
+Note the second and third arrive **the day the contract is signed**, not when
+the customer gets round to uploading. `estate.committedBytes` is the figure that
+moves then, which is why it is reported separately from what is held.
+
+**Then: Cloudflare R2**, as a second driver behind the `EvidenceStore`
+interface. S3-compatible so the driver is standard, egress genuinely zero with
+no cap, a CDN available in front for nothing.
+
+The comparison, at a year-two book of 11 TB held and 22 TB read per month:
+
+| Backend | Storage | Egress | Total | Markup on a £15 block |
+|---|---|---|---|---|
+| Backblaze B2 | £52 | £0 | **£52** | 31.6× |
+| **Cloudflare R2** | £130 | £0 | **£130** | 12.7× |
+| VPS block volume | £968 | £0 | £968 | 1.7× |
+| AWS S3 | £200 | £1,564 | £1,764 | 8.3× |
+| Firebase Storage | £226 | £2,086 | £2,312 | 7.3× |
+
+Egress is the whole story and it only appears at scale. B2 is £78 a month
+cheaper than R2 and reintroduces a cliff — its free egress is capped at three
+times the stored volume per month, which one bulk-export month can pass. £78 is
+not worth a surprise.
+
+**Firebase is the wrong answer here, and the price is the weaker reason.** It is
+the dearest of the five, but it also fights three settled decisions at once: the
+SDK ends zero runtime dependencies; Firebase Auth would be a second identity
+model beside the RBAC/ABAC that already enforces every permission; and its
+value — client-direct upload — bypasses the server-side re-hash that stops a
+client storing arbitrary bytes under a hash the ledger already trusts. That
+guard is what makes the evidence chain worth having.
+
+One copy is enough on object storage, and two are needed on the volume. That is
+not a shortcut: this store is content-addressed, so objects are immutable and
+never overwritten, versioning therefore costs nothing, and object lock gives the
+logical protection a second copy would otherwise be buying.
+
+**Retention will not save you.** Nothing the ledger names is deletable, by
+policy: an evidence record can be argued over for as long as the contract can be
+sued on. The only removable bytes are objects no record names, and the upload
+path cannot create those.
 
 ### Memory, and why it is a different question
 

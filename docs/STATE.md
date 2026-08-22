@@ -1232,6 +1232,27 @@ the storage backend rather than on the customer, and moving the store to a
 volume without revisiting it converts the margin quietly. The config comment
 says so beside the number.
 
+The backend decision is now made and written down in `docs/GOING-LIVE.md`: the
+VPS volume now, **Cloudflare R2** when the estate passes ~60 GB held or the first
+Professional Delivery tenancy signs, whichever comes first. `GET
+/v1/admin/tenants` reports every tenancy's meter and the estate totals beside
+them, so the trigger is observable rather than remembered — including
+`committedBytes`, which is what an Enterprise contract moves the day it is
+signed rather than the day anybody uploads.
+
+**Firebase was assessed and rejected**, and the price is the weaker reason. At a
+year-two book it is the dearest of the five at £2,312 a month against R2's £130,
+almost all of it egress. But it also fights three settled decisions at once: the
+SDK ends zero runtime dependencies, Firebase Auth would be a second identity
+model beside the RBAC/ABAC that already enforces every permission, and its
+central value — client-direct upload — bypasses the server-side re-hash that
+stops a client storing bytes under a hash the ledger already trusts.
+
+An earlier costing here used two copies on object storage and was corrected: the
+store is content-addressed, so objects are immutable and never overwritten,
+versioning costs nothing and object lock gives the logical protection a second
+copy would buy. One copy is honest there; the volume still needs two.
+
 Two consequences worth stating. **S3 is ruled out by egress, not by storage
 cost**: one customer pulling a 4 TB archive is about £284, seven times what
 holding it for a month costs, and B2 and R2 charge nothing for the same read.
