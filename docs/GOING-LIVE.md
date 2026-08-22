@@ -91,62 +91,90 @@ not the size of the models, which never arrive.
 **The ledger is negligible** beside either. It is JSON lines, and a project
 generating a hundred thousand events writes tens of megabytes.
 
-### Where the bytes live, now and later
+### Where the bytes live
 
-**Now: the VPS volume.** Already built, no new vendor, no new dependency, and
-correct for the trial and the first two or three pilot tenancies. The margin on
-sold capacity is thin here — see the table below — and at pilot volume that is a
-few pounds a month in absolute terms, so it does not matter yet.
+**The destination is Backblaze B2, and the cutover belongs in days rather than
+months.** That is a correction: an earlier version of this document proposed
+Cloudflare R2 at a 60 GB trigger, and both halves were wrong.
 
-**Leave when any one of these fires**, whichever comes first. All three are
-visible on `GET /v1/admin/tenants`, which reports every tenancy's meter and the
-estate totals beside them:
+R2 was wrong on the numbers. B2 is cheaper until a tenancy reads back more than
+**3.9× what it stores, every month** — R2's zero-egress guarantee is insurance
+costing £78 a month against a risk that does not arrive at document-platform read
+volumes:
 
-- Estate-wide held bytes pass ~60 GB, on a 100 GB volume that also carries the
-  journal and the operating system.
-- The first Professional Delivery tenancy — 500 GB does not fit.
-- Any Enterprise tenancy — 4 TB obviously does not.
+| read ÷ stored | B2 | R2 | |
+|---|---|---|---|
+| 1× | £52 | £130 | B2 by £78 |
+| 2× — realistic | **£52** | £130 | **B2 by £78** |
+| 3× | £52 | £130 | B2 by £78 |
+| 4× | £139 | £130 | R2 by £9 |
+| 8× | £487 | £130 | R2 by £356 |
 
-Note the second and third arrive **the day the contract is signed**, not when
-the customer gets round to uploading. `estate.committedBytes` is the figure that
-moves then, which is why it is reported separately from what is held.
+The 60 GB trigger was wrong on the migration. Every object has to be copied,
+re-hashed and verified, because a content-addressed store that does not check the
+hash is not one — so the cost of moving is measured in objects and only ever
+rises:
 
-**Then: Cloudflare R2**, as a second driver behind the `EvidenceStore`
-interface. S3-compatible so the driver is standard, egress genuinely zero with
-no cap, a CDN available in front for nothing.
+| Move at | Objects to copy and verify |
+|---|---|
+| **before the first customer** | **~0** |
+| 60 GB held | ~20,500 |
+| the first Professional Delivery tenancy | ~170,700 |
 
-The comparison, at a year-two book of 11 TB held and 22 TB read per month:
+So: go live on the volume because it is built and works, and **cut over before
+the first paying customer**, not at a capacity threshold. At that point the
+migration is a script that runs in minutes. `GET /v1/admin/tenants` reports every
+tenancy's meter and the estate totals, so the position is visible either way.
+
+The full comparison, at a year-two book of 11 TB held and 22 TB read per month:
 
 | Backend | Storage | Egress | Total | Markup on a £15 block |
 |---|---|---|---|---|
-| Backblaze B2 | £52 | £0 | **£52** | 31.6× |
-| **Cloudflare R2** | £130 | £0 | **£130** | 12.7× |
+| **Backblaze B2** | £52 | £0 | **£52** | 31.6× |
+| Cloudflare R2 | £130 | £0 | £130 | 12.7× |
 | VPS block volume | £968 | £0 | £968 | 1.7× |
 | AWS S3 | £200 | £1,564 | £1,764 | 8.3× |
 | Firebase Storage | £226 | £2,086 | £2,312 | 7.3× |
-
-Egress is the whole story and it only appears at scale. B2 is £78 a month
-cheaper than R2 and reintroduces a cliff — its free egress is capped at three
-times the stored volume per month, which one bulk-export month can pass. £78 is
-not worth a surprise.
 
 **Firebase is the wrong answer here, and the price is the weaker reason.** It is
 the dearest of the five, but it also fights three settled decisions at once: the
 SDK ends zero runtime dependencies; Firebase Auth would be a second identity
 model beside the RBAC/ABAC that already enforces every permission; and its
 value — client-direct upload — bypasses the server-side re-hash that stops a
-client storing arbitrary bytes under a hash the ledger already trusts. That
-guard is what makes the evidence chain worth having.
+client storing arbitrary bytes under a hash the ledger already trusts. That guard
+is what makes the evidence chain worth having.
 
-One copy is enough on object storage, and two are needed on the volume. That is
-not a shortcut: this store is content-addressed, so objects are immutable and
-never overwritten, versioning therefore costs nothing, and object lock gives the
-logical protection a second copy would otherwise be buying.
+One copy is enough on object storage and two are needed on the volume. Not a
+shortcut: the store is content-addressed, so objects are immutable and never
+overwritten, versioning therefore costs nothing, and object lock gives the
+logical protection a second copy would otherwise buy.
 
 **Retention will not save you.** Nothing the ledger names is deletable, by
 policy: an evidence record can be argued over for as long as the contract can be
 sued on. The only removable bytes are objects no record names, and the upload
 path cannot create those.
+
+### What the B2 driver needs, when it is written
+
+Not built. Stated so the shape is known before somebody starts.
+
+`EvidenceStore` already separates policy from bytes in everything but its type:
+the hash whitelist, the re-hash on write and on read, tenant path scoping, the
+size ceiling, the signed-link HMAC and the usage meter are all backend-agnostic
+and must stay written once. What swaps is six byte-level operations.
+
+Three things make it more than a driver:
+
+- **B2 speaks the S3 API, and the S3 API is HTTP plus SigV4** — HMAC-SHA256
+  chains, all of it in `node:crypto`. No dependency, the same argument that put
+  SMTP and RESP in this repo by hand.
+- **`projectRegister` calls `has()` once per evidence record.** On a volume that
+  is a `stat`; against object storage it is a network round trip each. It has to
+  become one `LIST` into an index, which is better on the volume too.
+- **It cannot be tested against B2 from here.** A fake S3 server over `node:http`
+  proves the signing and the protocol, the way the fake SMTP and RESP servers
+  already do — it does not prove B2's implementation agrees. That check happens
+  on first deploy.
 
 ### Memory, and why it is a different question
 

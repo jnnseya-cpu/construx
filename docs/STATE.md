@@ -1232,13 +1232,32 @@ the storage backend rather than on the customer, and moving the store to a
 volume without revisiting it converts the margin quietly. The config comment
 says so beside the number.
 
-The backend decision is now made and written down in `docs/GOING-LIVE.md`: the
-VPS volume now, **Cloudflare R2** when the estate passes ~60 GB held or the first
-Professional Delivery tenancy signs, whichever comes first. `GET
-/v1/admin/tenants` reports every tenancy's meter and the estate totals beside
-them, so the trigger is observable rather than remembered — including
-`committedBytes`, which is what an Enterprise contract moves the day it is
-signed rather than the day anybody uploads.
+The backend decision is written down in `docs/GOING-LIVE.md`: the VPS volume to
+launch on because it is built, and **Backblaze B2 before the first paying
+customer**. `GET /v1/admin/tenants` reports every tenancy's meter and the estate
+totals beside them, including `committedBytes` — what an Enterprise contract
+moves the day it is signed rather than the day anybody uploads.
+
+An earlier version of that plan said Cloudflare R2 at a 60 GB trigger and both
+halves were wrong. R2 was wrong on the numbers: B2 is cheaper until a tenancy
+reads back more than 3.9× what it stores every month, so R2's zero-egress
+guarantee is £78 a month of insurance against a risk document-platform read
+volumes do not produce. The 60 GB trigger was wrong on the migration: every
+object must be copied, re-hashed and verified — a content-addressed store that
+does not check the hash is not one — so moving costs ~0 objects before the first
+customer, ~20,500 at 60 GB and ~170,700 at the first Professional Delivery
+tenancy. The cost of that decision only ever rises, which makes it the one thing
+not to defer.
+
+The driver is **not built**, and `docs/GOING-LIVE.md` states its shape so nobody
+starts blind. Three things make it more than a driver: B2 speaks the S3 API,
+which is HTTP plus SigV4 and therefore `node:crypto` and no dependency, the same
+argument that put SMTP and RESP here by hand; `projectRegister` calls `has()`
+once per evidence record, which is a `stat` on a volume and a round trip against
+object storage, so it has to become one `LIST` into an index; and it cannot be
+tested against B2 from a development machine, so a fake S3 server proves the
+signing and the protocol the way the fake SMTP and RESP servers already do, and
+first deploy proves the rest.
 
 **Firebase was assessed and rejected**, and the price is the weaker reason. At a
 year-two book it is the dearest of the five at £2,312 a month against R2's £130,
