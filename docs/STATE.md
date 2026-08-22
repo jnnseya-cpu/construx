@@ -192,6 +192,41 @@ every signature — both of which `assertProductionSafety` warns about at boot,
 and neither of which anybody would have chosen. Both are now set, on the same
 volume as the journal.
 
+**A first real deployment found two more, and the second was the worse one.**
+The compose file published `127.0.0.1:8080:8080` with the host side fixed, which
+stops the container dead on any machine already running something on 8080 — and
+the tempting fix, publishing on `0.0.0.0`, is the exact thing the comment beside
+it warns against. The host side is now `${CONSTRUX_HOST_PORT:-8080}`: the port
+inside the container never moves, the loopback binding never moves, and a
+shared host is a variable rather than a patch.
+
+The second was invisible. **Compose enumerated a dozen environment variables and
+silently dropped the other thirty-eight**, so a deployment could set anything
+`.env.example` documents, see no error, and get the built-in default. That
+included `NEWSLETTER_FROM_ADDRESS` — the from address on every email, including
+the signup confirmation, and the one the sender-domain check had just been
+written to catch. The warning would fire correctly and the operator could not act
+on it, because the variable had nowhere to go. It also swallowed
+`ACU_MARKUP_MULTIPLIER`, `STORAGE_BLOCK_PRICE_MINOR` and
+`FREE_TRIAL_GRANT_MINOR`: the commercial values this directive says must never be
+hardcoded were, in the only environment that charges anybody.
+
+The fix is `env_file`, not a longer list — `.dockerignore` excludes `.env` from
+the image on purpose, so that is the only route it has. `environment:` now
+carries only what belongs to the container rather than to the deployment: paths
+inside the image, the port the process binds behind the published one, and the
+`:?` guard on `GATEWAY_JWT_SECRET`. `backend/tests/deployment.test.ts` asserts
+both directions — every documented variable stays settable, and every variable
+compose fixes for itself is documented — and was checked by breaking the compose
+file deliberately and watching it fail.
+
+**And a VPS is rarely empty.** The one this was deployed to already ran two other
+applications, with a proxy on 80 and 443 and a Node process on 8080. `GOING-LIVE`
+now opens with the check for that and a co-existence path: move the host port,
+add a site block to the proxy that is already there, skip the Caddy step
+entirely. Stopping the incumbent proxy was never an option — it serves somebody
+else's live site.
+
 Verified by running the service exactly as the image does — production
 environment, no `node_modules` present at all — which is also the strongest
 available check that the zero-dependency decision still holds. The image itself

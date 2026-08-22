@@ -57,6 +57,41 @@ the record lives in RAM and the evidence store accepts objects up to 50 MB
 each, so headroom is cheaper than a migration. Disk is dominated by evidence,
 not by the journal — the journal is JSON lines.
 
+### If the VPS already runs something
+
+**Check before installing anything.** A VPS that has been up for weeks is not a
+blank machine, and the collision is not obvious until Caddy refuses to start:
+
+```bash
+ss -tlnp | grep -E ':80 |:443 |:8080 ' || echo "PORTS FREE"
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}'
+```
+
+Anything holding 80 or 443 means **steps 5 and 7 below do not apply**. Do not
+stop it and do not install Caddy beside it — one reverse proxy owns those ports
+on a host, and the one already there is serving something somebody relies on.
+Co-exist instead:
+
+1. **Give this platform a free host port.** `CONSTRUX_HOST_PORT=8090` in `.env`.
+   The container still binds `8080` internally and is still published only on
+   `127.0.0.1`; only the host side moves. Never publish it on `0.0.0.0` to get
+   around a clash — Docker's iptables rules are evaluated before ufw's, so that
+   puts the console on the open internet over plain http.
+2. **Add the domain to the reverse proxy that is already running**, pointing at
+   `127.0.0.1:8090`. That proxy is already obtaining certificates for the other
+   sites; this is one more site block, not a second proxy.
+3. **Skip step 5 entirely.** There is no Caddy to install and no certificate to
+   obtain here — the existing proxy does both.
+
+Everything else — the secrets, `.env`, the compose command, backups, the first
+account — is unchanged.
+
+**Memory is the constraint when sharing, not disk or CPU.** The whole ledger is
+replayed into memory at boot, so this platform's footprint grows with the size
+of the record while its neighbours' stay flat. On a 4 GB box already running two
+applications, that is a pilot rather than a business, and the upgrade is a resize
+rather than a migration.
+
 ### What actually lands on the disk
 
 Three classes of thing, and only one of them is big.

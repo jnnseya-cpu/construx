@@ -15,8 +15,27 @@ services:
       # '8080:8080' here would reach the internet on a host whose firewall
       # allows only 80 and 443, and serve the console over plain http beside
       # the https one. A reverse proxy on the same host reaches this fine.
-      - '127.0.0.1:8080:8080'
+      #
+      # The host side is a variable because a VPS is rarely empty. Another
+      # application already holding 8080 would stop this container dead on
+      # start, and the fix must not be to publish it more widely. Set
+      # CONSTRUX_HOST_PORT and point the proxy at that instead; the port
+      # inside the container never changes.
+      - '127.0.0.1:${CONSTRUX_HOST_PORT:-8080}:8080'
+    # Every setting `.env.example` documents, passed through as written.
+    #
+    # This used to enumerate a dozen variables, which meant the other thirty
+    # eight were silently ignored in the only environment that runs in
+    # production: a deployment could set NEWSLETTER_FROM_ADDRESS or
+    # ACU_MARKUP_MULTIPLIER in .env, see no error, and get the built-in default.
+    # `.env` cannot reach the image any other way — .dockerignore excludes it on
+    # purpose, so that no published layer ever carries somebody's secrets.
+    env_file:
+      - .env
     environment:
+      # Only what belongs to the container rather than to the deployment. These
+      # deliberately override .env, because they name paths inside the image and
+      # the port the process binds behind the published one.
       NODE_ENV: production
       PORT: '8080'
       LEDGER_JOURNAL_PATH: /data/ledger.jsonl
@@ -27,22 +46,10 @@ services:
       # the platform records evidence hashes and holds no files — a chain that
       # lasts exactly as long as whoever took the photograph still has it.
       EVIDENCE_STORE_PATH: /data/evidence
-      # Unset means every signature request is refused. Generate once and keep
-      # it: a new key invalidates every signature already made.
-      #   openssl genpkey -algorithm ed25519 -out signing.pem
-      SIGNING_PRIVATE_KEY_PEM: ${SIGNING_PRIVATE_KEY_PEM:-}
-      # Built into every link sent by email, so it is the public https origin in
-      # any real deployment — not the address the container binds.
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
-      # Required. The service warns loudly at boot if this is the development
-      # default, because every token it has ever signed would be forgeable.
+      # Required, and checked here rather than at boot so the failure is "you
+      # have not set this" instead of a service that starts and signs tokens
+      # anybody could forge.
       GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:?set GATEWAY_JWT_SECRET before starting}
-      AI_MODE: ${AI_MODE:-local}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
     volumes:
       - ledger:/data
     restart: unless-stopped
