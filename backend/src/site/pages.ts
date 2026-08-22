@@ -546,7 +546,7 @@ export function getStarted(): string {
         }</div>
         <ul class="plan-list">
           <li>${t.includedSeats === null ? 'Unlimited identities' : `${t.includedSeats} identities included`}</li>
-          <li>${t.storageGb === null ? 'Unlimited storage' : `${t.storageGb} GB storage`}</li>
+          <li>${t.storageGb >= 1000 ? `${(t.storageGb / 1000).toFixed(t.storageGb % 1000 === 0 ? 0 : 1)} TB storage` : `${t.storageGb} GB storage`}</li>
           <li>${
             t.aiAllowanceAcus > 0
               ? `<b>${t.aiAllowanceAcus.toLocaleString('en-GB')} ACUs</b> of AI included each month`

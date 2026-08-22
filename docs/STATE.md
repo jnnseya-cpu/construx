@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,296 passing, 0 failing, 0 skipped, across 66 files |
+| Tests | 1,297 passing, 0 failing, 0 skipped, across 66 files |
 | Typecheck | clean |
 | Backend | 105 TypeScript files, 49,851 lines |
 | Application | 32 ES modules, 10,267 lines (plus a service worker) |
@@ -1193,6 +1193,25 @@ blocks bought, usage is measured from the object store, 70% raises a flag and
 because nothing the ledger names is deletable — usage only ever rises, there is
 no state an over-quota tenant returns to, and billing for the overage is a bill
 that grows for ever against storage the platform can never reclaim.
+
+**No package is uncapped.** Enterprise carried `null`, which meant unlimited,
+which against a record nothing can be deleted from is an unbounded liability —
+usage only rises and the plan carries it for ever at a fixed monthly price. It
+now carries 4 TB, and removing the null case removed a branch from every screen,
+route and function downstream: a position always has a limit, a percentage is
+always a number, and there is no second path through the console for the tenancy
+nothing could refuse.
+
+The figures are derived rather than chosen. Photographs are 88–89% of everything
+on every project size, so the unit of demand is a project: about 9 GB for a small
+works job over six months, 52 GB for a mid project over twelve, 258 GB for a
+major project over twenty-four. The rule is that an allowance must reach the 70%
+flag no sooner than twelve months of typical use for that package — year-one
+demand divided by 0.7 — which puts the warning a year in, early enough to be a
+conversation and late enough not to tax a customer who has just arrived. That
+rule reproduces the three existing figures exactly (5 GB, 100 GB, 500 GB) and
+sizes the fourth at 4 TB. A test asserts it, so a package added later cannot be
+priced with an allowance that trips its own flag in month nine.
 
 Three things it is careful about. **What stops is supplying bytes**, never
 recording an event, certifying a payment or signing a document: a full disk must

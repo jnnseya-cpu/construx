@@ -25,6 +25,13 @@ import { PACKAGES, type PackageTier } from './seats.ts';
  * capacity or start a conversation about the plan. Warning at 90% would arrive
  * after the decision needed making.
  *
+ * **No package is uncapped.** Unlimited storage against a record nothing can be
+ * deleted from is an unbounded liability, so every package carries a real
+ * figure — the smallest that reaches the flag no sooner than twelve months of
+ * typical use. That also removes a whole branch from everything downstream: a
+ * position always has a limit, a percentage is always a number, and there is no
+ * second path through the console for the tenancy that could never be refused.
+ *
  * **What is refused, and what is never refused.** The stop applies to uploading
  * *bytes*. It does not apply to recording events, raising an RFI, certifying a
  * payment or signing anything — a full disk must not stop a contract from being
@@ -52,14 +59,12 @@ export type StorageState = 'OK' | 'WARNING' | 'FULL';
 export type StoragePosition = {
   package: PackageTier;
   usedBytes: number;
-  /** null where the package is uncapped. Metered and reported all the same. */
-  limitBytes: number | null;
-  includedGb: number | null;
+  limitBytes: number;
+  includedGb: number;
   purchasedBlocks: number;
   purchasedGb: number;
-  /** null where uncapped — a percentage of nothing is not zero, it is undefined. */
-  percentUsed: number | null;
-  remainingBytes: number | null;
+  percentUsed: number;
+  remainingBytes: number;
   state: StorageState;
   /** What the next upload will do. The console leads with this. */
   summary: string;
@@ -67,17 +72,9 @@ export type StoragePosition = {
   nextBlock?: { gb: number; priceMinor: number; wouldTakeTo: string };
 };
 
-/**
- * The entitlement: what the package includes, plus what has been bought.
- *
- * An uncapped package returns null rather than a very large number. A sentinel
- * would be a cap somebody eventually hits, and hitting it would look like a
- * defect rather than a decision.
- */
-export function allowanceBytes(tier: PackageTier, purchasedBlocks: number): number | null {
-  const included = PACKAGES[tier].storageGb;
-  if (included === null) return null;
-  return (included + purchasedBlocks * STORAGE_BLOCK_GB) * BYTES_PER_GB;
+/** The entitlement: what the package includes, plus what has been bought. */
+export function allowanceBytes(tier: PackageTier, purchasedBlocks: number): number {
+  return (PACKAGES[tier].storageGb + purchasedBlocks * STORAGE_BLOCK_GB) * BYTES_PER_GB;
 }
 
 function readable(bytes: number): string {
@@ -93,23 +90,6 @@ export function storagePosition(input: {
   const limitBytes = allowanceBytes(input.tier, input.purchasedBlocks);
   const includedGb = PACKAGES[input.tier].storageGb;
   const purchasedGb = input.purchasedBlocks * STORAGE_BLOCK_GB;
-
-  if (limitBytes === null) {
-    return {
-      package: input.tier,
-      usedBytes: input.usedBytes,
-      limitBytes: null,
-      includedGb: null,
-      purchasedBlocks: input.purchasedBlocks,
-      purchasedGb,
-      percentUsed: null,
-      remainingBytes: null,
-      state: 'OK',
-      summary:
-        `${readable(input.usedBytes)} held. This package is uncapped, so nothing here will refuse an ` +
-        'upload — the figure is reported because storage that nobody is watching is how a volume fills up.',
-    };
-  }
 
   const percentUsed = Number(((input.usedBytes / limitBytes) * 100).toFixed(1));
   const remainingBytes = Math.max(0, limitBytes - input.usedBytes);
@@ -159,8 +139,6 @@ export function storagePosition(input: {
  * that had nothing to do with it.
  */
 export function assertCapacity(position: StoragePosition, incomingBytes: number): void {
-  if (position.limitBytes === null) return;
-
   if (position.usedBytes + incomingBytes > position.limitBytes) {
     const short = position.usedBytes + incomingBytes - position.limitBytes;
     throw new DomainError(

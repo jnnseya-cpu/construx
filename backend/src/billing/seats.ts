@@ -111,7 +111,23 @@ export type PackageDefinition = {
   /** null = unlimited under fair use. */
   includedSeats: number | null;
   monthlyPriceMinor: number;
-  storageGb: number | null;
+  /**
+   * The included storage allowance. Never null — no package is uncapped.
+   *
+   * Unlimited storage against an append-only record is an unbounded liability:
+   * nothing stored is ever deleted, so a tenant's usage only rises, and a plan
+   * that promises no ceiling promises to carry that for ever at a fixed monthly
+   * price. Every figure below is the smallest that reaches the 70% flag no
+   * sooner than twelve months of typical use for that package, so the warning
+   * lands a year in — early enough to be a conversation, late enough not to be
+   * a tax on a customer who has just arrived.
+   *
+   * Derived from what a project actually accumulates, which is photographs:
+   * they are 88–89% of everything on every project size. A small works job runs
+   * about 9 GB over six months, a mid project 52 GB over twelve, a major
+   * project 258 GB over twenty-four.
+   */
+  storageGb: number;
   isolatedTenancy: boolean;
   apiAccess: boolean;
   /**
@@ -165,7 +181,9 @@ export const PACKAGES: Record<PackageTier, PackageDefinition> = {
     targetCustomer: 'Tier 1 and multi-portfolio contractors',
     includedSeats: null,
     monthlyPriceMinor: 650_000,
-    storageGb: null,
+    // 20 live projects — 12 mid and 8 major — is about 2,685 GB in year one for
+    // a division or region, and 2,685 / 0.7 is 3,836.
+    storageGb: 4_000,
     isolatedTenancy: true,
     apiAccess: true,
     export: true,

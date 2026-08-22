@@ -62,7 +62,7 @@ export type AccountType = {
   /** `null` is unlimited, and is kept as null: zero would read as "none". */
   includedSeats: number | null;
   monthlyPriceMinor: number;
-  storageGb: number | null;
+  storageGb: number;
   export: boolean;
   apiAccess: boolean;
   /** Whether a stranger can provision this without talking to anybody. */

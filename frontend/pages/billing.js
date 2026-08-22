@@ -79,14 +79,10 @@ export async function billing(root) {
                 }</span></div>
                 <div class="row"><span class="lbl">Storage</span><span class="val">${
                   storage
-                    ? storage.limitBytes === null
-                      ? 'uncapped'
-                      : `${gb(storage.usedBytes)} of ${gb(storage.limitBytes)}${
-                          storage.purchasedBlocks > 0 ? ` · ${storage.purchasedGb} GB bought` : ''
-                        }`
-                    : seats.package.storageGb === null
-                      ? 'unlimited'
-                      : `${seats.package.storageGb} GB`
+                    ? `${gb(storage.usedBytes)} of ${gb(storage.limitBytes)}${
+                        storage.purchasedBlocks > 0 ? ` · ${storage.purchasedGb} GB bought` : ''
+                      }`
+                    : `${seats.package.storageGb} GB`
                 }</span></div>
                 <div class="row"><span class="lbl">Export, download and print</span><span class="val">${
                   seats.package.export ? badge('included', 'good') : badge('not on this plan', 'warn')
@@ -116,22 +112,16 @@ export async function billing(root) {
           : html`<div class="card" style="margin-bottom:14px">
               <h3>Storage</h3>
               <p class="metric-sub" style="margin-bottom:12px">${storage.summary}</p>
-              ${
-                storage.limitBytes === null
-                  ? ''
-                  : html`
-                      ${raw(track(storage.percentUsed, storage.state === 'FULL' ? 'bad' : storage.state === 'WARNING' ? 'warn' : 'good'))}
-                      <div class="split-list" style="margin-top:12px">
-                        <div class="row"><span class="lbl">Held</span><span class="val">${gb(storage.usedBytes)}</span></div>
-                        <div class="row"><span class="lbl">Allowance</span><span class="val">${gb(storage.limitBytes)}${
-                          storage.purchasedBlocks > 0
-                            ? ` (${storage.includedGb} GB included + ${storage.purchasedGb} GB bought)`
-                            : ' included'
-                        }</span></div>
-                        <div class="row"><span class="lbl">Remaining</span><span class="val ${raw(storage.state === 'FULL' ? 'bad' : '')}">${gb(storage.remainingBytes)}</span></div>
-                      </div>
-                    `
-              }
+              ${raw(track(storage.percentUsed, storage.state === 'FULL' ? 'bad' : storage.state === 'WARNING' ? 'warn' : 'good'))}
+              <div class="split-list" style="margin-top:12px">
+                <div class="row"><span class="lbl">Held</span><span class="val">${gb(storage.usedBytes)}</span></div>
+                <div class="row"><span class="lbl">Allowance</span><span class="val">${gb(storage.limitBytes)}${
+                  storage.purchasedBlocks > 0
+                    ? ` (${storage.includedGb} GB included + ${storage.purchasedGb} GB bought)`
+                    : ' included'
+                }</span></div>
+                <div class="row"><span class="lbl">Remaining</span><span class="val ${raw(storage.state === 'FULL' ? 'bad' : '')}">${gb(storage.remainingBytes)}</span></div>
+              </div>
               ${
                 storage.state === 'OK'
                   ? ''

@@ -5293,15 +5293,6 @@ export const ROUTES: Route[] = [
       authorise(engineCtx, 'BILLING_ACU', 'U');
 
       const { blocks } = body<{ blocks: number }>(ctx);
-      const before = storagePositionFor(platform, actor.tenantId);
-      if (before.limitBytes === null) {
-        throw new DomainError(
-          'STORAGE_UNCAPPED',
-          'This package is uncapped, so there is no capacity to add. Buying a block would charge for something already included.',
-          409,
-        );
-      }
-
       const entitlementId = ulid();
       const monthlyPriceMinor = blocks * config.billing.storageBlockPriceMinor;
       write(engineCtx, {

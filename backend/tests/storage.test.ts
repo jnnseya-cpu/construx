@@ -39,27 +39,51 @@ const GB = 1024 * 1024 * 1024;
 
 describe('what a plan allows', () => {
   it('adds bought blocks to what the package includes', () => {
-    const included = PACKAGES.CORE_PROJECT.storageGb!;
+    const included = PACKAGES.CORE_PROJECT.storageGb;
     assert.equal(allowanceBytes('CORE_PROJECT', 0), included * GB);
     assert.equal(allowanceBytes('CORE_PROJECT', 2), (included + 2 * STORAGE_BLOCK_GB) * GB);
   });
 
-  it('reports an uncapped package as uncapped rather than as a very large number', () => {
-    // A sentinel would be a cap somebody eventually reaches, and reaching it
-    // would look like a defect rather than a decision.
-    assert.equal(allowanceBytes('ENTERPRISE', 0), null);
-    assert.equal(PACKAGES.ENTERPRISE.storageGb, null);
+  it('caps every package, including the largest', () => {
+    // Unlimited storage against a record nothing can be deleted from is an
+    // unbounded liability: usage only rises, and the plan carries it for ever
+    // at a fixed monthly price. So no package is uncapped, and the top one
+    // carries a real figure rather than a promise.
+    for (const definition of Object.values(PACKAGES)) {
+      assert.equal(typeof definition.storageGb, 'number', `${definition.package} has no storage figure`);
+      assert.ok(definition.storageGb > 0);
+    }
 
-    const position = storagePosition({ tier: 'ENTERPRISE', usedBytes: 900 * GB, purchasedBlocks: 0 });
-    assert.equal(position.limitBytes, null);
-    assert.equal(position.percentUsed, null, 'a percentage of no limit is undefined, not zero');
-    assert.equal(position.state, 'OK');
-    // Still measured, because storage nobody is watching is how a volume fills.
-    assert.equal(position.usedBytes, 900 * GB);
+    const enterprise = storagePosition({ tier: 'ENTERPRISE', usedBytes: 900 * GB, purchasedBlocks: 0 });
+    assert.equal(enterprise.limitBytes, PACKAGES.ENTERPRISE.storageGb * GB);
+    assert.equal(enterprise.state, 'OK', '900 GB against 4 TB is not a warning');
+  });
+
+  it('sizes every package so the flag lands no sooner than a year of typical use', () => {
+    // The rule the figures come from, asserted rather than left in a comment.
+    // A mid project accumulates about 52 GB over twelve months and a major one
+    // 258 GB over twenty-four, of which photographs are 88-89%. Year-one demand
+    // divided by the 70% threshold is the smallest defensible allowance.
+    const MID = 52, MAJOR = 258, SMALL = 9;
+    const yearOne: Record<string, number> = {
+      FREE_TRIAL: 0.25 * SMALL,
+      CORE_PROJECT: 2 * SMALL + 1 * MID,
+      PROFESSIONAL_DELIVERY: 3 * SMALL + 5 * MID,
+      ENTERPRISE: 12 * MID + 8 * MAJOR,
+    };
+
+    for (const [tier, demand] of Object.entries(yearOne)) {
+      const allowance = PACKAGES[tier as keyof typeof PACKAGES].storageGb;
+      assert.ok(
+        allowance >= demand / STORAGE_WARN_AT,
+        `${tier} allows ${allowance} GB but a year of typical use is ${demand.toFixed(0)} GB, ` +
+          `which trips the ${STORAGE_WARN_AT * 100}% flag before the year is out`,
+      );
+    }
   });
 
   it('flags at seventy per cent and not before', () => {
-    const limit = PACKAGES.CORE_PROJECT.storageGb! * GB;
+    const limit = PACKAGES.CORE_PROJECT.storageGb * GB;
 
     const under = storagePosition({ tier: 'CORE_PROJECT', usedBytes: limit * 0.69, purchasedBlocks: 0 });
     const at = storagePosition({ tier: 'CORE_PROJECT', usedBytes: limit * STORAGE_WARN_AT, purchasedBlocks: 0 });
@@ -73,7 +97,7 @@ describe('what a plan allows', () => {
   });
 
   it('says the only way down is more capacity, because deletion is not on the table', () => {
-    const limit = PACKAGES.CORE_PROJECT.storageGb! * GB;
+    const limit = PACKAGES.CORE_PROJECT.storageGb * GB;
     const warning = storagePosition({ tier: 'CORE_PROJECT', usedBytes: limit * 0.8, purchasedBlocks: 0 });
     assert.match(warning.summary, /Nothing already stored can be deleted/i);
   });
@@ -81,7 +105,7 @@ describe('what a plan allows', () => {
   it('is full at the limit, and says what still works', () => {
     // A full disk must not stop a contract being administered. What stops is
     // supplying files — the record, the approvals and the signatures continue.
-    const limit = PACKAGES.CORE_PROJECT.storageGb! * GB;
+    const limit = PACKAGES.CORE_PROJECT.storageGb * GB;
     const full = storagePosition({ tier: 'CORE_PROJECT', usedBytes: limit, purchasedBlocks: 0 });
 
     assert.equal(full.state, 'FULL');
@@ -90,7 +114,7 @@ describe('what a plan allows', () => {
   });
 
   it('comes back under the line when a block is bought', () => {
-    const limit = PACKAGES.CORE_PROJECT.storageGb! * GB;
+    const limit = PACKAGES.CORE_PROJECT.storageGb * GB;
     const full = storagePosition({ tier: 'CORE_PROJECT', usedBytes: limit, purchasedBlocks: 0 });
     const bought = storagePosition({ tier: 'CORE_PROJECT', usedBytes: limit, purchasedBlocks: 1 });
 
@@ -106,7 +130,7 @@ describe('refusing the write', () => {
     // A tenant 1 MB under the line uploading a 40 MB drawing set would otherwise
     // be allowed to cross it, and the next upload would fail for a file that had
     // nothing to do with it.
-    const limit = PACKAGES.CORE_PROJECT.storageGb! * GB;
+    const limit = PACKAGES.CORE_PROJECT.storageGb * GB;
     const nearly = storagePosition({ tier: 'CORE_PROJECT', usedBytes: limit - 1_048_576, purchasedBlocks: 0 });
 
     assert.equal(nearly.state, 'WARNING', 'not yet full');
@@ -115,7 +139,7 @@ describe('refusing the write', () => {
   });
 
   it('refuses with 507, because the request was fine and the server cannot hold it', () => {
-    const limit = PACKAGES.CORE_PROJECT.storageGb! * GB;
+    const limit = PACKAGES.CORE_PROJECT.storageGb * GB;
     const full = storagePosition({ tier: 'CORE_PROJECT', usedBytes: limit, purchasedBlocks: 0 });
 
     try {
@@ -129,9 +153,14 @@ describe('refusing the write', () => {
     }
   });
 
-  it('never refuses an uncapped package', () => {
-    const uncapped = storagePosition({ tier: 'ENTERPRISE', usedBytes: 40_000 * GB, purchasedBlocks: 0 });
-    assert.doesNotThrow(() => assertCapacity(uncapped, 50 * 1_048_576));
+  it('refuses the largest package too, once it is genuinely full', () => {
+    // The case that used to be unreachable. A tenancy nothing could refuse is
+    // a tenancy that fills the volume for everybody else on it.
+    const limit = PACKAGES.ENTERPRISE.storageGb * GB;
+    const full = storagePosition({ tier: 'ENTERPRISE', usedBytes: limit, purchasedBlocks: 0 });
+
+    assert.equal(full.state, 'FULL');
+    throwsCode(() => assertCapacity(full, 1), 'STORAGE_LIMIT_REACHED');
   });
 });
 
