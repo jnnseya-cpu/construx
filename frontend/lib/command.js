@@ -1,4 +1,5 @@
 import { api, ApiError, hashFile } from './api.js';
+import { forEvidence } from './capture.js';
 import { queueFile } from './outbox.js';
 import { esc, exact, toast } from './ui.js';
 
@@ -111,12 +112,20 @@ async function collect(host, fields, files = []) {
         if (field.required === false) continue;
         throw new ApiError({ title: 'EVIDENCE_REQUIRED', detail: `${field.label} is required` }, 400);
       }
-      const hash = await hashFile(file);
+      // Resize before hashing, never after. The hash is the address the bytes
+      // are stored at and the value written into an append-only event, so it
+      // has to be taken over the bytes that are actually kept. A large
+      // photograph comes back smaller; everything else comes back untouched.
+      const prepared = await forEvidence(file);
+      const hash = await hashFile(prepared);
       body[field.name] = hash;
-      if (field.nameInto) body[field.nameInto] = file.name;
+      // The prepared name, not the captured one: a resized HEIC is stored as
+      // JPEG bytes, and a record naming it `.HEIC` would hand somebody a file
+      // their machine refuses to open.
+      if (field.nameInto) body[field.nameInto] = prepared.name;
       // Held for after the command succeeds. The upload is refused until a
       // ledger record names the hash, and this command is what creates it.
-      files.push({ hash, file });
+      files.push({ hash, file: prepared });
       continue;
     }
 

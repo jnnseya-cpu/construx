@@ -64,6 +64,13 @@ describe('what a plan allows', () => {
     // A mid project accumulates about 52 GB over twelve months and a major one
     // 258 GB over twenty-four, of which photographs are 88-89%. Year-one demand
     // divided by the 70% threshold is the smallest defensible allowance.
+    //
+    // These are the figures for photographs stored at capture size. The console
+    // now re-encodes them in the browser and a mid project's photography falls
+    // from about 46 GB to about 9 GB, so real demand is well under this. The
+    // model is deliberately left at the larger number: it is the floor for a
+    // browser where the re-encode falls back, and an allowance sized against
+    // compression that did not happen is an allowance that trips in month nine.
     const MID = 52, MAJOR = 258, SMALL = 9;
     const yearOne: Record<string, number> = {
       FREE_TRIAL: 0.25 * SMALL,

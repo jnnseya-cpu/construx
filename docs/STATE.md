@@ -1213,6 +1213,49 @@ rule reproduces the three existing figures exactly (5 GB, 100 GB, 500 GB) and
 sizes the fourth at 4 TB. A test asserts it, so a package added later cannot be
 priced with an allowance that trips its own flag in month nine.
 
+**The cheapest byte is the one never uploaded.** Photographs are 88–89% of
+everything stored, a handset shoots 3–12 MB a frame, and a defect, a pour, a
+rebar cover check or a delivery ticket is completely legible at 1920px on the
+long edge. `frontend/lib/capture.js` re-encodes them in the browser before
+anything leaves the device: a mid project's photography falls from about 46 GB
+to about 9 GB, which is the largest single lever on storage cost anywhere in the
+system and the only one that also makes the upload faster on a site connection.
+
+It runs **before the hash**, and that placement is the whole of its correctness.
+The hash is the address the bytes are stored at and the value written into an
+append-only event, so it must be taken over the bytes actually kept; compressing
+after hashing would make the platform refuse its own upload. `command.js` is the
+one path where a captured file becomes an address, so it is the one place this
+is wired. The other `hashFile` call site — `audit.js`, supplying bytes against a
+hash already on the record — must never compress, and does not.
+
+Four rules keep it from being a risk. Only images, and only large ones: a PDF, a
+drawing, an IFC or a signed document passes through untouched, because
+re-encoding those is lossy where it matters and a drawing is exactly what
+somebody zooms into three years later. It can never return a larger file, so an
+already-optimised image keeps its original bytes. Every failure path returns the
+original — a browser without `OffscreenCanvas`, a corrupt image, a codec the
+canvas will not read — because an uncompressed photograph is a fine outcome and
+a lost one is not. And EXIF orientation is applied during decode, without which
+every sideways phone photo is stored sideways, which is the kind of defect
+noticed a week and a thousand photographs late.
+
+What is given up is the rest of EXIF, including the GPS fix and the capture
+timestamp. Nothing reads either today — the event carries its own
+`deviceTimestamp` and its own author, which is what a delay claim is argued from
+— so nothing regresses, but if location ever becomes evidence here it has to be
+extracted before this runs and cannot be recovered afterwards. The module says
+so, at the top, in the place somebody would look.
+
+Verified in a real browser rather than asserted: a 4032×3024 capture comes back
+1920×1440 and 9.6× smaller, portrait stays portrait, a PDF and an IFC come back
+identical, a 400×300 photograph is left alone, and a flat image the encoder
+would have grown keeps its original bytes. The package sizing above is
+deliberately **not** reduced to match: the demand model stays at capture size,
+because it is the floor for a browser where the re-encode falls back, and
+because cutting an allowance on the strength of an engineering change reprices a
+customer who did nothing. The headroom is now real headroom.
+
 **What the allowances cost, and what the block earns.** A block is 100 GB held
 twice — live plus the off-machine backup the runbook requires — so every figure
 below is 200 GB-months of underlying cost.
@@ -1288,9 +1331,9 @@ not stop a contract being administered, and the evidence hash still reaches the
 ledger with the record saying the file is not held. **The incoming file is
 measured, not just the running total**, so a tenant a megabyte under the line
 cannot cross it with a forty-megabyte drawing set and leave the next upload to
-fail for it. And **an uncapped package reports null rather than a large
-number** — a sentinel is a cap somebody eventually hits, and hitting it looks
-like a defect rather than a decision.
+fail for it. And **the meter measures held bytes, not recorded ones**, so a
+tenancy that records evidence the platform does not hold is not charged capacity
+for files that are not there.
 
 Usage is measured from the volume and is deliberately not an event: bytes on
 disk are a measurement, and an event asserting one would be a second source of

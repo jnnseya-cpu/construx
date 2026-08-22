@@ -77,16 +77,22 @@ at `EVIDENCE_MAX_BYTES` (50 MB default). Drawings, photographs, certificates,
 delivery tickets, test results, scanned O&M content. This is what fills a disk,
 and photographs are most of it:
 
-| Per active project, per month | Roughly |
-|---|---|
-| Site photographs — 100/day at 3 MB, 22 days | 6.6 GB |
-| Drawings issued and revised — 60 at 5 MB | 300 MB |
-| Certificates, tickets, test results — 200 at 1 MB | 200 MB |
-| **Total** | **~7 GB** |
+| Per active project, per month | At capture | As stored |
+|---|---|---|
+| Site photographs — 100/day, 22 days | 6.6 GB (3 MB each) | 1.3 GB (~600 KB each) |
+| Drawings issued and revised — 60 at 5 MB | 300 MB | 300 MB |
+| Certificates, tickets, test results — 200 at 1 MB | 200 MB | 200 MB |
+| **Total** | **~7 GB** | **~1.8 GB** |
 
-So 100 GB is roughly fourteen months of one busy site, or four to five months of
-three. That is months rather than years, and it is the number to plan against —
-not the size of the models, which never arrive.
+The second column is what actually lands, because `frontend/lib/capture.js`
+re-encodes photographs at 1920px on the long edge before they leave the handset.
+Only photographs move: a drawing, a PDF or an IFC is stored exactly as supplied,
+which is why those two rows do not change.
+
+So 100 GB is roughly four and a half years of one busy site, or eighteen months
+of three — against fourteen months and four to five if nothing were re-encoded.
+Plan against the stored column, but do not size the disk so tightly that a
+browser falling back to the original bytes fills it.
 
 **The ledger is negligible** beside either. It is JSON lines, and a project
 generating a hundred thousand events writes tens of megabytes.
