@@ -759,11 +759,15 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     // Three firms, three outcomes. Northstone has delivered for this business
     // before and comes out strategic; Calder is clean but unproven here;
     // Pennine carries a RIDDOR and lands conditional.
-    { legalName: 'Northstone Civils Ltd', trades: ['GROUNDWORKS', 'CIVIL_ENGINEERING', 'CONCRETE_WORKS'], incorporated: '2008-03-14', riddor: 0, packagesCompleted: 6, disputes: 0, onTime: 92 },
-    { legalName: 'Calder Construction Ltd', trades: ['GROUNDWORKS', 'CIVIL_ENGINEERING', 'DRAINAGE'], incorporated: '2014-09-02', riddor: 0, packagesCompleted: 1, disputes: 0, onTime: 88 },
-    { legalName: 'Pennine Groundworks Ltd', trades: ['GROUNDWORKS', 'EARTHWORKS'], incorporated: '2019-06-20', riddor: 1, packagesCompleted: 2, disputes: 0, onTime: 78 },
+    { partyId: 'SUP-NORTHSTONE', legalName: 'Northstone Civils Ltd', trades: ['GROUNDWORKS', 'CIVIL_ENGINEERING', 'CONCRETE_WORKS'], incorporated: '2008-03-14', riddor: 0, packagesCompleted: 6, disputes: 0, onTime: 92 },
+    { partyId: 'SUP-CALDER', legalName: 'Calder Construction Ltd', trades: ['GROUNDWORKS', 'CIVIL_ENGINEERING', 'DRAINAGE'], incorporated: '2014-09-02', riddor: 0, packagesCompleted: 1, disputes: 0, onTime: 88 },
+    { partyId: 'SUP-PENNINE', legalName: 'Pennine Groundworks Ltd', trades: ['GROUNDWORKS', 'EARTHWORKS'], incorporated: '2019-06-20', riddor: 1, packagesCompleted: 2, disputes: 0, onTime: 78 },
   ].map((firm) => {
     const { supplierId } = supplychain.registerSupplier(qsCtx, {
+      // The party this firm trades as. Registered here so the enquiry and the
+      // return name the same firm — without it the eligibility check at the
+      // enquiry never reaches the party that actually submits.
+      partyId: firm.partyId,
       legalName: firm.legalName,
       trades: firm.trades,
       contactName: 'Commercial Manager',
@@ -835,7 +839,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
       complianceConfirmed: true,
       evidenceHash: hashEvidence(`pqq-${firm.legalName}`),
     });
-    return { supplierId, name: firm.legalName, status: result.status };
+    return { supplierId, partyId: firm.partyId, name: firm.legalName, status: result.status };
   });
   step(`Supply chain prequalified: ${supplyChain.map((s) => `${s.name} (${s.status})`).join(', ')}`);
 
@@ -869,7 +873,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     },
     {
       supplierPartyId: 'SUP-CALDER',
-      supplierName: 'Calder Construction Group',
+      supplierName: 'Calder Construction Ltd',
       priceMinor: 798_000_000,
       durationDays: 365,
       exclusions: ['Rock excavation', 'Dewatering beyond sump pumping', 'Out of hours working', 'Winter working measures', 'Temporary works design', 'Reinstatement'],
@@ -881,7 +885,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     },
     {
       supplierPartyId: 'SUP-PENNINE',
-      supplierName: 'Pennine Structures Ltd',
+      supplierName: 'Pennine Groundworks Ltd',
       priceMinor: 915_000_000,
       durationDays: 400,
       exclusions: ['Rock excavation'],

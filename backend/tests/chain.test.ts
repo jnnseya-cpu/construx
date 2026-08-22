@@ -435,6 +435,7 @@ describe('8 · Subcontract procurement runs off a prequalified register', () => 
     const pmCtx = ctxFor('pm');
 
     const { supplierId } = supplychain.registerSupplier(qsCtx, {
+      partyId: 'SUP-SUSPENDED-SCAFF',
       legalName: 'Suspended Scaffolding Ltd',
       trades: ['SCAFFOLDING'],
       contactName: 'A person',
@@ -1038,6 +1039,9 @@ describe('8b · Framework agreements are sized, gated and rotated', () => {
 
   const prequalified = (legalName: string, trades: string[], maxPackageValueMinor = 2_000_000_00): string => {
     const { supplierId } = supplychain.registerSupplier(ctxFor('qs'), {
+      // One party per firm, derived from the name so the fixture cannot
+      // accidentally register two firms as the same commercial party.
+      partyId: `SUP-${legalName.replace(/\W/g, '').toUpperCase()}`,
       legalName,
       trades,
       contactName: 'A person',
@@ -1198,6 +1202,7 @@ describe('8b · Framework agreements are sized, gated and rotated', () => {
   it('gates a framework place on the same prequalification an enquiry needs', () => {
     const pmCtx = ctxFor('pm');
     const { supplierId } = supplychain.registerSupplier(ctxFor('qs'), {
+      partyId: 'SUP-NEVER-ASSESSED',
       legalName: 'Never Assessed Groundworks Ltd',
       trades: ['GROUNDWORKS'],
       contactName: 'A person',

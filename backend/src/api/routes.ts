@@ -1049,8 +1049,12 @@ export const ROUTES: Route[] = [
     description: 'Register a supplier against one or more trades',
     schema: {
       type: 'object',
-      required: ['legalName', 'trades', 'contactName', 'contactEmail'],
+      required: ['partyId', 'legalName', 'trades', 'contactName', 'contactEmail'],
       properties: {
+        // The join between the register and everything downstream. Required in
+        // the schema as well as in the command, so a console form that omits it
+        // is refused at the door rather than at the write.
+        partyId: stringField,
         legalName: stringField,
         tradingName: stringField,
         companyNumber: stringField,

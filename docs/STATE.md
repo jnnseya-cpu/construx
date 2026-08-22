@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,279 passing, 0 failing, 0 skipped, across 65 files |
+| Tests | 1,282 passing, 0 failing, 0 skipped, across 65 files |
 | Typecheck | clean |
 | Backend | 105 TypeScript files, 49,851 lines |
 | Application | 32 ES modules, 10,267 lines (plus a service worker) |
@@ -1117,15 +1117,41 @@ did nothing** — silently, with no console error, since the listener was never
 attached. Confirmed in a browser before and after. The two new correspondence
 buttons would have been dead on arrival beside the nine that already were.
 
-Reported rather than fixed: a firm is invited to an RFQ by its supply-chain
-register identifier and submits under its party identifier, and no `Supplier`
-record carries a party. The two identifier spaces have nothing joining them, so
-on the demo project every return looks uninvited and every invited firm looks
-silent — and both readings are wrong. The reconciliation says so on its own
-answer rather than publishing three false irregularities. Joining them means
-changing what a `Supplier` record is, and every award, subcontract and commitment
-is keyed on the party side of the gap; that is a change to working machinery and
-needs its own piece of work.
+**The supply chain register and the returns now name the same firm.** This was
+reported as a defect and left alone in the same commit that found it; it is
+fixed here.
+
+A firm was invited to an RFQ by its supply-chain register identifier and
+submitted under the party identifier its people carry, and no `Supplier` record
+held a party. Two consequences, and the second is the serious one. Every return
+looked uninvited and every invited firm looked silent, which the reconciliation
+could only report as an unreadable answer. And `assertEligibleForEnquiry` gated
+who could be *invited* while nothing gated who could *return*, so the
+prequalification the enquiry refused to go out without could be bypassed end to
+end: an unqualified firm's bid received, evaluated, adjudicated and awarded.
+
+`registerSupplier` now takes the party the firm trades as, required rather than
+optional — an optional field leaves the same hole open for whoever is in a
+hurry — and refuses a party another register entry already claims, because a
+party shared by two firms makes a return ambiguous at the moment it has to be
+attributed. `receiveSubmission` resolves the submitting party to its register
+entry and refuses a return from a firm that was not invited; `acknowledgeRFQ`
+does the same, and accepts either identifier from a firm answering for itself.
+The submission records the register entry it resolved to, so the join is read
+rather than re-derived on every report.
+
+Nothing downstream was re-keyed. The award, the subcontract and the commitment
+still carry the party, which is now a resolvable reference instead of an
+unmoored string — that is what made the fix small.
+
+Two things it does not do. Firms registered before the join cannot be matched to
+their returns, and the ledger is append-only so those entries stand; the
+reconciliation keeps reporting that as an unreadable answer rather than
+inventing a match, and the fallback is tested against a fixture rather than
+against the seed, because a test that only passes on broken data stops testing
+the day the data is fixed. And a submission from an unrecognised party is still
+accepted, since refusing it would make the ledger's own history unreplayable
+through the command path.
 
 **Running the asset, not listing it.** The FM centre was the weakest of the
 seven — four of nine panels partial and one absent — for one reason: the asset

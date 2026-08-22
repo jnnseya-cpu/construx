@@ -2,7 +2,7 @@ import { hashEvidence } from '../core/canonical.ts';
 import { DomainError, ForbiddenError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, currentPhase, registerEvidence, write, type EngineContext } from '../engines/context.ts';
-import { assertEligibleForEnquiry } from './supplychain.ts';
+import { assertEligibleForEnquiry, supplierForParty } from './supplychain.ts';
 
 /**
  * Procurement: RFQ issue, supplier returns, award, and the subcontract that
@@ -138,9 +138,31 @@ export function issueRFQ(ctx: EngineContext, input: { rfqId: string; tenderPacka
 export function acknowledgeRFQ(ctx: EngineContext, input: { rfqId: string; supplierId: string; intendToBid: boolean }): void {
   const rfq = ctx.ledger.require({ refType: 'RFQ', refId: input.rfqId });
 
-  // A supplier may only acknowledge on its own behalf.
-  if (ctx.auth.roles.includes('SUPPLIER') && ctx.auth.partyId !== input.supplierId) {
+  // A supplier may only acknowledge on its own behalf. The comparison is
+  // against the party, and a supplier acting for itself may name either its
+  // party or its register entry — the two identify the same firm now that a
+  // supplier records the party it trades as, and refusing one of them would be
+  // refusing a firm for using its own name.
+  const own = supplierForParty(ctx, input.supplierId)?.supplierId ?? input.supplierId;
+  const asParty =
+    ctx.ledger.get({ refType: 'Supplier', refId: input.supplierId })?.state.partyId ?? input.supplierId;
+  if (
+    ctx.auth.roles.includes('SUPPLIER') &&
+    ctx.auth.partyId !== input.supplierId &&
+    ctx.auth.partyId !== asParty
+  ) {
     throw new ForbiddenError('Suppliers may only respond on their own behalf', 'SUPPLIER_IDENTITY_MISMATCH');
+  }
+
+  // Answering an enquiry nobody sent you is not an answer. Tolerant of a firm
+  // registered before suppliers carried a party, for the same reason the
+  // submission gate is: the ledger's own history has to stay replayable.
+  const invited = (rfq.state.invitedSupplierIds as string[]) ?? [];
+  if (invited.length > 0 && !invited.includes(own) && !invited.includes(input.supplierId)) {
+    throw new DomainError(
+      'SUPPLIER_NOT_INVITED',
+      `That firm was not invited to ${String(rfq.state.reference)}, so there is no enquiry for it to acknowledge`,
+    );
   }
 
   const acknowledgements = (rfq.state.acknowledgements as Array<Record<string, unknown>>) ?? [];
@@ -245,6 +267,35 @@ export function receiveSubmission(
   if (ctx.auth.roles.includes('SUPPLIER') && ctx.auth.partyId !== input.supplierPartyId) {
     throw new ForbiddenError('Suppliers may only submit on their own behalf', 'SUPPLIER_IDENTITY_MISMATCH');
   }
+
+  /**
+   * The return has to come from a firm that was invited, and this is where that
+   * is checked.
+   *
+   * `assertEligibleForEnquiry` gates who may be *invited* and nothing gated who
+   * may *return*, because the invitation named a supply-chain register id and
+   * the submission named a party with nothing joining them. The eligibility
+   * check could therefore be bypassed end to end: an unqualified firm's bid
+   * received, evaluated, adjudicated and awarded without the prequalification
+   * that the enquiry refused to go out without.
+   *
+   * A submission from a firm registered before suppliers carried a party is
+   * still accepted, with the gap named in the error only when the party is
+   * unknown outright. Refusing those would make the ledger's own history
+   * unreplayable through the command path, which is a worse failure than the
+   * one being fixed.
+   */
+  const supplier = supplierForParty(ctx, input.supplierPartyId);
+  if (supplier) {
+    const invited = (rfq.state.invitedSupplierIds as string[]) ?? [];
+    if (!invited.includes(supplier.supplierId)) {
+      throw new DomainError(
+        'SUPPLIER_NOT_INVITED',
+        `${supplier.legalName} was not invited to ${String(rfq.state.reference)}. A return from an uninvited firm ` +
+          'cannot be evaluated against the others, and awarding on it would bypass the prequalification the enquiry required.',
+      );
+    }
+  }
   // Returns keep arriving until the deadline; the first one only moves the RFQ
   // into RETURNS_RECEIVED, it does not close the door on the rest.
   const openStatuses = ['ISSUED', 'CLARIFICATION', 'RETURNS_RECEIVED'];
@@ -272,6 +323,9 @@ export function receiveSubmission(
       projectId: ctx.projectId,
       rfqId: input.rfqId,
       supplierPartyId: input.supplierPartyId,
+      // The register entry this party is, resolved once and recorded. A join
+      // re-derived on every read is a join that changes when the register does.
+      supplierId: supplier?.supplierId,
       supplierName: input.supplierName,
       priceMinor: input.priceMinor,
       durationDays: input.durationDays,
@@ -524,12 +578,13 @@ export type TenderReconciliation = {
   /**
    * The honest limit on this answer, where there is one.
    *
-   * The register invites a firm by its supply-chain identifier and a submission
-   * arrives under the submitting party's identifier, and the platform holds
-   * nothing joining the two. Where *no* return matches *any* invitation that is
-   * not three irregularities, it is one missing join, and saying so beats
-   * publishing a reconciliation that reconciles nothing while looking as though
-   * it does.
+   * A supplier now records the party it trades as, so an invitation and a
+   * return name the same firm and this is normally absent. It survives for the
+   * records that predate the join: the ledger is append-only, firms registered
+   * before suppliers carried a party cannot be matched to their returns, and
+   * where *no* return matches *any* invitation that is one missing join rather
+   * than a supply chain that ignored the enquiry. Saying so beats publishing a
+   * reconciliation that reconciles nothing while looking as though it does.
    */
   unmatchable?: string;
   summary: string;
@@ -557,9 +612,22 @@ export function reconcileTenderResponses(
     .list(ctx.projectId, 'Clarification')
     .filter((record) => record.state.rfqId === rfqId);
 
+  // The join, read rather than guessed. A submission records the register entry
+  // its party resolved to at the moment it arrived; where it does not, the firm
+  // was registered before suppliers carried a party and the fallback compares
+  // the raw identifiers, which is what the record supports and no more.
+  const registerIdOf = (record: (typeof submissions)[number]): string =>
+    typeof record.state.supplierId === 'string' ? record.state.supplierId : String(record.state.supplierPartyId);
+
   const bidders: BidderPosition[] = invited.map((supplierId) => {
-    const ack = acknowledgements.find((entry) => entry.supplierId === supplierId);
-    const submission = submissions.find((record) => record.state.supplierPartyId === supplierId);
+    const supplier = ctx.ledger.get({ refType: 'Supplier', refId: supplierId });
+    const partyId = typeof supplier?.state.partyId === 'string' ? supplier.state.partyId : undefined;
+    // An acknowledgement is written under whichever identifier the acknowledging
+    // party held, so both are accepted rather than one being assumed.
+    const ack = acknowledgements.find(
+      (entry) => entry.supplierId === supplierId || (partyId !== undefined && entry.supplierId === partyId),
+    );
+    const submission = submissions.find((record) => registerIdOf(record) === supplierId);
     const intendToBid = ack ? Boolean(ack.intendToBid) : undefined;
 
     // Before the deadline an unreturned bid is not yet a failure; after it, the
@@ -576,21 +644,25 @@ export function reconcileTenderResponses(
 
     return {
       supplierId,
-      supplierName: submission ? String(submission.state.supplierName) : undefined,
+      // From the register where it is known, so the list reads as the firms
+      // that were invited rather than as a column of identifiers.
+      supplierName: supplier ? String(supplier.state.legalName) : submission ? String(submission.state.supplierName) : undefined,
       acknowledged: ack !== undefined,
       acknowledgedAt: ack ? String(ack.at) : undefined,
       intendToBid,
       returned: submission !== undefined,
       returnedAt: submission ? String(submission.state.receivedAt) : undefined,
       submissionId: submission?.refId,
-      clarificationsRaised: clarifications.filter((record) => record.state.supplierId === supplierId).length,
+      clarificationsRaised: clarifications.filter(
+        (record) => record.state.supplierId === supplierId || (partyId !== undefined && record.state.supplierId === partyId),
+      ).length,
       outcome,
     };
   });
 
   const invitedSet = new Set(invited);
   const uninvitedReturns = submissions
-    .filter((record) => !invitedSet.has(String(record.state.supplierPartyId)))
+    .filter((record) => !invitedSet.has(registerIdOf(record)))
     .map((record) => String(record.state.supplierName));
 
   // No return matched any invitation, and returns exist. That is the missing
@@ -598,10 +670,10 @@ export function reconcileTenderResponses(
   // as the latter would send somebody chasing three firms that did in fact bid.
   const unmatchable =
     submissions.length > 0 && submissions.length === uninvitedReturns.length && invited.length > 0
-      ? 'No return matches any invitation. A firm is invited by its supply-chain register identifier and submits ' +
-        'under its party identifier, and the platform holds nothing joining the two — so on this RFQ the outcomes ' +
-        'below are what the record supports and not what happened. Until a supplier record carries the party that ' +
-        'submits for it, this reconciliation cannot match a return to an invitation.'
+      ? 'No return matches any invitation. These firms were registered before a supplier recorded the party it ' +
+        'trades as, so the platform holds nothing joining the two identifiers — the outcomes below are what the ' +
+        'record supports and not what happened. Re-registering the firms against their parties makes this exact; ' +
+        'the ledger is append-only, so the existing entries cannot be amended in place.'
       : undefined;
 
   const returned = bidders.filter((bidder) => bidder.returned).length;

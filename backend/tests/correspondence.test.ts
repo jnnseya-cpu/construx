@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
+import { hashEvidence } from '../src/core/canonical.ts';
 import {
   CORRESPONDENCE_TYPES,
   correspondencePosition,
@@ -8,7 +9,8 @@ import {
   respondToCorrespondence,
   responseRule,
 } from '../src/domain/correspondence.ts';
-import { reconcileTenderResponses } from '../src/domain/procurement.ts';
+import { receiveSubmission, reconcileTenderResponses } from '../src/domain/procurement.ts';
+import { registerSupplier } from '../src/domain/supplychain.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -345,17 +347,65 @@ describe('who was asked, who answered, and who said nothing', () => {
     else if (closed.returned === 2) assert.match(String(closed.concern), /price and no market/i);
   });
 
-  it('says the identifiers do not join rather than reporting three irregularities', () => {
-    // The reconciliation found this on its first run and it is a real defect,
-    // not a seed typo: a firm is invited by its supply-chain register id and
-    // submits under its party id, and no Supplier record carries a party. So on
-    // this project every return looks uninvited and every invited firm looks
-    // silent, and both readings are wrong.
+  it('still says so where a firm predates the join, rather than inventing a match', () => {
+    // The fallback that has to stay. Suppliers registered before they carried a
+    // party cannot be matched to their returns, and the ledger is append-only so
+    // those records exist for good. Where nothing matches at all the counts are
+    // not a competition position, and reporting them as one would send somebody
+    // chasing firms that did in fact bid.
     //
-    // Reported here rather than fixed. Joining the two identifier spaces means
-    // changing what a Supplier record is, and every award, subcontract and
-    // commitment is keyed on the party side of the gap — that is a change to
-    // working machinery and it needs its own piece of work.
+    // Built as a fixture rather than asserted against the seed, which now joins
+    // properly — a test that only passes on broken data stops testing the day
+    // the data is fixed.
+    const legacy = reconcileTenderResponses(
+      {
+        ...pm(),
+        ledger: {
+          ...pm().ledger,
+          require: () => ({
+            refId: 'legacy-rfq',
+            state: {
+              reference: 'RFQ-LEGACY',
+              status: 'ISSUED',
+              returnDeadline: '2026-01-01T00:00:00.000Z',
+              invitedSupplierIds: ['supplier-registered-before-the-join'],
+              acknowledgements: [],
+            },
+          }),
+          get: () => undefined,
+          list: (_projectId: string, refType: string) =>
+            refType === 'SupplierSubmission'
+              ? [
+                  {
+                    refId: 'legacy-submission',
+                    state: {
+                      rfqId: 'legacy-rfq',
+                      supplierPartyId: 'SUP-UNJOINED',
+                      supplierName: 'Registered Before The Join Ltd',
+                      receivedAt: '2025-12-01T00:00:00.000Z',
+                    },
+                  },
+                ]
+              : [],
+        },
+      } as unknown as EngineContext,
+      'legacy-rfq',
+      '2099-01-01T00:00:00.000Z',
+    );
+
+    assert.equal(legacy.returned, 0);
+    assert.ok(legacy.unmatchable, 'a reconciliation that matched nothing reported a supply chain that bid nothing');
+    assert.match(String(legacy.unmatchable), /holds nothing joining the two/i);
+    // And it does not then layer a competition concern on top of counts it has
+    // just said cannot be read.
+    assert.equal(legacy.concern, undefined);
+  });
+
+  it('matches every return to the firm that was invited, now that a supplier carries a party', () => {
+    // The defect this closed. A firm was invited by its supply-chain register
+    // id and submitted under its party id with nothing joining the two, so
+    // every return looked uninvited and every invited firm looked silent —
+    // both readings wrong, and the reconciliation could only say so.
     const rfq = platform.ledger.list(seed.projectId, 'RFQ')[0];
     if (!rfq) return;
 
@@ -364,25 +414,88 @@ describe('who was asked, who answered, and who said nothing', () => {
       .list(seed.projectId, 'SupplierSubmission')
       .filter((record) => record.state.rfqId === rfq.refId);
 
-    if (submissions.length > 0 && position.returned === 0) {
-      assert.ok(position.unmatchable, 'a reconciliation that matched nothing reported itself as a supply chain that bid nothing');
-      assert.match(String(position.unmatchable), /holds nothing joining the two/i);
+    assert.equal(position.unmatchable, undefined, 'the register and the returns still do not join');
+    assert.deepEqual(position.uninvitedReturns, []);
+    assert.equal(position.returned, submissions.length);
+
+    // And the firms are named from the register rather than from whatever the
+    // submission called itself — the seed used to disagree with itself on two
+    // of the three names.
+    for (const bidder of position.bidders) {
+      const supplier = platform.ledger.get({ refType: 'Supplier', refId: bidder.supplierId });
+      assert.equal(bidder.supplierName, String(supplier?.state.legalName));
     }
   });
 
-  it('reports a return from a firm nobody invited rather than quietly dropping it', () => {
-    // Either a data fault or a procurement irregularity. Filtering it out means
-    // the register agrees with itself and disagrees with what happened.
+  it('refuses a return from a firm that was never invited', () => {
+    // The gate that was missing entirely. Eligibility was checked when the
+    // enquiry went out and nothing checked it when a bid came back, so an
+    // unqualified firm's return could be received, evaluated, adjudicated and
+    // awarded without ever meeting the bar the enquiry refused to go out
+    // without.
     const rfq = platform.ledger.list(seed.projectId, 'RFQ')[0];
     if (!rfq) return;
 
-    const invited = new Set((rfq.state.invitedSupplierIds as string[]) ?? []);
-    const submissions = platform.ledger
-      .list(seed.projectId, 'SupplierSubmission')
-      .filter((record) => record.state.rfqId === rfq.refId);
-    const expected = submissions.filter((record) => !invited.has(String(record.state.supplierPartyId)));
+    const qs = platform.context(seed.users.qs!.auth, seed.projectId, { source: 'WEB' });
+    const outsider = registerSupplier(qs, {
+      partyId: 'SUP-OUTSIDER',
+      legalName: 'Uninvited Groundworks Ltd',
+      trades: ['GROUNDWORKS'],
+      contactName: 'A person',
+      contactEmail: 'uninvited@example.com',
+    });
+    assert.ok(outsider.supplierId);
 
-    const position = reconcileTenderResponses(pm(), rfq.refId);
-    assert.equal(position.uninvitedReturns.length, expected.length);
+    throwsCode(
+      () =>
+        receiveSubmission(qs, {
+          rfqId: rfq.refId,
+          supplierPartyId: 'SUP-OUTSIDER',
+          supplierName: 'Uninvited Groundworks Ltd',
+          priceMinor: 700_000_000,
+          durationDays: 380,
+          exclusions: [],
+          contractExceptions: [],
+          provisionalSumsMinor: 0,
+          insurancesHeld: ['PUBLIC_LIABILITY', 'EMPLOYERS_LIABILITY'],
+          submissionHash: hashEvidence('uninvited-submission'),
+        }),
+      'SUPPLIER_NOT_INVITED',
+    );
+  });
+
+  it('refuses to register two firms as the same commercial party', () => {
+    // A party shared by two register entries makes a return ambiguous at
+    // exactly the moment it has to be attributed to one of them.
+    const qs = platform.context(seed.users.qs!.auth, seed.projectId, { source: 'WEB' });
+    throwsCode(
+      () =>
+        registerSupplier(qs, {
+          partyId: 'SUP-NORTHSTONE',
+          legalName: 'Not Actually Northstone Ltd',
+          trades: ['GROUNDWORKS'],
+          contactName: 'A person',
+          contactEmail: 'clash@example.com',
+        }),
+      'SUPPLIER_PARTY_TAKEN',
+    );
+  });
+
+  it('refuses to register a supplier with no party at all', () => {
+    // An optional party would have left the same hole open for whoever left
+    // the field blank, which on a register filled in by a procurement team is
+    // everybody in a hurry.
+    const qs = platform.context(seed.users.qs!.auth, seed.projectId, { source: 'WEB' });
+    throwsCode(
+      () =>
+        registerSupplier(qs, {
+          partyId: '   ',
+          legalName: 'Partyless Piling Ltd',
+          trades: ['PILING'],
+          contactName: 'A person',
+          contactEmail: 'partyless@example.com',
+        }),
+      'SUPPLIER_PARTY_REQUIRED',
+    );
   });
 });

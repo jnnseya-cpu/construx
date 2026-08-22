@@ -627,9 +627,41 @@ export function registerSupplier(
     contactEmail: string;
     countryCode?: string;
     regionsCovered?: string[];
+    /**
+     * The commercial party this firm trades as — the identifier its people
+     * carry on their identities and the one a submission arrives under.
+     *
+     * Required, and that is the whole point. Without it the register knew a
+     * firm by one identifier and every return, award, subcontract and
+     * commitment named it by another, with nothing joining the two: a firm
+     * could be prequalified and invited, and its bid received, evaluated and
+     * awarded, without the eligibility check at the enquiry ever reaching the
+     * party that actually submitted. An optional field would have left exactly
+     * that hole open for whoever forgot to fill it in.
+     */
+    partyId: string;
   },
 ): { supplierId: string } {
   authorise(ctx, 'PROCUREMENT_AWARD', 'C');
+
+  if (!input.partyId.trim()) {
+    throw new DomainError(
+      'SUPPLIER_PARTY_REQUIRED',
+      'A supplier must name the commercial party it trades as, or nothing joins its returns to its prequalification',
+    );
+  }
+
+  // One party, one firm. Two register entries sharing a party would make a
+  // return ambiguous at exactly the moment it has to be attributed.
+  const clash = ctx.ledger
+    .listByTenant(ctx.tenantId, 'Supplier')
+    .find((record) => record.state.partyId === input.partyId);
+  if (clash) {
+    throw new DomainError(
+      'SUPPLIER_PARTY_TAKEN',
+      `Party ${input.partyId} is already registered as ${String(clash.state.legalName)}`,
+    );
+  }
 
   if (input.trades.length === 0) {
     throw new DomainError('TRADES_REQUIRED', 'A supplier must be registered against at least one trade');
@@ -646,6 +678,7 @@ export function registerSupplier(
     nextState: {
       id: supplierId,
       tenantId: ctx.tenantId,
+      partyId: input.partyId,
       legalName: input.legalName,
       tradingName: input.tradingName,
       companyNumber: input.companyNumber,
@@ -896,4 +929,27 @@ export function supplyChainCoverage(ctx: EngineContext): {
       doNotUse: suppliers.filter((s) => s.status === 'DO_NOT_USE').length,
     },
   };
+}
+
+/**
+ * The register entry for a commercial party, within one tenancy.
+ *
+ * The join that was missing. A firm is invited by its register identifier and
+ * submits under the party identifier its people carry, and until suppliers
+ * recorded a party there was nothing connecting the two — so the eligibility
+ * check at the enquiry never reached the party that actually returned a bid.
+ *
+ * Returns undefined for a party no register entry claims, and for a firm
+ * registered before the join existed. Both are legitimately unknown rather than
+ * errors, and the caller decides what an unknown party means: a submission
+ * refuses it, a reconciliation reports it.
+ */
+export function supplierForParty(
+  ctx: EngineContext,
+  partyId: string,
+): { supplierId: string; legalName: string } | undefined {
+  const record = ctx.ledger
+    .listByTenant(ctx.tenantId, 'Supplier')
+    .find((entry) => entry.state.partyId === partyId);
+  return record ? { supplierId: record.refId, legalName: String(record.state.legalName) } : undefined;
 }
