@@ -531,3 +531,15 @@ img, svg { max-width: 100%; }
   .consent-actions { width: 100%; }
   .consent-actions .btn { flex: 1; justify-content: center; text-align: center; }
 }
+
+/* Post links on the index, and the date line on a post page. The list was
+   previously a set of cards with nothing to click; each post now has its own
+   address, so the title is the link and there is a second one for people who
+   read to the end of the standfirst rather than the top of it. */
+
+.post h3 a { color: inherit; text-decoration: none; }
+.post h3 a:hover { color: var(--orange); }
+.post-more { margin: 10px 0 0; font-size: 14px; }
+.post-more a { color: var(--orange); text-decoration: none; font-weight: 500; }
+.post-more a:hover { text-decoration: underline; }
+.post-date { color: var(--text-3); font-size: 13.5px; margin: 0 0 18px; }

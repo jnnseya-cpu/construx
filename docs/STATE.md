@@ -161,6 +161,43 @@ is photographs — roughly 7GB per active project per month at capture size, abo
 and a half years of one busy site, and it is evidence rather than models that
 decides when the volume has to grow.
 
+**Blog posts have addresses now, which is what "the view count isn't working"
+turned out to mean.** There was no view count. There was also no post: `/blog`
+rendered five engineering notes as cards with no links and no slugs, and **a
+page with no URL cannot be counted by anything** — not a first-party counter,
+not Google, not any tool that exists, because every one of them counts URLs.
+Nothing was broken; nothing had been built.
+
+Each post now has its own route, title, description, canonical link and body,
+and the Google tag reports each as a distinct `page_path`. The bodies are
+written from the work recorded in this file rather than invented — the pay less
+notice with no command, the minor unit that is not always a hundredth, the
+specification clause that was never in the specification, the hand-written PDF,
+and the demonstration route that handed out a session.
+
+They are registered separately from `SITE_PAGES`, because that list drives the
+navigation and the footer and five engineering notes in a footer is not a
+footer. One concrete route per post rather than a `:slug` pattern, which keeps
+the "a page cannot be reached without existing" shape and lets an unknown slug
+404 through the ordinary path.
+
+Writing it forced a module split. `pages.ts` reads the route table to build the
+developers page, so the route table reading the posts back through `pages.ts`
+threw `Cannot access POST_PAGES before initialization` at import — a cycle, not
+a typo. `backend/src/site/posts.ts` holds the data and imports nothing, which is
+the same reason `SITE_PAGES` has always lived in `layout.ts`.
+
+The public-surface tests failed on the five new routes, which is the guard
+working: the API surface is listed by hand and marketing pages are derived, so
+publishing a page is not a security edit. Posts are derived alongside them.
+
+What is *not* built is a first-party counter. A public page view is a
+measurement rather than a governed fact — the same reasoning that keeps storage
+usage out of the ledger — and anonymous visitors must never be able to append to
+a hash-chained record. If the numbers are ever wanted on the site itself, that
+is a small counter file on the volume with bot filtering, deliberately not an
+event.
+
 **Marketing measurement: Meta Pixel and Google tag, on the public site only.**
 `ANALYTICS_META_PIXEL_ID` and `ANALYTICS_GOOGLE_TAG_ID` in `backend/src/config.ts`,
 both empty by default. With neither set the whole feature is inert — no script

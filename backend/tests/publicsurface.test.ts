@@ -3,7 +3,7 @@ import type { Server } from 'node:http';
 import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
 import { ROUTES } from '../src/api/routes.ts';
-import { SITE_PAGES } from '../src/site/index.ts';
+import { POST_PAGES, SITE_PAGES } from '../src/site/index.ts';
 import { Platform } from '../src/platform.ts';
 
 /**
@@ -63,7 +63,13 @@ describe('what an anonymous caller can obtain', () => {
     // assertions below, and a public route added without a thought here should
     // fail in both places rather than neither.
     const publicRoutes = ROUTES.filter((r) => r.public).map((r) => `${r.method} ${r.pattern}`).sort();
-    const sitePaths = new Set(SITE_PAGES.map((p) => `GET ${p.path}`));
+    // Marketing pages are derived rather than listed, so publishing one is not
+    // a security edit. Blog posts are the same class of thing — public,
+    // server-rendered, no API surface — and each has its own address because
+    // nothing can count a page that has none.
+    const sitePaths = new Set(
+      [...SITE_PAGES.map((p) => p.path), ...POST_PAGES.map((p) => p.path)].map((path) => `GET ${path}`),
+    );
     const publicApi = publicRoutes.filter((id) => !sitePaths.has(id));
 
     assert.deepEqual(publicApi, [

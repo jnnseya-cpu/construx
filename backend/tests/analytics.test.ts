@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { analyticsCspHosts, analyticsEnabled, analyticsScriptTag, consentBanner, measurementIds } from '../src/site/analytics.ts';
 import { page } from '../src/site/layout.ts';
+import { POST_PAGES, render } from '../src/site/index.ts';
 
 /**
  * Marketing measurement on the public site.
@@ -115,5 +116,42 @@ describe('the console is out of scope, and provably so', () => {
     const { resolve } = await import('node:path');
     const shellHtml = readFileSync(resolve(import.meta.dirname, '../../frontend/index.html'), 'utf8');
     assert.ok(!shellHtml.includes('analytics.js'), 'the application shell must not load the measurement script');
+  });
+});
+
+describe('blog posts have addresses, which is what makes them countable', () => {
+  it('gives every post a unique slug and a route', () => {
+    // Nothing can count a post that has no URL — not a first-party counter, not
+    // Google, not any third-party tool. Cards on a list page were the reason
+    // there were no view figures, and a duplicate slug would silently merge two
+    // posts' numbers into one.
+    const paths = POST_PAGES.map((post) => post.path);
+    assert.ok(paths.length >= 5, `expected the posts to be registered, got ${paths.length}`);
+    assert.equal(new Set(paths).size, paths.length, 'slugs must be unique');
+    for (const path of paths) {
+      assert.match(path, /^\/blog\/[a-z0-9-]+$/, `${path} must be a lowercase hyphenated path`);
+    }
+  });
+
+  it('renders each post with its own title, description and canonical link', () => {
+    for (const post of POST_PAGES) {
+      const html = render(post.path, {} as never, {} as never);
+      assert.ok(html.includes(`<link rel="canonical" href="${post.path}">`), `${post.path} canonical`);
+      assert.ok(html.includes('<meta name="description"'), `${post.path} description`);
+      assert.ok(html.includes('href="/blog"'), `${post.path} links back to the index`);
+    }
+  });
+
+  it('links to every post from the index', () => {
+    const index = render('/blog', {} as never, {} as never);
+    for (const post of POST_PAGES) {
+      assert.ok(index.includes(`href="${post.path}"`), `the index must link to ${post.path}`);
+    }
+  });
+
+  it('refuses a slug that does not exist', () => {
+    // There is no route for an unknown slug, so it never reaches a renderer —
+    // it 404s through the ordinary not-found path instead.
+    assert.throws(() => render('/blog/not-a-real-post', {} as never, {} as never));
   });
 });

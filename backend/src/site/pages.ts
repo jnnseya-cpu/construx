@@ -7,6 +7,7 @@ import { EVENT_TYPES } from '../goldenthread/eventTypes.ts';
 import { ROUTES } from '../api/routes.ts';
 import { accountTypes } from '../identity/signup.ts';
 import { cards, cta, page, pageHead, SITE_PAGES } from './layout.ts';
+import { POSTS, longDate } from './posts.ts';
 
 /**
  * The public pages.
@@ -283,49 +284,32 @@ ${cta({
 
 // ----------------------------------------------------------------------- Blog
 
-type Post = { title: string; standfirst: string; date: string; tag: string };
+/** One post, at its own address. Unknown slugs never reach here — there is no route for them. */
+export function blogPost(slug: string): string {
+  const post = POSTS.find((candidate) => candidate.slug === slug);
+  if (!post) throw new Error(`No post ${slug}`);
 
-/**
- * Posts are the engineering notes this project actually produced, not invented
- * thought leadership. Each one corresponds to work recorded in docs/STATE.md.
- */
-const POSTS: Post[] = [
-  {
-    title: 'A pay less notice the platform said was overdue, and no way to give one',
-    standfirst:
-      'Building the Construction Act engine found the hole: the event existed, the position read it, and no command could emit one — so "pay in full" was the only advice the platform could ever offer.',
-    date: '2026-07-02',
-    tag: 'Engineering',
-  },
-  {
-    title: 'Why a minor unit is not always a hundredth',
-    standfirst:
-      'Money in minor units is a correct decision. Dividing by 100 in five places is not: a yen has no minor unit and a dinar has three, so a JPY figure displayed a hundred times too small.',
-    date: '2026-07-18',
-    tag: 'Engineering',
-  },
-  {
-    title: 'The clause that was never in the specification',
-    standfirst:
-      'Splitting a wrapped specification clause on newlines invented a hold point that did not exist. A register that gains a requirement nobody imposed is worse than one that misses it.',
-    date: '2026-08-04',
-    tag: 'Engineering',
-  },
-  {
-    title: 'Writing a PDF by hand, and what it caught',
-    standfirst:
-      'Printing a web page is not an answer when the document carries a content hash. Building the writer found the report putting raw minor units in front of an adjudicator.',
-    date: '2026-08-19',
-    tag: 'Engineering',
-  },
-  {
-    title: 'A demonstration route that handed out a working session',
-    standfirst:
-      'One console endpoint was public with no production gate and returned a PM access token to anyone who could reach the origin. Its sibling already carried the gate, which is what made it dangerous.',
-    date: '2026-08-21',
-    tag: 'Security',
-  },
-];
+  return page(
+    {
+      title: post.title,
+      // The standfirst is already the one-sentence version of the post, which
+      // is exactly what a search result and a link preview want. Writing a
+      // second summary would give two answers to one question.
+      description: post.standfirst,
+      path: `/blog/${post.slug}`,
+    },
+    `${pageHead({ eyebrow: post.tag, title: post.title, standfirst: post.standfirst })}
+
+<section class="prose">
+  <div class="wrap narrow">
+    <p class="post-date"><time datetime="${esc(post.date)}">${esc(longDate(post.date))}</time></p>
+    ${post.body.map((paragraph) => `<p>${paragraph}</p>`).join('\n    ')}
+    <p class="note"><a href="/blog">← All engineering notes</a></p>
+  </div>
+</section>`,
+  );
+}
+
 
 export function blog(): string {
   return page(
@@ -348,10 +332,11 @@ export function blog(): string {
       ${POSTS.map(
         (post) => `<article class="post">
         <div class="post-meta"><span class="tag">${esc(post.tag)}</span><time datetime="${esc(post.date)}">${esc(
-          new Date(`${post.date}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }),
+          longDate(post.date),
         )}</time></div>
-        <h3>${esc(post.title)}</h3>
+        <h3><a href="/blog/${esc(post.slug)}">${esc(post.title)}</a></h3>
         <p>${esc(post.standfirst)}</p>
+        <p class="post-more"><a href="/blog/${esc(post.slug)}">Read the note <span aria-hidden="true">→</span></a></p>
       </article>`,
       ).join('\n      ')}
     </div>

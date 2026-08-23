@@ -4,6 +4,10 @@ import * as storage from '../billing/storage.ts';
 import * as signup from '../identity/signup.ts';
 import * as erasure from '../identity/erasure.ts';
 import * as site from '../site/index.ts';
+// Read from the data module rather than through the site barrel: `pages.ts`
+// reads this route table, so importing the posts through it would make this
+// file depend on a module that depends on this file.
+import { POST_PAGES } from '../site/posts.ts';
 import * as notifications from '../notifications/catalogue.ts';
 import { CATEGORIES, CATEGORY_TITLES, NOTIFICATION_EVENTS } from '../notifications/catalogue.ts';
 import * as notifyEngine from '../notifications/notify.ts';
@@ -1766,6 +1770,21 @@ export const ROUTES: Route[] = [
     htmlPolicy: 'PUBLIC_SITE' as const,
     description: `Public site — ${definition.label}`,
     handler: (platform: Platform, ctx: RequestContext) => site.render(definition.path, platform, ctx),
+  })),
+
+  // Blog posts, each at its own address. Registered separately from
+  // `SITE_PAGES` because that list also drives the navigation and the footer,
+  // and engineering notes belong in neither — they are reached from the blog
+  // index and from links people share. Their own URLs are also the only way
+  // anything can count them: every measurement tool counts pages, not cards.
+  ...POST_PAGES.map((post) => ({
+    method: 'GET' as const,
+    pattern: post.path,
+    public: true,
+    html: true,
+    htmlPolicy: 'PUBLIC_SITE' as const,
+    description: `Blog — ${post.title}`,
+    handler: (platform: Platform, ctx: RequestContext) => site.render(post.path, platform, ctx),
   })),
 
   // ------------------------------------------------------------------ signup

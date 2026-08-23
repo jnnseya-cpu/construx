@@ -3,9 +3,11 @@ import type { Platform } from '../platform.ts';
 import { channelStatus } from '../notifications/notify.ts';
 import { SITE_PAGES } from './layout.ts';
 import { landing } from './landing.ts';
+import { POST_PAGES } from './posts.ts';
 import {
   about,
   blog,
+  blogPost,
   contact,
   developers,
   getStarted,
@@ -27,6 +29,7 @@ import {
  */
 
 export { SITE_PAGES } from './layout.ts';
+export { POST_PAGES } from './posts.ts';
 
 type Renderer = (platform: Platform, ctx: RequestContext) => string;
 
@@ -35,6 +38,13 @@ const RENDERERS: Record<string, Renderer> = {
   '/how-it-works': () => howItWorks(),
   '/industries': () => industries(),
   '/blog': () => blog(),
+  // One concrete route per post rather than a `:slug` pattern. It keeps the
+  // "one map from path to renderer" shape that makes a page impossible to
+  // reach without existing, and an unknown slug then 404s through the ordinary
+  // not-found path instead of needing a lookup that can miss.
+  ...Object.fromEntries(
+    POST_PAGES.map((post) => [post.path, () => blogPost(post.path.slice('/blog/'.length))] as const),
+  ),
   '/developers': () => developers(),
   '/contact': () => contact(),
   '/get-started': () => getStarted(),
