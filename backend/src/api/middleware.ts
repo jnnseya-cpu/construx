@@ -430,6 +430,35 @@ export function sendHtml(
   res.end(html);
 }
 
+/**
+ * A plain text or XML document — `robots.txt` and `sitemap.xml`.
+ *
+ * Neither is HTML and neither should be treated as it: a crawler reading a
+ * sitemap wants `application/xml`, and `nosniff` on a `text/plain` response is
+ * what stops a browser deciding for itself that a robots file is something it
+ * should render.
+ *
+ * Cached for an hour rather than not at all. These change when a page is
+ * published, which is rarely, and a crawler asking for a sitemap on every visit
+ * is a crawler wasting the budget it could have spent on pages.
+ */
+export function sendDocument(
+  res: ServerResponse,
+  ctx: RequestContext,
+  contentType: string,
+  body: string,
+): void {
+  res.writeHead(200, {
+    'Content-Type': contentType,
+    'Content-Length': Buffer.byteLength(body),
+    'x-trace-id': ctx.traceId,
+    'x-correlation-id': ctx.correlationId,
+    'Cache-Control': 'public, max-age=3600',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(body);
+}
+
 export function sendProblem(res: ServerResponse, ctx: RequestContext, error: unknown): void {
   const problem = toProblem(error, ctx.path, ctx.traceId, ctx.correlationId);
   const payload = JSON.stringify(problem);

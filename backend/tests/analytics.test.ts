@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { analyticsCspHosts, analyticsEnabled, analyticsScriptTag, consentBanner, measurementIds } from '../src/site/analytics.ts';
 import { page } from '../src/site/layout.ts';
 import { POST_PAGES, render } from '../src/site/index.ts';
+import { absolute } from '../src/site/layout.ts';
 
 /**
  * Marketing measurement on the public site.
@@ -136,7 +137,9 @@ describe('blog posts have addresses, which is what makes them countable', () => 
   it('renders each post with its own title, description and canonical link', () => {
     for (const post of POST_PAGES) {
       const html = render(post.path, {} as never, {} as never);
-      assert.ok(html.includes(`<link rel="canonical" href="${post.path}">`), `${post.path} canonical`);
+      // Absolute now: a canonical link states which URL is the real one, and a
+      // relative one resolves against whatever host served the page.
+      assert.ok(html.includes(`<link rel="canonical" href="${absolute(post.path)}">`), `${post.path} canonical`);
       assert.ok(html.includes('<meta name="description"'), `${post.path} description`);
       assert.ok(html.includes('href="/blog"'), `${post.path} links back to the index`);
     }

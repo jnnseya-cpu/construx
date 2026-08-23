@@ -161,6 +161,43 @@ is photographs — roughly 7GB per active project per month at capture size, abo
 and a half years of one busy site, and it is evidence rather than models that
 decides when the volume has to grow.
 
+**The SEO foundations, which were absent rather than weak.** Reported as "SEO
+scores is not working". There is no SEO score in this platform and never was —
+nothing named that exists anywhere in the codebase. What did turn up, on
+searching for what a checker actually grades, were four real gaps:
+
+- **No `robots.txt`.** Answered 404, which every audit tool reports as a fault.
+- **No `sitemap.xml`.** The only pages a search engine would index are the ones
+  something already links to from outside.
+- **`twitter:card` promised `summary_large_image` with no image tag anywhere on
+  the page.** Every share of every page rendered as a bare grey card — the worst
+  of both, since the space is reserved and nothing fills it.
+- **Canonical links were relative.** A canonical link is a statement about which
+  URL is the real one, and a relative one resolves against whatever host served
+  the page, which is exactly the ambiguity the tag exists to remove.
+
+`backend/src/site/discovery.ts` derives both files from the same lists that
+build the navigation and the route table, so a page cannot be published and left
+out — the usual way a sitemap becomes a lie a search engine notices. `lastmod`
+is claimed only for posts, because a sitemap that stamps today on everything
+teaches a crawler the date means nothing. `/app`, `/v1/` and `/unsubscribe` are
+disallowed; the last is the strongest of the three, since it is reached by a
+signed token in an email and a crawler following one would unsubscribe a real
+person.
+
+Every page now carries an absolute canonical, `og:url`, `og:image` with
+dimensions and alt text, and the matching Twitter tags. Posts additionally carry
+`og:type: article`, `article:published_time` and `BlogPosting` structured data
+with a publisher. The JSON-LD serialiser escapes `<` — a `</script>` inside a
+JSON string would end the block early and hand the rest of the document to the
+parser — and a test asserts it.
+
+Verified against a running server with `PUBLIC_BASE_URL` set: eighteen checks
+including both documents' content types, every sitemap URL absolute and https,
+the console absent from it, valid parsed JSON-LD of the right type, and the
+preview image actually resolving — a card pointing at a 404 is still a blank
+card.
+
 **Blog posts have addresses now, which is what "the view count isn't working"
 turned out to mean.** There was no view count. There was also no post: `/blog`
 rendered five engineering notes as cards with no links and no slugs, and **a

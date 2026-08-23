@@ -18,11 +18,13 @@ import {
   storeIdempotent,
   validateRequest,
   type RequestContext,
+  sendDocument,
 } from './middleware.ts';
 import { resolveLocale } from '../domain/locale.ts';
 import { truncateAddress } from './telemetry.ts';
 import { matchRoute, ROUTES } from './routes.ts';
 import { renderLanding } from '../site/index.ts';
+import { robots, sitemap } from '../site/discovery.ts';
 import { serveStatic } from './static.ts';
 
 /**
@@ -145,6 +147,22 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
       // Through the same helper as the rest of the site so it gets the same
       // security headers. It was writing its own head with none of them.
       sendHtml(res, ctx, 200, renderLanding(), 'PUBLIC_SITE');
+      logRequest(ctx, 200);
+      return;
+    }
+
+    // How a crawler discovers the site at all. Neither existed: a missing
+    // robots.txt answers 404, which every audit tool reports as a fault, and
+    // with no sitemap the only pages indexed are the ones something already
+    // links to from outside. Both are derived from the same lists that build
+    // the navigation, so a page cannot be published and left out of them.
+    if (ctx.method === 'GET' && ctx.path === '/robots.txt') {
+      sendDocument(res, ctx, 'text/plain; charset=utf-8', robots());
+      logRequest(ctx, 200);
+      return;
+    }
+    if (ctx.method === 'GET' && ctx.path === '/sitemap.xml') {
+      sendDocument(res, ctx, 'application/xml; charset=utf-8', sitemap());
       logRequest(ctx, 200);
       return;
     }

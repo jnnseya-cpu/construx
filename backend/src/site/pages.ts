@@ -6,7 +6,7 @@ import { NOTIFICATION_EVENTS, CATEGORIES } from '../notifications/catalogue.ts';
 import { EVENT_TYPES } from '../goldenthread/eventTypes.ts';
 import { ROUTES } from '../api/routes.ts';
 import { accountTypes } from '../identity/signup.ts';
-import { cards, cta, page, pageHead, SITE_PAGES } from './layout.ts';
+import { absolute, cards, cta, jsonLd, organisation, page, pageHead, SITE_PAGES } from './layout.ts';
 import { POSTS, longDate } from './posts.ts';
 
 /**
@@ -297,6 +297,24 @@ export function blogPost(slug: string): string {
       // second summary would give two answers to one question.
       description: post.standfirst,
       path: `/blog/${post.slug}`,
+      type: 'article',
+      published: post.date,
+      // A post presented as an untyped page is a page. Declared as a
+      // BlogPosting it can appear as an article in a result, with its date, and
+      // the headline is what gets shown rather than the browser tab title.
+      jsonLd: jsonLd({
+        '@context': 'https://schema.org',
+        '@type': 'BlogPosting',
+        headline: post.title,
+        description: post.standfirst,
+        datePublished: post.date,
+        url: absolute(`/blog/${post.slug}`),
+        mainEntityOfPage: { '@type': 'WebPage', '@id': absolute(`/blog/${post.slug}`) },
+        image: absolute('/landing-hero.png'),
+        publisher: organisation(),
+        author: organisation(),
+        articleSection: post.tag,
+      }),
     },
     `${pageHead({ eyebrow: post.tag, title: post.title, standfirst: post.standfirst })}
 

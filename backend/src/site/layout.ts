@@ -1,4 +1,5 @@
 import { esc } from '../messaging/render.ts';
+import { config } from '../config.ts';
 import { analyticsScriptTag, consentBanner } from './analytics.ts';
 
 /**
@@ -51,10 +52,45 @@ export type PageMeta = {
   description: string;
   /** Canonical path, used for the link tag and to mark the nav. */
   path: string;
+  /**
+   * `article` for a blog post, `website` for everything else. Open Graph reads
+   * this to decide what kind of card to draw, and a post presented as a website
+   * loses its date and its author in every preview.
+   */
+  type?: 'website' | 'article';
+  /** Publication date, ISO `YYYY-MM-DD`. Articles only. */
+  published?: string;
+  /** Structured data for this page, already serialised. */
+  jsonLd?: string;
 };
+
+/**
+ * The site-wide preview image.
+ *
+ * `twitter:card` was already declaring `summary_large_image` — a promise of a
+ * large picture — with no image tag anywhere on the page. Every share of every
+ * page therefore rendered as a bare grey card, which is the worst of both: the
+ * space is reserved and nothing fills it.
+ */
+const PREVIEW_IMAGE = '/landing-hero.png';
+
+/**
+ * Absolute, because relative does not work for any of the three things that
+ * read these.
+ *
+ * A canonical link is a statement about which URL is the real one, and Google's
+ * own guidance is to make it absolute — a relative one is resolved against
+ * whatever host served the page, which is exactly the ambiguity the tag exists
+ * to remove. Open Graph and Twitter are stricter still: a crawler fetching a
+ * preview has no base to resolve against and simply drops a relative image.
+ */
+function absolute(path: string): string {
+  return `${config.publicBaseUrl.replace(/\/$/, '')}${path}`;
+}
 
 function head(meta: PageMeta): string {
   const title = `${esc(meta.title)} · CONSTRUX.AI`;
+  const url = absolute(meta.path);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -62,16 +98,49 @@ function head(meta: PageMeta): string {
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>${title}</title>
 <meta name="description" content="${esc(meta.description)}">
-<link rel="canonical" href="${esc(meta.path)}">
-<meta property="og:type" content="website">
+<link rel="canonical" href="${esc(url)}">
+<meta property="og:type" content="${meta.type ?? 'website'}">
+<meta property="og:site_name" content="CONSTRUX.AI">
+<meta property="og:url" content="${esc(url)}">
 <meta property="og:title" content="${title}">
 <meta property="og:description" content="${esc(meta.description)}">
-<meta name="twitter:card" content="summary_large_image">
+<meta property="og:image" content="${esc(absolute(PREVIEW_IMAGE))}">
+<meta property="og:image:width" content="2880">
+<meta property="og:image:height" content="1800">
+<meta property="og:image:alt" content="The CONSTRUX.AI command centre">
+${meta.published ? `<meta property="article:published_time" content="${esc(meta.published)}">\n` : ''}<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${title}">
+<meta name="twitter:description" content="${esc(meta.description)}">
+<meta name="twitter:image" content="${esc(absolute(PREVIEW_IMAGE))}">
 <meta name="theme-color" content="#0c0c0e">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/site.css">
-</head>`;
+${meta.jsonLd ? `<script type="application/ld+json">${meta.jsonLd}</script>\n` : ''}</head>`;
 }
+
+/**
+ * Structured data, serialised safely for embedding in a script element.
+ *
+ * `</script>` inside a JSON string would end the block early — the one escape
+ * that matters here, and the reason this is not a bare `JSON.stringify`. The
+ * `<` form is what every serialiser uses because it is valid JSON *and* inert
+ * to an HTML parser.
+ */
+export function jsonLd(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, '\\u003c');
+}
+
+/** The publisher, identical on every page that carries structured data. */
+export function organisation(): Record<string, unknown> {
+  return {
+    '@type': 'Organization',
+    name: 'CONSTRUX.AI',
+    url: absolute('/'),
+    logo: absolute('/logo.svg'),
+  };
+}
+
+export { absolute };
 
 function header(current: string): string {
   const links = PRIMARY.map(
