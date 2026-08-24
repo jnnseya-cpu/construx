@@ -77,9 +77,30 @@ Co-exist instead:
    `127.0.0.1`; only the host side moves. Never publish it on `0.0.0.0` to get
    around a clash — Docker's iptables rules are evaluated before ufw's, so that
    puts the console on the open internet over plain http.
-2. **Add the domain to the reverse proxy that is already running**, pointing at
-   `127.0.0.1:8090`. That proxy is already obtaining certificates for the other
-   sites; this is one more site block, not a second proxy.
+2. **Add the domain to the reverse proxy that is already running.** That proxy
+   already obtains certificates for the other sites; this is one more site
+   block, not a second proxy.
+
+   **How it reaches this container depends on how the proxy runs, and getting
+   this wrong is the step that wastes an evening.** If the proxy is itself a
+   container — check `docker ps` for published ports like `0.0.0.0:80->80`,
+   which means it is on a bridge network — then `127.0.0.1` *inside* it means
+   the proxy itself, not the host, and it can never reach the published loopback
+   port. Put this container on the proxy's network instead and address it by
+   name:
+
+   ```bash
+   docker network connect <the proxy's network> construx
+   # then in the proxy config:   reverse_proxy construx:8080
+   ```
+
+   That is also the tighter arrangement: nothing needs publishing to the host at
+   all for the route to work. `CONSTRUX_HOST_PORT` still earns its place, but as
+   a diagnostic — it is what makes `curl 127.0.0.1:8090/readyz` work on the box
+   without colliding with whatever already holds 8080.
+
+   Only where the proxy runs with `--network host`, or directly on the machine,
+   does `127.0.0.1:8090` work.
 3. **Skip step 5 entirely.** There is no Caddy to install and no certificate to
    obtain here — the existing proxy does both.
 
@@ -506,7 +527,7 @@ SMTP_HOST=smtp.hostinger.com
 SMTP_PORT=587
 SMTP_SECURE=false
 SMTP_REQUIRE_TLS=true
-SMTP_USER=no-reply@construxvg.com
+SMTP_USER=contact@construxvg.com
 SMTP_PASS=<the mailbox password>
 
 # Who the mail says it is from. Despite the NEWSLETTER_ prefix this is the from
@@ -516,8 +537,13 @@ SMTP_PASS=<the mailbox password>
 # and whose SPF record does not authorise it, so the confirmation email is
 # rejected or filtered and nobody can finish signing up. Make it the mailbox
 # that is actually authenticating above.
+#
+# Deliberately the monitored inbox rather than a no-reply address. Every one
+# of these emails invites a reply somebody will eventually send - a question
+# about a confirmation link, a bounce, a person who cannot sign in - and a
+# no-reply mailbox turns each of those into silence on both sides.
 NEWSLETTER_FROM_NAME=CONSTRUX.AI
-NEWSLETTER_FROM_ADDRESS=no-reply@construxvg.com
+NEWSLETTER_FROM_ADDRESS=contact@construxvg.com
 
 # local = deterministic engines, no spend. Change to production when you are
 # ready to pay providers, and set the two keys.
