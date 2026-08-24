@@ -3,6 +3,7 @@ import { assertOrder } from './dates.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
+import * as stages from '../lifecycle/stages.ts';
 import {
   assertTransitionAllowed,
   evaluatePhaseGate,
@@ -192,6 +193,21 @@ export function createProject(
     },
   });
 
+  // The first occupancy, opened with the project. `phaseHistory` above says the
+  // project entered CONCEPT; this is the record of it being *in* CONCEPT — what
+  // was open, what gate was submitted, and eventually what was frozen when it
+  // left. Opened here rather than lazily so that a project created today has a
+  // complete stage record rather than one that begins wherever somebody first
+  // happened to look.
+  //
+  // `projectId` is passed explicitly: the context still points at whatever
+  // project the caller was working in, and the ledger would otherwise file this
+  // stage against that one.
+  stages.openStage(
+    { ...ctx, projectId },
+    { phase: 'CONCEPT', reason: `Project created: ${input.name}` },
+  );
+
   return { projectId, phase: 'CONCEPT' };
 }
 
@@ -328,33 +344,20 @@ export function transitionPhase(
   const evaluation = evaluatePhaseGate(from, (refType) => ctx.ledger.list(ctx.projectId, refType).map((r) => r.state));
   const { direction } = assertTransitionAllowed(from, input.to, evaluation);
 
-  const evidence = registerEvidence(ctx, {
-    type: 'PHASE_TRANSITION_AUTHORITY',
-    hash: hashEvidence(JSON.stringify({ from, to: input.to, justification: input.justification, evaluation })),
-    description: `Phase transition ${from} -> ${input.to}: ${input.justification}`,
-  });
-
-  const history = (project.state.phaseHistory as Array<Record<string, unknown>>) ?? [];
-
-  write(ctx, {
-    eventType: 'PROJECT_PHASE_TRANSITIONED',
-    entity: { refType: 'Project', refId: ctx.projectId },
-    nextState: {
-      ...project.state,
-      phase: input.to,
-      phaseHistory: [
-        ...history,
-        {
-          phase: input.to,
-          enteredAt: new Date().toISOString(),
-          by: ctx.auth.actorId,
-          direction,
-          justification: input.justification,
-          gateEvaluation: evaluation.criteria,
-        },
-      ],
-    },
-    evidenceRefs: [evidence],
+  // The write itself lives in `lifecycle/stages.ts`.
+  //
+  // Two commands change a project's phase: this one, and a gate decision. If
+  // each wrote its own transition they would drift — and the first symptom
+  // would be a stage record disagreeing with the project it describes, which
+  // is fatal for a record whose entire purpose is to be the thing you trust
+  // when the project's own state is in question. So there is one writer, and
+  // both callers reach it having already established their own right to.
+  stages.applyPhaseChange(ctx, {
+    from,
+    to: input.to,
+    direction,
+    justification: input.justification,
+    gateEvaluation: evaluation.criteria,
   });
 
   return { from, to: input.to, direction };

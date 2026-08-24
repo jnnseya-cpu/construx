@@ -40,6 +40,7 @@ import { AGENT_DIVISIONS, type AgentDivision } from '../agents/types.ts';
 import { AGENTS } from '../agents/registry.ts';
 import * as framework from '../domain/framework.ts';
 import * as lifecycleControl from '../lifecycle/control.ts';
+import * as stages from '../lifecycle/stages.ts';
 import * as costModel from '../engines/maths/costModel.ts';
 import * as structure from '../domain/structure.ts';
 import * as bim from '../engines/bim.ts';
@@ -2406,6 +2407,104 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => structure.transitionPhase(projectContext(platform, ctx), body(ctx)),
+  },
+  // ------------------------------------------- stage instances and gate reviews
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/stages',
+    description: 'Every stage this project has occupied, what was frozen at each, and what is open now',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      const current = stages.currentStage(engineCtx);
+      return {
+        current: current ?? null,
+        // Named separately from `current.openActions` because this is the
+        // question people actually ask at a gate — what have we been carrying,
+        // and since when — and burying it inside the stage makes it a lookup.
+        openActions: ((current?.openActions as unknown[]) ?? []).filter(
+          (a) => (a as { status: string }).status === 'OPEN',
+        ),
+        history: stages.stageInstances(engineCtx),
+        gateReviews: stages.gateReviews(engineCtx),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/stages/gate',
+    description: 'Submit the current stage for gate review. Answers NOT_READY with the blockers rather than refusing',
+    schema: {
+      type: 'object',
+      required: ['comments'],
+      properties: { comments: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => stages.submitForGate(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/stages/gate/:gateReviewId/decision',
+    description: 'Decide a submitted gate. Approving freezes the outgoing baseline and transitions the project',
+    schema: {
+      type: 'object',
+      required: ['result', 'authorityBasis', 'comments'],
+      properties: {
+        result: { type: 'string', enum: ['APPROVED', 'APPROVED_WITH_ACTIONS', 'REJECTED'] },
+        // Not free text for its own sake: this is the delegation or role the
+        // approver is acting under, and a decision that cannot name one is a
+        // decision nobody can defend three years later.
+        authorityBasis: stringField,
+        comments: stringField,
+        to: { type: 'string', enum: LIFECYCLE_ORDER },
+        actions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['description', 'ownerId', 'dueDate'],
+            properties: { description: stringField, ownerId: stringField, dueDate: stringField },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      stages.decideGate(projectContext(platform, ctx), {
+        gateReviewId: ctx.params.gateReviewId!,
+        ...body<Omit<Parameters<typeof stages.decideGate>[1], 'gateReviewId'>>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/stages/reopen',
+    description: 'Re-enter a stage already left. Supersedes the live instance; the approved one is never rewritten',
+    schema: {
+      type: 'object',
+      required: ['phase', 'reason', 'scope'],
+      properties: {
+        phase: { type: 'string', enum: LIFECYCLE_ORDER },
+        reason: stringField,
+        scope: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => stages.reopenStage(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/stages/actions/:actionId/close',
+    description: 'Close a condition a gate attached to its approval',
+    schema: {
+      type: 'object',
+      required: ['evidenceNote'],
+      properties: { evidenceNote: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      stages.closeAction(projectContext(platform, ctx), {
+        actionId: ctx.params.actionId!,
+        ...body<{ evidenceNote: string }>(ctx),
+      }),
   },
   {
     method: 'GET',

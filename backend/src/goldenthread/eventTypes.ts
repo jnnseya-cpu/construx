@@ -121,6 +121,29 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PACKAGE_CREATED', 'ScopePackage', 'CREATE', 'PROJECT_CONTROL'),
   def('WORKPACKAGE_CREATED', 'WorkPackage', 'CREATE', 'PROJECT_CONTROL'),
 
+  // --- Stage instances and gate reviews ------------------------------------
+  //
+  // A lifecycle stage is an occupancy with its own record, not a label on the
+  // project. `PROJECT_PHASE_TRANSITIONED` above says the project moved; these
+  // say which stage it moved out of, what was frozen at that moment, who
+  // decided, on what authority, and what was still open when it happened.
+  //
+  // None is AI-authorable. A gate decision is the point where a named person
+  // takes responsibility for a baseline, and an agent that could record one
+  // would be an agent that could approve its own proposals. The mandate ceiling
+  // is PROPOSE and this is where that matters most.
+  def('STAGE_INSTANCE_OPENED', 'StageInstance', 'CREATE', 'PROJECT_CONTROL', { creates: true }),
+  def('STAGE_INSTANCE_STATUS_CHANGED', 'StageInstance', 'UPDATE', 'PROJECT_CONTROL'),
+  // FREEZE, not UPDATE: locking a stage fixes the baseline hash and the exact
+  // component versions that satisfied its gate. Nothing may change afterwards.
+  def('STAGE_INSTANCE_LOCKED', 'StageInstance', 'FREEZE', 'PROJECT_CONTROL', { requiresEvidence: true }),
+  def('GATE_REVIEW_SUBMITTED', 'GateReview', 'CREATE', 'GOVERNANCE', { creates: true, requiresEvidence: true }),
+  def('GATE_REVIEW_DECIDED', 'GateReview', 'APPROVE', 'GOVERNANCE', { requiresEvidence: true }),
+  // Re-entering a stage opens a *new* instance. The approved one it supersedes
+  // stays exactly as it was approved — re-opening a project must not rewrite
+  // the record of the decision that was taken at the time.
+  def('STAGE_REOPENED', 'StageInstance', 'CREATE', 'GOVERNANCE', { creates: true, requiresEvidence: true }),
+
   // --- Design & information ------------------------------------------------
   def('DRAWING_REGISTERED', 'Drawing', 'IMPORT', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),
   def('DRAWING_SUPERSEDED', 'Drawing', 'UPDATE', 'DESIGN', { requiresEvidence: true }),

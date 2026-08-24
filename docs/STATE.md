@@ -2022,6 +2022,80 @@ A project whose value nobody recorded is measured against the whole standard.
 Quietly excusing items on a job that might be enormous is the more dangerous
 failure.
 
+**Stage instances and gate reviews.** A lifecycle stage used to be a string on
+the project plus an array of past transitions inside its state. That records
+*that* a project moved. It cannot record what was frozen at the moment it moved,
+who decided, on what authority, or what was still open when the decision was
+taken — which are exactly the questions asked three years later, when somebody
+wants to know why the design was signed off with a clash still on the register.
+
+So an occupancy of a stage is now an entity (`StageInstance`) with its own
+status machine, and the decision that ends one is another (`GateReview`), in
+`backend/src/lifecycle/stages.ts`:
+
+```
+StageInstance:  DRAFT → ACTIVE → READY_FOR_GATE → GATE_REVIEW
+                              → APPROVED | REJECTED → LOCKED → SUPERSEDED
+
+GateReview:     NOT_READY | READY_FOR_REVIEW
+                          → APPROVED | APPROVED_WITH_ACTIONS | REJECTED
+                          → SUPERSEDED
+```
+
+**Two acts, two people, enforced twice.** Submitting a gate takes `U` on
+`PROJECT_SETUP`; deciding one takes `A`. That split makes the permission matrix
+carry segregation of duties — a project manager holds `U` and not `A`, an owner
+the reverse — and the command additionally refuses a decision from whoever
+submitted it, for the roles that hold both. A gate one person can raise and
+approve is a formality with a timestamp on it.
+
+**Locking freezes component versions, not a summary.** The baseline hash covers
+the exact `refType:refId@version` of every entity that satisfied the gate. "The
+design was approved" is not a checkable claim; "these entities at these versions
+were approved" is, and it is what lets a later dispute establish whether the
+thing being argued about is the thing that was signed off.
+
+**`APPROVED_WITH_ACTIONS` earns its place.** Real gates pass with conditions
+attached, and a system offering only approve or reject forces that into one of
+two lies: an approval with the conditions recorded nowhere, or a rejection of
+work everybody agreed should proceed. The conditions carry across the boundary
+they were attached to, with owner and due date, and land as open items on the
+stage that follows.
+
+**Ungated moves are marked as such.** `structure.transitionPhase` still exists
+and still works; it now closes the outgoing instance as `SUPERSEDED` with no
+baseline, because no gate approved it. Only a gate decision produces `LOCKED`
+with a hash. A regression is exactly this case and must not look like approval.
+Both commands reach one writer — `stages.applyPhaseChange` — so a stage record
+cannot drift from the project it describes.
+
+**Re-opening never rewrites.** An authorised re-open supersedes the live
+instance and opens a new one carrying reason, scope and authority; the approved
+instance it returns to keeps its decision and its baseline exactly as taken. The
+decision was made on the evidence available at the time, and editing it destroys
+the only record of what was actually known.
+
+**The last phase is reviewed, not exited.** Operations runs for thirty years and
+has no terminal gate: it is assured annually and at each change, refurbishment
+or replacement. An approval there locks the period reviewed with its baseline
+and opens the next, writing no phase transition — a transition in the project's
+history that nothing corresponds to is worse than no record, because it is a
+phase change somebody will later try to explain. This was found by driving the
+API rather than the unit tests: the check used to sit *after* the decision
+event, so at OPERATIONS it wrote the decision and then threw, leaving a review
+marked APPROVED with its actions carried nowhere while the caller was told
+nothing had happened. Every reason to refuse now precedes every write.
+
+Six event types were added to the closed catalogue, all `aiAllowed: false`. An
+agent that could record a gate decision would be an agent that could approve its
+own proposals, which is the one thing the governance model exists to prevent.
+
+What this does not have yet: a curated console panel. The four write routes are
+reachable through the generated command catalogue, which is a real door and is
+what `doors.test.ts` checks — but a gate review is a governance ceremony, and
+deciding one through a generated JSON form with a `gateReviewId` text box is
+poor. `GET /v1/projects/:projectId/stages` has no view at all.
+
 **The corporate project control standard.** Every project runs through the same
 four stages — preconstruction, mobilisation, delivery, completion — and the same
 36 items, evaluated continuously against the ledger rather than only at a phase

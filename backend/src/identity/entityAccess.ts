@@ -38,6 +38,17 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   Programme: { area: 'ENTERPRISE_STRUCTURE' },
   Project: { area: 'PROJECT_SETUP' },
   ScopePackage: { area: 'PROJECT_SETUP' },
+  // A stage occupancy and the gate decision that ends it both sit under
+  // PROJECT_SETUP, which is the area that already authorises phase transitions.
+  // A separate area would have meant an entry for each in the permission matrix
+  // for every role, to express an authority that already exists.
+  //
+  // Segregation of duties is enforced where the spec actually asks for it — on
+  // the decision itself, in `lifecycle/stages.ts`, which refuses a decision from
+  // the person who submitted the gate. That is a rule about two acts by one
+  // person; a capability area cannot express it.
+  StageInstance: { area: 'PROJECT_SETUP' },
+  GateReview: { area: 'PROJECT_SETUP' },
   User: { area: 'ENTERPRISE_STRUCTURE' },
 
   // Design and information
