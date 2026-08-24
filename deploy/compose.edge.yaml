@@ -1,0 +1,48 @@
+# Co-existence overlay: share a reverse proxy that already exists on the host.
+#
+# Use this when something else already owns ports 80 and 443 — another
+# application's Caddy, nginx or Traefik. That proxy becomes the front door for
+# this platform too, and reaches it by container name over a shared network.
+#
+# Without this file the attachment has to be made by hand:
+#
+#     docker network connect construx-edge construx
+#
+# and that lasts exactly until the next deploy. `compose up --build` recreates
+# the container, the manual attachment is not part of the compose definition, so
+# it is lost — and the proxy answers 502 for a site that was working five
+# minutes earlier. Declaring it here makes the attachment part of the deployment
+# rather than something somebody has to remember at 11pm.
+#
+# Usage:
+#
+#     docker network create construx-edge                    # once
+#     docker network connect construx-edge <the proxy>       # once
+#     docker compose -f deploy/compose.yaml \
+#                    -f deploy/compose.edge.yaml \
+#                    --env-file .env up -d --build           # every deploy
+#
+# Then point the proxy at `construx:8080`. Nothing needs publishing to the host
+# for that route to work, which is why this is the tighter arrangement as well
+# as the more durable one.
+#
+# The name matches the base file so both describe the same project.
+name: construx
+
+services:
+  construx:
+    networks:
+      # Its own network, which compose creates, and the shared one. Naming
+      # `default` explicitly matters: a `networks:` key replaces the implicit
+      # default rather than adding to it, so omitting it would cut the container
+      # off from anything else in this project.
+      - default
+      - edge
+
+networks:
+  edge:
+    # Not created here. It belongs to the proxy that was on this host first, and
+    # a compose file that claimed ownership could remove it on `down` while
+    # somebody else's live site was still attached.
+    external: true
+    name: ${CONSTRUX_EDGE_NETWORK:-construx-edge}

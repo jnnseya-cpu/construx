@@ -161,6 +161,35 @@ is photographs — roughly 7GB per active project per month at capture size, abo
 and a half years of one busy site, and it is evidence rather than models that
 decides when the volume has to grow.
 
+**A manual network attachment does not survive a deploy, and the symptom is a
+502.** On a shared host the container reaches the existing proxy over a network
+joined with `docker network connect`. That lasts exactly until the next
+`compose up --build`: the container is recreated, the attachment is not part of
+the compose definition, and the proxy answers 502 for a site that worked five
+minutes earlier. `deploy/compose.edge.yaml` declares it instead — an external
+network, because it belongs to the proxy that was on the host first and a
+compose file claiming ownership could remove it on `down` while somebody else's
+live site was still attached. `default` is listed alongside it explicitly: a
+`networks:` key replaces the implicit default rather than adding to it, so
+omitting it would silently cut the container off from its own project.
+
+**Three gaps in the self-serve journey, found by trying to use it.** The backend
+is built and tested; the interface for it is not, and the parts are further
+apart than the completed task suggested:
+
+- **There is no signup page.** `/signup` answers 404 — the public site links to
+  `/app/signup`, and the console has no such view. Nothing in `frontend/` calls
+  `POST /v1/signup` at all.
+- **There is no verification landing page.** The confirmation email links to
+  `/verify?r=…&t=…`, which is not a route. The token is valid and the endpoint
+  behind it works; the page that would use them does not exist.
+- Registration therefore has to be driven against the API directly, which is
+  how the first real account on `construxvg.com` was created.
+
+Recorded here rather than quietly fixed, because it is a missing feature and not
+a defect in what exists: `POST /v1/signup` and `POST /v1/signup/verify` behave
+exactly as their tests say. What is absent is a form and a landing page.
+
 **Nobody could sign in to a production deployment.** Found on the first real one,
 minutes after it went live. Three things combined, and each looked innocent
 alone.

@@ -104,6 +104,28 @@ describe('the deployed container receives the settings a deployment is told it c
     assert.match(compose, /\nname: construx\n/, 'the compose project must be named, not inherited from the folder');
   });
 
+  it('offers a durable way to join an existing proxy, rather than a manual command', () => {
+    // `docker network connect construx-edge construx` works and lasts exactly
+    // until the next deploy: `compose up --build` recreates the container, the
+    // attachment is not part of the compose definition, and the proxy answers
+    // 502 for a site that worked five minutes earlier. The overlay makes the
+    // attachment part of the deployment instead of something to remember.
+    const overlay = readFileSync(resolve(ROOT, 'deploy/compose.edge.yaml'), 'utf8');
+
+    // Asserted line by line rather than as one block: the file is commented
+    // between the entries, and a pattern that demanded adjacency would fail on
+    // an explanation rather than on a defect.
+    assert.match(overlay, /^ {4}networks:$/m, 'the service declares its networks');
+    assert.match(overlay, /^ {6}- edge$/m, 'joins the shared network');
+    // `default` must be listed explicitly: a networks key replaces the implicit
+    // default rather than adding to it, so omitting it silently cuts the
+    // container off from the rest of its own project.
+    assert.match(overlay, /^ {6}- default$/m, 'and keeps its own, named explicitly');
+    assert.match(overlay, /^ {4}external: true$/m, 'the shared network belongs to the proxy that was here first');
+    assert.match(overlay, /name: \$\{CONSTRUX_EDGE_NETWORK:-construx-edge\}/, 'the network name is configurable');
+    assert.match(overlay, /^name: construx$/m, 'same project as the base file');
+  });
+
   it('lets the host port move without exposing the container more widely', () => {
     // A VPS is rarely empty. Another application already holding 8080 stops
     // this container dead on start, and the tempting fix — publishing on

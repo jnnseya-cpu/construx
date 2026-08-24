@@ -90,9 +90,25 @@ Co-exist instead:
    name:
 
    ```bash
-   docker network connect <the proxy's network> construx
+   docker network create construx-edge
+   docker network connect construx-edge <the proxy's container>
    # then in the proxy config:   reverse_proxy construx:8080
    ```
+
+   **And deploy with the overlay, or it breaks on the next release.**
+   Connecting the *platform's* container by hand lasts exactly until
+   `compose up --build` recreates it — the attachment is not part of the compose
+   definition, so it is lost, and the proxy answers 502 for a site that worked
+   five minutes earlier. `deploy/compose.edge.yaml` declares it instead:
+
+   ```bash
+   docker compose -f deploy/compose.yaml -f deploy/compose.edge.yaml \
+                  --env-file .env up -d --build
+   ```
+
+   Use that command for every deploy on a shared host. The proxy's own
+   attachment is made once and survives, because the proxy is not the container
+   being replaced.
 
    That is also the tighter arrangement: nothing needs publishing to the host at
    all for the route to work. `CONSTRUX_HOST_PORT` still earns its place, but as
@@ -338,7 +354,7 @@ ON THE VPS
  35  arrange to copy /srv/construx/backups OFF this machine
 
 IN A BROWSER
- 36  https://construxvg.com/signup                 -> register the company
+ 36  POST /v1/signup (see step 8)                -> register the company
  37  confirm from the email                        -> this is why step 3 mattered
  38  https://construxvg.com/app                    -> sign in
 ```
@@ -679,7 +695,8 @@ the account can never be confirmed — and the screen will not tell you that,
 because to a caller a real registration and a duplicate one answer identically
 by design.
 
-1. Go to `https://construxvg.com/signup`.
+1. Register through `POST /v1/signup`. **There is no signup page yet** — the
+   backend is built and covered by tests, the form is not. See below.
 2. Register the operating company. Confirm from the email.
 3. Sign in at `/app` and check the identity you have.
 
