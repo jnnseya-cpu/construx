@@ -150,7 +150,7 @@ function header(current: string): string {
 
   return `<header class="site-head">
   <div class="wrap head-row">
-    <a class="mark" href="/" aria-label="CONSTRUX.AI home">
+    <a class="mark" href="/" aria-label="CONSTRUX home">
       <svg width="30" height="30" viewBox="0 0 64 64" aria-hidden="true"><path fill="#6b727b" d="M12 14 L22 9 L22 40 L12 40 Z"/><path fill="#8b939d" d="M24 12 L31 8 L31 40 L24 40 Z"/><path fill="#6b727b" d="M30 30 L38 30 L45 40 L41 45 Z"/><path fill="#6b727b" d="M43 38 L50 38 L56 52 L47 52 Z"/><path fill="#ff6600" d="M45 30 L56 30 L41 52 L31 52 Z"/></svg>
       <span>CONSTRU<span class="x">X</span></span>
     </a>
@@ -184,7 +184,7 @@ function footer(): string {
   <div class="wrap">
     <div class="foot-grid">
       <div class="foot-brand">
-        <div class="mark"><span>CONSTRU<span class="x">X</span></span></div>
+        <a class="mark" href="/" aria-label="CONSTRUX home"><span>CONSTRU<span class="x">X</span></span></a>
         <p>The record of how an asset came to exist — governed, evidenced and verifiable from concept to thirty-year operation.</p>
         <p class="foot-status"><a href="/status"><span class="dot"></span> All systems operational</a></p>
       </div>

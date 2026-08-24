@@ -212,15 +212,136 @@ export function renderCampaign(copy: CampaignCopy, recipient: Recipient): Render
   };
 }
 
-// --- The unsubscribe page ---------------------------------------------------
+// --- Pages reached from a link in an email ----------------------------------
+
+/**
+ * The shell every emailed link lands on.
+ *
+ * Deliberately plain: no scripts, no application shell, no sign-in, nothing
+ * that needs a session. Somebody arriving here has clicked a link in a mail
+ * client and may well be on a phone, on a corporate network that rewrites URLs,
+ * with a browser that blocks third-party anything. The page has one job and
+ * does it with a form and a button.
+ */
+function plainPage(title: string, heading: string, bodyHtml: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<!-- No favicon link, deliberately. These pages run under the SELF_CONTAINED
+     policy, whose default-src of none forbids images because a page reached
+     from a link in an email is the one most likely to be attacked. The browser
+     falls back to /favicon.ico and gets a 404 nobody sees; widening a security
+     policy to silence a devtools line is the wrong trade. -->
+<title>${esc(title)} — CONSTRUX</title>
+</head>
+<body style="margin:0;background:${BRAND.paper};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
+  <div style="max-width:520px;margin:0 auto;padding:48px 18px">
+    <a href="${esc(absolute('/'))}" style="display:block;background:${BRAND.black};border-radius:12px 12px 0 0;padding:20px 26px;text-decoration:none">
+      <span style="font-size:16px;font-weight:800;letter-spacing:.4px;color:#fff;white-space:nowrap">CONSTRU<span style="color:${BRAND.orange}">X</span></span>
+    </a>
+    <div style="background:#fff;border-radius:0 0 12px 12px;padding:30px 26px;border:1px solid #e3e4e7;border-top:0">
+      <h1 style="margin:0 0 14px 0;font-size:21px;line-height:1.3;color:${BRAND.ink}">${esc(heading)}</h1>
+      ${bodyHtml}
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+/** A primary action styled as a button, whether it is a link or a submit. */
+const BUTTON = `background:${BRAND.orange};color:#fff;border:0;border-radius:6px;padding:12px 20px;
+        font-size:14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block`;
+const BUTTON_QUIET = `background:${BRAND.grey};color:#fff;border:0;border-radius:6px;padding:12px 20px;
+        font-size:14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block`;
+const PARAGRAPH = 'margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#3c4046';
+const QUIET = `margin:0 0 20px 0;font-size:14px;line-height:1.6;color:${BRAND.muted}`;
+
+/**
+ * The page a person lands on from the verification link in their signup email.
+ *
+ * This is the last step of registration and, until it existed, the only step
+ * with no way to take it: the confirmation email pointed at `/verify`, nothing
+ * answered there, and every person who signed up got a 404 at the moment they
+ * were being asked to prove their address. The account stayed pending for ever
+ * and the sign-in screen then told them, correctly and uselessly, that no such
+ * account existed.
+ *
+ * The GET renders a button and provisions nothing. That is not politeness: the
+ * token is single-use and spent on activation, and corporate mail security —
+ * Defender, Proofpoint, Mimecast — fetches every link in an inbound message to
+ * scan it. A GET that activated would be consumed by the scanner, and the human
+ * would click a link that had already been used by a robot on their behalf.
+ */
+export function verificationPage(input: {
+  state: 'CONFIRM' | 'DONE' | 'FAILED';
+  /** Carried through the form so the POST has what the GET was given. */
+  r: string;
+  t: string;
+  /** On DONE, who was created. On FAILED, why. */
+  organisation?: string;
+  email?: string;
+  reason?: string;
+}): string {
+  const action = `/verify?r=${encodeURIComponent(input.r)}&t=${encodeURIComponent(input.t)}`;
+
+  if (input.state === 'CONFIRM') {
+    return plainPage(
+      'Confirm your account',
+      'Confirm your email address',
+      `<p style="${PARAGRAPH}">
+         One press finishes setting up your organisation and makes you its administrator.
+       </p>
+       <p style="${QUIET}">
+         Nothing is charged and no card is held. You will sign in afterwards with this address and a
+         code sent to it.
+       </p>
+       <form method="post" action="${esc(action)}" style="margin:0">
+         <button type="submit" style="${BUTTON}">Confirm and create my account</button>
+       </form>`,
+    );
+  }
+
+  if (input.state === 'DONE') {
+    return plainPage(
+      'Account created',
+      'Your account is ready',
+      `<p style="${PARAGRAPH}">
+         <b>${esc(input.organisation ?? 'Your organisation')}</b> exists on the platform and
+         <b>${esc(input.email ?? '')}</b> is its administrator.
+       </p>
+       <p style="${QUIET}">
+         Sign in with that address. A six-character code will be sent to it — that is the second factor,
+         and it is required every time.
+       </p>
+       <a href="${esc(absolute('/app'))}" style="${BUTTON}">Sign in</a>`,
+    );
+  }
+
+  // FAILED. The reason is the domain error's own message: already verified, link
+  // superseded, link expired, address taken since. Each one has a different next
+  // step and saying "invalid link" for all four would strand somebody whose only
+  // problem is that they clicked the older of two emails.
+  return plainPage(
+    'Confirmation link',
+    'That link did not work',
+    `<p style="${PARAGRAPH}">${esc(input.reason ?? 'That verification link is not valid.')}</p>
+     <p style="${QUIET}">
+       If the link has expired or been replaced, start again and the newest email will be the one that works.
+     </p>
+     <a href="${esc(absolute('/get-started'))}" style="${BUTTON}">Start again</a>
+     <a href="${esc(absolute('/app'))}" style="${BUTTON_QUIET};margin-left:8px">Sign in</a>`,
+  );
+}
 
 /**
  * The page a person lands on from the unsubscribe link.
  *
- * Deliberately plain: no scripts, no application shell, no sign-in. Someone
- * following this link has already decided, and the page's only job is to make
- * the decision take effect in one press and confirm that it did. The GET only
- * ever shows the confirmation — acting on a GET would let a mail scanner
+ * Someone following this link has already decided, and the page's only job is to
+ * make the decision take effect in one press and confirm that it did. The GET
+ * only ever shows the confirmation — acting on a GET would let a mail scanner
  * prefetching links unsubscribe people who never clicked.
  */
 export function unsubscribePage(input: {
@@ -241,45 +362,24 @@ export function unsubscribePage(input: {
         assigned to you inside the platform.
       </p>
       <form method="post" action="${esc(action)}" style="margin:0">
-        <button type="submit" style="background:${BRAND.orange};color:#fff;border:0;border-radius:6px;
-                padding:12px 20px;font-size:14px;font-weight:700;cursor:pointer">Stop sending me the newsletter</button>
+        <button type="submit" style="${BUTTON}">Stop sending me the newsletter</button>
       </form>`,
     DONE: `
       <p style="margin:0 0 6px 0;font-size:15px;line-height:1.6;color:#3c4046">
         Done. <b>${esc(input.user.email)}</b> will not receive the newsletter again.
       </p>
-      <p style="margin:0 0 20px 0;font-size:14px;line-height:1.6;color:${BRAND.muted}">
+      <p style="${QUIET}">
         If this was a mistake, you can turn it back on under email preferences once you are signed in.
       </p>
-      <a href="${esc(absolute('/app/newsletter'))}" style="display:inline-block;background:${BRAND.grey};color:#fff;
-         border-radius:6px;padding:12px 20px;font-size:14px;font-weight:700;text-decoration:none">Email preferences</a>`,
+      <a href="${esc(absolute('/app/newsletter'))}" style="${BUTTON_QUIET}">Email preferences</a>`,
     ALREADY_OUT: `
-      <p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#3c4046">
+      <p style="${PARAGRAPH}">
         <b>${esc(input.user.email)}</b> is already unsubscribed. Nothing further was needed.
       </p>
-      <a href="${esc(absolute('/'))}" style="display:inline-block;background:${BRAND.grey};color:#fff;
-         border-radius:6px;padding:12px 20px;font-size:14px;font-weight:700;text-decoration:none">CONSTRUX.AI</a>`,
+      <a href="${esc(absolute('/'))}" style="${BUTTON_QUIET}">CONSTRUX</a>`,
   };
 
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Email preferences — CONSTRUX.AI</title>
-</head>
-<body style="margin:0;background:${BRAND.paper};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
-  <div style="max-width:520px;margin:0 auto;padding:48px 18px">
-    <div style="background:${BRAND.black};border-radius:12px 12px 0 0;padding:20px 26px">
-      <span style="font-size:16px;font-weight:800;letter-spacing:.4px;color:#fff">CONSTRUX<span style="color:${BRAND.orange}">.AI</span></span>
-    </div>
-    <div style="background:#fff;border-radius:0 0 12px 12px;padding:30px 26px;border:1px solid #e3e4e7;border-top:0">
-      <h1 style="margin:0 0 14px 0;font-size:21px;line-height:1.3;color:${BRAND.ink}">Email preferences</h1>
-      ${bodies[input.state]}
-    </div>
-  </div>
-</body>
-</html>`;
+  return plainPage('Email preferences', 'Email preferences', bodies[input.state]);
 }
 
 // --- MIME -------------------------------------------------------------------

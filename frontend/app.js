@@ -328,8 +328,13 @@ window.addEventListener('online', () => void drainOutbox());
 // --- shell ------------------------------------------------------------------
 
 function sidebar(active) {
+  // A real link with a real href, not a click handler: the wordmark is the one
+  // thing on every screen a person expects to take them home, and a plain
+  // anchor is also what lets them middle-click it, copy the address, or see
+  // where it goes before they press it. `/` leaves the shell for the public
+  // site, so it is a document navigation rather than a client route.
   return html`<aside class="sidebar">
-    <div class="sidebar-mark">
+    <a class="sidebar-mark" href="/" aria-label="CONSTRUX home">
       <!-- The reduced mark. Geometry matches frontend/logo-glyph.svg; at 19px
            the full mark's crane and ground line become grey smudges, which read
            as a rendering fault rather than as a logo. -->
@@ -340,8 +345,8 @@ function sidebar(active) {
         <path fill="#6b727b" d="M43 38 L50 38 L56 52 L47 52 Z"/>
         <path fill="#ff6600" d="M45 30 L56 30 L41 52 L31 52 Z"/>
       </svg>
-      <span>CONSTRU<span class="x">X</span></span>
-    </div>
+      <span style="white-space:nowrap">CONSTRU<span class="x">X</span></span>
+    </a>
 
     ${NAV.map((group) => {
       const visible = group.items.filter((item) => reachable(item));
@@ -445,7 +450,21 @@ async function draw() {
   const { page, params } = currentRoute();
 
   if (!state.session) {
-    await PAGES.login(root);
+    // Two views are reachable without one, and only two. Registration has to be,
+    // or the pricing page's buttons lead to a screen asking for the credentials
+    // of the account somebody is trying to create — which is what they did.
+    // Anything else falls through to sign-in rather than 404ing, because a
+    // signed-out person following a deep link wants the door, not an error.
+    await (page === 'signup' ? PAGES.signup(root) : PAGES.login(root));
+    return;
+  }
+
+  // The signed-out views are not shell views. Drawing one inside the shell puts
+  // a sign-in panel over the top of a signed-in session; somebody who kept the
+  // registration link open in a tab and then signed in elsewhere belongs at
+  // their overview, not at a form for an account they already have.
+  if (page === 'signup' || page === 'login') {
+    navigate(isOperator() ? 'admin' : 'overview');
     return;
   }
 

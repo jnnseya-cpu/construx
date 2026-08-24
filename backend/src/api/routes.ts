@@ -60,9 +60,9 @@ import {
   listCampaigns,
   previewFor,
 } from '../messaging/newsletter.ts';
-import { unsubscribePage } from '../messaging/render.ts';
+import { unsubscribePage, verificationPage } from '../messaging/render.ts';
 import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
-import { createMfaChallenge, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
+import { createMfaChallenge, decoyMfaResponse, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
 import { FIELD_FORBIDDEN_EVENTS } from '../field/sync.ts';
 import { estateBurn } from '../billing/burn.ts';
@@ -325,6 +325,40 @@ function getOrCreateConsoleSession(platform: Platform): Promise<{
   return consoleSession;
 }
 
+/**
+ * Prove an address and provision the tenancy behind it.
+ *
+ * Shared by the two doors onto the same act: `POST /v1/signup/verify` for a
+ * client that speaks JSON, and `POST /verify` for a person who pressed the
+ * button on the page the confirmation email points at. One implementation,
+ * because two would drift and only one of them would keep sending the welcome.
+ */
+async function activateRegistration(
+  platform: Platform,
+  ctx: RequestContext,
+  registrationId: string,
+  token: string,
+): Promise<{ activation: signup.Activation; email: string }> {
+  const activation = signup.verify(platform, { registrationId, token, correlationId: ctx.correlationId });
+  const user = platform.user(activation.userId);
+
+  await notifyEngine.notify(platform, {
+    code: 'account.verification.successful',
+    recipients: [{ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }],
+    payload: {
+      enterprise: activation.enterpriseName,
+      actionUrl: '/app',
+      actionLabel: 'Sign in',
+      detail: `${activation.enterpriseName} is set up and you are its administrator.`,
+    },
+    branding: platform.exports.branding(activation.tenantId),
+    actorId: 'signup',
+    correlationId: ctx.correlationId,
+  });
+
+  return { activation, email: user.email };
+}
+
 export const ROUTES: Route[] = [
   // ------------------------------------------------------------------ health
   {
@@ -352,7 +386,23 @@ export const ROUTES: Route[] = [
     handler: async (platform, ctx) => {
       const { email } = body<{ email: string }>(ctx);
       const user = platform.userByEmail(email);
-      if (!user) throw new NotFoundError('No user with that email address');
+
+      // An unknown address gets the same answer a known one does.
+      //
+      // This route used to reply `404 No user with that email address`, which
+      // made it an account-enumeration oracle: feed it a leaked address list and
+      // it sorts the list into customers and strangers, for free, without
+      // authenticating. Registration was written from the opposite premise —
+      // `identity/signup.ts` returns an identical receipt whether or not the
+      // address is in use, precisely so that nobody can ask — and login handed
+      // the answer to anyone who asked it.
+      //
+      // The decoy is a challenge that was never stored, so `verifyMfaChallenge`
+      // cannot match it and the attempt fails with MFA_FAILED — the same error a
+      // real account gives for a wrong code. Nothing is sent, because there is
+      // nobody to send it to.
+      if (!user) return decoyMfaResponse();
+
       const challenge = createMfaChallenge(user.id);
 
       // In production the code has to reach the person, and until now it did
@@ -1912,22 +1962,7 @@ export const ROUTES: Route[] = [
     },
     handler: async (platform, ctx) => {
       const { registrationId, token } = body<{ registrationId: string; token: string }>(ctx);
-      const activation = signup.verify(platform, { registrationId, token, correlationId: ctx.correlationId });
-      const user = platform.user(activation.userId);
-
-      await notifyEngine.notify(platform, {
-        code: 'account.verification.successful',
-        recipients: [{ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }],
-        payload: {
-          enterprise: activation.enterpriseName,
-          actionUrl: '/app',
-          actionLabel: 'Sign in',
-          detail: `${activation.enterpriseName} is set up and you are its administrator.`,
-        },
-        branding: platform.exports.branding(activation.tenantId),
-        actorId: 'signup',
-        correlationId: ctx.correlationId,
-      });
+      const { activation, email } = await activateRegistration(platform, ctx, registrationId, token);
 
       // Deliberately no tokens. Completing a registration produces an account,
       // not a session — the person signs in through /v1/auth/login and MFA like
@@ -1936,10 +1971,48 @@ export const ROUTES: Route[] = [
       return {
         status: 'VERIFIED',
         enterpriseName: activation.enterpriseName,
-        email: user.email,
+        email,
         signInPath: '/app',
         message: 'Your account is ready. Sign in with this address to continue.',
       };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/verify',
+    public: true,
+    html: true,
+    description: 'The landing page for the confirmation link in a signup email. Renders a button; provisions nothing',
+    handler: (_platform, ctx) =>
+      // No validation of r and t here, and no lookup. Telling a caller at this
+      // point that an id is unknown would turn the page into the enumeration
+      // oracle that `identity/signup.ts` exists to avoid; a wrong link simply
+      // fails on the press, like a right link with a spent token.
+      verificationPage({ state: 'CONFIRM', r: ctx.query.get('r') ?? '', t: ctx.query.get('t') ?? '' }),
+  },
+  {
+    method: 'POST',
+    pattern: '/verify',
+    public: true,
+    html: true,
+    description: 'Act on a confirmation link — provisions the tenancy and renders the outcome as a page',
+    handler: async (platform, ctx) => {
+      const r = ctx.query.get('r') ?? '';
+      const t = ctx.query.get('t') ?? '';
+      try {
+        const { activation, email } = await activateRegistration(platform, ctx, r, t);
+        return verificationPage({ state: 'DONE', r, t, organisation: activation.enterpriseName, email });
+      } catch (error) {
+        // Rendered as a page rather than rethrown. The error handler answers
+        // problem+json, which is right for an API client and useless to someone
+        // who clicked a link in Outlook and would be shown raw JSON. The
+        // message is the domain error's own — expired, superseded, already
+        // verified — because each has a different next step.
+        if (error instanceof DomainError || error instanceof NotFoundError) {
+          return verificationPage({ state: 'FAILED', r, t, reason: error.message });
+        }
+        throw error;
+      }
     },
   },
 

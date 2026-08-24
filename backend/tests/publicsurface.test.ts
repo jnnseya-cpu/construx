@@ -82,6 +82,11 @@ describe('what an anonymous caller can obtain', () => {
       // expiry, or an authorised identity, or nothing is served.
       'GET /v1/evidence/:hash',
       'GET /v1/signup/account-types',
+      // The landing page for the confirmation link in a signup email. Public by
+      // necessity — the whole point is that the person has no account yet — and
+      // it provisions nothing on GET, so a mail scanner prefetching the link
+      // cannot spend the single-use token before its owner clicks it.
+      'GET /verify',
       'POST /unsubscribe',
       'POST /v1/auth/login',
       'POST /v1/auth/mfa/verify',
@@ -90,6 +95,11 @@ describe('what an anonymous caller can obtain', () => {
       'POST /v1/console/session',
       'POST /v1/signup',
       'POST /v1/signup/verify',
+      // The button on that page. Same act as POST /v1/signup/verify and the
+      // same implementation behind it; what differs is that it answers with a
+      // page rather than JSON, because the caller is a browser that followed a
+      // link out of an inbox.
+      'POST /verify',
     ]);
 
     // Every marketing page is public and none of them is an API surface. They

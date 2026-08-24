@@ -182,7 +182,7 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     // The shared vocabulary, from its own root. Served ahead of the frontend so
     // a file placed at frontend/shared/ could never shadow it.
     if (ctx.method === 'GET' && ctx.path.startsWith(SHARED_PREFIX)) {
-      const result = await serveStatic(SHARED_ROOT, ctx.path.slice(SHARED_PREFIX.length - 1), res, traceId);
+      const result = await serveStatic(SHARED_ROOT, ctx.path.slice(SHARED_PREFIX.length - 1), res, traceId, req);
       if (result.served) {
         logRequest(ctx, 200);
         return;
@@ -191,7 +191,7 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
 
     // Static assets: stylesheets, client modules, images.
     if (ctx.method === 'GET' && !ctx.path.startsWith('/v1/')) {
-      const result = await serveStatic(WEB_ROOT, ctx.path, res, traceId);
+      const result = await serveStatic(WEB_ROOT, ctx.path, res, traceId, req);
       if (result.served) {
         logRequest(ctx, 200);
         return;

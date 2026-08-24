@@ -33,14 +33,16 @@ export async function login(root) {
     root,
     html`<div class="login-page">
       <div class="login-brand">
-        <div style="display:flex;align-items:center;gap:11px;font-size:20px;font-weight:800;letter-spacing:-.4px">
-          <svg width="26" height="26" viewBox="0 0 32 32" fill="none">
+        <a href="/" aria-label="CONSTRUX home"
+           style="display:inline-flex;align-items:center;gap:11px;font-size:20px;font-weight:800;
+                  letter-spacing:-.4px;color:inherit;text-decoration:none;align-self:flex-start">
+          <svg width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
             <path d="M4 27 L11 27 L11 12 L16 9 L16 27 L21 27 L21 5 L25 5 L25 27 L28 27" stroke="#8a9099" stroke-width="2.1" stroke-linejoin="round"/>
             <path d="M14 28 L28 6" stroke="#ff6600" stroke-width="4.4" stroke-linecap="square"/>
             <path d="M20 20 L28 28 L20 28 Z" fill="#4b5058"/>
           </svg>
           <span style="white-space:nowrap">CONSTRU<span style="color:var(--orange)">X</span></span>
-        </div>
+        </a>
         <h1>The operating system for built assets.</h1>
         <p>
           One immutable data spine and seven AI engines governing the entire lifecycle.

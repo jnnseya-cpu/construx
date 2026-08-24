@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
-import type { ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 /**
  * Static asset serving for the application shell.
@@ -42,6 +43,7 @@ export async function serveStatic(
   requestPath: string,
   res: ServerResponse,
   traceId: string,
+  req?: IncomingMessage,
 ): Promise<StaticResult> {
   // Resolve inside the root and verify containment. Checking the resolved path
   // rather than the raw one defeats encoded traversal (`%2e%2e%2f`) too, since
@@ -82,12 +84,36 @@ export async function serveStatic(
 
   const type = CONTENT_TYPES[extname(target).toLowerCase()] ?? 'application/octet-stream';
 
+  // Revalidate, never guess.
+  //
+  // These modules used to be served `public, max-age=300`, which meant a
+  // browser that had loaded the console within five minutes of a deploy kept
+  // running the old JavaScript against the new server and had no way to know.
+  // The symptom is worse than a stale page: `index.html` is `no-cache` and
+  // refetches, so the new shell loads the old modules, and the mixture behaves
+  // like neither version. It cost a live deployment an afternoon — the fixed
+  // sign-in screen was on the server and the browser kept drawing the broken
+  // one, which reads as a failed deploy.
+  //
+  // `no-cache` does not mean "do not store"; it means "ask first". With the
+  // content hash as the validator the browser sends `If-None-Match` and gets a
+  // 304 with no body, so the saving that `max-age` was buying is kept and the
+  // window where a client can be wrong disappears. Weak, because the comparison
+  // is byte-for-byte on the file rather than on a transfer encoding.
+  const etag = `W/"${createHash('sha256').update(body).digest('base64url').slice(0, 27)}"`;
+
+  if (req?.headers['if-none-match']?.split(',').some((candidate) => candidate.trim() === etag)) {
+    res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache', 'x-trace-id': traceId });
+    res.end();
+    return { served: true };
+  }
+
   res.writeHead(200, {
     'Content-Type': type,
     'Content-Length': body.length,
     'x-trace-id': traceId,
-    // The shell and its modules change with every deploy; the API is never cached.
-    'Cache-Control': type.startsWith('text/html') ? 'no-cache' : 'public, max-age=300',
+    ETag: etag,
+    'Cache-Control': 'no-cache',
     'X-Content-Type-Options': 'nosniff',
   });
   res.end(body);

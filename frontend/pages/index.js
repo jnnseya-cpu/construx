@@ -20,10 +20,14 @@ import { pipeline } from './pipeline.js';
 import { procurement } from './procurement.js';
 import { programme } from './programme.js';
 import { risk } from './risk.js';
+import { signup } from './signup.js';
 
 /** Route id → view. Ids match the navigation model in app.js. */
 export const PAGES = {
   login,
+  // Reached without a session, like login. The public site's pricing buttons
+  // link straight here with the package in the query string.
+  signup,
   account,
   overview,
   copilot,

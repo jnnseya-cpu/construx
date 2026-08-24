@@ -221,3 +221,30 @@ export function shapeMfaResponse(challenge: MfaChallenge): Record<string, unknow
   }
   return { mfaRequired: true, message: 'Additional verification required' };
 }
+
+/**
+ * The answer for an address that has no account.
+ *
+ * Byte-for-byte the shape of a real one — same keys, same id format, same
+ * `actorId` — so an unauthenticated caller cannot tell a customer's address from
+ * a stranger's. That distinction is worth money to whoever is holding a breach
+ * dump, and login was giving it away for free with a 404.
+ *
+ * Nothing is stored against these ids, which is what makes the decoy safe as
+ * well as opaque: `verifyMfaChallenge` finds no challenge, returns false, and
+ * the attempt fails with MFA_FAILED — indistinguishable from mistyping the code
+ * on a real account. There is no code, so no code can be guessed.
+ *
+ * `devCode` is absent in every environment. Outside production a real challenge
+ * returns one; a decoy has none to return, and inventing one would make a
+ * nonexistent account appear to sign in on a developer's laptop.
+ */
+export function decoyMfaResponse(): Record<string, unknown> {
+  const decoy: MfaChallenge = {
+    challengeId: ulid(),
+    methods: ['TOTP', 'SMS'],
+    code: '',
+    expiresAt: Date.now() + 5 * 60 * 1000,
+  };
+  return { ...shapeMfaResponse(decoy), actorId: ulid() };
+}

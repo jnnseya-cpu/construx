@@ -174,7 +174,17 @@ describe('request validation', () => {
     // carries whatever fields that provider chooses; validating it would refuse
     // an unsubscribe, which is the one thing that must never happen. The two
     // console routes take no body at all and are gated out of production.
-    const bodyIgnored = new Set(['POST /unsubscribe', 'POST /v1/console/identities', 'POST /v1/console/session']);
+    // `POST /verify` is the same shape as the unsubscribe one: a browser form
+    // submitting to a URL whose query string carries the registration id and
+    // the single-use token. Both credentials are in the URL the email
+    // published, nothing is read from the body, and the act is refused unless
+    // the token hashes to the stored HMAC.
+    const bodyIgnored = new Set([
+      'POST /unsubscribe',
+      'POST /verify',
+      'POST /v1/console/identities',
+      'POST /v1/console/session',
+    ]);
 
     const unvalidated = ROUTES.filter(
       (route) => route.method !== 'GET' && !route.upload && !route.schema,

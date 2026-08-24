@@ -173,22 +173,62 @@ live site was still attached. `default` is listed alongside it explicitly: a
 `networks:` key replaces the implicit default rather than adding to it, so
 omitting it would silently cut the container off from its own project.
 
-**Three gaps in the self-serve journey, found by trying to use it.** The backend
-is built and tested; the interface for it is not, and the parts are further
-apart than the completed task suggested:
+**The self-serve journey now has the two pages it was missing, and login has
+stopped answering a question it was never asked.** The backend was built and
+tested throughout; what did not exist was any way for a person to reach it. Both
+gaps were found by trying to sign up on the live deployment and failing.
 
-- **There is no signup page.** `/signup` answers 404 — the public site links to
-  `/app/signup`, and the console has no such view. Nothing in `frontend/` calls
-  `POST /v1/signup` at all.
-- **There is no verification landing page.** The confirmation email links to
-  `/verify?r=…&t=…`, which is not a route. The token is valid and the endpoint
-  behind it works; the page that would use them does not exist.
-- Registration therefore has to be driven against the API directly, which is
-  how the first real account on `construxvg.com` was created.
+- **`/app/signup`** is a real form (`frontend/pages/signup.js`), reached without
+  a session and drawn by `draw()` before the sign-in screen. The public site's
+  pricing buttons have linked here since the pricing page was written; until now
+  the shell drew sign-in instead, which asks for the credentials of the account
+  the person is trying to create. Packages, currencies and jurisdictions come
+  from `/v1/signup/account-types`, and `selfServe` decides what can be chosen —
+  so a package that is sold rather than provisioned cannot be bought by editing
+  the query string, and a price changed on the server changes here too. The
+  receipt is shown in the endpoint's own words, because rewording it would leak
+  what the endpoint is built not to say.
+- **`GET /verify` and `POST /verify`** are the landing page the confirmation
+  email has always pointed at. The GET renders a button and provisions nothing:
+  the token is single-use, and corporate mail security fetches every link in an
+  inbound message to scan it, so a GET that activated would be spent by a robot
+  before its owner clicked. Both doors onto activation — this one and
+  `POST /v1/signup/verify` — run the same `activateRegistration`. Failures are
+  rendered as pages rather than problem+json, and name which of the four ways a
+  link can fail happened, because each has a different next step.
+- **`POST /v1/auth/login` no longer says whether an address has an account.** It
+  answered `404 No user with that email address`, which made it an
+  account-enumeration oracle on an unauthenticated endpoint: feed it a breach
+  dump and it sorts the list into customers and strangers for free. Registration
+  was written from the opposite premise — `identity/signup.ts` returns an
+  identical receipt either way, precisely so nobody can ask — and login handed
+  the answer to anyone. An unknown address now gets `decoyMfaResponse()`: the
+  same shape, the same id format, nothing stored behind it, so the attempt fails
+  with MFA_FAILED exactly as a wrong code on a real account does. No code is
+  generated, so none can be guessed, and no mail is sent because there is nobody
+  to send it to.
 
-Recorded here rather than quietly fixed, because it is a missing feature and not
-a defect in what exists: `POST /v1/signup` and `POST /v1/signup/verify` behave
-exactly as their tests say. What is absent is a form and a landing page.
+What this does not close: a decoy still costs less server time than a real
+challenge, because a real one sends an email. That is a timing signal rather
+than a status code, and narrowing it further would mean sending mail to nobody.
+
+**Static assets revalidate rather than expiring.** `serveStatic` served modules
+`public, max-age=300`, and that window cost a live deployment an afternoon:
+`index.html` is `no-cache` and refetches, so a browser that had loaded the
+console within five minutes of a deploy ran the **new** shell against the **old**
+modules — a mixture that behaves like neither version, with nothing in the UI to
+say so. The fixed sign-in screen was on the server and the browser kept drawing
+the broken one, which reads as a failed deploy. Every asset now carries a weak
+ETag over its content and `Cache-Control: no-cache`, which means "ask first", not
+"do not store": the browser sends `If-None-Match` and gets a bodyless 304, so the
+saving `max-age` was buying is kept and the window where a client can be silently
+wrong is gone.
+
+**The wordmark is a link on every surface.** The public site header already had
+one; the console sidebar, the sign-in screen, the signup form and the site footer
+did not, so the one element a person expects to take them home did nothing on
+four of five surfaces. Real anchors with real `href`s rather than click handlers,
+so they can be middle-clicked and their destination seen before pressing.
 
 **Nobody could sign in to a production deployment.** Found on the first real one,
 minutes after it went live. Three things combined, and each looked innocent
@@ -450,7 +490,16 @@ time, and a spent token is deleted so a link cannot be replayed.
 **Verifying returns an account, never a session.** The person then signs in
 through `/v1/auth/login` and MFA like any other client. Returning a token here
 would have rebuilt the console-session hole through a different door, which is
-why the public-surface invariant covers it.
+why the public-surface invariant covers it. Both doors onto verification —
+`POST /v1/signup/verify` for a client that speaks JSON and `POST /verify` for the
+button on the emailed page — run one `activateRegistration`, so neither can drift
+into provisioning differently or forgetting to send the welcome.
+
+The anti-enumeration property now holds on the way **in** as well as the way up.
+`POST /v1/auth/login` used to answer `404 No user with that email address`, which
+gave away for free exactly what registration refuses to say. An unknown address
+now gets a decoy challenge with nothing stored behind it, so it fails at the code
+step like a mistyped one rather than at the address step.
 
 Account types are published from `PACKAGES` rather than typed into the page.
 `ENTERPRISE` is marked **not self-serve** rather than hidden — hiding it would

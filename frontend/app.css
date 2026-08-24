@@ -132,7 +132,11 @@ button { font: inherit; }
 .sidebar-mark {
   display: flex; align-items: center; gap: 9px; padding: 17px 18px;
   font-weight: 800; font-size: 16px; letter-spacing: -0.3px; border-bottom: 1px solid var(--line);
+  /* It is an anchor now, so the inherited link colour and underline have to go
+     — the mark's own colours are the brand's, not the link palette's. */
+  color: inherit; text-decoration: none;
 }
+.sidebar-mark:hover { background: var(--carbon); }
 .sidebar-mark .x { color: var(--orange); }
 
 .nav-group { padding: 14px 10px 4px; }

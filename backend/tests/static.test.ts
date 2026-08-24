@@ -44,14 +44,64 @@ describe('static asset serving', () => {
     assert.ok(res.body.length > 0);
   });
 
-  it('never caches the shell, and caches assets briefly', async () => {
-    const shell = capture();
-    await serveStatic(WEB_ROOT, '/index.html', shell, 'trace-2');
-    assert.equal(shell.headers['Cache-Control'], 'no-cache');
+  it('makes every asset revalidate, so a deploy cannot leave a client on old code', async () => {
+    // This asserted `public, max-age=300` on assets, and that window cost a live
+    // deployment an afternoon. `index.html` is `no-cache` and refetches, so a
+    // browser that had loaded the console within five minutes of a deploy ran
+    // the *new* shell against the *old* modules — a mixture that behaves like
+    // neither version, with nothing in the UI to say so. The fixed sign-in
+    // screen was on the server and the browser kept drawing the broken one,
+    // which reads as a failed deploy rather than as a cache.
+    for (const path of ['/index.html', '/app.js', '/app.css']) {
+      const res = capture();
+      await serveStatic(WEB_ROOT, path, res, 'trace-2');
+      assert.equal(res.headers['Cache-Control'], 'no-cache', `${path} may be served from cache unchecked`);
+      assert.match(String(res.headers.ETag), /^W\/".+"$/, `${path} has nothing to revalidate against`);
+    }
+  });
 
-    const asset = capture();
-    await serveStatic(WEB_ROOT, '/app.js', asset, 'trace-3');
-    assert.equal(asset.headers['Cache-Control'], 'public, max-age=300');
+  it('answers 304 to a client that already has the bytes', async () => {
+    // `no-cache` means "ask first", not "do not store". Without the 304 the
+    // revalidation above would cost a full transfer per module per page load,
+    // and the fix for a correctness bug would be a performance one.
+    const first = capture();
+    await serveStatic(WEB_ROOT, '/app.js', first, 'trace-3');
+    const etag = String(first.headers.ETag);
+
+    const again = capture();
+    const result = await serveStatic(WEB_ROOT, '/app.js', again, 'trace-4', {
+      headers: { 'if-none-match': etag },
+    } as never);
+
+    assert.equal(result.served, true);
+    assert.equal(again.statusCode, 304);
+    assert.equal(again.body.length, 0, 'a 304 must carry no body');
+    assert.equal(again.headers.ETag, etag);
+  });
+
+  it('sends the file when the client is holding a different version', async () => {
+    const res = capture();
+    await serveStatic(WEB_ROOT, '/app.js', res, 'trace-5', {
+      headers: { 'if-none-match': 'W/"something-else-entirely"' },
+    } as never);
+
+    assert.equal(res.statusCode, 200);
+    assert.ok(res.body.length > 0, 'a stale validator must produce the new bytes');
+  });
+
+  it('derives the validator from the content, not from the clock', async () => {
+    // mtime changes on every `git checkout` and every container rebuild, which
+    // would invalidate the whole shell on a deploy that changed one file.
+    const a = capture();
+    const b = capture();
+    await serveStatic(WEB_ROOT, '/app.js', a, 'trace-6');
+    await serveStatic(WEB_ROOT, '/app.css', b, 'trace-7');
+
+    assert.notEqual(a.headers.ETag, b.headers.ETag, 'two different files share a validator');
+
+    const repeat = capture();
+    await serveStatic(WEB_ROOT, '/app.js', repeat, 'trace-8');
+    assert.equal(repeat.headers.ETag, a.headers.ETag, 'the same bytes produced two validators');
   });
 
   it('refuses to climb out of the root', async () => {

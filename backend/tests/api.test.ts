@@ -118,6 +118,10 @@ describe('the routing table itself', () => {
       // the evidence belongs to. Refused either way, and the refusal is tested.
       'GET /v1/evidence/:hash',
       'GET /v1/signup/account-types',
+      // The confirmation link in a signup email lands here. Public because the
+      // person has no account yet, and inert on GET so a mail scanner cannot
+      // spend the single-use token before its owner clicks.
+      'GET /verify',
       'POST /unsubscribe',
       'POST /v1/auth/login',
       'POST /v1/auth/mfa/verify',
@@ -126,6 +130,9 @@ describe('the routing table itself', () => {
       'POST /v1/console/session',
       'POST /v1/signup',
       'POST /v1/signup/verify',
+      // The button on that page: the same activation, answering with a page
+      // rather than JSON because the caller is a browser, not a client.
+      'POST /verify',
     ]);
 
     // Every marketing page is public and none of them is an API surface. They

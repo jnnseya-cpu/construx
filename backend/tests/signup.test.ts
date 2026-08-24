@@ -307,3 +307,199 @@ describe('what registration tells the person', () => {
     assert.ok(dispatched.includes('account.registration.received'), 'the address owner was not warned');
   });
 });
+
+describe('the page the confirmation link lands on', () => {
+  /**
+   * The last step of registration, and for a while the only one with no way to
+   * take it. The email said "Confirm your account" and pointed at `/verify`;
+   * nothing answered there. Every person who signed up got a 404 at the exact
+   * moment they were being asked to prove they owned the address, their
+   * registration stayed pending for ever, and the sign-in screen then told them
+   * — correctly, and uselessly — that no such account existed.
+   */
+
+  /** As a browser asks, so the response is a page rather than JSON. */
+  async function page(method: string, path: string) {
+    const res = await fetch(`${base}${path}`, { method, headers: { accept: 'text/html' } });
+    return { status: res.status, type: res.headers.get('content-type') ?? '', html: await res.text() };
+  }
+
+  it('is where the email actually points', async () => {
+    // Derived from the same function that builds the link, so a change to one
+    // without the other fails here rather than in somebody's inbox.
+    const { verificationUrl } = await import('../src/identity/signup.ts');
+    const url = new URL(verificationUrl('reg-id', 'tok'));
+    assert.equal(url.pathname, '/verify', 'the email links somewhere no route serves');
+
+    const reply = await page('GET', `${url.pathname}${url.search}`);
+    assert.equal(reply.status, 200);
+    assert.match(reply.type, /text\/html/, 'a person following a link must not be shown JSON');
+  });
+
+  it('provisions nothing on GET, so a mail scanner cannot spend the token', async () => {
+    // Defender, Proofpoint and Mimecast fetch every link in an inbound message
+    // to scan it. A GET that activated would be consumed by the scanner, and
+    // the human would then click a link a robot had already used on their
+    // behalf. The GET renders a button; only the press acts.
+    const started = await call('POST', '/v1/signup', { ...VALID, email: 'scanned@northgate.example' });
+    const r = started.body.registrationId;
+    const t = started.body.devToken;
+
+    const landed = await page('GET', `/verify?r=${r}&t=${t}`);
+    assert.match(landed.html, /<form[^>]+method="post"/i, 'the page must ask before it acts');
+    assert.equal(platform.userByEmail('scanned@northgate.example'), undefined, 'the GET created an account');
+
+    // And the token it was holding is still good.
+    const pressed = await page('POST', `/verify?r=${r}&t=${t}`);
+    assert.equal(pressed.status, 200);
+    assert.ok(platform.userByEmail('scanned@northgate.example'), 'the press did not create the account');
+  });
+
+  it('carries the link through the form so the press has what the click was given', async () => {
+    const started = await call('POST', '/v1/signup', { ...VALID, email: 'carried@northgate.example' });
+    const landed = await page('GET', `/verify?r=${started.body.registrationId}&t=${started.body.devToken}`);
+
+    const action = /<form[^>]+action="([^"]+)"/i.exec(landed.html)?.[1] ?? '';
+    assert.match(action, /r=/, 'the registration id is not carried to the POST');
+    assert.match(action, /t=/, 'the token is not carried to the POST');
+  });
+
+  it('creates the account the same way the JSON route does, and says whose it is', async () => {
+    const started = await call('POST', '/v1/signup', { ...VALID, email: 'pressed@northgate.example' });
+    const done = await page('POST', `/verify?r=${started.body.registrationId}&t=${started.body.devToken}`);
+
+    assert.equal(done.status, 200);
+    assert.match(done.html, /Northgate Civils Ltd/, 'the page does not name the organisation it created');
+    assert.match(done.html, /pressed@northgate\.example/, 'the page does not say who the administrator is');
+
+    const user = platform.userByEmail('pressed@northgate.example');
+    assert.ok(user, 'no account exists');
+    assert.deepEqual(user.roles, ['ENTERPRISE_ADMIN'], 'the first user must be able to invite the rest');
+
+    // The invariant the console-session hole broke: an account, never a session.
+    assert.doesNotMatch(done.html, /accessToken|refreshToken/, 'a page must not hand out a token');
+  });
+
+  it('and that account can then sign in', async () => {
+    const started = await call('POST', '/v1/signup', { ...VALID, email: 'signsin@northgate.example' });
+    await page('POST', `/verify?r=${started.body.registrationId}&t=${started.body.devToken}`);
+
+    const challenge = await call('POST', '/v1/auth/login', { email: 'signsin@northgate.example' });
+    assert.ok(challenge.body.challengeId, 'the new account cannot even start a sign-in');
+
+    const verified = await call('POST', '/v1/auth/mfa/verify', {
+      actorId: challenge.body.actorId,
+      challengeId: challenge.body.challengeId,
+      code: challenge.body.devCode,
+    });
+    assert.ok(verified.body.accessToken, 'signing up produced an account nobody can get into');
+  });
+
+  it('explains a link that did not work, as a page rather than as JSON', async () => {
+    const bad = await page('POST', '/verify?r=nope&t=also-nope');
+    assert.match(bad.type, /text\/html/, 'somebody in Outlook must not be shown a problem+json body');
+    assert.doesNotMatch(bad.html, /"type"\s*:/, 'the raw error object leaked into the page');
+    assert.equal(platform.userByEmail('nope'), undefined);
+  });
+
+  it('tells somebody who clicked the older of two emails to use the newer one', async () => {
+    // A superseded registration keeps its token hash for exactly this reason:
+    // the person holding the stale link is the genuine address owner opening
+    // their first email, and "not valid" would make them give up. "A newer link
+    // was issued" tells them what to do instead.
+    const first = await call('POST', '/v1/signup', { ...VALID, email: 'twolinks@northgate.example' });
+    await call('POST', '/v1/signup', { ...VALID, email: 'twolinks@northgate.example' });
+
+    const stale = await page('POST', `/verify?r=${first.body.registrationId}&t=${first.body.devToken}`);
+    assert.match(stale.html, /newer verification link/i, 'a superseded link must say so');
+  });
+
+  it('says nothing about a spent link, and provisions nothing twice', async () => {
+    // The opposite call, and deliberately so. A verified registration's token
+    // hash is deleted — keeping it would leave a second working link — so a
+    // replay cannot be distinguished from a wrong id, and gets the same
+    // undifferentiated answer. That is the right trade here: whoever is
+    // replaying a spent token is not the person who already used it.
+    const started = await call('POST', '/v1/signup', { ...VALID, email: 'spent@northgate.example' });
+    const url = `/verify?r=${started.body.registrationId}&t=${started.body.devToken}`;
+
+    await page('POST', url);
+    const tenantsBefore = platform.userByEmail('spent@northgate.example')?.tenantId;
+
+    const twice = await page('POST', url);
+    assert.match(twice.html, /not valid/i, 'a spent link must not describe what it once was');
+    assert.equal(
+      platform.userByEmail('spent@northgate.example')?.tenantId,
+      tenantsBefore,
+      'a replayed link created a second tenancy',
+    );
+  });
+
+  it('offers a way back to the platform from every state', async () => {
+    const started = await call('POST', '/v1/signup', { ...VALID, email: 'wayback@northgate.example' });
+    const landed = await page('GET', `/verify?r=${started.body.registrationId}&t=${started.body.devToken}`);
+    const done = await page('POST', `/verify?r=${started.body.registrationId}&t=${started.body.devToken}`);
+    const failed = await page('POST', '/verify?r=x&t=y');
+
+    for (const [name, html] of [['confirm', landed.html], ['done', done.html], ['failed', failed.html]] as const) {
+      assert.match(html, /href="[^"]*\/"/, `the ${name} page's wordmark does not link home`);
+    }
+    assert.match(done.html, /\/app/, 'the done page does not offer the sign-in it just enabled');
+    assert.match(failed.html, /get-started/, 'the failed page does not offer a way to start again');
+  });
+});
+
+describe('signing in does not reveal who has an account', () => {
+  /**
+   * `POST /v1/auth/login` used to answer `404 No user with that email address`.
+   *
+   * Registration is written from the opposite premise — an identical receipt
+   * whether or not the address is in use, precisely so nobody can ask — and
+   * login handed the answer to any unauthenticated caller. Feed it a breach
+   * dump and it sorts the list into customers and strangers for free.
+   */
+
+  it('answers an unknown address in the shape it answers a known one', async () => {
+    const started = await call('POST', '/v1/signup', { ...VALID, email: 'known@northgate.example' });
+    await call('POST', '/v1/signup/verify', {
+      registrationId: started.body.registrationId,
+      token: started.body.devToken,
+    });
+
+    const known = await call('POST', '/v1/auth/login', { email: 'known@northgate.example' });
+    const stranger = await call('POST', '/v1/auth/login', { email: 'nobody@nowhere.example' });
+
+    assert.equal(stranger.status, known.status, 'the status code alone tells an attacker which is which');
+    assert.deepEqual(
+      Object.keys(stranger.body).sort(),
+      Object.keys(known.body).filter((k) => k !== 'devCode').sort(),
+      'the response shape differs, which is the same oracle by another route',
+    );
+    assert.ok(stranger.body.challengeId, 'the decoy must look like a challenge');
+  });
+
+  it('and the decoy cannot be completed', async () => {
+    const stranger = await call('POST', '/v1/auth/login', { email: 'nobody@nowhere.example' });
+
+    // No code was generated, so there is none to guess. The attempt fails the
+    // way a wrong code on a real account fails.
+    assert.equal(stranger.body.devCode, undefined, 'a decoy must never carry a code');
+
+    for (const code of ['', '000000', 'ABC123']) {
+      const attempt = await call('POST', '/v1/auth/mfa/verify', {
+        actorId: stranger.body.actorId,
+        challengeId: stranger.body.challengeId,
+        code,
+      });
+      assert.ok(attempt.status >= 400, `code ${JSON.stringify(code)} got through a decoy challenge`);
+      assert.equal(attempt.body.accessToken, undefined, 'a decoy minted a token');
+    }
+  });
+
+  it('issues a different decoy each time, so repeats cannot be correlated', async () => {
+    const a = await call('POST', '/v1/auth/login', { email: 'nobody@nowhere.example' });
+    const b = await call('POST', '/v1/auth/login', { email: 'nobody@nowhere.example' });
+    assert.notEqual(a.body.actorId, b.body.actorId, 'a stable decoy id is itself the answer');
+    assert.notEqual(a.body.challengeId, b.body.challengeId);
+  });
+});
