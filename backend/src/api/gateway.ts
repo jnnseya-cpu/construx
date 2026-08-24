@@ -26,6 +26,7 @@ import { matchRoute, ROUTES } from './routes.ts';
 import { renderLanding } from '../site/index.ts';
 import { robots, sitemap } from '../site/discovery.ts';
 import { serveStatic } from './static.ts';
+import { buildId } from './buildid.ts';
 
 /**
  * The single internet-facing component. Order of operations is fixed:
@@ -175,6 +176,39 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
       // response on this server with no policy and no frame refusal on it.
       const html = await readFile(APP_SHELL, 'utf8');
       sendHtml(res, ctx, 200, html, 'APP_SHELL', 'no-cache');
+      logRequest(ctx, 200);
+      return;
+    }
+
+    // The service worker, with this deployment's id substituted in.
+    //
+    // Served through a route rather than as a static file because the browser
+    // installs a new worker only when these bytes change. With the version
+    // hardcoded they never did, so an installed device served the shell it
+    // downloaded on the day it installed — permanently, and invisibly, because
+    // the API stayed current underneath it. `Service-Worker-Allowed` is what
+    // lets a worker at the root claim the /app scope it registers for.
+    if (ctx.method === 'GET' && ctx.path === '/sw.js') {
+      // replaceAll rather than replace: a single substitution takes the first
+      // occurrence, and if the placeholder is ever mentioned in a comment above
+      // the constant, that is the one it takes — leaving the version fixed and
+      // the placeholder gone, which looks exactly like it worked.
+      const worker = (await readFile(join(WEB_ROOT, 'sw.js'), 'utf8')).replaceAll(
+        '__BUILD_ID__',
+        await buildId(WEB_ROOT),
+      );
+      res.writeHead(200, {
+        'Content-Type': 'text/javascript; charset=utf-8',
+        'Content-Length': Buffer.byteLength(worker),
+        'x-trace-id': traceId,
+        // Never cached. A stale worker is a device that cannot be updated by
+        // any means, because the file that would update it is the one being
+        // served from cache.
+        'Cache-Control': 'no-store',
+        'Service-Worker-Allowed': '/app',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      res.end(worker);
       logRequest(ctx, 200);
       return;
     }

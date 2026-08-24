@@ -22,7 +22,24 @@
  * and only falls back to the cached shell when there is none.
  */
 
-const VERSION = 'construx-shell-v1';
+/**
+ * The cache key, and the reason this worker is served through a route rather
+ * than as a plain file.
+ *
+ * The placeholder below is replaced by the gateway with a hash of everything
+ * the browser can load. It has to be, because a browser installs a new worker
+ * only when the bytes of this file change: with a fixed version, a deploy left
+ * every installed device serving the shell it downloaded on the day it
+ * installed, permanently, with nothing to indicate it. The token is not named
+ * in this comment on purpose — a substitution that hit the prose instead of the
+ * constant would leave the version fixed and the placeholder gone, which looks
+ * exactly like it worked. See `backend/src/api/buildid.ts`.
+ *
+ * The placeholder is a valid string literal, so this file still works if it is
+ * ever served raw — it just pins one version, which is the old behaviour and
+ * the right fallback.
+ */
+const VERSION = 'construx-shell-__BUILD_ID__';
 
 /**
  * The application shell — the files that are identical for every user and

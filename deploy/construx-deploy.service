@@ -1,0 +1,35 @@
+# One deploy run. Started by construx-deploy.timer, not enabled directly.
+#
+# Type=oneshot, so systemd tracks the run to completion and `systemctl status`
+# reports the exit code of the deploy rather than of a wrapper that returned
+# immediately. A failed deploy shows as a failed unit, which is the point:
+# `systemctl list-timers` and `systemctl --failed` are then honest about whether
+# the site is running what the branch says it should be.
+
+[Unit]
+Description=Deploy CONSTRUX from the tracked branch
+Documentation=file:/srv/construx/app/docs/RUNBOOK.md
+# Docker has to be up before this is worth trying. Without it the first run
+# after a reboot fails on a socket that is seconds away from existing.
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Root because it drives the Docker socket and writes into /srv/construx. The
+# alternative — a deploy user in the docker group — is the same privilege with
+# more steps, since group membership grants the socket and the socket grants
+# root.
+User=root
+WorkingDirectory=/srv/construx/app
+ExecStart=/srv/construx/app/deploy/autodeploy.sh
+
+# A build plus a journal replay. Generous, but bounded: a hung build must not
+# hold the lock for ever and block every later deploy.
+TimeoutStartSec=1800
+
+# Everything the script prints goes to the journal, tagged so a deploy history
+# is one command: journalctl -t construx-deploy
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=construx-deploy

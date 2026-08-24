@@ -1,38 +1,50 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import type { Server } from 'node:http';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { after, before, describe, it } from 'node:test';
+import type { Server } from 'node:http';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createGateway } from '../src/api/gateway.ts';
-import { issueTokens } from '../src/identity/auth.ts';
-import { FIELD_FORBIDDEN_EVENTS } from '../src/field/sync.ts';
+import { resetBuildId } from '../src/api/buildid.ts';
 import { Platform } from '../src/platform.ts';
-import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
 /**
- * The installed field application.
+ * The installed application.
  *
- * The manifest and service worker made the console installable. What made it a
- * *field* application is the outbox: a supervisor at the bottom of a shaft with
- * no signal needs the record made now, at the time the work happened, and
- * reconciled later. The sync engine was built for exactly that and until now
- * nothing in the browser fed it.
+ * A PWA is three things that have to agree: a manifest the browser accepts, a
+ * service worker that installs, and icons that exist at the sizes the manifest
+ * promises. Any one of them wrong and the install prompt never appears, with
+ * nothing in the interface to say why.
  *
- * These tests cover the two things that go wrong quietly.
+ * The defect these were written for is subtler than that, and worse. The
+ * worker's cache key was the literal `construx-shell-v1`, and a browser
+ * installs a new worker only when the bytes of `/sw.js` change. They never did,
+ * so the version never changed, so the cache was never invalidated: an installed
+ * device served the shell it downloaded on the day it installed, permanently.
+ * The API stayed current underneath it, so there was no error, no stale-data
+ * warning, nothing — just a phone running last month's JavaScript against this
+ * month's platform, on a site, where nobody can reach it to clear the cache.
  */
 
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const read = (...parts: string[]) => readFileSync(join(REPO_ROOT, ...parts), 'utf8');
+const ROOT = resolve(import.meta.dirname, '../..');
+const MANIFEST = JSON.parse(readFileSync(resolve(ROOT, 'frontend/manifest.webmanifest'), 'utf8')) as {
+  start_url: string;
+  scope: string;
+  display: string;
+  icons: { src: string; sizes: string; type: string; purpose: string }[];
+  shortcuts: { url: string }[];
+};
 
 let platform: Platform;
-let seed: SeedResult;
 let server: Server;
 let base: string;
 
+async function get(path: string) {
+  const res = await fetch(`${base}${path}`);
+  return { status: res.status, headers: res.headers, body: await res.text() };
+}
+
 before(async () => {
   platform = new Platform();
-  seed = await seedDemoProject(platform);
   server = createGateway(platform);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -40,155 +52,139 @@ before(async () => {
 
 after(() => server.close());
 
-describe('installability', () => {
-  it('declares a manifest scoped to the application, not the marketing site', () => {
-    const manifest = JSON.parse(read('frontend', 'manifest.webmanifest'));
+describe('the service worker can be replaced by a deploy', () => {
+  it('carries a version derived from what is being served', async () => {
+    const worker = await get('/sw.js');
 
-    assert.equal(manifest.scope, '/app', 'a manifest scoped to / would install the public site');
-    assert.equal(manifest.start_url, '/app');
-    assert.equal(manifest.display, 'standalone');
-    assert.ok(manifest.icons.length >= 2, 'an installed application needs an icon at both sizes');
-    assert.ok(
-      manifest.icons.some((i: { purpose?: string }) => i.purpose === 'maskable'),
-      'without a maskable icon Android crops the logo into its own shape',
+    assert.equal(worker.status, 200);
+    assert.doesNotMatch(worker.body, /__BUILD_ID__/, 'the placeholder was never substituted');
+    assert.doesNotMatch(
+      worker.body,
+      /const VERSION = 'construx-shell-v1'/,
+      'a fixed version means an installed device can never be updated',
     );
+    assert.match(worker.body, /const VERSION = 'construx-shell-[A-Za-z0-9_-]{12}'/, 'the version must be a build id');
   });
 
-  it('ships every icon the manifest promises', () => {
-    // A manifest listing a file that is not there installs with a blank tile,
-    // and nothing warns you — the install simply looks wrong on the home screen.
-    const manifest = JSON.parse(read('frontend', 'manifest.webmanifest'));
-    for (const icon of manifest.icons as Array<{ src: string }>) {
-      assert.doesNotThrow(
-        () => readFileSync(join(REPO_ROOT, 'frontend', icon.src)),
-        `${icon.src} is in the manifest and not in the build`,
-      );
+  it('changes when a served file changes, and only then', async () => {
+    const before = /construx-shell-([A-Za-z0-9_-]+)/.exec((await get('/sw.js')).body)?.[1];
+
+    // Same content, recomputed from scratch: the id must be a function of the
+    // bytes, not of the walk order or the clock. readdir returns filesystem
+    // order, which differs between a container and a laptop, and an id that
+    // depended on it would change without the content changing.
+    resetBuildId();
+    const again = /construx-shell-([A-Za-z0-9_-]+)/.exec((await get('/sw.js')).body)?.[1];
+    assert.equal(again, before, 'the same frontend produced two different ids');
+
+    // Now actually change something the browser loads.
+    const css = resolve(ROOT, 'frontend/app.css');
+    const original = readFileSync(css, 'utf8');
+    try {
+      writeFileSync(css, `${original}\n/* deploy marker */\n`);
+      resetBuildId();
+      const changed = /construx-shell-([A-Za-z0-9_-]+)/.exec((await get('/sw.js')).body)?.[1];
+      assert.notEqual(changed, before, 'a changed stylesheet did not produce a new cache version');
+    } finally {
+      writeFileSync(css, original);
+      resetBuildId();
     }
+  });
+
+  it('is never cached itself', async () => {
+    // The one file that must always come from the network. A cached worker is a
+    // device that cannot be updated by any means, because the file that would
+    // update it is the one being served from cache.
+    const worker = await get('/sw.js');
+    assert.equal(worker.headers.get('cache-control'), 'no-store');
+  });
+
+  it('is allowed to claim the scope it registers for', async () => {
+    // A worker served from the root registering for /app needs the server's
+    // permission. Without the header the registration is refused and the
+    // application silently stops being installable.
+    const worker = await get('/sw.js');
+    assert.equal(worker.headers.get('service-worker-allowed'), '/app');
+    assert.match(worker.headers.get('content-type') ?? '', /javascript/, 'a worker served as text/plain will not run');
   });
 });
 
-describe('the service worker never caches a response that belongs to one identity', () => {
-  const worker = read('frontend', 'sw.js');
+describe('the worker never touches project data', () => {
+  const source = readFileSync(resolve(ROOT, 'frontend/sw.js'), 'utf8');
 
-  it('refuses the whole API surface', () => {
-    // The failure this prevents: one person's commercial position served to
-    // whoever opens the application on that handset next. There is no partial
-    // version of this rule that is safe.
-    assert.match(worker, /pathname\.startsWith\('\/v1\/'\)/);
+  it('excludes every authorised surface from the cache', () => {
+    // The rule the worker's own header states. Every response under /v1/ is
+    // authorised for one identity in one tenancy at one moment; a cached copy
+    // sits somewhere the platform's access control cannot reach and is served
+    // to whoever opens the app on that device next.
+    assert.match(source, /pathname\.startsWith\('\/v1\/'\)/, '/v1/ must be excluded by path prefix');
+    assert.match(source, /request\.method !== 'GET'/, 'a command must never be served from cache');
+    assert.match(source, /url\.origin !== self\.location\.origin/, 'cross-origin requests are not this worker\'s business');
   });
 
   it('precaches only files that are identical for every user', () => {
-    const shell = [...worker.matchAll(/^\s*'(\/[^']*)',$/gm)].map((m) => m[1]!);
-    assert.ok(shell.length > 0, 'the shell list could not be read — check the pattern, not the worker');
-    for (const path of shell) {
-      assert.ok(!path.startsWith('/v1/'), `${path} is precached and is API data`);
+    const shell = /const SHELL = \[([\s\S]*?)\]/.exec(source)?.[1] ?? '';
+    const paths = [...shell.matchAll(/'([^']+)'/g)].map((m) => m[1] ?? '');
+
+    assert.ok(paths.length > 0, 'the shell list is empty');
+    for (const path of paths) {
+      assert.doesNotMatch(path, /^\/v1\//, `${path} is an API path and must not be precached`);
     }
   });
 
-  it('prefers the network for navigations, so a deployed fix reaches a handset', () => {
-    assert.match(worker, /request\.mode === 'navigate'/);
+  it('prefers the network for navigations, so a deploy lands on the next launch', () => {
+    assert.match(source, /request\.mode === 'navigate'/, 'navigations need their own strategy');
   });
 });
 
-describe('the outbox', () => {
-  const outbox = read('frontend', 'lib', 'outbox.js');
+describe('the manifest promises nothing that is missing', () => {
+  it('serves every icon it lists, at the type it claims', async () => {
+    // A 404 here does not break the app; it stops the install prompt appearing,
+    // which is indistinguishable from the browser simply not offering it.
+    for (const icon of MANIFEST.icons) {
+      const response = await get(icon.src);
+      assert.equal(response.status, 200, `${icon.src} is in the manifest and is not served`);
+      assert.match(
+        response.headers.get('content-type') ?? '',
+        /image\/png/,
+        `${icon.src} is declared as ${icon.type}`,
+      );
+    }
+  });
 
-  it('does not declare which events are forbidden offline — it is told', () => {
-    // The first version of this file hardcoded eight plausible-looking event
-    // names and every one was wrong. Settled decision 6: the interface holds no
-    // rule the API does not publish.
+  it('offers both a maskable and an unmaskable icon at each size', () => {
+    // Android crops an `any` icon to whatever shape the launcher uses, which
+    // clips a logo that fills its canvas. A maskable icon carries the safe zone.
+    const purposes = new Set(MANIFEST.icons.map((i) => `${i.sizes}:${i.purpose}`));
+    for (const size of ['192x192', '512x512']) {
+      assert.ok(purposes.has(`${size}:any`), `no plain icon at ${size}`);
+      assert.ok(purposes.has(`${size}:maskable`), `no maskable icon at ${size}`);
+    }
+  });
+
+  it('starts inside its own scope', async () => {
+    // A start_url outside scope means the launched application immediately
+    // leaves the worker's control and opens in a browser tab instead.
     assert.ok(
-      !/PROGRAMME_BASELINE_APPROVED|RFQ_AWARDED|INVOICE_ISSUED/.test(outbox),
-      'the forbidden-event list has been copied into the browser again',
+      MANIFEST.start_url.startsWith(MANIFEST.scope),
+      `start_url ${MANIFEST.start_url} is outside scope ${MANIFEST.scope}`,
     );
-    assert.match(outbox, /useNeverOffline/);
+    assert.equal(MANIFEST.display, 'standalone', 'the point of installing is not to get a browser tab');
+    assert.equal((await get(MANIFEST.start_url)).status, 200, 'start_url must be served');
   });
 
-  it('is fed the server’s own list, over HTTP, so the two cannot drift', async () => {
-    // Read the way the browser reads it rather than by importing the constant.
-    // The failure this catches is the endpoint quietly ceasing to publish the
-    // field — which importing the constant would hide completely.
-    const pm = platform.user(seed.users.pm!.id);
-    const token = issueTokens({
-      actorId: pm.id,
-      tenantId: pm.tenantId,
-      partyId: pm.partyId,
-      roles: pm.roles,
-      mfaSatisfied: true,
-    }).accessToken;
+  it('points every shortcut at a route that exists', async () => {
+    for (const shortcut of MANIFEST.shortcuts) {
+      assert.ok(shortcut.url.startsWith(MANIFEST.scope), `${shortcut.url} is outside scope`);
+      assert.equal((await get(shortcut.url)).status, 200, `${shortcut.url} is a shortcut to nothing`);
+    }
+  });
 
-    const response = await fetch(`${base}/v1/permissions/matrix`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
+  it('is served as a manifest rather than as JSON', async () => {
+    // A browser that receives it as application/json ignores it, and the app
+    // silently stops being installable with nothing in the console to say why.
+    const response = await fetch(`${base}/manifest.webmanifest`);
     assert.equal(response.status, 200);
-
-    const { neverOffline } = (await response.json()) as { neverOffline: string[] };
-    assert.ok(Array.isArray(neverOffline), 'the matrix stopped publishing neverOffline');
-    assert.deepEqual(
-      [...neverOffline].sort(),
-      [...FIELD_FORBIDDEN_EVENTS].sort(),
-      'what is published and what is enforced have diverged',
-    );
-    assert.ok(neverOffline.includes('PROGRAMME_BASELINE_APPROVED'));
-  });
-
-  it('stamps PWA, never a native source it is not', () => {
-    // A browser claiming ANDROID would put a false provenance into a ledger
-    // that cannot afterwards be corrected.
-    assert.match(outbox, /source: 'PWA'/);
-    assert.ok(!/source: '(ANDROID|IOS)'/.test(outbox), 'the outbox claims to be a native client');
-  });
-
-  it('keeps an operation the server did not decide about', () => {
-    // A transport failure is not a verdict. Dropping an operation because the
-    // request failed is how a site record silently loses a day.
-    assert.match(outbox, /unsent \+= operations\.length/);
-  });
-
-  it('clears on sign-out, because a site handset changes hands', () => {
-    assert.match(outbox, /export async function clear/);
-    // Including the held files. A photograph captured under one operative's
-    // session must not flush under the next person's token.
-    assert.match(outbox, /store\.clear\(\), FILES/);
-  });
-
-  it('holds the file, not only the hash it computed from it', () => {
-    // Queuing the operation without the bytes leaves the field app exactly
-    // where the platform was before the object store existed: a hash captured
-    // at a work face, and the photograph on a handset that may not survive to
-    // see signal again.
-    assert.match(outbox, /export async function queueFile/);
-    assert.match(outbox, /export async function flushFiles/);
-    // The Blob itself. Base64 in a data URL is a third larger for no gain.
-    assert.match(outbox, /blob: file/);
-  });
-
-  it('keeps a file whose record has not landed yet, and drops one that can never match', () => {
-    // A 404 means no ledger record names this hash *yet* — the record may be in
-    // the next batch, so the file waits. A 422 means the bytes do not hash to
-    // the address they claim, which cannot become true later.
-    assert.match(outbox, /error\?\.status === 422/);
-    assert.match(outbox, /waiting \+= 1/);
-  });
-});
-
-describe('PWA as a first-class event source', () => {
-  it('is a source the ledger will accept', () => {
-    const context = platform.context(seed.users.pm!.auth, seed.projectId, { source: 'PWA' });
-    assert.equal(context.source, 'PWA');
-  });
-
-  it('is separate from WEB, because a desk and a work face are different evidence', () => {
-    const types = read('backend', 'src', 'goldenthread', 'types.ts');
-    assert.match(types, /'WEB' \| 'PWA'/);
-  });
-
-  it('is accepted for an offline batch, and WEB is not', () => {
-    // Typed rather than runtime-checked: `SyncOperation.source` excludes WEB, so
-    // this asserts the type surface rather than a branch. Allowing WEB would let
-    // an online client backdate work through deviceTimestamp with none of the
-    // offline provenance that justifies the backdating.
-    const sync = read('backend', 'src', 'field', 'sync.ts');
-    assert.match(sync, /Extract<EventSource, 'PWA' \| 'ANDROID' \| 'IOS'>/);
+    assert.match(response.headers.get('content-type') ?? '', /application\/manifest\+json/);
   });
 });

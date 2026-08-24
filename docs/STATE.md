@@ -224,6 +224,58 @@ ETag over its content and `Cache-Control: no-cache`, which means "ask first", no
 saving `max-age` was buying is kept and the window where a client can be silently
 wrong is gone.
 
+**A push to the tracked branch deploys itself.** `deploy/autodeploy.sh` runs on
+the host from a systemd timer: fetch, and if the branch has moved, back up the
+journal, fast-forward, build, bring it up and wait for `/readyz`. If the new
+build never becomes ready it puts the previous commit back and rebuilds, then
+exits non-zero so the unit shows as failed rather than reporting a rolled-back
+deploy as a clean one.
+
+It **pulls** rather than being pushed to, and that is the whole security
+argument. No inbound port is opened and no machine outside the host holds a
+credential that reaches the Docker socket. A GitHub Actions deploy would mean
+storing an SSH key with root-equivalent access to a VPS that also hosts two
+other people's live sites, available to anybody who can push to the repository
+or compromise a third-party action. The cost is latency — a push is live within
+a minute instead of instantly.
+
+The rollback window is narrow on purpose, and the reason is the constraint in
+`docs/RUNBOOK.md`: **the journal is forward-compatible and not
+backward-compatible**, so an older image replaying a journal holding an event
+type it does not know refuses to start. An automatic rollback is therefore only
+safe while the new image has written nothing — which is exactly the window a
+failed readiness check describes, because replay finishes before readiness and
+appends no events. A failure *after* readiness is left to a person.
+
+What it does not do: check that CI was green. It cannot — the repository is
+private and the host holds no GitHub credential, deliberately. The boot check
+catches anything that stops the container starting; a change that boots and
+breaks a page will deploy, which is the same exposure as a manual deploy
+arriving sooner.
+
+**The installed application could never be updated.** The service worker's cache
+key was the literal `construx-shell-v1`, and a browser installs a new worker
+only when the bytes of `/sw.js` change. They never did, so the version never
+changed, so `activate` never deleted anything: a device that installed the app
+served the shell it downloaded that day, permanently. There was nothing to see —
+the API stayed current underneath it, so no error, no warning, just a phone
+running old JavaScript against the current platform. On a site, on the device
+nobody can reach to clear.
+
+`/sw.js` is now served through a route that substitutes a build id computed from
+every file the browser can load (`backend/src/api/buildid.ts`; `frontend/shots/`
+is excluded as 56MB of documentation nothing loads at runtime). Change a served
+file and the id changes, the worker's bytes change, the browser installs it, and
+`activate` deletes every cache that is not the new one. Change nothing and it is
+byte-identical, so a redeploy of the same code does not evict a working cache.
+The worker itself is `no-store`, because a cached worker is a device that cannot
+be updated by any means.
+
+Proven in a browser rather than reasoned about: install, change a stylesheet,
+restart, relaunch — the old cache is deleted, the new one is present, and the
+deployed CSS is what gets served. Before the change the last two failed and kept
+failing.
+
 **The wordmark is a link on every surface.** The public site header already had
 one; the console sidebar, the sign-in screen, the signup form and the site footer
 did not, so the one element a person expects to take them home did nothing on

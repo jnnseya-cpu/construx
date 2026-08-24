@@ -76,6 +76,77 @@ process is up; `/readyz` answers when the platform is actually able to serve.
 Between them sits the journal replay, and a container marked ready during a
 replay answers "no such project" for projects that exist.
 
+### Automatic deploy
+
+A push to the tracked branch goes live within a minute, without anybody logging
+in. `deploy/autodeploy.sh` runs on the host from a systemd timer:
+
+```
+fetch → nothing new? exit quietly
+      → back up the journal
+      → fast-forward, build, up
+      → wait for /readyz
+      → ready? done.   not ready? put the previous commit back and rebuild.
+```
+
+**It pulls; nothing pushes to it.** That is the security argument for this shape
+rather than a GitHub Actions deploy. No inbound port is opened, and no machine
+outside this host holds a credential that reaches the Docker socket. An Actions
+deploy would mean storing an SSH key with root-equivalent access to a VPS that
+also hosts two other live sites, reachable by anybody who can push to the
+repository or compromise a third-party action. The cost is latency: a push is
+live within the timer interval instead of instantly, which on a deploy that
+takes minutes to build is not the part worth optimising.
+
+**The rollback window is deliberately narrow.** It reverts only when the new
+build never reached `/readyz`. See the section below for why that is the only
+window where an automatic rollback is safe — replay finishes before readiness
+and appends nothing, so a container that never became ready never wrote an
+event, and the previous image can replay the same journal it could before. A
+failure *after* readiness is left to a person with this document open.
+
+**It does not check that CI was green**, and cannot: the repository is private
+and this host holds no GitHub credential, on purpose. The boot check catches
+anything that stops the container starting; a change that boots fine and breaks
+a page will deploy. That is the same exposure as a manual deploy, arriving
+sooner — so watch the CI badge, not the site.
+
+#### Installing it, once
+
+```bash
+sudo cp /srv/construx/app/deploy/construx-deploy.service /etc/systemd/system/
+sudo cp /srv/construx/app/deploy/construx-deploy.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now construx-deploy.timer
+```
+
+To point it at a different branch or checkout, drop an override rather than
+editing the unit — `systemctl edit construx-deploy.service`:
+
+```ini
+[Service]
+Environment=CONSTRUX_DEPLOY_BRANCH=main
+Environment=CONSTRUX_APP_DIR=/srv/construx/app
+```
+
+#### Watching it
+
+```bash
+systemctl list-timers construx-deploy.timer   # when it last ran and next runs
+journalctl -t construx-deploy -n 50           # the deploy history
+journalctl -t construx-deploy -f              # follow a deploy as it happens
+systemctl --failed                            # a failed deploy shows up here
+sudo systemctl start construx-deploy.service  # deploy now, without waiting
+```
+
+A run with nothing to do prints nothing. That is deliberate: this fires 1,440
+times a day, and a line per check would bury the deploys that matter.
+
+A failed deploy that rolled back successfully still exits non-zero, so the unit
+shows as failed. The site is up on the previous commit and the branch no longer
+matches what is live — which is exactly the state somebody needs to be told
+about rather than left to discover.
+
 ### Rollback
 
 Redeploy the previous image. **The journal is forward-compatible and not

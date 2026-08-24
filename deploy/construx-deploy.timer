@@ -1,0 +1,35 @@
+# Check the branch for new commits every minute.
+#
+# A minute is the interval, not the cost. A check with nothing to do is one
+# `git fetch` against a repository with no new objects — a few kilobytes and no
+# container touched — and the script exits silently. Work only happens when the
+# branch has actually moved.
+#
+# Pull rather than push, so a deploy needs no inbound port and no machine
+# outside this host holds a credential for it. The cost is that a push is live
+# within a minute rather than instantly, which for a deploy that takes minutes
+# to build is not the part worth optimising.
+
+[Unit]
+Description=Check for CONSTRUX deployments every minute
+Documentation=file:/srv/construx/app/docs/RUNBOOK.md
+
+[Timer]
+# Not immediately at boot: docker, the network and the existing container all
+# need to settle first, and a deploy racing a cold start is how a healthy
+# release gets rolled back for failing a readiness check it never had time to
+# pass.
+OnBootSec=3min
+OnUnitActiveSec=1min
+
+# The timer fires on a schedule; the service takes a non-blocking lock. If a
+# build is still running the next fire exits at once rather than queueing, so a
+# slow deploy cannot accumulate a backlog of runs behind it.
+AccuracySec=15s
+
+# Survives a reboot: a push made while the host was down is deployed on the next
+# check rather than waiting for a full interval from boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
