@@ -161,6 +161,47 @@ is photographs — roughly 7GB per active project per month at capture size, abo
 and a half years of one busy site, and it is evidence rather than models that
 decides when the volume has to grow.
 
+**Nobody could sign in to a production deployment.** Found on the first real one,
+minutes after it went live. Three things combined, and each looked innocent
+alone.
+
+The console offered *only* the demonstration identity picker — there was no
+credential form at all. That picker reads `devCode` out of the login response,
+which production deliberately withholds. And nothing ever **sent** the code: the
+challenge was generated, held in memory, returned to nobody. `mfa.otp_code` had
+been sitting in the notification catalogue since it was written, waiting for a
+caller that did not exist.
+
+So every credential could be correct and no human being could get in. The
+visible symptom was the front door of a working platform reporting
+*"Could not reach the platform: Demonstration identities are not available in
+production"* — which reads as an outage and was the security gate working
+exactly as designed. That is the worst kind of defect: two correct behaviours
+producing an impossible state, with the error message pointing at neither.
+
+Three fixes. `/v1/auth/login` sends the code through the ordinary notification
+pipeline in production, so it is recorded, rendered and branded like every other
+notice rather than becoming a second private mail path — email only, because the
+catalogue also lists SMS and there is no SMS carrier in this build. The console
+has a real two-step credential form, and the identity picker is now offered only
+where the platform actually provides it: a refusal renders nothing rather than an
+error, because on a real deployment that refusal is the expected answer.
+`signInWithCredentials` establishes the session from the tenancy's own projects
+rather than from `/v1/console/identities`, which is production-gated — the demo
+path could not have established a session on a real deployment even holding a
+valid token. A tenancy with no projects opens on the enterprise view, which is
+where a project is created; that is a new account, not a broken one.
+
+`backend/tests/signin.test.ts` runs in production mode against a fake SMTP
+server and asserts the whole path: the code withheld from the response, sent to
+the person, a token minted from it, that token authorising a real request, a
+guessed code refused, and both demonstration routes still shut.
+
+Also: the console wordmark rendered as "CONSTRU X". The flex container's
+`gap: 11px` was applying *between* the text node and the `<span>` holding the
+orange X, because they are two flex items — so the brand name had a gap in it
+and could wrap mid-word. Wrapped in a single span.
+
 **The SEO foundations, which were absent rather than weak.** Reported as "SEO
 scores is not working". There is no SEO score in this platform and never was —
 nothing named that exists anywhere in the codebase. What did turn up, on

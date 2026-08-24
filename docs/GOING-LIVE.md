@@ -643,9 +643,14 @@ OUT=/srv/construx/backups/$STAMP
 mkdir -p "$OUT"
 docker exec construx sh -c 'cat /data/ledger.jsonl'     > "$OUT/ledger.jsonl"
 docker exec construx sh -c 'cat /data/ledger.jsonl.acu' > "$OUT/acu.jsonl"
-docker exec construx tar -C /data -cf - evidence        > "$OUT/evidence.tar"
+# `mkdir -p` first, because the evidence directory is created lazily on the
+# first upload. On a fresh deployment it does not exist yet, and `tar` exits
+# non-zero on a missing directory — which `set -e` turns into a backup script
+# that fails every hour until somebody uploads a photograph.
+docker exec construx sh -c 'mkdir -p /data/evidence && tar -C /data -cf - evidence' > "$OUT/evidence.tar"
 SH
 chmod +x /srv/construx/backup.sh
+/srv/construx/backup.sh          # run it once by hand before trusting the cron
 crontab -e   # 0 * * * * /srv/construx/backup.sh
 ```
 

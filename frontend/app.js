@@ -194,6 +194,50 @@ document.addEventListener('click', (event) => {
 
 // --- session ----------------------------------------------------------------
 
+/**
+ * Sign in with a real credential: verify the MFA code and establish the session.
+ *
+ * Separate from `signIn` below for one reason that matters — it does not touch
+ * `/v1/console/identities`. That route seeds and returns the demonstration
+ * project and is refused in production, so the demo path could not establish a
+ * session on a real deployment even holding a perfectly valid token. Context
+ * here comes from what the tenancy actually has: its own projects, or none.
+ *
+ * A brand new tenancy has no projects, and that is a normal state rather than a
+ * failure. The console opens on the enterprise view, which is where a project
+ * gets created.
+ */
+export async function signInWithCredentials({ actorId, challengeId, code }) {
+  const verified = await api.post('/v1/auth/mfa/verify', { actorId, challengeId, code }, { anonymous: true });
+
+  session.set({
+    accessToken: verified.accessToken,
+    refreshToken: verified.refreshToken,
+    user: verified.user,
+  });
+  state.session = session.get();
+
+  // What this tenancy can see, asked with the token we just earned. Failure is
+  // not fatal: an account with no projects is a new account, not a broken one.
+  let projects = [];
+  try {
+    const listed = await api.get('/v1/projects');
+    projects = listed?.projects ?? listed?.items ?? (Array.isArray(listed) ? listed : []);
+  } catch {
+    projects = [];
+  }
+
+  const first = projects[0];
+  session.set({ ...session.get(), projectId: first?.id ?? first?.projectId ?? null });
+  state.session = session.get();
+  state.project = null;
+  state.gate = null;
+  state.wallet = null;
+  matrix = null;
+
+  navigate(isOperator() ? 'admin' : state.session.projectId ? 'overview' : 'enterprise');
+}
+
 export async function signIn(identity) {
   const challenge = await api.post('/v1/auth/login', { email: identity.email }, { anonymous: true });
   // Outside production the challenge code is returned so the demonstration does

@@ -349,15 +349,44 @@ export const ROUTES: Route[] = [
     public: true,
     description: 'Authenticate and receive an MFA challenge',
     schema: { type: 'object', required: ['email'], properties: { email: stringField }, additionalProperties: false },
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
       const { email } = body<{ email: string }>(ctx);
       const user = platform.userByEmail(email);
       if (!user) throw new NotFoundError('No user with that email address');
       const challenge = createMfaChallenge(user.id);
+
+      // In production the code has to reach the person, and until now it did
+      // not: it was generated, held in memory, returned to nobody, and the
+      // response deliberately withheld it. The effect was a deployment where
+      // every credential was correct and no human being could complete a
+      // sign-in — the demonstration identity picker was hiding it, because the
+      // demo path reads `devCode` straight out of this response.
+      //
+      // `mfa.otp_code` was already in the notification catalogue waiting for a
+      // caller. Sent through the same pipeline as every other notice, so it is
+      // recorded, rendered and branded like one rather than being a second
+      // private mail path.
+      if (isProduction()) {
+        await notifyEngine.notify(platform, {
+          code: 'mfa.otp_code',
+          recipients: [{ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }],
+          payload: {
+            detail: `Your verification code is ${challenge.code}. It expires in five minutes.`,
+          },
+          // Email only. The catalogue also lists SMS, and there is no SMS
+          // carrier in this build — routing to one would record a delivery
+          // that never happened.
+          channels: ['EMAIL'],
+          branding: platform.exports.branding(user.tenantId),
+          actorId: user.id,
+          correlationId: ctx.correlationId,
+        });
+      }
+
       return {
         ...shapeMfaResponse(challenge),
-        // The challenge code is returned only outside production, so the demo
-        // and local development do not need an SMS gateway.
+        // Returned only outside production, so local development and the
+        // demonstration do not need a mail server to sign in.
         ...(isProduction() ? {} : { devCode: challenge.code }),
         actorId: user.id,
       };
