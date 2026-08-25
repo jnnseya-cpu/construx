@@ -756,6 +756,21 @@ checked status, and that gate has been left as it was; and the storage limit
 `STORAGE_LIMIT_REACHED` with a 507. A duplicate check written before finding it
 was removed.
 
+**`docs/GO-LIVE.md` — nothing to taking payments, in order.** Where each key
+comes from in each provider's dashboard, how to get it onto the server without
+destroying what is already there, what every boot-log state means, and how to
+prove a rail works rather than assume it does.
+
+It exists because the deployment gap was not technical. Every commit passed CI
+and none of it was running: the commit that added autodeploy had itself never
+been deployed, so the deployer was never installed and the box sat eleven
+commits behind for a day. Nothing detected that, because CI answers "does this
+build" and nothing was answering "is this running".
+
+Every command in it uses absolute paths. The Hostinger web console resets to
+`/root` on reconnect, and instructions written as `cd` plus a relative path fail
+in a way that looks like the platform is broken.
+
 **`deploy/env-check.sh` — what a deployment's `.env` is missing.** Reports which
 variables are unset and what each absence costs, reads no values and changes
 nothing. Exit 1 when something critical is missing, so it can gate a deploy.
