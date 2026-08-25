@@ -6,9 +6,11 @@ import { SyncEngine } from './field/sync.ts';
 import { ACUWallet, type ACUCaps, type ACUEntry } from './billing/acu.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
 import { assignIdentity, packageForTier, revokeIdentity, TIERS, type Subscription, type SubscriptionTier } from './billing/subscription.ts';
+import { standing } from './billing/entitlement.ts';
 import { PACKAGES, UNCHARGED_ROLES, type PackageTier } from './billing/seats.ts';
 import { config } from './config.ts';
 import { DomainError, ForbiddenError, NotFoundError } from './core/errors.ts';
+import { hashEvidence } from './core/canonical.ts';
 import { ulid } from './core/ids.ts';
 import type { EngineContext } from './engines/context.ts';
 import { GoldenThreadLedger } from './goldenthread/ledger.ts';
@@ -109,34 +111,23 @@ export class Platform {
     // The exporter asks whether a tenant may take a document out; the platform
     // is what knows. A tenant with no subscription on record is refused rather
     // than allowed — the failure of a lookup should not open the gate.
+    // Delegated to `billing/entitlement.ts`, which is now the single answer to
+    // "what may this tenancy do". This gate used to be the only one that read
+    // `subscription.status` at all — writes, AI execution and top-ups read
+    // none of it — so the same tenancy could be refused an export and still
+    // append to the ledger, run engines and buy credit. One function, asked the
+    // same way by every gate, is what stops that happening again.
+    //
+    // The exemptions it applies are the ones this gate established: the
+    // platform operator is not a customer and has no package to be limited by,
+    // and a regulator's access is one the asset owner is obliged to provide —
+    // refusing it because the contractor has not paid would be this platform
+    // enforcing a commercial term against a statutory right.
     this.exports = new ExportService(this.ledger, (tenantId, roles) => {
-      // Two exemptions, and the second is the one that matters.
-      //
-      // The platform operator is not a customer and has no package to be
-      // limited by. And a **regulator's** export is an access the asset owner
-      // is obliged to provide — refusing it because the contractor has not paid
-      // would be this platform enforcing a commercial term against a statutory
-      // right, which is not a trade-off it gets to make.
-      if (roles?.some((role) => (UNCHARGED_ROLES as readonly string[]).includes(role))) return { permitted: true };
-
-      const subscription = this.#subscriptions.get(tenantId);
-      if (!subscription) {
-        return { permitted: false, reason: 'No subscription is recorded for this tenancy' };
-      }
-      const definition = PACKAGES[subscription.package];
-      if (!definition.export) {
-        return {
-          permitted: false,
-          reason:
-            `The ${definition.label} package does not include exporting or printing. ` +
-            'Everything else is available — the platform governs, records and computes on a trial; ' +
-            'what it does not do is let a document leave.',
-        };
-      }
-      if (subscription.status !== 'ACTIVE') {
-        return { permitted: false, reason: `This subscription is ${subscription.status.toLowerCase()}` };
-      }
-      return { permitted: true };
+      const position = standing(this.#subscriptions.get(tenantId), roles);
+      return position.mayExport
+        ? { permitted: true }
+        : { permitted: false, ...(position.reason ? { reason: position.reason } : {}) };
     });
   }
 
@@ -701,6 +692,87 @@ export class Platform {
     });
   }
 
+  /**
+   * Suspend, cancel or reactivate a tenancy's subscription.
+   *
+   * The mechanism the entitlement gates need in order not to be theatre.
+   * Nothing could change `Subscription.status` before this existed: the field
+   * was declared with three values, one function read it, and no code path set
+   * it to either of the two that mean "stopped paying". So a customer who
+   * cancelled kept writing, kept running engines and kept buying credit.
+   *
+   * Operator-only, and it stays that way when a payment provider is wired: the
+   * provider's webhook calls this, rather than reaching into the map itself, so
+   * a dunning failure and an operator's decision leave the same record.
+   *
+   * The reason is required and is recorded as evidence, because this is the
+   * event that turns off a paying customer's platform, and "who decided, when,
+   * and on what basis" is the first question asked when it turns out to have
+   * been wrong.
+   */
+  setSubscriptionStatus(input: {
+    tenantId: string;
+    status: Subscription['status'];
+    reason: string;
+    /** The operator or system that decided. `billing` for a provider webhook. */
+    decidedBy: string;
+  }): Subscription {
+    if (!input.reason.trim()) {
+      throw new DomainError('SUBSCRIPTION_REASON_REQUIRED', 'Changing a subscription status requires a reason');
+    }
+
+    const subscription = this.subscription(input.tenantId);
+    if (subscription.status === input.status) return subscription;
+
+    const updated: Subscription = { ...subscription, status: input.status };
+    this.#subscriptions.set(input.tenantId, updated);
+
+    const evidenceId = ulid();
+    const projectId = `${input.tenantId}-governance`;
+    const decidedAt = new Date().toISOString();
+
+    this.ledger.commit({
+      tenantId: input.tenantId,
+      projectId,
+      actor: { refType: 'System', refId: 'billing' },
+      source: 'SYSTEM',
+      correlationId: ulid(),
+      eventType: 'EVIDENCE_REGISTERED',
+      entity: { refType: 'EvidenceItem', refId: evidenceId },
+      nextState: {
+        id: evidenceId,
+        type: 'SUBSCRIPTION_STATUS_AUTHORITY',
+        hash: hashEvidence(
+          JSON.stringify({ tenantId: input.tenantId, from: subscription.status, to: input.status, decidedAt }),
+        ),
+        description: `Subscription ${subscription.status} → ${input.status}: ${input.reason}`,
+        linkedEntities: [],
+        capturedAt: decidedAt,
+        capturedBy: input.decidedBy,
+      },
+    });
+
+    this.ledger.commit({
+      tenantId: input.tenantId,
+      projectId,
+      actor: { refType: 'System', refId: 'billing' },
+      source: 'SYSTEM',
+      correlationId: ulid(),
+      eventType: 'SUBSCRIPTION_STATUS_CHANGED',
+      entity: { refType: 'Subscription', refId: updated.id },
+      nextState: {
+        ...updated,
+        previousStatus: subscription.status,
+        statusChangedAt: decidedAt,
+        statusChangedBy: input.decidedBy,
+        statusReason: input.reason,
+      },
+      evidenceRefs: [{ refType: 'EvidenceItem', refId: evidenceId }],
+    });
+
+    return updated;
+  }
+
   // --- Accessors -------------------------------------------------------------
 
   tenant(tenantId: string): Tenant {
@@ -820,6 +892,23 @@ export class Platform {
   // --- Billing ---------------------------------------------------------------
 
   topUp(tenantId: string, amountMinor: number): void {
+    // Credit is refused on a subscription that is not active, and the reason is
+    // not tidiness. Taking somebody's money for AI on a platform they may not
+    // use is worse than the loophole it closes: the credit is unspendable —
+    // `runAI` refuses it — so the transaction is a charge for nothing.
+    //
+    // No role exemption here. The uncharged roles do not buy credit; the
+    // operator tops a customer's wallet up through the same path, and doing so
+    // for a suspended tenancy would be the same mistake made on their behalf.
+    const position = standing(this.#subscriptions.get(tenantId), []);
+    if (!position.mayTopUp) {
+      throw new DomainError(
+        'SUBSCRIPTION_NOT_ACTIVE',
+        `${position.reason ?? 'This subscription is not active'} Credit cannot be purchased until it is.`,
+        402,
+      );
+    }
+
     const wallet = this.wallet(tenantId);
     wallet.topUp(amountMinor);
 
@@ -939,6 +1028,13 @@ export class Platform {
       correlationId: options.correlationId ?? ulid(),
       tenantId: auth.tenantId,
       projectId,
+      // Resolved once, here, rather than at each write. `#subscriptions.get`
+      // rather than `subscription()`: an absent subscription is a state the
+      // entitlement rules answer for — fail-closed, with the operator exempt so
+      // there is still a way to repair it — and throwing here would make an
+      // unprovisioned tenancy a 404 on every route instead of a 402 on the ones
+      // that change something.
+      standing: standing(this.#subscriptions.get(auth.tenantId), auth.roles),
     };
   }
 

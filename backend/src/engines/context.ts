@@ -10,6 +10,7 @@ import type { GoldenThreadLedger, CommitInput } from '../goldenthread/ledger.ts'
 import type { EntityRef, EventSource, GoldenThreadEvent } from '../goldenthread/types.ts';
 import { ulid } from '../core/ids.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
+import type { TenancyStanding } from '../billing/entitlement.ts';
 
 /**
  * Shared execution context for every engine.
@@ -29,7 +30,36 @@ export type EngineContext = {
   correlationId: string;
   tenantId: string;
   projectId: string;
+  /**
+   * What this tenancy may do, resolved once when the context is built.
+   *
+   * Carried on the context rather than looked up at each write because it is a
+   * property of the request, not of the call site: a subscription cancelled
+   * halfway through a command should not make the first half of that command
+   * succeed and the second half fail.
+   */
+  standing: TenancyStanding;
 };
+
+/**
+ * Refuse a state change from a tenancy that is not entitled to make one.
+ *
+ * Enforced here rather than route by route because this module is the choke
+ * point every state change passes through, and an entitlement gate with a way
+ * around it is decoration. See `billing/entitlement.ts` for what it enforces
+ * and why.
+ */
+function assertMayWrite(ctx: EngineContext): void {
+  if (ctx.standing.mayWrite) return;
+  throw new DomainError(
+    'SUBSCRIPTION_NOT_ACTIVE',
+    ctx.standing.reason ?? 'This subscription does not permit changes',
+    // 402, not 403. This is not "you are not allowed"; it is "this account owes
+    // money", and a client that cannot tell the two apart will send somebody to
+    // the wrong support queue.
+    402,
+  );
+}
 
 /** The switches every access decision is evaluated under, wherever it is made. */
 export const AUTHZ_OPTIONS = {
@@ -67,6 +97,8 @@ export function write(
   input: Omit<CommitInput, 'tenantId' | 'projectId' | 'actor' | 'source' | 'correlationId'> &
     Partial<Pick<CommitInput, 'actor' | 'projectId'>>,
 ): { event: GoldenThreadEvent; state: Record<string, unknown> } {
+  assertMayWrite(ctx);
+
   // The spread comes first and the defaults after. The other way round, a
   // caller passing `actor: undefined` — which is what an optional field looks
   // like when it is absent — overwrote the default and committed an event with
@@ -123,6 +155,19 @@ export type AITaskResult = {
  * Golden Thread.
  */
 export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITaskResult> {
+  // Before authorisation, before the phase check, and long before anything is
+  // reserved: a wallet full of credit does not entitle anybody to run engines
+  // on a platform they have stopped paying for. ACU credit buys AI; it does not
+  // buy the platform. Checking the balance alone was the whole loophole — a
+  // customer could cancel, keep topping up, and carry on.
+  if (!ctx.standing.mayRunAI) {
+    throw new DomainError(
+      'SUBSCRIPTION_NOT_ACTIVE',
+      ctx.standing.reason ?? 'This subscription does not permit AI execution',
+      402,
+    );
+  }
+
   const phase = currentPhase(ctx);
   authorise(ctx, 'AI_EXECUTION', 'X', { lifecyclePhase: phase });
 
@@ -253,6 +298,12 @@ export function registerEvidence(
   ctx: EngineContext,
   input: { type: string; hash: string; uri?: string; description: string; linkedEntities?: EntityRef[] },
 ): EntityRef {
+  // Gated too, not only `write`. Evidence is registered *before* the event that
+  // needs it, so leaving this open would let a read-only tenancy append evidence
+  // records that no event ever references — writes that failed, littering an
+  // append-only ledger that cannot be tidied.
+  assertMayWrite(ctx);
+
   const refId = ulid();
   const ref: EntityRef = { refType: 'EvidenceItem', refId };
   ctx.ledger.commit({

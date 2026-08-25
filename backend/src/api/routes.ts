@@ -503,6 +503,50 @@ export const ROUTES: Route[] = [
     },
   },
   {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:tenantId/subscription-status',
+    description: 'Suspend, cancel or reactivate a tenancy (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['status', 'reason'],
+      properties: {
+        status: { type: 'string', enum: ['ACTIVE', 'SUSPENDED', 'CANCELLED'] },
+        // Required, and recorded as evidence. This is the switch that turns off
+        // a paying customer's platform; a record of it with no stated reason is
+        // useless the day somebody asks why it happened.
+        reason: { type: 'string', minLength: 3 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      // Operator-only, and it stays that way when a payment provider is wired:
+      // the provider's webhook comes through here rather than reaching into
+      // platform state, so a dunning failure and an operator's decision leave
+      // the same record.
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may change a subscription status', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const input = body<{ status: 'ACTIVE' | 'SUSPENDED' | 'CANCELLED'; reason: string }>(ctx);
+      const updated = platform.setSubscriptionStatus({
+        tenantId: ctx.params.tenantId!,
+        status: input.status,
+        reason: input.reason,
+        decidedBy: actor.actorId,
+      });
+      return {
+        tenantId: updated.tenantId,
+        status: updated.status,
+        // Stated back rather than left implied: an operator suspending a
+        // tenancy should see exactly what they have just switched off.
+        effect:
+          updated.status === 'ACTIVE'
+            ? 'Writes, AI execution, top-ups and export are permitted.'
+            : 'The record is read-only. No writes, no AI execution, no top-ups and no export until reactivated.',
+      };
+    },
+  },
+  {
     method: 'GET',
     pattern: '/v1/admin/tenants',
     description: 'Tenancy, seats and prepaid balance across the estate (platform operator only)',

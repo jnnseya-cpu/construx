@@ -103,6 +103,13 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('IDENTITY_SEAT_ASSIGNED', 'Subscription', 'UPDATE', 'GOVERNANCE'),
   def('IDENTITY_SEAT_REVOKED', 'Subscription', 'UPDATE', 'GOVERNANCE'),
   def('SUBSCRIPTION_ACTIVATED', 'Subscription', 'CREATE', 'GOVERNANCE'),
+  // Suspension and reactivation. Until this existed, `Subscription.status`
+  // could be read but never changed: nothing anywhere set SUSPENDED or
+  // CANCELLED, so a customer who stopped paying kept every entitlement they
+  // had. Evidence is required because this is the event that turns off a
+  // paying customer's platform, and "who decided, when, and on what basis"
+  // is the first question asked when it turns out to have been wrong.
+  def('SUBSCRIPTION_STATUS_CHANGED', 'Subscription', 'UPDATE', 'GOVERNANCE', { requiresEvidence: true }),
   def('POLICY_UPDATED', 'PermissionPolicy', 'UPDATE', 'GOVERNANCE'),
   def('ACU_CAPS_SET', 'ACUWallet', 'UPDATE', 'GOVERNANCE'),
   // Capacity bought is a commercial fact with money behind it, so it belongs on

@@ -521,6 +521,65 @@ That run found one more defect: **HEAD returned 404 on every path**, including
 and a platform whose health probe defaults to it would have read a healthy
 service as a permanent outage. HEAD now routes as GET.
 
+**What a tenancy may do when it stops paying.** `Subscription.status` carried
+`ACTIVE | SUSPENDED | CANCELLED` and exactly one function read it —
+`monthlySubscriptionCharge`, which returns zero when it is not ACTIVE. Every
+other gate read `subscription.package`, which does not change when a
+subscription ends. And nothing anywhere could *set* the status to either of the
+two values meaning "stopped paying".
+
+So a customer could stop paying and carry on: appending to the ledger, running
+engines against a topped-up wallet, and buying more credit. Only the export gate
+checked status, which made it worse rather than better — the same tenancy could
+be refused a document and still write to the record it came from. Meanwhile the
+platform kept carrying their storage and a thirty-year retention obligation.
+That is not lost revenue; it is an unbounded permanent liability acquired at the
+moment somebody stops paying.
+
+`backend/src/billing/entitlement.ts` is now the single answer to what a tenancy
+may do, and the principle it enforces is: **ACU credit buys AI. It does not buy
+the platform.** Separate purchases, separately gated. Three gates on `status`,
+all of them where the act happens rather than route by route:
+
+- **No writes.** `write` and `registerEvidence` in `engines/context.ts` — the
+  choke point every state change passes through. Evidence is gated as well as
+  the event, because it is registered *first*, and leaving it open would let a
+  read-only tenancy append evidence records no event ever references.
+- **No AI, whatever the wallet holds.** Checked at the top of `runAI`, before
+  authorisation and long before anything is reserved. Refusing after the
+  reservation would still put a hold on a customer's credit for work that never
+  ran.
+- **No top-ups.** Taking the money would be worse than the loophole: the credit
+  is unspendable, so the transaction is a charge for nothing.
+
+Answered **402**, not 403. This is not "you are not allowed", it is "this
+account owes money", and a client that cannot tell the two apart sends somebody
+to the wrong support queue.
+
+`platform.setSubscriptionStatus` is the mechanism, operator-only, with a
+required reason recorded as evidence — this is the switch that turns off a
+paying customer's platform, and "who decided, when, on what basis" is the first
+question asked when it turns out to have been wrong. When a payment provider is
+wired its webhook calls this rather than reaching into platform state, so a
+dunning failure and an operator's decision leave the same record.
+
+What deliberately keeps working: reads, so a billing failure does not hide the
+evidence somebody needs to resolve it; a regulator's access, because refusing it
+over a contractor's invoice would be this platform enforcing a commercial term
+against a statutory right; and erasure, because a data-subject right cannot be
+made billable. Each is pinned by its own test.
+
+Two things found while building it. The platform operator **cannot hold an
+engine context at all** — `platform.context` needs a wallet and the operator
+tenancy has none — so operators cannot write to a customer's ledger through the
+engines regardless of subscription. That is a stronger separation than assumed
+and is now asserted. And export stays refused on a stopped subscription, matching
+what the gate already did: there is a real tension with the portability right,
+but an export is a branded client-facing document rather than a data dump, so
+leaving it open would let somebody cancel and keep producing deliverables for
+ever. Resolving it properly means separating "take my records" from "generate a
+report", which does not exist yet.
+
 **Public registration, and every account type.** `POST /v1/signup` is the only
 endpoint where an unauthenticated stranger creates state, so it is written on
 the assumption the caller is hostile until an address is proved.
