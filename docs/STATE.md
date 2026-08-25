@@ -756,6 +756,25 @@ checked status, and that gate has been left as it was; and the storage limit
 `STORAGE_LIMIT_REACHED` with a 507. A duplicate check written before finding it
 was removed.
 
+**`deploy/env-check.sh` — what a deployment's `.env` is missing.** Reports which
+variables are unset and what each absence costs, reads no values and changes
+nothing. Exit 1 when something critical is missing, so it can gate a deploy.
+
+It exists because the instruction it replaces was dangerous. `.env` on a running
+deployment already holds secrets that cannot be regenerated without consequence:
+`GATEWAY_JWT_SECRET` signs every live session, and `SIGNING_PRIVATE_KEY_PEM` is
+the key every signature the platform has ever witnessed was made with — replace
+it and they all stop verifying, silently, with nothing raised anywhere.
+Overwriting the file to add a payment key is a data-loss event wearing the
+clothes of a configuration change, so the tool reports what to *append*.
+
+`KEY=` present but blank counts as missing, which is the state a half-finished
+edit actually leaves behind. It also catches the two half-configured pairs the
+boot warnings cover — a payment secret key with no webhook secret, meaning money
+taken and never credited — and a non-local `AI_MODE` with no provider key at
+all, which the boot warnings do not cover because they check each key
+independently.
+
 **A third AI vendor, and two things that were wrong with the gateway.** The
 platform was described as a gateway with failover across OpenAI, Gemini and
 Claude. It had two of those, and the failover was not what it looked like.
