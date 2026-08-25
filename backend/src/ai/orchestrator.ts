@@ -5,7 +5,7 @@ import { ulid } from '../core/ids.ts';
 import type { ACUWallet, CapBreach } from '../billing/acu.ts';
 import type { AIProvider, EntityRef } from '../goldenthread/types.ts';
 import { mockPerception, mockReasoning } from './providers/mock.ts';
-import { remotePerception, remoteReasoning } from './providers/remote.ts';
+import { remotePerception, remoteReasoning, spareAdapters } from './providers/remote.ts';
 import type { AIProviderAdapter, ProviderCapability, ProviderRequest, ProviderResponse } from './providers/types.ts';
 
 /**
@@ -297,10 +297,20 @@ export class AIOrchestrator {
   #reasoning: AIProviderAdapter;
   #perception: AIProviderAdapter;
 
+  /**
+   * Providers beyond the two primaries, available when both are failing.
+   *
+   * Empty in local mode and empty when the overrides are supplied, so a test
+   * that hands in two adapters gets exactly those two and nothing reaches the
+   * network behind its back.
+   */
+  readonly #spares: AIProviderAdapter[];
+
   constructor(overrides: { reasoning?: AIProviderAdapter; perception?: AIProviderAdapter } = {}) {
     const live = config.ai.mode !== 'local';
     this.#reasoning = overrides.reasoning ?? (live ? remoteReasoning : mockReasoning);
     this.#perception = overrides.perception ?? (live ? remotePerception : mockPerception);
+    this.#spares = live && !overrides.reasoning && !overrides.perception ? spareAdapters('REASONING') : [];
   }
 
   adapterFor(capability: ProviderCapability): AIProviderAdapter {
@@ -310,6 +320,18 @@ export class AIOrchestrator {
     // Failover: a perception outage should degrade the platform, not stop it.
     const fallback = capability === 'PERCEPTION' ? this.#reasoning : this.#perception;
     if (fallback.healthy()) return fallback;
+
+    // A third vendor, if one is configured. With only the two primaries this
+    // chain is vendor-diverse by accident — it works because reasoning and
+    // perception happen to sit on different companies, and stops working the
+    // moment somebody points both at the same one. A provider that holds a key
+    // is somewhere to go regardless of which capability it was meant for:
+    // degraded output beats no output, and the ledger records which vendor
+    // actually served it either way.
+    const spare = this.#spares.find(
+      (adapter) => adapter.name !== primary.name && adapter.name !== fallback.name && adapter.healthy(),
+    );
+    if (spare) return spare;
 
     throw new DomainError('AI_UNAVAILABLE', 'No healthy AI provider is available for this capability', 503);
   }

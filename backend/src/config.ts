@@ -144,6 +144,7 @@ export const config = {
     perceptionProvider: str('AI_PERCEPTION_PROVIDER', 'GEMINI'),
     openaiKey: str('OPENAI_API_KEY', ''),
     geminiKey: str('GEMINI_API_KEY', ''),
+    anthropicKey: str('ANTHROPIC_API_KEY', ''),
     /**
      * The largest file that may be sent to a provider in one perception
      * request. Smaller than the evidence store's own ceiling on purpose: the
@@ -479,6 +480,17 @@ export function assertProductionSafety(): string[] {
       warnings.push(`AI_MODE is "${config.ai.mode}" in a production environment`);
     }
     if (!config.auth.required) warnings.push('GATEWAY_REQUIRE_AUTH is disabled in production');
+    // A mistyped provider name silently falls back to the default. Said out
+    // loud, because the deployment believes it is calling somebody else — and
+    // the ledger will record the vendor that actually served each request.
+    for (const [key, value] of [
+      ['AI_REASONING_PROVIDER', config.ai.reasoningProvider],
+      ['AI_PERCEPTION_PROVIDER', config.ai.perceptionProvider],
+    ] as const) {
+      if (!['OPENAI', 'GEMINI', 'ANTHROPIC'].includes(value)) {
+        warnings.push(`${key} is "${value}", which is not a provider this platform can call — the default is being used instead`);
+      }
+    }
     if (config.rateLimit.redisUrl === '') {
       warnings.push(
         'GATEWAY_RATE_LIMIT_REDIS_URL is unset — rate limits are per-process, so N replicas enforce N times the configured limit',

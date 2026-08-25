@@ -756,6 +756,50 @@ checked status, and that gate has been left as it was; and the storage limit
 `STORAGE_LIMIT_REACHED` with a 507. A duplicate check written before finding it
 was removed.
 
+**A third AI vendor, and two things that were wrong with the gateway.** The
+platform was described as a gateway with failover across OpenAI, Gemini and
+Claude. It had two of those, and the failover was not what it looked like.
+
+**Claude was never built.** `AIProvider` was `'OPENAI' | 'GEMINI'` — a closed
+vocabulary in `goldenthread/types.ts`, which every AI spend event records
+against. There was no Anthropic endpoint, key or adapter. `.env.example` was
+accurate to the code; the description was not.
+
+**A third provider would have been Gemini wearing another name.**
+`RemoteProviderAdapter` resolved both its endpoint and its key with a pair of
+ternaries — `name === 'OPENAI' ? OPENAI : GEMINI` — so *any* name that was not
+OPENAI got Gemini's URL and Gemini's key. Adding `'ANTHROPIC'` without noticing
+would have sent that traffic to Google, authenticated as us, and written
+"ANTHROPIC" into an append-only ledger against every pound of it. Replaced with
+a provider table, so a fourth vendor is an entry rather than an edit to a
+conditional that is already wrong at three.
+
+**The provider-selection settings did nothing.** `AI_REASONING_PROVIDER` and
+`AI_PERCEPTION_PROVIDER` were read into `config` and used by no code anywhere;
+the adapters were constructed from hard-coded names. Setting either changed
+nothing while `.env.example` presented both as a supported choice — a knob that
+does nothing is worse than no knob. They now select, an unrecognised name falls
+back to the default rather than resolving to whatever a conditional reached,
+and `assertProductionSafety` warns when one is set to a name that is not a
+provider.
+
+**The failover was vendor-diverse by accident.** `adapterFor` fell back across
+*capabilities*, not vendors: if reasoning was unhealthy the perception adapter
+took the work. That gives vendor redundancy only because the two capabilities
+happen to sit on different companies, and it silently stops giving any the
+moment both are pointed at the same one. Any provider holding a key now joins
+the chain as a third option, so the redundancy is deliberate rather than
+incidental. A test pins that injected adapters stay isolated — otherwise a
+suite exercising the exhausted-provider path would quietly reach a real vendor
+whenever the environment happened to hold a key.
+
+Anthropic is wired to the Messages API, which differs from the other two in
+ways that matter: `max_tokens` is required, media is an `image` content block,
+and a response can carry several blocks of which only the text one is the
+engine's answer. `backend/tests/providers.test.ts` pins each provider to its own
+endpoint and its own credential — the assertion that would have caught the
+ternary.
+
 **KODA, as a second payment rail.** Mobile money beside the card, wired to the
 same shape as Stripe on purpose: a JSON call out to create an intent, a signed
 webhook back, and `Platform.creditFromPayment` as the single door into the

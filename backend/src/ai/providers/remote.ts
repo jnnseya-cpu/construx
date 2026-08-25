@@ -145,6 +145,91 @@ const GEMINI_ENDPOINT: Endpoint = {
   },
 };
 
+
+/**
+ * Anthropic's Messages API.
+ *
+ * The third vendor, and the reason the failover below is worth having: with two
+ * providers, a fallback is only vendor-diverse by accident of the two
+ * capabilities sitting on different companies. With three, a provider can be
+ * taken out of rotation and the platform still has somewhere to go.
+ */
+const ANTHROPIC_ENDPOINT: Endpoint = {
+  url: 'https://api.anthropic.com/v1/messages',
+  headers: (key) => ({
+    'x-api-key': key,
+    // Pinned for the same reason Stripe's is: a version rolled out on their
+    // side cannot reshape what `extract` below is parsing.
+    'anthropic-version': '2023-06-01',
+    'Content-Type': 'application/json',
+  }),
+  body: (request, modelClass) => ({
+    model: modelClass === 'reasoning-deep' ? 'claude-opus-5' : 'claude-sonnet-5',
+    // Required by this API, unlike the other two. Sized for a structured
+    // engine response rather than prose; a schema-shaped answer that needs
+    // more than this is a sign the engine is asking the wrong question.
+    max_tokens: 8_192,
+    system:
+      'You are a construction domain analysis engine. Respond only with JSON matching the supplied schema. ' +
+      'Never invent quantities, dates or costs that are not derivable from the supplied payload.',
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: JSON.stringify({ task: request.task, payload: request.payload }) },
+          // Native inline media, as with Gemini. Base64 in a text block would
+          // be the same bytes charged at text rates and looked at by nothing.
+          ...(request.media
+            ? [
+                {
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: request.media.contentType,
+                    data: request.media.base64,
+                  },
+                },
+              ]
+            : []),
+        ],
+      },
+    ],
+  }),
+  extract: (response) => {
+    const body = response as {
+      content?: Array<{ type?: string; text?: string }>;
+      usage?: { input_tokens?: number; output_tokens?: number };
+    };
+    return {
+      // The first text block. A response can carry more than one block, and
+      // anything that is not text is not the engine's answer.
+      text: body.content?.find((block) => block.type === 'text')?.text ?? '',
+      inputTokens: body.usage?.input_tokens ?? 0,
+      outputTokens: body.usage?.output_tokens ?? 0,
+    };
+  },
+};
+
+/**
+ * Every provider, and the key each one authenticates with.
+ *
+ * One table rather than a chain of ternaries: adding a fourth vendor should be
+ * an entry here, not an edit to a conditional that already gets the wrong
+ * answer when it grows a third branch.
+ */
+const PROVIDERS: Record<AIProvider, { endpoint: Endpoint; key: () => string }> = {
+  OPENAI: { endpoint: OPENAI_ENDPOINT, key: () => config.ai.openaiKey },
+  GEMINI: { endpoint: GEMINI_ENDPOINT, key: () => config.ai.geminiKey },
+  ANTHROPIC: { endpoint: ANTHROPIC_ENDPOINT, key: () => config.ai.anthropicKey },
+};
+
+/** Whether a configured string names a provider the platform can actually call. */
+export function isProvider(value: string): value is AIProvider {
+  return value in PROVIDERS;
+}
+
+export const PROVIDER_NAMES = Object.keys(PROVIDERS) as AIProvider[];
+
 export class RemoteProviderAdapter implements AIProviderAdapter {
   readonly name: AIProvider;
   readonly capability: ProviderCapability;
@@ -157,8 +242,14 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
   constructor(name: AIProvider, capability: ProviderCapability) {
     this.name = name;
     this.capability = capability;
-    this.#endpoint = name === 'OPENAI' ? OPENAI_ENDPOINT : GEMINI_ENDPOINT;
-    this.#apiKey = name === 'OPENAI' ? config.ai.openaiKey : config.ai.geminiKey;
+    // Looked up rather than branched on. The pair of ternaries this replaces
+    // resolved every name that was not OPENAI to Gemini's endpoint *and*
+    // Gemini's key — so a third provider would have silently been Gemini
+    // wearing another name, and the ledger would have recorded the wrong
+    // vendor against every pound of that spend.
+    const provider = PROVIDERS[name];
+    this.#endpoint = provider.endpoint;
+    this.#apiKey = provider.key();
   }
 
   /** Three consecutive failures takes the adapter out of rotation for failover. */
@@ -243,7 +334,38 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
  * had silently become a text part would look identical from the outside and cost
  * the same, while the model saw no drawing at all.
  */
-export const ENDPOINTS = { OPENAI: OPENAI_ENDPOINT, GEMINI: GEMINI_ENDPOINT };
+export const ENDPOINTS = { OPENAI: OPENAI_ENDPOINT, GEMINI: GEMINI_ENDPOINT, ANTHROPIC: ANTHROPIC_ENDPOINT };
 
-export const remoteReasoning = new RemoteProviderAdapter('OPENAI', 'REASONING');
-export const remotePerception = new RemoteProviderAdapter('GEMINI', 'PERCEPTION');
+/**
+ * Resolve a configured provider name, falling back to a default it announces.
+ *
+ * `AI_REASONING_PROVIDER` and `AI_PERCEPTION_PROVIDER` were read into config
+ * and never used by anything — the adapters below were constructed from
+ * hard-coded names, so setting either variable changed nothing at all. A knob
+ * that does nothing is worse than no knob: it reads as a supported choice.
+ */
+function configured(value: string, fallback: AIProvider): AIProvider {
+  return isProvider(value) ? value : fallback;
+}
+
+export const remoteReasoning = new RemoteProviderAdapter(
+  configured(config.ai.reasoningProvider, 'OPENAI'),
+  'REASONING',
+);
+export const remotePerception = new RemoteProviderAdapter(
+  configured(config.ai.perceptionProvider, 'GEMINI'),
+  'PERCEPTION',
+);
+
+/**
+ * Every provider that holds a key, as adapters available for failover.
+ *
+ * Built from the key table rather than from the two primaries, so a third
+ * vendor configured with nothing but a key is still somewhere to go when the
+ * other two are failing.
+ */
+export function spareAdapters(capability: ProviderCapability): AIProviderAdapter[] {
+  return PROVIDER_NAMES.filter((name) => PROVIDERS[name].key() !== '').map(
+    (name) => new RemoteProviderAdapter(name, capability),
+  );
+}

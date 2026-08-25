@@ -18,7 +18,14 @@ export type ActorRef = { refType: 'User' | 'System' | 'AI'; refId: string };
  */
 export type EventSource = 'WEB' | 'PWA' | 'ANDROID' | 'IOS' | 'SYSTEM' | 'AI';
 
-export type AIProvider = 'OPENAI' | 'GEMINI';
+/**
+ * The providers the platform will call.
+ *
+ * Additive only. Every AI spend event records the provider that served it, so a
+ * value removed here would orphan history that already names it — the journal
+ * is forward-compatible, not backward-compatible.
+ */
+export type AIProvider = 'OPENAI' | 'GEMINI' | 'ANTHROPIC';
 
 export type AIEventBlock = {
   aiRequestId: string;
