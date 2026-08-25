@@ -5573,6 +5573,14 @@ export const ROUTES: Route[] = [
       return {
         awaitingPayment: platform.topUpIntents(tenantId).filter((i) => i.status === 'AWAITING_PAYMENT'),
         receipts: platform.paymentReceipts(tenantId),
+        // How the card route is actually behaving, because a webhook secret can
+        // be present and wrong — and then customers pay, every delivery is
+        // refused, and nothing is credited. Rejections climbing while
+        // `accepted` stays at zero is that, and nothing else.
+        cardPayments: {
+          configured: stripe.stripeConfigured(),
+          webhook: stripe.webhookHealth(),
+        },
       };
     },
   },

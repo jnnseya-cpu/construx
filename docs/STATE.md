@@ -724,7 +724,27 @@ Four rules the implementation exists to enforce:
 
 Unset keys mean the checkout answers 503 and top-up requests are still recorded
 for the operator to settle by bank transfer. The platform works without Stripe;
-it simply cannot take a card. Exercised in `backend/tests/stripe.test.ts`
+it simply cannot take a card.
+
+**Making a wrong key visible.** One deployment mistake is silent and expensive:
+a webhook secret that is *set but wrong* — the signing secret of a different
+endpoint, or one copied before the endpoint was recreated. Every field is
+present and well-formed, so no boot-time check can catch it; checkout works,
+customers pay Stripe, every delivery fails verification, and nothing is ever
+credited. Only a delivery can reveal it, so `GET /v1/admin/payments` now carries
+`cardPayments.webhook`: accepted, rejected, and the code of the last rejection —
+never the signature, which is still a credential somebody attempted. Rejections
+climbing while accepted stays at zero has one likely cause. Boot warnings cover
+the halves that *are* detectable: a secret key with no webhook secret, a webhook
+secret with no key, and a `sk_test_` key on a production deployment.
+
+Found while testing that: **refusing an oversized upload poisoned the
+connection.** The body is rejected as it streams, so the unread remainder stayed
+in the socket and the client's next keep-alive request was parsed as a
+continuation of it — failing for no visible reason. The refusal now sets
+`Connection: close`, flagged at the one place a body is abandoned rather than
+inferred from request state, since `readableEnded` is false for every ordinary
+bodyless request and closing on those breaks everything. Exercised in `backend/tests/stripe.test.ts`
 (forged, wrong-secret, moved, malformed, stale and rotated signatures; test-mode
 in production; unpaid sessions; wrong currency; redelivery) and
 `backend/tests/moneyleaks2.test.ts` for the four above.

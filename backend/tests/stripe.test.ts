@@ -6,7 +6,13 @@ import { throwsCode } from './helpers.ts';
 import { createGateway } from '../src/api/gateway.ts';
 import { resetIdempotency } from '../src/api/middleware.ts';
 import { config } from '../src/config.ts';
-import { settledPayment, verifyWebhook, type StripeEvent } from '../src/billing/stripe.ts';
+import {
+  resetWebhookHealth,
+  settledPayment,
+  verifyWebhook,
+  webhookHealth,
+  type StripeEvent,
+} from '../src/billing/stripe.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -125,7 +131,10 @@ before(async () => {
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
 
-beforeEach(() => resetIdempotency());
+beforeEach(() => {
+  resetIdempotency();
+  resetWebhookHealth();
+});
 
 after(() => {
   server.close();
@@ -397,5 +406,61 @@ describe('the webhook route', () => {
     assert.equal(res.status, 400);
     const problem = (await res.json()) as { detail?: string };
     assert.match(String(problem.detail), /limit/i);
+  });
+});
+
+// ------------------------------------------------------ the deployment diagnostic
+
+describe('a webhook secret that is set but wrong', () => {
+  it('is visible as rejections with nothing accepted', async () => {
+    // The one deployment mistake that is silent and expensive: the signing
+    // secret of a different endpoint, or one copied before the endpoint was
+    // recreated. Every field is present and well-formed, so boot-time checks
+    // cannot catch it — customers pay Stripe, every delivery fails, nothing is
+    // credited, and each failure is a 400 in a log nobody is reading.
+    const body = JSON.stringify(checkoutEvent({ tenantId: seed.users.pm!.auth.tenantId }));
+    for (let i = 0; i < 3; i += 1) {
+      await postWebhook(body, sign(body, 'whsec_the_wrong_endpoints_secret'));
+    }
+
+    const health = webhookHealth();
+    assert.equal(health.accepted, 0);
+    assert.equal(health.rejected, 3);
+    assert.equal(health.lastRejection?.code, 'STRIPE_SIGNATURE_INVALID');
+  });
+
+  it('counts a delivery that verifies, so a working endpoint is distinguishable', async () => {
+    const body = JSON.stringify(
+      checkoutEvent({ id: 'evt_health_ok', tenantId: seed.users.pm!.auth.tenantId, paymentIntent: 'pi_health_ok' }),
+    );
+    await postWebhook(body, sign(body));
+
+    const health = webhookHealth();
+    assert.equal(health.accepted, 1);
+    assert.equal(health.rejected, 0);
+    assert.ok(health.lastAcceptedAt);
+  });
+
+  it('never puts the signature or the body into the tally', async () => {
+    // It is operational telemetry read by whoever holds the operator role. A
+    // rejected signature is still a credential someone attempted; recording it
+    // would put it somewhere it was never meant to be.
+    const body = JSON.stringify(checkoutEvent());
+    const header = sign(body, 'whsec_wrong');
+    await postWebhook(body, header);
+
+    const serialised = JSON.stringify(webhookHealth());
+    assert.ok(!serialised.includes(header.split('v1=')[1] ?? 'v1'), 'the signature reached the tally');
+    assert.ok(!serialised.includes('cs_test_1'), 'the event body reached the tally');
+  });
+
+  it('surfaces the tally to the operator and to nobody else', async () => {
+    const bad = JSON.stringify(checkoutEvent());
+    await postWebhook(bad, sign(bad, 'whsec_wrong'));
+
+    const denied = await fetch(`${base}/v1/admin/payments`, {
+      headers: { authorization: `Bearer ${tokenFor('admin')}` },
+    });
+    assert.equal(denied.status, 403, 'an enterprise admin read the operator payment record');
   });
 });

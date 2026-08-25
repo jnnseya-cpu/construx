@@ -31,9 +31,11 @@ import { BILLING_CURRENCY } from './payments.ts';
  * test key — which is to say anybody, they are free — could drive real credit
  * onto a real account with fake payments.
  *
- * **A replayed event credits once.** Stripe retries for days on any non-2xx,
- * and delivers at-least-once by design. The event's own id becomes the payment
- * reference, and `Platform.creditFromPayment` spends a reference exactly once.
+ * **A payment credits once, however many times we hear about it.** Stripe
+ * retries for days on any non-2xx and delivers at-least-once by design, and one
+ * Checkout sale raises more than one event with a different id on each. So the
+ * reference is the *payment intent* rather than the event, and
+ * `Platform.creditFromPayment` spends a reference exactly once.
  */
 
 const STRIPE_API = 'https://api.stripe.com/v1';
@@ -43,6 +45,61 @@ const SIGNATURE_TOLERANCE_SECONDS = 300;
 
 export function stripeConfigured(): boolean {
   return config.stripe.secretKey !== '' && config.stripe.webhookSecret !== '';
+}
+
+// ------------------------------------------------------------- delivery health
+
+/**
+ * A tally of what the webhook endpoint has been sent.
+ *
+ * There is one deployment mistake that is silent, expensive and easy to make:
+ * a webhook secret that is set but wrong — the signing secret of a different
+ * endpoint, or one copied before the endpoint was recreated. Checkout works,
+ * customers pay Stripe, every delivery fails verification, and nothing is ever
+ * credited. Each failure is a 400 in a log nobody is reading, while the money
+ * is real and the customer is waiting for credit.
+ *
+ * Boot-time configuration checks cannot catch it: the secret is present and
+ * well-formed, it is simply not the right one. Only a delivery can tell us, so
+ * the count of deliveries is the diagnostic. Rejected climbing while accepted
+ * stays at zero has exactly one likely cause, and the operator can see it on
+ * `GET /v1/admin/payments` instead of inferring it from Stripe's dashboard.
+ *
+ * In-process and reset by a restart, like everything else here. It is
+ * operational telemetry, not a record — the receipts are the record.
+ */
+export type WebhookHealth = {
+  accepted: number;
+  rejected: number;
+  /** The failure code of the most recent rejection, never the signature itself. */
+  lastRejection?: { code: string; at: string };
+  lastAcceptedAt?: string;
+};
+
+const health: WebhookHealth = { accepted: 0, rejected: 0 };
+
+export function webhookHealth(): WebhookHealth {
+  return { ...health };
+}
+
+export function resetWebhookHealth(): void {
+  health.accepted = 0;
+  health.rejected = 0;
+  delete health.lastRejection;
+  delete health.lastAcceptedAt;
+}
+
+/**
+ * Record the outcome and re-throw.
+ *
+ * Wrapping every refusal rather than counting at the route, so a failure added
+ * later cannot be the one that goes uncounted — which would be the failure that
+ * matters, since an uncounted rejection is an invisible one.
+ */
+function reject(error: DomainError): never {
+  health.rejected += 1;
+  health.lastRejection = { code: error.code, at: new Date().toISOString() };
+  throw error;
 }
 
 // ------------------------------------------------------------------ requests
@@ -147,10 +204,10 @@ export type StripeEvent = {
  */
 export function verifyWebhook(rawBody: Buffer, signatureHeader: string | undefined, now = Date.now()): StripeEvent {
   if (!stripeConfigured()) {
-    throw new DomainError('STRIPE_UNCONFIGURED', 'Stripe is not configured on this deployment', 503);
+    reject(new DomainError('STRIPE_UNCONFIGURED', 'Stripe is not configured on this deployment', 503));
   }
   if (!signatureHeader) {
-    throw new DomainError('STRIPE_SIGNATURE_MISSING', 'No Stripe signature on the request', 400);
+    reject(new DomainError('STRIPE_SIGNATURE_MISSING', 'No Stripe signature on the request', 400));
   }
 
   // `t=1700000000,v1=abc...,v1=def...` — more than one v1 during a secret
@@ -160,7 +217,7 @@ export function verifyWebhook(rawBody: Buffer, signatureHeader: string | undefin
   const signatures = parts.filter(([key]) => key === 'v1').map(([, value]) => value ?? '');
 
   if (!timestamp || signatures.length === 0) {
-    throw new DomainError('STRIPE_SIGNATURE_MALFORMED', 'The Stripe signature header could not be parsed', 400);
+    reject(new DomainError('STRIPE_SIGNATURE_MALFORMED', 'The Stripe signature header could not be parsed', 400));
   }
 
   // The tolerance window is what stops a captured webhook being replayed a
@@ -168,11 +225,11 @@ export function verifyWebhook(rawBody: Buffer, signatureHeader: string | undefin
   // have not changed — so time is the only thing that makes it stale.
   const age = Math.abs(now / 1000 - Number(timestamp));
   if (!Number.isFinite(age) || age > SIGNATURE_TOLERANCE_SECONDS) {
-    throw new DomainError(
+    reject(new DomainError(
       'STRIPE_SIGNATURE_STALE',
       `The Stripe signature is ${Math.round(age)}s out of date, beyond the ${SIGNATURE_TOLERANCE_SECONDS}s tolerance`,
       400,
-    );
+    ));
   }
 
   const expected = createHmac('sha256', config.stripe.webhookSecret)
@@ -188,31 +245,33 @@ export function verifyWebhook(rawBody: Buffer, signatureHeader: string | undefin
   });
 
   if (!matched) {
-    throw new DomainError(
+    reject(new DomainError(
       'STRIPE_SIGNATURE_INVALID',
       'The Stripe signature does not match. This request did not come from Stripe.',
       400,
-    );
+    ));
   }
 
   let event: StripeEvent;
   try {
     event = JSON.parse(rawBody.toString('utf8')) as StripeEvent;
   } catch {
-    throw new DomainError('STRIPE_PAYLOAD_INVALID', 'The Stripe payload is not valid JSON', 400);
+    reject(new DomainError('STRIPE_PAYLOAD_INVALID', 'The Stripe payload is not valid JSON', 400));
   }
 
   // Live and test money are different money. A production deployment that
   // accepted test events would credit real accounts from fake payments, and
   // Stripe test keys are free to anybody who signs up.
   if (config.env === 'production' && event.livemode !== true) {
-    throw new DomainError(
+    reject(new DomainError(
       'STRIPE_TEST_EVENT',
       'A test-mode Stripe event was delivered to a production deployment and was refused.',
       400,
-    );
+    ));
   }
 
+  health.accepted += 1;
+  health.lastAcceptedAt = new Date().toISOString();
   return event;
 }
 

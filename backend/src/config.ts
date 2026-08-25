@@ -443,6 +443,22 @@ export function assertProductionSafety(): string[] {
         'GATEWAY_RATE_LIMIT_REDIS_URL is unset — rate limits are per-process, so N replicas enforce N times the configured limit',
       );
     }
+    // Half-configured Stripe. The webhook secret alone is inert, but a secret
+    // key without one is the dangerous half: checkout opens, the customer pays,
+    // and there is nothing that can verify the notification saying so.
+    if (config.stripe.secretKey !== '' && config.stripe.webhookSecret === '') {
+      warnings.push(
+        'STRIPE_SECRET_KEY is set but STRIPE_WEBHOOK_SECRET is not — card payments would be taken and never credited, so the checkout route stays disabled until both are present',
+      );
+    }
+    if (config.stripe.webhookSecret !== '' && config.stripe.secretKey === '') {
+      warnings.push('STRIPE_WEBHOOK_SECRET is set but STRIPE_SECRET_KEY is not — no checkout can be opened');
+    }
+    // A live key against a test webhook secret, or the reverse. Stripe prefixes
+    // its keys, so this one mistake is catchable before a customer finds it.
+    if (config.stripe.secretKey.startsWith('sk_test_')) {
+      warnings.push('STRIPE_SECRET_KEY is a test key on a production deployment — no real payment can be taken');
+    }
     if (config.newsletter.enabled && !config.smtp.host) {
       warnings.push('NEWSLETTER_ENABLED is on but SMTP_HOST is unset — issues will be recorded, not delivered');
     }

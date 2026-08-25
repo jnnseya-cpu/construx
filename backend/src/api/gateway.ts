@@ -99,7 +99,13 @@ async function readRawBody(req: IncomingMessage, limit: number): Promise<Buffer>
     // Refused as it arrives, not after. An oversized upload is rejected part
     // way through rather than buffered to completion and then thrown away.
     if (size > limit) {
-      throw new ValidationError(`Upload exceeds the ${Math.round(limit / 1_048_576)}MB limit`);
+      const error = new ValidationError(`Upload exceeds the ${Math.round(limit / 1_048_576)}MB limit`);
+      // The rest of the body is still arriving and will never be read. Marked
+      // here, where it is known, so the error handler can close the connection
+      // rather than leave the unread remainder to be parsed as the client's
+      // next request. This is the only place a body is abandoned mid-stream.
+      (error as { bodyAbandoned?: boolean }).bodyAbandoned = true;
+      throw error;
     }
     chunks.push(chunk as Buffer);
   }
@@ -330,6 +336,15 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     sendJson(res, ctx, status, payload);
     logRequest(ctx, status);
   } catch (error) {
+    // An upload refused over its ceiling, with the rest of the body still
+    // arriving and nothing left to read it. The unread remainder sits in the
+    // socket, so whatever the client sends next on this connection would be
+    // parsed as a continuation of it. Say the connection is finished — which is
+    // what HTTP provides this header for — or a keep-alive client's *next*
+    // request fails for no visible reason.
+    if ((error as { bodyAbandoned?: boolean })?.bodyAbandoned) {
+      res.setHeader('Connection', 'close');
+    }
     sendProblem(res, ctx, error);
     logRequest(ctx, error instanceof Error && 'status' in error ? (error as { status: number }).status : 500, error);
   }
