@@ -96,7 +96,16 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   // Real AI work needs real credit; the trial grant alone will not carry a
   // whole lifecycle, and running out mid-demo is exactly what should happen
   // if it is not topped up.
-  platform.topUp(tenant.id, 500_000);
+  // Through the payment path, not a bare credit: the demonstration should show
+  // the same route a real payment takes, and there is no longer any other.
+  platform.creditFromPayment({
+    tenantId: tenant.id,
+    amountMinor: 500_000,
+    method: 'BANK_TRANSFER',
+    reference: `SEED-${tenant.id}`,
+    recordedBy: 'seed',
+    note: 'Opening credit for the demonstration tenancy',
+  });
   step('ACU wallet topped up with prepaid credit');
 
   // --- Enterprise admin creates the delivery team ---------------------------

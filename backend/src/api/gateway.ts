@@ -269,7 +269,7 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
 
     // Idempotency: a retried command returns the original result rather than
     // performing the state change twice.
-    const cached = readIdempotent(ctx.idempotencyKey);
+    const cached = readIdempotent(ctx.idempotencyKey, ctx);
     if (cached) {
       sendJson(res, ctx, cached.status, cached.body);
       logRequest(ctx, cached.status);
@@ -322,7 +322,7 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
 
     const payload = result ?? { ok: true };
 
-    storeIdempotent(ctx.idempotencyKey, status, payload);
+    storeIdempotent(ctx.idempotencyKey, ctx, status, payload);
     sendJson(res, ctx, status, payload);
     logRequest(ctx, status);
   } catch (error) {

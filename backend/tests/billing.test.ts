@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
-import { ACUWallet, effectiveMultiplier, minimumMultiplier } from '../src/billing/acu.ts';
+import { ACUWallet, effectiveMultiplier, minimumMultiplier, profitPercent } from '../src/billing/acu.ts';
 import { assignIdentity, revokeIdentity, SeatLimitError, TIERS, type Subscription } from '../src/billing/subscription.ts';
 import { buildInvoice, formatContractValue } from '../src/billing/invoice.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS, seatForRole } from '../src/billing/seats.ts';
@@ -58,11 +58,42 @@ describe('ACU wallet', () => {
     assert.equal(w.snapshot().heldMinor, 0);
   });
 
-  it('caps the charge at the amount reserved when an execution overruns its estimate', () => {
+  it('caps a mild overrun at the amount reserved', () => {
+    // Estimate 100 raw, held at 4x = 400. Actual 150 raw would bill 600, so the
+    // cap bites and the customer pays the 400 they were shown. The platform
+    // still made 250 on a 150 cost, comfortably above the floor.
+    const w = wallet();
+    const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
+    const entry = w.settle(hold.holdId, 150, 'OPENAI');
+    assert.equal(entry.billedMinor, hold.heldMinor, 'the customer is charged the disclosed hold, not more');
+    assert.ok(entry.billedMinor > entry.rawCostMinor, 'and the platform did not sell below cost');
+  });
+
+  it('will not honour the cap by selling below cost', () => {
+    /*
+     * This test used to assert the opposite, and the opposite was a leak.
+     *
+     * Estimate 100 raw, held at 4x = 400. Actual 500 raw. Capping at the hold
+     * charged 400 for something that cost 500 — a straight loss, on every call
+     * whose answer turned out much larger than its question. The estimator
+     * assumes output is a quarter of input, so a short prompt against a schema
+     * demanding a long list produces exactly this, repeatably, for anybody who
+     * noticed.
+     *
+     * The cap now yields to the company's own profit floor: never below
+     * `minimumMultiplier` on the cost actually incurred.
+     */
     const w = wallet();
     const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
     const entry = w.settle(hold.holdId, 500, 'OPENAI');
-    assert.equal(entry.billedMinor, hold.heldMinor, 'the customer is never charged beyond the disclosed hold');
+
+    assert.ok(entry.billedMinor > hold.heldMinor, 'the cap was honoured at the platform\'s expense');
+    assert.equal(entry.billedMinor, Math.ceil(500 * minimumMultiplier()), 'charged at the profit floor');
+    assert.ok(
+      profitPercent(entry.rawCostMinor, entry.billedMinor) >= config.billing.minimumProfitPercent,
+      'an overrun was settled below the required profit',
+    );
+    assert.match(String(entry.note), /profit floor/i, 'an overrun must say so on the entry');
   });
 
   it('refuses to settle the same hold twice', () => {
@@ -296,6 +327,34 @@ describe('seat pricing', () => {
 });
 
 describe('invoicing', () => {
+  it('bills storage that is held, which nothing used to', () => {
+    // Blocks could be bought and never appeared on an invoice, so the platform
+    // carried the disk and charged nothing for it — a cost with no revenue
+    // against it, recurring for as long as the customer kept the data.
+    const w = wallet(1_000);
+    const subscription: Subscription = {
+      id: 'sub-s',
+      tenantId: 'tenant-s',
+      tier: 'BUSINESS',
+      package: 'PROFESSIONAL_DELIVERY',
+      status: 'ACTIVE',
+      assignedIdentities: ['u1'],
+      startedAt: new Date().toISOString(),
+      renewsAt: new Date().toISOString(),
+    };
+
+    const without = buildInvoice(subscription, w, new Date().toISOString().slice(0, 7), 'GBP', 0);
+    const withBlocks = buildInvoice(subscription, w, new Date().toISOString().slice(0, 7), 'GBP', 3);
+
+    assert.equal(without.storageMinor, 0);
+    assert.equal(withBlocks.storageMinor, 3 * config.billing.storageBlockPriceMinor);
+    assert.equal(withBlocks.totalMinor, without.totalMinor + withBlocks.storageMinor, 'held storage is not payable');
+    assert.ok(
+      withBlocks.lines.some((line) => line.category === 'STORAGE'),
+      'the customer must see what the storage charge is for',
+    );
+  });
+
   it('separates the subscription line from AI usage and states the multiplier', () => {
     const w = wallet(100_000);
     const hold = w.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 100, module: 'PLANNING' });
@@ -317,7 +376,17 @@ describe('invoicing', () => {
     assert.equal(invoice.aiUsageMinor, 100 * config.billing.markupMultiplier);
     assert.equal(invoice.aiRawCostMinor, 100);
     assert.equal(invoice.effectiveMultiplier, config.billing.markupMultiplier);
-    assert.equal(invoice.totalMinor, invoice.subscriptionMinor + invoice.aiUsageMinor);
+
+    // The total is the subscription, not the subscription plus the AI.
+    //
+    // It used to be both, which billed the customer twice: once when they
+    // bought the credit — the wallet is prepaid, `acu.ts` opens by saying so —
+    // and again on the invoice for having spent it. AI stays on the invoice as
+    // a line, because somebody is entitled to see what their credit went on;
+    // what it is not is payable a second time.
+    assert.equal(invoice.totalMinor, invoice.subscriptionMinor, 'AI usage was charged again on the invoice');
+    assert.equal(invoice.aiUsageDrawnFromCredit, true, 'the invoice must say why the lines exceed the total');
+    assert.ok(invoice.aiUsageMinor > 0, 'the consumption is still shown');
     assert.ok(invoice.commercialTerms.some((t) => t.includes('no AI usage entitlement')));
   });
 });

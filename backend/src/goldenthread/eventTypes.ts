@@ -406,6 +406,16 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('ACU_CAP_BREACHED', 'ACUWallet', 'UPDATE', 'AI_BILLING'),
   def('ACU_ALERT_RAISED', 'ACUWallet', 'UPDATE', 'AI_BILLING'),
   def('INVOICE_ISSUED', 'Invoice', 'ISSUE', 'AI_BILLING', { requiresEvidence: true, creates: true }),
+  // Money entering the platform, in two halves that must never be one event.
+  //
+  // A request carries no money: it is a customer saying they would like credit.
+  // A receipt is the claim that money arrived, and it is the only thing that
+  // moves a balance. Collapsing the two is precisely what the old top-up route
+  // did — it took an amount from a request body and credited the wallet with
+  // it, which made the console's top-up button a mint.
+  def('TOPUP_REQUESTED', 'TopUpIntent', 'CREATE', 'AI_BILLING', { creates: true }),
+  def('TOPUP_SETTLED', 'TopUpIntent', 'UPDATE', 'AI_BILLING'),
+  def('PAYMENT_RECEIVED', 'PaymentReceipt', 'CREATE', 'AI_BILLING', { creates: true }),
 ];
 
 const BY_CODE = new Map(EVENT_TYPES.map((t) => [t.code, t]));

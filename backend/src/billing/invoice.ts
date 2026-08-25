@@ -1,6 +1,8 @@
+import { config } from '../config.ts';
 import { ulid } from '../core/ids.ts';
 import { currencySymbol, formatMoney as exactMoney, toMajor } from '../domain/locale.ts';
 import type { ACUWallet } from './acu.ts';
+import { STORAGE_BLOCK_GB } from './storage.ts';
 import { monthlySubscriptionCharge, type Subscription, TIERS } from './subscription.ts';
 
 /**
@@ -15,7 +17,7 @@ export type InvoiceLine = {
   quantity: number;
   unitMinor: number;
   amountMinor: number;
-  category: 'SUBSCRIPTION' | 'AI_USAGE';
+  category: 'SUBSCRIPTION' | 'STORAGE' | 'AI_USAGE';
   projectId?: string;
   module?: string;
 };
@@ -28,10 +30,17 @@ export type Invoice = {
   issuedAt: string;
   lines: InvoiceLine[];
   subscriptionMinor: number;
+  storageMinor: number;
   aiUsageMinor: number;
   aiRawCostMinor: number;
   effectiveMultiplier: number;
+  /**
+   * What is payable. Subscription and storage only — AI was paid for when the
+   * credit was bought, and adding it here charged for it twice.
+   */
   totalMinor: number;
+  /** States why the lines do not sum to the total, rather than leaving it to be worked out. */
+  aiUsageDrawnFromCredit: boolean;
   /** Reproduced on the invoice so the multiplier is never a surprise. */
   commercialTerms: string[];
 };
@@ -41,6 +50,7 @@ export function buildInvoice(
   wallet: ACUWallet,
   period: string,
   currency = 'USD',
+  storageBlocks = 0,
 ): Invoice {
   const tier = TIERS[subscription.tier];
   // The package charge is already in minor units — the whole billing path works
@@ -58,6 +68,20 @@ export function buildInvoice(
       category: 'SUBSCRIPTION',
     },
   ];
+
+  // Storage held beyond the package allowance, charged for as long as it is
+  // held. This line did not exist: blocks could be bought and never appeared on
+  // any invoice, so the platform carried the disk and billed nothing for it.
+  const storageMinor = storageBlocks * config.billing.storageBlockPriceMinor;
+  if (storageBlocks > 0) {
+    lines.push({
+      description: `Additional evidence storage — ${storageBlocks} × ${STORAGE_BLOCK_GB} GB block${storageBlocks === 1 ? '' : 's'}`,
+      quantity: storageBlocks,
+      unitMinor: config.billing.storageBlockPriceMinor,
+      amountMinor: storageMinor,
+      category: 'STORAGE',
+    });
+  }
 
   let aiUsageMinor = 0;
   let aiRawCostMinor = 0;
@@ -85,16 +109,37 @@ export function buildInvoice(
     issuedAt: new Date().toISOString(),
     lines,
     subscriptionMinor,
+    storageMinor,
     aiUsageMinor,
     aiRawCostMinor,
     effectiveMultiplier: multiplier,
-    totalMinor: subscriptionMinor + aiUsageMinor,
+    /**
+     * What is payable — and AI is deliberately not in it.
+     *
+     * The wallet is prepaid: `acu.ts` opens with "prepaid only, no negative
+     * balances, ever", credit is bought before it is spent, and an execution
+     * draws the balance down. The total used to be
+     * `subscriptionMinor + aiUsageMinor`, which billed that consumption a
+     * second time — the customer paid once to buy the credit and again on the
+     * invoice for having used it. That is not a leak in the platform's favour;
+     * it is the kind of error that ends in chargebacks, refunds and an argument
+     * about every other figure on the page.
+     *
+     * AI usage stays on the invoice as a line, because a customer is entitled
+     * to see what their credit went on. It is a statement of consumption, not a
+     * charge, and `aiUsageDrawnFromCredit` says so rather than leaving somebody
+     * to work out why the lines do not sum to the total.
+     */
+    totalMinor: subscriptionMinor + storageMinor,
+    aiUsageDrawnFromCredit: true,
     commercialTerms: [
       'Subscription fees cover platform access, identity management, governance, auditability and non-AI functionality.',
-      'AI services are billed on actual consumption, measured in AI Compute Units (ACUs).',
+      'AI services are prepaid: credit is purchased in advance and drawn down as it is consumed.',
+      'AI usage shown on this invoice has already been paid for at the point credit was purchased, and is stated here for transparency rather than charged again.',
       'Each ACU represents the underlying third-party AI compute cost incurred by CONSTRUX.',
-      'AI usage is invoiced at a fixed multiplier over underlying compute cost, applied uniformly to all client categories.',
-      'Subscription fees include no AI usage entitlement.',
+      'AI credit is sold at a fixed multiplier over underlying compute cost, applied uniformly to all client categories.',
+      'Subscription fees include no AI usage entitlement beyond the monthly allowance stated on the plan.',
+      'Additional evidence storage is charged monthly for as long as it is held.',
       'AI usage limits, alerts and hard caps may be configured by the client for budget predictability.',
     ],
   };

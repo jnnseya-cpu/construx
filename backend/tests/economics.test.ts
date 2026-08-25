@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { throwsCode } from './helpers.ts';
 import {
   ACUWallet,
   acusFromMinor,
@@ -11,6 +10,7 @@ import {
   subscriptionAcuAllocationMinor,
 } from '../src/billing/acu.ts';
 import { PACKAGES } from '../src/billing/seats.ts';
+import { throwsCode } from './helpers.ts';
 import { config } from '../src/config.ts';
 import { Platform } from '../src/platform.ts';
 
@@ -243,7 +243,19 @@ describe('rule 4 — 20% of a subscription buys AI allowance', () => {
     assert.equal(platform.wallet(tenant.id).snapshot().balanceMinor, config.billing.freeTrialGrantMinor);
   });
 
-  it('credits once per period, so a reissued invoice is not free money', () => {
+  it('credits once per period, and refuses periods that are worth money to invent', () => {
+    /*
+     * The allowance is money: twenty per cent of the plan, credited when a
+     * period is billed. The wallet refuses a second allocation for the *same*
+     * period, and that was the only guard — nothing stopped anybody asking for
+     * a different one. `POST /v1/billing/invoice` was tenant-callable with a
+     * client-supplied period, so a loop from 2020-01 to 2030-12 minted a
+     * hundred and thirty-two months of allowance for free.
+     *
+     * This test used to bill 2027-01 to show "a later period allocates again",
+     * which is exactly the hole: 2027-01 has not happened. Issuing is now
+     * operator-only and the period must be real.
+     */
     const platform = new Platform();
     const { tenant } = platform.createTenant({
       legalName: 'Reissue Ltd',
@@ -255,21 +267,25 @@ describe('rule 4 — 20% of a subscription buys AI allowance', () => {
     });
 
     const wallet = platform.wallet(tenant.id);
-    const afterCreation = wallet.snapshot().balanceMinor;
+    const period = new Date().toISOString().slice(0, 7);
 
-    // A later period allocates again.
-    platform.issueInvoice(tenant.id, '2027-01');
-    const afterFirstInvoice = wallet.snapshot().balanceMinor;
-    assert.ok(afterFirstInvoice > afterCreation, 'a new period did not credit its allowance');
+    // A new tenancy has exactly one billable period, and creation already
+    // credited it. Reissuing the invoice for it credits nothing further, which
+    // is what makes a corrected or retried invoice safe.
+    const atCreation = wallet.snapshot().balanceMinor;
+    platform.issueInvoice(tenant.id, period);
+    platform.issueInvoice(tenant.id, period);
+    assert.equal(wallet.snapshot().balanceMinor, atCreation, 'reissuing an invoice credited the allowance again');
 
-    // The same period does not, however many times it is issued.
-    platform.issueInvoice(tenant.id, '2027-01');
-    platform.issueInvoice(tenant.id, '2027-01');
-    assert.equal(
-      wallet.snapshot().balanceMinor,
-      afterFirstInvoice,
-      'reissuing an invoice credited the allowance again',
-    );
+    // A month that has not happened cannot have been consumed.
+    const nextYear = String(Number(period.slice(0, 4)) + 1);
+    throwsCode(() => platform.issueInvoice(tenant.id, `${nextYear}-01`), 'INVOICE_PERIOD_FUTURE');
+
+    // Nor one that predates the plan: a customer who signed up this week did
+    // not have a subscription in 2019.
+    throwsCode(() => platform.issueInvoice(tenant.id, '2019-03'), 'INVOICE_PERIOD_BEFORE_SUBSCRIPTION');
+
+    assert.equal(wallet.snapshot().balanceMinor, atCreation, 'a refused period still moved the balance');
   });
 
   it('records the allowance separately from a purchased top-up', () => {

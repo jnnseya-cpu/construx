@@ -521,6 +521,67 @@ That run found one more defect: **HEAD returned 404 on every path**, including
 and a platform whose health probe defaults to it would have read a healthy
 service as a permanent outage. HEAD now routes as GET.
 
+**Six ways to take money out of the platform, all closed.** A deliberate audit
+of the money model rather than a defect report. Ordered by what an attacker
+needed, and the first three needed nothing beyond an ordinary account.
+
+1. **The top-up route was a mint.** `POST /v1/billing/top-up` credited the
+   wallet with the `amountMinor` in the request body. No payment provider, no
+   ceiling, callable by any tenant user holding `U` on `BILLING_ACU` — and the
+   console shipped a button doing exactly that for £1,000 a press. Every ACU
+   spent from that credit bought real provider compute with real money.
+
+   Money now enters only against a receipt (`backend/src/billing/payments.ts`).
+   A customer pressing "top up" records a `TopUpIntent`, which carries nothing;
+   `Platform.creditFromPayment` is operator-only and is what a payment
+   provider's webhook will call when one is wired, so a card settlement and a
+   bank transfer leave the same record. **The payment reference is the
+   idempotency key for money** — checked against every receipt ever recorded
+   rather than a cache with a TTL, so a webhook firing twice credits once. A
+   replay answers success, not an error, because a provider told its payment
+   failed keeps retrying.
+
+2. **The invoice route minted AI allowance.** Issuing an invoice credits that
+   period's twenty per cent, and the route was tenant-callable with a
+   client-supplied period. The wallet refuses a second allocation for the *same*
+   period and nothing stopped a different one: a loop from 2020-01 to 2030-12
+   minted 132 months of allowance. Issuing is now operator-only, the period must
+   have happened and must not predate the subscription, and tenants read their
+   position through a `GET` that allocates nothing.
+
+3. **The idempotency cache leaked across tenancies.** It was keyed on the
+   client-supplied header alone — no tenant, no actor, no route — and consulted
+   *before* the handler, so it answered before any authorisation ran. Anybody
+   replaying another caller's key received their cached response body. The
+   console generates a UUID per request, which is why it never collided by
+   accident. The key is now scoped to tenant, actor and route, and failures are
+   no longer cached — a corrected retry under the same key would otherwise be
+   served the old error for a day.
+
+4. **Overruns were sold below cost.** `settle` capped the charge at the hold,
+   and the hold is sized from an estimate that assumes output is a quarter of
+   input. A request whose answer is much larger than its question — a short
+   prompt against a schema demanding a long list — costs several times the
+   estimate, and capping meant paying the provider more than the customer was
+   charged. Repeatable by anybody who noticed. The cap now yields to the
+   company's own profit floor: never below `minimumMultiplier` on the cost
+   actually incurred, and the entry says so.
+
+5. **Held storage was never billed.** Blocks could be bought and appeared on no
+   invoice: real disk, recurring for as long as the data was kept, against no
+   revenue. There is a `STORAGE` line now and it is in the payable total.
+
+6. **AI was billed twice.** The wallet is prepaid — credit is bought before it
+   is spent and an execution draws it down — and the invoice total was
+   `subscription + aiUsage`, charging for that consumption again. Not a leak in
+   the platform's favour: the kind of error that ends in chargebacks and an
+   argument about every other figure on the page. AI usage stays on the invoice
+   as a line, because a customer is entitled to see what their credit went on,
+   and `aiUsageDrawnFromCredit` says why the lines exceed the total.
+
+All six are exercised against a running server in `backend/tests/moneyleaks.test.ts`,
+including the 132-period loop, which now refuses 132 times and credits nothing.
+
 **What a tenancy may do when it stops paying.** `Subscription.status` carried
 `ACTIVE | SUSPENDED | CANCELLED` and exactly one function read it —
 `monthlySubscriptionCharge`, which returns zero when it is not ACTIVE. Every

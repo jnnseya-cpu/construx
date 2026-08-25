@@ -46,6 +46,17 @@ function suspend(reason = 'Payment failed on renewal'): void {
   });
 }
 
+/** Credit a wallet the only way there is: against a recorded payment. */
+function credit(tenantId: string, amountMinor: number, reference: string): void {
+  platform.creditFromPayment({
+    tenantId,
+    amountMinor,
+    method: 'BANK_TRANSFER',
+    reference,
+    recordedBy: seed.users.operator!.id,
+  });
+}
+
 function reactivate(): void {
   platform.setSubscriptionStatus({
     tenantId: seed.users.pm!.auth.tenantId,
@@ -224,7 +235,7 @@ describe('a stopped subscription cannot run AI, however full the wallet', () => 
     // using the engines. `runAI` checked the balance and nothing else.
     reactivate();
     const tenantId = seed.users.pm!.auth.tenantId;
-    platform.topUp(tenantId, 100_000);
+    credit(tenantId, 100_000, 'ENTITLEMENT-AI-1');
 
     suspend();
     const before = platform.wallet(tenantId).snapshot();
@@ -272,7 +283,10 @@ describe('a stopped subscription cannot buy more credit', () => {
     const tenantId = seed.users.pm!.auth.tenantId;
     const before = platform.wallet(tenantId).snapshot().balanceMinor;
 
-    throwsCode(() => platform.topUp(tenantId, 50_000), 'SUBSCRIPTION_NOT_ACTIVE');
+    throwsCode(
+      () => platform.requestTopUp({ tenantId, amountMinor: 50_000, requestedBy: seed.users.admin!.id }),
+      'SUBSCRIPTION_NOT_ACTIVE',
+    );
     assert.equal(platform.wallet(tenantId).snapshot().balanceMinor, before, 'money was taken');
   });
 
@@ -280,7 +294,12 @@ describe('a stopped subscription cannot buy more credit', () => {
     reactivate();
     const tenantId = seed.users.pm!.auth.tenantId;
     const before = platform.wallet(tenantId).snapshot().balanceMinor;
-    platform.topUp(tenantId, 50_000);
+    // The request alone moves nothing — that is the point of splitting it from
+    // the receipt — so the assertion is on the credit, not on the ask.
+    platform.requestTopUp({ tenantId, amountMinor: 50_000, requestedBy: seed.users.admin!.id });
+    assert.equal(platform.wallet(tenantId).snapshot().balanceMinor, before, 'a request is not money');
+
+    credit(tenantId, 50_000, 'ENTITLEMENT-REACTIVATED');
     assert.ok(platform.wallet(tenantId).snapshot().balanceMinor > before);
   });
 });

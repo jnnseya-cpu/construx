@@ -302,20 +302,62 @@ export function validateRequest(ctx: RequestContext, schema: Schema | undefined,
 const idempotencyCache = new Map<string, { status: number; body: unknown; storedAt: number }>();
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 
-export function readIdempotent(key: string | undefined): { status: number; body: unknown } | undefined {
+/**
+ * The cache key for a replayed request.
+ *
+ * The client-supplied header alone is not it, and the reason is not subtle: the
+ * key is chosen by the caller. Keyed on the header by itself, a tenant sending
+ * `Idempotency-Key: abc` receives whatever another tenant's request under the
+ * same key returned — somebody else's project data, wallet snapshot or invoice,
+ * served from cache with no authorisation involved at all, because the cache is
+ * consulted before the handler runs. The console generates a UUID per request so
+ * it never collided by accident, which is exactly why it was never noticed.
+ *
+ * The identity and the route are therefore part of the key. A replay now means
+ * the same actor repeating the same call, which is the only thing idempotency
+ * was ever meant to cover.
+ */
+function idempotencyScope(key: string, ctx: RequestContext): string {
+  // Tenant *and* actor: two people in one tenancy issuing the same key are
+  // still two different requests, and one must not see the other's answer.
+  const tenantId = ctx.auth?.tenantId ?? 'anonymous';
+  const actorId = ctx.auth?.actorId ?? 'anonymous';
+  // The route pattern rather than the path, so `/v1/projects/:id` replays
+  // per-project rather than across every project the actor can reach.
+  return `${tenantId} ${actorId} ${ctx.method} ${ctx.routeId ?? ctx.path} ${key}`;
+}
+
+export function readIdempotent(
+  key: string | undefined,
+  ctx: RequestContext,
+): { status: number; body: unknown } | undefined {
   if (!key) return undefined;
-  const cached = idempotencyCache.get(key);
+  const cached = idempotencyCache.get(idempotencyScope(key, ctx));
   if (!cached) return undefined;
   if (Date.now() - cached.storedAt > IDEMPOTENCY_TTL_MS) {
-    idempotencyCache.delete(key);
+    idempotencyCache.delete(idempotencyScope(key, ctx));
     return undefined;
   }
   return { status: cached.status, body: cached.body };
 }
 
-export function storeIdempotent(key: string | undefined, status: number, body: unknown): void {
+export function storeIdempotent(
+  key: string | undefined,
+  ctx: RequestContext,
+  status: number,
+  body: unknown,
+): void {
   if (!key) return;
-  idempotencyCache.set(key, { status, body, storedAt: Date.now() });
+  // Only successful writes are replayable. Caching a failure means a caller who
+  // fixed their request and retried with the same key — which is what a retry
+  // looks like from a phone with one bar — gets the old error back for a day.
+  if (status >= 400) return;
+  idempotencyCache.set(idempotencyScope(key, ctx), { status, body, storedAt: Date.now() });
+}
+
+/** Cleared between tests; the cache is process-local and holds no durable state. */
+export function resetIdempotency(): void {
+  idempotencyCache.clear();
 }
 
 // --- Response helpers -------------------------------------------------------

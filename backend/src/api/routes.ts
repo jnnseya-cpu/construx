@@ -5370,9 +5370,97 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => {
+      // This used to credit the wallet with the amount in the request body.
+      // There is no payment provider, so that made the route a mint: any tenant
+      // user holding `U` on BILLING_ACU could grant themselves unlimited AI
+      // credit, and every ACU spent from it bought real provider compute.
+      //
+      // It now records an intent and moves nothing. Credit appears when a
+      // receipt says money arrived, which only the operator can record.
       const actor = authoriseTenant(ctx, 'BILLING_ACU', 'U');
-      platform.topUp(actor.tenantId, body<{ amountMinor: number }>(ctx).amountMinor);
-      return platform.wallet(actor.tenantId).snapshot();
+      const intent = platform.requestTopUp({
+        tenantId: actor.tenantId,
+        amountMinor: body<{ amountMinor: number }>(ctx).amountMinor,
+        requestedBy: actor.actorId,
+      });
+      return {
+        ...intent,
+        // Said plainly, because the balance will not have moved and a screen
+        // that showed the old snapshot would look like the request had failed.
+        message:
+          'Recorded. Credit is added once payment has been received and matched to this request; ' +
+          'the balance is unchanged until then.',
+        wallet: platform.wallet(actor.tenantId).snapshot(),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:tenantId/credit',
+    description: 'Credit a wallet against a received payment (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['amountMinor', 'method', 'reference'],
+      properties: {
+        amountMinor: { type: 'integer', minimum: 1 },
+        method: {
+          type: 'string',
+          enum: ['CARD', 'BANK_TRANSFER', 'INVOICE_SETTLEMENT', 'CREDIT_NOTE', 'MANUAL_ADJUSTMENT'],
+        },
+        // The provider's or bank's own identifier. Unique for ever — it is the
+        // idempotency key for money, and it is what makes a webhook that fires
+        // twice credit once.
+        reference: { type: 'string', minLength: 4, maxLength: 200 },
+        intentId: stringField,
+        note: { type: 'string', maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      // Operator-only, and it stays that way when a payment provider is wired:
+      // the webhook calls this rather than reaching into wallet state, so a
+      // card settlement and a bank transfer leave the same record.
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may credit a wallet', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const input = body<{
+        amountMinor: number;
+        method: 'CARD' | 'BANK_TRANSFER' | 'INVOICE_SETTLEMENT' | 'CREDIT_NOTE' | 'MANUAL_ADJUSTMENT';
+        reference: string;
+        intentId?: string;
+        note?: string;
+      }>(ctx);
+
+      const { receipt, alreadyRecorded } = platform.creditFromPayment({
+        tenantId: ctx.params.tenantId!,
+        ...input,
+        recordedBy: actor.actorId,
+      });
+
+      return {
+        receipt,
+        // Success rather than an error, and said out loud. A provider retrying
+        // after a timeout must not be told the payment failed, or it will keep
+        // retrying something that is already credited.
+        alreadyRecorded,
+        wallet: platform.wallet(ctx.params.tenantId!).snapshot(),
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/payments',
+    description: 'Top-up requests awaiting payment and every receipt recorded (platform operator only)',
+    handler: (platform, ctx) => {
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may see the payment record', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const tenantId = ctx.query.get('tenantId') ?? undefined;
+      return {
+        awaitingPayment: platform.topUpIntents(tenantId).filter((i) => i.status === 'AWAITING_PAYMENT'),
+        receipts: platform.paymentReceipts(tenantId),
+      };
     },
   },
   {
@@ -5402,12 +5490,46 @@ export const ROUTES: Route[] = [
     description: 'Issue an invoice for a period',
     schema: {
       type: 'object',
-      required: ['period'],
-      properties: { period: { type: 'string', pattern: '^\\d{4}-\\d{2}$' } },
+      required: ['tenantId', 'period'],
+      properties: {
+        tenantId: stringField,
+        period: { type: 'string', pattern: '^\\d{4}-\\d{2}$' },
+      },
       additionalProperties: false,
     },
-    handler: (platform, ctx) =>
-      platform.issueInvoice(authoriseTenant(ctx, 'BILLING_ACU', 'U').tenantId, body<{ period: string }>(ctx).period),
+    handler: (platform, ctx) => {
+      // Operator-only. Issuing an invoice credits that period's AI allowance,
+      // which makes it an act of billing rather than something a customer does
+      // to themselves — and while it was tenant-callable with a client-supplied
+      // period, a loop over periods minted allowance for free.
+      //
+      // A customer who wants to see their position reads it: `GET` below
+      // returns the same figures and allocates nothing.
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError(
+          'Only the platform operator issues invoices. Use GET /v1/billing/invoice to see the current position.',
+          'PLATFORM_ADMIN_REQUIRED',
+        );
+      }
+      const { tenantId, period } = body<{ tenantId: string; period: string }>(ctx);
+      return platform.issueInvoice(tenantId, period);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/billing/invoice',
+    description: 'The current billing position for a period. Reads only — issues nothing and credits nothing',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'BILLING_ACU', 'R');
+      const period = ctx.query.get('period') ?? new Date().toISOString().slice(0, 7);
+      // `preview` rather than `issueInvoice`: the same figures, no allocation,
+      // no ledger event. What a customer is looking at when they ask "what do I
+      // owe" is a statement, and a statement that quietly credits a month of AI
+      // every time somebody opens the page is not one.
+      return platform.previewInvoice(actor.tenantId, period);
+    },
   },
   {
     method: 'GET',

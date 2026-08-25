@@ -222,6 +222,17 @@ export const config = {
      * higher price.
      */
     storageBlockPriceMinor: num('STORAGE_BLOCK_PRICE_MINOR', 1_500),
+    /**
+     * The largest single payment the platform will credit, in minor units.
+     *
+     * £100,000 by default. Not a limit on what a customer may spend — a larger
+     * settlement is recorded as several receipts, each with its own reference,
+     * which is also the form an auditor would rather see. It is a guard against
+     * the two ways an amount goes wrong: a typo with an extra three zeros, and
+     * a malformed webhook. Both put a number into an append-only ledger that
+     * nobody can quietly take back out.
+     */
+    maximumCreditMinor: num('MAXIMUM_CREDIT_MINOR', 10_000_000),
   },
 
   privacy: {

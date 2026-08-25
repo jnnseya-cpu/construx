@@ -427,9 +427,24 @@ export class ACUWallet {
     const multiplier = effectiveMultiplier(this.monthRawSpendMinor(), this.#volumeIncentive);
     const billedMinor = Math.ceil(actualRawCostMinor * multiplier);
 
-    // An execution that overruns its estimate is capped at the held amount:
-    // the customer is never charged more than was reserved and disclosed.
-    const chargedMinor = Math.min(billedMinor, hold.heldMinor);
+    // An execution that overruns its estimate is capped at the held amount: the
+    // customer is never charged more than was reserved and disclosed.
+    //
+    // With one floor, and the floor is why this is not a plain `min`. The hold
+    // is sized from an *estimate*, and the estimator assumes output is a
+    // quarter of input. A request whose answer is much larger than its question
+    // — a short prompt against a schema demanding a long list — costs several
+    // times the estimate. Capping at the hold there meant paying a provider
+    // more than the customer was charged: a straight loss, larger the more the
+    // caller did it, and available to anybody who noticed.
+    //
+    // So the cap holds unless honouring it would sell below the company's own
+    // profit floor, in which case the floor wins. That is the same rule the
+    // price is derived from, applied at the moment the real cost is known
+    // rather than only at the moment it was guessed.
+    const floorMinor = Math.ceil(actualRawCostMinor * minimumMultiplier());
+    const chargedMinor = Math.max(Math.min(billedMinor, hold.heldMinor), floorMinor);
+    const overran = chargedMinor > hold.heldMinor;
 
     this.#holds.delete(holdId);
 
@@ -445,6 +460,17 @@ export class ACUWallet {
       module: hold.module,
       feature: hold.feature,
       aiRequestId: hold.aiRequestId,
+      // Named on the entry rather than left to be inferred from the arithmetic.
+      // An overrun is the one case where a customer is charged more than they
+      // were quoted, and it has to be visible on the invoice line rather than
+      // discovered by somebody recomputing it.
+      ...(overran
+        ? {
+            note:
+              `Charged at the minimum profit floor: the execution cost ${actualRawCostMinor} against an ` +
+              `estimate held at ${hold.heldMinor}. Capping at the hold would have sold below cost.`,
+          }
+        : {}),
     }, -chargedMinor);
 
     this.#evaluateAlerts();

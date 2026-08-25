@@ -7,7 +7,16 @@ import { ACUWallet, type ACUCaps, type ACUEntry } from './billing/acu.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
 import { assignIdentity, packageForTier, revokeIdentity, TIERS, type Subscription, type SubscriptionTier } from './billing/subscription.ts';
 import { standing } from './billing/entitlement.ts';
+import {
+  assertBillablePeriod,
+  assertCreditableAmount,
+  normaliseReference,
+  type PaymentMethod,
+  type PaymentReceipt,
+  type TopUpIntent,
+} from './billing/payments.ts';
 import { PACKAGES, UNCHARGED_ROLES, type PackageTier } from './billing/seats.ts';
+import * as storage from './billing/storage.ts';
 import { config } from './config.ts';
 import { DomainError, ForbiddenError, NotFoundError } from './core/errors.ts';
 import { hashEvidence } from './core/canonical.ts';
@@ -96,6 +105,16 @@ export class Platform {
     for (const wallet of this.#wallets.values()) wallet.attachSink(sink);
   }
   readonly #subscriptions = new Map<string, Subscription>();
+  /** Top-up requests, keyed by id. Intents only — none of these is money. */
+  readonly #topUpIntents = new Map<string, TopUpIntent>();
+  /**
+   * Every payment ever recorded, keyed by its reference.
+   *
+   * Keyed by reference rather than by id because the reference is the
+   * uniqueness rule: it is what makes a replayed webhook credit nothing, and a
+   * map keyed on anything else would need a scan to enforce it.
+   */
+  readonly #receiptsByReference = new Map<string, PaymentReceipt>();
   readonly #tenants = new Map<string, Tenant>();
   readonly #users = new Map<string, PlatformUser>();
 
@@ -891,16 +910,24 @@ export class Platform {
 
   // --- Billing ---------------------------------------------------------------
 
-  topUp(tenantId: string, amountMinor: number): void {
-    // Credit is refused on a subscription that is not active, and the reason is
-    // not tidiness. Taking somebody's money for AI on a platform they may not
-    // use is worse than the loophole it closes: the credit is unspendable —
-    // `runAI` refuses it — so the transaction is a charge for nothing.
-    //
-    // No role exemption here. The uncharged roles do not buy credit; the
-    // operator tops a customer's wallet up through the same path, and doing so
-    // for a suspended tenancy would be the same mistake made on their behalf.
-    const position = standing(this.#subscriptions.get(tenantId), []);
+  /**
+   * Ask to add credit. Records the intent and moves no money.
+   *
+   * This is what a customer pressing "top up" does. It used to credit the
+   * wallet directly from the amount in the request body, which made the button
+   * a mint: no payment provider, no ceiling, and every ACU spent from it bought
+   * real provider compute. Credit now appears only when a receipt says money
+   * arrived — see `creditFromPayment`.
+   */
+  requestTopUp(input: {
+    tenantId: string;
+    amountMinor: number;
+    requestedBy: string;
+  }): TopUpIntent {
+    // The same subscription gate as before: taking somebody's money for AI on a
+    // platform they may not use is worse than the loophole it closes, because
+    // the credit would be unspendable and the transaction a charge for nothing.
+    const position = standing(this.#subscriptions.get(input.tenantId), []);
     if (!position.mayTopUp) {
       throw new DomainError(
         'SUBSCRIPTION_NOT_ACTIVE',
@@ -909,8 +936,148 @@ export class Platform {
       );
     }
 
+    assertCreditableAmount(input.amountMinor);
+
+    const intent: TopUpIntent = {
+      id: ulid(),
+      tenantId: input.tenantId,
+      amountMinor: input.amountMinor,
+      currency: this.tenant(input.tenantId).defaultCurrency,
+      requestedBy: input.requestedBy,
+      requestedAt: new Date().toISOString(),
+      status: 'AWAITING_PAYMENT',
+    };
+    this.#topUpIntents.set(intent.id, intent);
+
+    this.ledger.commit({
+      tenantId: input.tenantId,
+      projectId: `${input.tenantId}-governance`,
+      actor: { refType: 'User', refId: input.requestedBy },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'TOPUP_REQUESTED',
+      entity: { refType: 'TopUpIntent', refId: intent.id },
+      nextState: { ...intent },
+    });
+
+    return intent;
+  }
+
+  /**
+   * Credit a wallet against money that has actually been received.
+   *
+   * The only path by which a balance goes up, and it is operator-only — or, when
+   * one is wired, a payment provider's webhook calling the same method rather
+   * than reaching into wallet state, so a card settlement and a bank transfer
+   * leave the same record.
+   *
+   * The reference is the idempotency key for money and is checked against every
+   * receipt ever recorded, not against a cache with a TTL. A webhook that fires
+   * twice, an operator pressing the button again, a retry after a timeout — all
+   * the same payment, and the second one credits nothing.
+   */
+  creditFromPayment(input: {
+    tenantId: string;
+    amountMinor: number;
+    method: PaymentMethod;
+    reference: string;
+    intentId?: string;
+    recordedBy: string;
+    note?: string;
+  }): { receipt: PaymentReceipt; alreadyRecorded: boolean } {
+    const reference = normaliseReference(input.reference);
+    assertCreditableAmount(input.amountMinor);
+
+    // Checked before anything else, and answered as success rather than as an
+    // error: a webhook retried after a timeout is not a fault, and a 4xx would
+    // make the provider keep retrying a payment that is already credited.
+    const existing = this.#receiptsByReference.get(reference);
+    if (existing) {
+      if (existing.tenantId !== input.tenantId || existing.amountMinor !== input.amountMinor) {
+        throw new DomainError(
+          'PAYMENT_REFERENCE_CONFLICT',
+          `Reference ${reference} is already recorded against a different tenancy or amount. ` +
+            'A payment reference identifies one payment and cannot be reused.',
+          409,
+        );
+      }
+      return { receipt: existing, alreadyRecorded: true };
+    }
+
+    const intent = input.intentId ? this.#topUpIntents.get(input.intentId) : undefined;
+    if (input.intentId && !intent) throw new NotFoundError(`No top-up request ${input.intentId}`);
+    if (intent && intent.tenantId !== input.tenantId) {
+      throw new NotFoundError(`No top-up request ${input.intentId}`);
+    }
+    if (intent && intent.status !== 'AWAITING_PAYMENT') {
+      throw new DomainError('TOPUP_ALREADY_SETTLED', 'That top-up request has already been settled or cancelled', 409);
+    }
+
+    const receipt: PaymentReceipt = {
+      id: ulid(),
+      tenantId: input.tenantId,
+      amountMinor: input.amountMinor,
+      currency: this.tenant(input.tenantId).defaultCurrency,
+      method: input.method,
+      reference,
+      ...(input.intentId ? { intentId: input.intentId } : {}),
+      recordedBy: input.recordedBy,
+      recordedAt: new Date().toISOString(),
+      ...(input.note ? { note: input.note } : {}),
+    };
+
+    // The receipt is registered before the wallet moves. If the credit throws,
+    // the reference is spent and the payment cannot be credited twice by a
+    // retry — which is the safer failure: a customer chasing a missing credit
+    // is a support conversation, a double credit is money.
+    this.#receiptsByReference.set(reference, receipt);
+
+    this.ledger.commit({
+      tenantId: input.tenantId,
+      projectId: `${input.tenantId}-governance`,
+      actor: { refType: 'System', refId: 'billing' },
+      source: 'SYSTEM',
+      correlationId: ulid(),
+      eventType: 'PAYMENT_RECEIVED',
+      entity: { refType: 'PaymentReceipt', refId: receipt.id },
+      nextState: { ...receipt },
+    });
+
+    if (intent) {
+      intent.status = 'SETTLED';
+      intent.receiptId = receipt.id;
+      this.ledger.commit({
+        tenantId: input.tenantId,
+        projectId: `${input.tenantId}-governance`,
+        actor: { refType: 'System', refId: 'billing' },
+        source: 'SYSTEM',
+        correlationId: ulid(),
+        eventType: 'TOPUP_SETTLED',
+        entity: { refType: 'TopUpIntent', refId: intent.id },
+        nextState: { ...intent },
+      });
+    }
+
+    this.#creditWallet(input.tenantId, input.amountMinor, `${input.method} ${reference}`);
+    return { receipt, alreadyRecorded: false };
+  }
+
+  /** Top-up requests awaiting payment, for the operator's reconciliation view. */
+  topUpIntents(tenantId?: string): TopUpIntent[] {
+    return [...this.#topUpIntents.values()]
+      .filter((intent) => tenantId === undefined || intent.tenantId === tenantId)
+      .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
+  }
+
+  paymentReceipts(tenantId?: string): PaymentReceipt[] {
+    return [...this.#receiptsByReference.values()]
+      .filter((receipt) => tenantId === undefined || receipt.tenantId === tenantId)
+      .sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
+  }
+
+  #creditWallet(tenantId: string, amountMinor: number, note: string): void {
     const wallet = this.wallet(tenantId);
-    wallet.topUp(amountMinor);
+    wallet.topUp(amountMinor, `Prepaid ACU purchase — ${note}`);
 
     this.ledger.commit({
       tenantId,
@@ -969,8 +1136,40 @@ export class Platform {
     return snapshot;
   }
 
+  /**
+   * The billing position for a period, without issuing anything.
+   *
+   * Deliberately separate from `issueInvoice` rather than a flag on it. Issuing
+   * credits the period's AI allowance and writes to the ledger; looking must do
+   * neither, and a boolean parameter controlling whether a function spends
+   * money is the kind of thing that gets passed wrong once.
+   */
+  previewInvoice(tenantId: string, period: string): Invoice {
+    return buildInvoice(
+      this.subscription(tenantId),
+      this.wallet(tenantId),
+      period,
+      this.tenant(tenantId).defaultCurrency,
+      storage.purchasedBlocks(this.ledger, tenantId),
+    );
+  }
+
   issueInvoice(tenantId: string, period: string): Invoice {
     const subscription = this.subscription(tenantId);
+
+    // The period must be one that has actually happened.
+    //
+    // This route used to be tenant-callable with a client-supplied period, and
+    // issuing an invoice credits that period's AI allowance. The wallet refuses
+    // a second allocation for the *same* period — but nothing stopped anybody
+    // asking for a different one. A loop from 2020-01 to 2030-12 minted a
+    // hundred and thirty-two months of allowance, at twenty per cent of the
+    // plan price each, for free.
+    //
+    // Two bounds close it: the period cannot be in the future, and it cannot
+    // predate the subscription. Issuing is also operator-only now, which is the
+    // primary control; this is the one that holds even if that is ever relaxed.
+    assertBillablePeriod(period, subscription.startedAt);
 
     // Billing the period is what buys the period's AI allowance, so it is
     // credited here rather than on a timer. The wallet refuses a second
@@ -979,7 +1178,13 @@ export class Platform {
     // another month of AI would be free money.
     this.wallet(tenantId).allocateFromSubscription(PACKAGES[subscription.package].monthlyPriceMinor, period);
 
-    const invoice = buildInvoice(subscription, this.wallet(tenantId), period, this.tenant(tenantId).defaultCurrency);
+    const invoice = buildInvoice(
+      subscription,
+      this.wallet(tenantId),
+      period,
+      this.tenant(tenantId).defaultCurrency,
+      storage.purchasedBlocks(this.ledger, tenantId),
+    );
 
     this.ledger.commit({
       tenantId,

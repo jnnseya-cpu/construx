@@ -253,13 +253,17 @@ export async function billing(root) {
   });
 
   document.getElementById('topup')?.addEventListener('click', async () => {
+    // This button used to credit the wallet outright — a thousand pounds of AI
+    // per press, with no payment involved anywhere. It now records a request,
+    // and the wording says so, because a button that reported "topped up" while
+    // the balance stayed put would read as a bug.
     try {
-      await api.post('/v1/billing/top-up', { amountMinor: 100_000 });
-      toast('Wallet topped up', '£1,000.00 of prepaid ACU added', 'ok');
+      const intent = await api.post('/v1/billing/top-up', { amountMinor: 100_000 });
+      toast('Top-up requested', intent.message, 'ok');
       await refreshContext();
       await billing(root);
     } catch (error) {
-      toast('Top-up failed', error.message, 'err');
+      toast('Could not request a top-up', error.message, 'err');
     }
   });
 
@@ -283,15 +287,21 @@ export async function billing(root) {
   });
 
   document.getElementById('invoice')?.addEventListener('click', async () => {
+    // Reads the position rather than issuing anything. Issuing credits that
+    // period's AI allowance, which makes it an act of billing and not something
+    // a customer does to themselves — while it was a POST from here, a loop
+    // over periods minted allowance for free.
     try {
-      const invoice = await api.post('/v1/billing/invoice', { period: new Date().toISOString().slice(0, 7) });
+      const invoice = await api.get(`/v1/billing/invoice?period=${new Date().toISOString().slice(0, 7)}`);
       toast(
-        `Invoice ${invoice.period}`,
-        `Subscription ${exact(invoice.subscriptionMinor, invoice.currency)} + AI ${exact(invoice.aiUsageMinor, invoice.currency)} = ${exact(invoice.totalMinor, invoice.currency)}`,
+        `Statement ${invoice.period}`,
+        `Payable ${exact(invoice.totalMinor, invoice.currency)} — subscription ${exact(invoice.subscriptionMinor, invoice.currency)}` +
+          `${invoice.storageMinor ? ` + storage ${exact(invoice.storageMinor, invoice.currency)}` : ''}. ` +
+          `AI ${exact(invoice.aiUsageMinor, invoice.currency)} was drawn from prepaid credit.`,
         'ok',
       );
     } catch (error) {
-      toast('Could not issue invoice', error.message, 'err');
+      toast('Could not read the billing position', error.message, 'err');
     }
   });
 }

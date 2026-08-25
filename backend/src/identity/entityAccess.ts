@@ -30,6 +30,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   Subscription: { area: 'PLATFORM_ADMINISTRATION' },
   PermissionPolicy: { area: 'PLATFORM_ADMINISTRATION' },
   ACUWallet: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
+  // Money entering the platform. Same area and sensitivity as the wallet it
+  // credits — a payment record names an amount and a bank reference, which is
+  // commercial-in-confidence for the same reasons the balance is.
+  TopUpIntent: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
+  PaymentReceipt: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   AIRequest: { area: 'AI_EXECUTION' },
 
   // Structure and setup
