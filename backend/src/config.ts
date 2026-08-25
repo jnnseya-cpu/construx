@@ -103,7 +103,28 @@ export const config = {
   },
 
   /**
-   * The first platform operator, created at boot when none exists.
+   * Who account mail comes from.
+   *
+   * Separate from the newsletter sender on purpose. A login code and a
+   * marketing issue are different kinds of message with different obligations:
+   * one is mandatory and carries no unsubscribe, the other is consented to and
+   * must. Sending both as `no-reply@` means a person cannot reply to the one
+   * message they most often want to reply to, and sending both as the main
+   * inbox puts marketing in the mailbox staff read.
+   *
+   * Falls back to the newsletter sender when unset, so a deployment that has
+   * only ever configured one address keeps working.
+   *
+   * The relay usually requires this to match the mailbox `SMTP_USER`
+   * authenticates as. Hostinger does; most do.
+   */
+  notifications: {
+    fromName: str('NOTIFICATIONS_FROM_NAME', str('NEWSLETTER_FROM_NAME', 'CONSTRUX.AI')),
+    fromAddress: str('NOTIFICATIONS_FROM_ADDRESS', str('NEWSLETTER_FROM_ADDRESS', 'hello@construx.ai')),
+  },
+
+  /**
+   * The platform operator, ensured at boot.
    *
    * Without this a production deployment cannot be administered at all.
    * `createOperator` is reachable only from the demonstration seed, and the
@@ -117,9 +138,14 @@ export const config = {
    * internet, whatever guard is in front of it. Setting a variable requires the
    * server itself, which is the authority the act deserves.
    *
-   * Creates exactly one, only when the platform holds no operator at all. It is
-   * not a way to add colleagues — that is `POST /v1/operators`, once somebody
-   * can sign in to call it.
+   * Keyed on the address, not on a count: boot ensures *this address* holds an
+   * operator, and does nothing if it already does. Guarding on "no operators at
+   * all" instead would mean changing this value silently did nothing, and a
+   * deployment that had picked the wrong address once could never correct it
+   * without being able to sign in — which is the situation the setting exists
+   * to prevent.
+   *
+   * Adding colleagues is `POST /v1/operators`, once somebody can sign in.
    */
   platform: {
     operatorEmail: str('PLATFORM_OPERATOR_EMAIL', ''),
@@ -567,12 +593,17 @@ export function assertProductionSafety(): string[] {
       // transit, and a mail client following one leaks it to every hop.
       warnings.push('PUBLIC_BASE_URL is not https — unsubscribe links would be sent over cleartext');
     }
-    const foreign = foreignSenderDomain(config.newsletter.fromAddress, config.publicBaseUrl);
-    if (foreign) {
-      warnings.push(
-        `NEWSLETTER_FROM_ADDRESS sends as "${foreign.sender}" but this deployment serves "${foreign.origin}" — ` +
-          'every email, including the signup confirmation, will fail SPF unless that domain authorises this sender',
-      );
+    for (const [key, address] of [
+      ['NEWSLETTER_FROM_ADDRESS', config.newsletter.fromAddress],
+      ['NOTIFICATIONS_FROM_ADDRESS', config.notifications.fromAddress],
+    ] as const) {
+      const foreign = foreignSenderDomain(address, config.publicBaseUrl);
+      if (foreign) {
+        warnings.push(
+          `${key} sends as "${foreign.sender}" but this deployment serves "${foreign.origin}" — ` +
+            'mail from it will fail SPF unless that domain authorises this sender',
+        );
+      }
     }
   }
   if (config.smtp.host && config.smtp.pass === '' && config.smtp.user !== '') {

@@ -756,6 +756,33 @@ checked status, and that gate has been left as it was; and the storage limit
 `STORAGE_LIMIT_REACHED` with a 507. A duplicate check written before finding it
 was removed.
 
+**Account mail and marketing mail are separate senders.** They shared one
+address, which forces a choice between putting marketing in the mailbox staff
+read and sending login codes from an address that cannot receive a reply.
+`NOTIFICATIONS_FROM_ADDRESS` covers codes, verification links and account
+notices; `NEWSLETTER_FROM_ADDRESS` covers the weekly issue. It falls back to the
+newsletter sender when unset, so a deployment configured before this keeps
+working.
+
+It matters operationally as well as editorially: most relays, Hostinger
+included, require the From address to be the mailbox `SMTP_USER` authenticates
+as. One address for both means one of the two is always sending as something it
+is not authorised to send as — and that refusal was invisible.
+
+**A refused send now says so.** `notify` caught SMTP failures and recorded them
+as `FAILED` without logging anything, so a broken relay looked identical to a
+working one from outside: the screen said a code had been sent, the delivery log
+said it had not, and nothing connected the two. An afternoon went into finding
+that on a live deployment. The relay's own refusal is now written to stderr,
+because the relay's words are the diagnosis.
+
+**The operator bootstrap is keyed on the address, not on a count.** It created
+one only when the platform held *no* operator, so changing
+`PLATFORM_OPERATOR_EMAIL` afterwards silently did nothing — and a deployment
+that picked a wrong or unreadable address once could never correct it, because
+correcting it required signing in. Now each boot ensures the configured address
+holds an operator and leaves any others alone.
+
 **Nobody could be sent a login code.** Found by trying to sign in on the live
 deployment, one layer behind the operator bootstrap.
 

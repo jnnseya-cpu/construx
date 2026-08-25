@@ -156,7 +156,16 @@ async function deliver(
     });
 
     try {
-      const result = await sendMail({ from: config.newsletter.fromAddress, to: input.recipient.email, raw });
+      const result = await sendMail({ from: config.notifications.fromAddress, to: input.recipient.email, raw });
+      // Said out loud when it fails. A refusal recorded and not logged is how
+      // an afternoon goes by with a login screen reporting "code sent" and no
+      // code sent — the platform knew and did not say. The relay's own words
+      // are the diagnosis, so they are what gets printed.
+      if (!result.accepted) {
+        process.stderr.write(
+          `[mail] REFUSED by ${config.smtp.host} sending as ${config.notifications.fromAddress}: ${result.response}\n`,
+        );
+      }
       return {
         ...base,
         destination: input.recipient.email,
@@ -164,6 +173,11 @@ async function deliver(
         detail: result.response,
       };
     } catch (error) {
+      process.stderr.write(
+        `[mail] FAILED to ${config.smtp.host} sending as ${config.notifications.fromAddress}: ${
+          error instanceof Error ? error.message : String(error)
+        }\n`,
+      );
       // A refused connection, a TLS failure or a timeout. Recorded against this
       // recipient and this channel; the loop continues, because one bad address
       // must not stop the notice reaching everybody else.

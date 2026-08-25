@@ -215,6 +215,6 @@ export function previewNotification(input: {
       payload,
       branding: input.branding,
     }),
-    from: `${config.newsletter.fromName} <${config.newsletter.fromAddress}>`,
+    from: `${config.notifications.fromName} <${config.notifications.fromAddress}>`,
   };
 }

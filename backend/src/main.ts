@@ -94,14 +94,18 @@ if (config.ledger.journalPath !== '') {
  * does nothing — which matters because nobody remembers to unset it.
  */
 let bootstrap = 'none configured';
-if (config.platform.operatorEmail === '') {
-  bootstrap = platform.operators().length > 0 ? `${platform.operators().length} on record` : 'NONE — nobody can sign in';
-} else if (platform.operators().length > 0) {
-  bootstrap = `${platform.operators().length} on record (PLATFORM_OPERATOR_EMAIL ignored)`;
+const configuredOperator = config.platform.operatorEmail.trim().toLowerCase();
+if (configuredOperator === '') {
+  bootstrap =
+    platform.operators().length > 0
+      ? `${platform.operators().length} on record`
+      : 'NONE — nobody can sign in. Set PLATFORM_OPERATOR_EMAIL';
+} else if (platform.operators().some((o) => o.email.toLowerCase() === configuredOperator)) {
+  bootstrap = `${configuredOperator} — already on record (${platform.operators().length} total)`;
 } else {
   const operator = platform.createOperator({
     name: config.platform.operatorName,
-    email: config.platform.operatorEmail,
+    email: configuredOperator,
   });
   bootstrap = `created ${operator.email} — sign in at /app to administer the platform`;
 }
