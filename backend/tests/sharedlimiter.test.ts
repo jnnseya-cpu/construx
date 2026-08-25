@@ -173,20 +173,28 @@ describe('the bucket, against a real Redis', () => {
 
   it('refills over time rather than staying empty', { skip: !available }, async () => {
     const k = key('refill');
-    // 200 per second, so a token is back roughly every 5ms.
-    const options = { max: 200, burst: 0, windowSeconds: 1 };
+    // Five per second, so a token is back every 200ms.
+    //
+    // Sized for few round-trips rather than many. An earlier version used a
+    // 200-token bucket and drained it with up to four hundred sequential
+    // commands — each one racing the limiter's 250ms reply timeout, so on a
+    // loaded CI runner a single slow round-trip failed the run. That timeout is
+    // there to stop a hung backend holding the request that is asking whether
+    // it may proceed, and it is not something to relax for a fixture's
+    // convenience. The property under test is "the bucket refills", and six
+    // round-trips prove it exactly as well as four hundred.
+    const options = { max: 5, burst: 0, windowSeconds: 1 };
 
-    // Drained by draining, not by counting. Two hundred sequential round-trips
-    // take about thirty milliseconds, in which six tokens refill — so consuming
-    // exactly `max` leaves the bucket non-empty and the fixture, not the code,
-    // is what fails. Take tokens until one is refused.
+    // Drained by draining, not by counting: refill runs during the loop, so
+    // consuming exactly `max` can leave the bucket non-empty.
     let drained = false;
-    for (let i = 0; i < 400 && !drained; i += 1) {
+    for (let i = 0; i < 20 && !drained; i += 1) {
       drained = !(await limiter.consume(k, options)).allowed;
     }
     assert.ok(drained, 'the bucket never ran out, so the limit is not being enforced at all');
 
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    // Two tokens' worth of refill, so the assertion is not itself a race.
+    await new Promise((resolve) => setTimeout(resolve, 400));
     assert.equal((await limiter.consume(k, options)).allowed, true, 'the bucket never refilled');
   });
 });
