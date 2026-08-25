@@ -260,20 +260,34 @@ export async function billing(root) {
     try {
       const intent = await api.post('/v1/billing/top-up', { amountMinor: 100_000 });
 
-      // The request is on record either way. The checkout is a second step and
-      // is allowed to fail on its own — a deployment with no payment provider
+      // The request is on record either way. Paying is a second step and is
+      // allowed to fail on its own — a deployment with no payment provider
       // configured still records the request for the operator to settle by
       // bank transfer, and saying "top-up failed" there would be untrue.
-      try {
-        const checkout = await api.post('/v1/billing/checkout', { intentId: intent.id });
-        toast('Taking you to payment', 'The balance moves once the payment clears.', 'ok');
-        window.location.assign(checkout.checkoutUrl);
-        return;
-      } catch (error) {
-        // Neutral, not an error: the request was recorded, which is what was
-        // asked for. Only the card route is missing.
-        toast('Top-up requested', `${intent.message} Card payment is unavailable: ${error.message}`);
+      //
+      // Two rails, tried in turn rather than offered as a choice: whichever is
+      // configured is the one the customer gets. A deployment with both wired
+      // should let them pick, and that is a real screen rather than a second
+      // confirm dialog bolted onto this one.
+      const rails = [
+        { path: '/v1/billing/checkout', name: 'Card payment' },
+        { path: '/v1/billing/koda/checkout', name: 'Mobile money' },
+      ];
+      const refusals = [];
+      for (const rail of rails) {
+        try {
+          const checkout = await api.post(rail.path, { intentId: intent.id });
+          toast('Taking you to payment', 'The balance moves once the payment clears.', 'ok');
+          window.location.assign(checkout.checkoutUrl);
+          return;
+        } catch (error) {
+          refusals.push(`${rail.name}: ${error.message}`);
+        }
       }
+
+      // Neutral, not an error: the request was recorded, which is what was
+      // asked for. Only the ways of paying it are missing.
+      toast('Top-up requested', `${intent.message} ${refusals.join('. ')}`);
 
       await refreshContext();
       await billing(root);

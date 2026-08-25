@@ -756,6 +756,64 @@ checked status, and that gate has been left as it was; and the storage limit
 `STORAGE_LIMIT_REACHED` with a 507. A duplicate check written before finding it
 was removed.
 
+**KODA, as a second payment rail.** Mobile money beside the card, wired to the
+same shape as Stripe on purpose: a JSON call out to create an intent, a signed
+webhook back, and `Platform.creditFromPayment` as the single door into the
+wallet. A second provider reaching the balance by its own route would be a
+second set of money rules to get wrong.
+
+`POST /v1/billing/koda/checkout` opens a hosted checkout for a top-up already
+on record, at the amount on that record; `POST /v1/webhooks/koda` credits when
+KODA says the payment verified. `payment.verified.late` credits identically — a
+slow operator SMS is the same money, and dropping it would mean a customer on a
+bad network never receiving their credit.
+
+**The signature has no timestamp behind it.** KODA signs the raw body only, so
+unlike Stripe there is no tolerance window and a captured webhook stays
+cryptographically valid for ever. Replay is stopped entirely by the payment
+reference — KODA's own receipt id, spent exactly once. That makes the reference
+the primary defence on this rail rather than a backstop, which is worth knowing
+before anybody relaxes it.
+
+**The wallet is in pounds and this rail settles in dollars.** That is the part
+that needed a decision rather than an implementation, because
+`BILLING_CURRENCY` exists precisely to stop minor units being compared across
+currencies. Three rules:
+
+- **The rate is an operator-set constant, not a live feed.** `KODA_USD_PER_GBP`.
+  A rate fetched at settlement makes a credit impossible to reproduce from the
+  ledger a year later, and adds a third-party dependency to the one path where
+  failing means taking money and crediting nothing. The cost is FX drift between
+  reviews; it is bounded and visible, which a silent dependency is not.
+- **The rate quoted is the rate credited.** It is pinned to the intent when the
+  customer is shown a price and reused when the webhook lands. Otherwise moving
+  the configured rate mid-payment re-prices somebody who has already paid, in
+  whichever direction the market went.
+- **Every conversion is recorded.** The receipt carries `fx` — what was settled,
+  in what currency, at what rate — so any credit can be recomputed from its own
+  record without knowing the configured rate that day. Rounded half-up rather
+  than floored: flooring would shave a sub-penny off every conversion in the
+  platform's favour, which is small, systematic and indefensible once somebody
+  adds it up.
+
+`convertToBillingMinor` refuses a rate that is zero, negative or not finite, and
+`assertProductionSafety` warns at boot when the rate is unusable or the keys are
+half-configured — so the failure is found at deploy rather than at settlement.
+The console tries both rails in turn; a deployment with both wired should let
+the customer choose, and that is a real screen rather than a second dialog, so
+it is not built yet.
+
+Exercised in `backend/tests/koda.test.ts`: forged, wrong-secret, moved and
+wrong-length signatures; the unconfigured refusal; the conversion and its
+round-trip; a rate moved mid-payment; redelivery and the late event crediting
+once between them; a verification with no receipt id or no tenancy crediting
+nothing.
+
+**Google Maps was checked and is not required.** Nothing in the platform
+geocodes, renders a map or holds a coordinate — a project has a sector and a
+jurisdiction, not a location — so there is no key to add and adding one would be
+a credential for a dependency that does not exist.
+
 **Public registration, and every account type.** `POST /v1/signup` is the only
 endpoint where an unauthenticated stranger creates state, so it is written on
 the assumption the caller is hostile until an address is proved.

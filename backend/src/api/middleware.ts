@@ -44,6 +44,8 @@ export type RequestContext = {
    * grow it.
    */
   webhookSignature?: string;
+  /** The `x-koda-signature` header, on the mobile-money webhook. Same job. */
+  kodaSignature?: string;
   /** The route pattern this matched, so metrics group by route not by path. */
   routeId?: string;
   /** Truncated source, for the audit stream. Never the full address. */

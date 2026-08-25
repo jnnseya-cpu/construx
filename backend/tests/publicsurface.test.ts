@@ -95,13 +95,19 @@ describe('what an anonymous caller can obtain', () => {
       'POST /v1/console/session',
       'POST /v1/signup',
       'POST /v1/signup/verify',
-      // The only public route that moves money, and the most dangerous one on
-      // the platform. Stripe has no credential of ours to present, so the
-      // signature is the credential: unverified, this endpoint is a mint for
-      // anybody who learns its address. Verification happens over the raw
-      // bytes, in constant time, inside a tolerance window, before the payload
-      // is parsed — and the amount credited is read from what Stripe signed,
-      // never from anything the browser said on the way in.
+      // The two public routes that move money, and the most dangerous pair on
+      // the platform. Neither provider can present a credential of ours, so in
+      // both cases the signature is the credential: unverified, either endpoint
+      // is a mint for anybody who learns its address.
+      //
+      // KODA signs the raw body only. With no timestamp there is no tolerance
+      // window, so replay is stopped by the payment reference alone — worth
+      // knowing before anybody relaxes it.
+      'POST /v1/webhooks/koda',
+      // Stripe signs timestamp and body, so a stale capture is refused on age
+      // as well. Verification happens over the raw bytes, in constant time,
+      // before the payload is parsed, and the amount credited is read from what
+      // Stripe signed rather than from anything the browser said on the way in.
       'POST /v1/webhooks/stripe',
       // The button on that page. Same act as POST /v1/signup/verify and the
       // same implementation behind it; what differs is that it answers with a

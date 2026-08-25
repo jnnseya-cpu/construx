@@ -2,6 +2,7 @@ import { CHANGE_ORIGIN, CONTINENT, CONTRACT_FORM, DELAY_CAUSE, NOTICE_TYPE, SECT
 import { ask } from '../ai/conversation.ts';
 import * as storage from '../billing/storage.ts';
 import * as stripe from '../billing/stripe.ts';
+import * as koda from '../billing/koda.ts';
 import * as signup from '../identity/signup.ts';
 import * as erasure from '../identity/erasure.ts';
 import * as site from '../site/index.ts';
@@ -5461,6 +5462,77 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/billing/koda/checkout',
+    description: 'Open a mobile-money checkout for a recorded top-up request',
+    schema: {
+      type: 'object',
+      required: ['intentId'],
+      properties: { intentId: stringField },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'BILLING_ACU', 'U');
+      const { intentId } = body<{ intentId: string }>(ctx);
+
+      // Same rule as the card rail: the amount comes from the intent on record,
+      // never from this request.
+      const intent = platform.topUpIntents(actor.tenantId).find((i) => i.id === intentId);
+      if (!intent) throw new NotFoundError(`No top-up request ${intentId}`);
+      if (intent.status !== 'AWAITING_PAYMENT') {
+        throw new DomainError('TOPUP_ALREADY_SETTLED', 'That top-up request has already been settled or cancelled', 409);
+      }
+
+      // The rate quoted here is the rate the customer is charged at and the
+      // rate the credit is computed with when the money lands. Pinning it to
+      // the intent is what stops an operator moving KODA_USD_PER_GBP mid-payment
+      // and crediting somebody an amount they never agreed to.
+      const quoted = platform.quoteMobileMoney(intent.id, actor.tenantId);
+
+      const checkout = await koda.createCheckout({
+        intentId: intent.id,
+        tenantId: actor.tenantId,
+        amountMinorUsd: quoted.amountMinor,
+        successUrl: config.koda.successUrl || `${config.publicBaseUrl}/app/billing?paid=1`,
+      });
+
+      return {
+        checkoutUrl: checkout.url,
+        intentId: intent.id,
+        // Said out loud, because the customer is about to be charged in a
+        // currency that is not the one the top-up was quoted in.
+        charged: { amountMinor: quoted.amountMinor, currency: quoted.currency },
+        ratePerBillingUnit: quoted.ratePerBillingUnit,
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/webhooks/koda',
+    public: true,
+    // Raw bytes: the signature is an HMAC over exactly what was sent, and
+    // re-serialising the JSON would change it.
+    upload: true,
+    maxBytes: 256 * 1024,
+    description: 'KODA mobile-money webhook. Signature-verified; credits a wallet when a payment is verified',
+    handler: (platform, ctx) => {
+      // Public because KODA holds no credential of ours. The signature is the
+      // credential, and it is checked before the body is read.
+      const event = koda.verifyKodaWebhook(ctx.rawBody ?? Buffer.alloc(0), ctx.kodaSignature);
+      const settlement = koda.kodaSettlement(event);
+
+      if (!settlement) return { received: true, acted: false, type: event.type };
+
+      const credited = platform.creditFromMobileMoney(settlement);
+      return {
+        received: true,
+        acted: true,
+        receiptId: credited.receipt.id,
+        alreadyRecorded: credited.alreadyRecorded,
+      };
+    },
+  },
+  {
+    method: 'POST',
     pattern: '/v1/webhooks/stripe',
     public: true,
     // Raw bytes, because the signature is over exactly what was sent. Parsing
@@ -5580,6 +5652,13 @@ export const ROUTES: Route[] = [
         cardPayments: {
           configured: stripe.stripeConfigured(),
           webhook: stripe.webhookHealth(),
+        },
+        mobileMoney: {
+          configured: koda.kodaConfigured(),
+          webhook: koda.kodaWebhookHealth(),
+          // The rate every mobile-money credit is computed at, so a wrong one
+          // is visible here rather than only in the arithmetic of a receipt.
+          usdPerGbp: config.koda.usdPerGbp,
         },
       };
     },

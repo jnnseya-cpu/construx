@@ -31,7 +31,29 @@ import { config } from '../config.ts';
  * something anybody can quietly undo.
  */
 
-export type PaymentMethod = 'CARD' | 'BANK_TRANSFER' | 'INVOICE_SETTLEMENT' | 'CREDIT_NOTE' | 'MANUAL_ADJUSTMENT';
+export type PaymentMethod =
+  | 'CARD'
+  | 'MOBILE_MONEY'
+  | 'BANK_TRANSFER'
+  | 'INVOICE_SETTLEMENT'
+  | 'CREDIT_NOTE'
+  | 'MANUAL_ADJUSTMENT';
+
+/**
+ * What was actually paid, when it was not paid in the billing currency.
+ *
+ * The wallet holds GBP and always will. A mobile-money rail settles in dollars,
+ * so a conversion happens — and a conversion that leaves no trace is a number
+ * nobody can check. Recording the settled amount, its currency and the rate
+ * applied means any credit can be recomputed from its own receipt, years later,
+ * without knowing what the configured rate happened to be that day.
+ */
+export type SettlementFx = {
+  settledCurrency: string;
+  settledAmountMinor: number;
+  /** Units of the settled currency per one unit of the billing currency. */
+  ratePerBillingUnit: number;
+};
 
 /** A request to add credit. Carries no money and moves no balance. */
 export type TopUpIntent = {
@@ -44,6 +66,16 @@ export type TopUpIntent = {
   status: 'AWAITING_PAYMENT' | 'SETTLED' | 'CANCELLED';
   /** Set when a receipt settles it. */
   receiptId?: string;
+  /**
+   * The rate quoted when this intent was created, for a rail that settles in
+   * another currency.
+   *
+   * Held on the intent so the customer gets what they were quoted. If the
+   * operator moves the configured rate while somebody is mid-payment, settling
+   * at the new rate would credit an amount they never agreed to — in whichever
+   * direction the market moved.
+   */
+  quotedFx?: { currency: string; amountMinor: number; ratePerBillingUnit: number };
 };
 
 /** Proof that money arrived. The only thing that may credit a wallet. */
@@ -63,6 +95,12 @@ export type PaymentReceipt = {
   recordedBy: string;
   recordedAt: string;
   note?: string;
+  /**
+   * Set when the money arrived in a currency other than the billing one.
+   * `amountMinor` above is always the billing currency; this says what was
+   * actually handed over and at what rate it was converted.
+   */
+  fx?: SettlementFx;
 };
 
 /**
@@ -191,4 +229,45 @@ export function normaliseReference(reference: string): string {
     throw new DomainError('PAYMENT_REFERENCE_TOO_LONG', 'A payment reference may not exceed 200 characters');
   }
   return trimmed;
+}
+
+/**
+ * Convert a settled foreign amount into the billing currency.
+ *
+ * Both currencies here have two decimal places, which is the only reason this
+ * is one division. It is deliberately not a general FX function: the exponent
+ * differences that made `BILLING_CURRENCY` necessary in the first place would
+ * need handling before this could take JPY or KWD, and writing that now would
+ * be building for a requirement that does not exist.
+ *
+ * Rounded half-up rather than floored. Floor would shave a sub-penny off every
+ * conversion in the platform's favour, which across enough payments is a
+ * systematic under-credit of customers — small, deliberate-looking, and exactly
+ * the sort of thing that is indefensible when somebody eventually adds it up.
+ */
+export function convertToBillingMinor(settledAmountMinor: number, ratePerBillingUnit: number): number {
+  if (!Number.isFinite(ratePerBillingUnit) || ratePerBillingUnit <= 0) {
+    throw new DomainError(
+      'FX_RATE_INVALID',
+      `A conversion rate of ${ratePerBillingUnit} cannot be used to credit a wallet. ` +
+        'Set a positive rate before taking payments on this rail.',
+      503,
+    );
+  }
+  if (!Number.isSafeInteger(settledAmountMinor) || settledAmountMinor <= 0) {
+    throw new DomainError('PAYMENT_INVALID_AMOUNT', 'A settled amount must be a positive whole number of minor units');
+  }
+  return Math.round(settledAmountMinor / ratePerBillingUnit);
+}
+
+/** The other direction: what to charge on the foreign rail for a billing-currency top-up. */
+export function convertFromBillingMinor(billingAmountMinor: number, ratePerBillingUnit: number): number {
+  if (!Number.isFinite(ratePerBillingUnit) || ratePerBillingUnit <= 0) {
+    throw new DomainError(
+      'FX_RATE_INVALID',
+      `A conversion rate of ${ratePerBillingUnit} cannot be used to price a payment.`,
+      503,
+    );
+  }
+  return Math.round(billingAmountMinor * ratePerBillingUnit);
 }

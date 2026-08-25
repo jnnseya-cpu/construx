@@ -7,13 +7,17 @@ import { ACUWallet, type ACUCaps, type ACUEntry } from './billing/acu.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
 import { assignIdentity, packageForTier, revokeIdentity, TIERS, type Subscription, type SubscriptionTier } from './billing/subscription.ts';
 import { standing } from './billing/entitlement.ts';
+import { KODA_SETTLEMENT_CURRENCY } from './billing/koda.ts';
 import {
   BILLING_CURRENCY,
   assertBillablePeriod,
   assertCreditableAmount,
+  convertFromBillingMinor,
+  convertToBillingMinor,
   normaliseReference,
   type PaymentMethod,
   type PaymentReceipt,
+  type SettlementFx,
   type TopUpIntent,
 } from './billing/payments.ts';
 import { PACKAGES, UNCHARGED_ROLES, type PackageTier } from './billing/seats.ts';
@@ -1007,6 +1011,12 @@ export class Platform {
      * most likely crediting the same payment twice under a mistyped reference.
      */
     source?: 'PROVIDER' | 'OPERATOR';
+    /**
+     * What was handed over, when the rail settled in another currency.
+     * `amountMinor` above is still the billing currency and is still what the
+     * wallet is credited; this is the audit trail for how it was arrived at.
+     */
+    fx?: SettlementFx;
   }): { receipt: PaymentReceipt; alreadyRecorded: boolean } {
     const reference = normaliseReference(input.reference);
     assertCreditableAmount(input.amountMinor);
@@ -1069,6 +1079,7 @@ export class Platform {
       recordedBy: input.recordedBy,
       recordedAt: new Date().toISOString(),
       ...(input.note ? { note: input.note } : {}),
+      ...(input.fx ? { fx: input.fx } : {}),
     };
 
     // The receipt is registered before the wallet moves. If the credit throws,
@@ -1105,6 +1116,66 @@ export class Platform {
 
     this.#creditWallet(input.tenantId, input.amountMinor, `${input.method} ${reference}`);
     return { receipt, alreadyRecorded: false };
+  }
+
+  /**
+   * Quote a recorded top-up on the mobile-money rail, and pin the rate to it.
+   *
+   * The rate is written onto the intent the first time it is quoted and reused
+   * afterwards, so re-opening a checkout does not re-price a payment somebody
+   * is already making, and so the webhook can credit at the rate the customer
+   * was actually shown.
+   */
+  quoteMobileMoney(intentId: string, tenantId: string): { amountMinor: number; currency: string; ratePerBillingUnit: number } {
+    const intent = this.#topUpIntents.get(intentId);
+    if (!intent || intent.tenantId !== tenantId) throw new NotFoundError(`No top-up request ${intentId}`);
+
+    if (intent.quotedFx) return { ...intent.quotedFx };
+
+    const rate = config.koda.usdPerGbp;
+    const amountMinor = convertFromBillingMinor(intent.amountMinor, rate);
+    intent.quotedFx = { currency: KODA_SETTLEMENT_CURRENCY, amountMinor, ratePerBillingUnit: rate };
+    return { ...intent.quotedFx };
+  }
+
+  /**
+   * Credit a wallet from a verified mobile-money settlement.
+   *
+   * Converts at the rate quoted on the intent when there is one — the customer
+   * gets what they were shown — and at the configured rate otherwise, which is
+   * the case for a payment that reached KODA without going through our
+   * checkout. Both amounts and the rate go onto the receipt, so the credit can
+   * be recomputed from its own record without knowing what the configured rate
+   * was that day.
+   */
+  creditFromMobileMoney(settlement: {
+    reference: string;
+    tenantId: string;
+    intentId?: string;
+    settledAmountMinor: number;
+    settledCurrency: string;
+  }): { receipt: PaymentReceipt; alreadyRecorded: boolean } {
+    const intent = settlement.intentId ? this.#topUpIntents.get(settlement.intentId) : undefined;
+    const rate = intent?.quotedFx?.ratePerBillingUnit ?? config.koda.usdPerGbp;
+    const amountMinor = convertToBillingMinor(settlement.settledAmountMinor, rate);
+
+    return this.creditFromPayment({
+      tenantId: settlement.tenantId,
+      amountMinor,
+      method: 'MOBILE_MONEY',
+      reference: settlement.reference,
+      ...(settlement.intentId ? { intentId: settlement.intentId } : {}),
+      recordedBy: 'koda',
+      // KODA is holding the money and has signed for it, so a second real
+      // payment against a spent request is a credit rather than a 409.
+      source: 'PROVIDER',
+      note: `KODA mobile money ${settlement.settledAmountMinor} ${settlement.settledCurrency}`,
+      fx: {
+        settledCurrency: settlement.settledCurrency,
+        settledAmountMinor: settlement.settledAmountMinor,
+        ratePerBillingUnit: rate,
+      },
+    });
   }
 
   /** Top-up requests awaiting payment, for the operator's reconciliation view. */

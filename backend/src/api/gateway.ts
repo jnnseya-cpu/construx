@@ -139,10 +139,10 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     query: url.searchParams,
     body: undefined,
     idempotencyKey: header(req, 'idempotency-key'),
-    // Only Stripe sends this today. Captured unconditionally because the
-    // alternative is the gateway knowing which routes are webhooks, and it
-    // costs one header read.
+    // The webhook signatures, captured unconditionally: the alternative is the
+    // gateway knowing which routes are webhooks, and each costs one header read.
     webhookSignature: header(req, 'stripe-signature'),
+    kodaSignature: header(req, 'x-koda-signature'),
     // Resolved and validated here rather than in a handler: the header is
     // client-supplied and ends up at a formatter that would throw on a bad tag.
     locale: resolveLocale(header(req, 'accept-language')),

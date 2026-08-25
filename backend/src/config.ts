@@ -178,6 +178,47 @@ export const config = {
     cancelUrl: str('STRIPE_CANCEL_URL', ''),
   },
 
+  /**
+   * KODA — mobile money, as a second payment rail beside the card.
+   *
+   * Same shape as Stripe on purpose: a secret key for the outbound call, a
+   * webhook secret that is the only credential on the inbound one, and nothing
+   * working until both are present.
+   */
+  koda: {
+    secretKey: str('KODA_SECRET_KEY', ''),
+    /**
+     * Signs `x-koda-signature` — HMAC-SHA256 of the raw body, hex. Unset means
+     * the webhook refuses everything, which is the only safe unconfigured
+     * state for an endpoint that credits wallets.
+     */
+    webhookSecret: str('KODA_WEBHOOK_SECRET', ''),
+    baseUrl: str('KODA_BASE_URL', 'https://kodajnn.com/v1'),
+    /** Mobile-money operators offered at checkout, in KODA's own codes. */
+    operators: str('KODA_OPERATORS', 'orange_cd,mpesa_cd')
+      .split(',')
+      .map((code) => code.trim())
+      .filter((code) => code !== ''),
+    successUrl: str('KODA_SUCCESS_URL', ''),
+    /**
+     * US dollars per pound, for pricing a KODA top-up.
+     *
+     * The platform denominates in GBP — that is what closed the minor-unit
+     * arbitrage — and KODA settles in USD, so one number has to bridge them.
+     * It is a operator-set constant rather than a live feed: a rate fetched at
+     * settlement makes the credited amount impossible to reproduce from the
+     * ledger a year later, and adds a runtime dependency on a third party to
+     * the one path where failing means taking money and crediting nothing.
+     *
+     * The rate in force is copied onto the intent when it is created and onto
+     * the receipt when it settles, so every credit can be recomputed from its
+     * own record, and changing this affects new top-ups rather than in-flight
+     * ones. Review it when the market moves; the drift between reviews is the
+     * cost of not having a feed, and it is bounded and visible.
+     */
+    usdPerGbp: num('KODA_USD_PER_GBP', 1.27),
+  },
+
   billing: {
     /**
      * Hard economic rule: 1 unit of provider cost is charged at 4.
@@ -458,6 +499,24 @@ export function assertProductionSafety(): string[] {
     // its keys, so this one mistake is catchable before a customer finds it.
     if (config.stripe.secretKey.startsWith('sk_test_')) {
       warnings.push('STRIPE_SECRET_KEY is a test key on a production deployment — no real payment can be taken');
+    }
+    // The same half-configured trap on the mobile-money rail.
+    if (config.koda.secretKey !== '' && config.koda.webhookSecret === '') {
+      warnings.push(
+        'KODA_SECRET_KEY is set but KODA_WEBHOOK_SECRET is not — mobile-money payments would be taken and never credited, so the checkout route stays disabled until both are present',
+      );
+    }
+    if (config.koda.webhookSecret !== '' && config.koda.secretKey === '') {
+      warnings.push('KODA_WEBHOOK_SECRET is set but KODA_SECRET_KEY is not — no mobile-money checkout can be opened');
+    }
+    // The rate every mobile-money credit is divided by. Zero or negative would
+    // reach a wallet as an infinite or negative credit, and the conversion
+    // refuses it — but at the point of payment, which is far too late to find
+    // out. Say so at boot instead.
+    if (config.koda.secretKey !== '' && !(config.koda.usdPerGbp > 0)) {
+      warnings.push(
+        `KODA_USD_PER_GBP is ${config.koda.usdPerGbp} — mobile-money payments will be refused at settlement until it is a positive rate`,
+      );
     }
     if (config.newsletter.enabled && !config.smtp.host) {
       warnings.push('NEWSLETTER_ENABLED is on but SMTP_HOST is unset — issues will be recorded, not delivered');
