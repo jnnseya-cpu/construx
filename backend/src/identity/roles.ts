@@ -14,6 +14,8 @@
  *                     platform-level controls.
  */
 
+import { DomainError } from '../core/errors.ts';
+
 export type AccountLayer = 'PLATFORM_ADMIN' | 'ENTERPRISE_ADMIN' | 'TENANT_USER';
 
 export type Role =
@@ -87,6 +89,66 @@ export const ROLE_ACCOUNT_LAYER: Record<Role, AccountLayer> = {
   SUPPLIER: 'TENANT_USER',
   REGULATOR: 'TENANT_USER',
 };
+
+/**
+ * The roles a tenant administrator may grant.
+ *
+ * Everything except the two that are not theirs to give.
+ *
+ * `POST /v1/users` and `POST /v1/users/:id/roles` took `roles` as an array of
+ * unconstrained strings and passed them through. An enterprise admin could
+ * therefore create a `PLATFORM_ADMIN` identity, sign in as it, and hold the
+ * whole operator surface: crediting wallets — their own — with unlimited money,
+ * suspending and reactivating subscriptions, reading the estate. Every gate on
+ * the money model was defeated by one request from an ordinary customer
+ * account.
+ *
+ * `REGULATOR` is excluded for a smaller but real reason: it is an uncharged
+ * seat. `assignIdentity` skips the seat cap for it, so a tenant on ten seats
+ * could staff a hundred people as regulators and pay for none of them — and a
+ * regulator's export bypasses the subscription gate on purpose, because that
+ * access is statutory. Both are correct for an actual regulator and neither is
+ * something a customer should be able to hand out to their own staff.
+ *
+ * An external regulator is invited by the operator, which is where the
+ * relationship is actually established.
+ */
+export const OPERATOR_ONLY_ROLES: Role[] = ['PLATFORM_ADMIN', 'REGULATOR'];
+
+export const ALL_ROLES: Role[] = Object.keys(ROLE_ACCOUNT_LAYER) as Role[];
+
+export const TENANT_GRANTABLE_ROLES: Role[] = ALL_ROLES.filter((role) => !OPERATOR_ONLY_ROLES.includes(role));
+
+/** Whether a string is a role at all. The route schemas take unconstrained arrays. */
+export function isRole(value: string): value is Role {
+  return (ALL_ROLES as string[]).includes(value);
+}
+
+/**
+ * Check a set of roles a tenant administrator is trying to grant.
+ *
+ * Two failures, and they are told apart deliberately: a typo is a mistake and a
+ * privilege escalation is not, and the operator's audit stream should be able
+ * to see the difference.
+ */
+export function assertTenantGrantable(roles: readonly string[]): Role[] {
+  const unknown = roles.filter((role) => !isRole(role));
+  if (unknown.length > 0) {
+    throw new DomainError('ROLE_UNKNOWN', `Not a role: ${unknown.join(', ')}`);
+  }
+
+  const forbidden = roles.filter((role) => OPERATOR_ONLY_ROLES.includes(role as Role));
+  if (forbidden.length > 0) {
+    throw new DomainError(
+      'ROLE_NOT_GRANTABLE',
+      `${forbidden.join(' and ')} cannot be granted from inside a tenancy. ` +
+        'The platform operator holds the operator role, and a regulator is invited by them.',
+      403,
+    );
+  }
+
+  return roles as Role[];
+}
 
 type Matrix = Partial<Record<CapabilityArea, PermissionCode[]>>;
 

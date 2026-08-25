@@ -133,6 +133,10 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     query: url.searchParams,
     body: undefined,
     idempotencyKey: header(req, 'idempotency-key'),
+    // Only Stripe sends this today. Captured unconditionally because the
+    // alternative is the gateway knowing which routes are webhooks, and it
+    // costs one header read.
+    webhookSignature: header(req, 'stripe-signature'),
     // Resolved and validated here rather than in a handler: the header is
     // client-supplied and ends up at a formatter that would throw on a bad tag.
     locale: resolveLocale(header(req, 'accept-language')),
@@ -260,7 +264,7 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     if (ctx.auth) await applyRateLimit(ctx, req.socket.remoteAddress ?? 'unknown');
 
     if (matched.route.upload) {
-      ctx.rawBody = await readRawBody(req, config.evidence.maxBytes);
+      ctx.rawBody = await readRawBody(req, matched.route.maxBytes ?? config.evidence.maxBytes);
       ctx.contentType = header(req, 'content-type');
     } else {
       ctx.body = await readBody(req);

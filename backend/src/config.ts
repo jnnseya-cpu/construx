@@ -154,6 +154,30 @@ export const config = {
     perceptionMaxBytes: num('AI_PERCEPTION_MAX_BYTES', 20 * 1_048_576),
   },
 
+  /**
+   * Stripe. Both values are required together: a secret key with no webhook
+   * secret can take a payment and has no way to be told about it, and a webhook
+   * secret with no key is a listener for something nothing produces. Absent
+   * means checkout is refused rather than half-wired.
+   */
+  stripe: {
+    secretKey: str('STRIPE_SECRET_KEY', ''),
+    /**
+     * The signing secret for the webhook endpoint, from the Stripe dashboard.
+     *
+     * This is the only thing standing between a public URL and the wallet. With
+     * it unset the webhook route refuses every request, which is the correct
+     * failure: an unverified webhook that credits money is worse than no
+     * webhook at all.
+     */
+    webhookSecret: str('STRIPE_WEBHOOK_SECRET', ''),
+    /** Pinned, so a version rolled out on Stripe's side cannot reshape what we parse. */
+    apiVersion: str('STRIPE_API_VERSION', '2024-06-20'),
+    /** Where the customer lands after paying, and after giving up. */
+    successUrl: str('STRIPE_SUCCESS_URL', ''),
+    cancelUrl: str('STRIPE_CANCEL_URL', ''),
+  },
+
   billing: {
     /**
      * Hard economic rule: 1 unit of provider cost is charged at 4.
@@ -233,6 +257,20 @@ export const config = {
      * nobody can quietly take back out.
      */
     maximumCreditMinor: num('MAXIMUM_CREDIT_MINOR', 10_000_000),
+    /**
+     * How many free trials one organisation may take.
+     *
+     * Every tenancy is granted trial credit at creation, and signup creates a
+     * tenancy per verified address — so with no counter, a company took a fresh
+     * grant for every address it could verify, and one person took one for
+     * every plus-suffix they could think of. Every pound of it buys real
+     * provider compute.
+     *
+     * One, because a trial is an offer to an organisation rather than to a
+     * mailbox. Raise it deliberately for a campaign; do not raise it because a
+     * prospect asked.
+     */
+    trialsPerOrganisation: num('TRIALS_PER_ORGANISATION', 1),
   },
 
   privacy: {

@@ -130,6 +130,13 @@ describe('the routing table itself', () => {
       'POST /v1/console/session',
       'POST /v1/signup',
       'POST /v1/signup/verify',
+      // Stripe cannot hold a credential of ours, so the payment notification
+      // has to arrive unauthenticated. The signature is what stands in for the
+      // credential: an HMAC over the exact bytes received, checked in constant
+      // time inside a tolerance window, before a single field of the body is
+      // read. Everything the route does with money — the amount, the currency,
+      // the paid flag — comes out of the object Stripe signed.
+      'POST /v1/webhooks/stripe',
       // The button on that page: the same activation, answering with a page
       // rather than JSON because the caller is a browser, not a client.
       'POST /verify',

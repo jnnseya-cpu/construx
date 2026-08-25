@@ -424,6 +424,25 @@ export class ACUWallet {
     const hold = this.#holds.get(holdId);
     if (!hold) throw new DomainError('ACU_HOLD_NOT_FOUND', `Hold ${holdId} does not exist or is already settled`);
 
+    // The provider's reported cost, checked before it becomes arithmetic.
+    //
+    // Nothing validated it. A negative figure — from a provider adapter with a
+    // sign error, a malformed response body, or a deliberately hostile one —
+    // produced a negative charge, and `#record` subtracts the charge from the
+    // balance, so a negative cost *credited* the customer. Free money arriving
+    // through the AI path, in a direction nobody would think to look.
+    //
+    // Zero is refused for the same family of reasons: a call that reached a
+    // provider cost something, and a zero settles the hold while charging
+    // nothing.
+    if (!Number.isFinite(actualRawCostMinor) || actualRawCostMinor <= 0) {
+      throw new DomainError(
+        'ACU_COST_INVALID',
+        `A provider reported a cost of ${actualRawCostMinor}, which cannot be settled. ` +
+          'A completed execution costs a positive amount.',
+      );
+    }
+
     const multiplier = effectiveMultiplier(this.monthRawSpendMinor(), this.#volumeIncentive);
     const billedMinor = Math.ceil(actualRawCostMinor * multiplier);
 

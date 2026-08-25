@@ -8,6 +8,7 @@ import { buildInvoice, type Invoice } from './billing/invoice.ts';
 import { assignIdentity, packageForTier, revokeIdentity, TIERS, type Subscription, type SubscriptionTier } from './billing/subscription.ts';
 import { standing } from './billing/entitlement.ts';
 import {
+  BILLING_CURRENCY,
   assertBillablePeriod,
   assertCreditableAmount,
   normaliseReference,
@@ -165,6 +166,15 @@ export class Platform {
     /** Commercial package. Defaults from the tier so existing callers keep working. */
     package?: PackageTier;
     enterpriseName: string;
+    /**
+     * Whether this tenancy gets the free trial grant.
+     *
+     * Defaults to true, which is right for an operator provisioning a customer.
+     * Public signup passes the answer from `trialGrantAllowed`, because it was
+     * granting afresh for every address that verified — so one company took a
+     * grant per employee, and one person took one per plus-suffix.
+     */
+    trialGrant?: boolean;
   }): { tenant: Tenant; subscription: Subscription; wallet: ACUWallet } {
     const tenantId = ulid();
     const enterpriseId = ulid();
@@ -194,8 +204,10 @@ export class Platform {
     const wallet = new ACUWallet(tenantId, { volumeIncentive: input.tier === 'ENTERPRISE' || input.tier === 'SOVEREIGN' });
     if (this.#walletSink) wallet.attachSink(this.#walletSink);
     // Every tenant, paid or trial, starts with the trial grant so AI can be
-    // tried without a payment method — and stops when it runs out.
-    wallet.grantTrialCredit();
+    // tried without a payment method — and stops when it runs out. Unless this
+    // organisation has already had one: the grant is an offer to a customer,
+    // not a per-mailbox entitlement.
+    if (input.trialGrant !== false) wallet.grantTrialCredit();
     // A paid plan additionally credits its AI allowance for the first period.
     // A free plan allocates nothing and therefore has only the trial grant,
     // which is the whole reason AI stops working on a trial that runs out
@@ -942,7 +954,7 @@ export class Platform {
       id: ulid(),
       tenantId: input.tenantId,
       amountMinor: input.amountMinor,
-      currency: this.tenant(input.tenantId).defaultCurrency,
+      currency: BILLING_CURRENCY,
       requestedBy: input.requestedBy,
       requestedAt: new Date().toISOString(),
       status: 'AWAITING_PAYMENT',
@@ -984,9 +996,26 @@ export class Platform {
     intentId?: string;
     recordedBy: string;
     note?: string;
+    /**
+     * Who is asserting that the money arrived.
+     *
+     * `PROVIDER` is a signed settlement notification: the payment processor has
+     * the money and says so, and the reference is one it generated. `OPERATOR`
+     * is a human typing into a form. The difference matters at exactly one
+     * point — a second credit against an intent that is already settled — where
+     * the provider is telling us about a second real payment and the operator is
+     * most likely crediting the same payment twice under a mistyped reference.
+     */
+    source?: 'PROVIDER' | 'OPERATOR';
   }): { receipt: PaymentReceipt; alreadyRecorded: boolean } {
     const reference = normaliseReference(input.reference);
     assertCreditableAmount(input.amountMinor);
+
+    // Checked before the reference is spent. A payment addressed to a tenancy
+    // that does not exist has to stay creditable: registering the receipt first
+    // and failing at the wallet would burn the reference, and a retry would then
+    // report success while nothing was ever credited.
+    this.wallet(input.tenantId);
 
     // Checked before anything else, and answered as success rather than as an
     // error: a webhook retried after a timeout is not a fault, and a 4xx would
@@ -1004,23 +1033,39 @@ export class Platform {
       return { receipt: existing, alreadyRecorded: true };
     }
 
-    const intent = input.intentId ? this.#topUpIntents.get(input.intentId) : undefined;
+    let intent = input.intentId ? this.#topUpIntents.get(input.intentId) : undefined;
     if (input.intentId && !intent) throw new NotFoundError(`No top-up request ${input.intentId}`);
     if (intent && intent.tenantId !== input.tenantId) {
       throw new NotFoundError(`No top-up request ${input.intentId}`);
     }
     if (intent && intent.status !== 'AWAITING_PAYMENT') {
-      throw new DomainError('TOPUP_ALREADY_SETTLED', 'That top-up request has already been settled or cancelled', 409);
+      if (input.source === 'PROVIDER') {
+        // A customer who opened the checkout page twice and paid on both. The
+        // second payment is real — the processor is holding it — so refusing it
+        // would take money and credit nothing, and a 4xx would have the provider
+        // retry a rejection for days. Credit it, and leave it unattached: the
+        // intent records one request and has already been answered once.
+        intent = undefined;
+      } else {
+        throw new DomainError(
+          'TOPUP_ALREADY_SETTLED',
+          'That top-up request has already been settled or cancelled',
+          409,
+        );
+      }
     }
 
     const receipt: PaymentReceipt = {
       id: ulid(),
       tenantId: input.tenantId,
       amountMinor: input.amountMinor,
-      currency: this.tenant(input.tenantId).defaultCurrency,
+      currency: BILLING_CURRENCY,
       method: input.method,
       reference,
-      ...(input.intentId ? { intentId: input.intentId } : {}),
+      // The resolved intent, not the requested one: a second real payment
+      // against an already-settled request is credited without being attached
+      // to it, so the request keeps recording the one settlement it answered.
+      ...(intent ? { intentId: intent.id } : {}),
       recordedBy: input.recordedBy,
       recordedAt: new Date().toISOString(),
       ...(input.note ? { note: input.note } : {}),
@@ -1149,7 +1194,12 @@ export class Platform {
       this.subscription(tenantId),
       this.wallet(tenantId),
       period,
-      this.tenant(tenantId).defaultCurrency,
+      // The billing currency, not the tenancy's working one. Every published
+      // price is a bare integer of minor units, and "minor unit" means a
+      // different amount of money in a currency with a different exponent —
+      // so reading the customer's own choice here priced the same package at a
+      // quarter in KWD and half in JPY.
+      BILLING_CURRENCY,
       storage.purchasedBlocks(this.ledger, tenantId),
     );
   }
@@ -1182,7 +1232,12 @@ export class Platform {
       subscription,
       this.wallet(tenantId),
       period,
-      this.tenant(tenantId).defaultCurrency,
+      // The billing currency, not the tenancy's working one. Every published
+      // price is a bare integer of minor units, and "minor unit" means a
+      // different amount of money in a currency with a different exponent —
+      // so reading the customer's own choice here priced the same package at a
+      // quarter in KWD and half in JPY.
+      BILLING_CURRENCY,
       storage.purchasedBlocks(this.ledger, tenantId),
     );
 

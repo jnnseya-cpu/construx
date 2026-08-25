@@ -133,6 +133,7 @@ const tokenHashes = new Map<string, string>();
 export function resetRegistrations(): void {
   registrations.clear();
   tokenHashes.clear();
+  trialsTaken.clear();
 }
 
 function hashToken(token: string): string {
@@ -150,6 +151,78 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function normaliseEmail(value: string): string {
   return value.trim().toLowerCase();
+}
+
+/**
+ * Email domains that have already taken a free trial.
+ *
+ * Every `createTenant` grants the trial credit, and signup creates a tenancy per
+ * verified address. Nothing counted, so a handful of addresses at one company —
+ * or one address with plus-suffixes, or a disposable-mail domain — took a fresh
+ * grant each time. Individually small; automated, unbounded, and every pound of
+ * it buys real provider compute.
+ *
+ * Keyed on the domain rather than the address for exactly that reason: the
+ * address is trivially varied and the domain is the organisation, which is what
+ * the trial is offered to. Free-mail domains are the deliberate exception —
+ * refusing a second trial to everyone at gmail.com would refuse it to every
+ * sole trader in the country — so those are counted per address instead.
+ */
+const trialsTaken = new Map<string, number>();
+
+/**
+ * Domains where one organisation does not mean one customer.
+ *
+ * A trial per address is right here; a trial per domain would be one trial for
+ * every sole trader using a free mailbox, which is most of them.
+ */
+const SHARED_MAIL_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'yahoo.com',
+  'icloud.com',
+  'me.com',
+  'proton.me',
+  'protonmail.com',
+  'aol.com',
+  'gmx.com',
+  'yandex.com',
+]);
+
+/**
+ * The key a trial is counted against.
+ *
+ * Plus-addressing is stripped: `rowan+one@acme.com` and `rowan+two@acme.com`
+ * are one mailbox at every major provider, and treating them as two customers
+ * is the cheapest way to farm the grant.
+ */
+export function trialKey(email: string): string {
+  const [local = '', domain = ''] = normaliseEmail(email).split('@');
+  if (SHARED_MAIL_DOMAINS.has(domain)) {
+    const withoutTag = local.split('+')[0] ?? local;
+    // Dots are not significant in a Gmail address either.
+    return `${domain === 'gmail.com' || domain === 'googlemail.com' ? withoutTag.replaceAll('.', '') : withoutTag}@${domain}`;
+  }
+  return domain;
+}
+
+/** How many free trials this organisation or mailbox has already taken. */
+export function trialsTakenBy(email: string): number {
+  return trialsTaken.get(trialKey(email)) ?? 0;
+}
+
+/** Record that a trial has been taken. Called once, when a tenancy is provisioned. */
+export function recordTrialTaken(email: string): void {
+  const key = trialKey(email);
+  trialsTaken.set(key, (trialsTaken.get(key) ?? 0) + 1);
+}
+
+/** Whether this address is entitled to the free grant at all. */
+export function trialGrantAllowed(email: string): boolean {
+  return trialsTakenBy(email) < config.billing.trialsPerOrganisation;
 }
 
 export function findByEmail(email: string): Registration | undefined {
@@ -307,7 +380,13 @@ export function verify(
     throw new DomainError('EMAIL_IN_USE', 'An account already exists for that address. Sign in instead.');
   }
 
+  // One free trial per organisation. Checked here rather than in `createTenant`
+  // because this is the only path a stranger can reach, and an operator
+  // provisioning a customer should not be second-guessed by it.
+  const grantTrial = trialGrantAllowed(record.email);
+
   const { tenant } = platform.createTenant({
+    trialGrant: grantTrial,
     legalName: record.organisationName,
     jurisdiction: record.jurisdiction,
     defaultCurrency: record.currency,
@@ -334,6 +413,8 @@ export function verify(
     documentReferencePrefix: record.organisationName.slice(0, 3).toUpperCase().padEnd(3, 'X'),
     legalFooter: `${record.organisationName} · registered in ${record.jurisdiction}`,
   });
+
+  if (grantTrial) recordTrialTaken(record.email);
 
   record.status = 'VERIFIED';
   record.verifiedAt = new Date().toISOString();

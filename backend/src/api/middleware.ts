@@ -35,6 +35,15 @@ export type RequestContext = {
   contentType?: string;
   auth?: AuthContext;
   idempotencyKey?: string;
+  /**
+   * The signature on an inbound webhook, for the routes that take one.
+   *
+   * Captured at the edge because a handler cannot reach the raw request, and
+   * named for what it is rather than exposing every header — a generic header
+   * bag on the context is a surface that grows without anybody deciding to
+   * grow it.
+   */
+  webhookSignature?: string;
   /** The route pattern this matched, so metrics group by route not by path. */
   routeId?: string;
   /** Truncated source, for the audit stream. Never the full address. */

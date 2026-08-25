@@ -641,6 +641,101 @@ leaving it open would let somebody cancel and keep producing deliverables for
 ever. Resolving it properly means separating "take my records" from "generate a
 report", which does not exist yet.
 
+**Four more ways to end up worse off, and a real payment provider.** A second
+pass over the same ground, because the first audit closed the routes that
+handled money and left the ones that decided who was allowed to.
+
+1. **Privilege escalation into the operator role.** `POST /v1/users` and
+   `POST /v1/users/:userId/roles` took `roles` as an array of unconstrained
+   strings and passed it through to `createUser`. An enterprise admin — which
+   is what every self-serve signup receives — could create a `PLATFORM_ADMIN`
+   identity, sign in as it, and hold the whole operator surface: crediting
+   their own wallet with any amount, reactivating a cancelled subscription,
+   reading the estate. **Every control in the first audit sat behind that one
+   word.** `identity/roles.ts` now publishes `TENANT_GRANTABLE_ROLES` and
+   `assertTenantGrantable`, applied at both doors, in the schema *and* the
+   handler. `ROLE_UNKNOWN` and `ROLE_NOT_GRANTABLE` are separate codes on
+   purpose: a typo is a mistake, an attempt at the operator role is a security
+   event, and the audit stream should be able to tell them apart.
+
+2. **Money was recorded without a currency.** Tenancies choose a display
+   currency, and minor units are not comparable across currencies — JPY has no
+   minor unit at all, KWD has three digits of one. Every published price is a
+   bare integer, so a tenancy on JPY was quoted the same integer as a tenancy
+   on GBP and paid roughly a hundredth of it. `BILLING_CURRENCY` in
+   `billing/payments.ts` is now the single denomination for intents, receipts
+   and invoices; the tenancy's own currency stays what it always was, a
+   presentation choice.
+
+3. **A provider reporting a nonsense cost charged nothing.** `settle`
+   multiplied the raw provider cost by the markup, so a zero produced a free
+   execution and a negative one would have *credited* the customer for running
+   an engine. The compute was bought either way. `ACU_COST_INVALID` now refuses
+   anything that is not a positive finite number.
+
+4. **Trial farming.** The free grant was made per tenancy, and a tenancy is one
+   signup form. `rowan+1@gmail.com`, `rowan+2@gmail.com` and `r.owan@gmail.com`
+   are one mailbox at every major provider, and each was a separate grant of
+   real provider compute. `identity/signup.ts` counts grants against a
+   normalised key — the domain for a company address, the de-tagged and
+   de-dotted mailbox for a free-mail one — under `TRIALS_PER_ORGANISATION`.
+   The distinction matters in both directions: counting a whole free-mail
+   domain as one organisation would refuse the second sole trader on Gmail,
+   which is most of them. A refused grant still provisions the account, because
+   turning a spend control into a lost sale is not a fix.
+
+**Stripe, over `fetch` and `node:crypto`.** No SDK — zero runtime dependencies
+is settled, and Stripe's API is form-encoded HTTP with an HMAC on the webhook,
+which is how the AI providers are already wired. `POST /v1/billing/checkout`
+opens a hosted session for a top-up **already on record**, at the amount on
+that record; `POST /v1/webhooks/stripe` credits the wallet when Stripe says the
+money arrived. The console redirects with `window.location.assign`, so the
+hosted page never enters this origin: no third-party script, no iframe, and no
+CSP relaxation anywhere.
+
+The webhook is the dangerous part, and it is the only unauthenticated route on
+the platform that moves money. Stripe holds no credential of ours, so **the
+signature is the credential** — HMAC-SHA256 over the exact bytes received,
+compared in constant time, inside a 300-second tolerance window, before a
+single field of the body is parsed. Unverified, it would be a mint with a
+payment provider's name on it. It reads its body as raw bytes with its own
+256KB ceiling rather than the 50MB evidence limit, because a public route that
+buffers 50MB per connection is a different kind of leak.
+
+Four rules the implementation exists to enforce:
+
+- **Nothing the browser says about money is believed.** The amount, currency
+  and paid flag come from the object Stripe signed. A customer may choose what
+  to pay; they may not choose what they are credited.
+- **Live and test money are never confused.** A production deployment refuses
+  `livemode: false`. Stripe test keys are free to anybody who signs up.
+- **A payment is credited exactly once.** The reference is the *payment
+  intent*, not the event — one Checkout sale raises more than one event, each
+  with its own id, so keying on the event would credit a single payment twice.
+  That was found and closed while building it. `payment_intent.succeeded` is
+  deliberately not read: it is the duplicate half of the pair.
+- **Money that arrived is always credited.** `creditFromPayment` now takes a
+  `source`. A provider settling a second real payment against an
+  already-answered request credits it, unattached; an operator doing the same
+  is refused, because there the likely explanation is one payment entered twice
+  under a mistyped reference. Answering 4xx to a provider holding a customer's
+  money would have Stripe retry a rejection for days and leave the customer
+  paid-up and uncredited.
+
+Unset keys mean the checkout answers 503 and top-up requests are still recorded
+for the operator to settle by bank transfer. The platform works without Stripe;
+it simply cannot take a card. Exercised in `backend/tests/stripe.test.ts`
+(forged, wrong-secret, moved, malformed, stale and rotated signatures; test-mode
+in production; unpaid sessions; wrong currency; redelivery) and
+`backend/tests/moneyleaks2.test.ts` for the four above.
+
+**Two things I said in the first audit that were wrong**, corrected here so the
+record is not: export does *not* survive cancellation — `platform.ts` already
+checked status, and that gate has been left as it was; and the storage limit
+*is* enforced — `storage.assertCapacity` runs on the upload route and throws
+`STORAGE_LIMIT_REACHED` with a 507. A duplicate check written before finding it
+was removed.
+
 **Public registration, and every account type.** `POST /v1/signup` is the only
 endpoint where an unauthenticated stranger creates state, so it is written on
 the assumption the caller is hostile until an address is proved.

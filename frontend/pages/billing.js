@@ -259,7 +259,22 @@ export async function billing(root) {
     // the balance stayed put would read as a bug.
     try {
       const intent = await api.post('/v1/billing/top-up', { amountMinor: 100_000 });
-      toast('Top-up requested', intent.message, 'ok');
+
+      // The request is on record either way. The checkout is a second step and
+      // is allowed to fail on its own — a deployment with no payment provider
+      // configured still records the request for the operator to settle by
+      // bank transfer, and saying "top-up failed" there would be untrue.
+      try {
+        const checkout = await api.post('/v1/billing/checkout', { intentId: intent.id });
+        toast('Taking you to payment', 'The balance moves once the payment clears.', 'ok');
+        window.location.assign(checkout.checkoutUrl);
+        return;
+      } catch (error) {
+        // Neutral, not an error: the request was recorded, which is what was
+        // asked for. Only the card route is missing.
+        toast('Top-up requested', `${intent.message} Card payment is unavailable: ${error.message}`);
+      }
+
       await refreshContext();
       await billing(root);
     } catch (error) {

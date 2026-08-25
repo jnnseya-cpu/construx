@@ -1,6 +1,7 @@
 import { CHANGE_ORIGIN, CONTINENT, CONTRACT_FORM, DELAY_CAUSE, NOTICE_TYPE, SECTOR, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
 import { ask } from '../ai/conversation.ts';
 import * as storage from '../billing/storage.ts';
+import * as stripe from '../billing/stripe.ts';
 import * as signup from '../identity/signup.ts';
 import * as erasure from '../identity/erasure.ts';
 import * as site from '../site/index.ts';
@@ -71,7 +72,10 @@ import * as evidence from '../evidence/registry.ts';
 import * as perception from '../engines/perception.ts';
 import * as signing from '../signing/signature.ts';
 import { ownershipMap } from '../identity/ownership.ts';
-import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode } from '../identity/roles.ts';
+import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode,
+  assertTenantGrantable,
+  TENANT_GRANTABLE_ROLES,
+} from '../identity/roles.ts';
 import { authorise, AUTHZ_OPTIONS, currentPhase, write } from '../engines/context.ts';
 import { ulid } from '../core/ids.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
@@ -110,6 +114,17 @@ export type Route = {
    * to 67MB of text and then ask the JSON parser to hold all of it.
    */
   upload?: boolean;
+  /**
+   * A smaller ceiling than the evidence limit, for an upload route that is not
+   * receiving a file.
+   *
+   * The evidence limit is sized for a scanned drawing set. A webhook envelope
+   * is a few kilobytes, and it arrives on a public route — anybody may post to
+   * it, so anybody may make the server buffer whatever the ceiling allows.
+   * Sizing the limit to the payload is the difference between a rejected
+   * request and 50MB of memory held per connection.
+   */
+  maxBytes?: number;
   /**
    * A POST that creates nothing and changes nothing — answered 200, not 201.
    *
@@ -1614,7 +1629,7 @@ export const ROUTES: Route[] = [
         name: stringField,
         email: stringField,
         partyId: { type: 'string' },
-        roles: { type: 'array', minItems: 1, items: { type: 'string' } },
+        roles: { type: 'array', minItems: 1, items: { type: 'string', enum: TENANT_GRANTABLE_ROLES } },
       },
       additionalProperties: false,
     },
@@ -1623,7 +1638,16 @@ export const ROUTES: Route[] = [
       if (!actor.roles.includes('ENTERPRISE_ADMIN') && !actor.roles.includes('OWNER')) {
         throw new ForbiddenError('Only an enterprise admin may create users', 'ENTERPRISE_ADMIN_REQUIRED');
       }
-      return platform.createUser({ ...body<{ name: string; email: string; roles: Parameters<typeof platform.createUser>[0]['roles']; partyId?: string }>(ctx), tenantId: actor.tenantId });
+      const input = body<{ name: string; email: string; roles: string[]; partyId?: string }>(ctx);
+      // The roles were passed straight through, from an array of unconstrained
+      // strings. An enterprise admin could mint a PLATFORM_ADMIN and hold the
+      // whole operator surface — including crediting their own wallet with
+      // unlimited money, which defeats every control on the money model.
+      return platform.createUser({
+        ...input,
+        roles: assertTenantGrantable(input.roles),
+        tenantId: actor.tenantId,
+      });
     },
   },
   {
@@ -1634,7 +1658,7 @@ export const ROUTES: Route[] = [
       type: 'object',
       required: ['roles', 'reason'],
       properties: {
-        roles: { type: 'array', minItems: 1, items: { type: 'string' } },
+        roles: { type: 'array', minItems: 1, items: { type: 'string', enum: TENANT_GRANTABLE_ROLES } },
         reason: { type: 'string', minLength: 10 },
       },
       additionalProperties: false,
@@ -1644,8 +1668,12 @@ export const ROUTES: Route[] = [
       if (!actor.roles.includes('ENTERPRISE_ADMIN') && !actor.roles.includes('OWNER')) {
         throw new ForbiddenError('Only an enterprise admin may change roles', 'ENTERPRISE_ADMIN_REQUIRED');
       }
+      const input = body<{ roles: string[]; reason: string }>(ctx);
+      // The same hole by the other door: creating a user was not the only way
+      // to acquire a role, and promoting an existing one was unconstrained too.
       return platform.assignRoles(actor, {
-        ...body<{ roles: Parameters<typeof platform.assignRoles>[1]['roles']; reason: string }>(ctx),
+        ...input,
+        roles: assertTenantGrantable(input.roles),
         userId: ctx.params.userId as string,
       });
     },
@@ -5396,6 +5424,87 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/billing/checkout',
+    description: 'Open a Stripe checkout page for a recorded top-up request',
+    schema: {
+      type: 'object',
+      required: ['intentId'],
+      properties: { intentId: stringField },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'BILLING_ACU', 'U');
+      const { intentId } = body<{ intentId: string }>(ctx);
+
+      // The amount comes from the intent already on record, not from this
+      // request. A customer choosing what to pay is fine; a customer choosing
+      // what they are credited is the hole this whole design exists to close.
+      const intent = platform.topUpIntents(actor.tenantId).find((i) => i.id === intentId);
+      if (!intent) throw new NotFoundError(`No top-up request ${intentId}`);
+      if (intent.status !== 'AWAITING_PAYMENT') {
+        throw new DomainError('TOPUP_ALREADY_SETTLED', 'That top-up request has already been settled or cancelled', 409);
+      }
+
+      const session = await stripe.createCheckoutSession({
+        intentId: intent.id,
+        tenantId: actor.tenantId,
+        amountMinor: intent.amountMinor,
+        customerEmail: platform.user(actor.actorId).email,
+        successUrl: config.stripe.successUrl || `${config.publicBaseUrl}/app/billing?paid=1`,
+        cancelUrl: config.stripe.cancelUrl || `${config.publicBaseUrl}/app/billing`,
+      });
+
+      // The URL, and nothing about the balance: it has not moved and will not
+      // until Stripe says the money arrived.
+      return { checkoutUrl: session.url, sessionId: session.id, intentId: intent.id };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/webhooks/stripe',
+    public: true,
+    // Raw bytes, because the signature is over exactly what was sent. Parsing
+    // to JSON and re-serialising changes whitespace and key order, and the HMAC
+    // would never match again.
+    upload: true,
+    // A Stripe event is a few kilobytes. The evidence ceiling is 50MB and is
+    // sized for a drawing set; leaving it in place on a route anybody may post
+    // to would let anybody make this process buffer 50MB per connection.
+    maxBytes: 256 * 1024,
+    description: 'Stripe payment webhook. Signature-verified; the only unauthenticated route that moves money',
+    handler: (platform, ctx) => {
+      // Public because Stripe holds no credential of ours, which makes the
+      // signature the entire defence. Unverified, this is a URL that credits
+      // wallets to anybody who finds it.
+      const event = stripe.verifyWebhook(ctx.rawBody ?? Buffer.alloc(0), ctx.webhookSignature);
+      const payment = stripe.settledPayment(event);
+
+      // Acknowledged, not acted on. Stripe sends dozens of event types and
+      // retries anything that is not a 2xx for days; answering 400 to an event
+      // we were never going to process would have it retried until it expired.
+      if (!payment) return { received: true, acted: false, type: event.type };
+
+      const { receipt, alreadyRecorded } = platform.creditFromPayment({
+        tenantId: payment.tenantId,
+        amountMinor: payment.amountMinor,
+        method: 'CARD',
+        // The event id. Stripe delivers at least once by design, and
+        // `creditFromPayment` spends a reference exactly once, so a redelivery
+        // credits nothing further.
+        reference: payment.reference,
+        ...(payment.intentId ? { intentId: payment.intentId } : {}),
+        recordedBy: 'stripe',
+        // Stripe is holding the money and has signed for it. That is what makes
+        // a second payment against a spent request a credit rather than a 409.
+        source: 'PROVIDER',
+        note: `Stripe ${event.type}`,
+      });
+
+      return { received: true, acted: true, receiptId: receipt.id, alreadyRecorded };
+    },
+  },
+  {
+    method: 'POST',
     pattern: '/v1/admin/tenants/:tenantId/credit',
     description: 'Credit a wallet against a received payment (platform operator only)',
     schema: {
@@ -5436,6 +5545,10 @@ export const ROUTES: Route[] = [
         tenantId: ctx.params.tenantId!,
         ...input,
         recordedBy: actor.actorId,
+        // A person typing. A second credit against a request already settled is
+        // refused here, because the likeliest explanation is the same payment
+        // entered twice under a mistyped reference.
+        source: 'OPERATOR',
       });
 
       return {

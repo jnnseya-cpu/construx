@@ -102,6 +102,32 @@ export function assertCreditableAmount(amountMinor: number): void {
 }
 
 /**
+ * The one currency every published price is quoted in.
+ *
+ * Every `monthlyPriceMinor` in `seats.ts` is a bare integer — 95,000 for Core
+ * Project — and "minor units" is not a fixed exponent. Signup let the customer
+ * choose any currency the platform counts in, and nothing converted anything,
+ * so the same integer meant a different amount of money depending on what they
+ * picked:
+ *
+ *   GBP (exponent 2)   95,000 minor  =  £950
+ *   JPY (exponent 0)   95,000 minor  =  ¥95,000   ≈ £490
+ *   KWD (exponent 3)   95,000 minor  =  95 KWD    ≈ £245
+ *
+ * A quarter price for the identical package, selectable from a dropdown on the
+ * signup form. The ACU wallet is worse, because one ACU is one minor unit: a
+ * hundred thousand minor units buys a hundred thousand ACUs whatever the
+ * currency, so the same AI cost 100 KWD instead of £1,000 — roughly cost, which
+ * erases the entire markup.
+ *
+ * So prices are denominated, once, here. A tenancy still records the currency
+ * it works in — a project in Riyadh reports in riyals, and that is correct and
+ * unaffected — but what the platform charges is quoted in this one and is not
+ * a function of what the customer selected.
+ */
+export const BILLING_CURRENCY = 'GBP';
+
+/**
  * Refuse a billing period that has not happened.
  *
  * Issuing an invoice credits that period's AI allowance, so a period is worth
