@@ -3,6 +3,7 @@ import type { Server } from 'node:http';
 import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
 import { ROUTES } from '../src/api/routes.ts';
+import { throwsCode } from './helpers.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
 
@@ -137,5 +138,105 @@ describe('creating the first operator', () => {
     platform.createOperator({ name: 'Second', email: 'second@construxvg.com' });
 
     assert.equal(platform.operators().length, 2);
+  });
+});
+
+/**
+ * Run a block with NODE_ENV set to production, restoring it afterwards.
+ *
+ * The login route only sends mail in production — outside it the code is
+ * returned in the response so local development needs no mail server. So the
+ * branding defect below is invisible in every other test in this suite, which
+ * is exactly why it reached a live deployment.
+ */
+async function asProduction<T>(run: () => Promise<T>): Promise<T> {
+  const previous = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previous;
+  }
+}
+
+describe('anybody who has an account can be sent a code for it', () => {
+  it('sends the operator a login code without client branding', async () => {
+    // The defect this pins. Sending the code demanded the tenancy's *client*
+    // branding, and the operator tenancy can never have any — it has no client.
+    // So the platform could not be signed into at all, and the sign-in screen
+    // reported that documents could not be exported, which is true and useless.
+    const platform = new Platform();
+    platform.createOperator({ name: 'Operator', email: 'ops@construxvg.com' });
+
+    const local = createGateway(platform);
+    await new Promise<void>((resolve) => local.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${(local.address() as { port: number }).port}/v1/auth/login`;
+
+    try {
+      const response = await asProduction(() =>
+        fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email: 'ops@construxvg.com' }),
+        }),
+      );
+
+      assert.ok(
+        [200, 201].includes(response.status),
+        `the operator could not be sent a login code (${response.status})`,
+      );
+    } finally {
+      local.close();
+    }
+  });
+
+  it('sends a brand-new tenancy its login code before anybody configures branding', async () => {
+    // The worse half. A tenancy is seconds old when its administrator first
+    // signs in, so it has no branding either — meaning the first person through
+    // the door of every new customer was refused their own code.
+    const platform = new Platform();
+    const { tenant } = platform.createTenant({
+      legalName: 'Brand New Ltd',
+      enterpriseName: 'Brand New Ltd',
+      jurisdiction: 'GB',
+      defaultCurrency: 'GBP',
+      tier: 'TEAM',
+    });
+    platform.createUser({
+      tenantId: tenant.id,
+      name: 'Rowan',
+      email: 'rowan@brandnew.test',
+      roles: ['ENTERPRISE_ADMIN'],
+    });
+
+    const local = createGateway(platform);
+    await new Promise<void>((resolve) => local.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${(local.address() as { port: number }).port}/v1/auth/login`;
+
+    try {
+      const response = await asProduction(() =>
+        fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email: 'rowan@brandnew.test' }),
+        }),
+      );
+
+      assert.ok(
+        [200, 201].includes(response.status),
+        `a new tenancy's administrator could not be sent a login code (${response.status})`,
+      );
+    } finally {
+      local.close();
+    }
+  });
+
+  it('still refuses to export a document for a tenancy with no branding', () => {
+    // The strict check must stay strict. An unbranded document reaching a
+    // client is worse than no document, and relaxing that is not what the fix
+    // above did.
+    const platform = new Platform();
+    throwsCode(() => platform.exports.branding('no-such-tenant'), 'BRANDING_NOT_CONFIGURED');
   });
 });

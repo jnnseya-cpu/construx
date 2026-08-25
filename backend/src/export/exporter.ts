@@ -123,6 +123,24 @@ export class ExportService {
     }
   }
 
+  /**
+   * The tenancy's branding, or nothing, without refusing.
+   *
+   * For the messages the platform sends *about an account* rather than
+   * documents it produces *for a client*: a verification code, a confirmation
+   * that a tenancy is set up. Those go out before anybody could have configured
+   * branding — a tenancy is minutes old at that point — and the platform
+   * tenancy can never have client branding at all, because it has no client.
+   *
+   * `branding` below stays strict, and must. An unbranded document reaching a
+   * client is worse than no document, and that refusal is the thing stopping
+   * it. This is a different question with a different answer, not a way round
+   * the same one.
+   */
+  brandingIfConfigured(tenantId: string): ClientBranding | undefined {
+    return this.#brandingByTenant.get(tenantId);
+  }
+
   branding(tenantId: string): ClientBranding {
     const branding = this.#brandingByTenant.get(tenantId);
     if (!branding) {

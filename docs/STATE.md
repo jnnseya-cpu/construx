@@ -756,6 +756,36 @@ checked status, and that gate has been left as it was; and the storage limit
 `STORAGE_LIMIT_REACHED` with a 507. A duplicate check written before finding it
 was removed.
 
+**Nobody could be sent a login code.** Found by trying to sign in on the live
+deployment, one layer behind the operator bootstrap.
+
+Sending the MFA code called `exports.branding(user.tenantId)`, which refuses
+when a tenancy has no **client** branding configured. Two consequences, and the
+second is worse than the first:
+
+- The platform operator can never have client branding — the operator tenancy
+  has no client — so the platform could not be signed into at all.
+- A tenancy is seconds old when its administrator first signs in, so it has no
+  branding either. **The first person through the door of every new customer
+  would have been refused their own login code.**
+
+The sign-in screen reported *"Client branding must be configured before
+documents can be exported"*, which is a true sentence about the wrong subject
+and tells the person nothing they can act on.
+
+`brandingIfConfigured` is the fix: account messages — a verification code, a
+confirmation that a tenancy exists — fall back to the platform's own branding,
+because they go out before anybody could have configured anything. `branding`
+stays strict and must: an unbranded *document* reaching a client is worse than
+no document, and that refusal is the thing preventing it. Different question,
+different answer.
+
+It survived every test because the login route only sends mail in production —
+outside it the code comes back in the response so local development needs no
+mail server. The regression test runs the route with `NODE_ENV=production`,
+which is the condition that makes the defect reachable, and fails without the
+fix.
+
 **A production deployment could not be administered at all.** Found on the live
 server, not in a test. Every admin route demands `PLATFORM_ADMIN`; the only
 thing that created one was `seedDemoProject`; and that is reachable only through

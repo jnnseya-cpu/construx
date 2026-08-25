@@ -368,7 +368,9 @@ async function activateRegistration(
       actionLabel: 'Sign in',
       detail: `${activation.enterpriseName} is set up and you are its administrator.`,
     },
-    branding: platform.exports.branding(activation.tenantId),
+    // Same reasoning as the login code: this arrives seconds after the tenancy
+    // exists, so there has been no opportunity to configure anything.
+    branding: platform.exports.brandingIfConfigured(activation.tenantId) ?? PLATFORM_BRANDING,
     actorId: 'signup',
     correlationId: ctx.correlationId,
   });
@@ -444,7 +446,14 @@ export const ROUTES: Route[] = [
           // carrier in this build — routing to one would record a delivery
           // that never happened.
           channels: ['EMAIL'],
-          branding: platform.exports.branding(user.tenantId),
+          // The tenancy's own branding when it has any, the platform's
+          // otherwise. Demanding client branding here made the platform
+          // unsignable-into: the operator tenancy can never have any, and a
+          // tenancy created ten seconds ago has none either — so the first
+          // person through the door of every new customer was refused their
+          // own login code, and the screen said documents could not be
+          // exported.
+          branding: platform.exports.brandingIfConfigured(user.tenantId) ?? PLATFORM_BRANDING,
           actorId: user.id,
           correlationId: ctx.correlationId,
         });
