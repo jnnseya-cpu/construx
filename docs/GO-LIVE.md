@@ -32,6 +32,40 @@ Two things it cannot tell you, so check them by eye:
 
 ---
 
+## Part 0 — The first operator
+
+A deployment with no operator cannot be administered: every admin route demands
+`PLATFORM_ADMIN`, and nothing on the network can create the first one. Check
+which state you are in — the boot banner says so directly:
+
+```bash
+docker logs --tail=40 construx | grep Operator
+```
+
+- `NONE — nobody can sign in` — do this part
+- `created …` or `N on record` — already done, go to Part 1
+
+Set the address, restart, and one operator is created:
+
+```bash
+grep -q '^PLATFORM_OPERATOR_EMAIL' /srv/construx/app/.env || \
+  printf 'PLATFORM_OPERATOR_EMAIL=\nPLATFORM_OPERATOR_NAME=Platform operator\n' >> /srv/construx/app/.env
+nano /srv/construx/app/.env      # fill in an address you can read
+cd /srv/construx/app && docker compose -f deploy/compose.yaml -f deploy/compose.edge.yaml --env-file .env up -d
+sleep 15 && docker logs --tail=40 construx | grep Operator
+```
+
+There is no password anywhere in this platform — sign-in is a one-time code sent
+by email — so **that address is the credential**. Use a mailbox you can actually
+read, and make sure SMTP is configured first or the code has no way to reach
+you.
+
+Then sign in at `https://construxvg.com/app`, enter the address, and type the
+code from your inbox. Add colleagues afterwards with `POST /v1/operators` rather
+than by editing this file again.
+
+---
+
 ## Part 1 — Collect the keys
 
 Do this part in a browser, before touching the server. Each secret is shown

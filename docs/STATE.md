@@ -756,6 +756,35 @@ checked status, and that gate has been left as it was; and the storage limit
 `STORAGE_LIMIT_REACHED` with a 507. A duplicate check written before finding it
 was removed.
 
+**A production deployment could not be administered at all.** Found on the live
+server, not in a test. Every admin route demands `PLATFORM_ADMIN`; the only
+thing that created one was `seedDemoProject`; and that is reachable only through
+`POST /v1/console/session`, which is `DEMO_DISABLED` in production — correctly,
+since it hands a working session to anonymous callers. So the platform came up,
+served the public site, reported `0 users across 0 tenancies`, and there was no
+way to sign in, create a tenancy, or do anything else.
+
+Closed with `PLATFORM_OPERATOR_EMAIL`: at boot, if the platform holds no
+operator at all, one is created. **Deliberately not a route.** A public endpoint
+that mints a `PLATFORM_ADMIN` is the worst thing that could be put on the
+internet whatever guard sits in front of it, and the role-escalation leak closed
+in the second money audit is what that costs — the operator role can credit any
+wallet with any amount. Setting a variable requires the server itself, which is
+the authority the act deserves.
+
+Guarded on the platform holding no operator rather than on the variable being
+absent, so it runs exactly once in a deployment's life and leaving the variable
+set afterwards is harmless — which matters, because nobody remembers to unset
+it. The boot banner reports which of the three states applies, including `NONE —
+nobody can sign in`, since that was the state nothing announced.
+
+Sign-in is an emailed one-time code and there is no password anywhere, so the
+configured address *is* the credential. An operator created against a mailbox
+nobody can read is an account nobody can use, and a test pins that.
+
+`POST /v1/operators` adds the second onwards, operator-only — so this is a
+bootstrap rather than a standing way to manage people.
+
 **`docs/GO-LIVE.md` — nothing to taking payments, in order.** Where each key
 comes from in each provider's dashboard, how to get it onto the server without
 destroying what is already there, what every boot-log state means, and how to

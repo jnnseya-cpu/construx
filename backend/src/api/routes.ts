@@ -520,6 +520,28 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/operators',
+    description: 'Create another platform operator (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['name', 'email'],
+      properties: { name: stringField, email: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      // The *second* operator onwards. The first is created at boot from
+      // PLATFORM_OPERATOR_EMAIL, because there is nobody to authorise this call
+      // on a deployment that has none — and a public route that mints a
+      // PLATFORM_ADMIN is the worst thing that could be put on the internet.
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may create another', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const input = body<{ name: string; email: string }>(ctx);
+      return platform.createOperator(input);
+    },
+  },
+  {
+    method: 'POST',
     pattern: '/v1/admin/tenants/:tenantId/subscription-status',
     description: 'Suspend, cancel or reactivate a tenancy (platform operator only)',
     schema: {

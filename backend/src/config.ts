@@ -102,6 +102,30 @@ export const config = {
     privateKeyPem: str('SIGNING_PRIVATE_KEY_PEM', '').replace(/\\n/g, '\n'),
   },
 
+  /**
+   * The first platform operator, created at boot when none exists.
+   *
+   * Without this a production deployment cannot be administered at all.
+   * `createOperator` is reachable only from the demonstration seed, and the
+   * demonstration seed is switched off in production — correctly, since it
+   * hands a working session to anonymous callers. So every admin route required
+   * an operator, and nothing could create the first one. The platform came up,
+   * served the public site, and could never be signed into.
+   *
+   * Declared here rather than exposed as a route because a public endpoint that
+   * mints a `PLATFORM_ADMIN` is the worst possible thing to put on the
+   * internet, whatever guard is in front of it. Setting a variable requires the
+   * server itself, which is the authority the act deserves.
+   *
+   * Creates exactly one, only when the platform holds no operator at all. It is
+   * not a way to add colleagues — that is `POST /v1/operators`, once somebody
+   * can sign in to call it.
+   */
+  platform: {
+    operatorEmail: str('PLATFORM_OPERATOR_EMAIL', ''),
+    operatorName: str('PLATFORM_OPERATOR_NAME', 'Platform operator'),
+  },
+
   auth: {
     required: bool('GATEWAY_REQUIRE_AUTH', true),
     exposeMfa: bool('GATEWAY_AUTH_EXPOSE_MFA', true),
@@ -480,6 +504,11 @@ export function assertProductionSafety(): string[] {
       warnings.push(`AI_MODE is "${config.ai.mode}" in a production environment`);
     }
     if (!config.auth.required) warnings.push('GATEWAY_REQUIRE_AUTH is disabled in production');
+    if (config.platform.operatorEmail === '') {
+      warnings.push(
+        'PLATFORM_OPERATOR_EMAIL is unset — if this deployment has no operator yet, nobody can sign in and no tenancy can be created',
+      );
+    }
     // A mistyped provider name silently falls back to the default. Said out
     // loud, because the deployment believes it is calling somebody else — and
     // the ledger will record the vendor that actually served each request.

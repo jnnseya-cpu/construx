@@ -80,6 +80,32 @@ if (config.ledger.journalPath !== '') {
   if (!config.ledger.fsync) durability += ' (fsync OFF)';
 }
 
+/**
+ * The first operator, if the platform has none and one is configured.
+ *
+ * A deployment with no operator cannot be administered: every admin route
+ * demands PLATFORM_ADMIN, the only thing that creates one is the demonstration
+ * seed, and the demonstration seed is switched off in production. So the
+ * platform would come up, serve the public site, and never be signable into.
+ *
+ * Guarded on the platform holding no operator at all rather than on the address
+ * being absent, so this runs exactly once in a deployment's life. Leaving the
+ * variable set afterwards is harmless — the second boot finds an operator and
+ * does nothing — which matters because nobody remembers to unset it.
+ */
+let bootstrap = 'none configured';
+if (config.platform.operatorEmail === '') {
+  bootstrap = platform.operators().length > 0 ? `${platform.operators().length} on record` : 'NONE — nobody can sign in';
+} else if (platform.operators().length > 0) {
+  bootstrap = `${platform.operators().length} on record (PLATFORM_OPERATOR_EMAIL ignored)`;
+} else {
+  const operator = platform.createOperator({
+    name: config.platform.operatorName,
+    email: config.platform.operatorEmail,
+  });
+  bootstrap = `created ${operator.email} — sign in at /app to administer the platform`;
+}
+
 // Rate-limit state, shared across replicas when a backend is configured.
 // Unset means the buckets stay in this process, which is correct for one
 // instance and is the multiplied-limit defect for more than one.
@@ -118,7 +144,8 @@ process.stdout.write(
         : 'Ed25519 key loaded; signatures are witnessed by the platform, not by the signatory'
     }`,
     `  AI mode      ${config.ai.mode}${config.ai.mode === 'local' ? ' (deterministic engines, no provider spend)' : ''}`,
-    `  Newsletter   ${
+    `  Operator     ${bootstrap}
+  Newsletter   ${
       config.newsletter.enabled
         ? `weekly, day ${config.newsletter.sendDayUtc} at ${config.newsletter.sendHourUtc}:00 UTC via ${config.smtp.host || 'no SMTP host — will record, not send'}`
         : 'disabled (set NEWSLETTER_ENABLED=true to arm the weekly send)'
