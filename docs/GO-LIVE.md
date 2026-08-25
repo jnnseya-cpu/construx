@@ -322,5 +322,6 @@ docker compose -f /srv/construx/app/deploy/compose.yaml \
   --env-file /srv/construx/app/.env ps          # is it healthy
 ```
 
-Related: `docs/RUNBOOK.md` for operating the ledger, `docs/STATE.md` for what is
-built and what is deliberately not.
+Related: `docs/ACCEPTANCE.md` for what to test once this is done,
+`docs/RUNBOOK.md` for operating the ledger, `docs/STATE.md` for what is built
+and what is deliberately not.

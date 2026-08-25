@@ -785,6 +785,18 @@ nobody can read is an account nobody can use, and a test pins that.
 `POST /v1/operators` adds the second onwards, operator-only — so this is a
 bootstrap rather than a standing way to manage people.
 
+**`docs/ACCEPTANCE.md` — what to test on a live deployment.** Ordered by
+dependency, and written so each test names the failure it is looking for rather
+than only the pass. Several of the failures on this platform are silent — a
+wrong webhook secret takes money and credits nothing; SMTP that is configured
+but not delivering records every notification and sends none — so a checklist
+that only says "should work" cannot tell you which one you are looking at.
+
+Part C is the one that matters: cross-tenant isolation, the 402 on a cancelled
+subscription, the unsigned webhook, and the demonstration surface. None of it
+should be reachable, and trying it is the only way to know. Each of those is a
+control something else in the platform relies on being true.
+
 **`docs/GO-LIVE.md` — nothing to taking payments, in order.** Where each key
 comes from in each provider's dashboard, how to get it onto the server without
 destroying what is already there, what every boot-log state means, and how to
