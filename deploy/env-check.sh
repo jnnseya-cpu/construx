@@ -49,12 +49,22 @@ report() {
     printf '  ok       %-32s\n' "$key"
     return
   fi
+
+  # Absent and blank need different fixes, and getting it wrong is silent.
+  # `config.ts` keeps the FIRST occurrence of a key and ignores every later
+  # one, so appending a line for a key that is already present — blank or not —
+  # changes nothing at all and looks exactly like a change that worked.
+  local how="append it"
+  if present "$key"; then
+    how="EDIT the existing blank line — appending a second one is ignored"
+  fi
+
   if [[ "$level" == "critical" ]]; then
     missing_critical=$((missing_critical + 1))
-    printf '  MISSING  %-32s %s\n' "$key" "$consequence"
+    printf '  MISSING  %-32s %s (%s)\n' "$key" "$consequence" "$how"
   else
     missing_optional=$((missing_optional + 1))
-    printf '  unset    %-32s %s\n' "$key" "$consequence"
+    printf '  unset    %-32s %s (%s)\n' "$key" "$consequence" "$how"
   fi
 }
 
@@ -110,6 +120,24 @@ if is_set AI_MODE && [[ "$(grep -E '^[[:space:]]*AI_MODE[[:space:]]*=' "$ENV_FIL
     echo "  WARNING  AI_MODE is not local but no provider key is set — every AI request will fail"
     missing_critical=$((missing_critical + 1))
   fi
+fi
+
+echo
+echo "Duplicated keys"
+# The trap this whole script exists to prevent somebody walking into. Appending
+# `AI_MODE=production` under an existing `AI_MODE=local` is the natural way to
+# make that change and it does nothing — the parser keeps the first line, so the
+# file says production, the platform runs local, and nothing anywhere disagrees.
+duplicates="$(grep -oE '^[[:space:]]*[A-Z_]+[[:space:]]*=' "$ENV_FILE" | tr -d ' =' | sort | uniq -d || true)"
+if [[ -n "$duplicates" ]]; then
+  while read -r key; do
+    [[ -z "$key" ]] && continue
+    first="$(grep -nE "^[[:space:]]*$key[[:space:]]*=" "$ENV_FILE" | head -1 | cut -d: -f1)"
+    echo "  WARNING  $key appears more than once — line $first wins, the rest are ignored"
+    missing_critical=$((missing_critical + 1))
+  done <<< "$duplicates"
+else
+  echo "  ok       no key is declared twice"
 fi
 
 echo
