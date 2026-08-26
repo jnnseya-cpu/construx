@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,574 passing, 0 failing, 0 skipped, across 81 files |
+| Tests | 1,584 passing, 0 failing, 0 skipped, across 82 files |
 | Typecheck | clean |
 | Backend | 115 TypeScript files, 55,231 lines |
 | Application | 36 ES modules, 11,790 lines (plus a service worker) |
@@ -3339,6 +3339,37 @@ getting one credit, and the whole page rendered in Chromium with no console
 error. `available` on `/v1/ai/control-plane` reports every keyed provider with
 its role, so a configured Anthropic key sitting in the failover chain is visible
 rather than invisible behind "OPENAI + GEMINI".
+
+**The deployment can now be asked what it has configured.** `config.ts` held
+every flag and `assertProductionSafety` computed the judgements at boot — into a
+log nobody reads twice. So the one person whose job is to fix a half-configured
+deployment could not see its state without shell access to the box, which is how
+a live deployment sat for a day with a payment rail keyed on one side and a
+ledger writing to nothing.
+
+`GET /v1/admin/readiness` (`api/readiness.ts`) reports fourteen capabilities:
+ledger durability, session secret, operator, authorisation enforcement, evidence
+store, signing key, both payment rails, AI providers, transactional mail,
+newsletter, shared rate limiter, public address and analytics. Each carries its
+state, what that state means operationally right now, and the variables that
+govern it **by name**. Critical capabilities that are not configured are listed
+as go-live blockers.
+
+Two properties are load-bearing. **No value crosses the boundary** — the report
+says whether a secret is set and never what it is, including inside a `detail`
+string, and a test searches the whole serialised report for every secret the
+process is holding so a future capability that helpfully quotes one fails there
+rather than in production. Variable *names* are published deliberately: they are
+already in `.env.example`, and an operator cannot fix what they cannot name.
+
+**Half-configured is its own state.** Two states would file a Stripe key with no
+webhook secret under either "configured" or "not set", and both are wrong in the
+direction that costs money — that deployment takes the payment and credits
+nothing. Verified by booting production-mode with exactly that half-rail: it
+reported `DEGRADED` and named the two blocking gaps.
+
+Operator-only despite carrying no secret. It is a map of which locks on this
+deployment are unlocked, which is the reconnaissance an attacker wants most.
 
 **Both HTML responses carry the policy layer.** The application shell used to
 write its own response head, which made it the one page on the server with no

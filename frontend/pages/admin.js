@@ -86,7 +86,7 @@ export async function admin(root) {
   const isOperator = roles.includes('PLATFORM_ADMIN');
   const operatorOnly = (path) => (isOperator ? api.get(path).catch(() => null) : Promise.resolve(null));
 
-  const [routes, plane, matrix, overview, estate, burn, payments, security, logs, vocab] = await Promise.all([
+  const [routes, plane, matrix, overview, estate, burn, payments, security, logs, ready, vocab] = await Promise.all([
     api.get('/v1/routes').catch(() => ({ routes: [] })),
     api.get('/v1/ai/control-plane').catch(() => null),
     api.get('/v1/permissions/matrix').catch(() => ({ matrix: {} })),
@@ -96,6 +96,7 @@ export async function admin(root) {
     operatorOnly('/v1/admin/payments'),
     operatorOnly('/v1/admin/security'),
     operatorOnly('/v1/admin/logs'),
+    operatorOnly('/v1/admin/readiness'),
     // Jurisdictions and currencies for the onboarding form, published by the
     // platform rather than listed here — so the console cannot offer a
     // jurisdiction the tax engine does not know.
@@ -388,6 +389,61 @@ export async function admin(root) {
             : ''
         }
       </div>
+
+      ${
+        ready
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">
+                System control — what this deployment actually has configured
+                ${
+                  ready.blocking.length > 0
+                    ? badge(`${ready.blocking.length} blocking go-live`, 'bad')
+                    : ready.degraded > 0
+                      ? badge(`${ready.degraded} half-configured`, 'warn')
+                      : badge('production-ready', 'ok')
+                }
+              </h3>
+              <div class="metric-sub" style="padding:0 17px 10px">
+                ${ready.configured} of ${ready.capabilities.length} capabilities configured · environment
+                <b>${ready.environment}</b>. Read from this running process, not from a checklist. Every rail is set with
+                environment variables on the server, never from this screen — and this screen reports whether a value is
+                set, never what it is.
+              </div>
+              ${
+                ready.blocking.length > 0
+                  ? html`<div style="padding:0 17px 12px"><div class="notice bad">
+                      <div><b>Not fit to hold a paying customer yet.</b><br>
+                      ${ready.blocking.join(' · ')} — each of these is a capability the platform cannot do without.</div>
+                    </div></div>`
+                  : ''
+              }
+              ${table({
+                headers: ['Capability', 'State', 'What that means right now', 'Set with'],
+                rows: ready.capabilities.map((capability) => [
+                  html`${capability.label}${capability.critical ? badge('critical', 'warn') : ''}`,
+                  badge(
+                    capability.state === 'CONFIGURED' ? 'configured' : capability.state === 'DEGRADED' ? 'half-configured' : 'not set',
+                    capability.state === 'CONFIGURED' ? 'ok' : capability.state === 'DEGRADED' ? 'bad' : 'neutral',
+                  ),
+                  capability.detail,
+                  html`<span class="mono" style="font-size:10.5px;color:var(--text-3)">${capability.env.join(' · ')}</span>`,
+                ]),
+              })}
+              ${
+                ready.warnings.length > 0
+                  ? html`<div style="padding:12px 17px 15px">
+                      <div class="metric-sub" style="margin-bottom:8px"><b>Boot warnings</b> — what this process said about itself when it started</div>
+                      <div class="split-list">
+                        ${ready.warnings.map((warning) => html`<div class="row"><span class="lbl">${warning}</span></div>`)}
+                      </div>
+                    </div>`
+                  : html`<div style="padding:12px 17px 15px"><div class="metric-sub">
+                      This process raised no configuration warning at boot.
+                    </div></div>`
+              }
+            </div>`
+          : ''
+      }
 
       ${
         estate

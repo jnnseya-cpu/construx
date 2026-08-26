@@ -85,6 +85,7 @@ import type { Platform } from '../platform.ts';
 import type { ExportAudience, ExportFormat } from '../export/exporter.ts';
 import { metrics, recentLogs, type HtmlPolicy, type RequestContext } from './middleware.ts';
 import { gatewayMetrics, securityEvents, securitySummary, type SecurityEventKind } from './telemetry.ts';
+import { readiness } from './readiness.ts';
 
 /**
  * The gateway routing table. Routes are explicit and versioned — no backend
@@ -713,6 +714,22 @@ export const ROUTES: Route[] = [
         awaitingPayment: platform.topUpIntents().filter((intent) => intent.status === 'AWAITING_PAYMENT'),
         operators: platform.operators().length,
       });
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/readiness',
+    description: 'What this deployment has configured, by capability (platform operator only)',
+    readOnly: true,
+    handler: (_platform, ctx) => {
+      // Operator-only, and it would be operator-only even though it carries no
+      // secret: it is a map of which locks on this deployment are unlocked, and
+      // that is exactly the reconnaissance an attacker wants. Whether a value is
+      // set crosses this boundary; what it is never does.
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may see deployment readiness', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      return readiness();
     },
   },
   {
