@@ -15,12 +15,12 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,840 passing, 0 failing, 0 skipped, across 95 files |
+| Tests | 1,862 passing, 0 failing, 0 skipped, across 96 files |
 | Typecheck | clean |
 | Backend | 121 TypeScript files, 61,355 lines |
 | Application | 39 ES modules, 14,226 lines (including a service worker) |
-| API routes | 331 (34 of them public) |
-| Event types | 218 Golden Thread (closed) · 178 communication events (closed) |
+| API routes | 336 (34 of them public) |
+| Event types | 222 Golden Thread (closed) · 178 communication events (closed) |
 | Entity types | 130, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
@@ -3952,6 +3952,75 @@ QS records an ITT with no stated zone and gets the Critical clarification; a bar
 mandatory deliverable is recorded and the Owner's decision to bid is refused,
 naming it; an addendum moves the deadline and the board shows the re-review. The
 panel and the command are screenshotted.
+
+### Submission, award, and the conversion that must not re-key anything
+
+T-WF-08. `backend/src/domain/award.ts`, five routes, 22 tests.
+
+The bid pack was already compiled and locked with a content hash, and a contract
+could already be converted from it. What was missing sat either side, and both
+halves are where money is lost.
+
+**Before**: a submission went out and nothing recorded that it arrived. The
+portal receipt — the one piece of paper proving the bid was in before the clock
+stopped — lived in somebody's inbox. The receipt is now bound to the pack's
+content hash, so the record does not say *"a bid was submitted at 11:52"*; it
+says **this** bid, these bytes, was submitted at 11:52 and the buyer
+acknowledged it. The position reports `hashMatches`, so a pack re-locked after
+submission shows up rather than passing silently.
+
+**After**: an award arrived and was signed, and nobody compared it against what
+was actually bid. That is where a contract sum quietly differs by £40,000, where
+a completion date has moved three weeks, and where the qualification the price
+depended on has been struck out. The comparison is now computed, not typed —
+because a departure somebody noticed is not the one that costs money — and it is
+run at the only moment it is cheap.
+
+**A departure is a difference, not an opinion.** Every one names both values and
+says what it means: a sum below the bid, a sum *above* it (which means the client
+has priced something we did not), a date that moved and by how many days, a term
+harder than the one the price was given on, and a qualification struck out —
+which is the single most expensive line on the list, because whatever it
+excluded is now inside the contract sum.
+
+**Silence is not a change.** A letter of intent names two terms and nothing else.
+Reporting the unstated ones as departures would bury the real ones.
+
+**Nothing here decides whether a departure is acceptable.** A person does, and
+the acceptance carries their reason — the question a year later is never whether
+the sum differed, it is who agreed that it could. Conversion is refused while one
+is still open, which is `AC-T-WF-08-03`: the comparison exists to be acted on
+before the money starts moving.
+
+**The budget is not typed.** `AC-T-WF-08-02` asks the contract sum, the budget
+and the buyout targets to reconcile to the awarded submission without re-entry,
+so the sum comes off the award and the budget's cost codes are the estimate's own
+priced cost heads. A budget re-keyed from a spreadsheet agrees with the tender
+until the first typo. The buyout target is the **estimate** figure rather than
+the budget figure: a package bought at budget has spent the contingency for it,
+which is exactly the drift the number exists to catch.
+
+**Converting needs two authorities.** It approves a cost baseline as well as
+accepting an award. A project manager holds award approval and not budget
+approval — deliberately — so the platform refuses before it writes anything
+rather than halfway through.
+
+**Two things found while building it.** A second receipt on an already-submitted
+pack was answered with *"only a locked pack can be submitted"* — true, useless,
+and hiding what the person needed to know. Already-submitted is now checked
+first. And the estimate stores its breakdown as `heads`, not the `byCostCode` the
+first draft guessed at; reading the real shape is what makes the budget
+reconcile.
+
+**A lost bid is not a dead end.** The market intelligence in a losing bid is the
+only thing that pays for it, so a loss records who won and at what, and stays
+searchable. Converting one is refused, and the refusal says why.
+
+**Not built:** the deterministic file-name, size and page-limit checks against
+the deliverable register at compile time; post-tender clarification cycles; and
+the procurement records and mobilisation tasks the conversion could also seed.
+
+---
 
 ### The site visit, and what the walk still obliges
 

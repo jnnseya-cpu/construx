@@ -52,6 +52,7 @@ import * as cost from '../engines/cost.ts';
 import * as handover from '../engines/handover.ts';
 import * as planning from '../engines/planning.ts';
 import * as sitevisit from '../engines/sitevisit.ts';
+import * as award from '../domain/award.ts';
 import * as quality from '../engines/quality.ts';
 import * as safety from '../engines/safety.ts';
 import * as tender from '../engines/tender.ts';
@@ -6191,6 +6192,105 @@ export const ROUTES: Route[] = [
         }),
       };
     },
+  },
+  // ---------------------------------------------- submission, award and conversion (T-WF-08)
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/awards',
+    description: 'Submission packs, their receipts, the award departures and what has converted',
+    handler: (platform, ctx) => award.awardPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/submit',
+    description: 'Record the submission and the receipt, bound to the exact pack hash',
+    schema: {
+      type: 'object',
+      required: ['reference', 'channel', 'receivedAt', 'evidenceHash'],
+      properties: {
+        reference: stringField,
+        channel: { type: 'string', enum: [...award.SUBMISSION_CHANNEL] },
+        receivedAt: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      award.recordSubmission(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/award',
+    description: 'Record the client’s award and compute what departs from what was bid',
+    schema: {
+      type: 'object',
+      required: ['outcome', 'reference', 'receivedOn'],
+      properties: {
+        outcome: { type: 'string', enum: [...award.AWARD_OUTCOME] },
+        reference: stringField,
+        receivedOn: stringField,
+        terms: {
+          type: 'object',
+          properties: {
+            contractSumMinor: { type: 'integer', minimum: 0 },
+            commencementDate: stringField,
+            completionDate: stringField,
+            liquidatedDamagesPerDayMinor: { type: 'integer', minimum: 0 },
+            ldCapPercent: { type: 'number', minimum: 0 },
+            retentionPercent: { type: 'number', minimum: 0 },
+            defectsLiabilityMonths: { type: 'integer', minimum: 0 },
+            acceptedQualifications: { type: 'array', items: { type: 'string' } },
+          },
+          additionalProperties: false,
+        },
+        winner: {
+          type: 'object',
+          properties: { name: { type: 'string' }, sumMinor: { type: 'integer', minimum: 0 } },
+          additionalProperties: false,
+        },
+        notes: { type: 'string' },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      award.recordAward(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/departures/:departureId/accept',
+    description: 'Take a departure on knowingly, with the reason it is acceptable',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      award.acceptDeparture(
+        projectContext(platform, ctx),
+        ctx.params.packId as string,
+        ctx.params.departureId as string,
+        body<{ reason: string }>(ctx).reason,
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/convert',
+    description: 'Carry the awarded submission into the budget and the buyout targets, without re-entry',
+    schema: {
+      type: 'object',
+      required: ['budgetVersion', 'contingencyMinor', 'managementReserveMinor', 'tenderMarginPercent'],
+      properties: {
+        budgetVersion: stringField,
+        contingencyMinor: { type: 'integer', minimum: 0 },
+        managementReserveMinor: { type: 'integer', minimum: 0 },
+        tenderMarginPercent: { type: 'number', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      award.convertAward(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
   },
   {
     method: 'POST',

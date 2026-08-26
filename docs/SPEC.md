@@ -1241,8 +1241,57 @@ None of these is built; each names what already exists that it would extend.
 | **T-WF-05** supply-chain and self-delivery pricing routes | `assignScheduleRoute` (SUPPLY_CHAIN / SELF_PRICE), `analyseReturns`, `consolidateMasterPricing`. Normalisation to a common basis with a visible adjustment bridge does not |
 | **T-WF-06** clarifications, addenda, return intelligence | The addendum register built above, and `analyseReturns`. A numbered clarification register with issue evidence, and an addendum impact report, do not |
 | **T-WF-07** commercial adjudication and governance | `adjudicate`, `compileBidPack`. Pre/post snapshots reconciling through an adjustment bridge, and approval against personal authority limits, do not |
-| **T-WF-08** submission, award, zero-re-entry conversion | `BID_PACK_LOCKED`, `convertToProject`, and the chain-break exception. The immutable submission pack hash, the submission receipt and the award-delta report do not |
+| ~~**T-WF-08** submission, award, zero-re-entry conversion~~ | **BUILT** — see below |
 | **8.4** stage gate Definition of Done | The lifecycle gate machinery and the replayable ledger. The seven-point tender gate itself is not declared, and it depends on the A2 gate work at item 6 below |
+
+### 8.3 (continued) T-WF-08 — Submission, award and zero-re-entry conversion
+
+**BUILT.** `backend/src/domain/award.ts`, five routes, 22 tests.
+
+The bid pack was already compiled and locked with a content hash, and a contract
+could already be converted from it carrying the qualifications and exclusions
+forward. What was missing sat either side of that, and both halves are where
+money is lost.
+
+| Clause | State |
+|---|---|
+| Compile an ordered submission pack with completeness checks | **PARTIAL** — `compileBidPack` already assembles and locks it in a fixed order. Deterministic file-name, size and page-limit checks against the deliverable register are **not built** |
+| Lock the pack with a hash and exact source versions | **BUILT, already** — `BID_PACK_LOCKED` is a `FREEZE` carrying the content hash |
+| Submit via the configured channel; capture receipt, portal id and evidence | **BUILT** — and the receipt is bound to the pack's content hash at the moment it is recorded |
+| Post-tender clarifications as separate controlled cycles | **NOT BUILT** |
+| On award, compare award terms to the submission and raise departures | **BUILT** — computed, never typed |
+| Create budget and package buyout targets from accepted data ids | **BUILT** — the budget's cost codes are the estimate's own priced cost heads |
+| Main contract baseline, procurement records, mobilisation tasks | **PARTIAL** — `convertBidToContract` already creates the contract carrying qualifications and exclusions. Procurement records and mobilisation tasks are **not built** |
+| **AC-T-WF-08-01** the receipt identifies the exact immutable pack hash | **BUILT** — and the position reports `hashMatches`, so a pack re-locked after submission is visible rather than silent |
+| **AC-T-WF-08-02** contract sum, budget and buyout targets reconcile without re-entry | **BUILT** — asserted arithmetically in the tests |
+| **AC-T-WF-08-03** award departures are visible before contract execution | **BUILT** — and blocking: conversion is refused while one is open |
+| Unsuccessful bid preserves market and lessons data | **BUILT** — a loss records who won and at what, and stays searchable |
+
+**Three decisions worth recording.**
+
+**A departure is a difference, not an opinion.** Every one compares two recorded
+values and names both. Nothing here judges whether a departure is *acceptable* —
+a person does that, and the acceptance carries their reason, because the
+question a year later is never whether the sum differed but who agreed it could.
+
+**Silence is not a change.** A letter of intent names two terms and nothing else.
+Reporting the unstated ones as departures would bury the real ones, so a term the
+award does not mention is left alone.
+
+**Converting needs two authorities.** It approves a cost baseline as well as
+accepting an award, so a project manager who can do the second cannot do the
+first. Both are checked before anything is written.
+
+**The event names.** `TENDER_SUBMITTED`, `AWARD_RECEIVED`,
+`AWARD_DEPARTURE_IDENTIFIED` and `BID_CONVERTED_TO_CONTRACT` are new and take the
+specification's names. `TENDER_SUBMISSION_LOCKED` is `BID_PACK_LOCKED` here,
+already on an append-only ledger under that name and mapped rather than renamed.
+
+**Not built:** the deterministic file-name / size / page-limit checks against the
+deliverable register, post-tender clarification cycles, and the procurement
+records and mobilisation tasks the conversion could also seed.
+
+---
 
 ## The site visit — walk to handover
 
@@ -1323,6 +1372,11 @@ Superseded ordering note, kept for honesty: The
 Recorded separately because they are stage work rather than platform work, and
 because the order above has to be finished first — every item below reads the
 audit event, the agent contract or the lifecycle gate.
+
+12a0. ~~T-WF-08 — submission, award and conversion.~~ **Done.** The receipt
+    binds to the pack hash, the departures are computed rather than noticed, and
+    the budget and buyout targets come off the estimate. The submission
+    completeness checks are the part not built.
 
 12a. ~~T-WF-01 — tender intake.~~ **Done.** The zoned deadline, the deliverable
     register with source/owner/internal date, the addendum that appends, the

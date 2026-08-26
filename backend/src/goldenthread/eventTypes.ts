@@ -240,6 +240,18 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('ADJUDICATION_COMPLETED', 'Adjudication', 'APPROVE', 'PROCUREMENT', { requiresEvidence: true, creates: true }),
   def('BID_PACK_COMPILED', 'BidSubmissionPack', 'CREATE', 'PROCUREMENT', { requiresEvidence: true }),
   def('BID_PACK_LOCKED', 'BidSubmissionPack', 'FREEZE', 'PROCUREMENT', { requiresEvidence: true }),
+  // Submission, award and conversion. The receipt binds to the pack's content
+  // hash: a record saying "a bid went in at 11:52" proves you sent something,
+  // and the argument after a disqualification is always about which bytes.
+  def('TENDER_SUBMITTED', 'BidSubmissionPack', 'ISSUE', 'PROCUREMENT', { requiresEvidence: true }),
+  def('AWARD_RECEIVED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
+  // What the client awarded that is not what was bid. Computed rather than
+  // typed: a departure somebody noticed is not the one that costs money.
+  def('AWARD_DEPARTURE_IDENTIFIED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
+  // The budget and the buyout targets, carried off the estimate rather than
+  // re-keyed. Evidence required because it is the join the whole no-re-entry
+  // rule stands on.
+  def('BID_CONVERTED_TO_CONTRACT', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT', { requiresEvidence: true }),
   def('RFQ_AWARDED', 'RFQ', 'APPROVE', 'PROCUREMENT', { requiresEvidence: true }),
   def('SUBCONTRACT_ASSEMBLED', 'Subcontract', 'CREATE', 'PROCUREMENT'),
   def('SUBCONTRACT_EXECUTED', 'Subcontract', 'APPROVE', 'PROCUREMENT', { requiresEvidence: true }),
