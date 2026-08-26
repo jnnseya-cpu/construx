@@ -61,6 +61,19 @@ export interface AIProviderAdapter {
    * register would then carry as a governed record.
    */
   readonly multimodal: boolean;
+  /**
+   * Whether using this adapter puts project data outside this process.
+   *
+   * Declared rather than inferred from the provider name, because the name is
+   * the *vendor* and this is a question about the *transport*. The deterministic
+   * adapter answers from a hash of its inputs and opens no socket, so no
+   * disclosure can occur however sensitive the material is — and a clearance
+   * rule that refused it would be protecting data from a journey it never takes.
+   *
+   * A remote adapter transmits, and is therefore subject to whatever the
+   * contract with that vendor permits.
+   */
+  readonly transmits: boolean;
   /** Estimated cost before execution, used to size the ACU hold. */
   estimateCostMinor(request: ProviderRequest): number;
   execute(request: ProviderRequest): Promise<ProviderResponse>;

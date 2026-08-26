@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { DataSensitivity } from './identity/abac.ts';
 
 /**
  * Configuration is entirely environment-driven — the gateway holds no state and
@@ -111,6 +112,39 @@ function str(key: string, fallback: string): string {
   register(key, 'string');
   const raw = process.env[key];
   return raw === undefined || raw === '' ? fallback : raw;
+}
+
+const SENSITIVITY: DataSensitivity[] = ['PUBLIC', 'INTERNAL', 'SAFETY_L2', 'COMMERCIAL_L3', 'LEGAL_L4'];
+
+/**
+ * One level, or the safe answer.
+ *
+ * A mistyped level must never clear a vendor for more than the operator meant,
+ * so anything unrecognised falls to `INTERNAL` rather than to the value that
+ * was almost spelled.
+ */
+function clearanceLevel(raw: string): DataSensitivity {
+  const value = raw.trim().toUpperCase() as DataSensitivity;
+  return SENSITIVITY.includes(value) ? value : 'INTERNAL';
+}
+
+/**
+ * `OPENAI:INTERNAL,ANTHROPIC:LEGAL_L4` into a map.
+ *
+ * A malformed entry is dropped rather than defaulted upward: somebody who
+ * mistypes a level must not accidentally clear a vendor for privileged
+ * material. The entry simply does not apply and the vendor falls back to the
+ * default clearance, which is the lower answer.
+ */
+function parseClearance(raw: string): Record<string, DataSensitivity> {
+  const out: Record<string, DataSensitivity> = {};
+  for (const entry of raw.split(',')) {
+    const [provider, level] = entry.split(':').map((part) => part.trim().toUpperCase());
+    if (!provider || !level) continue;
+    if (!SENSITIVITY.includes(level as DataSensitivity)) continue;
+    out[provider] = level as DataSensitivity;
+  }
+  return out;
 }
 
 export type AIMode = 'local' | 'staging' | 'production';
@@ -272,6 +306,33 @@ export const config = {
      * than sent and rejected by the vendor.
      */
     perceptionMaxBytes: num('AI_PERCEPTION_MAX_BYTES', 20 * 1_048_576),
+    /**
+     * The most sensitive material each vendor may be sent, as
+     * `OPENAI:INTERNAL,ANTHROPIC:LEGAL_L4,GEMINI:PUBLIC`.
+     *
+     * `DataSensitivity` already decided who inside a customer may *read* a
+     * record. It did not decide who the platform may *hand it to* — so a
+     * legally privileged clause a safety manager is barred from opening could
+     * be posted verbatim to any configured vendor by an engine that happened to
+     * include it in its inputs.
+     *
+     * Whether a vendor may hold commercial-in-confidence or privileged material
+     * is a fact about the contract signed with them: a data processing
+     * agreement, a retention promise, a processing region. The platform cannot
+     * know it, so it must be told.
+     */
+    providerClearance: parseClearance(str('AI_PROVIDER_CLEARANCE', '')),
+    /**
+     * What a vendor is cleared for when nothing has been said about it.
+     *
+     * `INTERNAL` is a deliberate middle. Clearing everything by default would
+     * leave the hole where it was and call it closed; clearing nothing would
+     * refuse every AI call on every existing deployment the day this shipped.
+     * This keeps ordinary project work running and stops the three categories
+     * that matter — safety, commercial, legal — until somebody states, per
+     * vendor, that the contract permits it.
+     */
+    defaultClearance: clearanceLevel(str('AI_DEFAULT_CLEARANCE', 'INTERNAL')),
   },
 
   /**
@@ -614,6 +675,15 @@ export function assertProductionSafety(): string[] {
       if (!['OPENAI', 'GEMINI', 'ANTHROPIC'].includes(value)) {
         warnings.push(`${key} is "${value}", which is not a provider this platform can call — the default is being used instead`);
       }
+    }
+    // Which vendors may hold which material. Silence here is not neutral: it
+    // means every provider is capped at INTERNAL, so any engine touching a
+    // contract, a claim or safety material will be refused at the point of use.
+    // Better said at boot than discovered by a user mid-command.
+    if (Object.keys(config.ai.providerClearance).length === 0 && config.ai.mode === 'production') {
+      warnings.push(
+        `AI_PROVIDER_CLEARANCE is unset — every provider is capped at ${config.ai.defaultClearance}, so any AI request carrying commercial, safety or legally privileged records will be refused. Set it once the data processing agreement with each vendor is in place.`,
+      );
     }
     if (config.rateLimit.redisUrl === '') {
       warnings.push(

@@ -50,6 +50,7 @@ function multimodalStub(output: Record<string, unknown>): AIProviderAdapter {
     name: 'GEMINI',
     capability: 'PERCEPTION',
     multimodal: true,
+    transmits: true,
     estimateCostMinor: () => 40,
     healthy: () => true,
     async execute(request: ProviderRequest): Promise<ProviderResponse> {

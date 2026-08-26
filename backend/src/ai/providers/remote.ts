@@ -235,6 +235,8 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
   readonly capability: ProviderCapability;
   /** Both endpoints below place media in their own API's native form. */
   readonly multimodal = true;
+  /** Over the network, to a third party. Clearance applies. */
+  readonly transmits = true;
   readonly #endpoint: Endpoint;
   readonly #apiKey: string;
   #consecutiveFailures = 0;

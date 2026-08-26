@@ -213,6 +213,23 @@ export function readiness(now = new Date()): Readiness {
       env: ['AI_MODE', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'AI_REASONING_PROVIDER', 'AI_PERCEPTION_PROVIDER'],
     },
     {
+      key: 'ai.clearance',
+      label: 'AI vendor clearance',
+      critical: false,
+      // Not critical in the go-live sense — a deployment with nothing cleared is
+      // safe, it simply refuses the sensitive work. It is listed because the
+      // refusal is otherwise discovered by a user mid-command rather than by an
+      // operator reading a screen.
+      state: Object.keys(config.ai.providerClearance).length > 0 ? 'CONFIGURED' : 'NOT_SET',
+      detail:
+        Object.keys(config.ai.providerClearance).length > 0
+          ? `Set per vendor: ${Object.entries(config.ai.providerClearance)
+              .map(([provider, level]) => `${provider} up to ${level}`)
+              .join(', ')}. Anything else is capped at ${config.ai.defaultClearance}.`
+          : `Nothing stated, so every vendor is capped at ${config.ai.defaultClearance}. Contracts, claims and safety records will not be sent to any provider — the request is refused rather than routed. Set this once the data processing agreement with each vendor is in place.`,
+      env: ['AI_PROVIDER_CLEARANCE', 'AI_DEFAULT_CLEARANCE'],
+    },
+    {
       key: 'mail.transactional',
       label: 'Transactional email',
       critical: true,

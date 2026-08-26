@@ -31,6 +31,9 @@ function stubProvider(
     // the local adapter: a perception command that would be refused in a local
     // run must be refused in a test that did not deliberately say otherwise.
     multimodal: options.multimodal ?? false,
+    // Stands in for a real vendor, so it transmits: clearance applies to it
+    // exactly as it would to the thing it replaces.
+    transmits: true,
     calls: 0,
     estimateCostMinor: () => options.cost ?? 100,
     healthy: () => options.healthy ?? true,

@@ -1,4 +1,6 @@
 import { config } from '../config.ts';
+import type { DataSensitivity } from '../identity/abac.ts';
+import { clearanceFor, mayReceive, sensitivityOf } from './sensitivity.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
 import { DomainError, ForbiddenError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
@@ -206,6 +208,24 @@ export type AIRequestRecord = {
   userId: string;
   status: AIRequestStatus;
   createdAt: string;
+  /**
+   * The routing decision, recorded with the input it was made on.
+   *
+   * "All routing decisions are logged" is not satisfied by recording which
+   * vendor served the call. That is the *outcome*; without the input, the
+   * choice cannot be re-derived from the record, and re-deriving it is the
+   * whole point the day somebody asks why a particular document went to a
+   * particular company.
+   */
+  routing: {
+    /** Derived from `inputRefs`, as the highest classification among them. */
+    sensitivity: DataSensitivity;
+    /** The vendor chosen, and the ceiling it was cleared to at that moment. */
+    provider: AIProvider;
+    clearance: DataSensitivity;
+    /** Vendors excluded because they were not cleared for this material. */
+    excluded: Array<{ provider: AIProvider; clearance: DataSensitivity }>;
+  };
 };
 
 export type AIExecutionRecord = {
@@ -313,25 +333,64 @@ export class AIOrchestrator {
     this.#spares = live && !overrides.reasoning && !overrides.perception ? spareAdapters('REASONING') : [];
   }
 
-  adapterFor(capability: ProviderCapability): AIProviderAdapter {
+  /**
+   * Vendors that could have served this call and were not cleared for it.
+   *
+   * Recorded rather than merely acted on. An audit that shows only the vendor
+   * chosen cannot distinguish "the others were down" from "the others were not
+   * allowed to see this", and those are entirely different facts.
+   */
+  #uncleared(
+    capability: ProviderCapability,
+    sensitivity: DataSensitivity,
+  ): Array<{ provider: AIProvider; clearance: DataSensitivity }> {
     const primary = capability === 'PERCEPTION' ? this.#perception : this.#reasoning;
-    if (primary.healthy()) return primary;
-
-    // Failover: a perception outage should degrade the platform, not stop it.
     const fallback = capability === 'PERCEPTION' ? this.#reasoning : this.#perception;
-    if (fallback.healthy()) return fallback;
+    return [primary, fallback, ...this.#spares]
+      .filter((adapter, index, all) => all.findIndex((other) => other.name === adapter.name) === index)
+      .filter((adapter) => !mayReceive(adapter, sensitivity))
+      .map((adapter) => ({ provider: adapter.name, clearance: clearanceFor(adapter.name) }));
+  }
 
-    // A third vendor, if one is configured. With only the two primaries this
-    // chain is vendor-diverse by accident — it works because reasoning and
-    // perception happen to sit on different companies, and stops working the
-    // moment somebody points both at the same one. A provider that holds a key
-    // is somewhere to go regardless of which capability it was meant for:
-    // degraded output beats no output, and the ledger records which vendor
-    // actually served it either way.
-    const spare = this.#spares.find(
-      (adapter) => adapter.name !== primary.name && adapter.name !== fallback.name && adapter.healthy(),
+  /**
+   * Which vendor serves this call.
+   *
+   * Two things decide it, and the order matters: a vendor must be *cleared* for
+   * the material before its health is even asked about. Failing over from a
+   * cleared vendor to an uncleared one because the first was down would turn an
+   * outage into a disclosure — the platform would silently send privileged
+   * material somewhere it may not go, at exactly the moment nobody is watching.
+   *
+   * So clearance filters the candidates, and health picks among what is left.
+   * When nothing is left the call is refused and says which level was refused
+   * and to whom, because "no provider is cleared for LEGAL_L4" is actionable and
+   * "AI unavailable" is not.
+   */
+  adapterFor(capability: ProviderCapability, sensitivity: DataSensitivity = 'INTERNAL'): AIProviderAdapter {
+    const primary = capability === 'PERCEPTION' ? this.#perception : this.#reasoning;
+    const fallback = capability === 'PERCEPTION' ? this.#reasoning : this.#perception;
+
+    // The order the chain is tried in, unchanged. What changes is that an
+    // uncleared vendor is not in it at all.
+    const chain = [primary, fallback, ...this.#spares].filter(
+      (adapter, index, all) => all.findIndex((other) => other.name === adapter.name) === index,
     );
-    if (spare) return spare;
+    const cleared = chain.filter((adapter) => mayReceive(adapter, sensitivity));
+
+    if (cleared.length === 0) {
+      throw new DomainError(
+        'AI_CLEARANCE_REQUIRED',
+        `This request carries ${sensitivity} material and no configured AI provider is cleared to receive it. ` +
+          `Clear a provider in AI_PROVIDER_CLEARANCE once the contract with that vendor permits it.`,
+        // 403, not 503. Nothing is broken and retrying will not help: the
+        // platform is refusing on purpose, and a client that reads this as an
+        // outage will keep trying.
+        403,
+      );
+    }
+
+    const healthy = cleared.find((adapter) => adapter.healthy());
+    if (healthy) return healthy;
 
     throw new DomainError('AI_UNAVAILABLE', 'No healthy AI provider is available for this capability', 503);
   }
@@ -368,8 +427,14 @@ export class AIOrchestrator {
     taskType: string;
     wallet: ACUWallet;
     projectId?: string;
+    /**
+     * What the priced call would carry. Quoting against a vendor the real call
+     * could not use would show a price nobody can transact at — and, worse, would
+     * hide a refusal until after the user had committed to it.
+     */
+    inputRefs?: readonly EntityRef[];
   }): CostQuote {
-    const adapter = this.adapterFor(input.capability);
+    const adapter = this.adapterFor(input.capability, sensitivityOf(input.inputRefs ?? []));
     const observed = input.wallet.observedRawCosts(input.engine, input.taskType);
 
     // The floor: what the adapter charges for this capability with nothing to
@@ -422,10 +487,25 @@ export class AIOrchestrator {
       userId: input.userId,
       status: 'QUEUED',
       createdAt: new Date().toISOString(),
+      routing: { sensitivity: 'INTERNAL', provider: 'OPENAI', clearance: 'INTERNAL', excluded: [] },
+    };
+
+    // Derived from the records being sent, not declared by the caller. An
+    // engine cannot understate what it is about to transmit, because it does
+    // not get to say — the classification comes from the same table the generic
+    // entity read already enforces.
+    //
+    // Resolved *before* the request is filed, so a refusal on clearance grounds
+    // leaves no queued request behind claiming a routing that never happened.
+    const sensitivity = sensitivityOf(input.inputRefs);
+    const adapter = this.adapterFor(input.capability, sensitivity);
+    aiRequest.routing = {
+      sensitivity,
+      provider: adapter.name,
+      clearance: clearanceFor(adapter.name),
+      excluded: this.#uncleared(input.capability, sensitivity),
     };
     this.#requests.set(aiRequest.id, aiRequest);
-
-    const adapter = this.adapterFor(input.capability);
     const estimate = adapter.estimateCostMinor(input.request);
 
     // Reserve first. If this throws, the provider is never called and no spend occurs.

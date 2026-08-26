@@ -35,6 +35,8 @@ class MockAdapter implements AIProviderAdapter {
    * fabrication that the drawing register would then carry as fact.
    */
   readonly multimodal = false;
+  /** Nothing leaves the process: the answer is derived from a hash of the inputs. */
+  readonly transmits = false;
   #healthy = true;
 
   constructor(name: AIProvider, capability: ProviderCapability) {
