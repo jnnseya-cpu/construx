@@ -16,6 +16,42 @@ Status vocabulary, used strictly:
 
 ---
 
+## The standing principle
+
+> THE MAIN PRINCIPLE FROM THE START IS NOTHING TO REMOVE, REPLACE OR DELETE,
+> UNLESS A MORE ENHANCED REQUIREMENT IS SENT
+
+Given by the product owner and binding on every change from here. It governs
+this file and the code alike, and it is stronger than the operating directive's
+rule 3 — which says *do not touch finished work without cause*. This says
+something further: **a later specification adds to what came before unless it
+explicitly supersedes it.**
+
+Three consequences, stated so they are not rediscovered:
+
+**A new section does not delete an old one.** The consolidated v1.0 document
+arriving now sits alongside Parts A to H rather than replacing them. Where the
+two describe the same thing, both are recorded and the difference is named. Where
+the newer one is genuinely more specific it supersedes — and that is said out
+loud, with the clause it supersedes quoted, never done silently.
+
+**A capability the specification stops mentioning stays built.** Absence from a
+later document is not an instruction to remove. `Reject` on the recommendation
+panel is the live example: the Build Standard names four actions and does not
+name it, and it stays, because a finding that is wrong has to be recordable as
+wrong. Removing it would have destroyed the platform's only measure of its own
+accuracy in order to match a list.
+
+**A settled decision is not reopened by a document that does not mention it.**
+The nine settled decisions in `STATE.md` and the recorded reasoning beside each
+one hold until something explicitly overturns them.
+
+What this does not protect: a defect. Correcting behaviour that was wrong —
+a dead code path, a mis-scoped filter, a figure computed from the wrong record —
+is not removal, and each one is recorded in `STATE.md` with what changed and why.
+
+---
+
 ## PART A — WHAT WE ARE BUILDING
 
 > CONSTRUX is an AI-agent-operated construction operating system that governs the
