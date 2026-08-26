@@ -102,6 +102,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   SupplierSubmission: { area: 'SUPPLIER_SUBMISSION', sensitivity: 'COMMERCIAL_L3' },
   BidEvaluation: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Adjudication: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
+  // The settlement meeting on our own bid. Estimating rather than procurement:
+  // it is the price we are giving, not a price we are choosing between.
+  Settlement: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   BidSubmissionPack: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Subcontract: { area: 'PROCUREMENT_AWARD', sensitivity: 'LEGAL_L4' },
 

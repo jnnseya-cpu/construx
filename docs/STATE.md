@@ -15,12 +15,12 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,862 passing, 0 failing, 0 skipped, across 96 files |
+| Tests | 1,885 passing, 0 failing, 0 skipped, across 97 files |
 | Typecheck | clean |
 | Backend | 121 TypeScript files, 61,355 lines |
 | Application | 39 ES modules, 14,226 lines (including a service worker) |
-| API routes | 336 (34 of them public) |
-| Event types | 222 Golden Thread (closed) · 178 communication events (closed) |
+| API routes | 342 (34 of them public) |
+| Event types | 227 Golden Thread (closed) · 178 communication events (closed) |
 | Entity types | 130, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
@@ -3952,6 +3952,61 @@ QS records an ITT with no stated zone and gets the Critical clarification; a bar
 mandatory deliverable is recorded and the Owner's decision to bid is refused,
 naming it; an addendum moves the deadline and the board shows the re-review. The
 panel and the command are screenshotted.
+
+### The settlement meeting, and the bridge that has to reconcile
+
+T-WF-07. `backend/src/domain/settlement.ts`, six routes, 23 tests.
+
+The last two hours before a bid goes out, where the price stops being the
+estimate and starts being a decision. Somebody takes £180,000 out of the
+preliminaries. Somebody puts the margin up half a point. Somebody says the piling
+risk is covered and takes the allowance out. All of it is right or wrong on the
+day, and none of it is written down — so when the job is losing money eighteen
+months later, the estimate is what gets examined and the estimate is not what was
+bid.
+
+Named **settlement**, not adjudication: `adjudicate` in the tender engine already
+means choosing a subcontractor from an evaluation, and two acts sharing a word is
+how somebody eventually calls the wrong one.
+
+**Five refusals, and every one is a refusal rather than a warning** — a
+governance control that produces a warning is a governance control that produces
+a warning:
+
+- **The bridge reconciles to the penny.** Pre-settlement, plus every adjustment,
+  equals the price being approved. The refusal shows the arithmetic and names
+  what the gap is: *an adjustment nobody recorded*.
+- **Every action is closed or carried.** Those are the only two honest endings —
+  it was done, or it was not done and the bid says so out loud. A carried action
+  becomes a condition the submission declares. An action that simply stopped
+  being discussed is a third thing, and approval refuses over it.
+- **The programme belongs to the price's cut-off.** A price settled against
+  addendum three and a programme built against addendum two produce a bid that
+  does not hang together, and nobody finds out until the first extension-of-time
+  claim.
+- **Nobody approves above the authority they hold**, and the refusal names both
+  the limit and the value.
+- **The person who ran the settlement does not approve it.** Somebody who was not
+  moving the numbers has to look at where they ended up.
+
+**Every adjustment carries a reason and a named decision-maker.** A line reading
+"-£180,000" is a hole in the price; one that says what came out of it is a
+decision somebody can defend or reverse.
+
+**Evidence where evidence exists — a deliberate departure from the clause as
+written.** The specification says every manual adjustment requires reason *and*
+evidence. Supplier prices, scope corrections and benchmark corrections point at a
+document and are refused without one. Margin, contingency and risk allowance are
+judgements taken in a room, and demanding a file for those produces a file
+attached to satisfy the platform — worse than nothing, because it looks like
+proof. The split is stated in the code and in `docs/SPEC.md` rather than left
+implicit.
+
+**Not built:** automatic abnormal-rate and coverage detection, resource and
+lead-time review driven from the settlement, and the risk and qualification
+registers sharing the cut-off explicitly (price and programme do).
+
+---
 
 ### Submission, award, and the conversion that must not re-key anything
 

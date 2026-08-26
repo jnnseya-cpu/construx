@@ -1240,9 +1240,50 @@ None of these is built; each names what already exists that it would extend.
 | **T-WF-04** package strategy, enquiry, bidder issue | `TENDER_PACKAGE_COMPOSED`, the RFQ engine, the supplier register with prequalification. Pack revisioning, per-recipient issue evidence and the return workspace lock do not |
 | **T-WF-05** supply-chain and self-delivery pricing routes | `assignScheduleRoute` (SUPPLY_CHAIN / SELF_PRICE), `analyseReturns`, `consolidateMasterPricing`. Normalisation to a common basis with a visible adjustment bridge does not |
 | **T-WF-06** clarifications, addenda, return intelligence | The addendum register built above, and `analyseReturns`. A numbered clarification register with issue evidence, and an addendum impact report, do not |
-| **T-WF-07** commercial adjudication and governance | `adjudicate`, `compileBidPack`. Pre/post snapshots reconciling through an adjustment bridge, and approval against personal authority limits, do not |
+| ~~**T-WF-07** commercial adjudication and governance~~ | **BUILT** — see below |
 | ~~**T-WF-08** submission, award, zero-re-entry conversion~~ | **BUILT** — see below |
 | **8.4** stage gate Definition of Done | The lifecycle gate machinery and the replayable ledger. The seven-point tender gate itself is not declared, and it depends on the A2 gate work at item 6 below |
+
+### 8.3 (continued) T-WF-07 — Commercial adjudication, bid programme and governance
+
+**BUILT** as `backend/src/domain/settlement.ts`, six routes, 23 tests.
+
+Named *settlement* rather than *adjudication*: `adjudicate` in the tender engine
+already means choosing a subcontractor from an evaluation, and two different
+acts sharing a word in one codebase is how somebody eventually calls the wrong
+one. Settlement is what the industry calls this meeting anyway.
+
+| Clause | State |
+|---|---|
+| Freeze the pre-adjudication snapshot | **BUILT** — taken at the moment the meeting opens, because "what did the estimate say before we started moving numbers" is exactly what cannot be recovered afterwards |
+| Reconcile cost to scope and benchmark; review abnormal rates | **PARTIAL** — the bridge reconciles; automatic abnormal-rate detection is **not built** |
+| Review programme logic, resources, lead times, milestones | **PARTIAL** — the programme is approved at the price's cut-off; the logic review itself is the planning engine's and is not driven from here |
+| Set allowances, margin and qualifications with reason and owner | **BUILT** — eight adjustment categories, every one carrying a reason and a named decision-maker |
+| Record action decisions and the post-adjudication snapshot | **BUILT** |
+| Route to approvals under delegated authority | **BUILT** — an approval above the authority held is refused, and the person who ran the settlement cannot approve it |
+| Every manual adjustment requires reason and evidence | **BUILT, and split** — see below |
+| Programme and price share one scope/addendum cut-off | **BUILT** — a mismatch is refused, not reported |
+| **AC-T-WF-07-01** pre/post snapshots and the bridge reconcile exactly | **BUILT** — to the penny, and the refusal shows the arithmetic |
+| **AC-T-WF-07-02** all actions closed or carried as submission conditions | **BUILT** — and the carried ones become conditions on the bid |
+| **AC-T-WF-07-03** price, programme, risk and qualifications share one cut-off | **BUILT** for price and programme |
+
+**Evidence is required where a document exists, and not where one does not.** A
+supplier price, a scope correction and a benchmark correction all point at a
+document and are refused without one. Margin, contingency and risk allowance are
+judgements taken in a room. A platform that demanded a file for a margin decision
+would get one — the agenda, re-attached eight times — and the register would look
+evidenced while proving nothing. That is a deliberate departure from the clause
+as written, and this is the reason.
+
+**A fifth event beyond the four named.** `SETTLEMENT_ACTION_RECORDED`, because an
+action is not a price adjustment and riding it on the adjustment event would put
+two different acts under one name.
+
+**Not built:** automatic abnormal-rate and coverage detection, resource and
+lead-time review driven from the settlement, and the risk and qualification
+registers sharing the cut-off explicitly (price and programme do).
+
+---
 
 ### 8.3 (continued) T-WF-08 — Submission, award and zero-re-entry conversion
 
@@ -1372,6 +1413,11 @@ Superseded ordering note, kept for honesty: The
 Recorded separately because they are stage work rather than platform work, and
 because the order above has to be finished first — every item below reads the
 audit event, the agent contract or the lifecycle gate.
+
+12a00. ~~T-WF-07 — the settlement meeting.~~ **Done.** The adjustment bridge
+    reconciles to the penny or the approval is refused, every adjustment names
+    who decided and why, actions are closed or carried as conditions, and the
+    price and programme share one cut-off.
 
 12a0. ~~T-WF-08 — submission, award and conversion.~~ **Done.** The receipt
     binds to the pack hash, the departures are computed rather than noticed, and

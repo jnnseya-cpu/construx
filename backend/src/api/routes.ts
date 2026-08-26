@@ -53,6 +53,7 @@ import * as handover from '../engines/handover.ts';
 import * as planning from '../engines/planning.ts';
 import * as sitevisit from '../engines/sitevisit.ts';
 import * as award from '../domain/award.ts';
+import * as settlement from '../domain/settlement.ts';
 import * as quality from '../engines/quality.ts';
 import * as safety from '../engines/safety.ts';
 import * as tender from '../engines/tender.ts';
@@ -6193,6 +6194,137 @@ export const ROUTES: Route[] = [
       };
     },
   },
+  // ------------------------------------------------------- the settlement meeting (T-WF-07)
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/settlements',
+    description: 'The adjustment bridge, the actions, and whether the price and the programme share a cut-off',
+    handler: (platform, ctx) => settlement.settlementPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/settlements',
+    description: 'Freeze the pre-settlement position and open the meeting',
+    schema: {
+      type: 'object',
+      required: ['estimateId', 'cutOff'],
+      properties: {
+        estimateId: stringField,
+        cutOff: {
+          type: 'object',
+          required: ['informationAt'],
+          properties: { addendum: { type: 'string' }, informationAt: stringField },
+          additionalProperties: false,
+        },
+        agenda: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => settlement.openSettlement(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/settlements/:settlementId/adjustments',
+    description: 'Move the price, with the reason and the person who decided',
+    schema: {
+      type: 'object',
+      required: ['category', 'amountMinor', 'reason', 'owner'],
+      properties: {
+        category: { type: 'string', enum: [...settlement.ADJUSTMENT_CATEGORY] },
+        // Signed, and no minimum: taking money out of a price is the commonest
+        // thing that happens in this meeting.
+        amountMinor: { type: 'integer' },
+        reason: { type: 'string' },
+        owner: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      settlement.recordAdjustment(projectContext(platform, ctx), ctx.params.settlementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/settlements/:settlementId/actions',
+    description: 'Record something the meeting decided somebody would do',
+    schema: {
+      type: 'object',
+      required: ['description', 'owner'],
+      properties: { description: { type: 'string' }, owner: stringField, dueBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      settlement.raiseAction(projectContext(platform, ctx), ctx.params.settlementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/settlements/:settlementId/actions/:actionReference/settle',
+    description: 'Close an action, or carry it as a condition the submission declares',
+    schema: {
+      type: 'object',
+      required: ['ending', 'outcome'],
+      properties: { ending: { type: 'string', enum: ['CLOSED', 'CARRIED'] }, outcome: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      settlement.settleAction(
+        projectContext(platform, ctx),
+        ctx.params.settlementId as string,
+        ctx.params.actionReference as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/settlements/:settlementId/programme',
+    description: 'Approve the programme the price was built on, at the price’s own cut-off',
+    schema: {
+      type: 'object',
+      required: ['programmeRef', 'cutOff', 'durationWeeks'],
+      properties: {
+        programmeRef: {
+          type: 'object',
+          required: ['refType', 'refId'],
+          properties: { refType: stringField, refId: stringField },
+          additionalProperties: false,
+        },
+        cutOff: {
+          type: 'object',
+          required: ['informationAt'],
+          properties: { addendum: { type: 'string' }, informationAt: stringField },
+          additionalProperties: false,
+        },
+        durationWeeks: { type: 'integer', minimum: 1 },
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      settlement.approveBidProgramme(projectContext(platform, ctx), ctx.params.settlementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/settlements/:settlementId/approve',
+    description: 'Approve the settled price, under a named authority and within its limit',
+    schema: {
+      type: 'object',
+      required: ['finalPriceMinor', 'authority', 'summary'],
+      properties: {
+        finalPriceMinor: { type: 'integer', minimum: 0 },
+        authority: {
+          type: 'object',
+          required: ['delegatedTo', 'limitMinor'],
+          properties: { delegatedTo: stringField, limitMinor: { type: 'integer', minimum: 0 }, reference: { type: 'string' } },
+          additionalProperties: false,
+        },
+        summary: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      settlement.approveSettlement(projectContext(platform, ctx), ctx.params.settlementId as string, body(ctx)),
+  },
+
   // ---------------------------------------------- submission, award and conversion (T-WF-08)
   {
     method: 'GET',

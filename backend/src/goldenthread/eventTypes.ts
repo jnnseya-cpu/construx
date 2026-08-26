@@ -238,6 +238,22 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('BIDS_EVALUATED', 'BidEvaluation', 'EXECUTE', 'PROCUREMENT', { aiAllowed: true, requiresEvidence: true }),
   def('MASTER_PRICING_CONSOLIDATED', 'MasterPricing', 'CREATE', 'PROCUREMENT'),
   def('ADJUDICATION_COMPLETED', 'Adjudication', 'APPROVE', 'PROCUREMENT', { requiresEvidence: true, creates: true }),
+  // The settlement meeting on our own bid — the last two hours before a tender
+  // goes out, where the price stops being the estimate and becomes a decision.
+  // A different act from `ADJUDICATION_COMPLETED` above, which chooses a
+  // subcontractor from an evaluation.
+  //
+  // None is AI-authorable. The specification is explicit that an agent may
+  // identify margin exposure and draft the risk summary, and may not set the
+  // margin, the contingency or the final price.
+  def('ADJUDICATION_STARTED', 'Settlement', 'CREATE', 'PROCUREMENT', { creates: true, requiresEvidence: true }),
+  def('PRICE_ADJUSTMENT_RECORDED', 'Settlement', 'UPDATE', 'PROCUREMENT'),
+  // Beyond the four the specification names, because an action is not an
+  // adjustment and riding it on the adjustment event would put two different
+  // acts under one name.
+  def('SETTLEMENT_ACTION_RECORDED', 'Settlement', 'UPDATE', 'PROCUREMENT'),
+  def('BID_PROGRAMME_APPROVED', 'Settlement', 'APPROVE', 'PROCUREMENT'),
+  def('ADJUDICATION_APPROVED', 'Settlement', 'APPROVE', 'PROCUREMENT', { requiresEvidence: true }),
   def('BID_PACK_COMPILED', 'BidSubmissionPack', 'CREATE', 'PROCUREMENT', { requiresEvidence: true }),
   def('BID_PACK_LOCKED', 'BidSubmissionPack', 'FREEZE', 'PROCUREMENT', { requiresEvidence: true }),
   // Submission, award and conversion. The receipt binds to the pack's content
