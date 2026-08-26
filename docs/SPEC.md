@@ -1228,7 +1228,7 @@ every record already carrying the old name, and the standing principle is that
 nothing is removed or replaced. The mapping is asserted by a test so it stays
 readable against the ledger.
 
-### 8.3 (continued) T-WF-03 to T-WF-06, and 8.4 — received, not built
+### 8.3 (continued) T-WF-03 to T-WF-05, and 8.4 — received, not built
 
 Recorded so the scope is visible and nothing here is mistaken for present.
 None of these is built; each names what already exists that it would extend.
@@ -1239,7 +1239,7 @@ None of these is built; each names what already exists that it would extend.
 | **T-WF-03** measurement, BoQ, estimate schedule | The twenty-cost-head estimate, take-off with sheet-and-revision evidence, `ESTIMATE_FROZEN`. Rate build-ups separating direct cost / preliminaries / risk / OH&P, and estimate-to-estimate reconciliation, do not |
 | **T-WF-04** package strategy, enquiry, bidder issue | `TENDER_PACKAGE_COMPOSED`, the RFQ engine, the supplier register with prequalification. Pack revisioning, per-recipient issue evidence and the return workspace lock do not |
 | **T-WF-05** supply-chain and self-delivery pricing routes | `assignScheduleRoute` (SUPPLY_CHAIN / SELF_PRICE), `analyseReturns`, `consolidateMasterPricing`. Normalisation to a common basis with a visible adjustment bridge does not |
-| **T-WF-06** clarifications, addenda, return intelligence | The addendum register built above, and `analyseReturns`. A numbered clarification register with issue evidence, and an addendum impact report, do not |
+| ~~**T-WF-06** clarifications, addenda, return intelligence~~ | **BUILT** — see below |
 | ~~**T-WF-07** commercial adjudication and governance~~ | **BUILT** — see below |
 | ~~**T-WF-08** submission, award, zero-re-entry conversion~~ | **BUILT** — see below |
 | **8.4** stage gate Definition of Done | The lifecycle gate machinery and the replayable ledger. The seven-point tender gate itself is not declared, and it depends on the A2 gate work at item 6 below |
@@ -1300,6 +1300,73 @@ qualification into the submitted bid pack's qualifications schedule.
 register after a document arrives appends rather than being refused as "already
 exists". Addendum impact is written as `ADDENDUM_IMPACT_ASSESSED`, which is the
 name T-WF-06 gives the same act — one event, not two.
+
+---
+
+### 8.3 (continued) T-WF-06 — Clarifications, addenda and tender return intelligence
+
+**BUILT.** `backend/src/domain/tenderintel.ts`, ten routes, 51 tests, and a
+panel on the Tender & Procurement screen with seven commands.
+
+| Clause | State |
+|---|---|
+| Number and classify a clarification as internal, client-side or bidder-side | **BUILT** — and on the **same** `Clarification` entity and `TQ-nnn` sequence as the RFQ-scoped supplier question that already existed, so the register is one register rather than two with colliding references |
+| Link question and response to the exact controlled information and the impacted records | **BUILT** — a document, clause, drawing, package or scope item, and a question naming none of them is refused |
+| Issue the approved response consistently to entitled recipients, with read evidence | **BUILT** — recipients and the issue time are the record, the issue is registered as evidence, and each recipient's read is recorded separately |
+| On addendum, calculate the impact on compliance, quantity, estimate, supplier returns and programme | **PARTIAL** — the addendum register is T-WF-01 and the impact on the frozen review (packages, scope, obligations, qualifications) is T-WF-02, both already built and reused. Impact on **quantities and the estimate** is **not built**: it depends on T-WF-03's measured items, which do not exist |
+| Normalise returns and detect variance, outliers and missing scope | **PARTIAL** — the comparison normalises through the adjustment bridge, and `analyseReturns` already detects variance and generates bidder-specific questions. Automatic outlier detection across the comparison is **not built** |
+| Reconcile clarification responses and update the comparison without changing the raw return | **BUILT** — the raw return is written once and refuses a second write; every adjustment sits beside it |
+| **AC-T-WF-06-01** every adjustment links to a raw return or a clarification | **BUILT** — a refusal at the point of entry, and a clarification that has been raised but not answered is refused too |
+| **AC-T-WF-06-02** recipients and issue times are auditable | **BUILT** — plus who acknowledged and when |
+| **AC-T-WF-06-03** completeness/confidence falls when material queries remain open | **BUILT** — and the ranking is withheld rather than footnoted |
+| Commercially confidential bidder data cannot leak across bidders | **BUILT** — refused in both directions: a confidential answer to a competitor, and an open answer that misses an entitled bidder |
+| Late addendum may trigger a deadline review and a decision record | **BUILT, already** — T-WF-01's addendum makes the bid decision stale and only deciding again clears it |
+| Unresolved material variance carries priced risk to adjudication | **BUILT** — the close records what is being carried and what it is worth |
+
+**Three decisions worth recording.**
+
+**The register is one register.** `procurement.raiseClarification` already wrote
+`CLARIFICATION_RAISED` for the RFQ-scoped supplier question. The tender-level
+register writes the same event against the same entity and continues the same
+`TQ-nnn` sequence, so a reference on a piece of paper still identifies exactly
+one thing. What was added is the two sides that had nowhere to go — the internal
+question and the question to the client — and the link into the controlled
+information.
+
+**Completeness is a count, not two proportions multiplied.** The first version
+multiplied coverage by answered-queries, and on a real case — both firms
+returned, one query open — the screen said **0% settled**. Nobody believes a
+number that claims nothing is known about a comparison holding two complete
+priced returns, and a measure nobody believes is worse than none. It now counts
+what the comparison needs to know (one return per firm, one answer per material
+query) against what it has. Confidence is stated from the facts rather than from
+a threshold on the percentage.
+
+**Closing is not refused while a query is open.** A bid deadline does not wait
+for an answer, and refusing here would only teach people to mark queries
+immaterial — destroying the one signal that matters. What the close records is
+exactly what is being carried and what it is worth.
+
+**Not built, and not to be claimed:** the quantity and estimate halves of the
+addendum impact (they need T-WF-03); automatic outlier detection across a
+comparison; and any bidder-facing portal — the recipients are recorded, and
+sending is somebody else's system.
+
+**The event names.** `CLARIFICATION_RAISED` and `ADDENDUM_IMPACT_ASSESSED`
+already existed and are reused. `CLARIFICATION_ISSUED` and
+`RETURN_COMPARISON_UPDATED` are new and take the specification's names;
+`ADDENDUM_RECEIVED` is `TENDER_ADDENDUM_ISSUED`, already on the ledger under
+that name from T-WF-01 and mapped rather than renamed. One name is beyond the
+specification's list — `CLARIFICATION_ACKNOWLEDGED` — because read evidence is a
+different fact from issue and folding it into the issue record would have made
+the issue event mean two things.
+
+**One security correction made on the way.** The `Clarification` entity was
+classified `DESIGN_INFORMATION` with no sensitivity. It holds nothing but
+procurement acts, so that was wrong before; it would have been a leak after,
+because the register now carries commercial-in-confidence bidder questions and
+anyone holding `DESIGN_INFORMATION` read could have listed them. It is now
+`PROCUREMENT_AWARD` / `COMMERCIAL_L3`, asserted by a test.
 
 ---
 
@@ -1482,6 +1549,13 @@ audit event, the agent contract or the lifecycle gate.
     binds to the pack hash, the departures are computed rather than noticed, and
     the budget and buyout targets come off the estimate. The submission
     completeness checks are the part not built.
+
+12a0000. ~~T-WF-06 — clarifications and the return comparison.~~ **Done.** One
+    clarification register across all three sides, issued to entitled recipients
+    with the reads recorded, the confidentiality fence in both directions, and a
+    comparison whose raw returns are never edited and whose every adjustment
+    cites a return line or an issued clarification. The quantity and estimate
+    halves of the addendum impact are the part not built; they need T-WF-03.
 
 12a000. ~~T-WF-02 — the tender information review.~~ **Done.** The document
     register with its three validation checks, the scope matrix with gaps and

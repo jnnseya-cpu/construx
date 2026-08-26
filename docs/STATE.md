@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,909 passing, 0 failing, 0 skipped, across 98 files |
+| Tests | 1,967 passing, 0 failing, 0 skipped, across 100 files |
 | Typecheck | clean |
-| Backend | 124 TypeScript files, 63,913 lines |
-| Application | 39 ES modules, 14,226 lines (including a service worker) |
-| API routes | 352 (34 of them public) |
-| Event types | 232 Golden Thread (closed) · 178 communication events (closed) |
-| Entity types | 132, all classified for access |
+| Backend | 125 TypeScript files, 65,115 lines |
+| Application | 39 ES modules, 14,553 lines (including a service worker) |
+| API routes | 363 (34 of them public) |
+| Event types | 235 Golden Thread (closed) · 178 communication events (closed) |
+| Entity types | 133, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -4258,6 +4258,98 @@ register after a missing document arrives appends rather than being refused as
 "already exists" — validation happens more than once by design. Addendum impact
 writes `ADDENDUM_IMPACT_ASSESSED`, the name T-WF-06 gives the same act, so there
 is one event for it and not two.
+
+---
+
+### Clarifications, and the comparison that must not become an opinion
+
+T-WF-06. `backend/src/domain/tenderintel.ts`, ten routes, 51 tests, and a panel
+on the Tender & Procurement screen with seven commands.
+
+Two failures are what this exists to prevent, and neither of them is a missing
+record.
+
+**Unequal information.** One bidder gets the answer on Tuesday and the other on
+Friday, and the tender has stopped being a competition. It is almost never
+malice; it is a reply-all that was a reply. The platform refuses the two shapes
+it can recognise — a commercial-in-confidence answer going to a competitor, and
+an open bidder answer that misses an entitled bidder — and records the
+distribution and the reads for everything else, because the question a year
+later is never what the answer was. It is whether one firm had it first.
+
+**The comparison that became an opinion.** Nobody sets out to do it. Two quotes
+are on different bases, somebody normalises them, and six weeks later nobody can
+say why the one that won had £180,000 added to the other. So the **raw return is
+written once and never edited** — a second write is refused, and a correction to
+what a firm meant is an adjustment sitting beside their own number — and **every
+adjustment cites the return line it corrects or the clarification that
+authorises it**, as a refusal rather than a report. A clarification that has been
+raised but not answered is refused as a source too: an adjustment resting on a
+question nobody has answered rests on nothing.
+
+**The register is one register.** The RFQ-scoped supplier question already
+existed and already wrote `CLARIFICATION_RAISED`. The tender-level register
+writes the same event against the same entity and continues the same `TQ-nnn`
+sequence, so a reference on a piece of paper still identifies exactly one thing.
+What was added is the two sides that had nowhere to go — the internal question
+and the question to the client — and the link into the controlled information
+that makes an answer findable by whoever prices that thing a fortnight later. A
+question naming no document, clause, drawing, package or scope item is refused.
+
+**Completeness is a count, and the first version of it was wrong.** It
+multiplied two proportions — how many firms returned, by how many material
+queries were answered — and on a real case with both firms returned and one
+query open, the screen said **0% settled**. Nobody believes a number claiming
+nothing is known about a comparison holding two complete priced returns, and a
+measure nobody believes is worse than none. It now counts what the comparison
+needs to know (one return per firm, one answer per material query) against what
+it has, and confidence is stated from the facts rather than from a threshold:
+a firm that has not returned is low, everything in with a material query open is
+medium, everything answered is high.
+
+**The ranking is withheld, not footnoted.** A ranked list is read as a
+recommendation however it is labelled, so while a firm has not returned or a
+material query is open there is no ranking at all — and the reason is on the
+screen. What the open material queries are worth is carried into adjudication as
+a stated priced risk rather than lost.
+
+**Closing is deliberately not refused while a query is open.** A bid deadline
+does not wait for an answer, and a refusal there would only teach people to mark
+queries immaterial — which would destroy the one signal that matters. What the
+close records is exactly what is being carried, and the person who ran the
+comparison does not close it: the matrix already gives the QS the right to run
+one and not to close it, and the arithmetic is shared between the two acts
+without either demanding the other's authority.
+
+**Verified against a running server**, every refusal and every acceptance driven
+over HTTP as the real roles: the confidential answer to a competitor is refused
+naming the firm it would have reached, the open answer missing a bidder is
+refused naming them, the unsourced adjustment is refused, raw plus adjustments
+reconciles to evaluated for both firms, the material query drops the comparison
+to 67% and withholds the ranking, and the QS is refused the close that the
+project manager is granted.
+
+**Two defects a browser found that no test had.** The confidentiality badge on
+the register rendered as the literal text `[object Object]`, because `raw()`
+called on something already marked as markup ran `String()` over the object.
+`raw()` now passes an already-marked value through, which is the root cause and
+would have bitten anywhere else the same natural-looking call was written; there
+is now a test file for the escaping layer. And every comparison command opened a
+modal with an empty required dropdown once the last comparison was closed — a
+dead end the person could not diagnose. Those commands now lock with the reason,
+using the same affordance the permission matrix already uses.
+
+**One security correction made on the way.** The `Clarification` entity was
+classified `DESIGN_INFORMATION` with no sensitivity. Every write against it is a
+procurement act, so that was wrong before this workflow; it would have been a
+leak after it, because the register now carries commercial-in-confidence bidder
+questions and anyone holding design read could have listed them. It is
+`PROCUREMENT_AWARD` / `COMMERCIAL_L3` now, asserted by a test.
+
+**Not built, and not to be claimed:** the quantity and estimate halves of the
+addendum impact — they need T-WF-03's measured items, which do not exist;
+automatic outlier detection across a comparison; and any bidder-facing portal.
+The recipients are recorded; sending is somebody else's system.
 
 ---
 

@@ -62,7 +62,12 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   Drawing: { area: 'DESIGN_INFORMATION' },
   DrawingMarkup: { area: 'DESIGN_INFORMATION' },
   RFI: { area: 'DESIGN_INFORMATION' },
-  Clarification: { area: 'DESIGN_INFORMATION' },
+  // Tender clarifications, not design ones — every write against this entity is
+  // a procurement act. Classified `DESIGN_INFORMATION` with no sensitivity
+  // until T-WF-06, which was wrong before and would have been a leak after: the
+  // register now carries commercial-in-confidence bidder questions, and a
+  // designer holding `DESIGN_INFORMATION` read could have listed them.
+  Clarification: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Correspondence: { area: 'DESIGN_INFORMATION' },
   StorageEntitlement: { area: 'BILLING_ACU' },
   // A permit names who is authorised to do a high-risk activity and on whose
@@ -98,6 +103,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   BidProgramme: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   MasterPricing: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   PricingSchedule: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
+  // Every bidder's price side by side. There is nothing more commercially
+  // sensitive in a tender than this record, and one bidder seeing it would end
+  // the process.
+  ReturnComparison: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Supplier: { area: 'PROCUREMENT_AWARD' },
   Framework: { area: 'PROCUREMENT_AWARD' },
   TenderPackage: { area: 'PROCUREMENT_AWARD' },

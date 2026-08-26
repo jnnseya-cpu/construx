@@ -252,6 +252,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('RFQ_ACKNOWLEDGED', 'RFQ', 'UPDATE', 'PROCUREMENT'),
   def('CLARIFICATION_RAISED', 'Clarification', 'CREATE', 'PROCUREMENT', { aiAllowed: true }),
   def('CLARIFICATION_ANSWERED', 'Clarification', 'UPDATE', 'PROCUREMENT'),
+  // T-WF-06. Issuing an answer is a human act by design: the specification puts
+  // issue and commercial interpretation on the person, and an agent that could
+  // release a clarification could release it unequally.
+  def('CLARIFICATION_ISSUED', 'Clarification', 'ISSUE', 'PROCUREMENT', { requiresEvidence: true }),
+  def('CLARIFICATION_ACKNOWLEDGED', 'Clarification', 'UPDATE', 'PROCUREMENT'),
+  // Opening, every adjustment and the close all write this. The comparison is
+  // one record whose whole life is the audit trail of how it was normalised.
+  def('RETURN_COMPARISON_UPDATED', 'ReturnComparison', 'UPDATE', 'PROCUREMENT', { creates: true }),
   def('SUBMISSION_RECEIVED', 'SupplierSubmission', 'CREATE', 'PROCUREMENT', { requiresEvidence: true }),
   def('SUBMISSION_NORMALISED', 'SupplierSubmission', 'AI_EXECUTE', 'PROCUREMENT', { aiAllowed: true }),
   def('BIDS_EVALUATED', 'BidEvaluation', 'EXECUTE', 'PROCUREMENT', { aiAllowed: true, requiresEvidence: true }),

@@ -54,6 +54,7 @@ import * as planning from '../engines/planning.ts';
 import * as sitevisit from '../engines/sitevisit.ts';
 import * as award from '../domain/award.ts';
 import * as settlement from '../domain/settlement.ts';
+import * as tenderintel from '../domain/tenderintel.ts';
 import * as tenderreview from '../domain/tenderreview.ts';
 import * as quality from '../engines/quality.ts';
 import * as safety from '../engines/safety.ts';
@@ -6398,6 +6399,214 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       tenderreview.assessAddendum(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
+  },
+
+  // --------------------------------- clarifications and return intelligence (T-WF-06)
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender-intelligence',
+    description: 'The clarification register and every return comparison, with its confidence',
+    handler: (platform, ctx) => tenderintel.tenderIntelPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-clarifications',
+    description: 'Raise a clarification against the controlled information it concerns',
+    schema: {
+      type: 'object',
+      required: ['side', 'subject', 'question', 'links'],
+      properties: {
+        side: { type: 'string', enum: [...tenderintel.CLARIFICATION_SIDE] },
+        subject: stringField,
+        question: stringField,
+        links: {
+          type: 'object',
+          properties: {
+            document: { type: 'string' },
+            clause: { type: 'string' },
+            drawing: { type: 'string' },
+            package: { type: 'string' },
+            scopeItem: { type: 'string' },
+          },
+          additionalProperties: false,
+        },
+        responseDeadline: { type: 'string' },
+        confidentiality: { type: 'string', enum: [...tenderintel.CONFIDENTIALITY] },
+        bidderPartyId: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => tenderintel.raiseTenderClarification(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-clarifications/:clarificationId/issue',
+    description: 'Issue the approved response to everybody entitled to it, and record who and when',
+    schema: {
+      type: 'object',
+      required: ['response', 'recipients'],
+      properties: {
+        response: stringField,
+        recipients: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['partyId', 'name', 'isBidder'],
+            properties: { partyId: stringField, name: stringField, isBidder: { type: 'boolean' } },
+            additionalProperties: false,
+          },
+        },
+        entitledBidders: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintel.issueClarification(projectContext(platform, ctx), {
+        clarificationId: ctx.params.clarificationId as string,
+        ...body<{ response: string; recipients: tenderintel.ClarificationRecipient[]; entitledBidders?: string[] }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-clarifications/:clarificationId/acknowledge',
+    description: 'Record that a recipient has read the answer',
+    schema: {
+      type: 'object',
+      required: ['partyId'],
+      properties: { partyId: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintel.acknowledgeClarification(projectContext(platform, ctx), {
+        clarificationId: ctx.params.clarificationId as string,
+        partyId: body<{ partyId: string }>(ctx).partyId,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/return-comparisons',
+    description: 'Open a comparison of the returns against one package',
+    schema: {
+      type: 'object',
+      required: ['packageReference', 'returnDeadline', 'informationCutOff', 'bidders'],
+      properties: {
+        packageReference: stringField,
+        returnDeadline: stringField,
+        informationCutOff: stringField,
+        bidders: {
+          type: 'array',
+          minItems: 2,
+          items: {
+            type: 'object',
+            required: ['partyId', 'name'],
+            properties: { partyId: stringField, name: stringField },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => tenderintel.openComparison(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/return-comparisons/:comparisonId/returns',
+    description: 'Record a return exactly as it arrived; it is never edited afterwards',
+    schema: {
+      type: 'object',
+      required: ['bidderPartyId', 'submittedAt', 'lines'],
+      properties: {
+        bidderPartyId: stringField,
+        submittedAt: stringField,
+        lines: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['reference', 'description', 'amountMinor'],
+            properties: { reference: stringField, description: stringField, amountMinor: { type: 'integer' } },
+            additionalProperties: false,
+          },
+        },
+        exclusions: { type: 'array', items: { type: 'string' } },
+        qualifications: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintel.recordRawReturn(projectContext(platform, ctx), ctx.params.comparisonId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/return-comparisons/:comparisonId/adjustments',
+    description: 'Adjust a return onto the common basis, citing the line or the clarification behind it',
+    schema: {
+      type: 'object',
+      required: ['bidderPartyId', 'category', 'amountMinor', 'reason'],
+      properties: {
+        bidderPartyId: stringField,
+        category: { type: 'string', enum: [...tenderintel.ADJUSTMENT_BASIS_CATEGORY] },
+        amountMinor: { type: 'integer' },
+        reason: stringField,
+        fromReturnLine: { type: 'string' },
+        fromClarification: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintel.adjustComparison(projectContext(platform, ctx), ctx.params.comparisonId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/return-comparisons/:comparisonId/queries',
+    description: 'Raise a query against a return, and what it is worth if it goes the wrong way',
+    schema: {
+      type: 'object',
+      required: ['bidderPartyId', 'subject', 'material', 'valueAtRiskMinor'],
+      properties: {
+        bidderPartyId: stringField,
+        subject: stringField,
+        material: { type: 'boolean' },
+        valueAtRiskMinor: { type: 'integer' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintel.raiseComparisonQuery(projectContext(platform, ctx), ctx.params.comparisonId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/return-comparisons/:comparisonId/queries/resolve',
+    description: 'Resolve a query and say what the answer was',
+    schema: {
+      type: 'object',
+      required: ['reference', 'resolution'],
+      properties: { reference: stringField, resolution: stringField, clarification: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintel.resolveComparisonQuery(projectContext(platform, ctx), ctx.params.comparisonId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/return-comparisons/:comparisonId',
+    description: 'Raw, adjustments and evaluated side by side, with completeness and carried risk',
+    handler: (platform, ctx) =>
+      tenderintel.compareReturns(projectContext(platform, ctx), ctx.params.comparisonId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/return-comparisons/:comparisonId/close',
+    description: 'Close the comparison for adjudication, naming the risk it carries',
+    schema: {
+      type: 'object',
+      required: ['rationale'],
+      properties: { rationale: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintel.closeComparison(projectContext(platform, ctx), ctx.params.comparisonId as string, body(ctx)),
   },
 
   // ------------------------------------------------------- the settlement meeting (T-WF-07)

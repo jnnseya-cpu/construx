@@ -42,6 +42,22 @@ export async function procurement(root) {
 
   const rfq = b.RFQ.at(-1);
 
+  // T-WF-06. The clarification register and every return comparison, with the
+  // confidence in each. Read through its own endpoint rather than the entity
+  // bundle because the completeness and the carried risk are derived server-side
+  // — the browser holds no rule the API does not publish.
+  const intel = await api
+    .get(`/v1/projects/${projectId}/tender-intelligence`)
+    .catch(() => ({ clarifications: [], comparisons: [], summary: '' }));
+
+  // A command whose only select would be empty is locked with the reason rather
+  // than offered — an empty required dropdown is a dead end the person cannot
+  // diagnose, and a lock that says why is the same affordance the permission
+  // matrix already uses.
+  const openComparisons = intel.comparisons.filter((c) => c.status === 'OPEN');
+  const unanswered = intel.clarifications.filter((c) => c.status === 'OPEN');
+  const NO_OPEN_COMPARISON = 'No comparison is open — open one, or the last was closed for adjudication';
+
   // Who was asked against who answered. Every fact was already on the record
   // and nothing stood them beside each other, which from a screen is
   // indistinguishable from not tracking bidders at all.
@@ -98,6 +114,23 @@ export async function procurement(root) {
             { id: 'issue', label: 'Issue RFQ', permitted: can('PROCUREMENT_AWARD', 'U'), reason: blockedReason('PROCUREMENT_AWARD', 'U') },
             { id: 'submission', label: 'Record submission', permitted: can('SUPPLIER_SUBMISSION', 'C'), reason: blockedReason('SUPPLIER_SUBMISSION', 'C') },
             { id: 'award', label: 'Award', permitted: can('PROCUREMENT_AWARD', 'A'), reason: blockedReason('PROCUREMENT_AWARD', 'A') },
+            { id: 'clarification', label: 'Raise clarification', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
+            { id: 'issueClarification', label: 'Issue answer',
+              permitted: can('PROCUREMENT_AWARD', 'U') && unanswered.length > 0,
+              reason: blockedReason('PROCUREMENT_AWARD', 'U') ?? 'Every clarification on the register has been answered' },
+            { id: 'comparison', label: 'Open comparison', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
+            { id: 'rawReturn', label: 'Record return',
+              permitted: can('PROCUREMENT_AWARD', 'U') && openComparisons.length > 0,
+              reason: blockedReason('PROCUREMENT_AWARD', 'U') ?? NO_OPEN_COMPARISON },
+            { id: 'adjustment', label: 'Adjust a return',
+              permitted: can('PROCUREMENT_AWARD', 'U') && openComparisons.length > 0,
+              reason: blockedReason('PROCUREMENT_AWARD', 'U') ?? NO_OPEN_COMPARISON },
+            { id: 'comparisonQuery', label: 'Raise query',
+              permitted: can('PROCUREMENT_AWARD', 'U') && openComparisons.length > 0,
+              reason: blockedReason('PROCUREMENT_AWARD', 'U') ?? NO_OPEN_COMPARISON },
+            { id: 'closeComparison', label: 'Close for adjudication',
+              permitted: can('PROCUREMENT_AWARD', 'A') && openComparisons.length > 0,
+              reason: blockedReason('PROCUREMENT_AWARD', 'A') ?? NO_OPEN_COMPARISON },
           ]))}
         </div>
       </div>
@@ -237,6 +270,80 @@ export async function procurement(root) {
                       </div>
                     </div></div>`
               }
+            </div>`
+      }
+
+      ${
+        intel.comparisons.length === 0
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Return comparisons — and how much of each is settled</h3>
+              <div style="padding:8px 17px 0"><div class="metric-sub">
+                Raw is what the firm sent and is never edited. Adjustments sit beside it, each one citing the return line it
+                corrects or the clarification that authorises it. Where a firm has not returned, or a material query is still
+                open, the ranking is withheld rather than published with a footnote — a ranked list is read as a
+                recommendation however it is labelled.
+              </div></div>
+              ${table({
+                headers: ['Comparison', 'Package', 'Settled', 'Confidence', 'Carried risk', 'Ranking', 'State'],
+                align: ['', '', 'num', '', 'num', '', ''],
+                rows: intel.comparisons.map((c) => [
+                  c.reference,
+                  c.packageReference,
+                  pct(c.completeness, 0),
+                  badge(
+                    String(c.confidence).toLowerCase(),
+                    c.confidence === 'HIGH' ? 'ok' : c.confidence === 'MEDIUM' ? 'warn' : 'bad',
+                  ),
+                  c.carriedRiskMinor > 0 ? money(c.carriedRiskMinor) : '—',
+                  c.rankingSuppressed ? badge('withheld', 'warn') : badge('published', 'ok'),
+                  badge(badgeText(c.status), statusTone(c.status)),
+                ]),
+              })}
+              ${
+                intel.comparisons.some((c) => c.carriedRiskMinor > 0)
+                  ? html`<div style="padding:12px 17px 15px"><div class="notice warn">
+                      <div>
+                        <b>${money(intel.comparisons.reduce((sum, c) => sum + c.carriedRiskMinor, 0))} of unresolved variance is
+                        being carried into adjudication.</b><br>
+                        Not lost and not priced — it is what the open material queries are worth if they go the wrong way, and
+                        it goes to the adjudication as a stated risk rather than as a surprise on site.
+                      </div>
+                    </div></div>`
+                  : ''
+              }
+            </div>`
+      }
+
+      ${
+        intel.clarifications.length === 0
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Clarification register</h3>
+              <div style="padding:8px 17px 0"><div class="metric-sub">
+                Every question against the document, clause, drawing or package it concerns, and who the answer went to.
+                A bidder who had the answer three days before the others is what makes an award challengeable, so the
+                distribution and the reads are the record — not the answer.
+              </div></div>
+              ${table({
+                headers: ['Ref', 'Side', 'Subject', 'About', 'Due', 'Issued', 'Sent to', 'Read', 'State'],
+                align: ['', '', '', '', '', '', 'num', 'num', ''],
+                rows: intel.clarifications.map((c) => [
+                  c.reference,
+                  badge(String(c.side).toLowerCase(), c.side === 'BIDDER' ? 'info' : 'neutral'),
+                  c.confidentiality === 'COMMERCIAL_IN_CONFIDENCE'
+                    ? html`${c.subject} ${badge('in confidence', 'warn')}`
+                    : c.subject,
+                  [c.links?.document, c.links?.clause && `cl. ${c.links.clause}`, c.links?.drawing, c.links?.package, c.links?.scopeItem]
+                    .filter(Boolean)
+                    .join(' · ') || '—',
+                  c.responseDeadline ? date(c.responseDeadline) : '—',
+                  c.issuedAt ? date(c.issuedAt) : '—',
+                  c.recipients || '—',
+                  c.recipients ? `${c.acknowledged}/${c.recipients}` : '—',
+                  badge(badgeText(c.status), statusTone(c.status)),
+                ]),
+              })}
             </div>`
       }
 
@@ -577,6 +684,216 @@ export async function procurement(root) {
         ...rest,
         conditions: String(conditions ?? '').split('\n').map((x) => x.trim()).filter(Boolean),
       }),
+    },
+
+    // ---- T-WF-06 -----------------------------------------------------------
+
+    clarification: {
+      title: 'Raise a clarification',
+      intent:
+        'A question against the exact information it concerns. An answer that is not attached to a document, clause, drawing, package or ' +
+        'scope item will not be found by the person who prices that thing a fortnight later, so at least one is required.',
+      path: `/v1/projects/${projectId}/tender-clarifications`,
+      submitLabel: 'Raise',
+      fields: [
+        { name: 'side', label: 'Between', type: 'select',
+          options: [
+            { value: 'INTERNAL', label: 'Internal — the bid team asking itself' },
+            { value: 'CLIENT', label: 'To the client or their agent' },
+            { value: 'BIDDER', label: 'From a firm pricing one of our packages' },
+          ] },
+        { name: 'subject', label: 'Subject', type: 'text' },
+        { name: 'question', label: 'The question', type: 'textarea', rows: 3 },
+        { name: 'document', label: 'Document', type: 'text', required: false },
+        { name: 'clause', label: 'Clause', type: 'text', required: false },
+        { name: 'drawing', label: 'Drawing', type: 'text', required: false },
+        { name: 'package', label: 'Package', type: 'text', required: false },
+        { name: 'scopeItem', label: 'Scope item', type: 'text', required: false },
+        { name: 'responseDeadline', label: 'Answer needed by', type: 'date', required: false },
+        { name: 'confidentiality', label: 'Confidentiality', type: 'select', required: false,
+          options: [
+            { value: 'OPEN', label: 'Open — goes to everybody entitled to it' },
+            { value: 'COMMERCIAL_IN_CONFIDENCE', label: 'In confidence — this bidder only' },
+          ] },
+        { name: 'bidderPartyId', label: 'Bidder', type: 'select', required: false,
+          hint: 'Required for a question from a bidder',
+          options: (suppliers.suppliers ?? []).map((sup) => ({ value: sup.id, label: sup.name })) },
+      ],
+      transform: ({ document, clause, drawing, package: pkg, scopeItem, ...rest }) => ({
+        ...rest,
+        links: Object.fromEntries(
+          Object.entries({ document, clause, drawing, package: pkg, scopeItem }).filter(([, value]) => String(value ?? '').trim()),
+        ),
+      }),
+    },
+
+    issueClarification: {
+      title: 'Issue the answer',
+      intent:
+        'Who it goes to and when is the record. A commercial-in-confidence answer reaching a competitor is refused, and so is an open ' +
+        'answer that reaches only the firm that asked — returns priced on different information are not comparable.',
+      path: (collected) => `/v1/projects/${projectId}/tender-clarifications/${collected.clarificationId}/issue`,
+      submitLabel: 'Issue',
+      fields: [
+        { name: 'clarificationId', label: 'Clarification', type: 'select',
+          options: intel.clarifications
+            .filter((c) => c.status === 'OPEN')
+            .map((c) => ({ value: c.clarificationId, label: `${c.reference} · ${c.subject}` })) },
+        { name: 'response', label: 'The answer', type: 'textarea', rows: 3 },
+        { name: 'recipients', label: 'Goes to', type: 'textarea', rows: 3,
+          hint: 'One per line: party-id, name, bidder or internal' },
+        { name: 'entitledBidders', label: 'Every bidder entitled to it', type: 'text', required: false,
+          hint: 'Comma-separated party ids. Leave blank if this is not a bidder question' },
+      ],
+      transform: ({ clarificationId, recipients, entitledBidders, ...rest }) => ({
+        ...rest,
+        recipients: String(recipients ?? '')
+          .split('\n')
+          .map((line) => line.split(',').map((part) => part.trim()))
+          .filter((parts) => parts[0])
+          .map((parts) => ({ partyId: parts[0], name: parts[1] || parts[0], isBidder: (parts[2] ?? '').toLowerCase() === 'bidder' })),
+        ...(String(entitledBidders ?? '').trim()
+          ? { entitledBidders: String(entitledBidders).split(',').map((x) => x.trim()).filter(Boolean) }
+          : {}),
+      }),
+    },
+
+    comparison: {
+      title: 'Open a comparison',
+      intent:
+        'The returns against one package, on one basis. The deadline and the information cut-off are what the prices were built on, and ' +
+        'recording them is what makes the comparison mean something six weeks later.',
+      path: `/v1/projects/${projectId}/return-comparisons`,
+      submitLabel: 'Open',
+      fields: [
+        { name: 'packageReference', label: 'Package', type: 'text' },
+        { name: 'returnDeadline', label: 'Return deadline', type: 'datetime-local' },
+        { name: 'informationCutOff', label: 'Information cut-off', type: 'text',
+          hint: 'The last addendum the returns were priced against' },
+        { name: 'bidders', label: 'Firms', type: 'textarea', rows: 3, hint: 'One per line: party-id, name' },
+      ],
+      transform: ({ bidders, returnDeadline, ...rest }) => ({
+        ...rest,
+        returnDeadline: new Date(returnDeadline).toISOString(),
+        bidders: String(bidders ?? '')
+          .split('\n')
+          .map((line) => line.split(',').map((part) => part.trim()))
+          .filter((parts) => parts[0])
+          .map((parts) => ({ partyId: parts[0], name: parts[1] || parts[0] })),
+      }),
+    },
+
+    rawReturn: {
+      title: 'Record a return',
+      intent:
+        'Exactly as it arrived. It is written once and never edited — a correction to what they meant is an adjustment, which keeps ' +
+        'their own number visible beside it.',
+      path: (collected) => `/v1/projects/${projectId}/return-comparisons/${collected.comparisonId}/returns`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'comparisonId', label: 'Comparison', type: 'select',
+          options: intel.comparisons
+            .filter((c) => c.status === 'OPEN')
+            .map((c) => ({ value: c.comparisonId, label: `${c.reference} · ${c.packageReference}` })) },
+        { name: 'bidderPartyId', label: 'Firm', type: 'text', hint: 'The party id used when the comparison was opened' },
+        { name: 'submittedAt', label: 'Received at', type: 'datetime-local' },
+        { name: 'lines', label: 'Priced lines', type: 'textarea', rows: 4,
+          hint: 'One per line: ref, description, amount in major units' },
+        { name: 'exclusions', label: 'Exclusions', type: 'textarea', rows: 2, required: false, hint: 'One per line' },
+        { name: 'qualifications', label: 'Qualifications', type: 'textarea', rows: 2, required: false, hint: 'One per line' },
+      ],
+      transform: ({ comparisonId, submittedAt, lines, exclusions, qualifications, bidderPartyId }) => ({
+        bidderPartyId,
+        submittedAt: new Date(submittedAt).toISOString(),
+        lines: String(lines ?? '')
+          .split('\n')
+          .map((line) => line.split(',').map((part) => part.trim()))
+          .filter((parts) => parts[0] && parts[2])
+          .map((parts) => ({
+            reference: parts[0],
+            description: parts[1] || parts[0],
+            amountMinor: Math.round(Number(parts[2]) * 100),
+          })),
+        exclusions: String(exclusions ?? '').split('\n').map((x) => x.trim()).filter(Boolean),
+        qualifications: String(qualifications ?? '').split('\n').map((x) => x.trim()).filter(Boolean),
+      }),
+    },
+
+    adjustment: {
+      title: 'Adjust a return onto the common basis',
+      intent:
+        'Every adjustment cites the return line it corrects or the clarification that authorises it. Without one, the adjustment cannot ' +
+        'be told apart from a preference once the meeting is over, and it is refused.',
+      path: (collected) => `/v1/projects/${projectId}/return-comparisons/${collected.comparisonId}/adjustments`,
+      submitLabel: 'Adjust',
+      fields: [
+        { name: 'comparisonId', label: 'Comparison', type: 'select',
+          options: intel.comparisons
+            .filter((c) => c.status === 'OPEN')
+            .map((c) => ({ value: c.comparisonId, label: `${c.reference} · ${c.packageReference}` })) },
+        { name: 'bidderPartyId', label: 'Firm', type: 'text' },
+        { name: 'category', label: 'What kind of adjustment', type: 'select',
+          options: [
+            { value: 'SCOPE_ADDED', label: 'Scope added' },
+            { value: 'SCOPE_REMOVED', label: 'Scope removed' },
+            { value: 'EXCLUSION_PRICED', label: 'Exclusion priced back in' },
+            { value: 'QUALIFICATION_PRICED', label: 'Qualification priced' },
+            { value: 'ATTENDANCE_MOVED', label: 'Attendance moved' },
+            { value: 'PROGRAMME_IMPACT', label: 'Programme impact' },
+            { value: 'TAX_OR_CURRENCY', label: 'Tax or currency' },
+            { value: 'ARITHMETIC_CORRECTION', label: 'Arithmetic correction' },
+          ] },
+        { name: 'amountMinor', label: 'Amount', type: 'number', money: true,
+          hint: 'Positive adds to this firm’s evaluated cost' },
+        { name: 'reason', label: 'Reason', type: 'textarea', rows: 2 },
+        { name: 'fromReturnLine', label: 'From return line', type: 'text', required: false },
+        { name: 'fromClarification', label: 'From clarification', type: 'select', required: false,
+          options: intel.clarifications
+            .filter((c) => c.status !== 'OPEN')
+            .map((c) => ({ value: c.reference, label: `${c.reference} · ${c.subject}` })) },
+      ],
+      transform: ({ comparisonId, ...rest }) => rest,
+    },
+
+    comparisonQuery: {
+      title: 'Raise a query against a return',
+      intent:
+        'A material query is one that moves the number. While it is open the ranking is withheld and what it is worth is carried into ' +
+        'adjudication as a stated risk, so a material query with nothing at stake is refused.',
+      path: (collected) => `/v1/projects/${projectId}/return-comparisons/${collected.comparisonId}/queries`,
+      submitLabel: 'Raise',
+      fields: [
+        { name: 'comparisonId', label: 'Comparison', type: 'select',
+          options: intel.comparisons
+            .filter((c) => c.status === 'OPEN')
+            .map((c) => ({ value: c.comparisonId, label: `${c.reference} · ${c.packageReference}` })) },
+        { name: 'bidderPartyId', label: 'Firm', type: 'text' },
+        { name: 'subject', label: 'The query', type: 'textarea', rows: 2 },
+        { name: 'material', label: 'Does it move the number?', type: 'select',
+          options: [
+            { value: 'true', label: 'Material — the comparison cannot be relied on until it is answered' },
+            { value: 'false', label: 'Immaterial — worth recording, does not change the price' },
+          ] },
+        { name: 'valueAtRiskMinor', label: 'Worth, if it goes the wrong way', type: 'number', money: true },
+      ],
+      transform: ({ comparisonId, material, ...rest }) => ({ ...rest, material: material === 'true' }),
+    },
+
+    closeComparison: {
+      title: 'Close for adjudication',
+      intent:
+        'Deliberately not refused while a query is open — a deadline does not wait, and refusing here would only teach people to mark ' +
+        'queries immaterial. What is recorded is exactly what is being carried, so adjudication sees it.',
+      path: (collected) => `/v1/projects/${projectId}/return-comparisons/${collected.comparisonId}/close`,
+      submitLabel: 'Close',
+      fields: [
+        { name: 'comparisonId', label: 'Comparison', type: 'select',
+          options: intel.comparisons
+            .filter((c) => c.status === 'OPEN')
+            .map((c) => ({ value: c.comparisonId, label: `${c.reference} · ${c.packageReference}` })) },
+        { name: 'rationale', label: 'Why it is being closed in the state it is in', type: 'textarea', rows: 2 },
+      ],
+      transform: ({ comparisonId, ...rest }) => rest,
     },
   };
 

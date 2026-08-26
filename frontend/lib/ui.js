@@ -17,8 +17,18 @@ export function esc(value) {
 
 const RAW = Symbol('raw');
 
-/** Mark a string as pre-escaped HTML. */
+/**
+ * Mark a string as pre-escaped HTML.
+ *
+ * Already-raw values pass through. Without that, `raw(badge(...))` — an easy
+ * thing to write, because most interpolations do need wrapping — took the
+ * object `badge` returns, ran `String()` over it, and put the literal text
+ * `[object Object]` on the screen. It failed silently and it failed in the
+ * output rather than at the call, which is the worst combination; a browser
+ * found one on the clarification register that no test had.
+ */
 export function raw(value) {
+  if (value !== null && typeof value === 'object' && RAW in value) return value;
   return { [RAW]: String(value ?? '') };
 }
 
