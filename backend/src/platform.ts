@@ -295,6 +295,12 @@ export class Platform {
     // onboarding rather than discovered missing at the moment of export.
     this.exports.setBranding(tenantId, {
       clientName: input.legalName,
+      // The party carrying the duty on every document this tenancy issues.
+      // Distinct from `clientName`, which a project overrides with whoever the
+      // document is prepared for — naming the client as the issuer of a permit
+      // to work would put the wrong organisation on the one document where it
+      // matters most.
+      issuingEntity: input.legalName,
       primaryColour: 'rgba(255, 102, 0, 1)',
       legalFooter: `${input.legalName} · registered in ${input.jurisdiction}`,
       documentReferencePrefix: input.legalName

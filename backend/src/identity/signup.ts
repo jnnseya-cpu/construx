@@ -409,6 +409,10 @@ export function verify(
   // and nothing here invents a logo.
   platform.exports.setBranding(tenant.id, {
     clientName: record.organisationName,
+    // The party carrying the duty on every document this organisation issues.
+    // Seeded to their own name because at signup that is exactly who it is;
+    // per-project branding overrides `clientName` later, and this stays theirs.
+    issuingEntity: record.organisationName,
     primaryColour: '#ff6600',
     documentReferencePrefix: record.organisationName.slice(0, 3).toUpperCase().padEnd(3, 'X'),
     legalFooter: `${record.organisationName} · registered in ${record.jurisdiction}`,

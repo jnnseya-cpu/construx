@@ -57,6 +57,7 @@ import * as enquiry from '../domain/enquiry.ts';
 import * as measurement from '../domain/measurement.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
+import * as documents from '../documents/generate.ts';
 import * as stagegate from '../domain/stagegate.ts';
 import * as tenderintel from '../domain/tenderintel.ts';
 import * as tenderreview from '../domain/tenderreview.ts';
@@ -6405,6 +6406,68 @@ export const ROUTES: Route[] = [
       tenderreview.assessAddendum(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
   },
 
+  // -------------------------------------------- generated site documents
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/documents',
+    description: 'Every document type, whether it can be generated, and what is missing where it cannot',
+    handler: (platform, ctx) => documents.documentCatalogue(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/documents',
+    description: 'Generate a branded document composed from the records this project holds',
+    schema: {
+      type: 'object',
+      required: ['code', 'preparedBy'],
+      properties: {
+        code: stringField,
+        subjectId: { type: 'string' },
+        preparedBy: stringField,
+        checkedBy: { type: 'string' },
+        approvedBy: { type: 'string' },
+        revision: { type: 'string' },
+        status: { type: 'string', enum: ['DRAFT', 'FOR_REVIEW', 'ISSUED', 'SUPERSEDED'] },
+        distribution: { type: 'array', items: { type: 'string' } },
+        audience: { type: 'string', enum: ['INTERNAL', 'CLIENT', 'SUPPLIER', 'REGULATOR', 'INSURER', 'ADJUDICATOR', 'COURT'] },
+        format: { type: 'string', enum: ['PDF', 'JSON_BUNDLE', 'CSV', 'HTML'] },
+        withNarrative: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const input = body<{
+        code: string;
+        subjectId?: string;
+        preparedBy: string;
+        checkedBy?: string;
+        approvedBy?: string;
+        revision?: string;
+        status?: 'DRAFT' | 'FOR_REVIEW' | 'ISSUED' | 'SUPERSEDED';
+        distribution?: string[];
+        audience?: Parameters<typeof documents.generateDocument>[2]['audience'];
+        format?: Parameters<typeof documents.generateDocument>[2]['format'];
+        withNarrative?: boolean;
+      }>(ctx);
+      return documents.generateDocument(projectContext(platform, ctx), platform.exports, {
+        code: input.code,
+        subjectId: input.subjectId,
+        control: {
+          preparedBy: input.preparedBy,
+          checkedBy: input.checkedBy,
+          approvedBy: input.approvedBy,
+          revision: input.revision,
+          status: input.status ?? 'DRAFT',
+          distribution: input.distribution,
+        },
+        audience: input.audience,
+        format: input.format,
+        withNarrative: input.withNarrative,
+        correlationId: ctx.correlationId,
+      });
+    },
+  },
+
   // ------------------------------- the stage gate Definition of Done (8.4)
   {
     method: 'GET',
@@ -7355,6 +7418,10 @@ export const ROUTES: Route[] = [
       properties: {
         clientName: stringField,
         logoRef: { type: 'string' },
+        /** The mark in the evidence store, so a document's hash commits to it. */
+        logoEvidenceHash: { type: 'string' },
+        /** Who carries the duty, which is never automatically the client. */
+        issuingEntity: { type: 'string' },
         primaryColour: stringField,
         legalFooter: stringField,
         documentReferencePrefix: stringField,
@@ -7382,6 +7449,17 @@ export const ROUTES: Route[] = [
          * logo is honest where a document with somebody else's logo is not.
          */
         logoRef: { type: 'string' },
+        /** The mark in the evidence store, so a document's hash commits to it. */
+        logoEvidenceHash: { type: 'string' },
+        /**
+         * Who issues the document on this project.
+         *
+         * Set only where the issuing party differs from the tenancy's own —
+         * a joint venture, or a subsidiary contracting in its own name. Left
+         * unset, the tenancy's issuing entity carries through, which is right
+         * far more often than the client's name would be.
+         */
+        issuingEntity: { type: 'string' },
         primaryColour: stringField,
         legalFooter: stringField,
         documentReferencePrefix: stringField,

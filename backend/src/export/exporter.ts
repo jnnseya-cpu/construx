@@ -29,6 +29,27 @@ export type ClientBranding = {
   clientName: string;
   /** Data URI or storage reference for the client's mark. */
   logoRef?: string;
+  /**
+   * The mark, in the evidence store, by its SHA-256.
+   *
+   * Separate from `logoRef` because it is a stronger thing: the store is
+   * content-addressed, so a document's own content hash commits to exactly
+   * which image was on the page. A logo swapped afterwards changes the hash and
+   * the document stops verifying, which is correct behaviour for a branded
+   * instrument. The PDF renderer resolves it through the same path a site
+   * photograph takes.
+   */
+  logoEvidenceHash?: string;
+  /**
+   * The organisation issuing the document, which is **not** the client.
+   *
+   * `clientName` is who a document is prepared for. This is who carries the
+   * duty under it — the party a regulator writes to about a permit to work, and
+   * the party named on a method statement a subcontractor works to. Collapsing
+   * the two is how a subcontractor ends up believing a document came from
+   * somebody else.
+   */
+  issuingEntity?: string;
   primaryColour: string;
   /** Registered office, company number, and any regulated-entity detail. */
   legalFooter: string;
@@ -219,6 +240,7 @@ export class ExportService {
       blocks: DocumentBlock[];
       redactionNotice?: string;
       correlationId: string;
+      suppressHeader?: boolean;
     },
   ): ExportDocument {
     // The backstop. Every route into a document passes through here, so a new
@@ -228,7 +250,9 @@ export class ExportService {
     const branding = this.branding(auth.tenantId, projectId);
     this.#sequence += 1;
 
-    const blocks = [...brandedHeader(branding, input.title, input.subtitle), ...input.blocks];
+    const blocks = input.suppressHeader
+      ? [...input.blocks]
+      : [...brandedHeader(branding, input.title, input.subtitle), ...input.blocks];
     if (input.redactionNotice) {
       blocks.push({ kind: 'PARAGRAPH', text: input.redactionNotice });
     }
@@ -320,6 +344,15 @@ export class ExportService {
       audience: ExportAudience;
       format?: ExportFormat;
       correlationId: string;
+      /**
+       * Set by a caller that has already built its own branded front matter.
+       *
+       * The minimal header this class prepends — title, subtitle, prepared-for,
+       * generated-at — is right for a report assembled here. A generated site
+       * document carries a full document-control block instead, and printing
+       * both put "Prepared for" on the page twice.
+       */
+      suppressHeader?: boolean;
     },
   ): ExportDocument {
     return this.#finalise(auth, projectId, {
@@ -329,6 +362,7 @@ export class ExportService {
       format: input.format ?? 'PDF',
       blocks: input.blocks,
       correlationId: input.correlationId,
+      suppressHeader: input.suppressHeader,
     });
   }
 
