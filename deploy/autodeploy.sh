@@ -49,7 +49,34 @@ set -eu
 APP_DIR="${CONSTRUX_APP_DIR:-/srv/construx/app}"
 BRANCH="${CONSTRUX_DEPLOY_BRANCH:-claude/ai-agent-construction-os-999410}"
 BACKUP_DIR="${CONSTRUX_BACKUP_DIR:-/srv/construx/backups}"
-HEALTH_URL="${CONSTRUX_HEALTH_URL:-http://127.0.0.1:8080/readyz}"
+# Two checks, because they fail for different reasons and want different
+# answers.
+#
+# The container's own port proves the application booted. The public URL proves
+# a request from the internet actually reaches it — which is a different claim,
+# and the one that was going untested. A deploy that recreates the container
+# also recreates its attachment to the reverse proxy's network; if that
+# attachment does not take, the container is healthy, `/readyz` answers on
+# localhost, every check passes, and the site returns 502 to everybody. That
+# happened, and nothing in this script noticed.
+#
+# The local port is read from the same variable the compose file publishes on,
+# so the two cannot drift. It previously hard-coded 8080 while the deployment
+# published 8090, which meant this check had been passing by never being
+# reached rather than by succeeding.
+HOST_PORT="${CONSTRUX_HOST_PORT:-8080}"
+LOCAL_HEALTH_URL="${CONSTRUX_HEALTH_URL:-http://127.0.0.1:${HOST_PORT}/readyz}"
+# Derived from the origin the platform already knows it serves, so there is no
+# second place to update when the domain changes. Empty disables the public
+# check rather than failing it — a deployment behind a VPN or with no public
+# name is a real thing, and inventing a URL for it would fail every deploy.
+PUBLIC_HEALTH_URL="${CONSTRUX_PUBLIC_HEALTH_URL:-}"
+if [ -z "$PUBLIC_HEALTH_URL" ] && [ -f "$APP_DIR/.env" ]; then
+  PUBLIC_BASE="$(sed -n 's/^[[:space:]]*PUBLIC_BASE_URL[[:space:]]*=[[:space:]]*//p' "$APP_DIR/.env" | head -1 | tr -d '\r')"
+  case "$PUBLIC_BASE" in
+    https://*|http://*) PUBLIC_HEALTH_URL="${PUBLIC_BASE%/}/readyz" ;;
+  esac
+fi
 # Generous: a cold start replays the whole journal before answering, and that
 # grows with the record. Too short a wait would roll back a healthy deploy.
 READY_TIMEOUT="${CONSTRUX_READY_TIMEOUT:-180}"
@@ -127,12 +154,16 @@ deploy() {
   $COMPOSE up -d --build
 }
 
-ready() {
-  # Polls rather than sleeps a fixed time: a fast boot should not wait, and a
-  # slow one should not be declared dead.
+# Poll one URL until it answers, or give up.
+#
+# Polls rather than sleeping a fixed time: a fast boot should not wait, and a
+# slow one should not be declared dead.
+poll() {
+  url="$1"
+  budget="$2"
   i=0
-  while [ "$i" -lt "$READY_TIMEOUT" ]; do
-    if curl -fsS --max-time 5 "$HEALTH_URL" > /dev/null 2>&1; then
+  while [ "$i" -lt "$budget" ]; do
+    if curl -fsS --max-time 5 "$url" > /dev/null 2>&1; then
       return 0
     fi
     i=$((i + 2))
@@ -141,9 +172,51 @@ ready() {
   return 1
 }
 
+ready() {
+  poll "$LOCAL_HEALTH_URL" "$READY_TIMEOUT"
+}
+
+# Is the site actually reachable from outside?
+#
+# Short budget: the application is already answering locally by this point, so
+# this is asking whether the proxy has a route to it, and a route either exists
+# or does not. Waiting three minutes for one would only delay the report.
+reachable() {
+  [ -z "$PUBLIC_HEALTH_URL" ] && return 0
+  poll "$PUBLIC_HEALTH_URL" 30
+}
+
 if deploy && ready; then
-  log "live on $SHORT_TARGET"
-  exit 0
+  if reachable; then
+    log "live on $SHORT_TARGET"
+    exit 0
+  fi
+
+  # The application is up and the front door is not. Rolling the code back
+  # cannot fix that — the previous commit would be just as unreachable — so it
+  # is deliberately not attempted. What is attempted is the one repair that
+  # matches the cause: re-attaching the container to the proxy's network, which
+  # is the step a recreate can silently lose.
+  log "WARNING: $SHORT_TARGET is healthy on $LOCAL_HEALTH_URL but $PUBLIC_HEALTH_URL does not answer"
+  log "         the application booted; the reverse proxy cannot reach it"
+
+  EDGE_NETWORK="${CONSTRUX_EDGE_NETWORK:-construx-edge}"
+  if docker network connect "$EDGE_NETWORK" construx 2>/dev/null; then
+    log "         re-attached construx to $EDGE_NETWORK; rechecking"
+    if reachable; then
+      log "live on $SHORT_TARGET (the edge attachment had been lost and was restored)"
+      exit 0
+    fi
+  fi
+
+  log "         Check that the proxy is on that network too:"
+  log "           docker network inspect $EDGE_NETWORK --format '{{range .Containers}}{{.Name}} {{end}}'"
+  log "         It must list the proxy as well as construx. Attach it with:"
+  log "           docker network connect $EDGE_NETWORK <proxy-container>"
+  # Non-zero: the deploy did not result in a working site, whatever the
+  # container says about itself. The code is left deployed because it is not
+  # what is broken.
+  exit 3
 fi
 
 # ------------------------------------------------------------------- roll back

@@ -756,6 +756,35 @@ checked status, and that gate has been left as it was; and the storage limit
 `STORAGE_LIMIT_REACHED` with a 507. A duplicate check written before finding it
 was removed.
 
+**A deploy was not checking that the site was reachable.** It polled
+`/readyz` on the container's own port, which answers a question the container
+can answer about itself — did the application boot. It cannot answer the one
+that matters: does a request from the internet arrive.
+
+Those differ exactly when it costs the most. A deploy recreates the container,
+and the container's attachment to the reverse proxy's network is remade with
+it. When that attachment does not take, the container is `healthy`, `/readyz`
+returns 200 on localhost, every check passes, and **the site returns 502 to
+everybody**. That happened on the live deployment and the script reported a
+successful deploy throughout.
+
+The local check was also latently broken: it hard-coded port 8080 while the
+deployment publishes 8090, so it had been passing by never being reached rather
+than by succeeding. It now reads `CONSTRUX_HOST_PORT`, the same variable compose
+publishes on, so the two cannot drift.
+
+The public URL is derived from `PUBLIC_BASE_URL` — the origin the platform
+already knows it serves — rather than being a second place to update when the
+domain changes. Unset means the check is skipped rather than failed, because a
+deployment behind a VPN is a real thing and inventing a URL for it would fail
+every deploy.
+
+**A routing failure does not roll the code back.** The previous commit would be
+exactly as unreachable, so rolling back would churn the deployment and fix
+nothing. Instead the one repair that matches the cause is attempted — re-attaching
+the container to the proxy's network — and if that does not help, the run exits
+non-zero with the two commands needed to inspect and fix the attachment by hand.
+
 **Account mail and marketing mail are separate senders.** They shared one
 address, which forces a choice between putting marketing in the mailbox staff
 read and sending login codes from an address that cannot receive a reply.

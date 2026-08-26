@@ -169,3 +169,57 @@ describe('the systemd units match the script', () => {
     assert.ok(timeout && Number(timeout[1]) >= 600, 'a docker build plus a journal replay needs minutes, not seconds');
   });
 });
+
+/**
+ * The check that was missing, and the outage it would have caught.
+ *
+ * A deploy recreates the container, and the container's attachment to the
+ * reverse proxy's network is remade with it. When that attachment does not
+ * take, the container is healthy, `/readyz` answers on localhost, every check
+ * passes — and the site returns 502 to everybody. That happened on the live
+ * deployment and nothing in the script noticed, because the only question it
+ * asked was one the container could answer about itself.
+ */
+describe('a deploy is not done until the site answers from outside', () => {
+  it('checks a public URL as well as the container', () => {
+    assert.match(script, /PUBLIC_HEALTH_URL/, 'no public health check');
+    assert.match(script, /reachable\(\)/, 'no reachability check');
+  });
+
+  it('derives the public URL from the origin the platform already serves', () => {
+    // Rather than a second place to update when the domain changes.
+    assert.match(script, /PUBLIC_BASE_URL/, 'the public URL is not derived from PUBLIC_BASE_URL');
+  });
+
+  it('reads the local port from the variable compose publishes on', () => {
+    // It hard-coded 8080 while the deployment published 8090, so the check had
+    // been passing by never being reached rather than by succeeding.
+    assert.match(script, /CONSTRUX_HOST_PORT/, 'the local health port can drift from the published one');
+    assert.doesNotMatch(
+      script,
+      /CONSTRUX_HEALTH_URL:-http:\/\/127\.0\.0\.1:8080/,
+      'the health port is hard-coded again',
+    );
+  });
+
+  it('does not roll the code back when only the front door is broken', () => {
+    // The previous commit would be exactly as unreachable. Rolling back would
+    // churn the deployment and fix nothing, so the failure is reported and the
+    // code is left where it is.
+    const unreachable = script.slice(script.indexOf('WARNING'), script.indexOf('exit 3'));
+    assert.doesNotMatch(unreachable, /git reset --hard/, 'a routing failure triggers a code rollback');
+    assert.match(unreachable, /docker network connect/, 'the one repair that matches the cause is not attempted');
+  });
+
+  it('exits non-zero when the site is unreachable', () => {
+    // A timer run that exits 0 here reports a working deploy for a site
+    // answering 502, which is the whole failure this closes.
+    assert.match(script, /exit 3/, 'an unreachable site is reported as a successful deploy');
+  });
+
+  it('treats an unset public URL as "not applicable" rather than a failure', () => {
+    // A deployment behind a VPN, or with no public name, is a real thing.
+    // Inventing a URL for it would fail every deploy.
+    assert.match(script, /\[ -z "\$PUBLIC_HEALTH_URL" \] && return 0/, 'an unset public URL is not skipped');
+  });
+});
