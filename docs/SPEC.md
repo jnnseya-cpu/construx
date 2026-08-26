@@ -650,6 +650,268 @@ validation — is the part that is absent.
 
 ---
 
+## PART E — STAGE 4: CONSTRUCTION (RIBA 5)
+
+> Zero re-entry applies throughout: Bid → Contract → Subcontract → Commitment →
+> Application → Ledger → CVR is one enforced data flow; any break raises an
+> exception.
+
+That clause is now **BUILT** — recorded under A1 Rule 2 above, which is where it
+belongs, because it restates that rule rather than adding to it.
+
+### E1 — Contract initialisation and contract intelligence
+
+| Clause | State |
+|---|---|
+| Award push freezes the bid; contract sum initialised from the locked bid; exclusions and qualifications carried over | **BUILT** — `convertBidToContract` refuses a bid pack that is not `LOCKED`, takes the sum from the frozen assembly, and carries `qualifications` and `exclusions` onto the contract. They are the basis the price was given on, so they travel with it |
+| Pricing baseline created | **BUILT** — the contract sum is the CVR's `contractValueMinor` baseline |
+| Signed contract PDF uploaded → OCR → automatic clause extraction | **PARTIAL** — `ingestContract` takes contract *text* and a document hash and extracts clauses into the register. There is no OCR: a scanned PDF has to be transcribed before it reaches this. The perception module reads drawings and title blocks, not contracts |
+| Clauses by category (commercial, legal, programme, insurance, payment, change, defects, notices) | **PARTIAL** — the clause register exists with categories; the eight named categories are not the closed set |
+| Payment mechanism summary · LD caps and triggers · defects liability period · retention rules | **BUILT** — `contractTerms` publishes all four from the contract record |
+| Notice obligation tracker with countdown to every deadline · obligations calendar | **BUILT** — `obligationCalendar` with time bars running |
+| Insurance register · design responsibility allocation | **NOT BUILT** — neither is modelled on the contract |
+| Contract risk dashboard | **PARTIAL** — the commercial term analysis scores contract risk at tender; there is no post-award risk dashboard |
+| Grounded clause Q&A with citations | **PARTIAL** — clause search returns the clause and its reference; there is no grounded question-answering over it |
+| Every contractual obligation becomes an actionable item with owner and due date | **BUILT** — `registerObligation` resolves a named owner |
+| **NEC4 Early Warning and Compensation Event machinery natively (8-week CE quotation clocks, reply deadlines)** | **NOT BUILT** — `ContractSuite` knows `NEC4`, and nothing behaves differently because of it. There is no Early Warning record, no Compensation Event, and no quotation or reply clock |
+| **JCT Relevant Event / Relevant Matter tracking** | **NOT BUILT** — the phrase appears nowhere in the codebase |
+| **FIDIC Clause 20 claim clocks** | **NOT BUILT** |
+
+The suite-specific machinery is the largest single gap in Part E. A generic
+`Notice` and a generic obligation calendar are not the same thing as a
+Compensation Event with its own statutory clock, and presenting them as
+equivalent would be the kind of overstatement this file exists to prevent.
+
+### E2 — Procurement-to-subcontract engine
+
+| Clause | State |
+|---|---|
+| Winning bidder selected in Tender → automatic push to procurement | **BUILT** — `assembleSubcontract` refuses an RFQ that is not `AWARDED` and reads the awarded submission |
+| Subcontract draft auto-created: pricing, scope and particulars pre-filled; correct standard form applied | **BUILT** — value, supplier, package, carried exclusions and contract exceptions all come from the submission; the form is recorded |
+| Numbered document pack assembled with drawings and specs attached | **PARTIAL** — subcontracts are numbered (`SC-00001`); the document pack is not assembled |
+| **Buyout target from tender adjudication as baseline; negotiation delta tracked live; buyout gain/loss feeds CVR** | **PARTIAL** — `buyoutTargetMinor` and `buyoutDeltaMinor` are recorded from the adjudication at assembly. The delta does not yet feed the CVR as a separate line |
+| Commercial approval gate before issue (budget, compliance, insurance, authority) | **PARTIAL** — `executeSubcontract` refuses without `budgetCheckPassed` and requires `PROCUREMENT_AWARD` approve authority. Compliance and insurance checks are not part of the gate |
+| E-signature workflow (send / viewed / signed / declined, automated chasing) | **PARTIAL** — signature is a governed ceremony with a witnessed record; there is no send/viewed/declined state machine and no chasing |
+| **On execution, Commitment auto-created and linked to package and CVR** | **BUILT** — `executeSubcontract` writes the subcontract and the commitment together, so the ledger can never show one without the other. The chain check above now proves the link rather than assuming it |
+| Downstream application cycle activated | **PARTIAL** — payment cycles are generated explicitly, not automatically on execution |
+| Procurement schedule generated from programme milestones | **NOT BUILT** |
+| **Long-lead items tracked with programme-impact forecasts** | **NOT BUILT** — no lead-time field exists anywhere |
+| Supplier performance written to Organisation Memory | **PARTIAL** — supplier performance is scored; the organisation-level memory layer it should feed is itself not built |
+
+### E3 — Variation and change control matrix
+
+| Clause | State |
+|---|---|
+| Governed change record with origin, notice type, approval status and authority level | **BUILT** |
+| Affected-package matrix with automatic notification to every affected subcontractor | **PARTIAL** — `affectedSubcontractIds` is carried on the change and the variation; the automatic notification is not wired |
+| Downstream instruction creation, linked and traceable · upstream client valuation and cost-report impact | **BUILT** |
+| **Upstream/downstream synchronisation: one change generates two linked records, status syncs bidirectionally** | **BUILT** — the variation reconciliation engine |
+| **Blocks upstream claims without downstream cost capture; flags downstream exposure not recovered upstream** | **BUILT** — both directions |
+| Domestic variation intake inside subcontractor payment applications, auto-flagged, evidence + cost effect + time effect mandatory | **PARTIAL** — domestic variations are modelled and linked; they are not submitted *inside* an application, and the three mandatory fields are not all enforced at intake |
+| Variation Impact Engine: cost, programme, procurement and claims-risk recalculated instantly; CVR exposure updates | **PARTIAL** — cost and claims-risk are computed; programme impact is assessed but not recalculated from the change; procurement impact is not computed |
+| Exposure dashboard: quoted/unquoted · instructed/uninstructed · approved/unapproved · upstream/downstream mismatch | **BUILT** — all four axes are on the commercial screen |
+
+### E4 — Applications, payments and Construction Act compliance
+
+| Clause | State |
+|---|---|
+| Application periods, submission dates, payment notice dates, pay-less dates, final dates for payment | **BUILT** — `generatePaymentCycle`, statute-aware under HGCRA 1996 as amended, with weekend and holiday rules |
+| **On contract creation the full cycle auto-generates for upstream and every downstream subcontract** | **NOT BUILT** — cycles are generated on request, one at a time, per contract. Nothing fans out on contract creation |
+| Reminder ladder | **PARTIAL** — deadlines are computed and surfaced; there is no escalating reminder sequence |
+| Notice validity checker | **BUILT** — a pay-less notice without a basis of calculation is refused under s.111(4) |
+| Late-notice risk alerts with commercial exposure estimate | **BUILT** |
+| **Smash-and-grab risk flag on both sides of the chain** | **PARTIAL** — the missed-notice consequence (the notified sum becomes payable) is computed and warned about, which is the substance. It is not named as smash-and-grab and is not presented per side of the chain |
+| Payment compliance dashboard | **BUILT** |
+| Application Builder pulls contract value, variations, previous certified, retention and accruals | **BUILT** |
+| Tracks application → payment notice → certificate → invoice → payment → ledger | **BUILT**, and the first two links of it are now checked by the chain check |
+| Cashflow intelligence: forecast, scenario stress testing, funding-pressure alerts, margin-to-cash gap, working-capital pinch points | **PARTIAL** — live forward cashflow and the funding model are built; scenario stress testing and the pinch-point forecast are not |
+
+### E5 — Live CVR and commercial ledger
+
+| Clause | State |
+|---|---|
+| CVR driven automatically from contract value, variations, commitments, accruals, certified and paid-to-date, forecast final cost | **BUILT** — every input is read from the ledger, none is keyed |
+| Margin-erosion alerts with configurable thresholds | **PARTIAL** — alerts fire; the thresholds are not configurable per tenant |
+| Cost-code and package drill-down | **BUILT** |
+| **Confidence score based on data completeness** | **BUILT** — the proportion of the CVR's eight inputs that are actually populated. A CVR built from two of eight is not presented with confidence |
+| Earned value: AC, EV, PV, CV, SV, CPI, SPI, EAC (multiple methods) | **BUILT** — `maths/evm.ts`, with both a CPI-only and a CPI×SPI pessimistic EAC |
+| Ledger bridge: committed vs certified vs paid per package, invoice/certificate linkage, exception queue, payment holds, retention, contras and backcharges | **PARTIAL** — the purchase ledger, retention and contra charges are built. There is no finance-system sync status and no unmatched-item exception queue |
+| Commercial AI answers "what is killing margin", "what changed this week", "what should be claimed now", "what exposure is not protected" | **PARTIAL** — the CVR narrative and the what-changed window answer the first two; the last two are not asked as questions the platform answers |
+
+### E6 — Programme and planning engine
+
+| Clause | State |
+|---|---|
+| Critical path, dependencies, auto-schedule, baselines and comparison, constraints, date shifting with linked recalculation | **BUILT** — `maths/cpm.ts` and the planning engine |
+| Contractual milestones distinguished · resource management with clash detection | **PARTIAL** — milestones exist; the contractual/non-contractual distinction and resource clash detection do not |
+| **Drag-and-drop planner-grade Gantt** | **NOT BUILT** — the programme is rendered and editable through forms, not by dragging bars |
+| Bulk progress updates by cost code or package | **NOT BUILT** |
+| Export to PDF / MS Project / Excel | **PARTIAL** — PDF only |
+| AI WBS generator with templates per project type | **PARTIAL** — WBS generation exists; the four named templates do not |
+| **What-If scenario engine** — the flagship query ("three recovery options to regain four weeks within 3% cost") | **NOT BUILT** — Monte Carlo completion forecasting exists, which is a different question: it says how likely a date is, not what to do about it |
+| Cross-module linkage to diaries, RFIs, variations, labour, procurement and delay events | **PARTIAL** — RFIs carry activity references and delay events link to activities; labour and procurement status do not |
+| Auto-suggested EOT candidates from event chronology | **PARTIAL** — delay attribution and the claims chronology exist; EOT candidates are not proposed |
+| Schedule analytics: health score, baseline drift with commentary, slippage heatmaps, float erosion, package criticality | **PARTIAL** — slippage and float are computed and the consistency report names un-absorbed slippage; there is no health score, drift commentary or heatmap |
+
+### E7–E9 — Field, RAMS and correspondence
+
+| Clause | State |
+|---|---|
+| Voice-to-field-record across diary, inspection, snag, observation, instruction | **PARTIAL** — voice capture and structured clean-up exist in the perception module; not every field module accepts it |
+| Offline capture with sync queue, operation-id idempotency | **BUILT** |
+| Trade-filtered snag dispatch; each contractor sees only their items | **BUILT** — enforced in the query, not in the interface |
+| Evidence mandatory before closure · ageing analytics · recurring-defect clustering | **PARTIAL** — evidence is mandatory and ageing is reported; clustering is not |
+| Template-driven inspections with mandatory evidence per item; failed items auto-create issues | **BUILT** — ITP, hold points and NCR |
+| Field evidence library: timestamped, GPS-tagged, zone/package/cost-code tagged, chronology views, claim bundles | **PARTIAL** — tagging, chronology and claim evidence bundles are built; GPS tagging and AI classification are not |
+| **Guided 8-step RAMS machine, deterministic, never freeform** | **PARTIAL** — RAMS exist with hazards, controls, residual risk scoring, approval and acknowledgement. They are not driven as eight sequenced steps with a button per step |
+| Dual-source safety knowledge (organisation base fused with platform base: CDM 2015, HSE ACOPs, COSHH, CITB) | **NOT BUILT** — no platform hazard library exists |
+| RAMS-to-resource bridge feeding permits and site readiness | **PARTIAL** — permits to work exist and RAMS gate them; PPE, plant and temporary works are not derived from the method |
+| Site-readiness gatekeeping on competency and training expiry | **BUILT** |
+| One correspondence engine with auto-sequential numbering per type, linked references, recipient matrix, response due-date logic, escalation ladder | **BUILT** |
+| Notice templates bound to clause numbers and deadline logic | **PARTIAL** — obligations carry clause references and deadlines; notice *templates* bound to them do not exist |
+
+### E10 — Construction AI agents
+
+Ten agents are specified. The agent runtime is built — contracts, triggers,
+mandates capped at `PROPOSE`, ACU metering, proposal queue scoped by capability
+area — and a twelve-agent fleet exists for the contract-winning stage. The ten
+construction agents named here are **PARTIAL**: several have a direct equivalent
+(commercial, claims, quality, HSE, payment), and none of them is declared with
+the trigger set, HITL mode and ACU tier this table specifies. The gap is the
+declaration, not the runtime.
+
+### E11 — Construction command centres
+
+Three command centres are specified, each with four data panels and an **AI
+Insight / Recommendation** panel carrying Review / Accept / Mitigate / Assign.
+
+**PARTIAL, and the same gap on all three.** The data panels largely exist across
+the delivery screens. What no delivery screen has is the AI Insight /
+Recommendation panel with those four actions — the operator console is the one
+screen in the platform that meets the Build Standard, and it is not one of these
+three. The Build Standard's other clause — every KPI tile drills to its source
+events — is also unmet on the delivery screens.
+
+---
+
+## PART F — STAGE 5: COMMISSIONING (RIBA 5–6)
+
+| Clause | State |
+|---|---|
+| System register with areas, dependencies, ITPs, witness requirements, acceptance criteria | **PARTIAL** — commissioning tests and system acceptance exist with mandatory evidence. There is no system *register* with power-on dependencies |
+| Register auto-seeded from the specification's testing obligations | **NOT BUILT** — specification intelligence extracts clauses; it does not seed a commissioning register |
+| Commissioning programme linked to the construction programme; mechanical completion per area drives test-start logic | **NOT BUILT** |
+| Test and witness records with role-verified sign-off; failed tests auto-create defects with a re-test loop | **PARTIAL** — tests are recorded and accepted with evidence and authority; failure does not auto-create a defect |
+| Defect and snag convergence in one engine with a PC-blocking flag on category-A items | **PARTIAL** — one defect engine exists; there is no severity category and no PC-blocking flag |
+| O&M data collection in parallel with an information-delivery schedule per subcontract, chased automatically with completeness scoring | **PARTIAL** — O&M manuals, warranties and completeness exist at handover; the per-package delivery schedule and automated chase do not |
+| **COBie validation against the schema and the EIR** | **NOT BUILT** — `COBieRow` is one of the eight missing A4 objects, and the string `COBie` appears nowhere in the backend |
+| Client training: sessions, attendance, recordings filed into the pack | **NOT BUILT** |
+| **PC Readiness Score per system and per area**, drillable to every record | **PARTIAL** — a handover readiness assessment exists and is narrative. It is not a computed score over the eight named inputs, and it is not per system or per area |
+| Exit Gate G5 with its six conditions; pass emits `COMMISSIONING_COMPLETE` | **NOT BUILT** — no such gate and no such event |
+
+---
+
+## PART G — STAGE 6: HANDOVER (RIBA 6 → 7)
+
+| Clause | State |
+|---|---|
+| Handover pack compiler assembling from data that already exists; locked and hashed on issue | **BUILT** — `HANDOVER_PACK_COMPILED` requires evidence, and the pack is content-hashed |
+| Pack includes as-builts, O&M, test records, certificates, warranties, training records, RAMS/permit history, fire safety information, decision chronology | **PARTIAL** — O&M, warranties, test records and the decision chronology are in; COBie, training records and RRO Article 38 fire safety information are not |
+| Golden Thread finalisation: safety-critical tracker, accountability matrix, change history, Gateway 3 evidence bundle, visible completeness score | **PARTIAL** — the ledger *is* the change history with a hash chain, and lineage traversal is built. `GoldenThreadItem` as a tracked object is one of the eight missing A4 objects, and there is no Gateway 3 bundle |
+| Client sign-off per pack section with comments loop and digital signature | **PARTIAL** — `HANDOVER_ACCEPTED` requires evidence and is authority-gated; acceptance is whole-pack, not per section, and there is no comments loop |
+| **Acceptance starts the Defects Liability Period clock and the retention release schedule automatically** | **NOT BUILT** — the DLP months and the retention percentage are both recorded on the contract, and nothing starts a clock or a schedule from acceptance. `DLP_STARTED` and `RETENTION_RELEASED` do not exist as events |
+| Asset activation into FM with full history, maintenance regime seeded from O&M | **PARTIAL** — `ASSET_REGISTERED` and the FM operating position are built; the maintenance regime is not seeded from the O&M data |
+| DLP defects flow to the responsible subcontractor with contractual response clocks; end-of-DLP inspection scheduled; retention release tied to defect closure evidence | **NOT BUILT** |
+| Final account convergence tracked | **PARTIAL** — the payment cycle refuses over-certification and overpayment; there is no final account convergence view |
+| Lessons-learned harvest into Organisation Memory | **PARTIAL** — `LESSON_CAPTURED` exists and lessons are corporate memory across projects. Agents do not mine the record to write them, and the organisation-level benchmark layer is not built |
+| Events `DLP_STARTED`, `RETENTION_RELEASED`, `GATEWAY3_SUBMITTED`, `ASSET_ACTIVATED`, `LESSON_RECORDED` | **NOT BUILT** — none of the five is in the closed catalogue. `LESSON_CAPTURED` and `ASSET_REGISTERED` are the nearest equivalents and are not the same events |
+
+---
+
+## PART H — CROSS-CUTTING
+
+### H1 — Commercial model
+
+The three MUSTs — **£1 = 100 ACU · 100% minimum profit · ×4 provider markup** —
+all hold, and are configured rather than written into code:
+`ACU_MARKUP_MULTIPLIER=4`, `ACU_MINIMUM_PROFIT_PERCENT=100`, and one ACU is one
+minor unit by construction.
+
+Every seat price in the table matches: Construction Manager £180, Commercial
+Manager / QS £150, Project Manager £140, Director / Executive £120, Planner £110,
+Design / Document Controller £90, Site Manager / Supervisor £70, Subcontractor
+£25. So does every package: Core Project £950 / 10 seats, Professional Delivery
+£2,200 / 25 seats, Enterprise £6,500 / unlimited under fair use. So does every
+bundle price: £300, £1,000, £2,500.
+
+**One addition beyond the table**, for the product owner to confirm or remove: a
+ninth seat, **Principal Designer (CDM 2015) at £130**, added when the statutory
+duty holder became a role. The specification names the persona in Part C and does
+not price it, and a role with no seat is a role nobody can be assigned.
+
+**One conflict inside the specification itself, and it is a real one.** The
+bundle table states ~10,000 / ~40,000 / ~110,000 usable ACUs. Those are the
+figures a **×3** markup produces. At the ×4 the same document requires, £300 buys
+7,500 ACUs, £1,000 buys 25,000 and £2,500 buys 62,500 — every bundle a third
+smaller than advertised.
+
+The platform resolves it in favour of ×4 and **derives** the yield from the
+multiplier rather than storing it, so the two can never disagree again. Nothing
+is misposted either way — a top-up credits the price and spend is billed at the
+effective multiplier, so the stale figure would only ever have appeared on a
+pricing page. But it is a promise a customer would find out about when the bundle
+ran out a third early, so the published figures are the derived ones. **If the
+~10,000 / ~40,000 / ~110,000 numbers are the commitment, the markup has to come
+down to ×3 and that is a pricing decision, not an engineering one.**
+
+| Clause | State |
+|---|---|
+| Subscription = platform access; ACUs metered separately, prepaid only | **BUILT**, and a settled decision |
+| Hard stop at zero balance, graceful "top up to continue", never silent failure | **BUILT** — the orchestrator refuses to call a provider on an empty wallet, and no charge occurs without a ledger write |
+| No AI activity = no ACU consumption | **BUILT** |
+| Per-task transparency for auditors: agent, model, tokens, tier, multiplier, £-equivalent | **BUILT** — every AI request writes a metered entry |
+| Balance checks precede execution | **BUILT** — held, then consumed or released |
+| Enterprise budget caps and alerts per project | **PARTIAL** — caps and 50/80/100% alerts are per wallet, not per project |
+| **Four ACU tiers (LOW / MED / HIGH / PREMIUM) by task intensity** | **PARTIAL** — cost varies by task and model; the four named tiers are not a declared vocabulary, and the agent tables in Parts D–G reference them |
+| Markup ×3–×10 by task intensity | **DELIBERATELY NOT BUILT** — flat ×4. Recorded as a decision: a variable markup and a 100% profit floor are two rules that can contradict each other, and the flat rate is the one that cannot be got wrong. Raising it per tier is a config change, not a rebuild |
+
+### H2 — Security, governance and tenancy
+
+| Clause | State |
+|---|---|
+| RBAC + ABAC, decision order explicit deny → ABAC → RBAC → scopes → default deny | **BUILT** — and default deny is proven by the unmapped-entity refusal |
+| Project-level and company-level partitioning enforced in queries, not UI | **BUILT** — tenant isolation on every read including the generic entity route and the audit feed |
+| TLS 1.3 in transit · AES-256 at rest | **PARTIAL** — transport is the deployment's; there is no database, so encryption at rest is a property of the volume rather than of the platform |
+| SSO (SAML 2.0 / OIDC) | **NOT BUILT** |
+| MFA enforceable per org | **PARTIAL** — MFA is enforced; it is not per-organisation policy |
+| Document access validated on every request, no naked URLs | **BUILT** — signed, tenant-scoped, time-limited |
+| Admin-override logging | **BUILT** |
+| **Private knowledge boundaries, embeddings partitioned per org** | **NOT BUILT** — there is no vector store, so there is nothing to partition. Stated rather than claimed |
+| **Prompt-injection defence: input sanitisation, tool allow-lists, output schema validation** | **PARTIAL** — outputs are schema-validated and tool access is bounded by the mandate; there is no input sanitisation layer |
+| Permissioned tool access by role and module | **BUILT** — no agent mandate exceeds `PROPOSE` |
+| Every AI interaction logged with user, model, prompt version, cost | **PARTIAL** — user, model and cost are logged; prompt version is not |
+| **Data-residency options** | **NOT BUILT**, and now partly addressed from the other side: provider clearance decides which vendor may receive which sensitivity |
+| Tenant-aware rate limiting, fail-closed | **BUILT** |
+| problem+json errors, correlation IDs end to end | **BUILT** — every response carries `x-correlation-id` |
+| **Idempotency keys on all mutating endpoints** | **PARTIAL** — field sync uses operation-id idempotency and the payment cycle is idempotent at the domain level (it refuses double certification and overpayment). There is no general idempotency-key header |
+
+### H3 — Definition of Done
+
+Stated here as the standard to be measured against, not as something met.
+
+| Clause | State |
+|---|---|
+| Autosave verified (2–5s, blur, pre-navigation, offline queue) | **NOT BUILT** — Rule 1 remains the largest unbuilt platform rule. The offline queue exists for field sync |
+| Zero re-entry proven by tracing one datum end to end | **BUILT** — the eleven-stage chain test, and now the chain check that proves the links rather than assuming them |
+| Every state change emits its event and appears in the audit log with the hash chain intact | **BUILT** |
+| Every agent passes a contract test: triggers, schema-valid output, confidence floor, HITL gate unbypassable, ACU metered, run logged | **PARTIAL** — the gate, metering and logging are proven; the confidence floor is not, because Rule 4's confidence score is not yet on the output contract |
+| **Every dashboard KPI drills to source events** | **NOT MET** — on any screen |
+| **AI Insight and Recommendation panels present with Review / Accept / Mitigate / Assign** | **NOT MET** — no delivery screen has one |
+| No mocked data behind a project-scoped view | **BUILT** — and enforced by rule 9 of the operating directive |
+| A subcontractor seat can never read another trade's snags, another org's data, or unfiltered commercial records | **BUILT** — all three tested |
+
+---
+
 ## Implementation order
 
 Set against dependency rather than against the order the clauses arrived in.
@@ -663,7 +925,10 @@ Set against dependency rather than against the order the clauses arrived in.
 3. **Rule 1 — autosave, drafts, conversation persistence, visible save state.**
 4. **Rule 3 — the two missing event families:** design approval, and Building
    Safety Act gateway submissions.
-5. **Rule 2 — chain-break detection and escalation to the Commercial Manager.**
+5. ~~Rule 2 — chain-break detection and escalation to the Commercial Manager.~~
+   **Done.** Six links checked by reference; the exception is recorded, raised
+   once, closes itself, and is addressed to the role the rule names. A background
+   sweep is the part not built.
 6. **A2 — entry gates for all seven states, and the real exit criteria**, with a
    gate evidence bundle on the transition and an evidence link per condition, plus
    reverse transitions at Project Director authority with a mandatory reason.
@@ -690,3 +955,48 @@ Superseded ordering note, kept for honesty: The
    CONSTRUCTION criteria move to where the specification puts them, and the
    thresholds (PC readiness, defect count, O&M completeness) become configured
    values rather than numbers in code.
+
+### What Parts E to H add to that order
+
+Recorded separately because they are stage work rather than platform work, and
+because the order above has to be finished first — every item below reads the
+audit event, the agent contract or the lifecycle gate.
+
+13. **The Build Standard on the delivery screens.** Two clauses, unmet on every
+    screen except the operator console: every KPI tile drills to its source
+    events, and every command centre carries an AI Insight / Recommendation panel
+    with Review / Accept / Mitigate / Assign. Three command centres are specified
+    in E11 and two more in F3 and G3, and none of them can be called finished
+    without it. This is the largest visible gap in the product and it is ahead of
+    any new module.
+14. **Suite-specific contract machinery** — NEC4 Early Warning and Compensation
+    Events with their quotation and reply clocks, JCT Relevant Events, FIDIC
+    Clause 20. `ContractSuite` already knows the names and nothing behaves
+    differently because of it, which is the gap. It is the highest-value item in
+    Part E: a missed CE notification is a lost entitlement, and that is money.
+15. **Declare the ten construction agents against the existing runtime**, with
+    their triggers, HITL mode and ACU tier. The runtime is built; the declaration
+    is not. This depends on Rule 4's output contract, which is item 2.
+16. **The four ACU tiers (LOW / MED / HIGH / PREMIUM)** as a declared vocabulary,
+    since every agent table in Parts D to G references them.
+17. **Handover clocks** — acceptance starts the Defects Liability Period and the
+    retention release schedule. Both figures are already on the contract and
+    nothing starts from them. Five events are missing: `DLP_STARTED`,
+    `RETENTION_RELEASED`, `GATEWAY3_SUBMITTED`, `ASSET_ACTIVATED`,
+    `LESSON_RECORDED`.
+18. **The PC Readiness Score** as a computed, drillable score over its eight
+    named inputs, replacing the narrative assessment, plus Exit Gate G5. Depends
+    on item 6, the gate machinery.
+19. **COBie validation.** Blocked on `COBieRow`, which is item 7.
+20. **What-If scenario modelling** — the flagship query in E6. Monte Carlo answers
+    how likely a date is; this answers what to do about it, and they are different
+    engines.
+21. **Long-lead tracking, procurement schedule from milestones, and automatic
+    cycle fan-out on contract creation** — three E2/E4 items that are small
+    individually and each remove a re-entry point.
+
+**One pricing decision for the product owner, blocking nothing but worth
+settling**: the ACU bundle table advertises figures a ×3 markup produces, and the
+same document requires ×4. The platform derives the yield from the multiplier, so
+it publishes the ×4 figures. If the advertised numbers are the commitment, the
+multiplier has to move.
