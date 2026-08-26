@@ -186,6 +186,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // --- Tender & procurement -------------------------------------------------
   def('TAKEOFF_COMPLETED', 'Takeoff', 'AI_EXECUTE', 'PROCUREMENT', { aiAllowed: true, requiresEvidence: true }),
   def('BOQITEM_CREATED_FROM_TAKEOFF', 'BoQItem', 'CREATE', 'PROCUREMENT', { aiAllowed: true, requiresEvidence: true }),
+  // T-WF-03. The schedule opens and takes items under one event, because its
+  // whole life is the audit trail of how it was measured.
+  def('BOQ_IMPORTED', 'MeasurementSchedule', 'UPDATE', 'PROCUREMENT', { creates: true, aiAllowed: true }),
+  // An agent may suggest what a rate build-up is missing; it may never approve a
+  // quantity or a rate, which is the specification's own guardrail.
+  def('RATE_BUILDUP_CREATED', 'MeasurementSchedule', 'UPDATE', 'PROCUREMENT'),
+  def('QUANTITY_REMEASURE_REQUIRED', 'MeasurementSchedule', 'UPDATE', 'PROCUREMENT'),
+  def('MEASUREMENT_FROZEN', 'MeasurementSchedule', 'FREEZE', 'PROCUREMENT', { requiresEvidence: true }),
   def('SCHEDULE_BUILT', 'PricingSchedule', 'CREATE', 'PROCUREMENT', { aiAllowed: true }),
   def('SCHEDULE_ROUTE_ASSIGNED', 'PricingSchedule', 'UPDATE', 'PROCUREMENT'),
   def('ESTIMATE_CREATED', 'Estimate', 'CREATE', 'PROCUREMENT', { aiAllowed: true }),

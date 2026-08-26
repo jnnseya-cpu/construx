@@ -1228,7 +1228,7 @@ every record already carrying the old name, and the standing principle is that
 nothing is removed or replaced. The mapping is asserted by a test so it stays
 readable against the ledger.
 
-### 8.3 (continued) T-WF-03 to T-WF-05, and 8.4 — received, not built
+### 8.3 (continued) T-WF-04, T-WF-05 and 8.4 — received, not built
 
 Recorded so the scope is visible and nothing here is mistaken for present.
 None of these is built; each names what already exists that it would extend.
@@ -1236,7 +1236,7 @@ None of these is built; each names what already exists that it would extend.
 | Workflow | Nearest thing that already exists |
 |---|---|
 | ~~**T-WF-02** documents, scope gap, contract risk~~ | **BUILT** — see below |
-| **T-WF-03** measurement, BoQ, estimate schedule | The twenty-cost-head estimate, take-off with sheet-and-revision evidence, `ESTIMATE_FROZEN`. Rate build-ups separating direct cost / preliminaries / risk / OH&P, and estimate-to-estimate reconciliation, do not |
+| ~~**T-WF-03** measurement, BoQ, estimate schedule~~ | **BUILT** — see below |
 | **T-WF-04** package strategy, enquiry, bidder issue | `TENDER_PACKAGE_COMPOSED`, the RFQ engine, the supplier register with prequalification. Pack revisioning, per-recipient issue evidence and the return workspace lock do not |
 | **T-WF-05** supply-chain and self-delivery pricing routes | `assignScheduleRoute` (SUPPLY_CHAIN / SELF_PRICE), `analyseReturns`, `consolidateMasterPricing`. Normalisation to a common basis with a visible adjustment bridge does not |
 | ~~**T-WF-06** clarifications, addenda, return intelligence~~ | **BUILT** — see below |
@@ -1300,6 +1300,72 @@ qualification into the submitted bid pack's qualifications schedule.
 register after a document arrives appends rather than being refused as "already
 exists". Addendum impact is written as `ADDENDUM_IMPACT_ASSESSED`, which is the
 name T-WF-06 gives the same act — one event, not two.
+
+---
+
+### 8.3 (continued) T-WF-03 — Measurement, BoQ and estimate schedule builder
+
+**BUILT.** `backend/src/domain/measurement.ts`, nine routes, 58 tests, and a
+panel on the Tender & Procurement screen with six commands.
+
+The estimate above this already existed and is not rebuilt: twenty cost heads,
+time-related costs by the week, contingency from the risk register at P80,
+margin on the cost beneath it. What did not exist is the layer underneath — the
+measured items, and where each quantity came from.
+
+| Clause | State |
+|---|---|
+| Import or create measurable rows with stable item IDs and hierarchy | **BUILT** — a stable reference per item and a `parent` link; a parent that is not in the schedule is reported. Importing from a **file** is **not built**: items arrive structured, as with every other workflow |
+| Validate units, formulas, duplicates, omissions and quantity-source links | **BUILT** — all five. A reference at two units, a reference twice, a formula that does not produce its own quantity, a measured zero, and an item naming no source |
+| Create take-off overlays or model object sets as evidence | **PARTIAL** — a named model object set is a valid source in place of a drawing. Graphical overlays are **not built** |
+| Build unit-rate components and separate direct cost, preliminaries, risk and OH&P | **BUILT** — the build-up holds labour, material, plant and subcontract as constants times costs, and produces **direct cost only**. Preliminaries, risk and OH&P are priced once at the estimate and deliberately not spread across item rates |
+| Create estimate versions and reconciliation from a prior estimate | **BUILT** — schedule-to-schedule, naming every movement as added, removed, remeasured or repriced |
+| Freeze the pricing snapshot before supplier returns and adjudication | **BUILT** — a content hash over items, rates and currency, registered as evidence |
+| Unit conflict or formula error blocks the freeze | **BUILT** — as a refusal naming each error |
+| Provisional quantity or rate is tagged and included in an uncertainty report | **BUILT** — four bases, and a report saying what share of the direct cost is not firm and why each line is not |
+| A revised drawing invalidates the linked quantity until reviewed | **BUILT** — every item measured from the superseded revision is named, and the freeze is refused until each is answered |
+| **AC-T-WF-03-01** every priced item has a quantity source or an authorised allowance basis | **BUILT** — enforced at the freeze, and a drawing named without its revision counts as no source |
+| **AC-T-WF-03-02** totals reconcile across item, package and currency | **BUILT** — item to schedule by construction; schedule to schedule through a reconciliation that reports when the movements do not account for the difference. Cross-currency reconciliation is **refused** rather than guessed |
+| **AC-T-WF-03-03** revision impact identifies the quantities needing remeasurement | **BUILT** |
+
+**Three decisions worth recording.**
+
+**The formula is re-evaluated, not trusted.** `12.4 × 3.85 × 2` is 95.48 and the
+line says 94.58. It is a transposition, it happens constantly, and it is
+invisible in a spreadsheet because the spreadsheet computed the wrong cell too.
+The evaluator is a small recursive-descent parser over numbers, `+ - * /` and
+parentheses — deliberately not a general expression language and deliberately
+not `eval`, because this parses text arriving over an API and the only safe
+evaluator for that is one that cannot express anything else. Anything it cannot
+read is reported as unreadable rather than run, and the comparison carries a
+0.1% tolerance so written-down rounding does not produce a finding on every line.
+
+**A reissued drawing flags every item measured from it, not the ones that
+changed.** Most will not have changed. *Which* ones did is exactly the question
+nobody can answer three weeks later, and pricing on through a reissue is how a
+bid goes out against a drawing that no longer exists. "Unchanged" is a first-
+class answer and has to be recorded — otherwise there is no way to tell an item
+somebody checked from one nobody opened.
+
+**Preliminaries, risk and OH&P are not spread across item rates.** The
+specification asks for them to be *separated*, and the separation the platform
+already has is the right one: they are priced once at the estimate, on the basis
+each actually has. Adding a percentage to every rate would have satisfied the
+words and destroyed the property that makes a slipped programme a known number
+here rather than a surprise at final account.
+
+**Not built, and not to be claimed:** importing a bill from a file; graphical
+take-off overlays; and any link from a frozen measurement schedule into the
+twenty-head estimate — the two are separate records today and combining them is
+a decision, not a wiring job.
+
+**The event names.** `BOQ_IMPORTED` and `RATE_BUILDUP_CREATED` are the
+specification's own. `TAKEOFF_CAPTURED` is `TAKEOFF_COMPLETED`, already on the
+ledger under that name, and `ESTIMATE_FROZEN` already exists on the `Estimate`
+entity — the schedule's freeze is `MEASUREMENT_FROZEN` because it freezes a
+different record, not because the old name was wrong.
+`QUANTITY_REMEASURE_REQUIRED` is beyond the specification's list, because a
+drawing invalidating a quantity is a fact in its own right.
 
 ---
 
@@ -1549,6 +1615,14 @@ audit event, the agent contract or the lifecycle gate.
     binds to the pack hash, the departures are computed rather than noticed, and
     the budget and buyout targets come off the estimate. The submission
     completeness checks are the part not built.
+
+12a00000. ~~T-WF-03 — measurement and the bill.~~ **Done.** Every quantity
+    names the drawing and revision it came off or the person who authorised the
+    allowance, the formula is re-evaluated against the quantity beside it, rates
+    are built from constants and costs rather than typed, a reissued drawing
+    flags what was measured from it, and the freeze refuses all three failures.
+    Importing a bill from a file and graphical take-off overlays are the parts
+    not built.
 
 12a0000. ~~T-WF-06 — clarifications and the return comparison.~~ **Done.** One
     clarification register across all three sides, issued to entitled recipients

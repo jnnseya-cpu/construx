@@ -93,6 +93,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // Take-off, estimate and tender — commercial
   Takeoff: { area: 'BOQ_TAKEOFF' },
   BoQItem: { area: 'BOQ_TAKEOFF' },
+  // The measured items and their rate build-ups. Commercial-L3: the build-ups
+  // are what our labour and material actually cost, which is the one thing a
+  // competitor would most like to see.
+  MeasurementSchedule: { area: 'BOQ_TAKEOFF', sensitivity: 'COMMERCIAL_L3' },
   Estimate: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   TenderResponse: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   ITTAnalysis: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },

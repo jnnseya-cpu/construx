@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,967 passing, 0 failing, 0 skipped, across 100 files |
+| Tests | 2,025 passing, 0 failing, 0 skipped, across 101 files |
 | Typecheck | clean |
-| Backend | 125 TypeScript files, 65,115 lines |
-| Application | 39 ES modules, 14,553 lines (including a service worker) |
-| API routes | 363 (34 of them public) |
-| Event types | 235 Golden Thread (closed) · 178 communication events (closed) |
-| Entity types | 133, all classified for access |
+| Backend | 126 TypeScript files, 66,362 lines |
+| Application | 39 ES modules, 14,785 lines (including a service worker) |
+| API routes | 373 (34 of them public) |
+| Event types | 239 Golden Thread (closed) · 178 communication events (closed) |
+| Entity types | 134, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -4258,6 +4258,103 @@ register after a missing document arrives appends rather than being refused as
 "already exists" — validation happens more than once by design. Addendum impact
 writes `ADDENDUM_IMPACT_ASSESSED`, the name T-WF-06 gives the same act, so there
 is one event for it and not two.
+
+---
+
+### Measurement — the layer under the estimate
+
+T-WF-03. `backend/src/domain/measurement.ts`, nine routes, 58 tests, and a panel
+on the Tender & Procurement screen with six commands.
+
+The estimate already worked and is not rebuilt: twenty cost heads, time-related
+costs by the week, contingency from the risk register at P80. What did not exist
+is the layer underneath, where a bid is actually lost, and always the same three
+ways.
+
+**A quantity nobody can trace.** Somebody measured 1,240 m² of blockwork off a
+drawing eleven weeks ago. Which drawing, at which revision, off which sheet? If
+the answer is not recorded the line cannot be checked, and when the drawing is
+reissued nobody knows whether this one moved. Every priced item names the
+drawing **and its revision**, or a model object set, or — for an allowance —
+what it is based on and who agreed it. A drawing named without its revision
+counts as no source at all, because Rev A and Rev D are different drawings and
+recording the number is the entire point.
+
+**A formula that does not produce its own answer.** `12.4 × 3.85 × 2` is 95.48
+and the line says 94.58. It is a transposition, it happens constantly, and it is
+invisible in a spreadsheet because the spreadsheet computed the wrong cell too.
+The formula is held beside the quantity and re-evaluated. The evaluator is a
+small recursive-descent parser over numbers, `+ - * /` and parentheses —
+deliberately not a general expression language and deliberately not `eval`,
+because this parses text arriving over an API and the only safe evaluator for
+that is one that cannot express anything but arithmetic. Anything it cannot read
+is reported as unreadable rather than run, and the comparison carries a 0.1%
+tolerance so the rounding a written-down quantity always has does not produce a
+finding on every line of a hundred-item bill.
+
+**A drawing reissued mid-tender.** Rev C arrives, the estimator prices on, and
+forty items measured off Rev B are wrong by an amount nobody has computed.
+Recording the reissue names every item measured from the superseded revision,
+and the schedule will not freeze until each has been looked at — not because
+they have all changed, since most will not have, but because which ones did is
+the question nobody can answer three weeks later. **"Unchanged" is a first-class
+answer** and has to be recorded, because otherwise there is no way to tell an
+item somebody checked from one nobody opened.
+
+**Rates are built, not typed.** A rate is resource constants times resource
+costs — 0.85 hours of concretor at £28.40, 1.02 m³ of ready-mix at £118 with 5%
+waste — and holding the components rather than the answer is what makes a rate
+arguable, reusable and repriceable when the labour rate moves. Waste on anything
+that is not a material is refused: waste is what is cut off, broken and
+over-ordered, and putting it on labour is somebody meaning "lost time" and
+hiding it where nobody will look. The total is rounded once at the end rather
+than per component, because rounding four components and adding them is a
+different number, and on ten thousand square metres the difference is real.
+
+**Preliminaries, risk and OH&P are not spread across item rates.** The
+specification asks for them to be separated, and the separation already in place
+is the right one: they are priced once at the estimate, each on the basis it
+actually has. Adding a percentage to every rate would have satisfied the words
+and destroyed the property that makes a slipped programme a known number here
+instead of a surprise at final account. The build-up produces direct cost, and
+the panel says so.
+
+**What is not firm is said out loud.** Four bases — measured, provisional,
+approximate, allowance — and a report giving the share of the direct cost
+sitting on each quantity that is not firm, largest exposure first, with the
+reason it is not firm and, for an allowance, what it was based on. A tender
+total containing 18% provisional quantity is a different commercial position
+from one containing none, and the difference is invisible in the total.
+
+**The reconciliation refuses to nearly explain itself.** Schedule to schedule,
+every movement named as added, removed, remeasured or repriced, biggest first.
+If the movements do not sum to the difference between the two totals, it says so
+rather than presenting a list that almost accounts for it. Reconciling across
+two currencies is refused outright: that is a rate decision, not a measurement
+one.
+
+**The freeze refuses three things**, each of which the schedule would otherwise
+be asserting untruthfully — an error in the bill, an item nobody priced (an
+unpriced line in a frozen schedule is priced at zero by everybody who reads it
+afterwards), and a drawing revision nobody looked at.
+
+**Verified against a running server**, every refusal driven over HTTP: the bad
+formula is caught at the point of recording and again at the freeze, waste on
+labour is refused with the reason, the reissue names both affected items, and
+the freeze succeeds only once all three are answered — returning a content hash
+over what it froze.
+
+**Two wording defects the run caught that the tests had not.** The uncertainty
+summary read *"1 quantity that are not firm"*, and the affected-items list came
+back in recording order rather than bill order. Both are the kind of thing that
+makes a reader stop trusting the rest of the page, and both are now locked by a
+test.
+
+**Not built, and not to be claimed:** importing a bill from a file — items
+arrive structured, as in every other workflow here; graphical take-off overlays;
+and any automatic link from a frozen measurement schedule into the twenty-head
+estimate. The two are separate records today, and joining them is a decision
+rather than a wiring job.
 
 ---
 

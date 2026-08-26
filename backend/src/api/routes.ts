@@ -53,6 +53,7 @@ import * as handover from '../engines/handover.ts';
 import * as planning from '../engines/planning.ts';
 import * as sitevisit from '../engines/sitevisit.ts';
 import * as award from '../domain/award.ts';
+import * as measurement from '../domain/measurement.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as tenderintel from '../domain/tenderintel.ts';
 import * as tenderreview from '../domain/tenderreview.ts';
@@ -6399,6 +6400,180 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       tenderreview.assessAddendum(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
+  },
+
+  // --------------------------------------- measurement and the bill (T-WF-03)
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/measurement',
+    description: 'Every measurement schedule, what it totals, and what stops it freezing',
+    handler: (platform, ctx) => measurement.measurementPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/measurement',
+    description: 'Open a measurement schedule against a package',
+    schema: {
+      type: 'object',
+      required: ['packageReference', 'title'],
+      properties: {
+        packageReference: stringField,
+        title: stringField,
+        measurementRule: { type: 'string' },
+        currency: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => measurement.openSchedule(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/measurement/:scheduleId/items',
+    description: 'Record measured items, each naming the drawing and revision it came off',
+    schema: {
+      type: 'object',
+      required: ['items'],
+      properties: {
+        items: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['reference', 'description', 'unit', 'quantity', 'basis', 'source'],
+            properties: {
+              reference: stringField,
+              parent: { type: 'string' },
+              description: stringField,
+              unit: stringField,
+              quantity: { type: 'number' },
+              basis: { type: 'string', enum: [...measurement.QUANTITY_BASIS] },
+              source: {
+                type: 'object',
+                properties: {
+                  drawing: { type: 'string' },
+                  revision: { type: 'string' },
+                  sheet: { type: 'string' },
+                  modelObjectSet: { type: 'string' },
+                  allowanceBasis: { type: 'string' },
+                  authorisedBy: { type: 'string' },
+                },
+                additionalProperties: false,
+              },
+              formula: { type: 'string' },
+              measurementRule: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      measurement.recordItems(
+        projectContext(platform, ctx),
+        ctx.params.scheduleId as string,
+        body<{ items: measurement.MeasuredItem[] }>(ctx).items,
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/measurement/:scheduleId/rates',
+    description: 'Build the rate for one item from its resource constants and costs',
+    schema: {
+      type: 'object',
+      required: ['reference', 'components'],
+      properties: {
+        reference: stringField,
+        components: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['kind', 'description', 'unitCostMinor', 'constant'],
+            properties: {
+              kind: { type: 'string', enum: [...measurement.RATE_COMPONENT_KIND] },
+              description: stringField,
+              unitCostMinor: { type: 'integer' },
+              constant: { type: 'number' },
+              wastePercent: { type: 'number' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      measurement.priceItem(projectContext(platform, ctx), ctx.params.scheduleId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/measurement/:scheduleId/revisions',
+    description: 'A drawing is reissued — name every item measured from the superseded revision',
+    schema: {
+      type: 'object',
+      required: ['drawing', 'fromRevision', 'toRevision'],
+      properties: { drawing: stringField, fromRevision: stringField, toRevision: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      measurement.reviseDrawing(projectContext(platform, ctx), ctx.params.scheduleId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/measurement/:scheduleId/remeasure',
+    description: 'Record what a remeasurement found, including that it found nothing',
+    schema: {
+      type: 'object',
+      required: ['reference', 'revision', 'outcome'],
+      properties: {
+        reference: stringField,
+        revision: stringField,
+        outcome: stringField,
+        quantity: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      measurement.confirmRemeasure(projectContext(platform, ctx), ctx.params.scheduleId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/measurement/:scheduleId',
+    description: 'Item, rate and amount for every line, with what is unpriced and what is not firm',
+    handler: (platform, ctx) =>
+      measurement.scheduleTotals(projectContext(platform, ctx), ctx.params.scheduleId as string),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/measurement/:scheduleId/uncertainty',
+    description: 'How much of the direct cost sits on a quantity that is not firm, and which lines',
+    handler: (platform, ctx) =>
+      measurement.uncertaintyReport(projectContext(platform, ctx), ctx.params.scheduleId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/measurement/:scheduleId/freeze',
+    description: 'Freeze the schedule the price is built on',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      measurement.freezeSchedule(projectContext(platform, ctx), ctx.params.scheduleId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/measurement/:scheduleId/reconciliation/:againstId',
+    description: 'Where the money went between two schedules, item by item',
+    handler: (platform, ctx) =>
+      measurement.reconcile(
+        projectContext(platform, ctx),
+        ctx.params.againstId as string,
+        ctx.params.scheduleId as string,
+      ),
   },
 
   // --------------------------------- clarifications and return intelligence (T-WF-06)

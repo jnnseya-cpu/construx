@@ -54,9 +54,17 @@ export async function procurement(root) {
   // than offered — an empty required dropdown is a dead end the person cannot
   // diagnose, and a lock that says why is the same affordance the permission
   // matrix already uses.
+  // T-WF-03. The measured items under the estimate, and what stops each
+  // schedule freezing.
+  const bill = await api
+    .get(`/v1/projects/${projectId}/measurement`)
+    .catch(() => ({ schedules: [], summary: '' }));
+  const openSchedules = bill.schedules.filter((s) => s.status === 'OPEN');
+
   const openComparisons = intel.comparisons.filter((c) => c.status === 'OPEN');
   const unanswered = intel.clarifications.filter((c) => c.status === 'OPEN');
   const NO_OPEN_COMPARISON = 'No comparison is open — open one, or the last was closed for adjudication';
+  const NO_OPEN_SCHEDULE = 'No measurement schedule is open — open one, or the last was frozen';
 
   // Who was asked against who answered. Every fact was already on the record
   // and nothing stood them beside each other, which from a screen is
@@ -114,6 +122,22 @@ export async function procurement(root) {
             { id: 'issue', label: 'Issue RFQ', permitted: can('PROCUREMENT_AWARD', 'U'), reason: blockedReason('PROCUREMENT_AWARD', 'U') },
             { id: 'submission', label: 'Record submission', permitted: can('SUPPLIER_SUBMISSION', 'C'), reason: blockedReason('SUPPLIER_SUBMISSION', 'C') },
             { id: 'award', label: 'Award', permitted: can('PROCUREMENT_AWARD', 'A'), reason: blockedReason('PROCUREMENT_AWARD', 'A') },
+            { id: 'schedule', label: 'Open measurement schedule', permitted: can('BOQ_TAKEOFF', 'C'), reason: blockedReason('BOQ_TAKEOFF', 'C') },
+            { id: 'items', label: 'Record measured items',
+              permitted: can('BOQ_TAKEOFF', 'U') && openSchedules.length > 0,
+              reason: blockedReason('BOQ_TAKEOFF', 'U') ?? NO_OPEN_SCHEDULE },
+            { id: 'rate', label: 'Build a rate',
+              permitted: can('ESTIMATE_TENDER', 'U') && openSchedules.length > 0,
+              reason: blockedReason('ESTIMATE_TENDER', 'U') ?? NO_OPEN_SCHEDULE },
+            { id: 'revision', label: 'Drawing reissued',
+              permitted: can('BOQ_TAKEOFF', 'U') && openSchedules.length > 0,
+              reason: blockedReason('BOQ_TAKEOFF', 'U') ?? NO_OPEN_SCHEDULE },
+            { id: 'remeasure', label: 'Record a remeasurement',
+              permitted: can('BOQ_TAKEOFF', 'U') && bill.schedules.some((s) => s.openRemeasure > 0),
+              reason: blockedReason('BOQ_TAKEOFF', 'U') ?? 'No item is waiting on a remeasurement' },
+            { id: 'freezeSchedule', label: 'Freeze the schedule',
+              permitted: can('ESTIMATE_TENDER', 'A') && openSchedules.length > 0,
+              reason: blockedReason('ESTIMATE_TENDER', 'A') ?? NO_OPEN_SCHEDULE },
             { id: 'clarification', label: 'Raise clarification', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
             { id: 'issueClarification', label: 'Issue answer',
               permitted: can('PROCUREMENT_AWARD', 'U') && unanswered.length > 0,
@@ -269,6 +293,59 @@ export async function procurement(root) {
                         ${reconciliation.uninvitedReturns.join(', ')} — either a data fault or a procurement irregularity, and both need somebody to look.
                       </div>
                     </div></div>`
+              }
+            </div>`
+      }
+
+      ${
+        bill.schedules.length === 0
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Measurement — what the estimate is built on</h3>
+              <div style="padding:8px 17px 0"><div class="metric-sub">
+                Direct cost only: preliminaries, risk and overhead-and-profit are priced once at the estimate above, never spread
+                across item rates. Every quantity names the drawing and revision it came off, or the person who authorised the
+                allowance, and a schedule holding one that does neither will not freeze.
+              </div></div>
+              ${table({
+                headers: ['Schedule', 'Package', 'Items', 'Direct cost', 'Not firm', 'Unpriced', 'Errors', 'Remeasure', 'State'],
+                align: ['', '', 'num', 'num', 'num', 'num', 'num', 'num', ''],
+                rows: bill.schedules.map((s) => [
+                  s.reference,
+                  s.title,
+                  s.items,
+                  money(s.directCostMinor),
+                  s.uncertainPercent > 0 ? pct(s.uncertainPercent, 1) : '—',
+                  s.unpriced > 0 ? badge(String(s.unpriced), 'warn') : '—',
+                  s.critical > 0 ? badge(String(s.critical), 'bad') : '—',
+                  s.openRemeasure > 0 ? badge(String(s.openRemeasure), 'warn') : '—',
+                  badge(badgeText(s.status), statusTone(s.status)),
+                ]),
+              })}
+              ${
+                bill.schedules.some((s) => s.openRemeasure > 0)
+                  ? html`<div style="padding:12px 17px 0"><div class="notice warn">
+                      <div>
+                        <b>A drawing has been reissued and ${bill.schedules.reduce((n, s) => n + s.openRemeasure, 0)} measured
+                        item${bill.schedules.reduce((n, s) => n + s.openRemeasure, 0) === 1 ? ' has' : 's have'} not been looked at.</b><br>
+                        Most of them will not have changed. Which ones did is the question nobody can answer three weeks later,
+                        so the schedule will not freeze until each has been checked and the answer recorded — including where the
+                        answer is "unchanged".
+                      </div>
+                    </div></div>`
+                  : ''
+              }
+              ${
+                bill.schedules.some((s) => s.uncertainPercent >= 10)
+                  ? html`<div style="padding:12px 17px 15px"><div class="notice info">
+                      <div>
+                        <b>Part of this tender total is not the final figure.</b><br>
+                        Provisional and approximate quantities are remeasured on site, and an allowance is a sum somebody
+                        authorised rather than measured. Where they are a material share of a schedule, the total reads as firmer
+                        than it is.
+                      </div>
+                    </div></div>`
+                  : ''
               }
             </div>`
       }
@@ -684,6 +761,161 @@ export async function procurement(root) {
         ...rest,
         conditions: String(conditions ?? '').split('\n').map((x) => x.trim()).filter(Boolean),
       }),
+    },
+
+    // ---- T-WF-03 -----------------------------------------------------------
+
+    schedule: {
+      title: 'Open a measurement schedule',
+      intent:
+        'The measured items under the estimate. Direct cost only — preliminaries, risk and OH&P are priced once above, because a ' +
+        'percentage spread across item rates is how a job whose programme moves loses money quietly.',
+      path: `/v1/projects/${projectId}/measurement`,
+      submitLabel: 'Open',
+      fields: [
+        { name: 'packageReference', label: 'Package', type: 'text' },
+        { name: 'title', label: 'What it measures', type: 'text' },
+        { name: 'measurementRule', label: 'Measurement rule', type: 'select', required: false,
+          options: [
+            { value: 'NRM2', label: 'NRM2 — building works' },
+            { value: 'CESMM4', label: 'CESMM4 — civil engineering' },
+            { value: 'POMI', label: 'POMI — principles of measurement (international)' },
+          ] },
+        { name: 'currency', label: 'Currency', type: 'text', required: false, hint: 'Defaults to GBP' },
+      ],
+    },
+
+    items: {
+      title: 'Record measured items',
+      intent:
+        'Every quantity names the drawing and revision it came off, or the person who authorised the allowance. A formula is ' +
+        're-evaluated against the quantity beside it — the transposition between the two is the commonest error in a bill.',
+      path: (collected) => `/v1/projects/${projectId}/measurement/${collected.scheduleId}/items`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'scheduleId', label: 'Schedule', type: 'select',
+          options: openSchedules.map((s) => ({ value: s.scheduleId, label: `${s.reference} · ${s.title}` })) },
+        { name: 'reference', label: 'Item reference', type: 'text', hint: 'The reference on the paper the client sees' },
+        { name: 'parent', label: 'Sits under', type: 'text', required: false },
+        { name: 'description', label: 'Description', type: 'textarea', rows: 2 },
+        { name: 'unit', label: 'Unit', type: 'text', hint: 'm3, m2, m, t, nr, item' },
+        { name: 'quantity', label: 'Quantity', type: 'number' },
+        { name: 'formula', label: 'Formula', type: 'text', required: false, hint: 'e.g. 12.4 * 3.85 * 2 — checked against the quantity' },
+        { name: 'basis', label: 'Basis', type: 'select',
+          options: [
+            { value: 'MEASURED', label: 'Measured — firm' },
+            { value: 'PROVISIONAL', label: 'Provisional — remeasured on site' },
+            { value: 'APPROXIMATE', label: 'Approximate — measured off information not trusted' },
+            { value: 'ALLOWANCE', label: 'Allowance — nobody measured it' },
+          ] },
+        { name: 'drawing', label: 'Measured from drawing', type: 'text', required: false },
+        { name: 'revision', label: 'Revision', type: 'text', required: false },
+        { name: 'sheet', label: 'Sheet', type: 'text', required: false },
+        { name: 'modelObjectSet', label: 'Or model object set', type: 'text', required: false },
+        { name: 'allowanceBasis', label: 'Allowance basis', type: 'text', required: false,
+          hint: 'What the allowance is based on. Required for an allowance' },
+        { name: 'authorisedBy', label: 'Allowance authorised by', type: 'text', required: false },
+      ],
+      transform: ({ scheduleId, drawing, revision, sheet, modelObjectSet, allowanceBasis, authorisedBy, parent, formula, ...rest }) => ({
+        items: [
+          {
+            ...rest,
+            ...(String(parent ?? '').trim() ? { parent } : {}),
+            ...(String(formula ?? '').trim() ? { formula } : {}),
+            quantity: Number(rest.quantity),
+            source: Object.fromEntries(
+              Object.entries({ drawing, revision, sheet, modelObjectSet, allowanceBasis, authorisedBy }).filter(
+                ([, value]) => String(value ?? '').trim(),
+              ),
+            ),
+          },
+        ],
+      }),
+    },
+
+    rate: {
+      title: 'Build a rate',
+      intent:
+        'Resource constants times resource costs — 0.85 hours of concretor at £28.40, 1.02 m³ of ready-mix at £118 with 5% waste. ' +
+        'Holding the components rather than the answer is what makes a rate arguable, reusable and repriceable when the labour rate moves.',
+      path: (collected) => `/v1/projects/${projectId}/measurement/${collected.scheduleId}/rates`,
+      submitLabel: 'Build',
+      fields: [
+        { name: 'scheduleId', label: 'Schedule', type: 'select',
+          options: openSchedules.map((s) => ({ value: s.scheduleId, label: `${s.reference} · ${s.title}` })) },
+        { name: 'reference', label: 'Item reference', type: 'text' },
+        { name: 'components', label: 'Components', type: 'textarea', rows: 5,
+          hint: 'One per line: kind, description, unit cost, constant [, waste %]. Kind is labour, material, plant or subcontract' },
+      ],
+      transform: ({ scheduleId, reference, components }) => ({
+        reference,
+        components: String(components ?? '')
+          .split('\n')
+          .map((line) => line.split(',').map((part) => part.trim()))
+          .filter((parts) => parts[0] && parts[2] && parts[3])
+          .map((parts) => ({
+            kind: String(parts[0]).toUpperCase(),
+            description: parts[1] || parts[0],
+            unitCostMinor: Math.round(Number(parts[2]) * 100),
+            constant: Number(parts[3]),
+            ...(parts[4] ? { wastePercent: Number(parts[4]) } : {}),
+          })),
+      }),
+    },
+
+    revision: {
+      title: 'A drawing has been reissued',
+      intent:
+        'Every item measured from the superseded revision is named, and the schedule will not freeze until each has been looked at. ' +
+        'Not because they have all changed — most will not have — but because which ones did is the question nobody can answer later.',
+      path: (collected) => `/v1/projects/${projectId}/measurement/${collected.scheduleId}/revisions`,
+      submitLabel: 'Record the reissue',
+      fields: [
+        { name: 'scheduleId', label: 'Schedule', type: 'select',
+          options: openSchedules.map((s) => ({ value: s.scheduleId, label: `${s.reference} · ${s.title}` })) },
+        { name: 'drawing', label: 'Drawing', type: 'text' },
+        { name: 'fromRevision', label: 'Superseded revision', type: 'text' },
+        { name: 'toRevision', label: 'New revision', type: 'text' },
+      ],
+      transform: ({ scheduleId, ...rest }) => rest,
+    },
+
+    remeasure: {
+      title: 'Record a remeasurement',
+      intent:
+        'Say what it found, including where it found nothing. "Unchanged" is a real and common answer and has to be recorded — ' +
+        'otherwise there is no way to tell an item somebody checked from one nobody opened.',
+      path: (collected) => `/v1/projects/${projectId}/measurement/${collected.scheduleId}/remeasure`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'scheduleId', label: 'Schedule', type: 'select',
+          options: bill.schedules
+            .filter((s) => s.openRemeasure > 0)
+            .map((s) => ({ value: s.scheduleId, label: `${s.reference} · ${s.openRemeasure} waiting` })) },
+        { name: 'reference', label: 'Item reference', type: 'text' },
+        { name: 'revision', label: 'Measured against revision', type: 'text' },
+        { name: 'quantity', label: 'New quantity', type: 'number', required: false, hint: 'Leave blank where nothing changed' },
+        { name: 'outcome', label: 'What the remeasurement found', type: 'textarea', rows: 2 },
+      ],
+      transform: ({ scheduleId, quantity, ...rest }) => ({
+        ...rest,
+        ...(String(quantity ?? '').trim() ? { quantity: Number(quantity) } : {}),
+      }),
+    },
+
+    freezeSchedule: {
+      title: 'Freeze the measurement schedule',
+      intent:
+        'Refused while the bill states something untrue, while an item carries no rate, or while a reissued drawing has not been ' +
+        'looked at. After it, a change is a new schedule — otherwise the number that went out is no longer reproducible.',
+      path: (collected) => `/v1/projects/${projectId}/measurement/${collected.scheduleId}/freeze`,
+      submitLabel: 'Freeze',
+      fields: [
+        { name: 'scheduleId', label: 'Schedule', type: 'select',
+          options: openSchedules.map((s) => ({ value: s.scheduleId, label: `${s.reference} · ${s.title}` })) },
+        { name: 'reason', label: 'What it is being frozen for', type: 'textarea', rows: 2 },
+      ],
+      transform: ({ scheduleId, ...rest }) => rest,
     },
 
     // ---- T-WF-06 -----------------------------------------------------------
