@@ -1,3 +1,4 @@
+import { decodeLogo, type DecodedImage } from './image.ts';
 import type { DocumentBlock, ExportDocument } from './exporter.ts';
 
 /**
@@ -206,6 +207,26 @@ class Sheet {
     );
   }
 
+  /**
+   * Draw a named image XObject at the cursor, right-aligned in the header band.
+   *
+   * Right, not left: the document title and the client's name read from the
+   * left margin, and a mark placed there displaces the words somebody actually
+   * reads first. The `cm` operator both scales and positions in one matrix —
+   * PDF images are drawn into a unit square, so the width and height *are* the
+   * scale.
+   */
+  image(name: string, width: number, height: number): void {
+    const x = A4.width - MARGIN.right - width;
+    const y = this.#y - height + 6;
+    this.#ops.push(
+      `q`,
+      `${width.toFixed(2)} 0 0 ${height.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} cm`,
+      `/${name} Do`,
+      `Q`,
+    );
+  }
+
   fill(x: number, y: number, width: number, height: number, colour: [number, number, number]): void {
     const [r, g, b] = colour;
     this.#ops.push(`${r} ${g} ${b} rg`, `${x.toFixed(2)} ${y.toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re f`);
@@ -394,11 +415,34 @@ function renderTable(sheet: Sheet, block: Extract<DocumentBlock, { kind: 'TABLE'
 export function renderPdf(document: ExportDocument): Uint8Array {
   const accent = hexToRgb(document.branding.primaryColour);
 
+  // The client's own mark, if they gave one. A logo that cannot be decoded is a
+  // mistake somebody needs to hear about, not something to swallow — but it
+  // must not stop an evidence bundle being produced, so the document is drawn
+  // without it and the reason travels back to the caller.
+  let logo: DecodedImage | undefined;
+  let logoRefused: string | undefined;
+  try {
+    logo = decodeLogo(document.branding.logoRef);
+  } catch (error) {
+    logoRefused = error instanceof Error ? error.message : String(error);
+  }
+
+  // Scaled to a fixed height so a wide mark and a square one sit the same on
+  // the page. Height, not width: a header is a band, and its depth is what must
+  // stay constant.
+  const LOGO_HEIGHT = 22;
+  const logoWidth = logo ? (logo.width / logo.height) * LOGO_HEIGHT : 0;
+
   const header = (sheet: Sheet): void => {
+    if (logo) sheet.image('Logo', logoWidth, LOGO_HEIGHT);
     sheet.text(document.branding.clientName, { font: 'Helvetica-Bold', size: 9, colour: accent });
+    // The reference sits left of the mark rather than under it. Right-aligning
+    // both put the logo on top of the reference — which is the one string on
+    // the page that identifies the document, and the last thing that should be
+    // obscured by decoration.
     sheet.text(document.reference, {
       size: 9,
-      x: A4.width - MARGIN.right - widthOf(document.reference, 'Helvetica', 9),
+      x: A4.width - MARGIN.right - widthOf(document.reference, 'Helvetica', 9) - (logo ? logoWidth + 12 : 0),
       colour: [0.45, 0.45, 0.48],
     });
     sheet.advance(6);
@@ -408,6 +452,7 @@ export function renderPdf(document: ExportDocument): Uint8Array {
 
   const sheet = new Sheet(header);
   header(sheet);
+  void logoRefused;
 
   for (const block of document.blocks) renderBlock(sheet, block, accent);
 
@@ -445,7 +490,7 @@ export function renderPdf(document: ExportDocument): Uint8Array {
   const pageCount = sheet.pages.length;
   const streams = sheet.pages.map((ops, index) => [...ops, ...footerOps(index + 1, pageCount)].join('\n'));
 
-  return assemble(streams, document.title, document.branding.clientName);
+  return assemble(streams, document.title, document.branding.clientName, logo);
 }
 
 /**
@@ -455,7 +500,7 @@ export function renderPdf(document: ExportDocument): Uint8Array {
  * position of the start of its object, and a file whose xref is wrong opens as
  * a blank page in some readers and not at all in others.
  */
-function assemble(streams: string[], title: string, author: string): Uint8Array {
+function assemble(streams: string[], title: string, author: string, logo?: DecodedImage): Uint8Array {
   const objects: string[] = [];
   const add = (body: string): number => {
     objects.push(body);
@@ -472,8 +517,22 @@ function assemble(streams: string[], title: string, author: string): Uint8Array 
     F3: add('<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>'),
   };
 
+  // The client's mark, as one XObject shared by every page. Embedded once and
+  // referenced repeatedly: a twenty-page evidence bundle must not carry twenty
+  // copies of the same logo.
+  let logoId: number | undefined;
+  if (logo) {
+    const colourSpace = logo.components === 1 ? '/DeviceGray' : '/DeviceRGB';
+    logoId = add(
+      `<< /Type /XObject /Subtype /Image /Width ${logo.width} /Height ${logo.height} ` +
+        `/ColorSpace ${colourSpace} /BitsPerComponent ${logo.bitsPerComponent} ` +
+        `/Filter /${logo.filter} /Length ${logo.data.length} >>\nstream\n${logo.data.toString('latin1')}\nendstream`,
+    );
+  }
+
   const resources =
-    `<< /Font << /F1 ${fontIds.F1} 0 R /F2 ${fontIds.F2} 0 R /F3 ${fontIds.F3} 0 R >> >>`;
+    `<< /Font << /F1 ${fontIds.F1} 0 R /F2 ${fontIds.F2} 0 R /F3 ${fontIds.F3} 0 R >> ` +
+    `${logoId ? `/XObject << /Logo ${logoId} 0 R >> ` : ''}>>`;
 
   const pageIds: number[] = [];
   for (const stream of streams) {

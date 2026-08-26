@@ -89,7 +89,30 @@ export type ExportEntitlement = { permitted: boolean; reason?: string };
 
 export class ExportService {
   readonly #ledger: GoldenThreadLedger;
+  /**
+   * The tenancy's own identity, used where no project says otherwise.
+   *
+   * This is the contractor's own brand — the one on a document that is not
+   * prepared for any particular client.
+   */
   readonly #brandingByTenant = new Map<string, ClientBranding>();
+
+  /**
+   * Branding per project, which is what a client-facing document actually needs.
+   *
+   * Storing one branding per tenancy was wrong in a way that only shows up on a
+   * real estate: a contractor running three projects for three different clients
+   * had one slot for all of them, so every export carried whichever client had
+   * been configured last. The header prints "Prepared for: {clientName}"
+   * verbatim, so a report for Northgate went out saying it was prepared for
+   * Meridian — the right document, the wrong company's name, logo and colour on
+   * the front of it.
+   *
+   * Keyed by tenancy *and* project, never by project alone: a project id from
+   * one tenancy must not be able to read another's branding, and a map keyed on
+   * a bare id would allow exactly that.
+   */
+  readonly #brandingByProject = new Map<string, ClientBranding>();
   readonly #entitlement: (tenantId: string, roles?: readonly string[]) => ExportEntitlement;
   #sequence = 0;
 
@@ -100,8 +123,14 @@ export class ExportService {
     this.#entitlement = entitlement ?? (() => ({ permitted: true }));
   }
 
-  setBranding(tenantId: string, branding: ClientBranding): void {
-    this.#brandingByTenant.set(tenantId, branding);
+  setBranding(tenantId: string, branding: ClientBranding, projectId?: string): void {
+    if (projectId) this.#brandingByProject.set(`${tenantId}:${projectId}`, branding);
+    else this.#brandingByTenant.set(tenantId, branding);
+  }
+
+  /** Whether this project has its own client identity, distinct from the tenancy's. */
+  projectBranding(tenantId: string, projectId: string): ClientBranding | undefined {
+    return this.#brandingByProject.get(`${tenantId}:${projectId}`);
   }
 
   /**
@@ -137,12 +166,22 @@ export class ExportService {
    * it. This is a different question with a different answer, not a way round
    * the same one.
    */
-  brandingIfConfigured(tenantId: string): ClientBranding | undefined {
-    return this.#brandingByTenant.get(tenantId);
+  brandingIfConfigured(tenantId: string, projectId?: string): ClientBranding | undefined {
+    return (projectId ? this.#brandingByProject.get(`${tenantId}:${projectId}`) : undefined)
+      ?? this.#brandingByTenant.get(tenantId);
   }
 
-  branding(tenantId: string): ClientBranding {
-    const branding = this.#brandingByTenant.get(tenantId);
+  /**
+   * The identity to put on a document.
+   *
+   * The project's own client branding wins; the tenancy's is the fallback for a
+   * document that belongs to no particular client. The order is the whole fix —
+   * reading the tenancy first would put the wrong client on every project that
+   * had bothered to configure its own.
+   */
+  branding(tenantId: string, projectId?: string): ClientBranding {
+    const branding = (projectId ? this.#brandingByProject.get(`${tenantId}:${projectId}`) : undefined)
+      ?? this.#brandingByTenant.get(tenantId);
     if (!branding) {
       // Refusing here is deliberate: an unbranded export sent to a client is
       // worse than no export, and silently substituting a default hides it.
@@ -172,7 +211,7 @@ export class ExportService {
     // export method inherits the gate without anybody remembering to add it.
     this.#assertEntitled(auth);
 
-    const branding = this.branding(auth.tenantId);
+    const branding = this.branding(auth.tenantId, projectId);
     this.#sequence += 1;
 
     const blocks = [...brandedHeader(branding, input.title, input.subtitle), ...input.blocks];

@@ -5479,7 +5479,7 @@ export const ROUTES: Route[] = [
   {
     method: 'PUT',
     pattern: '/v1/branding',
-    description: 'Configure the client identity applied to every export',
+    description: "Configure the tenancy's own identity, used where a project has no client branding of its own",
     schema: {
       type: 'object',
       required: ['clientName', 'primaryColour', 'legalFooter', 'documentReferencePrefix'],
@@ -5495,6 +5495,58 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => {
       platform.exports.setBranding(auth(ctx).tenantId, body(ctx));
       return platform.exports.branding(auth(ctx).tenantId);
+    },
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/projects/:projectId/branding',
+    description: "The client identity on this project's documents — their name, logo and colour, not the tenancy's",
+    schema: {
+      type: 'object',
+      required: ['clientName', 'primaryColour', 'legalFooter', 'documentReferencePrefix'],
+      properties: {
+        clientName: stringField,
+        /**
+         * The client's mark, as a data URI or a stored reference.
+         *
+         * Optional because a client may not supply one, and a document with no
+         * logo is honest where a document with somebody else's logo is not.
+         */
+        logoRef: { type: 'string' },
+        primaryColour: stringField,
+        legalFooter: stringField,
+        documentReferencePrefix: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      // One branding per tenancy was wrong in a way that only appears on a real
+      // estate: a contractor running three projects for three clients had one
+      // slot for all of them, so every export carried whichever client had been
+      // configured last. The header prints "Prepared for: {clientName}"
+      // verbatim, so a report for one client went out named for another.
+      const engine = projectContext(platform, ctx);
+      authorise(engine, 'PROJECT_SETUP', 'U');
+      platform.exports.setBranding(engine.tenantId, body(ctx), engine.projectId);
+      return platform.exports.branding(engine.tenantId, engine.projectId);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/branding',
+    description: 'What identity this project\'s documents will carry, and where it came from',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const engine = projectContext(platform, ctx);
+      authorise(engine, 'PROJECT_SETUP', 'R');
+      const own = platform.exports.projectBranding(engine.tenantId, engine.projectId);
+      const effective = platform.exports.brandingIfConfigured(engine.tenantId, engine.projectId);
+      return {
+        // Said out loud, because "which client's name is on this document" is
+        // exactly the question somebody asks after it has gone out wrong.
+        source: own ? 'PROJECT' : effective ? 'TENANCY' : 'NONE',
+        branding: effective ?? null,
+      };
     },
   },
 
