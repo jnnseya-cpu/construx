@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,885 passing, 0 failing, 0 skipped, across 97 files |
+| Tests | 1,909 passing, 0 failing, 0 skipped, across 98 files |
 | Typecheck | clean |
-| Backend | 121 TypeScript files, 61,355 lines |
+| Backend | 124 TypeScript files, 63,913 lines |
 | Application | 39 ES modules, 14,226 lines (including a service worker) |
-| API routes | 342 (34 of them public) |
-| Event types | 227 Golden Thread (closed) · 178 communication events (closed) |
-| Entity types | 130, all classified for access |
+| API routes | 352 (34 of them public) |
+| Event types | 232 Golden Thread (closed) · 178 communication events (closed) |
+| Entity types | 132, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -4184,6 +4184,80 @@ of the work and closes next week; a finding is about the state of the site and
 governs the job for years. Both exist and neither replaced the other — asserted
 by a test, because the temptation to collapse them is exactly how the long-lived
 one would be lost.
+
+---
+
+### Reading the tender documents before pricing them
+
+T-WF-02. `backend/src/domain/tenderreview.ts`, nine routes, 24 tests.
+
+Between deciding to bid and starting to price there is a review nobody records:
+what is in the pack, whether it can be relied on, which package carries each
+obligation, what the contract actually says, and what the price is deliberately
+not covering. It is done — on paper, in somebody's head, in an email thread —
+and then the price is built and the reasoning is gone. This makes it an entity
+with a frozen snapshot, so the question *"what information was this price built
+on"* has an answer with a hash on it.
+
+    documents → validation → scope map → contract → qualifications → freeze
+
+**A pack that cannot be relied on blocks the packages it informs, not the whole
+job.** An unreadable file and a citation pointing at something absent are
+Critical and stop exactly the packages that document feeds; a price built
+against a document nobody could open was built against a guess. The same
+document at two revisions is Major and blocks nothing, because a superseded
+sheet in a pack is ordinary — it is only *sometimes* wrong, and the register
+cannot say which one was priced against, so it says so and stops there.
+
+**One finding blocks everything: a standard form "as amended" with no schedule
+of amendments.** That is not a contract form. The amendments are where the
+fitness-for-purpose obligation, the uncapped damages and the payment terms live,
+so pricing the unamended suite prices a different contract entirely. There is no
+package that can be safely priced against an unknown set of amendments, and the
+freeze refuses while it stands.
+
+**A gap and an overlap are both expensive, in opposite directions.** An
+obligation no package carries gets built and nobody priced it, which costs the
+job. One carried by two packages is priced twice, which loses the bid — and that
+is the quieter failure, because nobody ever finds out why the number was high.
+Both are derived from the mapping rather than asked for, and neither is
+auto-resolved: which package should carry it is a commercial decision.
+
+**The contract is held verbatim, and the extractor does not accept their own
+extraction.** `wording` carries the clause word for word, because the executed
+wording is what binds and a paraphrase is a second document that will be
+believed. The freeze is refused while any obligation is still `DRAFT` — an
+interpretation nobody independently signed is one person's reading of a
+contract. This is not a new control invented here: the permission matrix already
+separates reading a contract from accepting an interpretation, so the QS
+extracts and the person carrying commercial authority accepts.
+
+**A qualification has to come from somewhere.** Every exclusion and
+qualification names the scope gap or the contract obligation it answers, or it
+is refused at the point of entry. A qualifications schedule that accumulated by
+habit is how a bid ends up excluding something the client asked for and nobody
+can say why.
+
+**The addendum impact is computed from the frozen review, not typed.** The
+addendum names the documents and clauses it changed; what depended on them —
+packages to reprice, obligations whose review is void, qualifications resting on
+something that moved — falls out of the mapping already built. Asking somebody
+to list the affected packages is asking them to remember a fortnight-old
+mapping, which is how one gets missed.
+
+**Not built, and not to be claimed:** reading obligations out of the contract
+file itself — they are supplied structured, exactly as in tender intake; any
+risk score or likelihood/impact rating on an obligation; and any automatic link
+from a qualification into the submitted bid pack's qualifications schedule,
+which stays a deliberate act.
+
+**Event names.** `SCOPE_GAP_IDENTIFIED`, `CONTRACT_INTERPRETED` and
+`TENDER_REVIEW_FROZEN` are new and take the specification's names.
+`TENDER_DOCUMENT_VALIDATED` is an `UPDATE` that may create, so re-validating the
+register after a missing document arrives appends rather than being refused as
+"already exists" — validation happens more than once by design. Addendum impact
+writes `ADDENDUM_IMPACT_ASSESSED`, the name T-WF-06 gives the same act, so there
+is one event for it and not two.
 
 ---
 

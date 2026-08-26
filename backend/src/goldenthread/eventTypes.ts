@@ -196,6 +196,25 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // The invitation read properly: every requirement with an owner, and the
   // commercial terms assessed against what this business can actually carry.
   def('ITT_ANALYSED', 'ITTAnalysis', 'CREATE', 'PROCUREMENT'),
+  // Reading the whole tender document set: what is missing, what nobody owns,
+  // what two people own, and what the contract actually says.
+  //
+  // Extraction may be an agent's work — the specification gives it clause and
+  // scope extraction with citations and confidence — and the acceptance is not.
+  // UPDATE with `creates`, because validating the register is the same act
+  // whether it is the first pack or a reissued one. A separate opening event
+  // would mean an empty review that means nothing.
+  def('TENDER_DOCUMENT_VALIDATED', 'TenderReview', 'UPDATE', 'PROCUREMENT', { creates: true, aiAllowed: true }),
+  def('SCOPE_GAP_IDENTIFIED', 'TenderReview', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  def('CONTRACT_INTERPRETED', 'TenderReview', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  // The freeze is not. It declares the information the price is built on, and
+  // an agent that could declare it could declare a pack complete.
+  def('TENDER_REVIEW_FROZEN', 'TenderReview', 'FREEZE', 'PROCUREMENT', { requiresEvidence: true }),
+  // What an addendum touches in a frozen review. The specification names this
+  // event under T-WF-06, which is the workflow that owns addenda and their
+  // impact reports; it is the same act, so it takes the same name rather than
+  // a second one meaning the same thing.
+  def('ADDENDUM_IMPACT_ASSESSED', 'TenderReview', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
   // Tender intake. The deadline is registered the hour the invitation lands,
   // before anybody has read it, because a countdown that starts when somebody
   // gets round to reading the documents is not a countdown. Human-authored: the

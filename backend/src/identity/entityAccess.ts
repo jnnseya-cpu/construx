@@ -91,6 +91,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   Estimate: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   TenderResponse: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   ITTAnalysis: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
+  // The reading of the tender documents. Legal-L4: it carries the executed
+  // contract wording verbatim, which is the same sensitivity as the contract.
+  TenderReview: { area: 'ESTIMATE_TENDER', sensitivity: 'LEGAL_L4' },
   TenderInvitation: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   BidProgramme: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   MasterPricing: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },

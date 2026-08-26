@@ -1228,14 +1228,14 @@ every record already carrying the old name, and the standing principle is that
 nothing is removed or replaced. The mapping is asserted by a test so it stays
 readable against the ledger.
 
-### 8.3 (continued) T-WF-02 to T-WF-08, and 8.4 — received, not built
+### 8.3 (continued) T-WF-03 to T-WF-06, and 8.4 — received, not built
 
 Recorded so the scope is visible and nothing here is mistaken for present.
 None of these is built; each names what already exists that it would extend.
 
 | Workflow | Nearest thing that already exists |
 |---|---|
-| **T-WF-02** documents, scope gap, contract risk | `analyseITT`'s commercial-term assessment, the drawing register and the contract clause register. The document register, scope matrix, contract-risk register and the frozen review snapshot do not exist |
+| ~~**T-WF-02** documents, scope gap, contract risk~~ | **BUILT** — see below |
 | **T-WF-03** measurement, BoQ, estimate schedule | The twenty-cost-head estimate, take-off with sheet-and-revision evidence, `ESTIMATE_FROZEN`. Rate build-ups separating direct cost / preliminaries / risk / OH&P, and estimate-to-estimate reconciliation, do not |
 | **T-WF-04** package strategy, enquiry, bidder issue | `TENDER_PACKAGE_COMPOSED`, the RFQ engine, the supplier register with prequalification. Pack revisioning, per-recipient issue evidence and the return workspace lock do not |
 | **T-WF-05** supply-chain and self-delivery pricing routes | `assignScheduleRoute` (SUPPLY_CHAIN / SELF_PRICE), `analyseReturns`, `consolidateMasterPricing`. Normalisation to a common basis with a visible adjustment bridge does not |
@@ -1243,6 +1243,65 @@ None of these is built; each names what already exists that it would extend.
 | ~~**T-WF-07** commercial adjudication and governance~~ | **BUILT** — see below |
 | ~~**T-WF-08** submission, award, zero-re-entry conversion~~ | **BUILT** — see below |
 | **8.4** stage gate Definition of Done | The lifecycle gate machinery and the replayable ledger. The seven-point tender gate itself is not declared, and it depends on the A2 gate work at item 6 below |
+
+### 8.3 (continued) T-WF-02 — Tender information, scope gap and contract risk review
+
+**BUILT.** `backend/src/domain/tenderreview.ts`, nine routes, 24 tests.
+
+This is the review that happens between deciding to bid and starting to price:
+what is in the pack, whether it can be relied on, which package carries each
+obligation, what the contract actually says, and what the price is *not*
+covering. Everything it produces is frozen into one snapshot, because the price
+has to be built on a stated version of the information.
+
+| Clause | State |
+|---|---|
+| Register every tender document with revision, date and the packages it informs | **BUILT** — and the register is what everything else keys off |
+| Validate the pack: unreadable files, missing citations, contradictory revisions | **BUILT** — three checks. Unreadable and missing-citation are Critical and block the packages that document informs; the same document at two revisions is Major and blocks nothing, because a superseded sheet in a pack is common and only sometimes wrong |
+| Identify the contract form, edition and amendments | **BUILT** — a standard form stated "as amended" with no schedule of amendments in the pack is Critical and blocks **every** package |
+| Map scope to packages and surface gaps and overlaps | **BUILT** — no package is a gap, more than one is an overlap, and both are reported with the source clause |
+| Extract contract obligations with clause, verbatim wording and owner | **BUILT** — the wording is held verbatim, because the executed wording is what binds and a paraphrase is a second document |
+| Reviewer accepts or rejects each extraction | **BUILT** — and the reviewer is not the extractor: the permission matrix already separates reading a contract (`RCUIX`) from accepting an interpretation (`RA`) |
+| Record qualifications and exclusions, each traceable to a finding | **BUILT** — `QUALIFICATION_UNTRACEABLE` refuses one that names no scope gap or obligation |
+| Freeze the review as the basis the price is built on | **BUILT** — a content hash over form, documents, scope, obligations and qualifications, registered as evidence |
+| Addendum impact after the freeze | **BUILT** — derived, not asserted |
+| **AC-T-WF-02-01** every obligation links to a clause or page and carries a reviewer status | **BUILT** — and the freeze is refused while any obligation is still `DRAFT` |
+| **AC-T-WF-02-02** every qualification traces to a gap or an obligation | **BUILT** — refused at the point of entry, not reported afterwards |
+| **AC-T-WF-02-03** addendum impact names the affected packages, scope, obligations and qualifications | **BUILT** — computed from the frozen review's own mapping |
+
+**Three decisions worth recording.**
+
+**A missing schedule of amendments blocks everything.** A standard form "as
+amended" with the amendments absent is not a contract form. The amendments are
+where the fitness-for-purpose obligation, the uncapped damages and the payment
+terms live, so pricing the standard form prices a different contract. Every
+other document finding blocks only the packages that document informs; this one
+blocks the lot, and the freeze refuses while it stands.
+
+**A gap and an overlap fail in opposite directions.** A gap is built and nobody
+priced it, which costs the job. An overlap is priced twice, which loses the bid
+— and that is the quieter failure, because nobody ever finds out why. Both are
+reported, neither is auto-resolved.
+
+**The extractor does not accept their own extraction.** An interpretation nobody
+independently signed is one person's reading of a contract. This is not a new
+control: the matrix already gives the QS extraction rights and the acceptance
+right to the person carrying commercial authority, and the freeze simply refuses
+while an obligation sits unreviewed.
+
+**Not built, and not to be claimed:** reading obligations out of the contract
+*file* (they are supplied structured, as with T-WF-01), a risk score or
+likelihood/impact rating on an obligation, and any automatic link from a
+qualification into the submitted bid pack's qualifications schedule.
+
+**The event names.** `SCOPE_GAP_IDENTIFIED`, `CONTRACT_INTERPRETED` and
+`TENDER_REVIEW_FROZEN` are new and take the specification's names.
+`TENDER_DOCUMENT_VALIDATED` is an `UPDATE` that may create, so re-validating a
+register after a document arrives appends rather than being refused as "already
+exists". Addendum impact is written as `ADDENDUM_IMPACT_ASSESSED`, which is the
+name T-WF-06 gives the same act — one event, not two.
+
+---
 
 ### 8.3 (continued) T-WF-07 — Commercial adjudication, bid programme and governance
 
@@ -1423,6 +1482,13 @@ audit event, the agent contract or the lifecycle gate.
     binds to the pack hash, the departures are computed rather than noticed, and
     the budget and buyout targets come off the estimate. The submission
     completeness checks are the part not built.
+
+12a000. ~~T-WF-02 — the tender information review.~~ **Done.** The document
+    register with its three validation checks, the scope matrix with gaps and
+    overlaps, the contract obligations held verbatim and accepted by somebody
+    other than the extractor, qualifications that must trace to a finding, and
+    one frozen snapshot the price is built on. Reading obligations out of the
+    contract file is the part not built.
 
 12a. ~~T-WF-01 — tender intake.~~ **Done.** The zoned deadline, the deliverable
     register with source/owner/internal date, the addendum that appends, the

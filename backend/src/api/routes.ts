@@ -54,6 +54,7 @@ import * as planning from '../engines/planning.ts';
 import * as sitevisit from '../engines/sitevisit.ts';
 import * as award from '../domain/award.ts';
 import * as settlement from '../domain/settlement.ts';
+import * as tenderreview from '../domain/tenderreview.ts';
 import * as quality from '../engines/quality.ts';
 import * as safety from '../engines/safety.ts';
 import * as tender from '../engines/tender.ts';
@@ -6194,6 +6195,211 @@ export const ROUTES: Route[] = [
       };
     },
   },
+  // --------------------------------------------- reading the tender documents (T-WF-02)
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender-reviews',
+    description: 'What is missing, what nobody owns, what two people own, and what the contract says',
+    handler: (platform, ctx) => tenderreview.tenderReviewPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-reviews',
+    description: 'Open the review, naming the contract form and edition the bid is priced against',
+    schema: {
+      type: 'object',
+      required: ['title', 'form'],
+      properties: {
+        title: stringField,
+        form: {
+          type: 'object',
+          required: ['suite', 'edition', 'amendmentsStated'],
+          properties: {
+            suite: stringField,
+            edition: stringField,
+            amendmentsStated: { type: 'boolean' },
+            amendmentDocument: stringField,
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => tenderreview.openReview(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-reviews/:reviewId/documents',
+    description: 'Record the register and validate it — missing, unreadable and contradictory',
+    schema: {
+      type: 'object',
+      required: ['documents'],
+      properties: {
+        documents: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['reference', 'title', 'revision', 'readable', 'informsPackages'],
+            properties: {
+              reference: stringField,
+              title: stringField,
+              revision: stringField,
+              readable: { type: 'boolean' },
+              informsPackages: { type: 'array', items: { type: 'string' } },
+              cites: { type: 'array', items: { type: 'string' } },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderreview.recordDocuments(
+        projectContext(platform, ctx),
+        ctx.params.reviewId as string,
+        body<{ documents: tenderreview.TenderDocument[] }>(ctx).documents,
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-reviews/:reviewId/scope',
+    description: 'Map the scope onto the packages that carry it, and find the gaps and overlaps',
+    schema: {
+      type: 'object',
+      required: ['items'],
+      properties: {
+        items: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['reference', 'description', 'source', 'packages'],
+            properties: {
+              reference: stringField,
+              description: { type: 'string' },
+              source: {
+                type: 'object',
+                required: ['document'],
+                properties: { document: stringField, clause: { type: 'string' }, page: { type: 'integer', minimum: 1 } },
+                additionalProperties: false,
+              },
+              packages: { type: 'array', items: { type: 'string' } },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderreview.mapScope(
+        projectContext(platform, ctx),
+        ctx.params.reviewId as string,
+        body<{ items: tenderreview.ScopeItem[] }>(ctx).items,
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-reviews/:reviewId/contract',
+    description: 'Record what the contract says, verbatim, and what the reader takes it to mean',
+    schema: {
+      type: 'object',
+      required: ['obligations'],
+      properties: {
+        obligations: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['reference', 'clause', 'wording', 'interpretation', 'category', 'response', 'owner'],
+            properties: {
+              reference: stringField,
+              clause: stringField,
+              page: { type: 'integer', minimum: 1 },
+              wording: { type: 'string' },
+              interpretation: { type: 'string' },
+              category: {
+                type: 'string',
+                enum: ['PAYMENT', 'CHANGE', 'DELAY', 'INSURANCE', 'SECURITY', 'LIABILITY', 'DEADLINE', 'OTHER'],
+              },
+              response: { type: 'string', enum: ['PRICED', 'PROGRAMMED', 'CLARIFICATION', 'ACCEPTED_RISK'] },
+              owner: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderreview.interpretContract(
+        projectContext(platform, ctx),
+        ctx.params.reviewId as string,
+        body<{ obligations: Parameters<typeof tenderreview.interpretContract>[2] }>(ctx).obligations,
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-reviews/:reviewId/obligations/:obligationReference/review',
+    description: 'A legal or commercial owner accepts or rejects the reading',
+    schema: {
+      type: 'object',
+      required: ['status'],
+      properties: { status: { type: 'string', enum: ['ACCEPTED', 'REJECTED'] }, note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderreview.reviewObligation(
+        projectContext(platform, ctx),
+        ctx.params.reviewId as string,
+        ctx.params.obligationReference as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-reviews/:reviewId/qualifications',
+    description: 'Record an exclusion or assumption, and the gap or obligation it answers',
+    schema: {
+      type: 'object',
+      required: ['kind', 'text', 'tracesTo'],
+      properties: {
+        kind: { type: 'string', enum: ['EXCLUSION', 'ASSUMPTION'] },
+        text: { type: 'string' },
+        tracesTo: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderreview.recordQualification(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-reviews/:reviewId/freeze',
+    description: 'Freeze the information the price is built on',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => tenderreview.freezeReview(projectContext(platform, ctx), ctx.params.reviewId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-reviews/:reviewId/addenda',
+    description: 'What an addendum touches in the frozen review — prices, programme and submissions',
+    schema: {
+      type: 'object',
+      required: ['addendum', 'changedDocuments'],
+      properties: {
+        addendum: stringField,
+        changedDocuments: { type: 'array', items: { type: 'string' } },
+        changedClauses: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderreview.assessAddendum(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
+  },
+
   // ------------------------------------------------------- the settlement meeting (T-WF-07)
   {
     method: 'GET',
