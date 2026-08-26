@@ -586,6 +586,19 @@ describe('tender intelligence · an adjustment with no source is a preference', 
     assert.equal(amey.evaluatedMinor, 5_680_000_00);
   });
 
+  /**
+   * The person who adjudicates has to be able to see what they are
+   * adjudicating. Reading a comparison was `X` — which the QS holds and the
+   * commercial roles who decide on it do not — until the pricing route needed
+   * it. It computes and writes nothing, so it is a read.
+   */
+  it('lets the roles who decide on a comparison read it', () => {
+    for (const who of ['pm', 'owner'] as const) {
+      const auth = platform.context(seed.users[who]!.auth, seed.projectId, { source: 'WEB' });
+      assert.equal(tenderintel.compareReturns(auth, comparisonId).reference.startsWith('TC-'), true);
+    }
+  });
+
   it('ranks when nothing is outstanding, cheapest evaluated first', () => {
     const result = tenderintel.compareReturns(asQS(), comparisonId);
     assert.equal(result.rankingSuppressed, false);

@@ -280,6 +280,12 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('RETURN_COMPARISON_UPDATED', 'ReturnComparison', 'UPDATE', 'PROCUREMENT', { creates: true }),
   def('SUBMISSION_RECEIVED', 'SupplierSubmission', 'CREATE', 'PROCUREMENT', { requiresEvidence: true }),
   def('SUBMISSION_NORMALISED', 'SupplierSubmission', 'AI_EXECUTE', 'PROCUREMENT', { aiAllowed: true }),
+  // T-WF-05. Buy it or do it. An agent may normalise and flag; the estimate of
+  // our own cost and the choice between the two routes are people's acts,
+  // because both are commercial judgements rather than arithmetic.
+  def('PRICING_ROUTE_SELECTED', 'PricingRoute', 'APPROVE', 'PROCUREMENT', { creates: true }),
+  def('SELF_PERFORM_PRICED', 'PricingRoute', 'UPDATE', 'PROCUREMENT'),
+  def('RETURN_NORMALISED', 'PricingRoute', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
   def('BIDS_EVALUATED', 'BidEvaluation', 'EXECUTE', 'PROCUREMENT', { aiAllowed: true, requiresEvidence: true }),
   def('MASTER_PRICING_CONSOLIDATED', 'MasterPricing', 'CREATE', 'PROCUREMENT'),
   def('ADJUDICATION_COMPLETED', 'Adjudication', 'APPROVE', 'PROCUREMENT', { requiresEvidence: true, creates: true }),

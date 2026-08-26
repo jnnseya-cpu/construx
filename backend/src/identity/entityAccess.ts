@@ -107,6 +107,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   BidProgramme: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   MasterPricing: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   PricingSchedule: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
+  // Buy it or do it, per package: the market's number beside our own, and the
+  // reasoning behind which one went in the bid.
+  PricingRoute: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   // Every bidder's price side by side. There is nothing more commercially
   // sensitive in a tender than this record, and one bidder seeing it would end
   // the process.

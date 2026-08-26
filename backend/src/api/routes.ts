@@ -55,6 +55,7 @@ import * as sitevisit from '../engines/sitevisit.ts';
 import * as award from '../domain/award.ts';
 import * as enquiry from '../domain/enquiry.ts';
 import * as measurement from '../domain/measurement.ts';
+import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as tenderintel from '../domain/tenderintel.ts';
 import * as tenderreview from '../domain/tenderreview.ts';
@@ -6401,6 +6402,123 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       tenderreview.assessAddendum(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
+  },
+
+  // ------------------------------------------ buy it or do it (T-WF-05)
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/pricing-routes',
+    description: 'Every package route, and where the cheapest evaluated option was not the one chosen',
+    handler: (platform, ctx) => pricingroute.pricingRoutePosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/pricing-routes',
+    description: 'Open the buy-or-build decision for one package',
+    schema: {
+      type: 'object',
+      required: ['packageReference'],
+      properties: { packageReference: stringField, comparisonId: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => pricingroute.openRoute(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/pricing-routes/:routeId/self-perform',
+    description: 'What it costs us to do the work ourselves, kept independent of the quotations',
+    schema: {
+      type: 'object',
+      required: ['directCostMinor', 'durationWeeks', 'peakLabour', 'basis'],
+      properties: {
+        directCostMinor: { type: 'integer' },
+        durationWeeks: { type: 'number' },
+        peakLabour: { type: 'number' },
+        basis: stringField,
+        retainedRisks: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      pricingroute.recordSelfPerform(projectContext(platform, ctx), ctx.params.routeId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/pricing-routes/:routeId/evaluation',
+    description: 'What choosing a route costs beyond its price — risk, interface, management, programme',
+    schema: {
+      type: 'object',
+      required: ['head', 'amountMinor', 'basis'],
+      properties: {
+        partyId: { type: 'string' },
+        head: { type: 'string', enum: [...pricingroute.EVALUATION_HEAD] },
+        amountMinor: { type: 'integer' },
+        basis: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      pricingroute.evaluateRoute(projectContext(platform, ctx), ctx.params.routeId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/pricing-routes/:routeId/exclusions',
+    description: 'Price it, clarify it, or accept it as a project exclusion — every exclusion is somebody’s cost',
+    schema: {
+      type: 'object',
+      required: ['partyId', 'exclusion', 'disposition'],
+      properties: {
+        partyId: stringField,
+        exclusion: stringField,
+        disposition: { type: 'string', enum: [...pricingroute.EXCLUSION_DISPOSITION] },
+        reference: { type: 'string' },
+        amountMinor: { type: 'integer' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      pricingroute.disposeExclusion(projectContext(platform, ctx), ctx.params.routeId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/pricing-routes/:routeId/interests',
+    description: 'Declare a connection to a firm being priced, before the selection',
+    schema: {
+      type: 'object',
+      required: ['partyId', 'name', 'nature'],
+      properties: { partyId: stringField, name: stringField, nature: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      pricingroute.declareInterest(projectContext(platform, ctx), ctx.params.routeId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/pricing-routes/:routeId',
+    description: 'Raw, normalised and evaluated side by side for every route on the package',
+    handler: (platform, ctx) =>
+      pricingroute.routePosition(projectContext(platform, ctx), ctx.params.routeId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/pricing-routes/:routeId/select',
+    description: 'Choose the route, on cost, risk, programme and capacity together',
+    schema: {
+      type: 'object',
+      required: ['route', 'rationale', 'costBasis', 'riskBasis', 'programmeBasis', 'capacityBasis'],
+      properties: {
+        route: { type: 'string', enum: [...pricingroute.ROUTE] },
+        partyId: { type: 'string' },
+        rationale: stringField,
+        costBasis: stringField,
+        riskBasis: stringField,
+        programmeBasis: stringField,
+        capacityBasis: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      pricingroute.selectRoute(projectContext(platform, ctx), ctx.params.routeId as string, body(ctx)),
   },
 
   // ------------------------------ the enquiry pack and who holds it (T-WF-04)

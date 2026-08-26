@@ -69,10 +69,17 @@ export async function procurement(root) {
   const closedEnquiries = enquiries.enquiries.filter((e) => e.status === 'CLOSED');
 
   const openComparisons = intel.comparisons.filter((c) => c.status === 'OPEN');
+
+  // T-WF-05. Buy it or do it, per package.
+  const routes = await api
+    .get(`/v1/projects/${projectId}/pricing-routes`)
+    .catch(() => ({ routes: [], summary: '' }));
+  const openRoutes = routes.routes.filter((r) => r.status === 'OPEN');
   const unanswered = intel.clarifications.filter((c) => c.status === 'OPEN');
   const NO_OPEN_COMPARISON = 'No comparison is open — open one, or the last was closed for adjudication';
   const NO_OPEN_SCHEDULE = 'No measurement schedule is open — open one, or the last was frozen';
   const NO_LIVE_ENQUIRY = 'No enquiry is live — open one, or the last closed for returns';
+  const NO_OPEN_ROUTE = 'No package route is open — open one, or the last was selected';
 
   // Who was asked against who answered. Every fact was already on the record
   // and nothing stood them beside each other, which from a screen is
@@ -130,6 +137,22 @@ export async function procurement(root) {
             { id: 'issue', label: 'Issue RFQ', permitted: can('PROCUREMENT_AWARD', 'U'), reason: blockedReason('PROCUREMENT_AWARD', 'U') },
             { id: 'submission', label: 'Record submission', permitted: can('SUPPLIER_SUBMISSION', 'C'), reason: blockedReason('SUPPLIER_SUBMISSION', 'C') },
             { id: 'award', label: 'Award', permitted: can('PROCUREMENT_AWARD', 'A'), reason: blockedReason('PROCUREMENT_AWARD', 'A') },
+            { id: 'route', label: 'Buy it or do it', permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
+            { id: 'selfPerform', label: 'Price it ourselves',
+              permitted: can('ESTIMATE_TENDER', 'U') && openRoutes.length > 0,
+              reason: blockedReason('ESTIMATE_TENDER', 'U') ?? NO_OPEN_ROUTE },
+            { id: 'evaluation', label: 'What the route costs us',
+              permitted: can('ESTIMATE_TENDER', 'U') && openRoutes.length > 0,
+              reason: blockedReason('ESTIMATE_TENDER', 'U') ?? NO_OPEN_ROUTE },
+            { id: 'exclusion', label: 'Dispose of an exclusion',
+              permitted: can('ESTIMATE_TENDER', 'U') && openRoutes.length > 0,
+              reason: blockedReason('ESTIMATE_TENDER', 'U') ?? NO_OPEN_ROUTE },
+            { id: 'interest', label: 'Declare an interest',
+              permitted: can('ESTIMATE_TENDER', 'U') && openRoutes.length > 0,
+              reason: blockedReason('ESTIMATE_TENDER', 'U') ?? NO_OPEN_ROUTE },
+            { id: 'selectRoute', label: 'Choose the route',
+              permitted: can('ESTIMATE_TENDER', 'A') && openRoutes.length > 0,
+              reason: blockedReason('ESTIMATE_TENDER', 'A') ?? NO_OPEN_ROUTE },
             { id: 'enquiry', label: 'Open enquiry', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
             { id: 'packRevision', label: 'Compose pack revision',
               permitted: can('PROCUREMENT_AWARD', 'C') && liveEnquiries.length > 0,
@@ -323,6 +346,59 @@ export async function procurement(root) {
                         ${reconciliation.uninvitedReturns.join(', ')} — either a data fault or a procurement irregularity, and both need somebody to look.
                       </div>
                     </div></div>`
+              }
+            </div>`
+      }
+
+      ${
+        routes.routes.length === 0
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Buy it or do it — the route on every package</h3>
+              <div style="padding:8px 17px 0"><div class="metric-sub">
+                Raw is what the firm sent. Normalised is the same scope, differently priced — a correction. Evaluated adds what
+                choosing that route costs us in risk, interface, management and programme — an addition. Mixing the two produces a
+                number nobody can defend, because half of it is arithmetic and half of it is judgement.
+              </div></div>
+              ${table({
+                headers: ['Route', 'Package', 'Options', 'Selected', 'Basis', 'Interests', 'State'],
+                align: ['', '', 'num', '', '', 'num', ''],
+                rows: routes.routes.map((r) => [
+                  r.reference,
+                  r.packageReference,
+                  r.options,
+                  r.selectedName ?? (r.rankingSuppressed ? badge('ranking withheld', 'warn') : '—'),
+                  r.selectedWasCheapest === false
+                    ? badge('not the cheapest evaluated', 'warn')
+                    : r.selectedWasCheapest === true
+                      ? badge('cheapest evaluated', 'ok')
+                      : '—',
+                  r.interests > 0 ? badge(String(r.interests), 'warn') : '—',
+                  badge(badgeText(r.status), statusTone(r.status)),
+                ]),
+              })}
+              ${
+                routes.routes.some((r) => r.selectedWasCheapest === false)
+                  ? html`<div style="padding:12px 17px 0"><div class="notice info">
+                      <div>
+                        <b>A package was bought from somebody other than the cheapest evaluated option.</b><br>
+                        That is often right — the firm that is cheaper and has no capacity until March is not cheaper — and it is
+                        exactly the sentence somebody will be asked about. The rationale, and the cost, risk, programme and
+                        capacity bases behind it, are on the record.
+                      </div>
+                    </div></div>`
+                  : ''
+              }
+              ${
+                routes.routes.some((r) => r.interests > 0)
+                  ? html`<div style="padding:12px 17px 15px"><div class="notice warn">
+                      <div>
+                        <b>A connection to a firm being priced has been declared.</b><br>
+                        Declared before the selection, which is the only time a declaration counts, and the person who declared it
+                        cannot make the decision on that firm.
+                      </div>
+                    </div></div>`
+                  : ''
               }
             </div>`
       }
@@ -849,6 +925,145 @@ export async function procurement(root) {
       transform: ({ rfqId, conditions, ...rest }) => ({
         ...rest,
         conditions: String(conditions ?? '').split('\n').map((x) => x.trim()).filter(Boolean),
+      }),
+    },
+
+    // ---- T-WF-05 -----------------------------------------------------------
+
+    route: {
+      title: 'Buy it or do it',
+      intent:
+        'Every package is priced twice and one of the two answers goes in the bid. Link the return comparison and the market side ' +
+        'is read from it — there is one register of the adjustments, not two.',
+      path: `/v1/projects/${projectId}/pricing-routes`,
+      submitLabel: 'Open',
+      fields: [
+        { name: 'packageReference', label: 'Package', type: 'text' },
+        { name: 'comparisonId', label: 'Return comparison', type: 'select', required: false,
+          options: intel.comparisons.map((c) => ({ value: c.comparisonId, label: `${c.reference} · ${c.packageReference}` })) },
+      ],
+    },
+
+    selfPerform: {
+      title: 'Price it ourselves',
+      intent:
+        'Kept independent of the quotations. A self-perform estimate built after seeing them is not an estimate, it is a reaction ' +
+        'to them, and it will land just under the cheapest one every time.',
+      path: (collected) => `/v1/projects/${projectId}/pricing-routes/${collected.routeId}/self-perform`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'routeId', label: 'Package route', type: 'select',
+          options: openRoutes.map((r) => ({ value: r.routeId, label: `${r.reference} · ${r.packageReference}` })) },
+        { name: 'directCostMinor', label: 'Our direct cost', type: 'number', money: true },
+        { name: 'durationWeeks', label: 'Weeks on site', type: 'number', min: 1 },
+        { name: 'peakLabour', label: 'Peak operatives', type: 'number', min: 1,
+          hint: 'Capacity is what constrains a self-perform route' },
+        { name: 'basis', label: 'How the estimate was built', type: 'textarea', rows: 2 },
+        { name: 'retainedRisks', label: 'What we carry by doing it', type: 'textarea', rows: 2, required: false, hint: 'One per line' },
+      ],
+      transform: ({ routeId, retainedRisks, ...rest }) => ({
+        ...rest,
+        retainedRisks: String(retainedRisks ?? '').split('\n').map((x) => x.trim()).filter(Boolean),
+      }),
+    },
+
+    evaluation: {
+      title: 'What choosing this route costs us',
+      intent:
+        'Beyond the price. Signed, because a firm that takes design responsibility off us genuinely costs less than its price — ' +
+        'and refusing that would push the saving into a fudge somewhere nobody can see it.',
+      path: (collected) => `/v1/projects/${projectId}/pricing-routes/${collected.routeId}/evaluation`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'routeId', label: 'Package route', type: 'select',
+          options: openRoutes.map((r) => ({ value: r.routeId, label: `${r.reference} · ${r.packageReference}` })) },
+        { name: 'partyId', label: 'Firm', type: 'text', required: false, hint: 'Leave blank for the self-perform route' },
+        { name: 'head', label: 'What it is', type: 'select',
+          options: [
+            { value: 'RISK', label: 'Risk — what they carry back to us' },
+            { value: 'INTERFACE', label: 'Interface — what somebody has to manage across' },
+            { value: 'MANAGEMENT', label: 'Management — our own time on it' },
+            { value: 'PROGRAMME', label: 'Programme — what their dates cost' },
+          ] },
+        { name: 'amountMinor', label: 'Amount', type: 'number', money: true, hint: 'Negative where the route costs us less than its price' },
+        { name: 'basis', label: 'What it rests on', type: 'textarea', rows: 2 },
+      ],
+      transform: ({ routeId, partyId, ...rest }) => ({
+        ...rest,
+        ...(String(partyId ?? '').trim() ? { partyId } : {}),
+      }),
+    },
+
+    exclusion: {
+      title: 'Dispose of an exclusion',
+      intent:
+        'A return that excludes scaffold is not cheaper; it is incomplete, and the scaffold is ours until somebody says otherwise. ' +
+        'Price it, point at the clarification that says it is not ours, or accept it as a project exclusion the client carries.',
+      path: (collected) => `/v1/projects/${projectId}/pricing-routes/${collected.routeId}/exclusions`,
+      submitLabel: 'Dispose',
+      fields: [
+        { name: 'routeId', label: 'Package route', type: 'select',
+          options: openRoutes.map((r) => ({ value: r.routeId, label: `${r.reference} · ${r.packageReference}` })) },
+        { name: 'partyId', label: 'Firm', type: 'text' },
+        { name: 'exclusion', label: 'The exclusion, as they wrote it', type: 'text' },
+        { name: 'disposition', label: 'What happens to it', type: 'select',
+          options: [
+            { value: 'PRICED', label: 'Priced — we carry an allowance for it' },
+            { value: 'CLARIFIED', label: 'Clarified — an issued clarification says it is not ours' },
+            { value: 'PROJECT_EXCLUSION', label: 'Project exclusion — the client carries it' },
+          ] },
+        { name: 'amountMinor', label: 'Allowance', type: 'number', money: true, required: false, hint: 'Required when pricing it' },
+        { name: 'reference', label: 'Clarification or bid exclusion reference', type: 'text', required: false },
+      ],
+      transform: ({ routeId, amountMinor, reference, ...rest }) => ({
+        ...rest,
+        ...(String(amountMinor ?? '').trim() ? { amountMinor: Number(amountMinor) } : {}),
+        ...(String(reference ?? '').trim() ? { reference } : {}),
+      }),
+    },
+
+    interest: {
+      title: 'Declare an interest',
+      intent:
+        'Before the selection, never after — declaring it afterwards is not a declaration, it is an explanation. The person who ' +
+        'declares it cannot then make the decision on that firm.',
+      path: (collected) => `/v1/projects/${projectId}/pricing-routes/${collected.routeId}/interests`,
+      submitLabel: 'Declare',
+      fields: [
+        { name: 'routeId', label: 'Package route', type: 'select',
+          options: openRoutes.map((r) => ({ value: r.routeId, label: `${r.reference} · ${r.packageReference}` })) },
+        { name: 'partyId', label: 'Firm', type: 'text' },
+        { name: 'name', label: 'Firm name', type: 'text' },
+        { name: 'nature', label: 'What the connection is', type: 'textarea', rows: 2 },
+      ],
+      transform: ({ routeId, ...rest }) => rest,
+    },
+
+    selectRoute: {
+      title: 'Choose the route',
+      intent:
+        'On cost, risk, programme and capacity together — none of them optional. The cheapest evaluated option does not have to ' +
+        'win, but choosing another has to say so out loud, because that is the sentence somebody will be asked about.',
+      path: (collected) => `/v1/projects/${projectId}/pricing-routes/${collected.routeId}/select`,
+      submitLabel: 'Choose',
+      fields: [
+        { name: 'routeId', label: 'Package route', type: 'select',
+          options: openRoutes.map((r) => ({ value: r.routeId, label: `${r.reference} · ${r.packageReference}` })) },
+        { name: 'route', label: 'Which route', type: 'select',
+          options: [
+            { value: 'SUPPLY_CHAIN', label: 'Buy it — a firm from the market' },
+            { value: 'SELF_PERFORM', label: 'Do it — our own people' },
+          ] },
+        { name: 'partyId', label: 'Firm', type: 'text', required: false, hint: 'For the supply-chain route' },
+        { name: 'rationale', label: 'Why', type: 'textarea', rows: 2 },
+        { name: 'costBasis', label: 'Cost basis', type: 'text' },
+        { name: 'riskBasis', label: 'Risk basis', type: 'text' },
+        { name: 'programmeBasis', label: 'Programme basis', type: 'text' },
+        { name: 'capacityBasis', label: 'Capacity basis', type: 'text' },
+      ],
+      transform: ({ routeId, partyId, ...rest }) => ({
+        ...rest,
+        ...(String(partyId ?? '').trim() ? { partyId } : {}),
       }),
     },
 

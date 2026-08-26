@@ -766,8 +766,22 @@ export type ComparisonResult = {
  * read as a recommendation however it is labelled, and the failure this
  * prevents is a package awarded on a comparison somebody knew was incomplete.
  */
+/**
+ * Authorised as a **read**, not as an execution.
+ *
+ * It was `X` until the pricing route needed to read a comparison to decide
+ * between buying a package and self-performing it — and the commercial manager
+ * who makes that decision holds `R` and `A` on procurement, not `X`. So the
+ * person who adjudicates could not see what they were adjudicating, which is
+ * the wrong way round.
+ *
+ * `X` was the wrong code for it anyway: this computes and writes nothing, and
+ * every role that holds `R` here is a senior commercial one who should be able
+ * to read a return comparison. The `COMMERCIAL_L3` sensitivity gate still
+ * applies on top, which is what actually keeps it away from the site team.
+ */
 export function compareReturns(ctx: EngineContext, comparisonId: string): ComparisonResult {
-  authorise(ctx, 'PROCUREMENT_AWARD', 'X', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+  authorise(ctx, 'PROCUREMENT_AWARD', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
   return computeComparison(requireComparison(ctx, comparisonId));
 }
 

@@ -1228,17 +1228,17 @@ every record already carrying the old name, and the standing principle is that
 nothing is removed or replaced. The mapping is asserted by a test so it stays
 readable against the ledger.
 
-### 8.3 (continued) T-WF-05 and 8.4 — received, not built
+### 8.3 (continued) — the eight tender workflows, and 8.4
 
-Recorded so the scope is visible and nothing here is mistaken for present.
-None of these is built; each names what already exists that it would extend.
+All eight of section 8.3 are built. Each is described below. The stage gate at
+8.4 is not declared and is the only thing outstanding in this section.
 
-| Workflow | Nearest thing that already exists |
+| Workflow | State |
 |---|---|
 | ~~**T-WF-02** documents, scope gap, contract risk~~ | **BUILT** — see below |
 | ~~**T-WF-03** measurement, BoQ, estimate schedule~~ | **BUILT** — see below |
 | ~~**T-WF-04** package strategy, enquiry, bidder issue~~ | **BUILT** — see below |
-| **T-WF-05** supply-chain and self-delivery pricing routes | `assignScheduleRoute` (SUPPLY_CHAIN / SELF_PRICE), `analyseReturns`, `consolidateMasterPricing`. Normalisation to a common basis with a visible adjustment bridge does not |
+| ~~**T-WF-05** supply-chain and self-delivery pricing routes~~ | **BUILT** — see below |
 | ~~**T-WF-06** clarifications, addenda, return intelligence~~ | **BUILT** — see below |
 | ~~**T-WF-07** commercial adjudication and governance~~ | **BUILT** — see below |
 | ~~**T-WF-08** submission, award, zero-re-entry conversion~~ | **BUILT** — see below |
@@ -1300,6 +1300,65 @@ qualification into the submitted bid pack's qualifications schedule.
 register after a document arrives appends rather than being refused as "already
 exists". Addendum impact is written as `ADDENDUM_IMPACT_ASSESSED`, which is the
 name T-WF-06 gives the same act — one event, not two.
+
+---
+
+### 8.3 (continued) T-WF-05 — Supply-chain and self-delivery pricing routes
+
+**BUILT.** `backend/src/domain/pricingroute.ts`, eight routes, 35 tests, and a
+panel on the Tender & Procurement screen with six commands.
+
+| Clause | State |
+|---|---|
+| Maintain independent supplier and self-perform routes per package | **BUILT** — and the self-perform estimate is a first-class option beside the returns, not a fallback |
+| Normalise quotations to a common scope, unit, tax, currency, base date and commercial basis | **BUILT, in the comparison** — `ReturnComparison` (T-WF-06) already holds the raw return immutably and every adjustment against it, each citing a return line or an issued clarification. Its figure is read here as the **normalised** one rather than rebuilt |
+| Map inclusions, exclusions, qualifications and provisional sums to the scope matrix | **PARTIAL** — every exclusion must be disposed as priced, clarified or a project exclusion. Mapping onto the T-WF-02 scope-matrix item is **not built** |
+| Calculate evaluated cost including risk, interface, management and programme impacts | **BUILT** — four heads, signed, each with a basis an adjudication can test |
+| Preserve the raw return and the adjustment bridge; no overwriting a supplier value | **BUILT, already** — the raw return refuses a second write |
+| Select a route provisionally for master pricing, subject to adjudication | **BUILT** — with the four bases, and whether it was the cheapest evaluated option |
+| Currency conversion and tax treatment must be explicit | **BUILT** — as a `TAX_OR_CURRENCY` adjustment naming both rates, which is where it belongs: it is a normalisation, not an evaluation |
+| Non-comparable returns stay flagged; ranking suppressed if material data is missing | **BUILT** — an undisposed exclusion makes that route not comparable and withholds the ranking |
+| Related-party or conflict declaration mandatory where configured | **BUILT** — declared before the selection, and the person who declared it cannot then choose that firm |
+| **AC-T-WF-05-01** raw, normalised and evaluated reconcile through visible adjustments | **BUILT** — asserted arithmetically for every option |
+| **AC-T-WF-05-02** each exclusion maps to a priced allowance, clarification or accepted project exclusion | **BUILT** — and an undisposed one blocks the selection |
+| **AC-T-WF-05-03** the selected route shows cost, risk, programme and capacity basis | **BUILT** — all four required, named in the refusal when missing |
+
+**Three decisions worth recording.**
+
+**Normalisation and evaluation are different acts and are kept apart.** Getting
+a quotation onto the common basis is a *correction* — the same scope, differently
+priced. What choosing that firm costs us is an *addition*. Mixing them produces
+a number nobody can defend, because half of it is arithmetic and half of it is
+judgement. The comparison holds the first and this holds the second, and the
+three figures reconcile.
+
+**The self-perform estimate is kept independent of the quotations.** An estimate
+built after seeing them is not an estimate, it is a reaction to them, and it
+will land just under the cheapest one every time. It also has to state peak
+labour: capacity is what constrains a self-perform route, and a route chosen
+without it was chosen on price alone.
+
+**An evaluation adder may be negative.** A firm that takes single-point design
+responsibility off us genuinely costs less than its price. Refusing negatives
+would push that saving into a fudge somewhere nobody can see it.
+
+**Not built, and not to be claimed:** mapping each exclusion onto the T-WF-02
+scope-matrix item it belongs to; any automatic currency conversion — the rate
+and the restatement are recorded as an adjustment by a person, deliberately;
+and any link from a selected route into `consolidateMasterPricing`, which
+remains a separate act.
+
+**The event names.** `SELF_PERFORM_PRICED`, `RETURN_NORMALISED` and
+`PRICING_ROUTE_SELECTED` are the specification's own. `TENDER_RETURN_RECEIVED`
+is `SUBMISSION_RECEIVED` and the comparison's own raw-return record, both
+already on the ledger and mapped rather than renamed.
+
+**One correction made on the way.** `compareReturns` authorised
+`PROCUREMENT_AWARD` `X`. The commercial roles who decide between buying a
+package and self-performing it hold `R` and `A`, not `X` — so the person who
+adjudicates could not read what they were adjudicating. It computes and writes
+nothing, so it is a read; it is `R` now, with the `COMMERCIAL_L3` sensitivity
+gate unchanged, and a test asserts the deciding roles can read it.
 
 ---
 
@@ -1675,6 +1734,14 @@ audit event, the agent contract or the lifecycle gate.
     binds to the pack hash, the departures are computed rather than noticed, and
     the budget and buyout targets come off the estimate. The submission
     completeness checks are the part not built.
+
+12a0000000. ~~T-WF-05 — buy it or do it.~~ **Done.** Raw, normalised and
+    evaluated as three reconciling figures, the self-perform estimate kept
+    independent of the quotations, every exclusion disposed before anything is
+    ranked, and a route chosen on cost, risk, programme and capacity together.
+    That completes all eight workflows of section 8.3; only the 8.4 stage gate
+    remains. Mapping each exclusion onto its scope-matrix item is the part not
+    built.
 
 12a000000. ~~T-WF-04 — the enquiry pack and who holds it.~~ **Done.** Numbered
     revisions with a content hash, per-firm issue evidence naming which one they

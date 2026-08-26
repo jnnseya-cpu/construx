@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 2,066 passing, 0 failing, 0 skipped, across 102 files |
+| Tests | 2,102 passing, 0 failing, 0 skipped, across 103 files |
 | Typecheck | clean |
-| Backend | 127 TypeScript files, 67,261 lines |
-| Application | 39 ES modules, 15,047 lines (including a service worker) |
-| API routes | 383 (34 of them public) |
-| Event types | 246 Golden Thread (closed) · 178 communication events (closed) |
-| Entity types | 135, all classified for access |
+| Backend | 128 TypeScript files, 68,164 lines |
+| Application | 39 ES modules, 15,262 lines (including a service worker) |
+| API routes | 391 (34 of them public) |
+| Event types | 249 Golden Thread (closed) · 178 communication events (closed) |
+| Entity types | 136, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -4258,6 +4258,83 @@ register after a missing document arrives appends rather than being refused as
 "already exists" — validation happens more than once by design. Addendum impact
 writes `ADDENDUM_IMPACT_ASSESSED`, the name T-WF-06 gives the same act, so there
 is one event for it and not two.
+
+---
+
+### Buy it or do it, and the three figures that are not the same figure
+
+T-WF-05. `backend/src/domain/pricingroute.ts`, eight routes, 35 tests, and a
+panel on the Tender & Procurement screen with six commands. **This completes
+all eight workflows of section 8.3.**
+
+Every package is priced twice and one of the two answers goes in the bid. What
+was missing is not the arithmetic — it is the three things that make the two
+numbers actually comparable.
+
+**Raw, normalised and evaluated are three different figures.** A quotation
+arrives on the firm's own basis: their currency, their tax treatment, their idea
+of what the package includes. Getting it onto the common basis is
+*normalisation*, and it is a **correction** — the same scope, differently
+priced. What it costs us to choose that firm — the risk they hand back, the
+interfaces somebody has to manage, the management time, the programme — is
+*evaluation*, and it is an **addition**. Mixing them produces a number nobody
+can defend, because half of it is arithmetic and half of it is judgement. All
+three reconcile, for every option, and the tests assert it.
+
+**The normalised figure is read from the return comparison, not rebuilt here.**
+`ReturnComparison` already holds the raw returns immutably and every adjustment
+against them, each citing a return line or an issued clarification. That *is*
+normalisation, and a second register of the same adjustments would be two
+sources of truth for one thing. What this adds is the evaluation layer on top
+and the decision that follows.
+
+**The self-perform estimate is kept independent of the quotations.** An estimate
+built after seeing them is not an estimate, it is a reaction to them, and it
+will land just under the cheapest one every time. It also has to state peak
+operatives: capacity is what constrains a self-perform route, and one chosen
+without it was chosen on price alone.
+
+**An evaluation adder may be negative.** A firm that takes single-point design
+responsibility off us genuinely costs less than its price, and refusing that
+would push the saving into a fudge somewhere nobody can see it.
+
+**Every exclusion is somebody's cost.** A return excluding scaffold is not
+cheaper; it is incomplete, and the scaffold is ours until somebody says
+otherwise. Each has to be disposed — priced as an allowance, answered by an
+*issued* clarification, or accepted as a project exclusion the client carries —
+and an undisposed one makes that route not comparable, withholds the ranking,
+and blocks the selection. It is not a report at the settlement meeting.
+
+**A route chosen on price alone is chosen on a quarter of the question.** Cost,
+risk, programme and capacity, none of them optional. The cheapest evaluated
+option does not have to win — but choosing another has to say so out loud,
+because that is the sentence somebody will be asked about, and the position
+reports every package where it happened.
+
+**A declared interest is declared before the decision.** Declaring one
+afterwards is not a declaration, it is an explanation. And the person who
+declared it cannot then make the decision on that firm: declaring and deciding
+anyway is worse than not declaring, because it puts the conflict on the record
+beside your own signature.
+
+**Verified against a running server**, and the arithmetic tells the story the
+workflow exists for: Amey looked £130,000 cheaper than Balfour on the raw
+return, and once the scaffold they excluded is priced back in they are the most
+expensive of the three options. Self-perform is cheapest on evaluated cost;
+Balfour was chosen anyway, and the four bases behind that are on the record.
+
+**One correction made on the way.** `compareReturns` authorised
+`PROCUREMENT_AWARD` `X`. The commercial roles who decide between buying a
+package and self-performing it hold `R` and `A` on procurement, not `X` — so the
+person who adjudicates could not read what they were adjudicating, which is the
+wrong way round. It computes and writes nothing, so it is a read: `R` now, with
+the `COMMERCIAL_L3` sensitivity gate unchanged, and a test asserts the deciding
+roles can read it.
+
+**Not built, and not to be claimed:** mapping each exclusion onto the
+scope-matrix item it belongs to; automatic currency conversion — the rate and
+the restatement are recorded by a person, deliberately; and any link from a
+selected route into `consolidateMasterPricing`, which stays a separate act.
 
 ---
 
