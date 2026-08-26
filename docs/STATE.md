@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,783 passing, 0 failing, 0 skipped, across 94 files |
+| Tests | 1,794 passing, 0 failing, 0 skipped, across 94 files |
 | Typecheck | clean |
 | Backend | 120 TypeScript files, 59,893 lines |
 | Application | 39 ES modules, 13,895 lines (including a service worker) |
@@ -3917,6 +3917,22 @@ rule the server does not, which is the exact drift `blockedReason` exists to
 prevent. `can()` and `blockedReason()` now take a `tenantScoped` option. Checked
 against every other screen: `BILLING_ACU` and `ENTERPRISE_STRUCTURE` carry no
 phase gate at all, so no other screen was affected.
+
+**Both now have a test that fails if they come back**, which is the part that
+actually mattered — a defect found by looking at the screen is found again the
+next time unless something is watching for it.
+
+The sentence is asserted verbatim. The phase gate has a new static invariant in
+`consoleforms.test.ts`, in the same family as the check that every console form
+posts to a route that exists: **a page that phase-gates a capability area must
+declare at least one project-scoped path.** A page whose every endpoint is
+tenant-scoped has no project to take a phase from, so gating on one is always
+wrong. It runs over all twenty-three page modules, and it reads the
+`{ tenantScoped: true }` idiom by name so the screens can keep declaring it once
+rather than four times.
+
+Both were proved by reverting the fix and watching the suite go red — a test
+that has never failed is a test that has never been checked.
 
 **Not built, and not to be claimed:** reading deliverables or requirements out of
 the invitation *file* — they are supplied structured, one at a time by a person

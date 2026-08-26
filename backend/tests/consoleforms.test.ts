@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { matchRoute, ROUTES } from '../src/api/routes.ts';
+import { WRITE_PHASE_GATES } from '../src/identity/abac.ts';
 
 /**
  * Every input form in the console posts to a route that exists.
@@ -97,6 +98,93 @@ describe('every path the console calls resolves to a route', () => {
       assert.deepEqual(dead, [], `these paths match no route:\n  ${dead.join('\n  ')}`);
     });
   }
+});
+
+/**
+ * The console must not phase-gate a command that runs before a project exists.
+ *
+ * This one shipped. Every command on the pipeline screen rendered locked —
+ * "Estimate tender cannot be written during the Operations phase" — while the
+ * API accepted the identical command without complaint. The bid pipeline runs
+ * against the tenant governance scope, which has no `Project` record and
+ * therefore no lifecycle phase; the server gates only when
+ * `attributes.lifecyclePhase` is present, so it never gated these at all. The
+ * browser was applying the phase of whatever delivery project the console
+ * happened to have selected.
+ *
+ * That is the browser holding a rule the server does not, which is precisely
+ * the drift `blockedReason` exists to prevent — and it is invisible from the
+ * server side, because nothing is refused. The person just sees a padlock and
+ * assumes they lack the permission.
+ *
+ * The invariant, stated so a regression fails here rather than in front of a
+ * bid manager: **a page that phase-gates a capability area must declare at
+ * least one project-scoped path.** A page whose every endpoint is tenant-scoped
+ * has no project to take a phase from, so gating on one is always wrong.
+ */
+describe('the console never phase-gates a command that has no project', () => {
+  /** Areas whose writes the server gates by phase. Anything else cannot drift. */
+  const GATED = new Set(Object.keys(WRITE_PHASE_GATES));
+  const WRITE_CODES = new Set(['C', 'U', 'A', 'I', 'G']);
+
+  /** `can('AREA', 'C')` / `blockedReason('AREA', 'U', OPTS)` — with any options. */
+  const GATE_CALL = /\b(?:can|blockedReason)\(\s*'([A-Z_]+)'\s*,\s*'([A-Z])'\s*(,[^)]*)?\)/g;
+
+  /**
+   * Names bound to an options object that sets `tenantScoped: true`.
+   *
+   * A screen where every command is tenant-scoped declares the option once and
+   * passes it by name, which reads far better at four call sites than the
+   * literal repeated four times. The check has to understand that idiom rather
+   * than force the worse-reading version to satisfy a regular expression.
+   */
+  function tenantScopedNames(source: string): Set<string> {
+    const names = new Set(['tenantScoped']);
+    for (const [, name, body] of source.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*(\{[^}]*\})/g)) {
+      if (/tenantScoped:\s*true/.test(body!)) names.add(name!);
+    }
+    return names;
+  }
+
+  for (const file of PAGE_FILES) {
+    const source = readFileSync(join(PAGES_DIR, file), 'utf8');
+
+    // Project-scoped is the server's own test: the route carries :projectId.
+    const hasProjectScopedPath = pathsIn(source).some(
+      (declared) => declared.includes('${projectId}') || declared.includes('/v1/projects/'),
+    );
+    if (hasProjectScopedPath) continue;
+
+    const exempt = tenantScopedNames(source);
+    const phaseGated = [...source.matchAll(GATE_CALL)]
+      .filter(([, area, code, options]) => {
+        if (!GATED.has(area!) || !WRITE_CODES.has(code!)) return false;
+        return ![...exempt].some((name) => (options ?? '').includes(name));
+      })
+      .map(([, area, code]) => `${area}/${code}`);
+
+    it(`${file} gates nothing on a phase it does not have`, () => {
+      assert.deepEqual(
+        [...new Set(phaseGated)],
+        [],
+        `${file} calls no project-scoped endpoint, so it has no lifecycle phase to gate on — ` +
+          'yet it phase-gates these. Pass { tenantScoped: true }, or the commands render locked ' +
+          'while the API accepts them.',
+      );
+    });
+  }
+
+  it('is actually looking at the screen this defect was found on', () => {
+    // Without this, deleting the pipeline screen — or renaming the helper —
+    // turns the whole block above into a loop over nothing that passes.
+    const source = readFileSync(join(PAGES_DIR, 'pipeline.js'), 'utf8');
+    assert.match(source, /tenantScoped:\s*true/, 'the pipeline screen no longer declares its commands tenant-scoped');
+    assert.ok(tenantScopedNames(source).size > 1, 'the tenant-scoped options object is no longer resolvable by name');
+    assert.ok(
+      [...source.matchAll(GATE_CALL)].some(([, area]) => GATED.has(area!)),
+      'the pipeline screen no longer gates a phase-gated area — this test has stopped checking anything',
+    );
+  });
 });
 
 describe('the input surface', () => {
