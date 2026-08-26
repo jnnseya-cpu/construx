@@ -17,7 +17,7 @@ import { esc, exact, toast } from './ui.js';
  * when it was rejected is worse than one that shows nothing.
  */
 
-const FIELD_TYPES = new Set(['text', 'number', 'date', 'select', 'textarea', 'hidden']);
+const FIELD_TYPES = new Set(['text', 'number', 'date', 'month', 'select', 'textarea', 'hidden']);
 
 /**
  * The hash is computed in the browser over the real bytes and becomes the

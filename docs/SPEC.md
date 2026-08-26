@@ -1020,6 +1020,97 @@ people the emphasis means nothing.
 | A subcontractor seat can never read another trade's snags, another org's data, or unfiltered commercial records | **BUILT** — all three tested |
 
 ---
+## THE CONSOLIDATED SPECIFICATION v1.0
+
+Arriving now, alongside Parts A to H rather than replacing them, per the standing
+principle above. Recorded section by section as it lands.
+
+### 5.4 — Role command centres
+
+Ten are specified (5.4.1 to 5.4.10). Six have been audited against the rendered
+screens item by item; **four arrived after that audit and are not yet audited** —
+HSE (5.4.7), Information / BIM (5.4.8), Commissioning (5.4.9) and Handover /
+Asset (5.4.10). They are named here so their absence is not read as a pass.
+
+Judged on what each screen actually renders, not on whether the data exists
+somewhere. Counting the six audited: **13 of 36 KPIs, 8 of 36 widgets and 8 of 30
+quick actions** are BUILT or PARTIAL at the named place.
+
+| Command centre | Screen | KPIs | Widgets | Quick actions |
+|---|---|---|---|---|
+| 5.4.1 Enterprise Client | `enterprise.js` | 1 built, 2 partial, 3 absent | 1 built, 2 partial, 3 absent | 0 of 5 — the two commands present are Create portfolio and Create project |
+| 5.4.2 Project Director / CM | `overview.js` | 1 built, 4 partial, 1 absent | 0 built, 2 partial, 4 absent | 0 built, 2 partial (both via the shared insight panel), 3 absent |
+| 5.4.3 Design Manager | `design.js` | 2 built, 2 partial, 2 absent | 1 built, 2 partial, 3 absent | 0 built, 2 partial, 3 absent |
+| 5.4.4 Commercial Director / QS | `commercial.js` | 4 built, 1 partial, 1 absent | 0 built, 2 partial, 4 absent — three of the four are built, on `contracts.js` and `procurement.js` | 1 built, 3 partial, 1 absent |
+| 5.4.5 Planner | `programme.js` | 1 built, 2 partial, 3 absent | 0 built, 5 partial, 1 absent | 2 built, 3 absent |
+| 5.4.6 Site Manager (mobile) | `field.js` | 0 built, 1 partial, 5 absent | 1 built, 2 partial, 3 absent | 2 built, 1 partial, 2 absent |
+
+Six findings from that audit worth stating rather than leaving in a table.
+
+**Several widgets are built, on the wrong screen.** Upstream/downstream variation
+mismatch, claims evidence strength and package buyout are all real and complete —
+on `contracts.js` and `procurement.js` rather than on the commercial command
+centre where 5.4.4 puts them. That is a composition problem, not a build one, and
+it is much cheaper to fix than the genuinely absent items.
+
+**There is no distinct mobile route.** 5.4.6 names
+`/mobile/projects/{projectId}/today`; `field.js` is one screen at every size,
+adapted by CSS alone (`.g4`/`.g5` collapse at 1200px and 900px). The ten-field
+daily form and the five-to-seven-column registers render as-is on a phone. The
+service worker precaches the shell only and explicitly refuses to cache `/v1/`,
+so no project data is ever held offline; the offline **queue** for captured work
+is real (`lib/outbox.js`, IndexedDB, device id, flush) and is surfaced on the
+screen.
+
+**Voice-first does not exist in the interface.** No microphone, audio, speech or
+dictation code anywhere in `frontend/`. A voice transcript path exists
+server-side and is read by the design screen; nothing captures one. The
+specification calls voice-first an adoption requirement, so this is the single
+largest gap on the field screen.
+
+**Commercial data is absent from the field screen rather than hidden from it.**
+`field.js` makes no `money()` call and loads no CVR, budget, contract or claim.
+That is composition, not policy — the same person navigating to `commercial.js`
+sees everything their role permits. 5.4.6's restriction says mobile actions are
+package- and location-scoped with sensitive data hidden; the redaction that
+exists is role-based, not device-based.
+
+**Aging is the most consistently missing thing across all six.** RFIs, site
+observations, obligations and notices all carry days-open or days-overdue. Agent
+recommendations, enterprise decision ownership, stage gates, overview actions,
+constraint rows, drawings, applications and variations carry none. Four of the
+six command centres ask for aging explicitly.
+
+**Decision ownership is on six screens and absent from five.** Present on
+enterprise ownership, every insight panel, constraints, site walks and the
+obligations calendar. Absent from the command centre's own "Requires attention"
+list, and from commercial, design, handover and control.
+
+### The defect this audit found
+
+**Every published CVR carried two invented numbers.** `commercial.js` posted
+`costToCompleteMinor: 1_193_000_000` and `accrualsMinor: 47_000_000` — £11.93M
+and £470,000 — hardcoded, on every publish, on every project, for every customer.
+The EVM snapshot did the same with `plannedValueMinor: 590_000_000`.
+
+The forecast final cost is the number that decides whether a job is making money.
+It was being computed from a cost-to-complete that came from nowhere, and the
+result was written to an append-only ledger. CPI and SPI were computed against a
+planned value belonging to a different project, and they render on three screens.
+Nothing on any of them said so.
+
+This is operating-directive rule 9 — no hardcoded demo response inside anything
+presented as complete — and it is the exact failure that rule names: *a screen
+showing invented numbers is not a finished feature*.
+
+Both are now entered by the person publishing. Cost to complete opens at the
+approved budget less cost to date, derived from records the screen already holds,
+and the hint says in terms that this is a starting point rather than a forecast.
+Accruals start blank, because a default of zero flatters the margin. Planned
+value is entered from the baseline. The ACU quote still appears before the button
+is pressed.
+
+---
 
 ## Implementation order
 

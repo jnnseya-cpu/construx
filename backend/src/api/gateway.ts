@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.ts';
-import { NotFoundError, ValidationError } from '../core/errors.ts';
+import { ForbiddenError, NotFoundError, ValidationError } from '../core/errors.ts';
 import type { Platform } from '../platform.ts';
 import {
   applyRateLimit,
@@ -268,6 +268,26 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
 
     // Re-apply post-auth so the tenant-aware key takes effect once known.
     if (ctx.auth) await applyRateLimit(ctx, req.socket.remoteAddress ?? 'unknown');
+
+    // The account layer, before the body is looked at.
+    //
+    // `projectContext` already refuses the operator, and it is reached inside
+    // the handler — which is after schema validation. So an operator posting to
+    // a customer's quality register got `400 VALIDATION_FAILED`: a refusal, but
+    // the wrong one. It reads as "fix your body and retry" for an actor who is
+    // categorically barred whatever the body says, and it hands out the shape of
+    // every customer route to somebody who may not use any of them.
+    //
+    // Enforced here on the route *pattern* rather than left to each handler,
+    // because "every project route remembers to build a project context" is not
+    // a property a codebase can hold. The lineage route already had to carry its
+    // own copy of this check for exactly that reason.
+    if (matched.route.pattern.includes(':projectId') && ctx.auth?.roles.includes('PLATFORM_ADMIN')) {
+      throw new ForbiddenError(
+        'Platform operators are barred from customer delivery data',
+        'ACCOUNT_LAYER_SEPARATION',
+      );
+    }
 
     if (matched.route.upload) {
       ctx.rawBody = await readRawBody(req, matched.route.maxBytes ?? config.evidence.maxBytes);

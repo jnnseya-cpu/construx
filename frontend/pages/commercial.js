@@ -1,5 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
-import { command, commandBar, confirmCost } from '../lib/command.js';
+import { command, commandBar } from '../lib/command.js';
 import { today } from '../lib/enums.js';
 import { badge, date, exact, html, humanise, metric, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
@@ -101,6 +101,14 @@ export async function commercial(root) {
     ...refsOf(bundle.Commitment, 'Commitment'),
   ];
   const marginSources = [...cvrRef, ...refsOf(bundle.Budget, 'Budget')];
+  // A starting point for the cost-to-complete field, derived from records this
+  // page already holds. Offered as a default and never as the answer: what it
+  // costs to finish is a judgement the quantity surveyor makes, and the platform
+  // has no basis for one.
+  const budgetTotal = (budget?.byCostCode ?? []).reduce((sum, line) => sum + Number(line.budgetMinor ?? 0), 0);
+  const costToDate = bundle.ActualCost.reduce((sum, cost) => sum + Number(cost.amountMinor ?? 0), 0);
+  const remainingBudget = Math.max(0, budgetTotal - costToDate);
+
   const cashSources = [
     ...cvrRef,
     ...refsOf(bundle.PaymentCertificate, 'PaymentCertificate'),
@@ -470,49 +478,88 @@ export async function commercial(root) {
     `,
   );
 
-  document.getElementById('publish-cvr')?.addEventListener('click', async (event) => {
-    const button = event.currentTarget;
-    const path = `/v1/projects/${state.session.projectId}/cost/cvr`;
-
-    const accepted = await confirmCost({
+  /**
+   * The two figures the CVR cannot derive, entered by the person publishing it.
+   *
+   * They were hardcoded — £11,930,000 to complete and £470,000 of accruals,
+   * posted on every publish, on every project, for every customer. The forecast
+   * final cost is the number that decides whether a job is making money, it was
+   * being computed from a cost-to-complete that came from nowhere, and the
+   * result was written to an append-only ledger. Nothing on the screen said so.
+   *
+   * `aiCost: true` keeps the ACU quote on the panel, so the cost is still shown
+   * before the button is pressed — which is what the confirmation dialog this
+   * replaces was there for.
+   */
+  document.getElementById('publish-cvr')?.addEventListener('click', async () => {
+    const published = await command({
       title: 'Publish CVR',
-      intent: 'Explains the margin movement and identifies the commercial actions that would recover it.',
-      path,
-      runLabel: 'Publish',
+      intent:
+        'The cost report reads the contract, commitments, variations and certified payments from the record. ' +
+        'These two it cannot: what it will cost to finish, and what has been done but not yet invoiced.',
+      path: `/v1/projects/${projectId}/cost/cvr`,
+      submitLabel: 'Publish',
+      aiCost: true,
+      fields: [
+        { name: 'period', label: 'Period', type: 'month', value: new Date().toISOString().slice(0, 7) },
+        {
+          name: 'costToCompleteMinor',
+          label: 'Cost to complete',
+          type: 'number',
+          money: true,
+          value: budgetTotal > 0 ? remainingBudget / 100 : undefined,
+          hint:
+            budgetTotal > 0
+              ? `Starts at the approved budget less cost to date. That is a starting point, not a forecast — correct it.`
+              : 'No approved budget to start from. Your forecast of what it will cost to finish the work.',
+        },
+        {
+          name: 'accrualsMinor',
+          label: 'Accruals',
+          type: 'number',
+          money: true,
+          hint: 'Work done and not yet invoiced. Leaving this at zero understates cost and flatters the margin.',
+        },
+      ],
     });
-    if (!accepted) return;
 
-    button.disabled = true;
-    button.textContent = 'Publishing…';
-    try {
-      const result = await api.post(path, {
-        period: new Date().toISOString().slice(0, 7),
-        costToCompleteMinor: 1_193_000_000,
-        accrualsMinor: 47_000_000,
-      });
-      toast('CVR published', `Margin ${result.cvr.forecastMarginPercent}% · ${result.acuConsumed} ACU`, 'ok');
+    if (published) {
+      toast('CVR published', 'Margin recalculated from the figures you entered.', 'ok');
       await refreshContext();
       await commercial(root);
-    } catch (error) {
-      toast('Could not publish', error.message, 'err');
-      button.disabled = false;
-      button.textContent = 'Publish CVR';
     }
   });
 
-  document.getElementById('evm')?.addEventListener('click', async (event) => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      const result = await api.post(`/v1/projects/${state.session.projectId}/cost/evm`, {
-        period: new Date().toISOString().slice(0, 7),
-        plannedValueMinor: 590_000_000,
-      });
-      toast('Snapshot taken', `CPI ${result.snapshot.costPerformanceIndex} · SPI ${result.snapshot.schedulePerformanceIndex}`, 'ok');
+  /**
+   * Planned value, likewise entered rather than assumed.
+   *
+   * It was hardcoded at £5,900,000 — the same figure on every project. CPI and
+   * SPI are both computed against it, so both indices were meaningless anywhere
+   * except the project the number came from, and they render on three screens.
+   */
+  document.getElementById('evm')?.addEventListener('click', async () => {
+    const taken = await command({
+      title: 'Take an earned value snapshot',
+      intent:
+        'Planned value is what the baseline says should have been earned by the end of this period. ' +
+        'CPI and SPI are both computed against it, so a wrong figure here makes both indices wrong.',
+      path: `/v1/projects/${projectId}/cost/evm`,
+      submitLabel: 'Take snapshot',
+      fields: [
+        { name: 'period', label: 'Period', type: 'month', value: new Date().toISOString().slice(0, 7) },
+        {
+          name: 'plannedValueMinor',
+          label: 'Planned value to date',
+          type: 'number',
+          money: true,
+          hint: 'From the approved programme baseline, for the period ending above.',
+        },
+      ],
+    });
+
+    if (taken) {
+      toast('Snapshot taken', 'CPI and SPI recalculated.', 'ok');
       await commercial(root);
-    } catch (error) {
-      toast('Snapshot failed', error.message, 'err');
-      button.disabled = false;
     }
   });
 

@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,702 passing, 0 failing, 0 skipped, across 90 files |
+| Tests | 1,708 passing, 0 failing, 0 skipped, across 91 files |
 | Typecheck | clean |
 | Backend | 118 TypeScript files, 57,287 lines |
 | Application | 35 ES modules, 12,075 lines (including a service worker) |
@@ -3632,6 +3632,63 @@ constraints, record progress — did nothing. Pre-existing, unrelated to this wo
 and reported rather than left: the block is moved back inside `programme()`,
 which is the scope it was written for and where every identifier it names is
 bound.
+
+### The account layer, enforced at the gateway and enumerated
+
+`projectContext` and `tenantContext` both refuse a platform operator, and both
+are reached *inside* a handler — which is after schema validation. So an operator
+posting to a customer's quality register got `400 VALIDATION_FAILED`: a refusal,
+but the wrong one. It reads as "fix your body and retry" to an actor who is
+barred whatever the body says, and it hands the shape of every customer route to
+somebody who may use none of them.
+
+The fence now sits in the gateway, on the route **pattern**, before the body is
+read. "Every project route remembers to build a project context" is not a
+property a codebase can hold — the lineage route already carried its own copy of
+the check for exactly that reason.
+
+`accountlayer.test.ts` walks the routing table rather than sampling it: all 176
+routes whose pattern names a project, called with an operator's token, each
+required to answer 403. A route added next year is in that test the day it is
+added. It also asserts the same endpoints answer 200 for a project person, so
+the sweep cannot pass on a platform where nothing works.
+
+**One correction, where the platform was right and the test was wrong.** The
+first version expected the operator to read `/v1/control/estate`. It is barred,
+correctly: estate control measures every one of a customer's projects against the
+control standard, which is the widest possible view of their delivery. That it
+aggregates does not make it the operator's. The test now asserts the refusal.
+
+### Every published CVR carried two invented numbers
+
+Found by auditing the command centres against the specification, not by a test.
+
+`commercial.js` posted `costToCompleteMinor: 1_193_000_000` and
+`accrualsMinor: 47_000_000` — £11,930,000 and £470,000 — hardcoded, on every
+publish, on every project, for every customer. `Take EVM snapshot` did the same
+with `plannedValueMinor: 590_000_000`.
+
+The forecast final cost is the number that decides whether a job is making money.
+It was computed from a cost-to-complete that came from nowhere and then written
+to an append-only ledger, where it cannot be corrected — only superseded. CPI and
+SPI were computed against a planned value belonging to a different project, and
+both render on three screens. Nothing on any of them said so.
+
+Rule 9 of the operating directive names this exactly: *a screen showing invented
+numbers is not a finished feature*.
+
+Both are now entered by the person publishing, through the same command panel
+every other write uses. Cost to complete opens at the approved budget less cost
+to date — derived from records the screen already holds — and the hint says in
+terms that this is a starting point and not a forecast. Accruals start blank
+rather than at zero, because zero understates cost and flatters the margin.
+Planned value is entered from the baseline. The ACU estimate still renders inside
+the panel above the button, so the cost is on screen before the commitment, which
+is what the confirmation dialog this replaced existed for.
+
+`month` was added to the command panel's field types at the same time. It was
+falling back to free text, and the specification requires every calendar input to
+be picked rather than typed.
 
 ---
 
