@@ -369,7 +369,7 @@ MaintenanceTask — which is a vocabulary difference, not a gap.
 
 ---
 
-## A5 — THE THREE MEMORY LAYERS (MANDATORY)
+## THE THREE MEMORY LAYERS (MANDATORY)
 
 > - **Project Memory** — everything known about one project: documents, actions,
 >   decisions, AI interactions, event chronology. Retained through final account.
@@ -390,6 +390,63 @@ The architectural point worth stating: all three layers already share **one**
 store. There is no separate project database, organisation warehouse or FM system
 to reconcile — which is the hard part of this requirement, and it is done. What is
 missing is aggregation across the layers, not the layers themselves.
+
+---
+
+## A5 — AI OPERATING MODEL — THREE VISIBLE LAYERS, NOT ONE CHATBOT
+
+> - **Layer 1 · Workflow AI** — button-driven, deterministic, multi-step machines
+>   that execute structured tasks (RAMS generation, scope writing, tender
+>   analysis, WBS generation). Validated output at each step.
+> - **Layer 2 · Copilot AI** — conversational drafting, querying and exploration
+>   with full project context. Advisory only; every output requires review before
+>   action.
+> - **Layer 3 · Knowledge AI** — grounded retrieval over embedded project data
+>   (drawings, specs, contracts, site records, commercial data). Answers always
+>   cite sources with confidence scores; no answer without evidence.
+
+The three-layer split is not only implemented, it is the model the code was
+already written to — `ai/conversation.ts` opens by naming the same three layers
+in the same order, and names itself as the second.
+
+| Layer | State |
+|---|---|
+| **Layer 1 · Workflow AI** | **BUILT** — engines invoked from a named command, never from free text. Deterministic maths is computed in the engine and the model supplies judgement only; the model never writes state on its own. Output is validated at each step: the entity's registered JSON Schema is enforced after the patch is applied, so a malformed AI output is refused at the ledger rather than persisted |
+| **Layer 2 · Copilot AI** | **BUILT** — answers from materialised Golden Thread state rather than from the model's memory of construction generally, carries full project and phase context, and is advisory by construction: it *proposes* the command and the user runs it. It performs no state change of its own |
+| **Layer 3 · Knowledge AI** | **NOT BUILT** — there is no vector store and nothing is embedded. Retrieval over drawings, specs, contracts and site records does not exist. The `KnowledgeEmbedding` object named in A4 is one of the eight missing, and this is what it was for |
+
+### Multi-model gateway routing inputs
+
+> The model router selects a provider per call using: task type & complexity, cost
+> per ACU, speed requirement, action risk level, data sensitivity, required
+> accuracy, context window, user subscription tier, remaining ACU balance, and
+> fallback availability. All routing decisions are logged.
+
+Ten inputs are specified. **The router uses two of them.**
+
+`adapterFor(capability)` selects on capability — `REASONING` or `PERCEPTION` —
+then falls back on provider health and through the declared spares. Everything
+else in the list is either recorded and unused, or not present at all.
+
+| Routing input | State |
+|---|---|
+| Task type & complexity | **NOT USED** — `taskType` is recorded on every request and does not influence which provider serves it |
+| Cost per ACU | **NOT USED** — cost is *quoted* before execution and *charged* after, and never routed on |
+| Speed requirement | **NOT BUILT** — no latency requirement is expressed anywhere |
+| Action risk level | **NOT BUILT** |
+| **Data sensitivity** | **NOT BUILT** — and this is the one that matters most. `DataSensitivity` exists as a first-class concept in ABAC (`PUBLIC` … `LEGAL_L4`) and governs who may *read* a record. It does not govern which vendor a record may be *sent to* |
+| Required accuracy | **NOT BUILT** |
+| Context window | **NOT BUILT** |
+| User subscription tier | **NOT USED** — the tier decides seats and allowance, not routing |
+| Remaining ACU balance | **PARTIAL** — an empty wallet refuses the call outright, which is a hard stop rather than a routing decision. A low balance does not steer the call to a cheaper provider |
+| Fallback availability | **BUILT** — an unhealthy primary fails over to the other capability's adapter and then through the configured spares |
+| **All routing decisions logged** | **PARTIAL** — the provider that served each call is recorded on the request and the execution, so the *outcome* is auditable. The *inputs the decision was made on* are not recorded, so a routing choice cannot be re-derived from the record |
+
+The gap is honest to state plainly: what exists is a **failover chain**, not a
+router. Turning it into the specified router means the ten inputs become an
+explicit, recorded decision — and the recording matters as much as the routing,
+because "all routing decisions are logged" is what makes a vendor choice
+auditable after a dispute.
 
 ---
 
@@ -415,10 +472,18 @@ Set against dependency rather than against the order the clauses arrived in.
    them; then `Retention`, `COBieRow` and `GoldenThreadItem` for handover.
 8. **A3's feature gaps** — realtime, full-text search, embeddings, SSO, and the
    refresh window — which do not need a stack decision.
-9. **A5 — organisation-level benchmarks** aggregated from project outcomes and
+9. **Memory layers — organisation-level benchmarks** aggregated from project outcomes and
    read by Concept and Tender, which is the compounding-asset half of the
    requirement.
-10. **A3's stack decision** — Postgres, Kafka, NestJS, OPA, Terraform. Blocked on
+10. **A5 — the model router.** The ten declared inputs, and the decision
+    recorded alongside its inputs. Data sensitivity first: `DataSensitivity`
+    already exists and already governs who may read a record; extending it to
+    govern which vendor a record may be sent to is the highest-value single
+    change in this section, and it is a data-protection control, not a
+    performance one.
+11. **A5 — Layer 3, Knowledge AI.** Blocked behind the vector store, which is
+    blocked behind the A3 stack decision.
+12. **A3's stack decision** — Postgres, Kafka, NestJS, OPA, Terraform. Blocked on
    the product owner, not on engineering.
 
 Superseded ordering note, kept for honesty: The
