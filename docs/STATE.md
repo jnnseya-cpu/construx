@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,664 passing, 0 failing, 0 skipped, across 88 files |
+| Tests | 1,681 passing, 0 failing, 0 skipped, across 89 files |
 | Typecheck | clean |
-| Backend | 115 TypeScript files, 55,231 lines |
-| Application | 36 ES modules, 11,790 lines (plus a service worker) |
-| API routes | 302 (34 of them public) |
-| Event types | 191 Golden Thread (closed) · 177 communication events (closed) |
-| Entity types | 118, all classified for access |
+| Backend | 118 TypeScript files, 57,287 lines |
+| Application | 35 ES modules, 12,075 lines (including a service worker) |
+| API routes | 307 (34 of them public) |
+| Event types | 203 Golden Thread (closed) · 178 communication events (closed) |
+| Entity types | 123, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -3458,6 +3458,83 @@ reading the headers of a running server, not by a test — no test asked. Inboun
 `x-trace-id` is now validated before it is echoed back and written into every
 log line; a value carrying a header separator used to turn the request into a
 500 from `writeHead`.
+
+### The chain, and the exception when it breaks
+
+Bid → Contract → Subcontract → Commitment → Application → CVR is one enforced
+data flow. Every other check in `domain/consistency.ts` compares two records
+that *disagree*; this one looks for a record that is **unattached**.
+
+An orphan is quieter than a disagreement and worse. A disagreement is two
+numbers that do not match, and somebody eventually notices. An orphan looks
+entirely correct on its own screen and simply never reaches the screen
+downstream: money committed against nothing, an application outside every cycle,
+a CVR whose contract sum came from a place no longer traceable.
+
+Six links, checked by reference rather than by count — "six subcontracts and six
+packages" proves nothing about whether they are the same six:
+
+| Link | Downstream record | Field | Upstream |
+|---|---|---|---|
+| Contract from the winning bid | `Contract` | `sourceBidPackId` | `BidSubmissionPack` |
+| Subcontract from the awarded enquiry | `Subcontract` | `rfqId` | `RFQ` |
+| Commitment against a subcontract | `Commitment` (type `SUBCONTRACT`) | `contractId` | `Subcontract` |
+| Payment cycle against the contract | `PaymentCycle` | `contractId` | `Contract` |
+| Application against a payment cycle | `PaymentApplication` | `cycleId` | `PaymentCycle` |
+| CVR from the contract | `CVR` | `contractId` | `Contract` |
+
+**The field names are the ones the engines write, which is not always the name
+the link suggests.** A `Commitment` names its subcontract in a field called
+`contractId`, because a commitment can stand against either. The first draft of
+this check asserted `estimateId` on a Contract and `subcontractId` on a
+Commitment — plausible names that exist nowhere in the codebase — and would have
+reported a complete break on every correctly connected project. Caught by
+reading `procurement.ts` and `cost.ts` rather than by trusting the shape of the
+requirement.
+
+**Absent and dangling are both breaks, and they are different mistakes**: one was
+never linked, the other points at something that is not there. A check that
+caught only the first would pass a commitment whose subcontract has since been
+superseded.
+
+**A link with no upstream at all is skipped, and said to be skipped.** A contract
+on a job that was never tendered through CONSTRUX is negotiated or novated work.
+Calling that a broken chain would fire on every imported contract on the first
+day and teach people to ignore the check, which is the same as not having one.
+
+**One defect fixed at source rather than reported.** `publishCVR` reads the
+contract to get the sum and never recorded which one, so a published CVR could
+not name the contract sum it started from — and `consistencyReport` reads the
+*latest* executed contract where `publishCVR` reads the *first*, so on a project
+with a supplemental agreement the two were not necessarily the same document.
+The CVR now carries `contractId`.
+
+**Escalation is separate from detection, deliberately.** `consistencyReport`
+stays read-only: opening a screen must never be the act that alerts somebody, or
+every dashboard refresh becomes an escalation. `escalateChainBreaks` is the
+other half — it writes a `ChainException`, and the console offers it as a button
+on the panel that shows the findings.
+
+Three properties make it an exception rather than a repeated complaint. It is
+**recorded, not only sent**, because an alert that exists in an inbox and nowhere
+else cannot be shown as open or closed and cannot be counted. It is **raised
+once** — an escalation that re-fires on every sweep is one people filter to a
+folder, and then the one that mattered goes to the folder too. And it **closes
+itself** when the link traces again, so an exception left open is evidence of a
+break that is still real.
+
+Addressed to `COMMERCIAL_MANAGER`, which is the holder A1 Rule 2 names, with
+`PROJECT_DIRECTOR` alongside it because a commercial manager is not guaranteed to
+exist on a small job and an exception with no recipient is not an exception. Where
+a tenancy holds neither, the API says so in the response rather than reporting a
+successful delivery to nobody.
+
+**Not built: a background sweep.** The exception is raised when somebody asks for
+it — from the console, or by calling
+`POST /v1/projects/:projectId/consistency/chain-exceptions`. Nothing runs it on a
+timer, so a break on a project nobody opens is detected but not yet escalated.
+The scheduler pattern exists (`messaging/newsletter.ts`); wiring this to it is a
+separate piece of work and is not claimed here.
 
 ---
 

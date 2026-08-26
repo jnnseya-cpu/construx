@@ -1,6 +1,7 @@
 import { formatMoney } from './locale.ts';
+import { ulid } from '../core/ids.ts';
 import { calculateCPM } from '../engines/maths/cpm.ts';
-import { AUTHZ_OPTIONS, authorise, type EngineContext } from '../engines/context.ts';
+import { AUTHZ_OPTIONS, authorise, write, type EngineContext } from '../engines/context.ts';
 import { evaluateAccess } from '../identity/abac.ts';
 
 /**
@@ -368,6 +369,148 @@ export function consistencyReport(
     }
   }
 
+  // --- The chain, link by link ---------------------------------------------
+  //
+  // Bid -> Contract -> Subcontract -> Commitment -> Application -> Ledger -> CVR
+  // is one enforced flow, and the requirement is that a break anywhere raises an
+  // exception. Every other check in this file compares two records that
+  // *disagree*; this one looks for a record that is *unattached* — a subcontract
+  // under no contract, an application against no subcontract, a CVR built from
+  // no contract at all.
+  //
+  // An orphan is quieter than a disagreement and worse. A disagreement is two
+  // numbers that do not match and somebody eventually notices. An orphan is a
+  // record that looks entirely correct on its own screen and simply never
+  // reaches the screen downstream: money committed against nothing, an
+  // application nobody reconciles, a CVR whose contract sum came from a place
+  // no longer traceable.
+  //
+  // Checked by reference rather than by count. "Six subcontracts and six
+  // packages" proves nothing about whether they are the same six.
+  //
+  // The keys below are the ones the writing engines actually set, which is not
+  // always the name the link would suggest — a `Commitment` names its
+  // subcontract in a field called `contractId`, because a commitment can stand
+  // against either. Guessing the obvious name here would have produced a check
+  // that reported a total break on a perfectly connected project.
+  const chain: Array<{
+    link: string;
+    downstream: string;
+    upstream: string;
+    /** The field on the downstream record that names its upstream. */
+    key: string;
+    /** Which downstream records this link governs, where it governs only some. */
+    only?: (state: Record<string, unknown>) => boolean;
+    consequence: string;
+  }> = [
+    {
+      link: 'Contract from the winning bid',
+      downstream: 'Contract',
+      upstream: 'BidSubmissionPack',
+      key: 'sourceBidPackId',
+      consequence:
+        'The contract sum cannot be traced to the bid it came from, so the exclusions and qualifications the price was given on are not attached to the obligation. That is the gap a final account is argued in.',
+    },
+    {
+      link: 'Subcontract from the awarded enquiry',
+      downstream: 'Subcontract',
+      upstream: 'RFQ',
+      key: 'rfqId',
+      consequence:
+        'A subcontract that names no enquiry cannot be checked against what was tendered, so the buyout position is unauditable and the carried exclusions have no source.',
+    },
+    {
+      link: 'Commitment against a subcontract',
+      downstream: 'Commitment',
+      upstream: 'Subcontract',
+      key: 'contractId',
+      only: (state) => state.type === 'SUBCONTRACT',
+      consequence:
+        'Money is committed against nothing. It will not appear in the subcontract position and will not be reconciled when the account is settled.',
+    },
+    {
+      link: 'Payment cycle against the contract',
+      downstream: 'PaymentCycle',
+      upstream: 'Contract',
+      key: 'contractId',
+      consequence:
+        'The statutory dates were generated against a contract the cycle cannot name, so nothing can confirm they were computed from the right payment terms.',
+    },
+    {
+      link: 'Application against a payment cycle',
+      downstream: 'PaymentApplication',
+      upstream: 'PaymentCycle',
+      key: 'cycleId',
+      consequence:
+        'An application outside any cycle has no due date and no notice deadlines attached to it. Under the Construction Act the clock runs anyway, so the exposure is a payment becoming due by default.',
+    },
+    {
+      link: 'CVR from the contract',
+      downstream: 'CVR',
+      upstream: 'Contract',
+      key: 'contractId',
+      consequence:
+        'The reported margin is computed against a contract sum the report cannot name. It may be right; nothing in the record shows it.',
+    },
+  ];
+
+  for (const step of chain) {
+    const downstream = ctx.ledger
+      .list(ctx.projectId, step.downstream)
+      .filter((record) => (step.only ? step.only(record.state) : true));
+    const upstream = ctx.ledger.list(ctx.projectId, step.upstream);
+
+    if (downstream.length === 0) {
+      skipped.push({ check: step.link, reason: `No ${step.downstream} record exists yet` });
+      continue;
+    }
+    if (upstream.length === 0) {
+      // Nothing upstream to attach to. A contract on a job that was never
+      // tendered through this platform is negotiated or novated work, not a
+      // broken chain — calling it one would flag every imported contract on
+      // day one and teach people to ignore the check.
+      skipped.push({
+        check: step.link,
+        reason: `No ${step.upstream} exists on this project, so there is nothing for the ${step.downstream} to be traced to`,
+      });
+      continue;
+    }
+
+    const upstreamIds = new Set(upstream.map((record) => record.refId));
+    const broken = downstream.filter((record) => {
+      const reference = record.state[step.key];
+      // Absent and dangling are both breaks, and they are different mistakes:
+      // one was never linked, the other points at something that is not there.
+      return typeof reference !== 'string' || reference === '' || !upstreamIds.has(reference);
+    });
+
+    if (broken.length === 0) {
+      passed.push(`${step.link} — ${downstream.length} record${downstream.length === 1 ? '' : 's'}, all traceable`);
+      continue;
+    }
+
+    // The exposure is the value of what is unattached, where the record carries
+    // one. A number makes this a decision rather than a housekeeping note.
+    const exposure = broken.reduce(
+      (sum, record) =>
+        sum +
+        Number(record.state.valueMinor ?? record.state.amountMinor ?? record.state.grossMinor ?? 0),
+      0,
+    );
+
+    findings.push({
+      check: step.link,
+      severity: 'CRITICAL',
+      finding:
+        `${broken.length} of ${downstream.length} ${step.downstream} record${downstream.length === 1 ? '' : 's'} ` +
+        `${broken.length === 1 ? 'does' : 'do'} not name the ${step.upstream} ${broken.length === 1 ? 'it' : 'they'} came from. ` +
+        'The data flow is broken at this link.',
+      consequence: step.consequence,
+      sources: broken.slice(0, 4).map((record) => ({ refType: step.downstream, refId: record.refId })),
+      ...(exposure > 0 ? { exposureMinor: exposure } : {}),
+    });
+  }
+
   const totalExposure = findings.reduce((sum, f) => sum + (f.exposureMinor ?? 0), 0);
 
   if (commercialWithheld) {
@@ -396,4 +539,171 @@ export function consistencyReport(
     totalExposureMinor: commercialWithheld ? 0 : totalExposure,
     summary: commercialWithheld ? summary.replace(/, [^,]*at stake\./, '.') : summary,
   };
+}
+
+/**
+ * Raise the chain break as an exception to whoever owns the commercial position.
+ *
+ * The rule is that a break in the bid-to-CVR flow *raises an exception* — not
+ * that it appears on a report somebody may open. A finding on a screen nobody
+ * has loaded is not an alert, and the difference matters most exactly when it
+ * matters at all: an unattached commitment is invisible precisely because
+ * nobody is looking at the record it should have been attached to.
+ *
+ * Three things make this an exception rather than a repeated complaint.
+ *
+ * **It is recorded, not only sent.** An alert that exists only in an inbox
+ * cannot be shown as open, cannot be shown as closed, and cannot be counted.
+ * The `ChainException` record is the thing a commercial manager works from.
+ *
+ * **It is raised once.** A break already carrying an open exception is not
+ * raised again, however many times this runs. An escalation that re-fires on
+ * every sweep is one people filter to a folder, and then the one that mattered
+ * goes to the folder too.
+ *
+ * **It closes itself.** When the link that was broken comes back clean, the
+ * open exception is cleared with the same mechanism that raised it. Nobody has
+ * to remember to tidy up after a fix, and an exception left open is therefore
+ * evidence of a break that is still real.
+ *
+ * The report itself stays read-only. This is the deliberate other half: the
+ * report answers "what disagrees", and this answers "who has been told".
+ */
+
+/** The chain checks, by name. An exception is only ever raised for one of these. */
+const CHAIN_CHECKS = new Set([
+  'Contract from the winning bid',
+  'Subcontract from the awarded enquiry',
+  'Commitment against a subcontract',
+  'Payment cycle against the contract',
+  'Application against a payment cycle',
+  'CVR from the contract',
+]);
+
+export type ChainExceptionRecord = {
+  id: string;
+  check: string;
+  finding: string;
+  consequence: string;
+  exposureMinor?: number;
+  sources: Array<{ refType: string; refId: string }>;
+};
+
+export type ChainEscalation = {
+  /** Exceptions raised by this run — breaks nobody had been told about. */
+  raised: ChainExceptionRecord[];
+  /** Breaks that already carry an open exception. Not re-raised, and not hidden. */
+  alreadyOpen: string[];
+  /** Exceptions closed because the link they were about is now clean. */
+  cleared: string[];
+  /**
+   * Who the exception is for, by role. Named here rather than at the transport
+   * so that the record says who was owed the alert even where no mail was sent.
+   */
+  owedTo: readonly string[];
+  /** Every open exception after this run, raised now or still standing. */
+  open: ChainExceptionRecord[];
+};
+
+/**
+ * The role that owns a broken commercial chain.
+ *
+ * `COMMERCIAL_MANAGER` is the holder the requirement names. The project
+ * director is included because a commercial manager is not guaranteed to exist
+ * on a small job, and an exception with no recipient is not an exception.
+ */
+export const CHAIN_EXCEPTION_ROLES = ['COMMERCIAL_MANAGER', 'PROJECT_DIRECTOR'] as const;
+
+export function escalateChainBreaks(
+  ctx: EngineContext,
+  today = new Date().toISOString().slice(0, 10),
+): ChainEscalation {
+  // Read authority over the commercial position, not authorship of it. Raising
+  // the alarm about a break is detection; gating it behind 'C' would lock out
+  // the Commercial Manager, who holds approval rather than authorship in this
+  // area and is the person the exception exists for.
+  authorise(ctx, 'BUDGET_COST', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const report = consistencyReport(ctx, today);
+  const breaks = new Map(
+    report.findings.filter((finding) => CHAIN_CHECKS.has(finding.check)).map((finding) => [finding.check, finding]),
+  );
+
+  const existing = ctx.ledger.list(ctx.projectId, 'ChainException');
+  const openByCheck = new Map(
+    existing.filter((record) => record.state.status === 'OPEN').map((record) => [String(record.state.check), record]),
+  );
+
+  const raised: ChainExceptionRecord[] = [];
+  const alreadyOpen: string[] = [];
+  const cleared: string[] = [];
+
+  for (const [check, finding] of breaks) {
+    if (openByCheck.has(check)) {
+      alreadyOpen.push(check);
+      continue;
+    }
+
+    const exceptionId = ulid();
+    write(ctx, {
+      eventType: 'CHAIN_EXCEPTION_RAISED',
+      entity: { refType: 'ChainException', refId: exceptionId },
+      // The finding is copied into the record rather than referenced. The
+      // report is recomputed from live data every time it runs, so a reference
+      // would describe today's state and not the state that caused the alert.
+      nextState: {
+        id: exceptionId,
+        projectId: ctx.projectId,
+        check,
+        finding: finding.finding,
+        consequence: finding.consequence,
+        exposureMinor: finding.exposureMinor,
+        sources: finding.sources,
+        owedTo: [...CHAIN_EXCEPTION_ROLES],
+        status: 'OPEN',
+        raisedAt: new Date().toISOString(),
+      },
+    });
+
+    raised.push({
+      id: exceptionId,
+      check,
+      finding: finding.finding,
+      consequence: finding.consequence,
+      exposureMinor: finding.exposureMinor,
+      sources: finding.sources,
+    });
+  }
+
+  // Anything open whose link no longer breaks. Closed here rather than left for
+  // somebody to tidy, so that an exception still open is evidence of a break
+  // that is still real.
+  for (const [check, record] of openByCheck) {
+    if (breaks.has(check)) continue;
+    write(ctx, {
+      eventType: 'CHAIN_EXCEPTION_CLEARED',
+      entity: { refType: 'ChainException', refId: record.refId },
+      nextState: {
+        ...record.state,
+        status: 'CLEARED',
+        clearedAt: new Date().toISOString(),
+        clearedBecause: 'The link this exception was raised about now traces end to end',
+      },
+    });
+    cleared.push(check);
+  }
+
+  const open = ctx.ledger
+    .list(ctx.projectId, 'ChainException')
+    .filter((record) => record.state.status === 'OPEN')
+    .map((record) => ({
+      id: record.refId,
+      check: String(record.state.check),
+      finding: String(record.state.finding),
+      consequence: String(record.state.consequence),
+      exposureMinor: record.state.exposureMinor as number | undefined,
+      sources: (record.state.sources ?? []) as Array<{ refType: string; refId: string }>,
+    }));
+
+  return { raised, alreadyOpen, cleared, owedTo: CHAIN_EXCEPTION_ROLES, open };
 }

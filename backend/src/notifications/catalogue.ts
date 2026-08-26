@@ -266,6 +266,17 @@ def('contract.pending_signature', 'Contract pending signature', 'Signature neede
 def('contract.signed', 'Contract signed', 'Contract signed: {{item}}', 'SUCCESS', [E, I]);
 def('contract.expiring', 'Contract expiring', 'Contract expiring: {{item}}', 'WARNING', [E, I]);
 def('contract.renewed', 'Contract renewed', 'Contract renewed: {{item}}', 'SUCCESS', [E, I]);
+// A break in the bid-to-CVR data flow. Mandatory, because it is money standing
+// against a record nothing downstream can see — a fact the person who owns the
+// commercial position is entitled to be told whatever they have muted.
+def(
+  'commercial.chain_broken',
+  'Data chain broken',
+  'Commercial exception on {{project}}: {{item}}',
+  'CRITICAL',
+  [E, I, P],
+  MANDATORY,
+);
 
 // ----------------------------------------------------- Document & Compliance
 group('DOCUMENT_COMPLIANCE');

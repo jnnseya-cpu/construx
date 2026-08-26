@@ -122,6 +122,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   PayLessNotice: { area: 'PAYMENT_APPLICATIONS', sensitivity: 'COMMERCIAL_L3' },
   PaymentCertificate: { area: 'PAYMENT_APPLICATIONS', sensitivity: 'COMMERCIAL_L3' },
   LedgerEntry: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
+  // A break in the bid-to-CVR chain. It names the unattached records and the
+  // money standing behind them, so it is as commercially sensitive as the
+  // records it is about.
+  ChainException: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
 
   // Contracts, change and claims — legal
   Contract: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },

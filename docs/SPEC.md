@@ -94,7 +94,32 @@ Six tests, applied per screen:
 | Clause | State |
 |---|---|
 | Bid → contract → CVR/applications/procurement → subcontracts → commitments; field → commercial/programme/claims | **BUILT** — proven end to end by the eleven-stage chain test |
-| Breaking the chain raises an exception alert to the Commercial Manager | **NOT BUILT** — nothing detects or escalates a broken link |
+| Breaking the chain raises an exception alert to the Commercial Manager | **BUILT** — `consistencyReport` checks six links by reference (Contract←BidSubmissionPack, Subcontract←RFQ, Commitment←Subcontract, PaymentCycle←Contract, PaymentApplication←PaymentCycle, CVR←Contract); `escalateChainBreaks` records a `ChainException` and notifies `COMMERCIAL_MANAGER` / `PROJECT_DIRECTOR`. Raised once per break, closes itself when the link traces again |
+
+Three things about that check are worth stating, because each was a defect
+before it was a feature.
+
+**The keys are the ones the engines write, not the ones the names suggest.** A
+`Commitment` names its subcontract in a field called `contractId`; a
+`Subcontract` names an `rfqId` and not a contract. The first draft asserted
+`estimateId` and `subcontractId` — plausible names that exist nowhere — and would
+have reported a total break on every correctly connected project on day one.
+
+**A missing upstream skips the link rather than failing it.** A contract on a job
+that was never tendered through CONSTRUX is negotiated or novated work, not a
+broken chain. Flagging it would have taught people to ignore the check, which is
+the same as not having one.
+
+**The CVR now records the contract it was computed against.** It always knew —
+`publishCVR` reads the contract to get the sum — and never wrote it down, so a
+published CVR could not name the contract sum it started from. Worse,
+`consistencyReport` reads the *latest* executed contract where `publishCVR` reads
+the *first*, so on a project with a supplemental agreement the two were not
+necessarily the same document. That is fixed at source rather than reported.
+
+Detection and escalation are deliberately separate. The report stays read-only,
+because opening a screen must never be the act that alerts somebody, or every
+dashboard refresh becomes an escalation.
 
 ### RULE 3 — Human-in-the-loop for high-risk actions
 

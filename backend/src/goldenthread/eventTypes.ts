@@ -272,6 +272,13 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // without a record of the cost it recovers is a deduction the payer cannot
   // substantiate, and it is the first thing an adjudicator asks for.
   def('CONTRA_CHARGE_RAISED', 'ContraCharge', 'CREATE', 'COMMERCIAL', { requiresEvidence: true }),
+  // A break in the bid-to-CVR data flow, raised as an exception to whoever owns
+  // the commercial position. Recorded rather than only sent, for two reasons:
+  // an alert that exists only in an inbox cannot be shown as open or closed,
+  // and the record is what stops the same break being escalated every time the
+  // report is run. AI may detect one; the record is written by the platform.
+  def('CHAIN_EXCEPTION_RAISED', 'ChainException', 'CREATE', 'COMMERCIAL', { creates: true }),
+  def('CHAIN_EXCEPTION_CLEARED', 'ChainException', 'UPDATE', 'COMMERCIAL'),
 
   // --- Agent runtime --------------------------------------------------------
   def('AGENT_RUN_COMPLETED', 'AgentRun', 'EXECUTE', 'AI_BILLING', { aiAllowed: true, creates: true }),

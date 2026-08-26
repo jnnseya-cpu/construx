@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
-import { badge, html, humanise, money, pct, raw, render, table } from '../lib/ui.js';
-import { state } from '../app.js';
+import { badge, html, humanise, money, pct, raw, render, table, toast } from '../lib/ui.js';
+import { blockedReason, can, draw, state } from '../app.js';
 
 /**
  * Corporate project control.
@@ -26,6 +26,22 @@ const STATUS_LABEL = {
 
 const KIND_TONE = { WENT_WRONG: 'bad', WENT_WELL: 'ok' };
 
+/**
+ * The links of Bid → Contract → Subcontract → Commitment → Application → CVR.
+ *
+ * Held here rather than derived from the response so that a break in the chain
+ * reads differently from a disagreement: the rest of this panel is two records
+ * that contradict each other, and these are records attached to nothing.
+ */
+const CHAIN_CHECKS = new Set([
+  'Contract from the winning bid',
+  'Subcontract from the awarded enquiry',
+  'Commitment against a subcontract',
+  'Payment cycle against the contract',
+  'Application against a payment cycle',
+  'CVR from the contract',
+]);
+
 export async function control(root) {
   const projectId = state.session.projectId;
 
@@ -39,6 +55,7 @@ export async function control(root) {
   // its own subject and none of them looks at the others, which is where the
   // expensive mistakes live.
   const consistency = await api.get(`/v1/projects/${projectId}/consistency`).catch(() => null);
+  const chainBreaks = (consistency?.findings ?? []).filter((finding) => CHAIN_CHECKS.has(finding.check));
 
   render(
     root,
@@ -91,6 +108,32 @@ export async function control(root) {
                 ${
                   consistency.commercialWithheld
                     ? html`<div class="metric-sub" style="margin-top:9px">Commercial detail is withheld from your role. The disagreements themselves stand.</div>`
+                    : ''
+                }
+                ${
+                  // A break in Bid → Contract → Subcontract → Commitment →
+                  // Application → CVR is not two numbers disagreeing; it is a
+                  // record attached to nothing, invisible precisely because
+                  // nobody is looking at where it should have been. It is raised
+                  // as an exception rather than left to be read — and raising it
+                  // writes, so it is a button rather than a side effect of
+                  // opening this page.
+                  chainBreaks.length > 0
+                    ? html`<div style="margin-top:12px">
+                        <div class="metric-sub" style="margin-bottom:7px">
+                          The data flow is broken at ${chainBreaks.length}
+                          link${raw(chainBreaks.length === 1 ? '' : 's')}. Raising it records the exception and notifies
+                          whoever owns the commercial position. The same break is only ever raised once, and it closes
+                          itself when the link traces again.
+                        </div>
+                        ${
+                          can('BUDGET_COST', 'R')
+                            ? html`<button class="btn" id="raise-chain">Raise the exception</button>`
+                            : html`<button class="btn quiet locked" disabled title="${blockedReason('BUDGET_COST', 'R')}">
+                                Raise the exception 🔒
+                              </button>`
+                        }
+                      </div>`
                     : ''
                 }
               </div>
@@ -279,4 +322,35 @@ export async function control(root) {
       }
     `,
   );
+
+  root.querySelector('#raise-chain')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await api.post(`/v1/projects/${projectId}/consistency/chain-exceptions`, {});
+      // Said as it happened rather than as a generic success. "Raised 2" and
+      // "already open, nobody re-notified" are different outcomes and a person
+      // deciding whether to chase somebody needs to know which one this was.
+      const parts = [];
+      if (result.raised.length > 0) parts.push(`${result.raised.length} raised`);
+      if (result.alreadyOpen.length > 0) parts.push(`${result.alreadyOpen.length} already open`);
+      if (result.cleared.length > 0) parts.push(`${result.cleared.length} closed`);
+      toast(
+        parts.length > 0 ? 'Chain exception' : 'Nothing to raise',
+        parts.length > 0 ? parts.join(' · ') : 'Every link traces end to end.',
+        parts.length > 0 ? 'warn' : 'ok',
+      );
+      if (result.unaddressed) {
+        toast(
+          'Recorded, but not addressed',
+          'Nobody on this tenancy holds Commercial Manager or Project Director, so nobody was told.',
+          'warn',
+        );
+      }
+      await draw();
+    } catch (error) {
+      button.disabled = false;
+      toast('The exception could not be raised', error.detail ?? error.message ?? '', 'err');
+    }
+  });
 }

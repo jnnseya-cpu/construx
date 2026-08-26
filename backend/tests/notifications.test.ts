@@ -60,8 +60,8 @@ before(async () => {
 });
 
 describe('the catalogue', () => {
-  it('holds 177 events across 15 categories', () => {
-    assert.equal(NOTIFICATION_EVENTS.length, 177);
+  it('holds 178 events across 15 categories', () => {
+    assert.equal(NOTIFICATION_EVENTS.length, 178);
     assert.equal(CATEGORIES.length, 15);
     assert.equal(new Set(CATEGORIES.map((c) => CATEGORY_TITLES[c])).size, 15, 'two categories share a title');
   });
@@ -93,10 +93,10 @@ describe('the catalogue', () => {
 
   it('reports the channel coverage the architecture claims', () => {
     const coverage = channelCoverage();
-    assert.equal(coverage.INAPP, 177, 'in-app is meant to carry every event');
-    assert.equal(coverage.EMAIL, 130);
+    assert.equal(coverage.INAPP, 178, 'in-app is meant to carry every event');
+    assert.equal(coverage.EMAIL, 131);
     assert.equal(coverage.SMS, 18);
-    assert.equal(coverage.PUSH, 27);
+    assert.equal(coverage.PUSH, 28);
   });
 
   it('declares WhatsApp and routes nothing to it, which is stated rather than hidden', () => {
@@ -107,8 +107,8 @@ describe('the catalogue', () => {
     assert.equal(channelCoverage().WHATSAPP, 0);
   });
 
-  it('carries 27 mandatory notices, and they are the ones that matter', () => {
-    assert.equal(mandatoryEvents().length, 27);
+  it('carries 28 mandatory notices, and they are the ones that matter', () => {
+    assert.equal(mandatoryEvents().length, 28);
 
     // Spot-checked by name rather than by count alone. A count stays green if
     // somebody moves the flag from "account locked" to "task assigned".

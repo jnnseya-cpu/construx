@@ -4917,6 +4917,55 @@ export const ROUTES: Route[] = [
       consistency.consistencyReport(projectContext(platform, ctx), ctx.query.get('today') ?? undefined),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consistency/chain-exceptions',
+    description: 'Raise a break in the bid-to-CVR data flow as an exception to whoever owns the commercial position',
+    // POST rather than GET, and separate from the report above, because this
+    // writes: reading what disagrees must never be the act that alerts somebody,
+    // or every dashboard refresh becomes an escalation.
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      const escalation = consistency.escalateChainBreaks(projectContext(platform, ctx));
+
+      // The record is written whatever happens next. The notice is the second
+      // half, and a mail server that is down must not lose the exception.
+      for (const exception of escalation.raised) {
+        const recipients = platform
+          .users(auth(ctx).tenantId)
+          .filter((user) => user.roles.some((role) => (consistency.CHAIN_EXCEPTION_ROLES as readonly string[]).includes(role)))
+          .map((user) => ({ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }));
+
+        if (recipients.length === 0) continue;
+
+        await notifyEngine.notify(platform, {
+          code: 'commercial.chain_broken',
+          recipients,
+          payload: {
+            project: ctx.params.projectId as string,
+            item: exception.check,
+            actionUrl: `/app/#/projects/${ctx.params.projectId}/consistency`,
+            actionLabel: 'Open the commercial position',
+            detail: `${exception.finding} ${exception.consequence}`,
+          },
+          branding: platform.exports.branding(auth(ctx).tenantId, ctx.params.projectId as string),
+          actorId: auth(ctx).actorId,
+          correlationId: ctx.correlationId,
+        });
+      }
+
+      return {
+        ...escalation,
+        // Said plainly rather than implied. An exception owed to nobody is a
+        // configuration problem on the tenancy, not a delivery failure.
+        unaddressed:
+          escalation.raised.length > 0 &&
+          platform
+            .users(auth(ctx).tenantId)
+            .every((user) => !user.roles.some((role) => (consistency.CHAIN_EXCEPTION_ROLES as readonly string[]).includes(role))),
+      };
+    },
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/obligations/calendar',
     description: 'The obligations calendar: what falls due, and which time bars are running',

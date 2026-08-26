@@ -225,6 +225,12 @@ export async function publishCVR(
           ...cvr,
           id: cvrId,
           projectId: ctx.projectId,
+          // The contract the margin was computed against. It was known here and
+          // never written down, so a published CVR could not name the contract
+          // sum it started from — and `consistencyReport` reads the *latest*
+          // executed contract where this reads the *first*, so on a project with
+          // a supplemental agreement the two were not necessarily the same one.
+          contractId: contract.refId,
           period: input.period,
           narrative: String(output.narrative ?? ''),
           publishedAt: new Date().toISOString(),
