@@ -245,7 +245,10 @@ const tenancy = (over: Partial<Parameters<typeof estateOverview>[0]['tenancies']
   status: 'ACTIVE' as const,
   seatsUsed: 2,
   seatsIncluded: 20 as number | null,
-  identities: [{ status: 'ACTIVE' as const }, { status: 'ACTIVE' as const }],
+  identities: [
+    { status: 'ACTIVE' as const, administrator: true },
+    { status: 'ACTIVE' as const, administrator: false },
+  ],
   ...over,
 });
 
@@ -416,7 +419,7 @@ describe('the estate position', () => {
     // inflates the estate and understates how full the packages are.
     const overview = estateOverview(
       {
-        tenancies: [tenancy({ identities: [{ status: 'ACTIVE' }, { status: 'SUSPENDED' }] })],
+        tenancies: [tenancy({ identities: [{ status: 'ACTIVE', administrator: true }, { status: 'SUSPENDED', administrator: false }] })],
         receipts: [],
         awaitingPayment: [],
         operators: 3,

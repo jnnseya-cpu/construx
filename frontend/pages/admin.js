@@ -1,7 +1,7 @@
 import { api } from '../lib/api.js';
 import { barChart, lineChart } from '../lib/chart.js';
 import { command } from '../lib/command.js';
-import { badge, date, html, humanise, money, pct, raw, render, table, toast, track } from '../lib/ui.js';
+import { badge, date, html, humanise, money, pct, raw, render, table, time, toast, track } from '../lib/ui.js';
 import { state } from '../app.js';
 
 /**
@@ -121,7 +121,7 @@ export async function admin(root) {
   const isOperator = roles.includes('PLATFORM_ADMIN');
   const operatorOnly = (path) => (isOperator ? api.get(path).catch(() => null) : Promise.resolve(null));
 
-  const [routes, plane, matrix, overview, estate, burn, payments, security, logs, ready, vocab] = await Promise.all([
+  const [routes, plane, matrix, overview, estate, burn, payments, security, logs, ready, governance, vocab] = await Promise.all([
     api.get('/v1/routes').catch(() => ({ routes: [] })),
     api.get('/v1/ai/control-plane').catch(() => null),
     api.get('/v1/permissions/matrix').catch(() => ({ matrix: {} })),
@@ -132,6 +132,7 @@ export async function admin(root) {
     operatorOnly('/v1/admin/security'),
     operatorOnly('/v1/admin/logs'),
     operatorOnly('/v1/admin/readiness'),
+    operatorOnly('/v1/admin/audit'),
     // Jurisdictions and currencies for the onboarding form, published by the
     // platform rather than listed here — so the console cannot offer a
     // jurisdiction the tax engine does not know.
@@ -215,8 +216,16 @@ export async function admin(root) {
               <div class="grid g4" style="margin-bottom:14px">
                 <div class="card">
                   <h3>Tenancies</h3>
-                  <div class="metric">${overview.tenancies.total}</div>
-                  <div class="metric-sub">${overview.tenancies.active} active · ${overview.tenancies.suspended} suspended · ${overview.tenancies.cancelled} cancelled</div>
+                  <div class="metric ${raw(overview.tenancies.unreachable > 0 ? 'bad' : '')}">${overview.tenancies.total}</div>
+                  <div class="metric-sub">
+                    ${overview.tenancies.active} active · ${overview.tenancies.onTrial} on trial ·
+                    ${overview.tenancies.suspended} suspended · ${overview.tenancies.cancelled} cancelled
+                    ${
+                      overview.tenancies.unreachable > 0
+                        ? html`<br><b>${overview.tenancies.unreachable} with no administrator — nobody can run them</b>`
+                        : ''
+                    }
+                  </div>
                 </div>
                 <div class="card">
                   <h3>New in 30 days</h3>
@@ -527,15 +536,23 @@ export async function admin(root) {
                 here — the account layer is enforced in ABAC, not in this page's markup.
               </div>
               ${table({
-                headers: ['Tenant', 'Jurisdiction', 'Tier', 'Status', 'Seats', 'Isolation', 'ACU available', 'Renews', ''],
-                align: ['', '', '', '', 'num', '', 'num', '', ''],
+                headers: ['Tenant', 'Tier', 'Status', 'People', 'Seats', 'Lifetime revenue', 'ACU available', 'Renews', ''],
+                align: ['', '', '', 'num', 'num', 'num', 'num', '', ''],
                 rows: (estate.tenants ?? []).map((t) => [
-                  t.legalName,
-                  t.jurisdiction,
+                  html`${t.legalName}<div class="metric-sub">${t.jurisdiction} · ${
+                    t.isolatedTenancy ? 'dedicated tenancy' : 'shared tenancy'
+                  }</div>`,
                   badge(t.tier, t.tier === 'ENTERPRISE' || t.tier === 'SOVEREIGN' ? 'ai' : 'info'),
                   badge(t.status, t.status === 'ACTIVE' ? 'ok' : 'warn'),
+                  // A tenancy with no administrator can invite nobody and be
+                  // configured by nobody, whatever it is paying. Onboarding now
+                  // makes that impossible, and it is shown so an older tenancy
+                  // in that state cannot hide.
+                  t.administrators === 0
+                    ? badge('no administrator', 'bad')
+                    : `${t.identities} (${t.administrators} admin${t.administrators === 1 ? '' : 's'})`,
                   `${t.seatsUsed} / ${t.seatsIncluded ?? '∞'}`,
-                  t.isolatedTenancy ? badge('dedicated', 'ok') : badge('shared', 'info'),
+                  money(t.lifetimeRevenueMinor),
                   money(t.wallet.availableMinor),
                   date(t.renewsAt),
                   html`<button class="btn quiet sm" data-credit="${t.id}">Credit</button>
@@ -543,6 +560,57 @@ export async function admin(root) {
                 ]),
                 empty: 'No tenancy on the estate yet',
               })}
+            </div>`
+          : ''
+      }
+
+      ${
+        governance
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">
+                Governance record — every act an operator is accountable for
+                ${governance.intact ? badge('chain intact', 'ok') : badge('CHAIN BROKEN', 'bad')}
+              </h3>
+              <div class="metric-sub" style="padding:0 17px 10px">
+                ${governance.total} event${governance.total === 1 ? '' : 's'} across
+                ${governance.chains.length} chain${governance.chains.length === 1 ? '' : 's'}.
+                A tenancy opened, an identity created, a seat assigned, a subscription suspended, a payment received,
+                a wallet credited. Delivery work is written to its own project and is not reachable from here —
+                that boundary is the shape of the record, not a filter on this page.
+                <b>${governance.intact ? 'Verified by walking every chain on this request' : 'A chain failed verification'}</b>,
+                not asserted.
+              </div>
+              ${
+                !governance.intact
+                  ? html`<div style="padding:0 17px 12px"><div class="notice bad">
+                      <div><b>A governance chain failed verification.</b><br>
+                      ${governance.chains
+                        .filter((c) => c.failures > 0)
+                        .map((c) => `${c.tenant}: ${c.failures} event${c.failures === 1 ? '' : 's'}`)
+                        .join(' · ')}.
+                      An event has been altered, deleted or reordered. Treat the affected record as unreliable until
+                      it is investigated.</div>
+                    </div></div>`
+                  : ''
+              }
+              ${table({
+                headers: ['When', 'Act', 'Tenant', 'On', 'By', 'Chain'],
+                rows: (governance.events ?? []).slice(0, 25).map((event) => [
+                  time(event.timestamp),
+                  humanise(event.eventType),
+                  event.tenant,
+                  `${humanise(event.entity.refType)}`,
+                  event.actor?.refType === 'System' ? badge('system', 'info') : (event.actor?.refId ?? '—'),
+                  html`<span class="mono" style="font-size:10.5px;color:var(--text-3)">${
+                    event.chainHash ? `${event.chainHash.slice(0, 12)}…` : '—'
+                  }</span>`,
+                ]),
+                empty: 'No governance act recorded yet',
+              })}
+              <div style="padding:12px 17px 15px"><div class="metric-sub">
+                Append-only. Nothing here is edited or deleted — a correction is a new event, and the chain hash makes
+                a deletion or a reordering detectable rather than merely forbidden.
+              </div></div>
             </div>`
           : ''
       }

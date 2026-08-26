@@ -70,6 +70,7 @@ import { classifyEntity } from '../identity/entityAccess.ts';
 import { FIELD_FORBIDDEN_EVENTS } from '../field/sync.ts';
 import { estateBurn } from '../billing/burn.ts';
 import { estateOverview } from '../billing/overview.ts';
+import { isPlatformGovernanceEvent } from '../goldenthread/eventTypes.ts';
 import * as evidence from '../evidence/registry.ts';
 import * as perception from '../engines/perception.ts';
 import * as signing from '../signing/signature.ts';
@@ -675,6 +676,17 @@ export const ROUTES: Route[] = [
             monthlyPriceUsd: definition.monthlyPriceUsd,
             isolatedTenancy: definition.isolatedTenancy,
             wallet: platform.wallet(tenant.id).snapshot(),
+            // What this tenancy has actually paid, and how many people it has.
+            // Both were reachable only by fetching two other endpoints and
+            // joining them in the browser, so the estate table — the one screen
+            // an operator judges a customer from — showed neither.
+            lifetimeRevenueMinor: platform
+              .paymentReceipts(tenant.id)
+              .reduce((sum, receipt) => sum + receipt.amountMinor, 0),
+            identities: platform.users(tenant.id).length,
+            administrators: platform
+              .users(tenant.id)
+              .filter((user) => user.roles.includes('ENTERPRISE_ADMIN')).length,
             // How much of the volume this tenancy is using, and how close it is
             // to the point where its next upload is refused. Bytes held, not
             // what they contain — the operator layer sees the meter, never the
@@ -759,13 +771,102 @@ export const ROUTES: Route[] = [
             status: subscription.status,
             seatsUsed: subscription.assignedIdentities.length,
             seatsIncluded: TIERS[subscription.tier].includedIdentities,
-            identities: platform.users(tenant.id).map((user) => ({ status: user.status })),
+            identities: platform.users(tenant.id).map((user) => ({
+              status: user.status,
+              administrator: user.roles.includes('ENTERPRISE_ADMIN'),
+            })),
           };
         }),
         receipts: platform.paymentReceipts(),
         awaitingPayment: platform.topUpIntents().filter((intent) => intent.status === 'AWAITING_PAYMENT'),
         operators: platform.operators().length,
       });
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/audit',
+    description: 'Every governance act on the estate, hash-chained and verified (platform operator only)',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may see the governance record', 'PLATFORM_ADMIN_REQUIRED');
+      }
+
+      /**
+       * The account boundary, stated one event code at a time.
+       *
+       * The first attempt selected every event on a `<tenantId>-governance`
+       * project, on the reasoning that governance acts are written there and
+       * delivery work is not. That is false: the governance project is where
+       * *everything tenant-scoped* goes, so it handed the operator a customer's
+       * portfolios, programmes, suppliers and bid pipeline. It looked correct on
+       * an estate with no delivery data — which is what every fresh fixture is,
+       * and why the tests agreed with it.
+       *
+       * `PLATFORM_GOVERNANCE_EVENTS` names the acts instead. Anything not on
+       * that list is out of reach by default, which is the right direction for
+       * the failure to fall: a missing code is a gap in an audit screen, and a
+       * wrongly added one is a customer's work handed to somebody with no
+       * business seeing it.
+       *
+       * The project check stays as well. It costs nothing and means a delivery
+       * event that ever reused one of these codes still could not arrive here.
+       */
+      const governance = platform.ledger
+        .events({})
+        .filter((event) => event.projectId.endsWith('-governance') && isPlatformGovernanceEvent(event.eventType));
+
+      const names = new Map(platform.tenants().map((tenant) => [tenant.id, tenant.legalName]));
+      const byType: Record<string, number> = {};
+      for (const event of governance) byType[event.eventType] = (byType[event.eventType] ?? 0) + 1;
+
+      // Verified rather than asserted. "Hash-chained" on a screen means nothing
+      // unless something has actually walked the chain, and the replay engine
+      // that does it already exists — so the answer here is computed, not
+      // claimed. Each governance project is its own chain and is verified as
+      // one.
+      const projects = [...new Set(governance.map((event) => event.projectId))];
+      const verification = projects.map((projectId) => {
+        const tenantId = projectId === 'platform-governance' ? 'platform' : projectId.replace(/-governance$/, '');
+        const report = replayProject(platform.ledger, tenantId, projectId, new Date().toISOString());
+        return {
+          projectId,
+          tenant: names.get(tenantId) ?? (tenantId === 'platform' ? 'Platform' : tenantId),
+          verified: report.summary.VERIFIED,
+          failures: report.failures.length,
+          chainHead: platform.ledger.chainHead(projectId),
+        };
+      });
+
+      return {
+        at: new Date().toISOString(),
+        total: governance.length,
+        byType,
+        // A single broken chain anywhere on the estate is the only number on
+        // this screen that matters, so it is computed across all of them rather
+        // than left for a reader to spot in a list.
+        intact: verification.every((entry) => entry.failures === 0),
+        chains: verification,
+        events: governance
+          .slice(-Number(ctx.query.get('limit') ?? 200))
+          .reverse()
+          .map((event) => ({
+            eventId: event.eventId,
+            timestamp: event.timestamp,
+            eventType: event.eventType,
+            tenant: names.get(event.tenantId) ?? (event.tenantId === 'platform' ? 'Platform' : event.tenantId),
+            entity: event.entity,
+            actor: event.actor,
+            source: event.source,
+            action: event.action,
+            // The per-entity hash and the whole-chain hash. The first proves the
+            // record was not edited; the second proves none was deleted or
+            // reordered around it, which a per-entity hash alone cannot.
+            afterHash: event.afterHash,
+            chainHash: event.chainHash,
+          })),
+      };
     },
   },
   {

@@ -418,6 +418,64 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PAYMENT_RECEIVED', 'PaymentReceipt', 'CREATE', 'AI_BILLING', { creates: true }),
 ];
 
+/**
+ * The acts a platform operator is accountable for.
+ *
+ * An explicit, closed list — and it is a list rather than a rule because the
+ * first attempt used a rule and the rule was wrong. Every governance act is
+ * written to a `<tenantId>-governance` project, so selecting those projects
+ * looked like a clean structural boundary. It is not: that project is where
+ * *everything tenant-scoped* is written, including portfolios, programmes,
+ * suppliers, opportunities and radar runs. Selecting it handed the operator a
+ * customer's commercial pipeline, and the mistake was invisible on an estate
+ * with no delivery data on it — which is exactly what a fresh test fixture is.
+ *
+ * So the boundary is stated, one code at a time, and anything not named here is
+ * out of the operator's reach by default. That is the right direction for the
+ * failure to fall: a governance act missing from this list is a gap in an audit
+ * screen, while a delivery event wrongly added is a customer's work handed to
+ * somebody who has no business seeing it.
+ *
+ * Three things are deliberately absent:
+ *
+ * - **`ACU_CONSUMED`, `ACU_HELD`, `ACU_RELEASED` and the cap alerts.** Spend has
+ *   its own view, computed from the wallet, and these are high-volume enough to
+ *   bury the fifteen acts that actually need reading.
+ * - **`PAYMENT_CERTIFIED`, `PAYMENT_NOTICE_ISSUED`, `PAYMENT_CYCLE_GENERATED`.**
+ *   Those are construction contract payments under the Construction Act —
+ *   a customer paying their subcontractor, not anybody paying the platform. The
+ *   shared word "payment" is the whole trap.
+ * - **`INVOICE_ISSUED`.** It reads as platform billing and is not worth the risk
+ *   of being wrong about; the payment receipt already records money arriving.
+ */
+export const PLATFORM_GOVERNANCE_EVENTS: readonly string[] = [
+  // Tenancy and its commercial terms
+  'TENANT_CREATED',
+  'ENTERPRISE_CREATED',
+  'SUBSCRIPTION_ACTIVATED',
+  'SUBSCRIPTION_STATUS_CHANGED',
+  // Identity — who exists, what they may do, and their removal
+  'USER_CREATED',
+  'USER_ROLE_ASSIGNED',
+  'IDENTITY_SEAT_ASSIGNED',
+  'IDENTITY_SEAT_REVOKED',
+  'USER_ERASURE_REQUESTED',
+  'USER_ERASURE_CANCELLED',
+  'USER_ERASED',
+  // Money entering the platform, and the ceilings on spending it
+  'ACU_WALLET_OPENED',
+  'ACU_TOPPED_UP',
+  'ACU_CAPS_SET',
+  'PAYMENT_RECEIVED',
+];
+
+const GOVERNANCE = new Set(PLATFORM_GOVERNANCE_EVENTS);
+
+/** Whether an event is one the platform operator is accountable for. */
+export function isPlatformGovernanceEvent(code: string): boolean {
+  return GOVERNANCE.has(code);
+}
+
 const BY_CODE = new Map(EVENT_TYPES.map((t) => [t.code, t]));
 
 export function lookupEventType(code: string): EventTypeDefinition | undefined {

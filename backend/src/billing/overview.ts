@@ -63,6 +63,16 @@ export type EstateOverview = {
     active: number;
     suspended: number;
     cancelled: number;
+    /**
+     * Active tenancies still on the free trial tier.
+     *
+     * Counted apart from `active` because they are a different commercial fact:
+     * a trial is a tenancy that has not yet decided, and folding it into the
+     * active count reports a customer base larger than the one paying.
+     */
+    onTrial: number;
+    /** Tenancies with no identity holding ENTERPRISE_ADMIN — nobody can run them. */
+    unreachable: number;
     /** Tenancies onboarded in the last 30 days. */
     newInWindow: number;
     byTier: Array<{ tier: SubscriptionTier; tenancies: number }>;
@@ -90,7 +100,7 @@ type TenancyInput = {
   seatsUsed: number;
   /** Null where the package caps nothing. */
   seatsIncluded: number | null;
-  identities: ReadonlyArray<{ status: 'ACTIVE' | 'SUSPENDED' }>;
+  identities: ReadonlyArray<{ status: 'ACTIVE' | 'SUSPENDED'; administrator: boolean }>;
 };
 
 /** Days in the calendar month `at` falls in, UTC. */
@@ -146,6 +156,12 @@ export function estateOverview(
       active: input.tenancies.filter((t) => t.status === 'ACTIVE').length,
       suspended: input.tenancies.filter((t) => t.status === 'SUSPENDED').length,
       cancelled: input.tenancies.filter((t) => t.status === 'CANCELLED').length,
+      onTrial: input.tenancies.filter((t) => t.status === 'ACTIVE' && t.tier === 'FREE_TRIAL').length,
+      // A tenancy nobody can administer cannot invite anybody, cannot be
+      // configured and cannot be used, whatever it is paying. Onboarding now
+      // creates the first administrator with the tenancy, so this should read
+      // zero for ever — which is exactly why it is worth showing.
+      unreachable: input.tenancies.filter((t) => !t.identities.some((i) => i.administrator)).length,
       newInWindow: input.tenancies.filter((t) => t.createdAt >= windowStart).length,
       byTier: [...byTier.entries()]
         .map(([tier, tenancies]) => ({ tier, tenancies }))

@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,597 passing, 0 failing, 0 skipped, across 83 files |
+| Tests | 1,607 passing, 0 failing, 0 skipped, across 84 files |
 | Typecheck | clean |
 | Backend | 115 TypeScript files, 55,231 lines |
 | Application | 36 ES modules, 11,790 lines (plus a service worker) |
@@ -3339,6 +3339,41 @@ getting one credit, and the whole page rendered in Chromium with no console
 error. `available` on `/v1/ai/control-plane` reports every keyed provider with
 its role, so a configured Anthropic key sitting in the failover chain is visible
 rather than invisible behind "OPENAI + GEMINI".
+
+**The operator has a governance record, and its boundary is an allow-list.**
+An operator can open a tenancy, suspend a paying customer's platform, credit a
+wallet and appoint somebody who can do all three. None of it was readable: the
+acts were in the ledger, and the ledger was reachable only per project through
+routes scoped to a tenant the operator is not in. The most consequential surface
+on the platform was the only unaudited one from the point of view of the person
+using it. `GET /v1/admin/audit` answers it, and verifies each chain on every
+request through the same replay engine the project audit uses — "hash-chained" is
+worth saying only if something has walked the chain.
+
+The first boundary was wrong, and the way it was wrong is worth recording. Every
+governance act is written to a `<tenantId>-governance` project, so selecting
+those projects looked like a clean structural boundary that would hold for
+commands that do not exist yet. It is not: that project is where *everything
+tenant-scoped* is written, so it handed the operator a customer's portfolios,
+programmes, suppliers and bid pipeline. Nine tests passed, because a fresh
+`new Platform()` has no delivery data on it to leak. It was found by looking at
+the rendered screen, which read "Supplier prequalified · Opportunity qualified".
+
+`PLATFORM_GOVERNANCE_EVENTS` in the event catalogue now names the fifteen acts
+explicitly, and anything absent is out of reach by default — the right direction
+for the failure to fall, since a missing code is a gap in an audit screen and a
+wrongly added one is a customer's work handed to somebody with no business seeing
+it. `ACU_CONSUMED` and the cap alerts are deliberately excluded (spend has its own
+view and they would bury the fifteen acts worth reading), as are
+`PAYMENT_CERTIFIED` and `PAYMENT_NOTICE_ISSUED` — those are Construction Act
+payments between a customer and their subcontractor, and the shared word is the
+whole trap. The replacement test runs against a seeded tenancy that has actually
+done work, and was confirmed to fail on the old filter before being kept.
+
+The estate table now carries lifetime revenue, headcount and administrator count
+per tenancy, and the overview separates trial tenancies and counts any tenancy
+with no administrator — which should read zero for ever now that onboarding
+creates one.
 
 **The product is CONSTRUX.** It was written as "CONSTRUX.AI" in 29 places —
 page titles, the OpenGraph card, the JSON-LD organisation name, the manifest, the
