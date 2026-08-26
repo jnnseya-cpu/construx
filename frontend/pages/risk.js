@@ -1,7 +1,8 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { OBSERVATION_TYPE, RISK_CATEGORY } from '../lib/enums.js';
-import { badge, date, days, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
+import { badge, date, days, drillable, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
+import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -25,6 +26,15 @@ export async function risk(root) {
   const worthMitigating = openRisks.filter((r) => r.residual?.recommended);
   const approvedRams = b.RAMS.filter((r) => r.status === 'APPROVED');
   const acknowledged = approvedRams.filter((r) => (r.acknowledgements ?? []).length > 0);
+
+  // The records behind each figure, so a number opens to what moved it.
+  const riskSources = openRisks.map((r) => ({ refType: 'RiskRegisterItem', refId: r._refId }));
+  const safetySources = [
+    ...(forecast ? [{ refType: 'SafetyForecast', refId: forecast._refId }] : []),
+    ...b.Incident.map((i) => ({ refType: 'Incident', refId: i._refId })),
+    ...b.SafetyObservation.map((o) => ({ refType: 'SafetyObservation', refId: o._refId })),
+  ];
+  const ramsSources = approvedRams.map((r) => ({ refType: 'RAMS', refId: r._refId }));
 
   const today = new Date().toISOString();
   const expiring = b.Competency.filter((c) => String(c.expiresAt ?? '') < today);
@@ -57,24 +67,24 @@ export async function risk(root) {
       }
 
       <div class="grid g4" style="margin-bottom:14px">
-        <div class="card">
+        <div ${raw(drillable('Expected risk cost', riskSources))}>
           <h3>Expected risk cost</h3>
           <div class="metric warn">${contingency ? money(contingency.expectedMinor) : '—'}</div>
           <div class="metric-sub">probability-weighted across ${openRisks.length} open risks</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('P80 contingency', riskSources))}>
           <h3>P80 contingency</h3>
           <div class="metric orange">${contingency ? money(contingency.p80Minor) : '—'}</div>
           <div class="metric-sub">the figure to hold, not the average</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Safety risk index', safetySources))}>
           <h3>Safety risk index</h3>
           <div class="metric ${raw(!forecast ? '' : forecast.severity === 'LOW' ? 'good' : forecast.severity === 'CRITICAL' ? 'bad' : 'warn')}">
             ${forecast ? forecast.riskIndex : '—'}
           </div>
           <div class="metric-sub">${forecast ? `${forecast.expectedIncidents30d} expected recordables in 30 days` : 'not forecast'}</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('RAMS briefed', ramsSources))}>
           <h3>RAMS briefed</h3>
           <div class="metric ${raw(approvedRams.length > 0 && acknowledged.length === approvedRams.length ? 'good' : 'warn')}">
             ${acknowledged.length}<span style="font-size:16px;color:var(--text-3)"> / ${approvedRams.length}</span>
@@ -82,6 +92,8 @@ export async function risk(root) {
           <div class="metric-sub">work must not start before acknowledgement</div>
         </div>
       </div>
+
+      <div id="risk-insight" style="margin-bottom:14px"></div>
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
@@ -301,6 +313,13 @@ export async function risk(root) {
       ],
     },
   };
+
+  void insightPanel(root.querySelector('#risk-insight'), {
+    projectId,
+    areas: ['RISK_REGISTER', 'SAFETY_RAMS'],
+    subject: 'risk and safety',
+    onChange: draw,
+  });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

@@ -1,6 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
-import { badge, date, days, html, humanise, modal, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
+import { badge, date, days, html, humanise, metric, modal, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
+import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -37,6 +38,18 @@ export async function programme(root) {
 
   const complete = tasks.filter((t) => Number(t.percentComplete ?? 0) >= 100).length;
   const slipping = tasks.filter((t) => Number(t.slippageDays ?? 0) > 0);
+
+  // What each headline figure was computed from. The network figures are a
+  // function of the activities and their logic, so both are named; the critical
+  // path names only the activities actually on it, because naming all of them
+  // would make the drill useless on a programme of any size.
+  const networkSources = [
+    ...tasks.map((task) => ({ refType: 'Task', refId: task._refId })),
+    ...bundle.Dependency.map((dependency) => ({ refType: 'Dependency', refId: dependency._refId })),
+  ];
+  const criticalSources = tasks
+    .filter((task) => criticalIds.has(task._refId) || criticalIds.has(task.id))
+    .map((task) => ({ refType: 'Task', refId: task._refId }));
 
   render(
     root,
@@ -169,29 +182,37 @@ export async function programme(root) {
       }
 
       <div class="grid g4" style="margin-bottom:14px">
-        <div class="card">
-          <h3>Programme duration</h3>
-          <div class="metric orange">${calc.projectDurationDays ? days(calc.projectDurationDays) : '—'}</div>
-          <div class="metric-sub">from the activity network</div>
-        </div>
-        <div class="card">
-          <h3>P80 duration</h3>
-          <div class="metric warn">${calc.p80DurationDays ? days(calc.p80DurationDays) : '—'}</div>
-          <div class="metric-sub">aggregated PERT variance on the critical path</div>
-        </div>
-        <div class="card">
-          <h3>On-time probability</h3>
-          <div class="metric ${raw((calc.probabilityOnTime ?? 0) >= 0.8 ? 'good' : 'warn')}">
-            ${calc.probabilityOnTime !== undefined ? pct(calc.probabilityOnTime * 100, 0) : '—'}
-          </div>
-          <div class="metric-sub">against a 400-day contractual duration</div>
-        </div>
-        <div class="card">
-          <h3>Critical / near-critical</h3>
-          <div class="metric bad">${calc.criticalPath?.length ?? 0}<span style="font-size:16px;color:var(--text-3)"> / ${calc.nearCritical?.length ?? 0}</span></div>
-          <div class="metric-sub">zero float / five days or less</div>
-        </div>
+        ${metric({
+          label: 'Programme duration',
+          value: calc.projectDurationDays ? days(calc.projectDurationDays) : '—',
+          tone: 'orange',
+          sub: 'from the activity network',
+          sources: networkSources,
+        })}
+        ${metric({
+          label: 'P80 duration',
+          value: calc.p80DurationDays ? days(calc.p80DurationDays) : '—',
+          tone: 'warn',
+          sub: 'aggregated PERT variance on the critical path',
+          sources: networkSources,
+        })}
+        ${metric({
+          label: 'On-time probability',
+          value: calc.probabilityOnTime !== undefined ? pct(calc.probabilityOnTime * 100, 0) : '—',
+          tone: (calc.probabilityOnTime ?? 0) >= 0.8 ? 'good' : 'warn',
+          sub: 'against a 400-day contractual duration',
+          sources: networkSources,
+        })}
+        ${metric({
+          label: 'Critical / near-critical',
+          value: raw(`${calc.criticalPath?.length ?? 0}<span style="font-size:16px;color:var(--text-3)"> / ${calc.nearCritical?.length ?? 0}</span>`),
+          tone: 'bad',
+          sub: 'zero float / five days or less',
+          sources: criticalSources,
+        })}
       </div>
+
+      <div id="programme-insight" style="margin-bottom:14px"></div>
 
       ${
         delay
@@ -337,10 +358,6 @@ export async function programme(root) {
       toast('Scenario failed', error.message, 'err');
     }
   });
-}
-
-function moneyOf(minor) {
-  return `£${(Number(minor ?? 0) / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
   const COMMANDS = {
     task: {
@@ -399,6 +416,13 @@ function moneyOf(minor) {
     },
   };
 
+  void insightPanel(root.querySelector('#programme-insight'), {
+    projectId,
+    areas: ['PROGRAMME_BASELINES', 'WORKPACKAGES_TASKS', 'LOOKAHEAD_CONSTRAINTS'],
+    subject: 'the programme',
+    onChange: draw,
+  });
+
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
     if (!button) return;
@@ -406,4 +430,8 @@ function moneyOf(minor) {
     if (!spec) return;
     if (await command(spec)) await draw();
   });
+}
+
+function moneyOf(minor) {
+  return `£${(Number(minor ?? 0) / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }

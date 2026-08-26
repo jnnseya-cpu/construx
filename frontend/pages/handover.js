@@ -1,7 +1,8 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { today as todayIso } from '../lib/enums.js';
-import { badge, date, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
+import { badge, date, drillable, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
+import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -42,6 +43,17 @@ export async function handover(root) {
   const openOrders = b.WorkOrder.filter((w) => w.status !== 'CLOSED');
   const accepted = b.CommissioningTest.filter((t) => t.status === 'ACCEPTED');
 
+  // The records behind each figure. Completeness is scored across the pack and
+  // the manuals and tests it is scored against, so all three are named.
+  const packSources = [
+    ...b.HandoverPack.map((h) => ({ refType: 'HandoverPack', refId: h._refId })),
+    ...b.OMManual.map((m) => ({ refType: 'OMManual', refId: m._refId })),
+    ...b.CommissioningTest.map((t) => ({ refType: 'CommissioningTest', refId: t._refId })),
+  ];
+  const assetSources = b.AssetRegisterItem.map((a) => ({ refType: 'AssetRegisterItem', refId: a._refId }));
+  const defectSources = openDefects.map((d) => ({ refType: 'Defect', refId: d._refId }));
+  const forecastSources = forecast ? [{ refType: 'MaintenanceForecast', refId: forecast._refId }] : [];
+
   const today = new Date().toISOString().slice(0, 10);
   const activeWarranties = b.Warranty.filter((w) => String(w.expiryDate ?? '') >= today);
 
@@ -72,27 +84,29 @@ export async function handover(root) {
       }
 
       <div class="grid g4" style="margin-bottom:14px">
-        <div class="card">
+        <div ${raw(drillable('Handover completeness', packSources))}>
           <h3>Handover completeness</h3>
           <div class="metric ${raw(!pack ? '' : pack.completeness === 1 ? 'good' : 'warn')}">${pack ? pct(pack.completeness * 100, 0) : '—'}</div>
           <div class="metric-sub">${pack ? `${(pack.gaps ?? []).length} gap(s) · ${humanise(pack.status)}` : 'no pack compiled'}</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Registered assets', assetSources))}>
           <h3>Registered assets</h3>
           <div class="metric orange">${b.AssetRegisterItem.length}</div>
           <div class="metric-sub">${activeWarranties.length} under active warranty</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Open defects', defectSources))}>
           <h3>Open defects</h3>
           <div class="metric ${raw(openDefects.length > 0 ? 'warn' : 'good')}">${openDefects.length}</div>
           <div class="metric-sub">${coveredDefects.length} recharged to a manufacturer</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('5-year maintenance', forecastSources))}>
           <h3>5-year maintenance</h3>
           <div class="metric">${forecast ? money(forecast.totalForecastMinor) : '—'}</div>
           <div class="metric-sub">${forecast ? `budget pressure ${forecast.budgetPressure}` : 'not forecast'}</div>
         </div>
       </div>
+
+      <div id="handover-insight" style="margin-bottom:14px"></div>
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
@@ -358,6 +372,13 @@ export async function handover(root) {
       ],
     },
   };
+
+  void insightPanel(root.querySelector('#handover-insight'), {
+    projectId,
+    areas: ['HANDOVER_OM'],
+    subject: 'handover and operations',
+    onChange: draw,
+  });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

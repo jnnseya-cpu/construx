@@ -1,5 +1,6 @@
 import { api, ApiError, resetWithheld, session, withheldRecords } from './lib/api.js';
 import { esc, html, humanise, initials, money, raw, render, toast } from './lib/ui.js';
+import { wireDrill } from './lib/drill.js';
 import * as outbox from './lib/outbox.js';
 import { PAGES } from './pages/index.js';
 
@@ -191,6 +192,11 @@ document.addEventListener('click', (event) => {
   event.preventDefault();
   navigate(link.dataset.nav);
 });
+
+// Every KPI opens to the events behind it. Wired once for the whole
+// application: each screen re-renders its own root on every draw, so a listener
+// bound per tile would be re-attached on each one.
+wireDrill(() => state.session?.projectId);
 
 // --- session ----------------------------------------------------------------
 

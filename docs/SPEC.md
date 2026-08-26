@@ -785,12 +785,14 @@ declaration, not the runtime.
 Three command centres are specified, each with four data panels and an **AI
 Insight / Recommendation** panel carrying Review / Accept / Mitigate / Assign.
 
-**PARTIAL, and the same gap on all three.** The data panels largely exist across
-the delivery screens. What no delivery screen has is the AI Insight /
-Recommendation panel with those four actions — the operator console is the one
-screen in the platform that meets the Build Standard, and it is not one of these
-three. The Build Standard's other clause — every KPI tile drills to its source
-events — is also unmet on the delivery screens.
+**The AI Insight panel is BUILT, on all ten delivery screens** — the three named
+here and the seven in Parts C, D, F and G — with all four actions, plus Reject.
+**The KPI drill is BUILT** on every one of them. Both are recorded in full under
+the Build Standard below.
+
+The data panels themselves remain **PARTIAL** against the exact tables in E11:
+most of the content exists across the delivery screens and it is not arranged
+into the named five-panel layout per persona.
 
 ---
 
@@ -905,8 +907,79 @@ Stated here as the standard to be measured against, not as something met.
 | Zero re-entry proven by tracing one datum end to end | **BUILT** — the eleven-stage chain test, and now the chain check that proves the links rather than assuming them |
 | Every state change emits its event and appears in the audit log with the hash chain intact | **BUILT** |
 | Every agent passes a contract test: triggers, schema-valid output, confidence floor, HITL gate unbypassable, ACU metered, run logged | **PARTIAL** — the gate, metering and logging are proven; the confidence floor is not, because Rule 4's confidence score is not yet on the output contract |
-| **Every dashboard KPI drills to source events** | **NOT MET** — on any screen |
-| **AI Insight and Recommendation panels present with Review / Accept / Mitigate / Assign** | **NOT MET** — no delivery screen has one |
+| **Every dashboard KPI drills to source events** | **BUILT** on all ten delivery screens |
+| **AI Insight and Recommendation panels present with Review / Accept / Mitigate / Assign** | **BUILT** on all ten delivery screens |
+
+#### The KPI drill
+
+A figure nobody can open is an assertion rather than a report, and on a
+commercial screen that is the difference. Every headline tile on every delivery
+screen now opens to the Golden Thread events behind it.
+
+**A tile names the records it was computed from, not a query.** The refs handed
+to the drill are the same array the tile added up. A query would be a second
+description of the calculation, and the day somebody changes the sum without
+changing the query the drill starts lying.
+
+**Content the reader may not see is withheld and said to be withheld.** The
+events route applies the entity classification per event, the same decision the
+audit feed makes. A drill that silently omitted those rows would be a way round
+the capability model.
+
+**A figure with no sources gets no drill.** Four tiles across the ten screens
+are deliberately plain, and each for a stated reason: the Golden Thread event
+count on the command centre would open the whole ledger, which is what the audit
+screen is; and the control screen's Gaps, Not-at-this-size and Not-tracked tiles
+all count the *absence* of records, so there is nothing to open. Dressing one of
+those in an affordance that opens empty is the placeholder rule 9 forbids.
+
+**One defect fixed at source.** The control report evaluated each item by
+filtering the ledger and keeping only `.length`. It now carries the refs it
+found, capped at 25 with the truncation stated, so "4 of 5 in place" can be
+opened rather than believed.
+
+#### The AI Insight / Recommendation panel
+
+Every part of this existed and lived on one screen — the autopilot queue, which
+is where somebody goes once they have already decided to look at what the agents
+found. That is backwards: a recommendation is worth something at the moment
+somebody is looking at the number it is about.
+
+**Scoped by capability area, filtered by the server**, so the narrowing is one
+rule the whole product shares and a screen cannot quietly widen it. A proposal
+with a command is placed by the area that command exercises. An observation —
+which is most of what the fleet produces — is placed by the areas of the records
+in its own evidence, read from `ENTITY_ACCESS`. Placing observations by the
+raising agent's *read mandate* was the first attempt and it is far too loose: an
+agent that reads eight areas appears on eight screens, and a handover finding
+landed on the field command centre because the handover agent reads quality data.
+An agent reading something is not the same as a finding being about it.
+
+**An item that is not the reader's is marked, not hidden**, so a design decision
+sitting for a week is visible to somebody other than the person already not
+acting on it.
+
+Two of the four actions had to be built:
+
+- **Mitigate** closes a finding that was right and is being handled another way.
+  Deliberately not a softer rejection — rejecting says the finding was *wrong* —
+  and the statement of what is being done instead is mandatory, because
+  "mitigated" with nothing behind it reads as a control and is a shrug. Keeping
+  the two apart is what leaves the fleet's own accuracy measurable.
+- **Assign** names who will decide it and leaves the proposal **open**, because
+  moving something to somebody's name is not dealing with it. The assignee must
+  actually be able to decide it: an item assigned to somebody who cannot act
+  looks owned and cannot move, which is worse than an unassigned one.
+
+**Reject is kept**, though the specification's four do not include it. A finding
+that is simply wrong has to be recordable as wrong, or every incorrect finding is
+closed as "mitigated" and the platform loses the only signal it has about whether
+its own findings are any good.
+
+Emphasis follows what the item offers: where there is a command to run, Accept is
+the primary action; where there is not, the card says so and Review is primary
+instead. Making Accept the loudest button on an item that runs nothing teaches
+people the emphasis means nothing.
 | No mocked data behind a project-scoped view | **BUILT** — and enforced by rule 9 of the operating directive |
 | A subcontractor seat can never read another trade's snags, another org's data, or unfiltered commercial records | **BUILT** — all three tested |
 
@@ -962,13 +1035,9 @@ Recorded separately because they are stage work rather than platform work, and
 because the order above has to be finished first — every item below reads the
 audit event, the agent contract or the lifecycle gate.
 
-13. **The Build Standard on the delivery screens.** Two clauses, unmet on every
-    screen except the operator console: every KPI tile drills to its source
-    events, and every command centre carries an AI Insight / Recommendation panel
-    with Review / Accept / Mitigate / Assign. Three command centres are specified
-    in E11 and two more in F3 and G3, and none of them can be called finished
-    without it. This is the largest visible gap in the product and it is ahead of
-    any new module.
+13. ~~The Build Standard on the delivery screens.~~ **Done.** Both clauses now
+    hold on all ten delivery screens. What remains of E11, F3 and G3 is the exact
+    per-persona panel layout, which is arrangement rather than capability.
 14. **Suite-specific contract machinery** — NEC4 Early Warning and Compensation
     Events with their quotation and reply clocks, JCT Relevant Events, FIDIC
     Clause 20. `ContractSuite` already knows the names and nothing behaves

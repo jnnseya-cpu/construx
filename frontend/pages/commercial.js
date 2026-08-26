@@ -1,7 +1,8 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { today } from '../lib/enums.js';
-import { badge, date, exact, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
+import { badge, date, exact, html, humanise, metric, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
+import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, refreshContext, state } from '../app.js';
 
 /**
@@ -76,6 +77,36 @@ export async function commercial(root) {
   }
   const atRisk = (notices?.position ?? []).filter((p) => p.checks.some((c) => c.status === 'OVERDUE' || c.status === 'LATE'));
 
+  /**
+   * What each headline figure was computed from.
+   *
+   * Taken from the records this page already holds rather than from a
+   * description of the calculation — the same array the number came out of. A
+   * separate query would be a second statement of the sum, and the day one
+   * changes without the other the drill starts lying.
+   *
+   * The CVR record is named on all four because it is the record that carries
+   * them; the inputs it read are named beside it so the drill shows what moved.
+   */
+  const refsOf = (records, refType) => (records ?? []).map((r) => ({ refType, refId: r._refId }));
+
+  const cvrRef = cvr ? [{ refType: 'CVR', refId: cvr._refId }] : [];
+  const valueSources = [
+    ...cvrRef,
+    ...refsOf(bundle.Variation, 'Variation'),
+  ];
+  const costSources = [
+    ...cvrRef,
+    ...refsOf(bundle.ActualCost, 'ActualCost'),
+    ...refsOf(bundle.Commitment, 'Commitment'),
+  ];
+  const marginSources = [...cvrRef, ...refsOf(bundle.Budget, 'Budget')];
+  const cashSources = [
+    ...cvrRef,
+    ...refsOf(bundle.PaymentCertificate, 'PaymentCertificate'),
+    ...refsOf(bundle.LedgerEntry, 'LedgerEntry'),
+  ];
+
   render(
     root,
     html`
@@ -105,29 +136,38 @@ export async function commercial(root) {
       }
 
       <div class="grid g4" style="margin-bottom:14px">
-        <div class="card">
-          <h3>Forecast final value</h3>
-          <div class="metric orange">${cvr ? money(cvr.forecastFinalValueMinor) : '—'}</div>
-          <div class="metric-sub">contract + approved + unapproved variations</div>
-        </div>
-        <div class="card">
-          <h3>Forecast final cost</h3>
-          <div class="metric">${cvr ? money(cvr.forecastFinalCostMinor) : '—'}</div>
-          <div class="metric-sub">to date + accruals + cost to complete</div>
-        </div>
-        <div class="card">
-          <h3>Forecast margin</h3>
-          <div class="metric ${raw(!cvr ? '' : cvr.forecastMarginPercent < 0 ? 'bad' : cvr.marginErosionPercent > 2 ? 'warn' : 'good')}">
-            ${cvr ? pct(cvr.forecastMarginPercent, 2) : '—'}
-          </div>
-          <div class="metric-sub">${cvr ? `tender ${pct(cvr.marginAtTenderPercent, 0)} · ${cvr.marginErosionPercent > 0 ? 'eroded' : 'improved'} ${Math.abs(cvr.marginErosionPercent).toFixed(2)} pts` : ''}</div>
-        </div>
-        <div class="card">
-          <h3>Cash position</h3>
-          <div class="metric ${raw((cvr?.cashPositionMinor ?? 0) >= 0 ? 'good' : 'bad')}">${cvr ? money(cvr.cashPositionMinor) : '—'}</div>
-          <div class="metric-sub">certified less cost incurred</div>
-        </div>
+        ${metric({
+          label: 'Forecast final value',
+          value: cvr ? money(cvr.forecastFinalValueMinor) : '—',
+          tone: 'orange',
+          sub: 'contract + approved + unapproved variations',
+          sources: valueSources,
+        })}
+        ${metric({
+          label: 'Forecast final cost',
+          value: cvr ? money(cvr.forecastFinalCostMinor) : '—',
+          sub: 'to date + accruals + cost to complete',
+          sources: costSources,
+        })}
+        ${metric({
+          label: 'Forecast margin',
+          value: cvr ? pct(cvr.forecastMarginPercent, 2) : '—',
+          tone: !cvr ? '' : cvr.forecastMarginPercent < 0 ? 'bad' : cvr.marginErosionPercent > 2 ? 'warn' : 'good',
+          sub: cvr
+            ? `tender ${pct(cvr.marginAtTenderPercent, 0)} · ${cvr.marginErosionPercent > 0 ? 'eroded' : 'improved'} ${Math.abs(cvr.marginErosionPercent).toFixed(2)} pts`
+            : '',
+          sources: marginSources,
+        })}
+        ${metric({
+          label: 'Cash position',
+          value: cvr ? money(cvr.cashPositionMinor) : '—',
+          tone: (cvr?.cashPositionMinor ?? 0) >= 0 ? 'good' : 'bad',
+          sub: 'certified less cost incurred',
+          sources: cashSources,
+        })}
       </div>
+
+      <div id="commercial-insight" style="margin-bottom:14px"></div>
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
@@ -583,6 +623,16 @@ export async function commercial(root) {
       ],
     },
   };
+
+  // Every command centre carries the panel, scoped to the areas it owns. The
+  // commercial screen owns the four the QS authors and the Commercial Manager
+  // approves; anything outside them belongs on the screen it is about.
+  void insightPanel(root.querySelector('#commercial-insight'), {
+    projectId,
+    areas: ['BUDGET_COST', 'PAYMENT_APPLICATIONS', 'CHANGE_VARIATION', 'CONTRACTS_CLAIMS'],
+    subject: 'the commercial position',
+    onChange: draw,
+  });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

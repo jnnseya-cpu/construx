@@ -499,6 +499,22 @@ export type EvaluatedItem = {
   gateEnforced: boolean;
   /** The smallest project this item is proportionate on. */
   appliesFrom: ProjectScale;
+  /**
+   * The records that satisfied this item, so the count can be opened rather
+   * than believed.
+   *
+   * The evaluation already had them — it filtered the ledger and then kept only
+   * `.length`. A screen showing "4 of 5 in place" with no way to reach the four
+   * is asking to be trusted, and the Build Standard's rule is that every figure
+   * drills to the events behind it.
+   *
+   * Capped, because an item evidenced by four hundred progress measurements
+   * produces a drill nobody can read. The cap is stated on the item rather than
+   * silently applied, so a truncated list is not mistaken for the whole one.
+   */
+  evidenceRefs?: Array<{ refType: string; refId: string }>;
+  /** True where `evidenceRefs` is a sample rather than everything found. */
+  evidenceTruncated?: boolean;
 };
 
 export type StageReport = {
@@ -549,6 +565,14 @@ export type ControlReport = {
  * the standard can be tested without standing a platform up and so a caller can
  * evaluate a hypothetical project state.
  */
+/**
+ * How many source records a control item carries to the screen.
+ *
+ * High enough that most items list everything, low enough that an item
+ * evidenced by hundreds of records does not turn a drill into a scroll.
+ */
+const EVIDENCE_REF_CAP = 25;
+
 export function evaluateControl(
   phase: LifecyclePhase,
   entitiesByType: (refType: string) => Array<Record<string, unknown>>,
@@ -588,13 +612,22 @@ export function evaluateControl(
       return { ...base, status: 'NOT_YET_DUE', required: item.evidence.minimum, counts: item.evidence.counts };
     }
 
-    const found = entitiesByType(item.evidence.refType).filter(item.evidence.predicate).length;
+    const matching = entitiesByType(item.evidence.refType).filter(item.evidence.predicate);
+    // `id` is the refId on every entity the ledger stores — the write path sets
+    // both from the same value. Anything without one is dropped rather than
+    // guessed at, so a ref that reaches a screen always resolves.
+    const refs = matching
+      .map((record) => ({ refType: item.evidence!.refType, refId: String(record.id ?? '') }))
+      .filter((ref) => ref.refId !== '');
+
     return {
       ...base,
-      status: found >= item.evidence.minimum ? 'PRESENT' : 'MISSING',
-      found,
+      status: matching.length >= item.evidence.minimum ? 'PRESENT' : 'MISSING',
+      found: matching.length,
       required: item.evidence.minimum,
       counts: item.evidence.counts,
+      evidenceRefs: refs.slice(0, EVIDENCE_REF_CAP),
+      ...(refs.length > EVIDENCE_REF_CAP ? { evidenceTruncated: true } : {}),
     };
   };
 

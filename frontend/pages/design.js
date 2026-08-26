@@ -1,7 +1,8 @@
 import { api, entities, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { DISCIPLINE } from '../lib/enums.js';
-import { badge, date, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
+import { badge, date, drillable, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
+import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -54,6 +55,12 @@ export async function design(root) {
   // quality manager nor the engineer can see it on their own.
   const spec = await api.get(`/v1/projects/${projectId}/specifications/coverage`).catch(() => null);
   const deviations = b.DigitalTwinState.reduce((sum, s) => sum + Number(s.deviationCount ?? 0), 0);
+
+  // Each tile's own records, so opening a figure shows the events that moved it.
+  const drawingSources = current.map((d) => ({ refType: 'Drawing', refId: d._refId }));
+  const modelSources = b.Model.map((m) => ({ refType: 'Model', refId: m._refId }));
+  const clashSources = openClashes.map((c) => ({ refType: 'Clash', refId: c._refId }));
+  const twinSources = b.DigitalTwinState.map((t) => ({ refType: 'DigitalTwinState', refId: t._refId }));
 
   // Reading a drawing rather than being told what it says. Both are fetched
   // rather than assumed: whether this deployment has a provider that can look
@@ -169,27 +176,29 @@ export async function design(root) {
       }
 
       <div class="grid g4" style="margin-bottom:14px">
-        <div class="card">
+        <div ${raw(drillable('Current drawings', drawingSources))}>
           <h3>Current drawings</h3>
           <div class="metric orange">${current.length}</div>
           <div class="metric-sub">${superseded.length} superseded and locked from markup</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Models ingested', modelSources))}>
           <h3>Models ingested</h3>
           <div class="metric">${b.Model.length}</div>
           <div class="metric-sub">${asBuilt.length} as-built · ${b.Model.reduce((s, m) => s + Number(m.elementCount ?? 0), 0).toLocaleString()} elements</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Open clashes', clashSources))}>
           <h3>Open clashes</h3>
           <div class="metric ${raw(criticalClashes.length > 0 ? 'bad' : openClashes.length > 0 ? 'warn' : 'good')}">${openClashes.length}</div>
           <div class="metric-sub">${criticalClashes.length} critical</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Site deviations', twinSources))}>
           <h3>Site deviations</h3>
           <div class="metric ${raw(deviations > 0 ? 'warn' : 'good')}">${deviations}</div>
           <div class="metric-sub">observed against ${b.DigitalTwinState.length} capture(s)</div>
         </div>
       </div>
+
+      <div id="design-insight" style="margin-bottom:14px"></div>
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
@@ -621,6 +630,13 @@ export async function design(root) {
         toast('Not rejected', error.message, 'err');
       }
     }
+  });
+
+  void insightPanel(root.querySelector('#design-insight'), {
+    projectId,
+    areas: ['DESIGN_INFORMATION', 'BIM_TWIN'],
+    subject: 'design and information',
+    onChange: draw,
   });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {

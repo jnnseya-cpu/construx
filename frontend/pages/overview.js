@@ -1,6 +1,7 @@
 import { api, entityBundle, isWithheld } from '../lib/api.js';
-import { badge, date, days, html, money, pct, raw, render, statusTone, table, time, humanise } from '../lib/ui.js';
-import { state } from '../app.js';
+import { badge, date, days, drillable, html, humanise, money, pct, raw, render, statusTone, table, time } from '../lib/ui.js';
+import { insightPanel } from '../lib/insight.js';
+import { draw, state } from '../app.js';
 import { sectorLabel } from '../lib/enums.js';
 
 /**
@@ -74,6 +75,20 @@ export async function overview(root) {
   }
 
   const aiEvents = events.events.filter((e) => e.actor.refType === 'AI').length;
+
+  // The records behind each figure.
+  //
+  // The Golden Thread tile is the exception and is deliberately not drillable:
+  // it counts every event on the project, so its "sources" would be the whole
+  // ledger. That is the audit trail, which has a screen of its own, and putting
+  // a modal of 325 rows behind a tile would be worse than the link.
+  // The contract value is a field on the Project record, so that is what the
+  // tile drills to. Naming the Contract records as well would be a guess: this
+  // page does not load them and cannot say which one the figure came from.
+  const contractSources = [{ refType: 'Project', refId: projectId }];
+  const marginSources = isWithheld('CVR') ? [] : bundle.CVR.map((c) => ({ refType: 'CVR', refId: c._refId }));
+  const delaySources = bundle.DelayRiskSnapshot.map((d) => ({ refType: 'DelayRiskSnapshot', refId: d._refId }));
+  const threadSources = [];
 
   // "Nothing outstanding" is only true if the reader could have seen an
   // exception in the first place.
@@ -170,12 +185,12 @@ export async function overview(root) {
       </div>
 
       <div class="grid g4" style="margin-bottom:14px">
-        <div class="card">
+        <div ${raw(drillable('Contract value', contractSources))}>
           <h3>Contract value</h3>
           <div class="metric orange">${money(project.contractValueMinor, project.currency)}</div>
           <div class="metric-sub">${date(project.plannedStart)} → ${date(project.plannedCompletion)}</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Forecast margin', marginSources))}>
           <h3>Forecast margin</h3>
           <div class="metric ${raw(!cvr ? '' : cvr.forecastMarginPercent < 0 ? 'bad' : cvr.marginErosionPercent > 2 ? 'warn' : 'good')}">
             ${cvr ? pct(cvr.forecastMarginPercent, 2) : '—'}
@@ -190,19 +205,21 @@ export async function overview(root) {
             }
           </div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Delay exposure', delaySources))}>
           <h3>Delay exposure</h3>
           <div class="metric ${raw(!delay ? '' : delay.severity === 'CRITICAL' ? 'bad' : delay.severity === 'LOW' ? 'good' : 'warn')}">
             ${delay ? days(delay.expectedDelayDays) : '—'}
           </div>
           <div class="metric-sub">${delay ? `P80 ${days(delay.p80DelayDays)} · ${delay.severity}` : 'not forecast'}</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Golden Thread', threadSources))}>
           <h3>Golden Thread</h3>
           <div class="metric">${events.events.length}</div>
           <div class="metric-sub">${aiEvents} AI-authored · none editable</div>
         </div>
       </div>
+
+      <div id="overview-insight" style="margin-bottom:14px"></div>
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card">
@@ -298,4 +315,29 @@ export async function overview(root) {
       </div>
     `,
   );
+
+  // The command centre's own panel. It carries the widest scope of any screen
+  // because the question it answers is "what needs me today" across the whole
+  // project rather than within one discipline — but it is still the server that
+  // narrows it, and still only what the reader's roles may decide.
+  void insightPanel(root.querySelector('#overview-insight'), {
+    projectId,
+    areas: [
+      'PROJECT_SETUP',
+      'PROGRAMME_BASELINES',
+      'BUDGET_COST',
+      'CONTRACTS_CLAIMS',
+      'CHANGE_VARIATION',
+      'RISK_REGISTER',
+      'SAFETY_RAMS',
+      'FIELD_EXECUTION',
+      'DESIGN_INFORMATION',
+      'PROCUREMENT_AWARD',
+      'PAYMENT_APPLICATIONS',
+      'QUALITY_COMMISSIONING',
+      'HANDOVER_OM',
+    ],
+    subject: 'this project',
+    onChange: draw,
+  });
 }

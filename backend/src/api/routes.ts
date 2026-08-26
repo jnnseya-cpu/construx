@@ -74,7 +74,7 @@ import { isPlatformGovernanceEvent } from '../goldenthread/eventTypes.ts';
 import * as evidence from '../evidence/registry.ts';
 import * as perception from '../engines/perception.ts';
 import * as signing from '../signing/signature.ts';
-import { ownershipMap } from '../identity/ownership.ts';
+import { ownersByRole, ownersFor, ownershipMap } from '../identity/ownership.ts';
 import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode,
   assertTenantGrantable,
   TENANT_GRANTABLE_ROLES,
@@ -5357,8 +5357,47 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/projects/:projectId/proposals',
-    description: 'Proposals awaiting a human decision, most urgent first',
-    handler: (platform, ctx) => ({ proposals: agents.pendingProposals(projectContext(platform, ctx)) }),
+    description: 'Proposals awaiting a human decision, most urgent first; narrow with ?area=A,B',
+    handler: (platform, ctx) => {
+      const context = projectContext(platform, ctx);
+      const all = agents.pendingProposals(context);
+
+      // Every command centre carries this panel, and each one asks about its own
+      // areas. Filtering here rather than in each screen means the narrowing is
+      // one rule the whole product shares, and a screen cannot quietly widen it.
+      //
+      // An item is in an area if the command it proposes exercises that area —
+      // that is what the reader would act on.
+      //
+      // Where a proposal names no command it is an observation, and it is placed
+      // by **what it is about**: the capability areas of the records in its own
+      // evidence, read from `ENTITY_ACCESS`. That is the same classification the
+      // entity read and the audit feed already use, so nothing new is asserted
+      // and an agent cannot widen its own reach.
+      //
+      // Matching an observation on the raising agent's *read mandate* was the
+      // obvious version and it is far too loose: an agent that reads eight areas
+      // then appears on eight screens, so a handover finding landed on the field
+      // command centre because the handover agent happens to read quality data.
+      // An agent reading something is not the same as a finding being about it.
+      const wanted = (ctx.query.get('area') ?? '')
+        .split(',')
+        .map((area) => area.trim())
+        .filter(Boolean);
+      if (wanted.length === 0) return { proposals: all, areas: [] };
+
+      const proposals = all.filter((proposal) => {
+        if (proposal.command) return wanted.includes(proposal.command.area);
+
+        const evidence = proposal.finding?.evidence ?? [];
+        return evidence.some((item) => {
+          const classification = classifyEntity(item.refType);
+          return classification !== undefined && wanted.includes(classification.area);
+        });
+      });
+
+      return { proposals, areas: wanted, ofTotal: all.length };
+    },
   },
   {
     method: 'POST',
@@ -5398,6 +5437,82 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       agents.rejectProposal(projectContext(platform, ctx), ctx.params.proposalId as string, body<{ reason: string }>(ctx).reason),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/proposals/:proposalId/mitigate',
+    description: 'Close a finding that was right and is being handled another way, stating what that way is',
+    schema: {
+      type: 'object',
+      required: ['mitigation'],
+      properties: { mitigation: { type: 'string', minLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      agents.mitigateProposal(
+        projectContext(platform, ctx),
+        ctx.params.proposalId as string,
+        body<{ mitigation: string }>(ctx).mitigation,
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/proposals/:proposalId/assign',
+    description: 'Name the person who will decide a proposal. Not a decision — it stays open',
+    schema: {
+      type: 'object',
+      required: ['userId'],
+      properties: { userId: stringField, note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const { userId, note } = body<{ userId: string; note?: string }>(ctx);
+
+      // Resolved from the tenancy rather than taken from the request. A client
+      // that could name the assignee's roles could assign a proposal to somebody
+      // who cannot decide it by simply claiming they can.
+      const assignee = platform.users(actor.tenantId).find((user) => user.id === userId);
+      if (!assignee) throw new NotFoundError(`No identity ${userId} in this tenancy`);
+
+      return agents.assignProposal(projectContext(platform, ctx), ctx.params.proposalId as string, {
+        assignee: { id: assignee.id, name: assignee.name, roles: assignee.roles },
+        note,
+      });
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/proposals/:proposalId/owners',
+    description: 'Who could decide this proposal, most specialised first, for the assign action',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const record = platform.ledger.get({ refType: 'AgentProposal', refId: ctx.params.proposalId as string });
+      if (!record || record.tenantId !== actor.tenantId) throw new NotFoundError('No such proposal');
+
+      const approvers = new Set((record.state.approvers ?? []) as string[]);
+      const identities = platform
+        .users(actor.tenantId)
+        .filter((user) => user.roles.some((role) => approvers.has(role)))
+        .map((user) => ({ id: user.id, name: user.name, email: user.email, roles: user.roles }));
+
+      // Two questions, and asking the wrong one returns nobody.
+      //
+      // Where the proposal has a command, ownership is the capability that
+      // command exercises: approving it means holding what it will do. Where it
+      // has none it is an observation, there is no capability to intersect
+      // with, and the nominated approver roles are themselves the answer.
+      const command = record.state.command as { area?: string; code?: string } | undefined;
+      return {
+        owners: command?.area
+          ? ownersFor(identities, command.area as CapabilityArea, (command.code ?? 'A') as PermissionCode)
+          : ownersByRole(identities, [...approvers]),
+        approverRoles: [...approvers],
+        // Said plainly, because "assign" offering an empty list is otherwise
+        // indistinguishable from a broken screen.
+        basis: command?.area ? `capability ${command.code ?? 'A'} on ${command.area}` : 'the roles nominated to decide it',
+      };
+    },
   },
 
   {
@@ -5670,10 +5785,29 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/projects/:projectId/audit/events',
-    description: 'Golden Thread events for the project, with content the caller may not read withheld',
+    description: 'Golden Thread events for the project; narrow with ?refs=Type:id,Type:id to drill a figure to its sources',
     handler: (platform, ctx) => {
       const actor = auth(ctx);
       const projectId = ctx.params.projectId as string;
+
+      // The Build Standard requires every KPI to drill to its source events.
+      // A tile knows which records it was computed from; this is where it asks
+      // what happened to them. Filtering here rather than adding a route keeps
+      // one place where an event's content is authorised — a second path would
+      // be a second chance to get that wrong.
+      const wanted = (ctx.query.get('refs') ?? '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .map((entry) => {
+          // Split on the FIRST colon only. A ULID carries no colon but an
+          // imported reference might, and splitting on every one would silently
+          // drop the tail of the id and return the wrong record's events.
+          const at = entry.indexOf(':');
+          return at === -1 ? undefined : `${entry.slice(0, at)}:${entry.slice(at + 1)}`;
+        })
+        .filter((entry): entry is string => entry !== undefined);
+      const filter = wanted.length > 0 ? new Set(wanted) : undefined;
 
       // An audit trail has two jobs, and they need separating. Proving the
       // record is complete and untampered needs the envelope — who, when, what
@@ -5681,7 +5815,10 @@ export const ROUTES: Route[] = [
       // the patch, and that is entity content: withholding it here is the same
       // decision the entity read makes, or the audit feed becomes the way round
       // every capability boundary in the system.
-      const events = platform.ledger.events({ tenantId: actor.tenantId, projectId }).map((event) => {
+      const events = platform.ledger
+        .events({ tenantId: actor.tenantId, projectId })
+        .filter((event) => !filter || filter.has(`${event.entity.refType}:${event.entity.refId}`))
+        .map((event) => {
         const classification = classifyEntity(event.entity.refType);
         const decision = classification
           ? evaluateAccess(
@@ -5701,6 +5838,10 @@ export const ROUTES: Route[] = [
         chainHead: platform.ledger.chainHead(projectId),
         events,
         withheldCount: events.filter((e) => 'contentWithheld' in e).length,
+        // Said rather than left to be inferred from an empty list. A drill that
+        // returns nothing because the records have no events yet is a different
+        // answer from one that returns nothing because the refs were malformed.
+        ...(filter ? { requestedRefs: [...filter], matchedRefs: new Set(events.map((e) => `${e.entity.refType}:${e.entity.refId}`)).size } : {}),
       };
     },
   },

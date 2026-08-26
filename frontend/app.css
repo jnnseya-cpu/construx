@@ -228,6 +228,26 @@ button { font: inherit; }
 .metric.info { color: var(--info); }
 .metric-sub { font-size: 11.5px; color: var(--text-3); margin-top: 5px; }
 
+/* A KPI that opens to the events behind it. The affordance is deliberately
+   quiet — a wall of cards that all look like buttons reads as noise — and
+   becomes plain on hover and on keyboard focus. No new colour: the accent is
+   the one the design system already carries. */
+.card.drillable { cursor: pointer; position: relative; transition: border-color .12s ease, background .12s ease; }
+.card.drillable:hover, .card.drillable:focus-visible { border-color: var(--line-strong); background: var(--grey); }
+.card.drillable:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+.drill-hint {
+  font-size: 10.5px; color: var(--text-3); margin-top: 8px;
+  opacity: 0; transition: opacity .12s ease; letter-spacing: .3px;
+}
+.card.drillable:hover .drill-hint, .card.drillable:focus-visible .drill-hint { opacity: 1; }
+/* Touch and reduced-motion readers never get a hover, so the hint is always
+   shown rather than never. */
+@media (hover: none) { .drill-hint { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .card.drillable { transition: none; }
+  .drill-hint { transition: none; opacity: 1; }
+}
+
 .delta { font-size: 11.5px; font-weight: 650; }
 .delta.up { color: var(--success); }
 .delta.down { color: var(--critical); }

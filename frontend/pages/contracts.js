@@ -1,7 +1,8 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { CHANGE_ORIGIN, DELAY_CAUSE, NOTICE_TYPE, today } from '../lib/enums.js';
-import { badge, date, days, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
+import { badge, date, days, drillable, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
+import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -80,6 +81,16 @@ export async function contracts(root) {
   const openVariations = b.Variation.filter((v) => v.status !== 'AGREED' && v.status !== 'REJECTED');
   const domestic = b.Variation.filter((v) => v.isDomestic);
   const variationValue = b.Variation.reduce((sum, v) => sum + Number(v.valuedAmountMinor ?? 0), 0);
+
+  // The records each figure was computed from, taken from the arrays the
+  // figures came out of rather than from a description of the calculation.
+  const variationSources = b.Variation.map((v) => ({ refType: 'Variation', refId: v._refId }));
+  const claimSources = claim
+    ? [
+        { refType: 'Claim', refId: claim._refId },
+        ...b.DelayEvent.map((event) => ({ refType: 'DelayEvent', refId: event._refId })),
+      ]
+    : [];
 
   const lateNotices = b.Notice.filter((n) => n.withinTimeBar === false);
 
@@ -175,22 +186,22 @@ export async function contracts(root) {
       }
 
       <div class="grid g4" style="margin-bottom:14px">
-        <div class="card">
+        <div ${raw(drillable('Variations', variationSources))}>
           <h3>Variations</h3>
           <div class="metric orange">${b.Variation.length}</div>
           <div class="metric-sub">${approvedVariations.length} agreed · ${openVariations.length} open · ${domestic.length} domestic</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Variation value', variationSources))}>
           <h3>Variation value</h3>
           <div class="metric">${money(variationValue)}</div>
           <div class="metric-sub">instructed and claimed, at valuation</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Assessed entitlement', claimSources))}>
           <h3>Assessed entitlement</h3>
           <div class="metric warn">${claim ? days(claim.assessedDays) : '—'}</div>
           <div class="metric-sub">${claim ? `against ${days(claim.claimedDays)} claimed` : 'no claim opened'}</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Entitlement score', claimSources))}>
           <h3>Entitlement score</h3>
           <div class="metric ${raw(!claim ? '' : claim.entitlementScore >= 0.7 ? 'good' : claim.entitlementScore >= 0.4 ? 'warn' : 'bad')}">
             ${claim ? claim.entitlementScore : '—'}
@@ -198,6 +209,8 @@ export async function contracts(root) {
           <div class="metric-sub">contract basis · causation · evidence · procedure</div>
         </div>
       </div>
+
+      <div id="contracts-insight" style="margin-bottom:14px"></div>
 
       ${
         claim
@@ -938,6 +951,13 @@ export async function contracts(root) {
       ],
     },
   };
+
+  void insightPanel(root.querySelector('#contracts-insight'), {
+    projectId,
+    areas: ['CONTRACTS_CLAIMS', 'CHANGE_VARIATION'],
+    subject: 'contracts, change and claims',
+    onChange: draw,
+  });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

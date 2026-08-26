@@ -77,11 +77,32 @@ export type AgentProposal = {
   finding: Finding;
   command?: ProposedCommand;
   autonomy: AutonomyLevel;
-  status: 'OPEN' | 'APPROVED' | 'REJECTED' | 'EXECUTED' | 'SUPERSEDED';
+  /**
+   * `MITIGATED` is not a softer rejection and the distinction is the point.
+   * Rejected means the finding was wrong or does not matter. Mitigated means it
+   * was right and is being dealt with another way — so the record has to say
+   * what that way is, or the platform has stored "somebody said they would
+   * handle it" as though it were a control.
+   */
+  status: 'OPEN' | 'APPROVED' | 'REJECTED' | 'MITIGATED' | 'EXECUTED' | 'SUPERSEDED';
   /** Set when a human decides. Never set by the agent. */
   decidedBy?: string;
   decidedAt?: string;
   decisionNote?: string;
+  /**
+   * Who is going to decide this, where somebody has been named.
+   *
+   * Assignment is not a decision: the proposal stays open. What it does is turn
+   * "a QS may approve this" into "this QS is dealing with it", which is the
+   * difference between a queue and a list of things nobody has picked up.
+   */
+  assignedTo?: string;
+  assignedToName?: string;
+  assignedBy?: string;
+  assignedAt?: string;
+  assignmentNote?: string;
+  /** What is being done instead, where the finding was mitigated. */
+  mitigation?: string;
 };
 
 /**

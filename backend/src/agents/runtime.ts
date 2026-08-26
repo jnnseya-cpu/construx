@@ -283,6 +283,123 @@ export function rejectProposal(ctx: EngineContext, proposalId: string, reason: s
   return decided;
 }
 
+/**
+ * Mitigate: the finding was right, and it is being handled another way.
+ *
+ * The Build Standard puts four actions on every command centre — Review,
+ * Accept, Mitigate, Assign — and only two of them existed. Approve was Accept
+ * and Reject was neither, because rejecting says the finding was wrong.
+ *
+ * Most findings on a real project are neither approved nor wrong. An agent
+ * proposes re-sequencing a package and the project manager has already agreed
+ * a different recovery with the subcontractor; the finding was correct and the
+ * command is not what is being done about it. Without this, that outcome had to
+ * be recorded as a rejection, which is a lie about the finding, or left open,
+ * which is a queue that fills with things somebody has already dealt with.
+ *
+ * **The mitigation text is mandatory.** A status of MITIGATED with no statement
+ * of what is being done instead is worse than leaving the proposal open: it
+ * reads as a control and it is a shrug. The same reasoning that makes a
+ * rejection reason mandatory.
+ */
+export function mitigateProposal(ctx: EngineContext, proposalId: string, mitigation: string): AgentProposal {
+  const record = ctx.ledger.require({ refType: 'AgentProposal', refId: proposalId });
+  const proposal = record.state as unknown as AgentProposal;
+
+  if (proposal.status !== 'OPEN') {
+    throw new DomainError('PROPOSAL_NOT_OPEN', `This proposal is ${proposal.status.toLowerCase()} and cannot be decided again`);
+  }
+  if (!mitigation?.trim() || mitigation.trim().length < 10) {
+    throw new DomainError(
+      'MITIGATION_REQUIRED',
+      'Closing a finding as mitigated requires a statement of what is being done instead',
+    );
+  }
+
+  // Same standing as approving or rejecting. Closing a finding is a decision
+  // however it is closed, and anyone who could do it without standing could
+  // clear the queue of everything they did not want to look at.
+  const agent = agentByName(proposal.agent);
+  if (agent && !ctx.auth.roles.some((role) => agent.mandate.approvers.includes(role))) {
+    throw new ForbiddenError(
+      `Proposals from the ${agent.name} agent are decided by ${agent.mandate.approvers.join(', ')}`,
+      'NOT_A_NOMINATED_APPROVER',
+    );
+  }
+
+  const decided: AgentProposal = {
+    ...proposal,
+    status: 'MITIGATED',
+    decidedBy: ctx.auth.actorId,
+    decidedAt: new Date().toISOString(),
+    mitigation: mitigation.trim(),
+  };
+
+  write(ctx, {
+    eventType: 'AGENT_PROPOSAL_MITIGATED',
+    entity: { refType: 'AgentProposal', refId: proposalId },
+    nextState: { ...record.state, ...decided } as unknown as Record<string, unknown>,
+  });
+
+  return decided;
+}
+
+/**
+ * Assign: name the person who is going to decide this.
+ *
+ * Deliberately **not** a decision. The proposal stays open, because assigning
+ * something is not dealing with it, and a status that said otherwise would let
+ * a queue be emptied by moving items around.
+ *
+ * What it changes is that "a QS may approve this" becomes "this QS is dealing
+ * with it". `ownersFor` already resolves a capability to named identities and
+ * orders them by specialisation; this records which of them took it.
+ *
+ * **The assignee must actually be able to decide it.** Assigning a proposal to
+ * somebody who cannot approve it produces an item that looks owned and cannot
+ * move, which is worse than an unassigned one — at least an unassigned item is
+ * visibly nobody's. Checked against the raising agent's own approver list, the
+ * same list every other decision here is checked against.
+ */
+export function assignProposal(
+  ctx: EngineContext,
+  proposalId: string,
+  input: { assignee: { id: string; name: string; roles: readonly string[] }; note?: string },
+): AgentProposal {
+  const record = ctx.ledger.require({ refType: 'AgentProposal', refId: proposalId });
+  const proposal = record.state as unknown as AgentProposal;
+
+  if (proposal.status !== 'OPEN') {
+    throw new DomainError('PROPOSAL_NOT_OPEN', `This proposal is ${proposal.status.toLowerCase()} and can no longer be assigned`);
+  }
+
+  const agent = agentByName(proposal.agent);
+  if (agent && !input.assignee.roles.some((role) => agent.mandate.approvers.includes(role as never))) {
+    throw new DomainError(
+      'ASSIGNEE_CANNOT_DECIDE',
+      `${input.assignee.name} holds no role that may decide a ${proposal.agent} proposal ` +
+        `(${agent.mandate.approvers.join(', ')}). Assigning it would produce an item nobody can move.`,
+    );
+  }
+
+  const assigned: AgentProposal = {
+    ...proposal,
+    assignedTo: input.assignee.id,
+    assignedToName: input.assignee.name,
+    assignedBy: ctx.auth.actorId,
+    assignedAt: new Date().toISOString(),
+    assignmentNote: input.note?.trim() || undefined,
+  };
+
+  write(ctx, {
+    eventType: 'AGENT_PROPOSAL_ASSIGNED',
+    entity: { refType: 'AgentProposal', refId: proposalId },
+    nextState: { ...record.state, ...assigned } as unknown as Record<string, unknown>,
+  });
+
+  return assigned;
+}
+
 /** Mark an approved proposal as executed, once the command has actually run. */
 export function markExecuted(ctx: EngineContext, proposalId: string, result: Record<string, unknown>): void {
   const record = ctx.ledger.require({ refType: 'AgentProposal', refId: proposalId });

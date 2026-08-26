@@ -38,6 +38,18 @@ export function render(target, content) {
   target.innerHTML = resolve(content);
 }
 
+/**
+ * The same resolution `render` performs, for a caller building a detached node.
+ *
+ * Exported so a component that constructs its own element — a modal host, a
+ * drill panel — resolves markup through one function rather than reimplementing
+ * the escaping. A second implementation of escaping is a second chance to get
+ * escaping wrong.
+ */
+export function resolveHtml(content) {
+  return resolve(content);
+}
+
 // --- formatting -------------------------------------------------------------
 
 /** Money in minor units → a readable figure. Zero at portfolio scale reads $0.0M. */
@@ -175,11 +187,67 @@ export function humanise(token) {
 
 // --- components -------------------------------------------------------------
 
-export function metric({ label, value, sub, tone = '' }) {
-  return html`<div class="card">
+/**
+ * The attributes that make an element drillable.
+ *
+ * Markup, so it lives with the design system rather than with the behaviour
+ * that reads it — and keeping it here means `metric()` does not have to import
+ * from the module that imports `metric()`.
+ */
+export function drillAttrs(label, sources) {
+  const usable = (sources ?? []).filter((source) => source && source.refType && source.refId);
+  if (usable.length === 0) return '';
+  const payload = usable.map((source) => ({ refType: source.refType, refId: source.refId }));
+  return (
+    ` data-drill="${esc(JSON.stringify(payload))}"` +
+    ` data-drill-label="${esc(label)}" tabindex="0" role="button"` +
+    ` title="${esc(`${usable.length} source record${usable.length === 1 ? '' : 's'} — open the events behind this figure`)}"`
+  );
+}
+
+/**
+ * The full class and attributes for a drillable card, as one token.
+ *
+ * `metric()` is the tile for a plain label/value/sub. Plenty of real tiles are
+ * not that — a count with a denominator in a smaller span, a value with a badge
+ * beside it — and rewriting them into a shape they do not fit would be churn
+ * for its own sake against working markup. This gives those the same
+ * affordance without touching what is inside them:
+ *
+ *     <div ${raw(drillable('Open clashes', clashSources))}>
+ *
+ * Falls back to a plain card when there are no sources, so a tile that cannot
+ * be opened does not pretend it can.
+ */
+export function drillable(label, sources) {
+  const attrs = drillAttrs(label, sources);
+  return attrs ? `class="card drillable"${attrs}` : 'class="card"';
+}
+
+/**
+ * A KPI tile.
+ *
+ * `sources` is the list of records the figure was computed from, as
+ * `[{refType, refId}]`. Supplying it makes the tile drillable: the Build
+ * Standard requires every KPI to open to the events behind it, and a figure
+ * nobody can check is an assertion rather than a report.
+ *
+ * Passing the same array the tile added up — rather than a description of the
+ * query — is what keeps the drill honest. A query is a second statement of the
+ * calculation, and the day somebody changes the sum without changing the query
+ * the drill starts lying.
+ *
+ * A tile with no sources renders exactly as it always did. Some figures are a
+ * count of nothing or a configured constant, and giving one an affordance that
+ * opens an empty panel is worse than leaving it plain.
+ */
+export function metric({ label, value, sub, tone = '', sources }) {
+  const attrs = drillAttrs(label, sources);
+  return html`<div class="card${raw(attrs ? ' drillable' : '')}"${raw(attrs)}>
     <h3>${label}</h3>
     <div class="metric ${raw(tone)}">${value}</div>
     ${sub ? html`<div class="metric-sub">${sub}</div>` : ''}
+    ${attrs ? html`<div class="drill-hint">${sources.length} source record${raw(sources.length === 1 ? '' : 's')} →</div>` : ''}
   </div>`;
 }
 

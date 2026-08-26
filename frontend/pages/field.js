@@ -1,7 +1,8 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { OBSERVATION_TYPE, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, today } from '../lib/enums.js';
-import { badge, date, days, html, humanise, pct, raw, render, statusTone, table, time, toast, track } from '../lib/ui.js';
+import { badge, date, days, drillable, html, humanise, pct, raw, render, statusTone, table, time, toast, track } from '../lib/ui.js';
+import { insightPanel } from '../lib/insight.js';
 import * as outbox from '../lib/outbox.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -58,6 +59,14 @@ export async function field(root) {
   const openConstraints = b.Constraint.filter((c) => c.status !== 'CLOSED');
 
   const coverage = b.Task.length === 0 ? 0 : (measured.length / b.Task.length) * 100;
+
+  // The records behind each figure. Evidence is capped: a mature project holds
+  // thousands of items and a drill listing all of them answers nothing, so the
+  // most recent are named and the tile says how many it stands for.
+  const taskSources = b.Task.map((t) => ({ refType: 'Task', refId: t._refId }));
+  const progressSources = b.ProgressMeasurement.map((m) => ({ refType: 'ProgressMeasurement', refId: m._refId }));
+  const snagSources = openSnags.map((snag) => ({ refType: 'Snag', refId: snag._refId }));
+  const evidenceSources = b.EvidenceItem.slice(-40).map((e) => ({ refType: 'EvidenceItem', refId: e._refId }));
 
   // Snags grouped by cost code — the routing that gets them actually fixed.
   const byTrade = new Map();
@@ -204,27 +213,29 @@ export async function field(root) {
       }
 
       <div class="grid g4" style="margin-bottom:14px">
-        <div class="card">
+        <div ${raw(drillable('Activities complete', taskSources))}>
           <h3>Activities complete</h3>
           <div class="metric good">${complete.length}<span style="font-size:16px;color:var(--text-3)"> / ${b.Task.length}</span></div>
           <div class="metric-sub">${pct(coverage, 0)} of activities carry a measurement</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Progress records', progressSources))}>
           <h3>Progress records</h3>
           <div class="metric orange">${b.ProgressMeasurement.length}</div>
           <div class="metric-sub">each one evidenced before it was accepted</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Open snags', snagSources))}>
           <h3>Open snags</h3>
           <div class="metric ${raw(openSnags.length > 0 ? 'warn' : 'good')}">${openSnags.length}</div>
           <div class="metric-sub">${dispatched.length} dispatched to trade</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Evidence items', evidenceSources))}>
           <h3>Evidence items</h3>
           <div class="metric">${b.EvidenceItem.length}</div>
           <div class="metric-sub">hashed and linked to the events that rely on them</div>
         </div>
       </div>
+
+      <div id="field-insight" style="margin-bottom:14px"></div>
 
       ${
         openConstraints.length > 0
@@ -514,6 +525,13 @@ export async function field(root) {
     await outbox.discardFile(button.dataset.discard);
     toast('Capture discarded', 'The file was removed from this device and was never filed.', 'err');
     await draw();
+  });
+
+  void insightPanel(root.querySelector('#field-insight'), {
+    projectId,
+    areas: ['FIELD_EXECUTION', 'QUALITY_COMMISSIONING'],
+    subject: 'field execution and quality',
+    onChange: draw,
   });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {

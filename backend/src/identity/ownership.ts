@@ -121,6 +121,55 @@ export function ownersFor(
 }
 
 /**
+ * Named identities holding one of these roles, most specialised first.
+ *
+ * A different question from `ownersFor`, and it exists because conflating the
+ * two produced an empty answer where there was a real one.
+ *
+ * `ownersFor` resolves a **capability**: who may approve a payment application.
+ * That is the right question when there is a command to run, because approving
+ * one means holding what it exercises. But an agent finding is often an
+ * observation with no command at all — "this delay event has no notice against
+ * it" — and there is no capability to intersect with. Asking `ownersFor` for one
+ * anyway means inventing an area, and the invented one named nobody: the
+ * fallback used `EVIDENCE_AUDIT` approve, which no role in the matrix holds, so
+ * every observation reported that it could not be assigned to anybody.
+ *
+ * For those, the roles nominated to decide it *are* the answer, and the only
+ * thing left to do is order them. Same ordering rule as `ownersFor` — the role
+ * holding the fewest areas is the person whose job it is, and the wider remits
+ * behind them are the escalation.
+ */
+export function ownersByRole(
+  identities: readonly Identity[],
+  roles: readonly string[],
+  code: PermissionCode = 'A',
+): DecisionOwner[] {
+  const wanted = new Set(roles);
+  const holders: DecisionOwner[] = [];
+
+  for (const identity of identities) {
+    const carrying = rolesOf(identity)
+      .filter((role) => wanted.has(role))
+      .sort((a, b) => remit(a, code) - remit(b, code));
+
+    const role = carrying[0];
+    if (role === undefined) continue;
+    // The operator is barred from delivery ownership here for the same reason
+    // it is in `ownersFor`: naming it as the owner of a project decision would
+    // misrepresent the separation the account layers exist to enforce.
+    if (ROLE_ACCOUNT_LAYER[role] === 'PLATFORM_ADMIN') continue;
+
+    holders.push({ userId: identity.id, name: identity.name, email: identity.email, role, escalation: false });
+  }
+
+  holders.sort((a, b) => remit(a.role, code) - remit(b.role, code) || a.name.localeCompare(b.name));
+
+  const narrowest = holders[0] ? remit(holders[0].role, code) : 0;
+  return holders.map((holder) => ({ ...holder, escalation: remit(holder.role, code) > narrowest }));
+}
+
+/**
  * The owner map for a whole tenancy: every capability area against who may
  * create and who may approve in it.
  *

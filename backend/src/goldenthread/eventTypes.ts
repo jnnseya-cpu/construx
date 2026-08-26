@@ -287,6 +287,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // by the ledger, which is what stops an agent approving its own proposal.
   def('AGENT_PROPOSAL_APPROVED', 'AgentProposal', 'APPROVE', 'AI_BILLING'),
   def('AGENT_PROPOSAL_REJECTED', 'AgentProposal', 'APPROVE', 'AI_BILLING'),
+  // Mitigated is a decision in its own right and not a softer rejection:
+  // rejected means the finding was wrong, mitigated means it was right and is
+  // being handled another way. Kept apart so a reader can tell how many
+  // findings the platform got right and nobody acted on through this route.
+  def('AGENT_PROPOSAL_MITIGATED', 'AgentProposal', 'APPROVE', 'AI_BILLING'),
+  // Assignment is not a decision — the proposal stays open — so this is an
+  // UPDATE. It names who is dealing with it, which is what turns a queue into
+  // something other than a list nobody has picked up.
+  def('AGENT_PROPOSAL_ASSIGNED', 'AgentProposal', 'UPDATE', 'AI_BILLING'),
   def('AGENT_PROPOSAL_EXECUTED', 'AgentProposal', 'UPDATE', 'AI_BILLING'),
 
   // --- Platform-to-person messaging -----------------------------------------

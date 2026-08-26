@@ -1,7 +1,8 @@
 import { api, entityBundle, isWithheld } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { CONTRACT_FORM, PRICING_BASIS, today } from '../lib/enums.js';
-import { badge, date, days, exact, html, humanise, money, pct, raw, render, statusTone, table } from '../lib/ui.js';
+import { badge, date, days, drillable, exact, html, humanise, money, pct, raw, render, statusTone, table } from '../lib/ui.js';
+import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -67,6 +68,19 @@ export async function procurement(root) {
   // roles cannot read them. Reporting the empty list as "0 returns" would be a
   // different — and wrong — statement from "you cannot see them".
   const returnsCount = isWithheld('SupplierSubmission') ? null : b.SupplierSubmission.length;
+
+  // The records behind each figure. Returns are withheld from some roles, and
+  // where they are the tile names no sources rather than naming records the
+  // reader cannot open — the drill would be a list of refused rows.
+  const maturitySources = maturity ? [{ refType: 'DesignMaturityAssessment', refId: maturity._refId }] : [];
+  const estimateSources = b.Estimate.map((e) => ({ refType: 'Estimate', refId: e._refId }));
+  const returnSources = isWithheld('SupplierSubmission')
+    ? []
+    : b.SupplierSubmission.map((sub) => ({ refType: 'SupplierSubmission', refId: sub._refId }));
+  const buyoutSources = [
+    ...b.Subcontract.map((sc) => ({ refType: 'Subcontract', refId: sc._refId })),
+    ...b.Adjudication.map((a) => ({ refType: 'Adjudication', refId: a._refId })),
+  ];
   const cheapest = [...scores].sort((x, y) => x.priceMinor - y.priceMinor)[0];
   const cheapestIsNotWinner = cheapest && winner && cheapest.submissionId !== winner.submissionId;
 
@@ -138,17 +152,17 @@ export async function procurement(root) {
       }
 
       <div class="grid g4" style="margin-bottom:14px">
-        <div class="card">
+        <div ${raw(drillable('Design maturity', maturitySources))}>
           <h3>Design maturity</h3>
           <div class="metric ${raw(!maturity ? '' : maturity.score >= 80 ? 'good' : maturity.score >= 60 ? 'warn' : 'bad')}">${maturity ? maturity.score : '—'}</div>
           <div class="metric-sub">${maturity ? `basis: ${humanise(maturity.recommendedPricingBasis)}` : 'not assessed'}</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Tender estimate', estimateSources))}>
           <h3>Tender estimate</h3>
           <div class="metric orange">${estimate ? money(estimate.totalMinor) : '—'}</div>
           <div class="metric-sub">${estimate ? `${badgeText(estimate.status)} · margin ${pct(estimate.marginPercent, 1)}` : ''}</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Returns received', returnSources))}>
           <h3>Returns received</h3>
           <div class="metric">${returnsCount ?? '—'}</div>
           <div class="metric-sub">${
@@ -159,7 +173,7 @@ export async function procurement(root) {
                 : 'no RFQ issued'
           }</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Buyout against target', buyoutSources))}>
           <h3>Buyout against target</h3>
           <div class="metric ${raw((subcontract?.buyoutDeltaMinor ?? 0) >= 0 ? 'good' : 'bad')}">
             ${subcontract ? money(subcontract.buyoutDeltaMinor) : '—'}
@@ -167,6 +181,8 @@ export async function procurement(root) {
           <div class="metric-sub">${subcontract ? `${subcontract.reference} · ${humanise(subcontract.status)}` : 'not awarded'}</div>
         </div>
       </div>
+
+      <div id="procurement-insight" style="margin-bottom:14px"></div>
 
       ${
         !reconciliation || reconciliation.invited === 0
@@ -563,6 +579,13 @@ export async function procurement(root) {
       }),
     },
   };
+
+  void insightPanel(root.querySelector('#procurement-insight'), {
+    projectId,
+    areas: ['PROCUREMENT_AWARD', 'ESTIMATE_TENDER', 'BOQ_TAKEOFF'],
+    subject: 'tender and procurement',
+    onChange: draw,
+  });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

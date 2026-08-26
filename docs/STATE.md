@@ -15,12 +15,12 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,681 passing, 0 failing, 0 skipped, across 89 files |
+| Tests | 1,702 passing, 0 failing, 0 skipped, across 90 files |
 | Typecheck | clean |
 | Backend | 118 TypeScript files, 57,287 lines |
 | Application | 35 ES modules, 12,075 lines (including a service worker) |
-| API routes | 307 (34 of them public) |
-| Event types | 203 Golden Thread (closed) · 178 communication events (closed) |
+| API routes | 310 (34 of them public) |
+| Event types | 205 Golden Thread (closed) · 178 communication events (closed) |
 | Entity types | 123, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
@@ -3535,6 +3535,103 @@ it — from the console, or by calling
 timer, so a break on a project nobody opens is detected but not yet escalated.
 The scheduler pattern exists (`messaging/newsletter.ts`); wiring this to it is a
 separate piece of work and is not claimed here.
+
+### The Build Standard on the delivery screens
+
+Two of its clauses were met on exactly one screen — the operator console — and
+on none of the screens a project person actually works in. Both are now met on
+all ten delivery screens: the command centre, commercial, programme, contracts,
+procurement, design, field, risk, handover and control.
+
+Both were failures of **reach** rather than of machinery, and that is worth
+saying because neither fix built a new subsystem. The ledger has held the events
+behind every figure since it was written, and there was no way to ask it from a
+tile. The agent fleet has produced findings with evidence, proposed commands with
+their cost, and mandated approvers, and all of it lived on the autopilot queue —
+the screen somebody opens once they have already decided to look at what the
+agents found. Which is backwards: a recommendation is worth something at the
+moment somebody is looking at the number it is about.
+
+**Every KPI opens to the events behind it.** `frontend/lib/drill.js` and one
+delegated listener; `metric({ sources })` for a plain tile and `drillable()` for
+one whose inner markup does not fit that shape. The tile hands the drill the same
+array of records it added up — not a query, because a query is a second
+description of the calculation and the day one changes without the other the
+drill starts lying. `GET /audit/events?refs=Type:id,Type:id` narrows the feed
+the audit trail already uses, so there is one place where an event's content is
+authorised rather than two. Refs split on their **first** colon only: a ULID
+carries none but an imported reference might, and splitting on every one would
+truncate the id and return another record's events.
+
+Content the reader may not see is withheld and marked, never dropped — a drill
+that silently omitted those rows would be a way round the capability model.
+
+**Four tiles are deliberately plain**, each for a stated reason. The Golden
+Thread event count would open the whole ledger, which is what the audit screen
+is. The control screen's Gaps, Not-at-this-size and Not-tracked tiles all count
+the *absence* of records. An affordance that opens empty is worse than none.
+
+**One defect fixed at source.** `evaluateControl` filtered the ledger for each
+control item and kept only `.length`, so "4 of 5 in place" could not be opened.
+It now carries the refs it found, capped at 25 with the truncation stated rather
+than silently applied.
+
+**Every command centre carries the AI Insight / Recommendation panel**, scoped by
+capability area and filtered by the server — so the narrowing is one rule the
+product shares and a screen cannot quietly widen it.
+
+A proposal with a command is placed by the area that command exercises. An
+observation — most of what the fleet produces — is placed by the areas of the
+records in **its own evidence**, read from `ENTITY_ACCESS`. Placing observations
+by the raising agent's *read mandate* was the first attempt and it is far too
+loose: an agent that reads eight areas appears on eight screens, and a handover
+finding landed on the field command centre because the handover agent reads
+quality data. An agent reading something is not the same as a finding being about
+it. Caught by looking at the rendered panel, not by a test.
+
+Two of the four actions had to be built.
+
+**Mitigate** closes a finding that was right and is being handled another way.
+It is not a softer rejection, and the distinction is the point: rejected means
+the finding was *wrong*. Most findings on a real project are neither approved nor
+wrong — an agent proposes re-sequencing and the manager has already agreed a
+different recovery — and without this that outcome had to be recorded as a
+rejection, which is a lie about the finding, or left open, which fills the queue
+with things somebody has already dealt with. The statement of what is being done
+instead is mandatory: `MITIGATED` with nothing behind it reads as a control and
+is a shrug.
+
+**Assign** names who will decide it and leaves the proposal **open**, because
+moving something to somebody's name is not dealing with it. The assignee is
+resolved from the tenancy rather than taken from the request, and must hold a
+role that can actually decide it — an item assigned to somebody who cannot act
+looks owned and cannot move, which is worse than an unassigned one.
+
+`ownersByRole` was added beside `ownersFor` for the same reason the observation
+rule changed: asking the wrong question returns nobody. `ownersFor` resolves a
+*capability*, which is right when there is a command to run. An observation has
+none, the first version invented `EVIDENCE_AUDIT` approve as a fallback, and no
+role in the matrix holds it — so every observation reported that it could not be
+assigned to anybody.
+
+**Reject is kept**, though it is not among the specification's four. A finding
+that is simply wrong has to be recordable as wrong, or every incorrect finding is
+closed as "mitigated" and the platform loses the only signal it has about whether
+its own findings are any good.
+
+Emphasis follows what the item offers: with a command, Accept is primary; without
+one the card says there is nothing to run and Review is primary instead. Making
+Accept the loudest button on an item that runs nothing teaches people the
+emphasis means nothing.
+
+**Found while doing this, and fixed: the programme screen's command bar had never
+worked.** `moneyOf` in `frontend/pages/programme.js` returned on its first line,
+and the entire `COMMANDS` object and the click handler below it were unreachable.
+Every button on that screen — create activity, set baseline, raise and clear
+constraints, record progress — did nothing. Pre-existing, unrelated to this work,
+and reported rather than left: the block is moved back inside `programme()`,
+which is the scope it was written for and where every identifier it names is
+bound.
 
 ---
 

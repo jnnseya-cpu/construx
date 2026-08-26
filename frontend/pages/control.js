@@ -1,6 +1,7 @@
 import { api } from '../lib/api.js';
-import { badge, html, humanise, money, pct, raw, render, table, toast } from '../lib/ui.js';
+import { badge, drillable, html, humanise, money, pct, raw, render, table, toast } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
+import { insightPanel } from '../lib/insight.js';
 
 /**
  * Corporate project control.
@@ -56,6 +57,26 @@ export async function control(root) {
   // expensive mistakes live.
   const consistency = await api.get(`/v1/projects/${projectId}/consistency`).catch(() => null);
   const chainBreaks = (consistency?.findings ?? []).filter((finding) => CHAIN_CHECKS.has(finding.check));
+
+  // The records behind the summary counts, collected from the per-item evidence
+  // the control report now carries.
+  //
+  // Three of the five tiles are deliberately not drillable, and for the same
+  // reason each time: they count the *absence* of records.
+  //
+  // A gap is an item with no evidence behind it — that is what makes it a gap —
+  // so a drill on it would always open empty. "Not at this size" counts items
+  // that do not apply to a project of this value, and "Not tracked here" counts
+  // items the platform has no evidence path for at all. None of the three has
+  // anything to show, and an affordance promising otherwise is the placeholder
+  // rule 9 forbids. The gaps themselves are listed in full below, by name.
+  const allItems = project.stages.flatMap((stage) => stage.items);
+  const presentSources = allItems
+    .filter((item) => item.status === 'PRESENT')
+    .flatMap((item) => item.evidenceRefs ?? []);
+  const lessonSources = (lessons?.lessons ?? [])
+    .map((lesson) => ({ refType: 'LessonLearned', refId: lesson.id ?? lesson._refId }))
+    .filter((ref) => ref.refId);
 
   render(
     root,
@@ -141,8 +162,10 @@ export async function control(root) {
           : ''
       }
 
+      <div id="control-insight" style="margin-bottom:14px"></div>
+
       <div class="grid g5" style="margin-bottom:14px">
-        <div class="card">
+        <div ${raw(drillable('This project', presentSources))}>
           <h3>This project</h3>
           <div class="metric ${raw(
             project.completenessPercent === null ? '' : project.completenessPercent >= 90 ? 'good' : project.completenessPercent >= 70 ? 'warn' : 'bad',
@@ -171,7 +194,7 @@ export async function control(root) {
           <div class="metric">${project.notTracked.length}</div>
           <div class="metric-sub">Real control items with no home in the platform yet. Excluded from the score, not hidden.</div>
         </div>
-        <div class="card">
+        <div ${raw(drillable('Lessons captured', lessonSources))}>
           <h3>Lessons captured</h3>
           <div class="metric orange">${lessons ? lessons.lessons.length : '—'}</div>
           <div class="metric-sub">
@@ -322,6 +345,13 @@ export async function control(root) {
       }
     `,
   );
+
+  void insightPanel(root.querySelector('#control-insight'), {
+    projectId,
+    areas: ['PROJECT_SETUP', 'EVIDENCE_AUDIT', 'RISK_REGISTER'],
+    subject: 'project control and assurance',
+    onChange: draw,
+  });
 
   root.querySelector('#raise-chain')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
