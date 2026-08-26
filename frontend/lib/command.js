@@ -1,4 +1,5 @@
 import { api, ApiError, hashFile } from './api.js';
+import { recordVoice, voiceSupport } from './voice.js';
 import { forEvidence } from './capture.js';
 import { queueFile } from './outbox.js';
 import { esc, exact, toast } from './ui.js';
@@ -86,7 +87,20 @@ function control(field) {
   }
 
   if (field.type === 'file') {
+    // A dictate button beside the file input rather than instead of it. The
+    // specification wants voice across every field module, and a note is
+    // sometimes a photograph and sometimes a sentence — offering only one of
+    // the two would move the gap rather than close it.
+    const support = field.voice === false ? { available: false } : voiceSupport();
     return `<input id="${id}" name="${esc(field.name)}" type="file" ${required}>
+      ${
+        support.available
+          ? `<div class="voice-field" style="margin-top:8px">
+               <button type="button" class="btn quiet sm" data-dictate="${esc(field.name)}">Dictate instead</button>
+               <span class="voice-taken" data-dictated="${esc(field.name)}" hidden></span>
+             </div>`
+          : ''
+      }
       <div class="file-hash" hidden></div>`;
   }
 
@@ -107,7 +121,11 @@ async function collect(host, fields, files = []) {
   for (const field of fields) {
     if (field.type === 'file') {
       const el = host.querySelector(`[name="${CSS.escape(field.name)}"]`);
-      const file = el?.files?.[0];
+      // A dictated recording is held on the element rather than in `files`,
+      // which is read-only. Either way it is the same `File` from here on and
+      // takes the same path: prepared, hashed, filed, uploaded, queued if it
+      // cannot be.
+      const file = el?.dictated ?? el?.files?.[0];
       if (!file) {
         if (field.required === false) continue;
         throw new ApiError({ title: 'EVIDENCE_REQUIRED', detail: `${field.label} is required` }, 400);
@@ -234,8 +252,33 @@ export function command({ title, intent, path, fields, submitLabel = 'Submit', t
       }
     }
 
-    host.addEventListener('click', (event) => {
-      if (event.target === host || event.target.closest('[data-close]')) close(null);
+    host.addEventListener('click', async (event) => {
+      if (event.target === host || event.target.closest('[data-close]')) return close(null);
+
+      const dictate = event.target.closest('[data-dictate]');
+      if (!dictate) return;
+
+      const name = dictate.dataset.dictate;
+      const label = fields.find((f) => f.name === name)?.label ?? 'evidence';
+      const recording = await recordVoice({
+        title: `Dictate: ${label}`,
+        intent: 'The recording is filed as evidence exactly as a photograph would be. Nothing is sent until you submit.',
+      });
+      if (!recording) return;
+
+      // Held on the element: `input.files` cannot be assigned from a Blob in
+      // every browser, and a hidden second input would be a second place the
+      // truth about "what file is attached" lives.
+      const input = host.querySelector(`[name="${CSS.escape(name)}"]`);
+      input.dictated = recording;
+      input.removeAttribute('required');
+
+      const taken = host.querySelector(`[data-dictated="${CSS.escape(name)}"]`);
+      if (taken) {
+        taken.textContent = `${recording.name} · ${Math.round(recording.size / 1024)}KB attached`;
+        taken.hidden = false;
+      }
+      dictate.textContent = 'Record again';
     });
 
     host.querySelector('form').addEventListener('submit', async (event) => {

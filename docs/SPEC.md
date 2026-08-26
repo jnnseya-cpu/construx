@@ -1062,11 +1062,28 @@ so no project data is ever held offline; the offline **queue** for captured work
 is real (`lib/outbox.js`, IndexedDB, device id, flush) and is surfaced on the
 screen.
 
-**Voice-first does not exist in the interface.** No microphone, audio, speech or
-dictation code anywhere in `frontend/`. A voice transcript path exists
-server-side and is read by the design screen; nothing captures one. The
-specification calls voice-first an adoption requirement, so this is the single
-largest gap on the field screen.
+**Voice-first did not exist in the interface, and now does.** No microphone,
+audio, speech or dictation code existed anywhere in `frontend/` — the
+transcription path existed server-side with nothing at the front of it.
+
+Now: **Walk and record** on the field screen, first in the command bar and the
+only one carrying the accent, because a button placed fifth is a convenience and
+the specification calls voice-first an adoption requirement. Record, file the
+audio as evidence on its own, transcribe, review the draft, confirm. And
+"Dictate instead" beside every evidence file input across every command panel,
+so a note that is sometimes a photograph and sometimes a sentence can be either.
+
+`MediaRecorder` and `getUserMedia`, native, no library. Recorded in full under
+the Build Standard in `STATE.md`, including the one thing that had to be built
+on the server — a recording is filable *before anything is said about it*,
+because on a walk nobody knows the category, the location or the owner until it
+has been listened to.
+
+Still **PARTIAL** against E7 in two respects, and neither is capture: segmented
+capture (one recording per note rather than a continuous walk split into
+several), and the subcontractor / cost-code / package tags on the resulting
+record. The location, category, action flag and owner are extracted and
+confirmed; the commercial tags are not.
 
 **Commercial data is absent from the field screen rather than hidden from it.**
 `field.js` makes no `money()` call and loads no CVR, budget, contract or claim.

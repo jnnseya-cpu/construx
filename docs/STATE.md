@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,708 passing, 0 failing, 0 skipped, across 91 files |
+| Tests | 1,718 passing, 0 failing, 0 skipped, across 92 files |
 | Typecheck | clean |
 | Backend | 118 TypeScript files, 57,287 lines |
 | Application | 35 ES modules, 12,075 lines (including a service worker) |
@@ -3689,6 +3689,86 @@ is what the confirmation dialog this replaced existed for.
 `month` was added to the command panel's field types at the same time. It was
 falling back to free text, and the specification requires every calendar input to
 be picked rather than typed.
+
+### Voice-first capture on the field screen
+
+The specification calls voice-first an adoption requirement rather than a
+convenience, and it was the largest gap on the field screen. The platform could
+transcribe a site recording, classify it into one of its own observation
+categories, read the location out of it and name who was said to be responsible
+— and there was **no way to make a recording**. The entire path existed with
+nothing at the front of it: no microphone, audio, speech or dictation code
+anywhere in `frontend/`.
+
+`MediaRecorder` and `getUserMedia`, both native. No library — a dependency for
+something the browser does is what the zero-dependency decision is about, and an
+audio library on a phone on a building site is bytes over a connection that is
+already bad.
+
+**Walk and record** is the whole record made during the walk. Four steps, three
+of which already existed:
+
+1. **Record.** Level meter, elapsed clock, playback before use, five-minute hard
+   stop so a phone in a pocket cannot record for an hour and then fail to upload
+   it. Works with no signal at all — nothing in the capture touches the API.
+2. **File it**, on its own, before anything is said about it. This was the one
+   thing that had to be built on the server (`POST /projects/:id/field/recordings`).
+3. **Transcribe.** The existing perception task, with its own ACU cost.
+4. **Review and confirm.** The transcript, category, location, action flag and
+   owner are all editable, and the confirmation — not the model — creates the
+   observation. What the person changed is recorded separately from what the
+   model returned.
+
+**Why a recording has to be filable on its own.** Every other evidence file
+arrives attached to a command — a photograph with a progress record, a survey
+with a measurement — and that is right, because the person already knows what
+they are recording. A dictated note is the opposite: nobody knows the category,
+the location or the owner until it has been listened to, and the point of walking
+and recording is that the structuring happens afterwards. The evidence store
+refuses bytes that no ledger record names, so without this there is nothing for
+a transcription to read.
+
+That is not a placeholder record. An audio file of a site walk is evidence in its
+own right whatever is subsequently made of it, and it is the piece a delay claim
+is argued from in three years. It is registered as `SITE_RECORDING` and gated by
+the **same lifecycle phase** as `captureSiteObservation`, deliberately — a
+recording that could never become the observation it feeds is a record in a dead
+end, and the person would find out after the walk, after the upload, and after
+paying to transcribe it.
+
+**The container is normalised before the file is named.** Chromium records
+`audio/webm;codecs=opus`, Safari `audio/mp4`. The perception task matches its
+accepted types by exact string, so a file typed with the codec parameter would be
+refused *after* the upload had already happened. Pinned by a test, because it is
+invisible from either side alone.
+
+**Dictation is not only on that one flow.** Any `command()` panel that takes an
+evidence file now offers "Dictate instead" beside the file input — the
+specification wants voice across every field module, and a note is sometimes a
+photograph and sometimes a sentence. The dictated file takes the identical path:
+prepared, hashed, filed, uploaded, queued on the device if it cannot be.
+
+**Both fallbacks say what happened rather than pretending.** Where the upload
+cannot land, the recording is queued and the screen says the audio follows on the
+next sync and can be transcribed then. Where the deployment has no multimodal
+provider, the recording is filed and the screen gives the provider's own reason.
+Neither path silently loses audio, and neither implies a transcript is coming.
+
+**One wording defect found by testing and fixed.** The panel said "Microphone
+refused" for every `getUserMedia` failure, including `NotFoundError` — which
+means the device is not there. Telling somebody with an unplugged headset that
+permission was refused sends them into browser settings to fix something that is
+not broken. Refused and absent are now separate messages.
+
+**What is verified and what is not.** The server chain is covered by ten tests.
+In a real browser: `voiceSupport()` reports available and picks
+`audio/webm;codecs=opus`; the button renders and opens the panel; the refusal
+path renders correctly; and filing, uploading and the capability check were all
+exercised over HTTP against a running server with a synthesised recording.
+**`MediaRecorder` capture itself has not been exercised** — this container has no
+audio device, so `getUserMedia` returns `NotFoundError` and Chromium's fake-device
+flag does not supply one. That is stated rather than implied: everything
+downstream of the `File` is proven, and the capture of the bytes is not.
 
 ---
 

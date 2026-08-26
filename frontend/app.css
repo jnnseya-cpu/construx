@@ -478,3 +478,41 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--orange); ou
   .login-page { grid-template-columns: 1fr; }
   .login-brand { display: none; }
 }
+
+/* --- voice capture -------------------------------------------------------
+   The level meter is the only honest confirmation that a microphone is live:
+   a red dot proves a button was pressed and nothing else, and on site the
+   difference is a walk repeated. No new colour — the accent and the semantic
+   pair the design system already carries. */
+.voice { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.voice-state {
+  font-size: 10.5px; font-weight: 750; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text-3);
+}
+.voice-state.live { color: var(--critical); }
+.voice-state.live::before {
+  content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--critical); margin-right: 7px; vertical-align: baseline;
+  animation: voice-pulse 1.1s ease-in-out infinite;
+}
+.voice-state.good { color: var(--success); }
+.voice-state.bad { color: var(--warning); }
+@keyframes voice-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .voice-state.live::before { animation: none; } }
+
+.voice-clock {
+  font-family: var(--mono); font-size: 30px; font-weight: 700; letter-spacing: -1px;
+  font-variant-numeric: tabular-nums; line-height: 1;
+}
+.voice-meter {
+  width: 100%; height: 6px; border-radius: 3px; background: var(--grey); overflow: hidden;
+}
+.voice-meter span {
+  display: block; height: 100%; width: 0%; background: var(--orange);
+  transition: width .06s linear;
+}
+.voice audio { width: 100%; margin-top: 2px; }
+
+/* The dictate control, beside a file input rather than instead of one. */
+.voice-field { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+.voice-field .voice-taken { font-size: 11.5px; color: var(--success); font-variant-numeric: tabular-nums; }

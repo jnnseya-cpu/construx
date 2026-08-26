@@ -79,7 +79,7 @@ import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode,
   assertTenantGrantable,
   TENANT_GRANTABLE_ROLES,
 } from '../identity/roles.ts';
-import { authorise, AUTHZ_OPTIONS, currentPhase, write } from '../engines/context.ts';
+import { authorise, AUTHZ_OPTIONS, currentPhase, registerEvidence, write } from '../engines/context.ts';
 import { ulid } from '../core/ids.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import type { Platform } from '../platform.ts';
@@ -3771,6 +3771,56 @@ export const ROUTES: Route[] = [
         from: ctx.query.get('from') ?? new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10),
         to: ctx.query.get('to') ?? new Date().toISOString().slice(0, 10),
       }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/field/recordings',
+    description: 'File a site recording as evidence before anything has been said about it',
+    schema: {
+      type: 'object',
+      required: ['hash', 'description'],
+      properties: {
+        hash: stringField,
+        description: { type: 'string', minLength: 3, maxLength: 200 },
+        // The activity the recording is about, where the person knew it at the
+        // time. Optional, because on a walk they often do not.
+        taskId: stringField,
+      },
+      additionalProperties: false,
+    },
+    /**
+     * Capture first, structure afterwards.
+     *
+     * Every other evidence file on the platform arrives *attached* to a command
+     * — a photograph with a progress record, a survey with a measurement — and
+     * that is right, because those are cases where the person already knows what
+     * they are recording.
+     *
+     * A dictated site note is the opposite. Nobody knows what category it is,
+     * where it happened or who owns it until it has been listened to, and the
+     * whole point of walking and recording is that the structuring happens
+     * later. So the recording has to be filable on its own.
+     *
+     * That is not a placeholder record. An audio file of a site walk is evidence
+     * in its own right whatever is subsequently made of it, and it is the piece
+     * a delay claim is argued from three years later. It is registered as what
+     * it is, and the transcription that follows is a separate act with its own
+     * cost and its own confirmation.
+     */
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      authorise(engineCtx, 'FIELD_EXECUTION', 'C', { lifecyclePhase: currentPhase(engineCtx) });
+
+      const input = body<{ hash: string; description: string; taskId?: string }>(ctx);
+      const ref = registerEvidence(engineCtx, {
+        type: 'SITE_RECORDING',
+        hash: input.hash,
+        description: input.description,
+        linkedEntities: input.taskId ? [{ refType: 'Task', refId: input.taskId }] : [],
+      });
+
+      return { evidenceId: ref.refId, hash: input.hash };
+    },
   },
   {
     method: 'POST',

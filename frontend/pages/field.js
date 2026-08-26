@@ -1,9 +1,10 @@
-import { api, entityBundle } from '../lib/api.js';
+import { api, entityBundle, hashFile } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { OBSERVATION_TYPE, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, today } from '../lib/enums.js';
 import { badge, date, days, drillable, html, humanise, pct, raw, render, statusTone, table, time, toast, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
 import * as outbox from '../lib/outbox.js';
+import { recordVoice, recordingDescription, voiceSupport } from '../lib/voice.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -40,6 +41,12 @@ export async function field(root) {
   // The walk register ordered by what is overdue. Sorted by date, the one that
   // matters is the one furthest down.
   const walk = await api.get(`/v1/projects/${projectId}/observations/position`).catch(() => null);
+
+  // Whether this deployment can actually transcribe. A recording is worth
+  // filing either way — it is what a delay claim is argued from — but the
+  // screen must not imply a transcript is coming when no provider can produce
+  // one.
+  const perception = await api.get(`/v1/projects/${projectId}/perception`).catch(() => null);
 
   // Days earned against days spent. The arithmetic already existed inside the
   // delay forecast, where nothing could read it on its own.
@@ -86,6 +93,10 @@ export async function field(root) {
         <div class="actions cmd-bar">
           ${raw(
             commandBar([
+              // First, and the only one carrying the accent. The specification
+              // calls voice-first an adoption requirement rather than a
+              // convenience, and a button placed fifth is a convenience.
+              { id: 'dictate', label: 'Walk and record', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
               { id: 'progress', label: 'Record progress', tone: '', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
               { id: 'observation', label: 'Log safety observation', permitted: can('SAFETY_RAMS', 'C'), reason: blockedReason('SAFETY_RAMS', 'C') },
               { id: 'work-order', label: 'Raise work order', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
@@ -534,9 +545,194 @@ export async function field(root) {
     onChange: draw,
   });
 
+  /**
+   * Walk and record.
+   *
+   * The whole record made during the walk: dictate, file, transcribe, correct,
+   * send. No desk return and no typing beyond fixing what the transcript got
+   * wrong.
+   *
+   * Four steps, each of which already existed and none of which had a way in.
+   *
+   *   1. Record. Native `MediaRecorder`; works with no signal at all.
+   *   2. File the recording as evidence, on its own, before anything is said
+   *      about it. That is what makes capture-first possible: on a walk nobody
+   *      knows the category, the location or the owner until it has been
+   *      listened to.
+   *   3. Transcribe. An ACU-consuming perception task that also classifies the
+   *      note, reads the location out of it and names who was said to be
+   *      responsible.
+   *   4. Review and confirm. The transcript is shown before anything is filed
+   *      and the person corrects it. The confirmation — not the model — is what
+   *      creates the observation.
+   *
+   * Step 3 is the only one that needs a connection, and where it cannot happen
+   * the recording is still filed and the screen says exactly that rather than
+   * appearing to work and losing the audio.
+   */
+  async function walkAndRecord() {
+    const support = voiceSupport();
+    if (!support.available) {
+      toast('Cannot record here', `${support.reason} Everything on this screen can still be typed.`, 'warn');
+      return;
+    }
+
+    const recording = await recordVoice({
+      title: 'Walk and record',
+      intent: 'Say where you are, what you saw, and who needs to do something about it.',
+    });
+    if (!recording) return;
+
+    // --- file it, before anything is said about it -------------------------
+    const hash = await hashFile(recording);
+    let filed;
+    try {
+      filed = await api.post(`/v1/projects/${projectId}/field/recordings`, {
+        hash,
+        description: recordingDescription(recording),
+      });
+    } catch (error) {
+      toast('The recording could not be filed', error.detail ?? error.message ?? '', 'err');
+      return;
+    }
+
+    // The bytes follow the record, never the other way round: the upload is
+    // refused until something in the ledger names the hash.
+    let held = false;
+    try {
+      await api.upload(`/v1/evidence/${encodeURIComponent(hash)}`, recording);
+    } catch {
+      try {
+        await outbox.queueFile(recording, projectId);
+      } catch {
+        /* no IndexedDB — a private window. The record and its hash still stand. */
+      }
+      held = true;
+    }
+
+    if (held) {
+      toast(
+        'Recorded and held on this device',
+        'The evidence record is filed. The audio follows on the next sync, and it can be transcribed then.',
+        'warn',
+      );
+      await draw();
+      return;
+    }
+
+    if (!perception?.capability?.available) {
+      toast(
+        'Recorded and filed',
+        perception?.capability?.reason ??
+          'This deployment cannot transcribe, so the recording is filed as evidence and nothing is read from it.',
+        'warn',
+      );
+      await draw();
+      return;
+    }
+
+    // --- transcribe --------------------------------------------------------
+    toast('Transcribing', 'Reading the recording. It is shown to you before anything is filed.', 'ok');
+    let draft;
+    try {
+      draft = await api.post(`/v1/projects/${projectId}/perception/voice-note`, { hash });
+    } catch (error) {
+      toast(
+        'Filed, but not transcribed',
+        `${error.detail ?? error.message ?? 'The transcription failed.'} The recording is on the record and can be read later.`,
+        'warn',
+      );
+      await draw();
+      return;
+    }
+
+    await reviewTranscript(draft);
+  }
+
+  /**
+   * The draft, shown before anything is filed.
+   *
+   * Every field is editable, because the model is reading a person talking on a
+   * building site with a excavator running, and the platform's position on AI
+   * output is that a person confirms it. What the person changes is recorded
+   * separately from what the model returned, so an observation argued about in
+   * three years can be traced to whichever of the two said it.
+   */
+  async function reviewTranscript(draft) {
+    const extraction = draft.extraction ?? {};
+
+    const confirmed = await command({
+      title: 'Review before it is filed',
+      intent:
+        `Transcribed${draft.confidence !== undefined && draft.confidence !== null ? ` at ${pct(draft.confidence * 100, 0)} confidence` : ''}. ` +
+        'Correct anything it got wrong. What you change is recorded separately from what the model returned.',
+      path: `/v1/projects/${projectId}/perception/${draft.id}/confirm`,
+      submitLabel: 'File the observation',
+      transform: (values) => ({
+        corrections: {
+          transcript: values.transcript,
+          category: values.category,
+          location: values.location,
+          requiresAction: values.requiresAction === 'YES',
+          ...(values.actionOwner ? { actionOwner: values.actionOwner } : {}),
+        },
+        observedBy: state.session.user?.name ?? undefined,
+      }),
+      fields: [
+        {
+          name: 'transcript',
+          label: 'What was said',
+          type: 'textarea',
+          rows: 5,
+          value: String(extraction.transcript ?? ''),
+          hint: 'Verbatim. Correct mishearings; do not tidy it into something you did not say.',
+        },
+        {
+          name: 'category',
+          label: 'Category',
+          type: 'select',
+          value: String(extraction.category ?? ''),
+          options: SITE_OBSERVATION_CATEGORY,
+        },
+        {
+          name: 'location',
+          label: 'Location',
+          type: 'text',
+          value: String(extraction.location ?? ''),
+          placeholder: 'Where on site this was',
+        },
+        {
+          name: 'requiresAction',
+          label: 'Does somebody have to do something?',
+          type: 'select',
+          value: extraction.requiresAction === true ? 'YES' : 'NO',
+          options: [
+            { value: 'NO', label: 'No — recorded for the file' },
+            { value: 'YES', label: 'Yes — it needs an owner' },
+          ],
+        },
+        {
+          name: 'actionOwner',
+          label: 'Who owns it',
+          type: 'text',
+          required: false,
+          value: String(extraction.actionOwner ?? ''),
+          hint: 'Named in the recording where the model heard one. An action with no owner is not an action.',
+        },
+      ],
+    });
+
+    if (confirmed) {
+      toast('Filed', `Observation ${confirmed.reference ?? ''} recorded, with the recording as its evidence.`, 'ok');
+      await draw();
+    }
+  }
+
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
     if (!button) return;
+    if (button.dataset.command === 'dictate') return void walkAndRecord();
+
     const spec = COMMANDS[button.dataset.command];
     if (!spec) return;
     const result = await command(spec);
