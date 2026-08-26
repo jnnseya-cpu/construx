@@ -72,6 +72,7 @@ import { estateBurn } from '../billing/burn.ts';
 import { estateOverview } from '../billing/overview.ts';
 import { isPlatformGovernanceEvent } from '../goldenthread/eventTypes.ts';
 import * as evidence from '../evidence/registry.ts';
+import * as designreview from '../engines/designreview.ts';
 import * as perception from '../engines/perception.ts';
 import * as signing from '../signing/signature.ts';
 import { ownersByRole, ownersFor, ownershipMap } from '../identity/ownership.ts';
@@ -3771,6 +3772,131 @@ export const ROUTES: Route[] = [
         from: ctx.query.get('from') ?? new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10),
         to: ctx.query.get('to') ?? new Date().toISOString().slice(0, 10),
       }),
+  },
+  // --- design review cycle --------------------------------------------------
+  //
+  // The specification's paths are `/v1/design-deliverables/{id}:submit` and so
+  // on. These are project-scoped, as every other delivery route here is: the
+  // project is what authorises the read, and a bare deliverable id would mean
+  // resolving the tenancy from the record before the request could be refused.
+  // The verbs and the shape are the specification's.
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design/reviews',
+    description: 'Submit a design deliverable for review, with the author’s own check declared',
+    schema: {
+      type: 'object',
+      required: ['deliverable', 'selfCheck', 'checkerId', 'dueBy'],
+      properties: {
+        deliverable: {
+          type: 'object',
+          required: ['refType', 'refId'],
+          properties: { refType: stringField, refId: stringField },
+          additionalProperties: false,
+        },
+        selfCheck: { type: 'string', minLength: 20 },
+        checkerId: stringField,
+        dueBy: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        purpose: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => designreview.submitForReview(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design/reviews/:cycleId/comments',
+    description: 'Raise a comment against a deliverable in review, at a named location and severity',
+    schema: {
+      type: 'object',
+      required: ['severity', 'location', 'comment'],
+      properties: {
+        severity: { type: 'string', enum: [...designreview.COMMENT_SEVERITY] },
+        location: { type: 'string', minLength: 1 },
+        comment: { type: 'string', minLength: 5 },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designreview.raiseComment(projectContext(platform, ctx), {
+        ...body<{ severity: designreview.CommentSeverity; location: string; comment: string; evidenceHash?: string }>(ctx),
+        cycleId: ctx.params.cycleId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design/comments/:commentId/disposition',
+    description: 'The author’s answer to a comment — accepted, rejected, or an alternative proposed',
+    schema: {
+      type: 'object',
+      required: ['disposition', 'response'],
+      properties: {
+        disposition: { type: 'string', enum: [...designreview.COMMENT_DISPOSITION] },
+        response: { type: 'string', minLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designreview.dispositionComment(projectContext(platform, ctx), {
+        ...body<{ disposition: designreview.CommentDisposition; response: string }>(ctx),
+        commentId: ctx.params.commentId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design/comments/:commentId/close',
+    description: 'The checker agrees the response settles the comment. Only then does it stop blocking',
+    schema: { type: 'object', properties: { note: stringField }, additionalProperties: false },
+    handler: (platform, ctx) =>
+      designreview.closeComment(projectContext(platform, ctx), {
+        ...body<{ note?: string }>(ctx),
+        commentId: ctx.params.commentId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design/reviews/:cycleId/decide',
+    description: 'Accept, accept with comments, send back for revision, or reject. Refused while a blocking comment is open',
+    schema: {
+      type: 'object',
+      required: ['decision', 'reason'],
+      properties: {
+        decision: { type: 'string', enum: [...designreview.REVIEW_DECISION] },
+        reason: { type: 'string', minLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designreview.decideReview(projectContext(platform, ctx), {
+        ...body<{ decision: designreview.ReviewDecision; reason: string }>(ctx),
+        cycleId: ctx.params.cycleId as string,
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/design/reviews',
+    readOnly: true,
+    description: 'Where every review stands: duration, what is overdue, and whose it is now',
+    handler: (platform, ctx) =>
+      designreview.reviewPosition(projectContext(platform, ctx), ctx.query.get('today') ?? undefined),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/design/reviews/:cycleId/comments',
+    readOnly: true,
+    description: 'The comment and disposition register for one cycle, blocking first',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      authorise(engineCtx, 'DESIGN_INFORMATION', 'R');
+      return {
+        cycle: platform.ledger.require({ refType: 'DesignReviewCycle', refId: ctx.params.cycleId as string }).state,
+        comments: designreview.commentsFor(engineCtx, ctx.params.cycleId as string),
+        // Published so the console reads what blocks rather than holding a
+        // second copy of the rule.
+        blockingSeverities: designreview.BLOCKING_SEVERITIES,
+      };
+    },
   },
   {
     method: 'POST',

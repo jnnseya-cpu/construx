@@ -672,7 +672,7 @@ roles above models the specification's two-person split; it does not enforce it.
 |---|---|
 | Auto-bootstrap from the Concept bundle — brief, option, Cost Plan v0, risk register carried forward untouched | **NOT BUILT** — blocked on the concept objects existing at all |
 | **EIR loaded, BEP captured** | **NOT BUILT** — neither the Exchange Information Requirements nor the BIM Execution Plan is modelled |
-| **CDE container structure per ISO 19650** (WIP / Shared / Published / Archive) | **NOT BUILT** — the evidence store is tenant-and-project scoped with signed access, and has no container states |
+| **CDE container structure per ISO 19650** (WIP / Shared / Published / Archive) | **PARTIAL** — a deliverable under review now carries a CDE state, and the review decision moves it (`SHARED` on submission, `PUBLISHED` on acceptance, back to `WORK_IN_PROGRESS` on revise-and-resubmit). The evidence store itself still has no containers, and suitability codes (S0–S7, A1–A5) are not modelled |
 | **Naming convention validator; non-compliant uploads quarantined with a fix suggestion, never silently accepted** | **NOT BUILT** |
 | **Design Responsibility Matrix as a first-class object** — every element assigned to a named organisation with a design level (concept / spatial / detailed / installation); unallocated elements glow red until owned | **PARTIAL, and thin** — a `designResponsibilityMatrix` exists only as an array of `{ element, responsibleParty }` *inside a tender package*, checked for presence when a bid pack is assembled. It has no design level, no unallocated tracking, and does not exist during the DESIGN stage where the specification puts it |
 | Design programme with stage milestones (Stage 2 sign-off, Stage 3 coordination freeze, Stage 4 technical freeze) linked to the master programme | **PARTIAL** — programme, baselines, milestones and linkage all exist as machinery; the three named RIBA design freezes are not modelled as milestones |
@@ -683,6 +683,42 @@ detection and resolution with evidence, RFIs with activity references, design
 maturity assessment, and the design-delay cost-through-to-site chain. The
 information-management layer around them — ISO 19650 containers, EIR/BEP, naming
 validation — is the part that is absent.
+
+### D-WF-03 — Design production, check, review and acceptance
+
+**BUILT.** `backend/src/engines/designreview.ts`, seven routes, 23 tests.
+
+The cycle is submit → comment → disposition → close → decide. It exists because
+the specification's own words are that design is where projects are silently
+lost, and the single mechanism by which that happens is a deliverable published
+while a serious comment is still open.
+
+| Clause | How it is enforced |
+|---|---|
+| Author's self-check before submission | A submission without ≥20 characters of self-check is refused. It is recorded on the cycle, not discarded |
+| Independent check | The author cannot comment on their own submission (`REVIEW_SELF_CHECK`) |
+| Independent acceptance | The submitter cannot decide their own review (`REVIEW_SELF_APPROVAL`) |
+| Comment severity | `CRITICAL · MAJOR · MINOR · OBSERVATION`. Critical and major are blocking |
+| Disposition is the author's, closure is not | Only the author may disposition a comment (`ACCEPTED · REJECTED · ALTERNATIVE_PROPOSED`, with ≥10 characters of response); only somebody other than the author may close it |
+| **A blocking comment cannot be concealed** | `ACCEPTED` and `ACCEPTED_WITH_COMMENTS` are both refused while a critical or major is open, and the refusal names the comments. "Accepted with comments" is the status that otherwise hides them, which is why it is refused too |
+| Revise and resubmit | Returns the deliverable to `WORK_IN_PROGRESS` and increments the revision count on the next submission |
+| Lateness | `reviewPosition` reports duration, days overdue and who it is waiting on — the checker before a decision, the author while comments are open |
+
+Verified against the running system rather than against the tests alone: the six
+steps were driven through the real API as the real people — the PM submits, the
+BIM Manager checks, the Design Manager decides — and the sequence refuses
+self-comment, refuses accept-with-comments while blocked, refuses acceptance
+after the author has answered but before the checker has agreed, and publishes
+only once the checker closes the comment.
+
+**Not built in this workflow:** suitability codes, model-federation checks as a
+review input, and an automatic review trigger on drawing issue. A reviewer is
+nominated on submission and there is no reviewer rota.
+
+**One question for the product owner:** `DESIGNER` may still accept a design.
+Now that `PRINCIPAL_DESIGNER` exists as a distinct role, that may be the wrong
+authority — the engine enforces that the *submitter* cannot decide, which is the
+per-act rule, but it does not require the decider to be the principal designer.
 
 ---
 
@@ -1129,6 +1165,35 @@ is pressed.
 
 ---
 
+### 8.3 T-WF-01 — Tender intake, compliance matrix and bid/no-bid
+
+Audited against what exists rather than restated. **Most of this is built**, in
+`backend/src/domain/itt.ts` and `backend/src/domain/business.ts`.
+
+| Clause | State |
+|---|---|
+| Register the invitation, client and opportunity metadata | **BUILT** — `OPPORTUNITY_REGISTERED`, `OPPORTUNITY_QUALIFIED` |
+| Extract deliverables, forms, limits, signatures and bonds | **PARTIAL** — requirements are supplied structured and analysed; nothing reads them out of the invitation file |
+| Compliance matrix with owner, internal due date and status | **BUILT** — every line carries a `Role` owner from `OWNER_BY_CATEGORY`, a `dueBy`, and `SATISFIED · GAP · UNKNOWN`. A requirement the platform cannot probe is `UNKNOWN`, never `GAP`, so real gaps are not buried |
+| Source clause / page anchor on each line | **NOT BUILT** — `reference` is the invitation's own reference, not a page anchor into a held file |
+| Score strategic fit, capacity, financial, delivery, contract and win risk | **BUILT** — the ten-factor qualification, and the commercial terms are each assessed against the company's own profile with the arithmetic shown |
+| Bid/no-bid with conditions, authority and dissent | **PARTIAL** — the decision records the score, the recommendation, the rationale, the decider and **whether it went against the recommendation**, which is the finding a post-mortem needs. Conditions and delegated-authority reference are not modelled |
+| Bid → tender programme and work packages | **PARTIAL** — tender packages exist; a bid-side programme generated from the return date does not |
+| Deadline conflict or unclear time zone as a Critical clarification | **NOT BUILT** — the return date is a date, not a zoned instant |
+| Mandatory pass/fail without an owner blocks approval | **PARTIAL** — every matrix line has an owner by construction, so the condition cannot arise; a mandatory line with no evidence sets `readyToPrice` false and raises a clarification |
+| Addendum triggers bid/no-bid re-review | **NOT BUILT** |
+| **AC-T-WF-01-03 — a no-bid cannot proceed to pricing** | **BUILT, and enforced structurally** — pricing is project-scoped, and `convertToProject` refuses `OPPORTUNITY_NOT_WON` for anything not decided as a bid. The opportunity stays searchable with its rationale |
+
+The named events do not exist under the specification's names —
+`TENDER_RECEIVED`, `COMPLIANCE_MATRIX_CREATED`, `BID_DECISION_RECORDED`,
+`TENDER_PROGRAMME_CREATED` are `OPPORTUNITY_REGISTERED`, `ITT_ANALYSED` and
+`BID_NO_BID_DECIDED` here. **These are not renamed.** The catalogue is closed and
+append-only; renaming an event orphans every record already written under the old
+name, and the standing principle is that nothing is removed or replaced. The
+mapping is recorded here so the specification can be read against the ledger.
+
+---
+
 ## Implementation order
 
 Set against dependency rather than against the order the clauses arrived in.
@@ -1178,6 +1243,11 @@ Superseded ordering note, kept for honesty: The
 Recorded separately because they are stage work rather than platform work, and
 because the order above has to be finished first — every item below reads the
 audit event, the agent contract or the lifecycle gate.
+
+12b. ~~D-WF-03 — the design review cycle.~~ **Done.** Submit, comment,
+    disposition, close, decide, with a blocking-comment rule that "accepted with
+    comments" cannot get round. Suitability codes and a review trigger on
+    drawing issue are the parts not built.
 
 13. ~~The Build Standard on the delivery screens.~~ **Done.** Both clauses now
     hold on all ten delivery screens. What remains of E11, F3 and G3 is the exact

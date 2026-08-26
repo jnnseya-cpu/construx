@@ -1,6 +1,6 @@
 import { api, entities, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
-import { DISCIPLINE } from '../lib/enums.js';
+import { DISCIPLINE, today } from '../lib/enums.js';
 import { badge, date, drillable, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -29,6 +29,16 @@ export async function design(root) {
     'RFI',
     'DesignMaturityAssessment',
   ]);
+
+  // Where every review stands. The engine computes duration, overdue and whose
+  // it is, so the screen renders an answer rather than doing arithmetic.
+  const reviews = await api.get(`/v1/projects/${projectId}/design/reviews`).catch(() => null);
+
+  // Who could check a design, read from the ownership map rather than guessed.
+  // The author picks a name from people the matrix says can actually do it —
+  // and the engine refuses the author themselves, whoever is chosen.
+  const ownership = await api.get('/v1/ownership').catch(() => ({ areas: [] }));
+  const designOwners = (ownership.areas ?? []).find((entry) => entry.area === 'DESIGN_INFORMATION');
 
   const current = b.Drawing.filter((d) => d.status === 'CURRENT');
   const superseded = b.Drawing.filter((d) => d.status === 'SUPERSEDED');
@@ -90,6 +100,9 @@ export async function design(root) {
         <div class="actions cmd-bar">
           ${raw(commandBar([
             { id: 'drawing', label: 'Register drawing', tone: '', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
+            { id: 'submit-review', label: 'Submit for review', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
+            { id: 'comment', label: 'Raise a review comment', permitted: can('DESIGN_INFORMATION', 'R'), reason: blockedReason('DESIGN_INFORMATION', 'R') },
+            { id: 'decide-review', label: 'Decide a review', permitted: can('DESIGN_INFORMATION', 'A'), reason: blockedReason('DESIGN_INFORMATION', 'A') },
             { id: 'markup', label: 'Add markup', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
             { id: 'answer', label: 'Answer an RFI', permitted: can('DESIGN_INFORMATION', 'U'), reason: blockedReason('DESIGN_INFORMATION', 'U') },
             { id: 'resolve-clash', label: 'Close a clash', permitted: can('BIM_TWIN', 'A'), reason: blockedReason('BIM_TWIN', 'A') },
@@ -197,6 +210,43 @@ export async function design(root) {
           <div class="metric-sub">observed against ${b.DigitalTwinState.length} capture(s)</div>
         </div>
       </div>
+
+      ${
+        reviews && reviews.cycles.length > 0
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Design review</h3>
+              <div style="padding:0 17px"><div class="metric-sub">${reviews.summary}</div></div>
+              <div style="padding:11px 17px 15px">
+                ${table({
+                  headers: ['Review', 'Deliverable', 'Rev', 'State', 'Comments', 'Open', 'Days', 'Waiting on'],
+                  align: ['', '', 'num', '', 'num', 'num', 'num', ''],
+                  rows: reviews.cycles.map((cycle) => [
+                    cycle.reference,
+                    `${cycle.deliverable.refType} ${String(cycle.deliverable.refId).slice(-8)}`,
+                    cycle.revision,
+                    cycle.decision
+                      ? badge(humanise(cycle.decision), cycle.decision.startsWith('ACCEPTED') ? 'good' : 'bad')
+                      : badge(humanise(cycle.cdeState), ''),
+                    cycle.comments.total,
+                    // The number that decides whether it can be published, and
+                    // it is shown as a warning rather than as a count.
+                    cycle.comments.blocking > 0
+                      ? badge(`${cycle.comments.blocking} blocking`, 'bad')
+                      : cycle.comments.open,
+                    cycle.daysOverdue !== undefined
+                      ? badge(`${cycle.daysOverdue}d late`, 'bad')
+                      : cycle.durationDays,
+                    cycle.waitingOn,
+                  ]),
+                })}
+                <div class="metric-sub" style="margin-top:9px">
+                  A deliverable cannot be published while a critical or major comment is open — including under
+                  "accepted with comments", which is the status that otherwise hides them.
+                </div>
+              </div>
+            </div>`
+          : ''
+      }
 
       <div id="design-insight" style="margin-bottom:14px"></div>
 
@@ -461,7 +511,128 @@ export async function design(root) {
     `,
   );
 
+  const openReviews = (reviews?.cycles ?? []).filter((cycle) => cycle.status === 'IN_REVIEW');
+
   const COMMANDS = {
+    'submit-review': {
+      title: 'Submit for review',
+      intent:
+        'Your own check goes on the record with it. A submission without one is a deliverable thrown over a wall, ' +
+        'and the person who submits it cannot then check, answer-and-close, or accept it.',
+      path: `/v1/projects/${projectId}/design/reviews`,
+      submitLabel: 'Submit',
+      transform: (values) => ({
+        deliverable: { refType: 'Drawing', refId: values.drawingId },
+        selfCheck: values.selfCheck,
+        checkerId: values.checkerId,
+        dueBy: values.dueBy,
+      }),
+      fields: [
+        {
+          name: 'drawingId',
+          label: 'Deliverable',
+          type: 'select',
+          options: current.map((drawing) => ({
+            value: drawing._refId,
+            label: `${drawing.drawingNumber} rev ${drawing.revision} · ${drawing.title ?? ''}`,
+          })),
+        },
+        {
+          name: 'selfCheck',
+          label: 'What you checked',
+          type: 'textarea',
+          rows: 3,
+          hint: 'Required, and recorded verbatim. Name what you verified, not that you verified it.',
+        },
+        {
+          name: 'checkerId',
+          label: 'Who is to check it',
+          type: 'select',
+          options: [...(designOwners?.approve ?? []), ...(designOwners?.create ?? [])]
+            // The same person may appear as both an approver and an author.
+            .filter((owner, index, all) => all.findIndex((other) => other.userId === owner.userId) === index)
+            .map((owner) => ({ value: owner.userId, label: `${owner.name} · ${humanise(owner.role)}` })),
+          hint: '"The design team" is not an owner. A review with no name against it is one nobody is doing.',
+        },
+        { name: 'dueBy', label: 'Due back by', type: 'date', min: today() },
+      ],
+    },
+
+    comment: {
+      title: 'Raise a review comment',
+      intent:
+        'Critical and major comments block publication until the person who raised them agrees they are settled. ' +
+        'Minor and observation do not.',
+      path: (collected) => `/v1/projects/${projectId}/design/reviews/${collected.cycleId}/comments`,
+      submitLabel: 'Raise',
+      transform: ({ cycleId, ...rest }) => rest,
+      fields: [
+        {
+          name: 'cycleId',
+          label: 'Review',
+          type: 'select',
+          options: openReviews.map((cycle) => ({
+            value: cycle.cycleId,
+            label: `${cycle.reference} · ${cycle.deliverable.refType} rev ${cycle.revision}`,
+          })),
+        },
+        {
+          name: 'severity',
+          label: 'Severity',
+          type: 'select',
+          options: [
+            { value: 'CRITICAL', label: 'Critical — blocks publication' },
+            { value: 'MAJOR', label: 'Major — blocks publication' },
+            { value: 'MINOR', label: 'Minor' },
+            { value: 'OBSERVATION', label: 'Observation' },
+          ],
+        },
+        {
+          name: 'location',
+          label: 'Where',
+          type: 'text',
+          placeholder: 'Grid C/4, clause 3.2, object GUID…',
+          hint: 'Required. A comment nobody can locate is a comment nobody can action.',
+        },
+        { name: 'comment', label: 'The comment', type: 'textarea', rows: 3 },
+        { name: 'evidenceHash', label: 'Evidence', type: 'file', required: false },
+      ],
+    },
+
+    'decide-review': {
+      title: 'Decide a review',
+      intent:
+        'Accepting publishes the revision. It is refused while a critical or major comment is open — including under ' +
+        '"accepted with comments", which is the status that otherwise hides them.',
+      path: (collected) => `/v1/projects/${projectId}/design/reviews/${collected.cycleId}/decide`,
+      submitLabel: 'Decide',
+      transform: ({ cycleId, ...rest }) => rest,
+      fields: [
+        {
+          name: 'cycleId',
+          label: 'Review',
+          type: 'select',
+          options: openReviews.map((cycle) => ({
+            value: cycle.cycleId,
+            label:
+              `${cycle.reference} · ${cycle.comments.blocking > 0 ? `${cycle.comments.blocking} blocking open` : 'nothing blocking'}`,
+          })),
+        },
+        {
+          name: 'decision',
+          label: 'Decision',
+          type: 'select',
+          options: [
+            { value: 'ACCEPTED', label: 'Accepted — publishes the revision' },
+            { value: 'ACCEPTED_WITH_COMMENTS', label: 'Accepted with comments — publishes, minor comments outstanding' },
+            { value: 'REVISE_AND_RESUBMIT', label: 'Revise and resubmit — back to the author' },
+            { value: 'REJECTED', label: 'Rejected' },
+          ],
+        },
+        { name: 'reason', label: 'Why', type: 'textarea', rows: 2, hint: 'Recorded with the decision.' },
+      ],
+    },
+
     drawing: {
       title: 'Register drawing',
       intent: 'Registering a revision supersedes the previous one automatically. Marking up a superseded drawing is then refused.',

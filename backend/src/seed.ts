@@ -121,6 +121,17 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   const planner = platform.createUser({ tenantId: tenant.id, name: 'Planning Manager', email: 'planner@meridian.example', roles: ['PLANNER'] });
   const safetyLead = platform.createUser({ tenantId: tenant.id, name: 'HSE Manager', email: 'hse@meridian.example', roles: ['SAFETY'] });
   const bimLead = platform.createUser({ tenantId: tenant.id, name: 'BIM Manager', email: 'bim@meridian.example', roles: ['BIM'] });
+  // The demonstration had no design approver at all. `DESIGNER` and
+  // `PRINCIPAL_DESIGNER` both hold approve on design information and neither was
+  // on the project, so a design could be authored, marked up and questioned —
+  // and never accepted by anybody. The review cycle made that visible; it was
+  // true before it.
+  const designLead = platform.createUser({
+    tenantId: tenant.id,
+    name: 'Design Manager',
+    email: 'design@meridian.example',
+    roles: ['DESIGNER'],
+  });
   const qaqc = platform.createUser({ tenantId: tenant.id, name: 'QA/QC Engineer', email: 'qaqc@meridian.example', roles: ['QAQC'] });
   const fm = platform.createUser({ tenantId: tenant.id, name: 'Facilities Manager', email: 'fm@meridian.example', roles: ['FM'] });
   const regulator = platform.createUser({ tenantId: tenant.id, name: 'Building Safety Regulator', email: 'regulator@meridian.example', roles: ['REGULATOR'] });
@@ -1986,6 +1997,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
       planner: { id: planner.id, auth: authOf(platform, planner.id) },
       safety: { id: safetyLead.id, auth: authOf(platform, safetyLead.id) },
       bim: { id: bimLead.id, auth: authOf(platform, bimLead.id) },
+      designer: { id: designLead.id, auth: authOf(platform, designLead.id) },
       qaqc: { id: qaqc.id, auth: authOf(platform, qaqc.id) },
       fm: { id: fm.id, auth: authOf(platform, fm.id) },
       regulator: { id: regulator.id, auth: authOf(platform, regulator.id) },

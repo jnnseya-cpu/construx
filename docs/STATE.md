@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,718 passing, 0 failing, 0 skipped, across 92 files |
+| Tests | 1,741 passing, 0 failing, 0 skipped, across 93 files |
 | Typecheck | clean |
-| Backend | 118 TypeScript files, 57,287 lines |
-| Application | 35 ES modules, 12,075 lines (including a service worker) |
-| API routes | 310 (34 of them public) |
-| Event types | 205 Golden Thread (closed) · 178 communication events (closed) |
-| Entity types | 123, all classified for access |
+| Backend | 119 TypeScript files, 58,484 lines |
+| Application | 39 ES modules, 13,652 lines (including a service worker) |
+| API routes | 318 (34 of them public) |
+| Event types | 210 Golden Thread (closed) · 178 communication events (closed) |
+| Entity types | 125, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -3769,6 +3769,68 @@ exercised over HTTP against a running server with a synthesised recording.
 audio device, so `getUserMedia` returns `NotFoundError` and Chromium's fake-device
 flag does not supply one. That is stated rather than implied: everything
 downstream of the `File` is proven, and the capture of the bytes is not.
+
+### The design review cycle
+
+D-WF-03 — design production, check, review and acceptance. The register, the
+revisions, the supersession, the clashes and the RFIs were all built. The thing
+between them was not: **there was no act of accepting a design**. A drawing
+existed at a revision and nothing recorded that anybody had looked at it, said
+what was wrong with it, and agreed it was fit to build from.
+
+`backend/src/engines/designreview.ts`. Five closed vocabularies — severity,
+disposition, decision, CDE state, and the blocking set — seven routes, 23 tests.
+
+The sequence is **submit → comment → disposition → close → decide**, and every
+step of it is a separation of duties at the act, which is how this codebase has
+always done it:
+
+- The **author self-checks** before submitting. Twenty characters minimum, and
+  it is recorded on the cycle rather than thrown away — the self-check is part
+  of the record of what was claimed at submission.
+- The **author cannot comment on their own submission**. A check that the person
+  being checked can write is not a check.
+- The **author dispositions** each comment — accepted, rejected, or an
+  alternative proposed — with a response. Only somebody who is **not the author
+  closes it**. The person who says a comment is dealt with is never the person
+  who said it was dealt with.
+- The **submitter cannot decide the review**.
+
+**The one rule that matters most:** a deliverable cannot reach `PUBLISHED` while
+a critical or major comment is open — and that holds for **accepted with
+comments** as well as for a clean acceptance. Accepted-with-comments is the
+status that hides open comments in every system that has one; it is the
+mechanism by which a design with a known fire-stopping problem gets issued for
+construction. The refusal names the comments it is refusing over.
+
+Revise-and-resubmit returns the deliverable to `WORK_IN_PROGRESS` and the next
+submission counts as a further revision. `reviewPosition` reports duration, days
+overdue and who it is waiting on — the checker before a decision, the author
+while comments sit open.
+
+**The demo had no design approver at all**, which is what building this exposed.
+A Design Manager is now seeded (`design@meridian.example`), because a review
+cycle with nobody able to decide it is not a cycle.
+
+**Verified against the running system, not only the tests.** Driven through the
+real API as the real people — the PM submits, the BIM Manager checks, the Design
+Manager decides — in sequence: submit opens the cycle; the author's comment on
+their own work is refused `REVIEW_SELF_CHECK`; the checker's critical is recorded
+as blocking; accepted-with-comments is refused `BLOCKING_COMMENTS_OPEN` naming
+the comment; acceptance after the *author* has answered is still refused;
+acceptance after the *checker* closes it publishes. The panel renders on the
+design screen with that history.
+
+**Not built, and not to be claimed:** ISO 19650 suitability codes (S0–S7,
+A1–A5), model federation as a review input, an automatic review trigger on
+drawing issue, and any reviewer rota — the checker is nominated by the submitter.
+The CDE state lives on the review cycle; the evidence store itself still has no
+containers.
+
+**Open for the product owner:** the engine enforces that the submitter cannot
+decide. It does not require the decider to be the `PRINCIPAL_DESIGNER` now that
+role exists, so a `DESIGNER` who did not submit may still accept a design. That
+may be right, and it may not.
 
 ---
 

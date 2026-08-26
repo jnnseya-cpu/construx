@@ -155,6 +155,23 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('DRAWING_REGISTERED', 'Drawing', 'IMPORT', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),
   def('DRAWING_SUPERSEDED', 'Drawing', 'UPDATE', 'DESIGN', { requiresEvidence: true }),
   def('DRAWING_MARKUP_ADDED', 'DrawingMarkup', 'CREATE', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),
+  // --- Design review -------------------------------------------------------
+  //
+  // The stage could hold documents and answer questions about them, and had no
+  // way to review one. A deliverable went from registered to used with nothing
+  // in between, which is the gap an uncoordinated package is built through.
+  //
+  // None of these is AI-authorable. A model may draft a comment and locate its
+  // evidence; the raising of it is a professional opinion with a name against
+  // it, and the acceptance of a design is a decision.
+  def('DESIGN_SUBMITTED_FOR_REVIEW', 'DesignReviewCycle', 'ISSUE', 'DESIGN', { creates: true }),
+  def('REVIEW_COMMENT_RAISED', 'DesignReviewComment', 'CREATE', 'DESIGN', { creates: true }),
+  // Both the author's answer and the checker's agreement that it settles the
+  // comment. One event type, because both are the same act on the same record —
+  // and the record carries which of the two happened.
+  def('COMMENT_DISPOSITIONED', 'DesignReviewComment', 'UPDATE', 'DESIGN'),
+  def('DESIGN_ACCEPTED', 'DesignReviewCycle', 'APPROVE', 'DESIGN'),
+  def('DESIGN_REJECTED', 'DesignReviewCycle', 'REJECT', 'DESIGN'),
   def('SPECIFICATION_INGESTED', 'Specification', 'IMPORT', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),
   def('SPEC_CLAUSE_EXTRACTED', 'SpecClause', 'CREATE', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),
   def('DESIGN_MATURITY_ASSESSED', 'DesignMaturityAssessment', 'CREATE', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),

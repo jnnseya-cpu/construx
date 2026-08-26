@@ -103,6 +103,12 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   BidSubmissionPack: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Subcontract: { area: 'PROCUREMENT_AWARD', sensitivity: 'LEGAL_L4' },
 
+  // A review cycle and its comments are design information: the same area, and
+  // the same sensitivity, as the deliverable they are about. A comment naming a
+  // structural defect is not less sensitive than the drawing it is on.
+  DesignReviewCycle: { area: 'DESIGN_INFORMATION' },
+  DesignReviewComment: { area: 'DESIGN_INFORMATION' },
+
   // Cost — commercial
   Budget: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
   ActualCost: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
