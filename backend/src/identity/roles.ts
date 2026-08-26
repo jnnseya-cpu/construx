@@ -22,6 +22,55 @@ export type Role =
   | 'PLATFORM_ADMIN'
   | 'ENTERPRISE_ADMIN'
   | 'OWNER'
+  /**
+   * Client-side authority above the Development Manager.
+   *
+   * Named by the specification as the holder of the Go/No-Go gate approval, and
+   * it is deliberately an *approver* rather than an author: it reads across the
+   * whole project and signs the small number of things that commit the client —
+   * the gate, the baseline, the award, the external forecast. Giving it create
+   * rights would make the person who signs the business case the person who
+   * wrote it.
+   */
+  | 'EXECUTIVE'
+  /**
+   * Client-side authorship of the concept: brief, options, business case.
+   *
+   * Holds no approval anywhere, on purpose. The specification has the
+   * Development Manager edit the investment paper and the Executive approve it,
+   * and that separation is the whole reason both roles exist rather than one.
+   */
+  | 'DEVELOPMENT_MANAGER'
+  /**
+   * Contractor-side authority above the Project Manager.
+   *
+   * Named by the specification as the authority required to reverse a lifecycle
+   * transition — to send a project back from COMMISSIONING to CONSTRUCTION on
+   * failed testing. That act is rare, loud and fully audited, and it needs a
+   * holder senior to the person whose programme it disrupts.
+   */
+  | 'PROJECT_DIRECTOR'
+  /**
+   * Commercial authority above the QS.
+   *
+   * The QS authors the cost report, the application, the variation and the
+   * claim. This role approves them, and receives the exception when the data
+   * chain between modules breaks. It holds no create rights in the four
+   * commercial areas for exactly the reason the QS holds no approve rights
+   * there: one person must not be both ends of a commercial decision.
+   */
+  | 'COMMERCIAL_MANAGER'
+  /**
+   * The CDM 2015 Principal Designer — a statutory duty holder, not a job title.
+   *
+   * Distinct from the Principal Contractor, whose duty set is already built.
+   * The Principal Designer plans, manages and monitors the pre-construction
+   * phase, and is answerable for design risk having been eliminated or reduced
+   * before anybody builds it. That is why this is the role that approves a
+   * design: the specification requires system-enforced approval before a design
+   * approval, and until now no role could give one.
+   */
+  | 'PRINCIPAL_DESIGNER'
   | 'EPC'
   | 'QS'
   | 'PM'
@@ -76,6 +125,11 @@ export const ROLE_ACCOUNT_LAYER: Record<Role, AccountLayer> = {
   PLATFORM_ADMIN: 'PLATFORM_ADMIN',
   ENTERPRISE_ADMIN: 'ENTERPRISE_ADMIN',
   OWNER: 'TENANT_USER',
+  EXECUTIVE: 'TENANT_USER',
+  DEVELOPMENT_MANAGER: 'TENANT_USER',
+  PROJECT_DIRECTOR: 'TENANT_USER',
+  COMMERCIAL_MANAGER: 'TENANT_USER',
+  PRINCIPAL_DESIGNER: 'TENANT_USER',
   EPC: 'TENANT_USER',
   QS: 'TENANT_USER',
   PM: 'TENANT_USER',
@@ -210,6 +264,136 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R', 'U'],
+  },
+
+  // Reads everything, authors nothing, signs the few things that commit the
+  // client: the gate, the baseline, the award, the forecast that goes outside.
+  // The absence of 'C' and 'U' is the point — an executive who could author the
+  // business case would be approving their own paper.
+  EXECUTIVE: {
+    BUSINESS_DEVELOPMENT: ['R', 'A'],
+    ENTERPRISE_STRUCTURE: ['R'],
+    PROJECT_SETUP: ['R', 'A'],
+    DESIGN_INFORMATION: ['R'],
+    WORKPACKAGES_TASKS: ['R'],
+    PROGRAMME_BASELINES: ['R', 'A'],
+    LOOKAHEAD_CONSTRAINTS: ['R'],
+    BOQ_TAKEOFF: ['R'],
+    ESTIMATE_TENDER: ['R', 'A'],
+    PROCUREMENT_AWARD: ['R', 'A'],
+    BUDGET_COST: ['R', 'A'],
+    PAYMENT_APPLICATIONS: ['R', 'A'],
+    CHANGE_VARIATION: ['R', 'A'],
+    CONTRACTS_CLAIMS: ['R', 'A'],
+    RISK_REGISTER: ['R'],
+    SAFETY_RAMS: ['R'],
+    QUALITY_COMMISSIONING: ['R'],
+    BIM_TWIN: ['R'],
+    HANDOVER_OM: ['R', 'A'],
+    EVIDENCE_AUDIT: ['R', 'I'],
+    AI_EXECUTION: ['R', 'X'],
+    BILLING_ACU: ['R'],
+  },
+
+  // Authors the concept and approves none of it. Every 'A' is absent
+  // deliberately: the specification has this role edit the investment paper and
+  // the Executive approve it, which is only meaningful if the matrix agrees.
+  DEVELOPMENT_MANAGER: {
+    BUSINESS_DEVELOPMENT: ['R', 'C', 'U', 'X'],
+    PROJECT_SETUP: ['R', 'C', 'U'],
+    DESIGN_INFORMATION: ['R'],
+    PROGRAMME_BASELINES: ['R'],
+    BOQ_TAKEOFF: ['R'],
+    ESTIMATE_TENDER: ['R'],
+    PROCUREMENT_AWARD: ['R'],
+    BUDGET_COST: ['R'],
+    CHANGE_VARIATION: ['R'],
+    CONTRACTS_CLAIMS: ['R'],
+    RISK_REGISTER: ['R', 'C', 'U'],
+    SAFETY_RAMS: ['R'],
+    QUALITY_COMMISSIONING: ['R'],
+    BIM_TWIN: ['R'],
+    HANDOVER_OM: ['R'],
+    EVIDENCE_AUDIT: ['R', 'I'],
+    AI_EXECUTION: ['R', 'X'],
+    BILLING_ACU: ['R'],
+  },
+
+  // Contractor-side seniority: approves what the delivery team authors, and
+  // holds the lifecycle authority the specification requires for a reverse
+  // transition. Not a second PM — it creates almost nothing.
+  PROJECT_DIRECTOR: {
+    BUSINESS_DEVELOPMENT: ['R'],
+    ENTERPRISE_STRUCTURE: ['R'],
+    PROJECT_SETUP: ['R', 'U', 'A'],
+    DESIGN_INFORMATION: ['R'],
+    WORKPACKAGES_TASKS: ['R', 'A'],
+    PROGRAMME_BASELINES: ['R', 'A', 'X'],
+    LOOKAHEAD_CONSTRAINTS: ['R', 'A'],
+    BOQ_TAKEOFF: ['R'],
+    ESTIMATE_TENDER: ['R', 'A'],
+    PROCUREMENT_AWARD: ['R', 'A'],
+    BUDGET_COST: ['R', 'A'],
+    PAYMENT_APPLICATIONS: ['R', 'A'],
+    CHANGE_VARIATION: ['R', 'A'],
+    CONTRACTS_CLAIMS: ['R', 'C', 'U', 'A', 'I'],
+    RISK_REGISTER: ['R', 'C', 'U', 'A'],
+    SAFETY_RAMS: ['R', 'A'],
+    FIELD_EXECUTION: ['R', 'A'],
+    QUALITY_COMMISSIONING: ['R', 'A'],
+    BIM_TWIN: ['R'],
+    HANDOVER_OM: ['R', 'A'],
+    EVIDENCE_AUDIT: ['R', 'I'],
+    AI_EXECUTION: ['R', 'X'],
+    BILLING_ACU: ['R'],
+  },
+
+  // Approves what the QS authors, and receives the exception when the data
+  // chain between modules breaks. No 'C' or 'U' in the four commercial areas,
+  // mirroring the QS having no 'A' there: one person must not be both ends of a
+  // commercial decision.
+  COMMERCIAL_MANAGER: {
+    BUSINESS_DEVELOPMENT: ['R'],
+    PROJECT_SETUP: ['R'],
+    DESIGN_INFORMATION: ['R'],
+    WORKPACKAGES_TASKS: ['R'],
+    PROGRAMME_BASELINES: ['R'],
+    BOQ_TAKEOFF: ['R'],
+    ESTIMATE_TENDER: ['R', 'A'],
+    PROCUREMENT_AWARD: ['R', 'A'],
+    BUDGET_COST: ['R', 'A'],
+    PAYMENT_APPLICATIONS: ['R', 'A'],
+    CHANGE_VARIATION: ['R', 'A'],
+    CONTRACTS_CLAIMS: ['R', 'A', 'I'],
+    RISK_REGISTER: ['R', 'C', 'U'],
+    QUALITY_COMMISSIONING: ['R'],
+    HANDOVER_OM: ['R'],
+    EVIDENCE_AUDIT: ['R', 'I'],
+    AI_EXECUTION: ['R', 'X'],
+    BILLING_ACU: ['R'],
+  },
+
+  // The CDM 2015 statutory duty holder for the pre-construction phase. This is
+  // the role that approves a design — the specification requires system-enforced
+  // approval before a design approval, and until this existed no role could give
+  // one. Its safety authority is the duty itself, not a convenience.
+  PRINCIPAL_DESIGNER: {
+    PROJECT_SETUP: ['R'],
+    DESIGN_INFORMATION: ['R', 'C', 'U', 'A', 'I', 'X'],
+    WORKPACKAGES_TASKS: ['R'],
+    PROGRAMME_BASELINES: ['R'],
+    BOQ_TAKEOFF: ['R'],
+    // Design risk eliminated or reduced before anybody builds it. The duty is
+    // discharged in the register and in the RAMS, so both carry approval.
+    RISK_REGISTER: ['R', 'C', 'U', 'A'],
+    SAFETY_RAMS: ['R', 'C', 'U', 'A'],
+    QUALITY_COMMISSIONING: ['R'],
+    BIM_TWIN: ['R', 'C', 'U', 'I'],
+    // The health and safety file is compiled through design and handed over.
+    HANDOVER_OM: ['R', 'C', 'U'],
+    EVIDENCE_AUDIT: ['R', 'I'],
+    AI_EXECUTION: ['R', 'X'],
+    BILLING_ACU: ['R'],
   },
 
   EPC: {

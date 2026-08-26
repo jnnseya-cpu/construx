@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
+import { ALL_ROLES, OPERATOR_ONLY_ROLES } from '../src/identity/roles.ts';
 import { ACUWallet, effectiveMultiplier, minimumMultiplier, profitPercent } from '../src/billing/acu.ts';
 import { assignIdentity, revokeIdentity, SeatLimitError, TIERS, type Subscription } from '../src/billing/subscription.ts';
 import { buildInvoice, formatContractValue } from '../src/billing/invoice.ts';
-import { ACU_BUNDLES, PACKAGES, SEATS, seatForRole } from '../src/billing/seats.ts';
+import { ACU_BUNDLES, PACKAGES, SEATS, UNCHARGED_ROLES, seatForRole } from '../src/billing/seats.ts';
 import { config } from '../src/config.ts';
 
 function wallet(balanceMinor = 10_000): ACUWallet {
@@ -266,6 +267,11 @@ describe('seat pricing', () => {
       SITE_SUPERVISOR: 7_000,
       SUBCONTRACTOR: 2_500,
       EXECUTIVE: 12_000,
+      // The CDM 2015 statutory duty holder. Its own seat rather than folded
+      // into the document controller: this role approves designs and owns
+      // design risk elimination, and pricing it with the drawing register
+      // would say the platform thinks those are the same job.
+      PRINCIPAL_DESIGNER: 13_000,
     });
   });
 
@@ -278,7 +284,13 @@ describe('seat pricing', () => {
   });
 
   it('maps every delivery role to a seat', () => {
-    for (const role of ['EPC', 'PM', 'QS', 'PLANNER', 'BIM', 'DESIGNER', 'SUPERVISOR', 'QAQC', 'SAFETY', 'FM', 'SUPPLIER', 'OWNER'] as const) {
+    // Enumerated from the role list rather than hand-written, so a role added
+    // later without a seat fails here instead of failing when somebody tries to
+    // assign it. The hand-written list was already stale: it predated five
+    // roles, and would have kept passing while none of them could be bought.
+    for (const role of ALL_ROLES) {
+      if (OPERATOR_ONLY_ROLES.includes(role)) continue;
+      if (UNCHARGED_ROLES.includes(role)) continue;
       assert.ok(seatForRole(role), `${role} has no seat price`);
     }
   });

@@ -559,10 +559,36 @@ do not express:
 | **Principal Designer (CDM 2015)** | Part C personas | Exists as a *supply-chain accreditation code* (`CDM_PRINCIPAL_DESIGNER`), not as a platform role with duties. The CDM work built the Principal **Contractor** duty set; the Principal **Designer** duty set is a separate statutory role and is not built |
 | **Commercial Manager** | A1 Rule 2 — chain-break escalation | No role. `QS` is the nearest |
 
-This is one decision, not five: either these are new roles in the permission
-matrix, or they are a separate *authority level* concept layered over the
-existing roles. It should be settled once, before any of the gates that depend on
-it are written, because every one of them names a holder.
+**Settled: all five are roles in the permission matrix**, rather than a separate
+authority-level concept layered over the existing fifteen. A second concept would
+have meant two things to check on every decision and two places for them to
+disagree; the matrix already resolves authority everywhere in the platform, and a
+role is what `assertAccess` understands.
+
+| Role | Shape | Seat |
+|---|---|---|
+| `EXECUTIVE` | Approves everywhere, authors nowhere — the gate, the baseline, the award, the forecast that goes outside | Executive, £120 |
+| `DEVELOPMENT_MANAGER` | Authors the concept, approves nothing. The mirror of the Executive, which is why both exist rather than one | Executive, £120 |
+| `PROJECT_DIRECTOR` | Contractor-side seniority; holds the `PROJECT_SETUP` approve a reverse transition is gated on. Creates almost nothing — not a second PM | Construction Manager, £180 |
+| `COMMERCIAL_MANAGER` | Approves the four commercial areas the QS authors, and authors in none of them | Commercial Manager, £150 |
+| `PRINCIPAL_DESIGNER` | CDM 2015 statutory duty holder. Approves design, owns design-risk elimination in the register and the RAMS, compiles the health and safety file. Holds no site authority — that is the Principal Contractor, a different duty holder | Principal Designer, £130 (new) |
+
+**One open question this surfaced, for the product owner rather than for
+engineering.** `DESIGNER` already held approve on design information, on the
+recorded reasoning that "approval of design content stays with the designer".
+There are now two design approvers: the lead designer signing off content, and
+the CDM duty holder confirming design risk has been eliminated or reduced. Those
+are genuinely different acts, so both may be right — but if a designer should no
+longer approve their own design, that is a deliberate change to a settled
+decision and has not been made here.
+
+**A correction to an earlier reading in this file.** An earlier draft implied the
+permission matrix is the platform's separation-of-duties mechanism. It is not:
+twenty-six existing roles hold both create and approve in the same area,
+deliberately, because separation is a rule about *two acts by one person* and a
+capability area cannot express it. It is enforced per act — `lifecycle/stages.ts`
+refuses a gate decision from whoever submitted it. The asymmetry in the three new
+roles above models the specification's two-person split; it does not enforce it.
 
 ---
 

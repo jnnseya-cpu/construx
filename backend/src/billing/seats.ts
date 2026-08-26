@@ -23,7 +23,17 @@ export type SeatType =
   | 'DOCUMENT_CONTROLLER'
   | 'SITE_SUPERVISOR'
   | 'SUBCONTRACTOR'
-  | 'EXECUTIVE';
+  | 'EXECUTIVE'
+  /**
+   * The CDM 2015 Principal Designer.
+   *
+   * Its own seat rather than folded into the document controller, because the
+   * authority is not documentary: this is the statutory duty holder for
+   * pre-construction health and safety, and it is the role that approves a
+   * design. Pricing it with the drawing register would say the platform thinks
+   * those are the same job.
+   */
+  | 'PRINCIPAL_DESIGNER';
 
 export type SeatDefinition = {
   seat: SeatType;
@@ -41,7 +51,10 @@ export const SEATS: Record<SeatType, SeatDefinition> = {
     label: 'Construction Manager',
     authority: 'Final decision on programme, cost, subcontracting, variations and site operations',
     monthlyPriceMinor: 18_000,
-    roles: ['EPC'],
+    // The Project Director sits above the Construction Manager and holds the
+    // same class of authority — final say on programme, cost and the lifecycle
+    // itself. Same seat: it is seniority within one authority, not a new one.
+    roles: ['EPC', 'PROJECT_DIRECTOR'],
   },
   PROJECT_MANAGER: {
     seat: 'PROJECT_MANAGER',
@@ -50,12 +63,23 @@ export const SEATS: Record<SeatType, SeatDefinition> = {
     monthlyPriceMinor: 14_000,
     roles: ['PM'],
   },
+  PRINCIPAL_DESIGNER: {
+    seat: 'PRINCIPAL_DESIGNER',
+    label: 'Principal Designer (CDM 2015)',
+    authority:
+      'Statutory pre-construction duty holder: approves design, owns design risk elimination, compiles the health and safety file',
+    monthlyPriceMinor: 13_000,
+    roles: ['PRINCIPAL_DESIGNER'],
+  },
   COMMERCIAL_MANAGER: {
     seat: 'COMMERCIAL_MANAGER',
     label: 'Commercial Manager / QS',
     authority: 'Cost control, procurement, applications and variation pricing',
     monthlyPriceMinor: 15_000,
-    roles: ['QS'],
+    // The QS authors and the Commercial Manager approves. One seat, because it
+    // is one commercial authority split across two people for separation of
+    // duties — not two different things to buy.
+    roles: ['QS', 'COMMERCIAL_MANAGER'],
   },
   PLANNER: {
     seat: 'PLANNER',
@@ -92,7 +116,9 @@ export const SEATS: Record<SeatType, SeatDefinition> = {
     label: 'Director / Executive',
     authority: 'Portfolio dashboards, CVR summary, risk and cashflow insight',
     monthlyPriceMinor: 12_000,
-    roles: ['OWNER', 'ENTERPRISE_ADMIN'],
+    // Client-side authority, whether it signs the gate (Executive) or writes
+    // the paper the gate reads (Development Manager).
+    roles: ['OWNER', 'ENTERPRISE_ADMIN', 'EXECUTIVE', 'DEVELOPMENT_MANAGER'],
   },
 };
 
