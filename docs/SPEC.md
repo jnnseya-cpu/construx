@@ -219,6 +219,178 @@ matters: a gate with one weak criterion is a gate that always opens.
 | Exit gate — HANDOVER | **PARTIAL** — has pack accepted and asset register populated. Missing: Golden Thread complete for HRB Gateway 3 |
 | OM never exits | **BUILT** — no exit criteria, by construction |
 
+### A2 continued — transitions, gates and the O&M horizon
+
+> - Every Project has lifecycle_state; transitions emit PROJECT_STATE_CHANGED
+>   with gate evidence bundle attached.
+> - Gate checks are computed, not asserted: each gate is a checklist of
+>   machine-verifiable conditions with an evidence link per condition. A human
+>   chair approves the gate; the system blocks approval while any mandatory
+>   condition is red.
+> - Reverse transitions (e.g. COMMISSIONING → CONSTRUCTION on failed testing) are
+>   permitted with authority level ≥ Project Director and mandatory reason; they
+>   are rare, loud and fully audited.
+> - O&M is a 30+ year data horizon, not a final page: asset twins persist
+>   post-handover; maintenance logs, failures and upgrades accumulate; agents
+>   learn longitudinally per asset.
+
+| Clause | State |
+|---|---|
+| Every Project has `lifecycle_state` | **BUILT** — `phase` on the project record, driving authorisation and engine availability |
+| Transitions emit an event | **BUILT** — `PROJECT_PHASE_TRANSITIONED`, human-only |
+| Gate evidence bundle attached to the transition | **BUILT** — `applyPhaseChange` writes an `EvidenceItem` carrying the whole `gateEvaluation`, the justification and the gate review id, and attaches it as `evidenceRefs`. The catalogue *requires* evidence on `PROJECT_PHASE_TRANSITIONED`, so a transition with no bundle is refused by the ledger rather than by a caller remembering |
+| Gate checks computed, not asserted | **BUILT** — each criterion is a predicate evaluated against materialised state; a gate that cannot be evaluated from the record is refused |
+| Evidence link per condition | **PARTIAL** — each criterion reports `id`, `description`, `satisfied`, `found` and `required`, so the count of qualifying records is evidence of a kind. It does not name *which* records satisfied it, which is what a link would give an auditor |
+| Human chair approves; system blocks while any mandatory condition is red | **BUILT** — `GATE_REVIEW_SUBMITTED` / `GATE_REVIEW_DECIDED`, both human-only, and the transition is refused while a criterion fails |
+| Reverse transitions, mandatory reason, fully audited | **BUILT** — `reopenStage` exists precisely because "projects genuinely re-enter design and re-tender, and a system that cannot express it gets one that lies instead". It requires a `reason` and a `scope`, supersedes rather than edits the approved instance — the decision taken at the time was taken on the evidence available at the time — and the regression is recorded as `direction: REGRESSION` with `SUPERSEDED`, never `LOCKED`, so it can never be mistaken for an approval |
+| Reverse transition authority ≥ Project Director | **PARTIAL** — gated on `PROJECT_SETUP` approve, held by `ENTERPRISE_ADMIN` and `OWNER` only. Whether those two are the intended equivalent of Project Director is a decision for the product owner; no role named Project Director exists |
+| O&M persists post-handover, twins accumulate | **PARTIAL** — `DigitalTwinState`, `SensorReading`, `WorkOrder`, `OperatingCost` and `MaintenanceForecast` all exist and persist; longitudinal per-asset learning does not |
+
+---
+
+## A3 — TECHNICAL STACK (REQUIRED)
+
+| Layer | Technology | Notes |
+|---|---|---|
+| Frontend | Next.js / React / TypeScript | Web + responsive PWA; React Native for iOS/Android field apps |
+| Backend | NestJS (or Fastify) microservices | Domain services per module; gateway-fronted |
+| Database | PostgreSQL + Prisma ORM | Row-level security for tenancy; partitioned event tables |
+| Events / Queue | Kafka (or Pub/Sub) + BullMQ | Event sourcing backbone; outbox pattern mandatory |
+| Realtime | WebSockets (Socket.IO) / Supabase Realtime | Live dashboards, presence, co-editing |
+| Storage | GCS or S3 + Cloudinary proxy | Signed URLs only; document access validated per request |
+| Search | OpenSearch | Full-text over documents, comms, records |
+| Vector DB | pgvector (default) / Pinecone / Weaviate | All project knowledge embedded (see A6) |
+| AI Gateway | Multi-model: Claude + OpenAI + Gemini/Vertex + OSS | Router by task, cost, risk, sensitivity, ACU balance |
+| Auth | Auth0/Firebase + SAML 2.0 / OIDC SSO, MFA | Access 15 min / refresh 30 days; gateway introspection |
+| AuthZ | RBAC + ABAC via OPA at gateway | Decision order: explicit deny → ABAC policy → RBAC role → scope → default deny |
+| API Gateway | NGINX + OPA + Redis | Path-based routing /api/v1/{service}; tenant-aware rate limits; fail-closed; problem+json errors; correlation IDs |
+| Observability | OpenTelemetry + Cloud Logging + Grafana | Structured logs with org/project/user/agent IDs |
+| Billing | ACU Engine microservice (Part H) | Prepaid ledger; hard stop at zero balance |
+| Deployment | GCP preferred; Docker + Terraform | Horizontal scalability; zero-trust posture |
+
+### This section requires a decision, and it is the product owner's to make
+
+This is the one part of the specification that cannot be delivered incrementally,
+because it names the foundation rather than a feature. CONSTRUX today is a
+**zero-runtime-dependency** platform: a Node HTTP server, an in-process
+hash-chained ledger with a durable file journal, and a vanilla ES-module console.
+That is a settled decision recorded in `STATE.md`, and it is why the platform
+boots with no `node_modules` present.
+
+Adopting A3 as written means replacing that foundation — NestJS, Prisma,
+Postgres, Kafka, Redis, OpenSearch, NGINX, OPA — across roughly 55,000 lines that
+currently work and are covered by 1,600 tests. That is a rebuild, not a change,
+and doing it quietly would be reckless.
+
+**What is worth separating: the behaviour A3 asks for is largely already met by
+different technology.** Row by row:
+
+| Layer | Required | CONSTRUX today | Contract met? |
+|---|---|---|---|
+| Frontend | Next.js/React + PWA + native field apps | Vanilla ES modules, installable PWA, offline outbox | **Behaviour yes, stack no.** No React Native app |
+| Backend | NestJS/Fastify microservices | One Node process, domain modules per area | **Behaviour yes, stack no** |
+| Database | Postgres + Prisma, RLS, partitioned event tables | In-process ledger + append-only file journal. Tenant isolation enforced in `identity/` on every read | **Isolation yes, durability class no.** Named in `STATE.md` as designed-for, not implemented |
+| Events / Queue | Kafka + BullMQ, outbox mandatory | Append-only event log with replay; no broker | **Event sourcing yes, distribution no** |
+| Realtime | Socket.IO / Supabase | Request/response only | **NOT BUILT** |
+| Storage | S3/GCS, signed URLs, per-request validation | Tenant-scoped local object store, signed links with TTL, validated per request | **Behaviour yes, backend no.** B2/S3 driver is the named next step |
+| Search | OpenSearch full-text | No full-text search | **NOT BUILT** |
+| Vector DB | pgvector / Pinecone | No embeddings | **NOT BUILT** |
+| AI Gateway | Multi-model router by task, cost, risk, sensitivity, balance | Built — routes by task and capability, falls back on unhealthy providers, refuses on an empty wallet | **BUILT** |
+| Auth | SSO + MFA, access 15 min / refresh 30 days | Email one-time code + MFA challenge, access 15 min, **refresh 7 days**. No SAML/OIDC SSO | **PARTIAL** — the refresh window is a one-line divergence; SSO is not built |
+| AuthZ | RBAC + ABAC, order: explicit deny → ABAC → RBAC → scope → default deny | RBAC + ABAC + scopes, fail-closed, order: **authenticate → RBAC → scopes → ABAC → decide** | **Behaviour yes, order differs.** Both are fail-closed and deny-wins, so no request is decided differently — but the stated order is not the specified one |
+| API Gateway | Path routing, tenant-aware rate limits, fail-closed, problem+json, correlation IDs | All five, in `api/middleware.ts` and `api/gateway.ts` | **BUILT** — on Node rather than NGINX+OPA |
+| Observability | OpenTelemetry, structured logs with org/project/user/agent IDs | Structured JSON logs carrying tenant, project, actor, route, correlation id; `x-correlation-id` on every response. No OTel exporter | **PARTIAL** |
+| Billing | Prepaid ACU ledger, hard stop at zero | Built, and the hard stop is tested | **BUILT** — in-process rather than a microservice |
+| Deployment | GCP, Docker + Terraform, zero-trust | Dockerfile + compose + autodeploy on a VPS. No Terraform, no GCP | **PARTIAL** |
+
+Three things follow, and they are stated rather than assumed:
+
+1. **The gaps that are real features, not stack choices** — realtime, full-text
+   search, vector embeddings, SSO, and the 30-day refresh window — can be built
+   on the current foundation and are listed in the implementation order below.
+2. **The gaps that are genuinely stack** — Postgres, Kafka, NestJS, OPA, NGINX,
+   Terraform — need an explicit decision to rebuild, with the cost understood.
+   Until that decision is taken, this file records the divergence rather than
+   hiding it.
+3. **`STATE.md` already says** database safety, deployment reproducibility and
+   caching are designed-for and not implemented. A3 is the requirement those
+   entries were waiting for.
+
+---
+
+## A4 — CORE DATA MODEL
+
+> Design the schema around these first-class objects. Every object carries
+> org_id, project_id (where applicable), lifecycle_state_at_creation, created_by
+> (human or agent), version, and soft-delete with tombstone.
+
+| Domain | Objects |
+|---|---|
+| Identity & tenancy | User, Organisation, OrgRelationship (client↔contractor↔subcontractor), Role, Permission, Seat |
+| Project spine | Project (lifecycle_state FSM), Portfolio, StageGate, GateCondition, DecisionRecord |
+| Concept & design | Brief, FeasibilityStudy, OptionAppraisal, CostPlan (v0–v4), Drawing, Revision, Specification, SpecClause, DesignPackage, DRMEntry, Clash, RFI, Submittal, TQ |
+| Tender & commercial | Tender, TenderPackage, ScheduleItem (BoQ), PricingRoute, TenderReturn, Clarification, Adjudication, BidPack, Contract, ContractClause, ObligationItem, Subcontract, Commitment, PurchaseOrder |
+| Delivery | Programme, Baseline, Activity, Dependency, Resource, Variation, EarlyWarning, CompensationEvent, Application, PaymentNotice, Certificate, CVRSnapshot, LedgerEntry, Claim, DelayEvent |
+| Field & HSE | SiteDiary, Inspection, ITP, Snag/Defect, NCR, Photo/Evidence, RAMS, ToolboxTalk, Permit, Incident, Observation |
+| Commissioning & handover | CommissioningSystem, TestRecord, WitnessRecord, OMDocument, TrainingRecord, HandoverItem, COBieRow, GoldenThreadItem, Warranty, Retention, DLPDefect |
+| Asset / FM | Asset, AssetTwin, MaintenanceTask, ConditionReading, ComplianceCert, FMRecord, LifecycleCostModel |
+| AI & platform | Agent, AgentTask, AIInteraction, PromptTemplate (versioned), KnowledgeEmbedding, ACULedger, AuditEvent, Notification, Approval |
+
+### Coverage
+
+**86 of the 94 named objects exist**, across 122 classified entity types. Some
+carry a different name for the same thing — `Tenant` for Organisation,
+`InspectionPlan` for ITP, `AssetRegisterItem` for Asset, `WorkOrder` for
+MaintenanceTask — which is a vocabulary difference, not a gap.
+
+**Eight objects do not exist in any form:**
+
+| Missing | Domain | Why it matters |
+|---|---|---|
+| `Brief` | Concept | The client brief A2 names as the CONCEPT entry gate |
+| `FeasibilityStudy` | Concept | A2's CONCEPT exit gate requires "feasibility approved" — there is nothing to approve. This is *why* that gate is currently one weak criterion |
+| `OptionAppraisal` | Concept | No option comparison exists before an option is chosen |
+| `COBieRow` | Handover | COBie is the standard handover data exchange; without it the pack is documents, not structured asset data |
+| `GoldenThreadItem` | Handover | A2's HANDOVER exit gate requires a complete Golden Thread for HRB Gateway 3 |
+| `Retention` | Handover | Retention is money held and later released; it is currently not modelled at all |
+| `PromptTemplate` (versioned) | AI | Prompts are composed in code, so a prompt change is a deploy and is not versioned as a record |
+| `KnowledgeEmbedding` | AI | No vector store, so no project knowledge is embedded |
+
+### Per-object required fields
+
+| Required on every object | State |
+|---|---|
+| `org_id` | **BUILT** — `tenantId` on every event |
+| `project_id` where applicable | **BUILT** |
+| **`lifecycle_state_at_creation`** | **BUILT** — `lifecyclePhase` is now recorded on every event, including the creating one |
+| `created_by` (human or agent) | **BUILT** — `actor`, with `AI` as a first-class actor type |
+| `version` | **BUILT** — by construction; every change is an event and state is replayable to any point |
+| **soft-delete with tombstone** | **NOT BUILT** — nothing is deletable at all. Append-only is stronger than a tombstone for the record, but there is no way to mark an object withdrawn or superseded as a *state*, which is what a tombstone gives a reader |
+
+---
+
+## A5 — THE THREE MEMORY LAYERS (MANDATORY)
+
+> - **Project Memory** — everything known about one project: documents, actions,
+>   decisions, AI interactions, event chronology. Retained through final account.
+> - **Organisation Memory** — cost rates, productivity baselines, supplier
+>   performance, claims outcomes, risk patterns, win/loss history. The org's
+>   compounding intelligence asset; feeds benchmarks in Concept and Tender.
+> - **Asset Memory** — 30+ years of FM records, maintenance history, condition
+>   data, energy performance and safety-critical information. The Golden Thread's
+>   permanent home.
+
+| Layer | State |
+|---|---|
+| **Project Memory** | **BUILT** — the Golden Thread is exactly this. Every document, action, decision, AI interaction and the full event chronology, per project, append-only and replayable to any instant. Retention is unbounded: nothing is deleted |
+| **Organisation Memory** | **PARTIAL** — cost rates and productivity are built (`LessonLearned`, cost intelligence from committed records, productivity against baseline), and supplier performance exists (`Supplier`, `SupplierSubmission`, `BidEvaluation`). Claims outcomes, risk patterns and win/loss history are recorded per project but **are not aggregated into an organisation-level benchmark that Concept and Tender read from**. The compounding half is the half that is missing |
+| **Asset Memory** | **PARTIAL** — `AssetRegisterItem`, `DigitalTwinState`, `SensorReading`, `WorkOrder`, `Warranty`, `OperatingCost` and `MaintenanceForecast` all persist past handover on the same spine. Energy performance is not modelled, and no safety-critical flag distinguishes a record that must survive for the life of the asset from one that need not |
+
+The architectural point worth stating: all three layers already share **one**
+store. There is no separate project database, organisation warehouse or FM system
+to reconcile — which is the hard part of this requirement, and it is done. What is
+missing is aggregation across the layers, not the layers themselves.
+
 ---
 
 ## Implementation order
@@ -235,7 +407,21 @@ Set against dependency rather than against the order the clauses arrived in.
 4. **Rule 3 — the two missing event families:** design approval, and Building
    Safety Act gateway submissions.
 5. **Rule 2 — chain-break detection and escalation to the Commercial Manager.**
-6. **A2 — entry gates for all seven states, and the real exit criteria.** The
+6. **A2 — entry gates for all seven states, and the real exit criteria**, with a
+   gate evidence bundle on the transition and an evidence link per condition, plus
+   reverse transitions at Project Director authority with a mandatory reason.
+7. **A4 — the eight missing objects.** `Brief`, `FeasibilityStudy` and
+   `OptionAppraisal` first, because A2's CONCEPT gate cannot be written without
+   them; then `Retention`, `COBieRow` and `GoldenThreadItem` for handover.
+8. **A3's feature gaps** — realtime, full-text search, embeddings, SSO, and the
+   refresh window — which do not need a stack decision.
+9. **A5 — organisation-level benchmarks** aggregated from project outcomes and
+   read by Concept and Tender, which is the compounding-asset half of the
+   requirement.
+10. **A3's stack decision** — Postgres, Kafka, NestJS, OPA, Terraform. Blocked on
+   the product owner, not on engineering.
+
+Superseded ordering note, kept for honesty: The
    CONSTRUCTION criteria move to where the specification puts them, and the
    thresholds (PC readiness, defect count, O&M completeness) become configured
    values rather than numbers in code.

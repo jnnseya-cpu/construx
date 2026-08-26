@@ -41,6 +41,18 @@ export type CommitInput = {
   causationId?: string;
   timestamp?: string;
   deviceTimestamp?: string;
+  /**
+   * The roles the actor held at this moment, and the project's lifecycle phase.
+   *
+   * Filled by `write()` and `runAI` rather than by each command, so no call site
+   * can forget them. Optional here because the ledger is also driven by the
+   * journal restore path, which replays events exactly as they were written —
+   * including events written before these fields existed.
+   */
+  roleAtAction?: string[];
+  lifecyclePhase?: string;
+  /** Why this act was taken. The human's stated reason or the agent's rationale. */
+  reason?: string;
   /** Optimistic concurrency: reject if current state hash has moved on. */
   expectedStateHash?: string;
 };
@@ -187,6 +199,9 @@ export class GoldenThreadLedger {
       eventType: input.eventType,
       entity: input.entity,
       action: definition.action,
+      ...(input.roleAtAction ? { roleAtAction: input.roleAtAction } : {}),
+      ...(input.lifecyclePhase ? { lifecyclePhase: input.lifecyclePhase } : {}),
+      ...(input.reason ? { reason: input.reason } : {}),
       beforeHash,
       afterHash,
       diff,

@@ -104,16 +104,42 @@ export function write(
   // like when it is absent — overwrote the default and committed an event with
   // no actor at all.
   const { actor, projectId, ...rest } = input;
+  const target = projectId ?? ctx.projectId;
 
   const { event, record } = ctx.ledger.commit({
     ...rest,
     tenantId: ctx.tenantId,
-    projectId: projectId ?? ctx.projectId,
+    projectId: target,
     actor: actor ?? { refType: 'User', refId: ctx.auth.actorId },
     source: ctx.source,
     correlationId: ctx.correlationId,
+    // Filled here rather than at each call site, because "every command
+    // remembers to record who they were and where the project was" is not a
+    // property a codebase can hold. There is one write path; it fills them.
+    //
+    // A snapshot of the roles, not a reference to them: somebody promoted or
+    // removed still acted under the mandate they held at the time, and an audit
+    // resolving their *current* roles reports the wrong authority for every
+    // historic act.
+    roleAtAction: [...ctx.auth.roles],
+    // Absent rather than guessed where the write is not against the context's
+    // own project — a governance act on a tenancy has no lifecycle phase, and
+    // reporting the wrong project's phase is worse than reporting none.
+    ...(target === ctx.projectId ? withPhase(ctx) : {}),
   });
   return { event, state: record.state };
+}
+
+/**
+ * The project's lifecycle phase, or nothing.
+ *
+ * Read from materialised project state, so it is the phase as the ledger knows
+ * it at this instant rather than a value carried on the request — which a caller
+ * could otherwise be wrong about, or lie about.
+ */
+function withPhase(ctx: EngineContext): { lifecyclePhase?: string } {
+  const phase = currentPhase(ctx);
+  return phase ? { lifecyclePhase: phase } : {};
 }
 
 export type AIWriteSpec = {
@@ -233,7 +259,17 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
           // AI_EXECUTION_COMPLETED event below.
           acuConsumed: 0,
           inputRefs: task.inputRefs,
+          // Recorded beside the change it justified. The engine already had
+          // this figure and used it to decide what to write; until now it was
+          // discarded at the moment it became evidence.
+          ...(run.response.confidence === undefined ? {} : { confidence: run.response.confidence }),
         },
+        // The human who pressed the button, and the phase the project was in.
+        // The actor on an AI-authored event is the engine — liability follows
+        // attribution — so the roles recorded are those of the person who
+        // authorised the run, which is the mandate the act was performed under.
+        roleAtAction: [...ctx.auth.roles],
+        ...withPhase(ctx),
         timestamp: new Date().toISOString(),
       });
       events.push(event);

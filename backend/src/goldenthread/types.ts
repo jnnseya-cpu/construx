@@ -36,6 +36,16 @@ export type AIEventBlock = {
   acuConsumed: number;
   /** Inputs the model actually saw — required so an AI change is reproducible. */
   inputRefs?: EntityRef[];
+  /**
+   * How sure the model was, 0.00–1.00.
+   *
+   * Optional because a provider may not return one, and a missing confidence
+   * must read as missing rather than as zero — zero is a claim that the model
+   * had no confidence at all, which is a different and much stronger statement.
+   * The value already reached the engine, which used it to decide what to
+   * write; it was simply never recorded beside the change it justified.
+   */
+  confidence?: number;
 };
 
 export type PolicyBlock = {
@@ -74,6 +84,43 @@ export type GoldenThreadEvent = {
   previousChainHash?: string;
   /** Device timestamp preserved verbatim when the record originated offline. */
   deviceTimestamp?: string;
+  /**
+   * The roles the actor held at the moment they acted.
+   *
+   * A snapshot, not a reference. Roles change: somebody promoted, moved team or
+   * removed from a project still acted under the mandate they had at the time,
+   * and an audit that resolves their *current* roles reports the wrong
+   * authority for every historic act. Under an append-only record the snapshot
+   * is the only version that can never become wrong.
+   *
+   * Absent on events written before this field existed. The journal is
+   * forward-compatible, not backward-compatible, and nothing may be backfilled
+   * onto an event that is already hash-chained.
+   */
+  roleAtAction?: string[];
+  /**
+   * The project's lifecycle state when the event fired.
+   *
+   * The phase already governs what may be written and which engines may run, so
+   * a refusal or an approval only makes sense read against the phase it happened
+   * in. Recording it removes the need to reconstruct the phase by replaying the
+   * project up to that moment in order to understand a single line of audit.
+   *
+   * Absent where the event is not project-scoped — a tenancy being opened has no
+   * lifecycle phase — and on events written before this field existed.
+   */
+  lifecyclePhase?: string;
+  /**
+   * Why. The human's stated reason, or the agent's rationale.
+   *
+   * Several commands already demand a reason — suspending a tenancy, changing a
+   * role, moving a spend cap — and every one of them buried it in the entity's
+   * state, where it is reachable only by knowing which field of which record to
+   * look in. It belongs on the event, beside the change it explains, because a
+   * record of a consequential act with no stated reason is useless the day
+   * somebody asks why it happened.
+   */
+  reason?: string;
 };
 
 export type VerificationStatus =
