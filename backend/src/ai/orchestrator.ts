@@ -509,13 +509,35 @@ export class AIOrchestrator {
     mode: string;
     reasoning: { provider: AIProvider; healthy: boolean };
     perception: { provider: AIProvider; healthy: boolean };
+    /**
+     * Every provider that could serve a request, primary or not.
+     *
+     * Reporting only the two primaries described the platform as
+     * "OPENAI + GEMINI" while a configured Anthropic key sat in the failover
+     * chain — accurate about what runs first, and misleading about what the
+     * platform can actually fall back to. A third vendor that nothing mentions
+     * is a third vendor nobody knows they are paying for.
+     */
+    available: Array<{ provider: AIProvider; healthy: boolean; role: 'REASONING' | 'PERCEPTION' | 'FAILOVER' }>;
     routingMatrix: typeof ROUTING_MATRIX;
     engineContracts: typeof ENGINE_CONTRACTS;
   } {
+    const available: Array<{ provider: AIProvider; healthy: boolean; role: 'REASONING' | 'PERCEPTION' | 'FAILOVER' }> = [
+      { provider: this.#reasoning.name, healthy: this.#reasoning.healthy(), role: 'REASONING' },
+    ];
+    if (this.#perception.name !== this.#reasoning.name) {
+      available.push({ provider: this.#perception.name, healthy: this.#perception.healthy(), role: 'PERCEPTION' });
+    }
+    for (const spare of this.#spares) {
+      if (available.some((entry) => entry.provider === spare.name)) continue;
+      available.push({ provider: spare.name, healthy: spare.healthy(), role: 'FAILOVER' });
+    }
+
     return {
       mode: config.ai.mode,
       reasoning: { provider: this.#reasoning.name, healthy: this.#reasoning.healthy() },
       perception: { provider: this.#perception.name, healthy: this.#perception.healthy() },
+      available,
       routingMatrix: ROUTING_MATRIX,
       // Published so the console can grey out an engine that is not applicable
       // to the phase rather than offering it and failing. `runAI` enforces the

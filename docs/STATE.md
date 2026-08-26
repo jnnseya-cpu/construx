@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,297 passing, 0 failing, 0 skipped, across 66 files |
+| Tests | 1,574 passing, 0 failing, 0 skipped, across 81 files |
 | Typecheck | clean |
-| Backend | 105 TypeScript files, 49,851 lines |
-| Application | 32 ES modules, 10,267 lines (plus a service worker) |
-| API routes | 280 (25 of them public) |
+| Backend | 115 TypeScript files, 55,231 lines |
+| Application | 36 ES modules, 11,790 lines (plus a service worker) |
+| API routes | 302 (34 of them public) |
 | Event types | 191 Golden Thread (closed) · 177 communication events (closed) |
 | Entity types | 118, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
@@ -3298,6 +3298,47 @@ platform still boots with no `node_modules`. `TEST_REDIS_URL` overrides where CI
 already runs one. Where the binary is genuinely absent the group still **skips
 loudly** and CI fails on the skip, because a green tick against an unexercised
 security control is worse than no test.
+
+**The operator console is a command centre, not a status page.** It was four
+counters and two tables. Everything an operator actually opens a console to ask —
+how much came in this month, where the AI money went, which tenancy loses service
+first, is a payment rail silently rejecting webhooks, who is being refused at the
+gateway — had to be answered somewhere other than the console, and three of the
+four operator write routes had no door in the interface at all. A route only its
+author can reach is not a feature.
+
+`GET /v1/admin/overview` (`billing/overview.ts`) counts the commercial position:
+tenancies by status and tier, identities and seats, revenue today, month to date,
+last month and lifetime, split by how the money arrived, and top-ups raised but
+unsettled. `estateBurn` gained a per-day series and a realised provider split.
+Both are counted from records the platform already holds; nothing is modelled.
+
+Three properties hold the arithmetic honest, and each is a way a dashboard lies.
+**A projection is labelled and shows its working** — the run-rate is month to date
+÷ elapsed days × days in the month, and it is *withheld* on the first of a month
+rather than extrapolating one day across thirty. **Absence is returned as absence**
+— `null`, not zero, so the console can say "no history yet" instead of making a
+claim. **A share is of the whole set** — spend with no provider attribution is
+named `UNATTRIBUTED` rather than dropped, because dropping it makes the remaining
+shares sum to 100% over part of the money. Every day inside the window appears in
+the series including the quiet ones, because a series that omits them draws a
+rising line out of a flat month.
+
+The console reads it through `frontend/lib/chart.js` — inline SVG, no library,
+since zero runtime dependencies is settled and a line over a bounded series does
+not need one. The axis is never auto-scaled to invent activity out of zeroes, an
+empty series renders its empty state rather than an axis around blank space, and
+points are joined straight because a curve through daily figures invents readings
+between the days that were measured.
+
+Four write doors now exist where there were none: onboard a tenancy, appoint an
+operator, credit a wallet against a received payment, and change a subscription
+status. Verified against a running server, not only in tests — every door
+exercised over HTTP, including crediting the same payment reference twice and
+getting one credit, and the whole page rendered in Chromium with no console
+error. `available` on `/v1/ai/control-plane` reports every keyed provider with
+its role, so a configured Anthropic key sitting in the failover chain is visible
+rather than invisible behind "OPENAI + GEMINI".
 
 **Both HTML responses carry the policy layer.** The application shell used to
 write its own response head, which made it the one page on the server with no

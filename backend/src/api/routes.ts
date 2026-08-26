@@ -69,6 +69,7 @@ import { createMfaChallenge, decoyMfaResponse, refreshTokens, shapeMfaResponse, 
 import { classifyEntity } from '../identity/entityAccess.ts';
 import { FIELD_FORBIDDEN_EVENTS } from '../field/sync.ts';
 import { estateBurn } from '../billing/burn.ts';
+import { estateOverview } from '../billing/overview.ts';
 import * as evidence from '../evidence/registry.ts';
 import * as perception from '../engines/perception.ts';
 import * as signing from '../signing/signature.ts';
@@ -681,6 +682,37 @@ export const ROUTES: Route[] = [
         }),
         windowDays,
       );
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/overview',
+    description: 'Tenancy, identity and revenue position across the estate (platform operator only)',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may see the estate position', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      // Commercial position only, on the same boundary the rest of the operator
+      // layer keeps: how many tenancies, how many identities, how much money.
+      // Nothing here names a project, a package or a document.
+      return estateOverview({
+        tenancies: platform.tenants().map((tenant) => {
+          const subscription = platform.subscription(tenant.id);
+          return {
+            tenantId: tenant.id,
+            createdAt: tenant.createdAt,
+            tier: subscription.tier,
+            status: subscription.status,
+            seatsUsed: subscription.assignedIdentities.length,
+            seatsIncluded: TIERS[subscription.tier].includedIdentities,
+            identities: platform.users(tenant.id).map((user) => ({ status: user.status })),
+          };
+        }),
+        receipts: platform.paymentReceipts(),
+        awaitingPayment: platform.topUpIntents().filter((intent) => intent.status === 'AWAITING_PAYMENT'),
+        operators: platform.operators().length,
+      });
     },
   },
   {

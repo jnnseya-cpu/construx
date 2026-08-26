@@ -77,6 +77,44 @@ export type TenantBurn = {
   absorbedMinor: number;
 };
 
+/**
+ * One day of estate spend.
+ *
+ * A total tells an operator what has happened; it does not tell them whether it
+ * is accelerating. The console draws these as a trend, so every day inside the
+ * window is present — including the ones with no spend at all, which are the
+ * shape of the line as much as the busy ones are. A series that silently omits
+ * quiet days draws a rising curve out of a flat month.
+ */
+export type DailyBurn = {
+  /** `YYYY-MM-DD`, UTC. */
+  date: string;
+  billedMinor: number;
+  rawCostMinor: number;
+  marginMinor: number;
+  acuUnits: number;
+};
+
+/**
+ * Estate spend split by the provider that earned it.
+ *
+ * Routing share is computed from what was actually charged, not from the
+ * configured routing table. The two differ every time a provider is unhealthy
+ * and traffic fails over, and it is the realised split that says where the
+ * money went.
+ */
+export type ProviderBurn = {
+  /** As recorded on the entry. Entries predating provider attribution are grouped under `UNATTRIBUTED`. */
+  provider: string;
+  billedMinor: number;
+  rawCostMinor: number;
+  acuUnits: number;
+  /** Number of charged executions routed to this provider. */
+  executions: number;
+  /** Share of estate billed revenue, 0–1. */
+  share: number;
+};
+
 export type EstateBurn = {
   windowDays: number;
   from: string;
@@ -84,6 +122,12 @@ export type EstateBurn = {
   billedMinor: number;
   rawCostMinor: number;
   marginMinor: number;
+  /** ACU units consumed across the estate over the window. */
+  acuUnits: number;
+  /** Every day in the window, oldest first. Days with no spend are present and zero. */
+  daily: DailyBurn[];
+  /** Realised routing split, biggest earner first. Empty where nothing was spent. */
+  providers: ProviderBurn[];
   /** Estate-wide billed ÷ raw. Null where nothing was spent — not 1, and not 0. */
   realisedMultiplier: number | null;
   /** Margin given up to the estimate cap across the estate. See `TenantBurn`. */
@@ -143,6 +187,56 @@ export function estateBurn(
   const rawCostMinor = rows.reduce((sum, row) => sum + row.rawCostMinor, 0);
   const largest = rows.reduce((most, row) => Math.max(most, row.billedMinor), 0);
 
+  // Every charged entry in the window, across every tenancy, once. The per-tenant
+  // pass above filtered the same set; folding it again here keeps the daily and
+  // provider views reading from the same definition of a charge rather than a
+  // second one that could drift from it.
+  const charged = tenants.flatMap((tenant) =>
+    tenant.entries.filter((entry) => isSpend(entry) && entry.timestamp >= from && entry.timestamp <= to),
+  );
+
+  // Seeded with every day in the window before anything is added, so a quiet day
+  // is a zero rather than a gap. `to` is included: today is the day an operator
+  // is actually looking at.
+  const byDay = new Map<string, DailyBurn>();
+  for (let day = 0; day <= windowDays; day += 1) {
+    const at = new Date(now.getTime() - (windowDays - day) * 86_400_000);
+    const date = at.toISOString().slice(0, 10);
+    byDay.set(date, { date, billedMinor: 0, rawCostMinor: 0, marginMinor: 0, acuUnits: 0 });
+  }
+  for (const entry of charged) {
+    const bucket = byDay.get(entry.timestamp.slice(0, 10));
+    // An entry can sit fractionally outside the seeded days at the window edge.
+    // Dropped from the series rather than opening a day outside the window,
+    // which would make the chart's axis disagree with its own stated range.
+    if (!bucket) continue;
+    bucket.billedMinor += entry.billedMinor;
+    bucket.rawCostMinor += entry.rawCostMinor;
+    bucket.marginMinor += entry.billedMinor - entry.rawCostMinor;
+    bucket.acuUnits += entry.acuUnits;
+  }
+
+  const byProvider = new Map<string, ProviderBurn>();
+  for (const entry of charged) {
+    // Attribution was added after the ledger existed, so an early entry can have
+    // none. Named rather than dropped: hiding them would make the shares sum to
+    // one over an incomplete set and read as a complete picture.
+    const provider = entry.provider ?? 'UNATTRIBUTED';
+    const row = byProvider.get(provider) ?? {
+      provider,
+      billedMinor: 0,
+      rawCostMinor: 0,
+      acuUnits: 0,
+      executions: 0,
+      share: 0,
+    };
+    row.billedMinor += entry.billedMinor;
+    row.rawCostMinor += entry.rawCostMinor;
+    row.acuUnits += entry.acuUnits;
+    row.executions += 1;
+    byProvider.set(provider, row);
+  }
+
   return {
     windowDays,
     from,
@@ -150,6 +244,11 @@ export function estateBurn(
     billedMinor,
     rawCostMinor,
     marginMinor: billedMinor - rawCostMinor,
+    acuUnits: charged.reduce((sum, entry) => sum + entry.acuUnits, 0),
+    daily: [...byDay.values()],
+    providers: [...byProvider.values()]
+      .map((row) => ({ ...row, share: billedMinor > 0 ? Number((row.billedMinor / billedMinor).toFixed(4)) : 0 }))
+      .sort((a, b) => b.billedMinor - a.billedMinor),
     absorbedMinor: rows.reduce((sum, row) => sum + row.absorbedMinor, 0),
     realisedMultiplier: rawCostMinor > 0 ? Number((billedMinor / rawCostMinor).toFixed(3)) : null,
     dailyBurnMinor: Math.round(billedMinor / windowDays),
