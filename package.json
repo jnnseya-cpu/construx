@@ -2,7 +2,7 @@
   "name": "construx-os",
   "version": "0.1.0",
   "private": true,
-  "description": "CONSTRUX.AI — AI-agent Construction Operating System covering the full asset lifecycle: Concept to 30+ year O&M.",
+  "description": "CONSTRUX — AI-agent Construction Operating System covering the full asset lifecycle: Concept to 30+ year O&M.",
   "type": "module",
   "engines": {
     "node": ">=22.18.0"

@@ -100,7 +100,7 @@ export function copyForWeek(week: string): CampaignCopy {
 
   return {
     week,
-    subject: `${lead.title} — CONSTRUX.AI`,
+    subject: `${lead.title} — CONSTRUX`,
     headline: lead.title,
     intro:
       'One data spine from concept to thirty years of operation: seven engines doing real arithmetic on your project, ' +

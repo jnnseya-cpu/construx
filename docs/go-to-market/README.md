@@ -1,6 +1,6 @@
 # Go-to-market
 
-The commercial plan for CONSTRUX.AI: Greater Manchester launch, a 90-day gated
+The commercial plan for CONSTRUX: Greater Manchester launch, a 90-day gated
 programme, and the route to the first 100 customers.
 
 `GO-TO-MARKET.md` is the readable source of record. `go-to-market.html` is the

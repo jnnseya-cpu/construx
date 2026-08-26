@@ -306,10 +306,10 @@ const stringField = { type: 'string', minLength: 1 } as const;
  * This is CONSTRUX writing as itself, which is what the message actually is.
  */
 const PLATFORM_BRANDING = {
-  clientName: 'CONSTRUX.AI',
+  clientName: 'CONSTRUX',
   primaryColour: '#ff6600',
   documentReferencePrefix: 'CXA',
-  legalFooter: 'CONSTRUX.AI — construction operating system',
+  legalFooter: 'CONSTRUX — construction operating system',
 } as const;
 
 const AGENT_COMMANDS: Record<string, (ctx: ReturnType<typeof projectContext>, input: Record<string, unknown>) => Promise<unknown>> = {

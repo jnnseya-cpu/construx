@@ -49,7 +49,7 @@ export function about(): string {
     {
       title: 'About',
       description:
-        'CONSTRUX.AI is a construction operating system built around one idea: the record of how an asset came to exist should be evidence, not an afterthought.',
+        'CONSTRUX is a construction operating system built around one idea: the record of how an asset came to exist should be evidence, not an afterthought.',
       path: '/about',
     },
     `${pageHead({
@@ -408,7 +408,7 @@ export function developers(): string {
     </p>
 
     <div class="code-block"><pre><code>{
-  "type": "https://construx.ai/problems/access-denied",
+  "type": "https://construxvg.com/problems/access-denied",
   "title": "ACCESS_DENIED",
   "status": 403,
   "detail": "No role of PM holds \\"C\\" on PROJECT_SETUP",
@@ -507,7 +507,7 @@ export function contact(): string {
       connected to a real inbox, the honest instruction is the one below.
     </p>
     <p class="callout">
-      Write to <b>hello@construx.ai</b> and say which of the four above you are. If it is a security report, put
+      Write to <b>contact@construxvg.com</b> and say which of the four above you are. If it is a security report, put
       <b>SECURITY</b> in the subject and it is triaged ahead of everything else.
     </p>
   </div>
@@ -718,13 +718,13 @@ export function terms(): string {
   return legal(
     {
       title: 'Terms of Service',
-      description: 'The terms on which CONSTRUX.AI is provided, and the limits of what it does.',
+      description: 'The terms on which CONSTRUX is provided, and the limits of what it does.',
       path: '/terms',
       updated: UPDATED,
     },
     `<h2>1. What the service is</h2>
     <p>
-      CONSTRUX.AI records project state as an append-only, hash-chained event log and computes engineering and
+      CONSTRUX records project state as an append-only, hash-chained event log and computes engineering and
       commercial positions from it. It is a record and a calculation engine. It is not legal advice, not a substitute
       for a contract administrator, and not a guarantee of any commercial outcome.
     </p>
@@ -864,7 +864,7 @@ export function policies(): string {
     [
       'Security disclosure',
       '/policies',
-      'Report a vulnerability to hello@construx.ai with SECURITY in the subject. We will not pursue anybody acting in good faith within their own tenancy, and we will credit you unless you ask us not to.',
+      'Report a vulnerability to contact@construxvg.com with SECURITY in the subject. We will not pursue anybody acting in good faith within their own tenancy, and we will credit you unless you ask us not to.',
     ],
     [
       'Data retention',

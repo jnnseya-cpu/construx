@@ -1,4 +1,4 @@
-# CONSTRUX.AI — GO-TO-MARKET
+# CONSTRUX — GO-TO-MARKET
 
 **Greater Manchester launch · 90-day programme · first 100 customers**
 

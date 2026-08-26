@@ -833,8 +833,8 @@ S(callout('Do not present these as benchmarks', [
 
 // ═══════════════════════════════════════════════════════════════════════════
 const doc = new Document({
-  creator: 'CONSTRUX.AI',
-  title: 'CONSTRUX.AI Go-To-Market',
+  creator: 'CONSTRUX',
+  title: 'CONSTRUX Go-To-Market',
   description: 'Manchester launch, 90-day programme, first 100 customers',
   numbering: {
     config: [
@@ -861,7 +861,7 @@ const doc = new Document({
     properties: { page: { margin: { top: 1134, bottom: 1134, left: 1134, right: 1134 } } },
     headers: {
       default: new Header({ children: [new Paragraph({
-        children: [t('CONSTRUX.AI', { font: 'Consolas', size: 15, color: MUTED, bold: true }),
+        children: [t('CONSTRUX', { font: 'Consolas', size: 15, color: MUTED, bold: true }),
                    t('   ·   GO-TO-MARKET   ·   Greater Manchester launch', { font: 'Consolas', size: 15, color: MUTED })],
         spacing: { after: 60 },
         border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: RULE, space: 6 } },

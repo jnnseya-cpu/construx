@@ -28,7 +28,7 @@ const out = [];
 const body = html.slice(html.indexOf('<header class="titleblock">'));
 
 // ── Front matter ───────────────────────────────────────────────────────────
-out.push('# CONSTRUX.AI — GO-TO-MARKET', '');
+out.push('# CONSTRUX — GO-TO-MARKET', '');
 out.push('**Greater Manchester launch · 90-day programme · first 100 customers**', '');
 const h1 = /<h1>([\s\S]*?)<\/h1>/.exec(body);
 if (h1) out.push(`> ${inline(h1[1])}`, '');

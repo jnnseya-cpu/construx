@@ -1,4 +1,4 @@
-# CONSTRUX.AI — one process, no build step, no runtime dependencies.
+# CONSTRUX — one process, no build step, no runtime dependencies.
 #
 # There is nothing to compile. Node 22 strips the types at load, the frontend is
 # plain ES modules, and the only npm packages in the tree are TypeScript and

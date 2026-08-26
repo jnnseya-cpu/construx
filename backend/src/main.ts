@@ -130,7 +130,7 @@ const newsletter = startNewsletterSchedule(platform, (report) => {
 process.stdout.write(
   [
     '',
-    '  CONSTRUX.AI — Construction Operating System',
+    '  CONSTRUX — Construction Operating System',
     `  Site         http://localhost:${config.port}/`,
     `  Console      http://localhost:${config.port}/app`,
     `  API routes   http://localhost:${config.port}/v1/routes`,

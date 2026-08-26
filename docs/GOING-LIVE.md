@@ -558,7 +558,7 @@ SMTP_PASS=<the mailbox password>
 # of these emails invites a reply somebody will eventually send - a question
 # about a confirmation link, a bounce, a person who cannot sign in - and a
 # no-reply mailbox turns each of those into silence on both sides.
-NEWSLETTER_FROM_NAME=CONSTRUX.AI
+NEWSLETTER_FROM_NAME=CONSTRUX
 NEWSLETTER_FROM_ADDRESS=contact@construxvg.com
 
 # local = deterministic engines, no spend. Change to production when you are

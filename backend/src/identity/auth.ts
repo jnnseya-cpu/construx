@@ -46,7 +46,7 @@ type TokenClaims = {
   aud: string;
 };
 
-const ISSUER = 'https://construx.ai';
+const ISSUER = 'https://construxvg.com';
 const AUDIENCE = 'construx-gateway';
 
 function base64url(input: Buffer | string): string {

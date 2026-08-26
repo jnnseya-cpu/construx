@@ -3340,6 +3340,25 @@ error. `available` on `/v1/ai/control-plane` reports every keyed provider with
 its role, so a configured Anthropic key sitting in the failover chain is visible
 rather than invisible behind "OPENAI + GEMINI".
 
+**The product is CONSTRUX.** It was written as "CONSTRUX.AI" in 29 places —
+page titles, the OpenGraph card, the JSON-LD organisation name, the manifest, the
+boot banner, mail templates, the legal footer and the export branding. Corrected
+everywhere; the name is the OS, not a domain suffix.
+
+Separately, `construx.ai` was standing in as the platform's own domain: the JWT
+issuer every session is validated against, the `type` URI on every problem+json
+response, the Message-ID domain on outbound mail, the public contact address on
+the site, and the default sender for both account mail and the newsletter. That
+domain is not the company's. It now reads `construxvg.com` throughout, with the
+two sender defaults split the way the addresses are actually used —
+`contact@construxvg.com` for account mail, `no-reply@construxvg.com` for the
+weekly issue. Changing the issuer invalidates any session minted before the
+change, which is one re-login.
+
+The test fixtures using `construx.ai` are deliberately left: they exercise the
+foreign-sender-domain check, and a domain the platform does not own is exactly
+the case that test is about.
+
 **A tenancy an operator provisions is one somebody can get into.** Found by
 provisioning one against a running server and then trying to use it. `POST
 /v1/admin/tenants` created the tenancy, its subscription and its wallet — and no

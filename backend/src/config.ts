@@ -188,8 +188,8 @@ export const config = {
    * authenticates as. Hostinger does; most do.
    */
   notifications: {
-    fromName: str('NOTIFICATIONS_FROM_NAME', str('NEWSLETTER_FROM_NAME', 'CONSTRUX.AI')),
-    fromAddress: str('NOTIFICATIONS_FROM_ADDRESS', str('NEWSLETTER_FROM_ADDRESS', 'hello@construx.ai')),
+    fromName: str('NOTIFICATIONS_FROM_NAME', str('NEWSLETTER_FROM_NAME', 'CONSTRUX')),
+    fromAddress: str('NOTIFICATIONS_FROM_ADDRESS', str('NEWSLETTER_FROM_ADDRESS', 'contact@construxvg.com')),
   },
 
   /**
@@ -484,8 +484,8 @@ export const config = {
     /** UTC day-of-week and hour the weekly issue goes out. 1 = Monday. */
     sendDayUtc: num('NEWSLETTER_SEND_DAY_UTC', 2),
     sendHourUtc: num('NEWSLETTER_SEND_HOUR_UTC', 9),
-    fromName: str('NEWSLETTER_FROM_NAME', 'CONSTRUX.AI'),
-    fromAddress: str('NEWSLETTER_FROM_ADDRESS', 'hello@construx.ai'),
+    fromName: str('NEWSLETTER_FROM_NAME', 'CONSTRUX'),
+    fromAddress: str('NEWSLETTER_FROM_ADDRESS', 'no-reply@construxvg.com'),
     replyTo: str('NEWSLETTER_REPLY_TO', ''),
     /**
      * Whether a registered user is in the audience before they have expressed a

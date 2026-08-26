@@ -89,7 +89,7 @@ function absolute(path: string): string {
 }
 
 function head(meta: PageMeta): string {
-  const title = `${esc(meta.title)} · CONSTRUX.AI`;
+  const title = `${esc(meta.title)} · CONSTRUX`;
   const url = absolute(meta.path);
   return `<!doctype html>
 <html lang="en">
@@ -100,14 +100,14 @@ function head(meta: PageMeta): string {
 <meta name="description" content="${esc(meta.description)}">
 <link rel="canonical" href="${esc(url)}">
 <meta property="og:type" content="${meta.type ?? 'website'}">
-<meta property="og:site_name" content="CONSTRUX.AI">
+<meta property="og:site_name" content="CONSTRUX">
 <meta property="og:url" content="${esc(url)}">
 <meta property="og:title" content="${title}">
 <meta property="og:description" content="${esc(meta.description)}">
 <meta property="og:image" content="${esc(absolute(PREVIEW_IMAGE))}">
 <meta property="og:image:width" content="2880">
 <meta property="og:image:height" content="1800">
-<meta property="og:image:alt" content="The CONSTRUX.AI command centre">
+<meta property="og:image:alt" content="The CONSTRUX command centre">
 ${meta.published ? `<meta property="article:published_time" content="${esc(meta.published)}">\n` : ''}<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="${title}">
 <meta name="twitter:description" content="${esc(meta.description)}">
@@ -134,7 +134,7 @@ export function jsonLd(value: unknown): string {
 export function organisation(): Record<string, unknown> {
   return {
     '@type': 'Organization',
-    name: 'CONSTRUX.AI',
+    name: 'CONSTRUX',
     url: absolute('/'),
     logo: absolute('/logo.svg'),
   };
@@ -191,7 +191,7 @@ function footer(): string {
       ${columns}
     </div>
     <div class="foot-base">
-      <span>&copy; ${new Date().getUTCFullYear()} CONSTRUX.AI</span>
+      <span>&copy; ${new Date().getUTCFullYear()} CONSTRUX</span>
       <span class="foot-links"><a href="/terms">Terms</a> <a href="/privacy">Privacy</a> <a href="/policies">Policies</a></span>
     </div>
   </div>

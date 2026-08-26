@@ -143,7 +143,7 @@ function renderHtml(copy: CampaignCopy, recipient: Recipient, features: Feature[
                     </p>
                     <a href="${esc(absolute('/app'))}"
                        style="display:inline-block;background:${BRAND.orange};color:#ffffff;font-size:14px;font-weight:700;
-                              text-decoration:none;padding:11px 22px;border-radius:6px">Sign in to CONSTRUX.AI &rarr;</a>
+                              text-decoration:none;padding:11px 22px;border-radius:6px">Sign in to CONSTRUX &rarr;</a>
                   </td>
                 </tr>
               </table>
@@ -154,7 +154,7 @@ function renderHtml(copy: CampaignCopy, recipient: Recipient, features: Feature[
             <td style="background:#ffffff;border-radius:0 0 12px 12px;padding:18px 22px;border-top:1px solid #e3e4e7">
               <p style="margin:0 0 11px 0;font-size:12px;line-height:1.9;color:${BRAND.muted}">${standing}</p>
               <p style="margin:0;font-size:11.5px;line-height:1.65;color:#9aa0a6">
-                Sent to ${esc(recipient.email)} because you hold a CONSTRUX.AI account.
+                Sent to ${esc(recipient.email)} because you hold a CONSTRUX account.
                 <a href="${unsubscribe}" style="color:${BRAND.muted}">Unsubscribe</a> &middot;
                 <a href="${preferences}" style="color:${BRAND.muted}">Email preferences</a><br>
                 This message carries no project, commercial or safety data.
@@ -174,7 +174,7 @@ function renderHtml(copy: CampaignCopy, recipient: Recipient, features: Feature[
 
 function renderText(copy: CampaignCopy, recipient: Recipient, features: Feature[]): string {
   const lines: string[] = [
-    `CONSTRUX.AI — ${copy.week}`,
+    `CONSTRUX — ${copy.week}`,
     '='.repeat(58),
     '',
     copy.headline,
@@ -194,7 +194,7 @@ function renderText(copy: CampaignCopy, recipient: Recipient, features: Feature[
     `Sign in: ${absolute('/app')}`,
     ...STANDING_LINKS.map((link) => `${link.label}: ${absolute(link.path)}`),
     '',
-    `Sent to ${recipient.email} because you hold a CONSTRUX.AI account.`,
+    `Sent to ${recipient.email} because you hold a CONSTRUX account.`,
     'This message carries no project, commercial or safety data.',
     `Unsubscribe: ${unsubscribeUrl(recipient.userId)}`,
     `Email preferences: ${absolute('/app/newsletter')}`,
@@ -355,7 +355,7 @@ export function unsubscribePage(input: {
   const bodies: Record<typeof input.state, string> = {
     CONFIRM: `
       <p style="margin:0 0 6px 0;font-size:15px;line-height:1.6;color:#3c4046">
-        <b>${esc(input.user.email)}</b> currently receives the CONSTRUX.AI newsletter.
+        <b>${esc(input.user.email)}</b> currently receives the CONSTRUX newsletter.
       </p>
       <p style="margin:0 0 20px 0;font-size:14px;line-height:1.6;color:${BRAND.muted}">
         Stopping it does not affect your account, and you will still receive messages about work
@@ -457,7 +457,7 @@ export function buildMime(input: MimeInput): string {
     `From: ${from}`,
     `To: ${header(input.toName)} <${input.to}>`,
     `Subject: ${header(input.subject)}`,
-    `Message-ID: <${input.messageId}@construx.ai>`,
+    `Message-ID: <${input.messageId}@construxvg.com>`,
     `Date: ${new Date().toUTCString()}`,
     'MIME-Version: 1.0',
     `List-Unsubscribe: <${input.unsubscribe}>`,

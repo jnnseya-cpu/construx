@@ -1,4 +1,4 @@
-# CONSTRUX.AI
+# CONSTRUX
 
 An AI-agent Construction Operating System covering the full asset lifecycle:
 

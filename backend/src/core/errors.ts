@@ -83,7 +83,7 @@ export class ACUExhaustedError extends DomainError {
 export function toProblem(error: unknown, instance: string, traceId: string, correlationId: string): ProblemDetail {
   if (error instanceof DomainError) {
     const problem: ProblemDetail = {
-      type: `https://construx.ai/problems/${error.code.toLowerCase().replace(/_/g, '-')}`,
+      type: `https://construxvg.com/problems/${error.code.toLowerCase().replace(/_/g, '-')}`,
       title: error.code,
       status: error.status,
       detail: error.message,
@@ -95,7 +95,7 @@ export function toProblem(error: unknown, instance: string, traceId: string, cor
     return problem;
   }
   return {
-    type: 'https://construx.ai/problems/internal-error',
+    type: 'https://construxvg.com/problems/internal-error',
     title: 'INTERNAL_ERROR',
     status: 500,
     detail: 'The request could not be completed.',
