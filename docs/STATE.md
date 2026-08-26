@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,588 passing, 0 failing, 0 skipped, across 82 files |
+| Tests | 1,597 passing, 0 failing, 0 skipped, across 83 files |
 | Typecheck | clean |
 | Backend | 115 TypeScript files, 55,231 lines |
 | Application | 36 ES modules, 11,790 lines (plus a service worker) |
@@ -3339,6 +3339,31 @@ getting one credit, and the whole page rendered in Chromium with no console
 error. `available` on `/v1/ai/control-plane` reports every keyed provider with
 its role, so a configured Anthropic key sitting in the failover chain is visible
 rather than invisible behind "OPENAI + GEMINI".
+
+**A tenancy an operator provisions is one somebody can get into.** Found by
+provisioning one against a running server and then trying to use it. `POST
+/v1/admin/tenants` created the tenancy, its subscription and its wallet — and no
+identity. Creating a user requires `ENTERPRISE_ADMIN` *of that tenancy*, and a
+tenancy seconds old has none, so the operator's own attempt came back 403. The
+customer was provisioned, billed, credited with a trial grant, and unreachable.
+
+Nothing said so, which is what made it survive: the estate view showed a healthy
+new tenancy with zero seats used, and that is exactly what a legitimate brand-new
+tenancy looks like. Public signup never had the defect — it creates the tenancy
+and its first `ENTERPRISE_ADMIN` together, because somebody has to be able to
+invite the rest. The operator route now mirrors that shape.
+
+`adminName` and `adminEmail` are required rather than optional: optional
+preserves the defect for anybody who omits them, and there is no correct tenancy
+with no way in. A duplicate address is refused *before* the tenancy is created,
+because creating it and then failing on the administrator leaves exactly the
+unreachable tenancy this prevents — and leaves it in the ledger. The route
+accepts no `roles` field at all; `ENTERPRISE_ADMIN` is decided server-side, so
+this cannot become a second door onto the role-escalation prize the user-creation
+audit already closed.
+
+Verified end to end against a running server: onboard, the named administrator
+signs in, and invites a colleague.
 
 **The deployment can now be asked what it has configured.** `config.ts` held
 every flag and `assertProductionSafety` computed the judgements at boot — into a

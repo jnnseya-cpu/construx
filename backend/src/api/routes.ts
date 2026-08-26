@@ -21,11 +21,11 @@ import * as agents from '../agents/runtime.ts';
 import { fleetManifest } from '../agents/runtime.ts';
 import type { ACUCaps } from '../billing/acu.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
-import { seatEconomics, TIERS } from '../billing/subscription.ts';
+import { seatEconomics, TIERS, type SubscriptionTier } from '../billing/subscription.ts';
 import { config, isProduction } from '../config.ts';
 import * as consistency from '../domain/consistency.ts';
 import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
-import { AuthError, DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
+import { AuthError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../core/errors.ts';
 import type { Schema } from '../core/validate.ts';
 import * as business from '../domain/business.ts';
 import * as cdm from '../domain/cdm.ts';
@@ -508,16 +508,32 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/admin/tenants',
-    description: 'Onboard a tenant (platform operator only)',
+    description: 'Onboard a tenant and its first administrator (platform operator only)',
     schema: {
       type: 'object',
-      required: ['legalName', 'jurisdiction', 'defaultCurrency', 'tier', 'enterpriseName'],
+      required: ['legalName', 'jurisdiction', 'defaultCurrency', 'tier', 'enterpriseName', 'adminName', 'adminEmail'],
       properties: {
         legalName: stringField,
         jurisdiction: stringField,
         defaultCurrency: stringField,
         enterpriseName: stringField,
         tier: { type: 'string', enum: ['SOLO', 'TEAM', 'BUSINESS', 'ENTERPRISE', 'SOVEREIGN', 'FREE_TRIAL'] },
+        /**
+         * The first person through the door, and required for the same reason
+         * `PLATFORM_OPERATOR_EMAIL` is required at boot.
+         *
+         * This route used to create the tenancy alone. Creating a user demands
+         * `ENTERPRISE_ADMIN` of that tenancy, and a tenancy seconds old has
+         * none — so an operator could provision a customer that nobody, ever,
+         * could sign in to, and nothing said so. Public signup never had the
+         * defect: it creates the tenancy and its administrator together, which
+         * is the shape mirrored here.
+         *
+         * Optional would preserve the defect for anybody who omitted it, so it
+         * is required. There is no correct tenancy with no way in.
+         */
+        adminName: stringField,
+        adminEmail: stringField,
       },
       additionalProperties: false,
     },
@@ -525,8 +541,44 @@ export const ROUTES: Route[] = [
       if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
         throw new ForbiddenError('Only the platform operator may onboard tenants', 'PLATFORM_ADMIN_REQUIRED');
       }
-      const result = platform.createTenant(body(ctx));
-      return { tenant: result.tenant, subscription: result.subscription, wallet: result.wallet.snapshot() };
+      const input = body<{
+        legalName: string;
+        jurisdiction: string;
+        defaultCurrency: string;
+        enterpriseName: string;
+        tier: SubscriptionTier;
+        adminName: string;
+        adminEmail: string;
+      }>(ctx);
+
+      // Refused before the tenancy exists rather than after. Creating it and
+      // then failing on the administrator leaves exactly the unreachable
+      // tenancy this change exists to prevent, and leaves it in the ledger.
+      const existing = platform.userByEmail(input.adminEmail);
+      if (existing) {
+        throw new ValidationError('That address already holds an identity on this platform', [
+          { field: 'adminEmail', message: 'Already in use — one human, one identity' },
+        ]);
+      }
+
+      const { adminName, adminEmail, ...tenancy } = input;
+      const result = platform.createTenant(tenancy);
+      // ENTERPRISE_ADMIN and nothing more. Somebody has to be able to invite
+      // the rest of the organisation, and that is the whole of the mandate —
+      // the same role and the same reasoning as public signup.
+      const administrator = platform.createUser({
+        tenantId: result.tenant.id,
+        name: adminName,
+        email: adminEmail,
+        roles: ['ENTERPRISE_ADMIN'],
+      });
+
+      return {
+        tenant: result.tenant,
+        subscription: result.subscription,
+        wallet: result.wallet.snapshot(),
+        administrator,
+      };
     },
   },
   {

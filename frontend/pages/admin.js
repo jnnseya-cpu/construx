@@ -725,14 +725,24 @@ export async function admin(root) {
     const result = await command({
       title: 'Onboard a tenancy',
       intent:
-        'Creates the tenancy, its subscription and its ACU wallet together. The wallet opens with the free trial ' +
-        'grant and the plan\'s first-period AI allowance. This is recorded in the ledger and cannot be undone — ' +
-        'name a test tenancy so the record reads honestly later.',
+        'Creates the tenancy, its subscription, its ACU wallet and its first administrator together. The wallet ' +
+        'opens with the free trial grant and the plan\'s first-period AI allowance. This is recorded in the ledger ' +
+        'and cannot be undone — name a test tenancy so the record reads honestly later.',
       path: '/v1/admin/tenants',
       submitLabel: 'Onboard',
       fields: [
         { name: 'legalName', label: 'Legal name', hint: 'As it appears on the contract' },
         { name: 'enterpriseName', label: 'Enterprise name', hint: 'The group this tenancy belongs to' },
+        // Required, and required for a reason: creating a user demands
+        // ENTERPRISE_ADMIN of that tenancy, and a tenancy seconds old has none.
+        // Without these two the tenancy is provisioned and nobody can ever
+        // sign in to it.
+        { name: 'adminName', label: 'First administrator', hint: 'The person who will run this tenancy — not a role' },
+        {
+          name: 'adminEmail',
+          label: 'Administrator email',
+          hint: 'Where their sign-in code goes. There is no password, so this address is the credential — and it is the only way into this tenancy.',
+        },
         {
           name: 'jurisdiction',
           label: 'Jurisdiction',
@@ -765,7 +775,11 @@ export async function admin(root) {
     });
 
     if (result) {
-      toast('Tenancy onboarded', `${result.tenant.legalName} — wallet opened`, 'ok');
+      toast(
+        'Tenancy onboarded',
+        `${result.tenant.legalName} — ${result.administrator.email} can now sign in and invite the rest`,
+        'ok',
+      );
       await again();
     }
   });
