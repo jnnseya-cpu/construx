@@ -1228,10 +1228,10 @@ every record already carrying the old name, and the standing principle is that
 nothing is removed or replaced. The mapping is asserted by a test so it stays
 readable against the ledger.
 
-### 8.3 (continued) — the eight tender workflows, and 8.4
+### 8.3 and 8.4 — the eight tender workflows and the stage gate
 
-All eight of section 8.3 are built. Each is described below. The stage gate at
-8.4 is not declared and is the only thing outstanding in this section.
+**Section 8 is complete.** All eight workflows of 8.3 are built, and the 8.4
+stage gate Definition of Done is declared and enforced. Each is described below.
 
 | Workflow | State |
 |---|---|
@@ -1242,7 +1242,7 @@ All eight of section 8.3 are built. Each is described below. The stage gate at
 | ~~**T-WF-06** clarifications, addenda, return intelligence~~ | **BUILT** — see below |
 | ~~**T-WF-07** commercial adjudication and governance~~ | **BUILT** — see below |
 | ~~**T-WF-08** submission, award, zero-re-entry conversion~~ | **BUILT** — see below |
-| **8.4** stage gate Definition of Done | The lifecycle gate machinery and the replayable ledger. The seven-point tender gate itself is not declared, and it depends on the A2 gate work at item 6 below |
+| ~~**8.4** stage gate Definition of Done~~ | **BUILT** — see below |
 
 ### 8.3 (continued) T-WF-02 — Tender information, scope gap and contract risk review
 
@@ -1300,6 +1300,49 @@ qualification into the submitted bid pack's qualifications schedule.
 register after a document arrives appends rather than being refused as "already
 exists". Addendum impact is written as `ADDENDUM_IMPACT_ASSESSED`, which is the
 name T-WF-06 gives the same act — one event, not two.
+
+---
+
+### 8.4 — Stage gate Definition of Done
+
+**BUILT.** `backend/src/domain/stagegate.ts`, three routes, 25 tests, and a panel
+on the Project Control screen.
+
+The lifecycle already had a gate: `evaluatePhaseGate` counts the entities a
+phase cannot be left without, and `transitionPhase` refuses a forward move that
+does not clear it. **That is untouched.** This is the seven-clause Definition of
+Done that sits on top of it, and the difference between them is the difference
+between "an estimate exists" and "this tender is finished".
+
+| Clause | State |
+|---|---|
+| All mandatory inputs present, validated, tied to exact source versions; completeness 100% and blocking issues zero | **BUILT** — the tender review frozen with no blocked package, every measurement schedule frozen, every enquiry approved, and no firm holding a pack they never acknowledged |
+| All approvals satisfy appointment, authority, maker-checker and party separation | **BUILT** — re-verified from the events themselves rather than trusted because the command refused at the time. An approval by `System` or `AI` is as wrong as one by nobody |
+| All critical/major blockers closed or governed by a permitted, time-bound condition | **BUILT** — critical findings, unchecked reissues, open material queries and open award departures, each named; and a conditional pass requires an owner and a date against every outstanding clause |
+| Cost, programme, risk, information and commercial snapshots share one declared cut-off | **BUILT** for cost, programme and information — the comparison and the settlement must state the same addendum. Risk has no declared cut-off of its own to reconcile |
+| AI outputs have evidence, confidence, assumptions, model/prompt versions, ACU settlement and human disposition | **NOT ASSESSABLE, and reported as such.** Evidence, confidence, model class and ACU settlement are on every AI output. **Assumptions, prompt version and human disposition are not recorded anywhere in the platform**, so the clause cannot be assessed in full and the gate says so by name |
+| Gate report, decision and locked baseline replay from the event store and verify against evidence hashes | **BUILT** — the whole log re-verified through `replayProject`, and the decision carries the report's content hash |
+| Downstream mobilisation tasks, owners, due dates and inherited residual obligations created without re-entry | **PARTIAL, and reported as not assessable.** The contract, the cost baseline and the buyout targets come off the estimate without re-entry. **Mobilisation tasks and inherited residual obligations are not built** |
+
+**The decision that matters more than any clause.** A clause the platform cannot
+assess is reported as `NOT_ASSESSABLE`, never as passed, and it blocks a clean
+pass exactly as a failure does. A gate that quietly passes what it did not check
+converts a gap into a signed assurance, and the signature is the thing somebody
+relies on two years later. Two of the seven are partly unassessable today and
+each names, on the screen, exactly what is missing.
+
+`PASS` therefore requires all seven met, which on a tender that used AI is
+currently unreachable — and that is the honest state of the product rather than
+a defect in the gate. `PASS_WITH_CONDITIONS` is the route through and is the
+specification's own: every outstanding clause needs a condition with an owner
+and a date, because a condition with no date is a hope and one with no owner is
+somebody else's problem. The position reports every condition that has gone past
+its date, at which point a conditional pass stops being a pass.
+
+**Not built, and not to be claimed:** the same Definition of Done for the other
+six lifecycle phases — this is declared for the tender gate; a risk cut-off to
+reconcile against the other four; and the mobilisation tasks that would let the
+seventh clause be assessed in full.
 
 ---
 
@@ -1735,13 +1778,20 @@ audit event, the agent contract or the lifecycle gate.
     the budget and buyout targets come off the estimate. The submission
     completeness checks are the part not built.
 
+12a00000000. ~~8.4 — the stage gate Definition of Done.~~ **Done.** Seven
+    clauses answered from the ledger, a clause the platform cannot assess
+    reported as unassessable rather than passed, and a conditional pass that
+    needs an owner and a date against every outstanding one. **Section 8 is now
+    complete.** The same Definition of Done for the other six phases, and the
+    mobilisation tasks the seventh clause would need to be assessable in full,
+    are the parts not built.
+
 12a0000000. ~~T-WF-05 — buy it or do it.~~ **Done.** Raw, normalised and
     evaluated as three reconciling figures, the self-perform estimate kept
     independent of the quotations, every exclusion disposed before anything is
     ranked, and a route chosen on cost, risk, programme and capacity together.
-    That completes all eight workflows of section 8.3; only the 8.4 stage gate
-    remains. Mapping each exclusion onto its scope-matrix item is the part not
-    built.
+    That completes all eight workflows of section 8.3. Mapping each exclusion
+    onto its scope-matrix item is the part not built.
 
 12a000000. ~~T-WF-04 — the enquiry pack and who holds it.~~ **Done.** Numbered
     revisions with a content hash, per-firm issue evidence naming which one they

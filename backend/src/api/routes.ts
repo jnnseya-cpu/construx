@@ -57,6 +57,7 @@ import * as enquiry from '../domain/enquiry.ts';
 import * as measurement from '../domain/measurement.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
+import * as stagegate from '../domain/stagegate.ts';
 import * as tenderintel from '../domain/tenderintel.ts';
 import * as tenderreview from '../domain/tenderreview.ts';
 import * as quality from '../engines/quality.ts';
@@ -6402,6 +6403,49 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       tenderreview.assessAddendum(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
+  },
+
+  // ------------------------------- the stage gate Definition of Done (8.4)
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/stage-gate',
+    description: 'The seven-clause Definition of Done, answered from the ledger',
+    handler: (platform, ctx) => stagegate.evaluateTenderGate(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/stage-gate/decisions',
+    description: 'Every gate decision, its conditions, and which of them are past their date',
+    handler: (platform, ctx) => stagegate.stageGatePosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/stage-gate',
+    description: 'Decide the gate — pass, pass with time-bound conditions, or hold',
+    schema: {
+      type: 'object',
+      required: ['decision', 'rationale'],
+      properties: {
+        decision: { type: 'string', enum: [...stagegate.GATE_DECISION] },
+        rationale: stringField,
+        conditions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['clause', 'what', 'owner', 'by'],
+            properties: {
+              clause: { type: 'string', enum: [...stagegate.GATE_CLAUSE] },
+              what: stringField,
+              owner: stringField,
+              by: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => stagegate.decideGate(projectContext(platform, ctx), body(ctx)),
   },
 
   // ------------------------------------------ buy it or do it (T-WF-05)

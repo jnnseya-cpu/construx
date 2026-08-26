@@ -110,6 +110,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // Buy it or do it, per package: the market's number beside our own, and the
   // reasoning behind which one went in the bid.
   PricingRoute: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
+  // The stage gate decision and its conditions. Project setup, because leaving
+  // a stage is a governance act rather than a commercial one, and internal
+  // rather than commercial because a regulator asking whether the gate was
+  // cleared is asking a question they are entitled to an answer to.
+  StageGateDecision: { area: 'PROJECT_SETUP' },
   // Every bidder's price side by side. There is nothing more commercially
   // sensitive in a tender than this record, and one bidder seeing it would end
   // the process.

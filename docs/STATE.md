@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 2,102 passing, 0 failing, 0 skipped, across 103 files |
+| Tests | 2,127 passing, 0 failing, 0 skipped, across 104 files |
 | Typecheck | clean |
-| Backend | 128 TypeScript files, 68,164 lines |
-| Application | 39 ES modules, 15,262 lines (including a service worker) |
-| API routes | 391 (34 of them public) |
-| Event types | 249 Golden Thread (closed) · 178 communication events (closed) |
-| Entity types | 136, all classified for access |
+| Backend | 129 TypeScript files, 68,870 lines |
+| Application | 39 ES modules, 15,396 lines (including a service worker) |
+| API routes | 394 (34 of them public) |
+| Event types | 250 Golden Thread (closed) · 178 communication events (closed) |
+| Entity types | 137, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -4258,6 +4258,78 @@ register after a missing document arrives appends rather than being refused as
 "already exists" — validation happens more than once by design. Addendum impact
 writes `ADDENDUM_IMPACT_ASSESSED`, the name T-WF-06 gives the same act, so there
 is one event for it and not two.
+
+---
+
+### The stage gate, and the clause it will not pretend to have checked
+
+8.4. `backend/src/domain/stagegate.ts`, three routes, 25 tests, and a panel on
+the Project Control screen. **With this, section 8 of the specification —
+all eight tender workflows and the stage gate — is complete.**
+
+The lifecycle already had a gate: `evaluatePhaseGate` counts the entities a
+phase cannot be left without, and `transitionPhase` refuses a forward move that
+does not clear it. That is untouched, and a test asserts it. This is the
+seven-clause Definition of Done on top of it, and the difference between them is
+the difference between *"an estimate exists"* and *"this tender is finished"*.
+
+**One rule matters more than any of the seven.** A clause the platform cannot
+assess is reported as **unassessable**, never as passed, and it blocks a clean
+pass exactly as a failure does. A gate that quietly passes what it did not check
+converts a gap into a signed assurance, and the signature is the thing somebody
+relies on two years later. This is the same principle the Project Control screen
+was already built on — untracked items greyed and excluded from every
+percentage, because they are the platform's gap and not the project's — applied
+to the gate that governs leaving a stage.
+
+Two of the seven are unassessable today, and each names on the screen exactly
+what is missing:
+
+- **AI accounted for.** Every AI output carries its evidence, its confidence,
+  its model class and its ACU settlement. **Assumptions, prompt version and
+  human disposition are not recorded anywhere in the platform.** The clause
+  therefore cannot be assessed against the specification in full, and it says
+  those three words rather than a tick.
+- **Downstream created.** The contract, the cost baseline and the buyout targets
+  come off the estimate without re-entry. **Mobilisation tasks with owners and
+  due dates, and inherited residual obligations, are not built.**
+
+The other five are answered from the ledger. Inputs: the tender review frozen
+with no blocked package, every measurement schedule frozen, every enquiry
+approved, and no firm holding a pack they never acknowledged. Approvals:
+re-verified from the events themselves rather than trusted because the command
+refused at the time — which is the point of checking twice, and catches anything
+written before a control existed. An approval by `System` or `AI` is as wrong as
+one by nobody. Blockers: every critical finding, unchecked reissue, open
+material query and open award departure, by name. One cut-off: the comparison
+and the settlement must state the same addendum. Replayable: the whole event log
+re-verified through `replayProject` against its own state and chain hashes.
+
+**`PASS` is currently unreachable on a tender that used AI**, and that is the
+honest state of the product rather than a defect in the gate.
+`PASS_WITH_CONDITIONS` is the route through and is the specification's own:
+every outstanding clause needs a condition with an owner and a date, because a
+condition with no date is a hope and one with no owner is somebody else's
+problem. The position reports every condition past its date — the day after
+which a conditional pass stops being a pass and becomes a list of things
+somebody promised.
+
+**One finding while building it.** The AI clause first reported forty failures.
+They were all `AI_EXECUTION_COMPLETED` — the billing record of the call itself,
+which correctly carries no confidence and no input refs because it is not a
+change the model justified. Counting the accounting ledger doing its job as a
+defect would have buried the one finding that mattered. The clause now reads
+"AI outputs **used in the decision**" as the specification wrote it.
+
+**Verified against a running server**: a clean pass over an open clause is
+refused naming all four, a conditional pass covering only one is refused naming
+the three it left uncovered, a condition with no date or no owner is refused,
+and a QS cannot decide the gate at all.
+
+**Not built, and not to be claimed:** the same Definition of Done for the other
+six lifecycle phases — this is declared for the tender gate; a risk cut-off to
+reconcile against the other four; and the mobilisation tasks that would let the
+seventh clause be assessed in full.
 
 ---
 

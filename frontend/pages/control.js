@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { command, commandBar } from '../lib/command.js';
 import { badge, drillable, html, humanise, money, pct, raw, render, table, toast } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
 import { insightPanel } from '../lib/insight.js';
@@ -46,10 +47,15 @@ const CHAIN_CHECKS = new Set([
 export async function control(root) {
   const projectId = state.session.projectId;
 
-  const [project, estate, lessons] = await Promise.all([
+  const [project, estate, lessons, gate, gateDecisions] = await Promise.all([
     api.get(`/v1/projects/${projectId}/control`),
     api.get('/v1/control/estate').catch(() => null),
     api.get('/v1/lessons').catch(() => null),
+    // 8.4. The seven-clause Definition of Done, answered server-side — the
+    // browser holds no rule the API does not publish, and a gate report the
+    // browser assembled would be a second answer to the same question.
+    api.get(`/v1/projects/${projectId}/stage-gate`).catch(() => null),
+    api.get(`/v1/projects/${projectId}/stage-gate/decisions`).catch(() => ({ decisions: [], summary: '' })),
   ]);
 
   // What the records say against each other. Every module here is right about
@@ -90,7 +96,88 @@ export async function control(root) {
             against what the Golden Thread can actually evidence and honest about what it cannot.
           </p>
         </div>
+        <div class="actions cmd-bar">
+          ${raw(commandBar([
+            { id: 'gate', label: 'Decide the stage gate', tone: '', permitted: can('PROJECT_SETUP', 'A'), reason: blockedReason('PROJECT_SETUP', 'A') },
+          ]))}
+        </div>
       </div>
+
+      ${
+        !gate
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Stage gate — Definition of Done</h3>
+              <div style="padding:8px 17px 0"><div class="metric-sub">
+                Seven clauses, each answered from the ledger rather than from a checklist somebody ticked. A clause the platform
+                cannot assess is reported as unassessable and never as passed — a gate that quietly passes what it did not check
+                turns a gap into a signed assurance, and the signature is what somebody relies on two years later.
+              </div></div>
+              ${table({
+                headers: ['Clause', 'State', 'What it found'],
+                rows: gate.clauses.map((clause) => [
+                  clause.title,
+                  clause.state === 'PASS'
+                    ? badge('met', 'ok')
+                    : clause.state === 'FAIL'
+                      ? badge('not met', 'bad')
+                      : badge('cannot assess', 'warn'),
+                  clause.detail,
+                ]),
+              })}
+              ${gate.clauses
+                .filter((clause) => clause.blocking.length > 0)
+                .map(
+                  (clause) => html`<div style="padding:12px 17px 0"><div class="notice ${raw(clause.state === 'FAIL' ? 'err' : 'warn')}">
+                    <div>
+                      <b>${clause.title}</b><br>
+                      ${clause.blocking.map((item) => html`${item}<br>`)}
+                    </div>
+                  </div></div>`,
+                )}
+              <div style="padding:14px 17px 15px"><div class="metric-sub">
+                Report hash <span class="mono">${gate.contentHash}</span> — a gate decision is recorded against this, so what was
+                decided can be told apart from how it was worded.
+              </div></div>
+            </div>`
+      }
+
+      ${
+        gateDecisions.decisions.length === 0
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Gate decisions and their conditions</h3>
+              ${table({
+                headers: ['Decided', 'Phase', 'Decision', 'Conditions', 'Past their date'],
+                align: ['', '', '', 'num', 'num'],
+                rows: gateDecisions.decisions.map((decision) => [
+                  decision.decidedAt.slice(0, 10),
+                  humanise(decision.phase),
+                  decision.decision === 'PASS'
+                    ? badge('passed', 'ok')
+                    : decision.decision === 'HOLD'
+                      ? badge('held', 'bad')
+                      : badge('passed with conditions', 'warn'),
+                  decision.conditions.length || '—',
+                  decision.overdue.length > 0 ? badge(String(decision.overdue.length), 'bad') : '—',
+                ]),
+              })}
+              ${
+                gateDecisions.decisions.some((decision) => decision.overdue.length > 0)
+                  ? html`<div style="padding:12px 17px 15px"><div class="notice err">
+                      <div>
+                        <b>A condition the gate was passed on has gone past its date.</b><br>
+                        ${gateDecisions.decisions
+                          .flatMap((decision) => decision.overdue)
+                          .map((condition) => html`${condition.what} — ${condition.owner}, due ${condition.by}<br>`)}
+                        On the day after the date, a conditional pass stops being a pass and becomes a list of things somebody
+                        promised.
+                      </div>
+                    </div></div>`
+                  : ''
+              }
+            </div>`
+      }
 
       ${
         consistency
@@ -351,6 +438,53 @@ export async function control(root) {
     areas: ['PROJECT_SETUP', 'EVIDENCE_AUDIT', 'RISK_REGISTER'],
     subject: 'project control and assurance',
     onChange: draw,
+  });
+
+  // Every outstanding clause needs its own condition, so the form offers one
+  // line per clause rather than a free-text box somebody fills in once.
+  const outstanding = [...(gate?.failed ?? []), ...(gate?.unassessable ?? [])];
+
+  const GATE_COMMAND = {
+    title: 'Decide the stage gate',
+    intent:
+      'A clean pass needs all seven clauses met — including the ones the platform cannot assess, which is why it says so rather ' +
+      'than passing them. A conditional pass is the real route through, and every outstanding clause needs an owner and a date.',
+    path: `/v1/projects/${projectId}/stage-gate`,
+    submitLabel: 'Record the decision',
+    fields: [
+      { name: 'decision', label: 'Decision', type: 'select',
+        options: [
+          { value: 'PASS_WITH_CONDITIONS', label: 'Pass with conditions' },
+          { value: 'PASS', label: 'Pass' },
+          { value: 'HOLD', label: 'Hold' },
+        ] },
+      { name: 'rationale', label: 'What the decision rests on', type: 'textarea', rows: 3 },
+      { name: 'owner', label: 'Condition owner', type: 'text', required: false,
+        hint: outstanding.length > 0
+          ? `Applied to all ${outstanding.length} outstanding clauses: ${outstanding.join(', ')}`
+          : 'No clause is outstanding' },
+      { name: 'by', label: 'Conditions due by', type: 'date', required: false },
+      { name: 'what', label: 'What has to happen', type: 'text', required: false },
+    ],
+    transform: ({ decision, rationale, owner, by, what }) =>
+      decision === 'PASS_WITH_CONDITIONS'
+        ? {
+            decision,
+            rationale,
+            conditions: outstanding.map((clause) => ({
+              clause,
+              what: String(what ?? '').trim() || `Close ${clause}`,
+              owner: String(owner ?? ''),
+              by: String(by ?? ''),
+            })),
+          }
+        : { decision, rationale },
+  };
+
+  root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-command]');
+    if (!button || button.dataset.command !== 'gate') return;
+    if (await command(GATE_COMMAND)) await draw();
   });
 
   root.querySelector('#raise-chain')?.addEventListener('click', async (event) => {

@@ -240,6 +240,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // The tender programme, back-planned from the return date across the working
   // calendar. Follows the decision to bid and never precedes it.
   def('TENDER_PROGRAMME_CREATED', 'BidProgramme', 'CREATE', 'PROCUREMENT', { creates: true }),
+  // 8.4. The stage gate Definition of Done. Never an agent's: a gate decision
+  // is the assurance somebody relies on two years later, and the whole point of
+  // the record is that a person put their name to it.
+  def('STAGE_GATE_DECIDED', 'StageGateDecision', 'APPROVE', 'GOVERNANCE', { creates: true, requiresEvidence: true }),
   // Never bid without a cash model. The peak funding requirement is a
   // different question from the margin, and it is the one that closes
   // companies, so it lands on the thread beside the price.
