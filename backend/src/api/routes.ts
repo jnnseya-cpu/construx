@@ -51,6 +51,7 @@ import * as claims from '../engines/claims.ts';
 import * as cost from '../engines/cost.ts';
 import * as handover from '../engines/handover.ts';
 import * as planning from '../engines/planning.ts';
+import * as sitevisit from '../engines/sitevisit.ts';
 import * as quality from '../engines/quality.ts';
 import * as safety from '../engines/safety.ts';
 import * as tender from '../engines/tender.ts';
@@ -4187,6 +4188,173 @@ export const ROUTES: Route[] = [
     description: 'The walk register ordered by what is overdue rather than by what is recent',
     handler: (platform, ctx) => planning.siteWalkPosition(projectContext(platform, ctx)),
   },
+
+  // ------------------------------------------------------- the site visit (walk to handover)
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-visits',
+    description: 'The site visit position: findings, permissions, logistics warnings and what is still owed at handover',
+    handler: (platform, ctx) => sitevisit.sitePosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-visits',
+    description: 'Record a site visit — who walked it, when, and why',
+    schema: {
+      type: 'object',
+      required: ['purpose', 'visitedOn', 'attendees'],
+      properties: {
+        purpose: { type: 'string', enum: [...sitevisit.VISIT_PURPOSE] },
+        visitedOn: stringField,
+        attendees: { type: 'array', minItems: 1, items: { type: 'string' } },
+        weather: { type: 'string' },
+        notes: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => sitevisit.recordVisit(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-visits/:visitId/findings',
+    description: 'Raise a finding: what was found, what it obliges, who carries it and when it is discharged',
+    schema: {
+      type: 'object',
+      required: ['category', 'description', 'location', 'basis', 'consequences', 'closesBy', 'owner'],
+      properties: {
+        category: { type: 'string', enum: [...sitevisit.FINDING_CATEGORY] },
+        description: { type: 'string' },
+        location: stringField,
+        basis: { type: 'string', enum: [...sitevisit.FINDING_BASIS] },
+        source: { type: 'string' },
+        // No `minItems` on purpose. An empty list is a real domain rule with a
+        // sentence worth reading — "a finding that obliges nothing is a note" —
+        // and a schema rejection would replace it with VALIDATION_FAILED.
+        consequences: { type: 'array', items: { type: 'string', enum: [...sitevisit.FINDING_CONSEQUENCE] } },
+        closesBy: { type: 'string', enum: [...sitevisit.CLOSES_BY] },
+        owner: stringField,
+        // Required by the engine for an OBSERVED finding rather than by the
+        // schema, because whether a photograph is needed is a fact about how the
+        // finding is known, not about the shape of the request.
+        evidenceHash: stringField,
+        taskId: stringField,
+        pricedNote: { type: 'string' },
+        permit: {
+          type: 'object',
+          required: ['name', 'authority', 'leadTimeDays', 'requiredBy'],
+          properties: {
+            name: stringField,
+            authority: stringField,
+            leadTimeDays: { type: 'integer', minimum: 1 },
+            requiredBy: stringField,
+            appliedOn: stringField,
+            grantedOn: stringField,
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      sitevisit.raiseFinding(projectContext(platform, ctx), ctx.params.visitId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-findings/:findingId/discharge',
+    description: 'Discharge a finding, with what actually discharged it',
+    schema: {
+      type: 'object',
+      required: ['discharge'],
+      properties: { discharge: { type: 'string' }, evidenceHash: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      sitevisit.closeFinding(projectContext(platform, ctx), ctx.params.findingId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/logistics-plan',
+    description: 'Set the site logistics plan and run the checks arithmetic can settle',
+    schema: {
+      type: 'object',
+      required: ['elements'],
+      properties: {
+        elements: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['type', 'reference', 'description'],
+            properties: {
+              type: { type: 'string', enum: [...sitevisit.LOGISTICS_ELEMENT] },
+              reference: stringField,
+              description: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+        cranes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['reference', 'type', 'radiusMetres', 'distanceToBoundaryMetres', 'tipHeightMetres'],
+            properties: {
+              reference: stringField,
+              type: { type: 'string', enum: ['TOWER', 'MOBILE', 'CRAWLER'] },
+              radiusMetres: { type: 'number', minimum: 0 },
+              distanceToBoundaryMetres: { type: 'number', minimum: 0 },
+              tipHeightMetres: { type: 'number', minimum: 0 },
+              overhead: {
+                type: 'object',
+                required: ['distanceMetres', 'exclusionMetres'],
+                properties: {
+                  distanceMetres: { type: 'number', minimum: 0 },
+                  exclusionMetres: { type: 'number', minimum: 0 },
+                },
+                additionalProperties: false,
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+        routes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['reference', 'description'],
+            properties: {
+              reference: stringField,
+              description: { type: 'string' },
+              maxVehicleLengthMetres: { type: 'number', minimum: 0 },
+              maxHeightMetres: { type: 'number', minimum: 0 },
+              maxWeightTonnes: { type: 'number', minimum: 0 },
+              deliveryWindow: {
+                type: 'object',
+                required: ['from', 'to'],
+                properties: { from: stringField, to: stringField },
+                additionalProperties: false,
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+        largestDelivery: {
+          type: 'object',
+          required: ['description', 'lengthMetres', 'heightMetres', 'weightTonnes'],
+          properties: {
+            description: stringField,
+            lengthMetres: { type: 'number', minimum: 0 },
+            heightMetres: { type: 'number', minimum: 0 },
+            weightTonnes: { type: 'number', minimum: 0 },
+          },
+          additionalProperties: false,
+        },
+        notes: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => sitevisit.setLogisticsPlan(projectContext(platform, ctx), body(ctx)),
+  },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/work-packages',
@@ -5977,6 +6145,50 @@ export const ROUTES: Route[] = [
         contentType: 'application/pdf',
         filename: `${document.reference}.pdf`,
         bytes: platform.exports.toPdf(document),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-visits/:visitId/report.pdf',
+    binary: true,
+    description: 'The site visit report — findings, what is already late, the logistics checks, and the photographs',
+    schema: {
+      type: 'object',
+      properties: {
+        audience: { type: 'string', enum: ['INTERNAL', 'CLIENT', 'SUPPLIER', 'REGULATOR', 'INSURER', 'ADJUDICATOR', 'COURT'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const projectId = ctx.params.projectId as string;
+      const engineCtx = projectContext(platform, ctx);
+      const { title, subtitle, blocks } = sitevisit.siteVisitReportBlocks(engineCtx, ctx.params.visitId as string);
+
+      const actor = auth(ctx);
+      const document = platform.exports.document(actor, projectId, {
+        title,
+        subtitle,
+        blocks,
+        audience: actor.roles.includes('REGULATOR') ? 'REGULATOR' : (body<{ audience?: ExportAudience }>(ctx).audience ?? 'INTERNAL'),
+        correlationId: ctx.correlationId,
+      });
+
+      return {
+        contentType: 'application/pdf',
+        filename: `${document.reference}.pdf`,
+        // The resolver, not the store: the renderer is handed a way to fetch
+        // one tenant's bytes by hash, and never the store itself. A photograph
+        // the platform does not hold — still on a device, or aged out under the
+        // retention policy — comes back undefined and the page says so.
+        bytes: platform.exports.toPdf(document, (hash) => {
+          try {
+            const held = platform.evidence.get(actor.tenantId, hash);
+            return { mime: held.contentType, bytes: held.bytes };
+          } catch {
+            return undefined;
+          }
+        }),
       };
     },
   },

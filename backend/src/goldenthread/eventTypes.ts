@@ -275,6 +275,21 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SITE_DIARY_RECORDED', 'SiteDiary', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
   def('SITE_OBSERVATION_CAPTURED', 'SiteObservation', 'CREATE', 'DELIVERY', { aiAllowed: true, requiresEvidence: true }),
   def('SITE_OBSERVATION_CLOSED', 'SiteObservation', 'UPDATE', 'DELIVERY'),
+  // The site visit. Not the same act as a site observation above: an
+  // observation is about the state of the work, a finding is about the state of
+  // the site, and the second one governs the job for years rather than closing
+  // next week.
+  def('SITE_VISIT_RECORDED', 'SiteVisit', 'CREATE', 'DELIVERY', { creates: true }),
+  // A finding observed on site carries its photograph. One read from a document
+  // carries its source instead, which is why evidence is required by the engine
+  // against the basis rather than unconditionally here.
+  def('SITE_FINDING_RAISED', 'SiteFinding', 'CREATE', 'DELIVERY', { creates: true }),
+  // Discharged, not "closed": the obligation is gone because somebody did the
+  // thing, and the record says what the thing was.
+  def('SITE_FINDING_DISCHARGED', 'SiteFinding', 'UPDATE', 'DELIVERY'),
+  // One current plan per project, superseding rather than accumulating. A site
+  // with two logistics plans has none.
+  def('LOGISTICS_PLAN_SET', 'SiteLogisticsPlan', 'UPDATE', 'DELIVERY', { creates: true }),
   // Quality assurance: the plan, the hold points, and the record against them.
   def('ITP_CREATED', 'InspectionPlan', 'CREATE', 'DELIVERY', { creates: true }),
   def('ITP_STAGE_UPDATED', 'InspectionPlan', 'UPDATE', 'DELIVERY'),

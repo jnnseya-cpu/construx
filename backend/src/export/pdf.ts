@@ -1,4 +1,4 @@
-import { decodeLogo, type DecodedImage } from './image.ts';
+import { decodeImage, decodeLogo, UnsupportedImageError, type DecodedImage } from './image.ts';
 import type { DocumentBlock, ExportDocument } from './exporter.ts';
 
 /**
@@ -104,6 +104,33 @@ function pdfString(text: string): string {
     else out += String.fromCharCode(byte);
   }
   return `${out})`;
+}
+
+/**
+ * A string for the document catalogue — the title, the author, the producer.
+ *
+ * Not `pdfString`. That one encodes to WinAnsi, which is right for a content
+ * stream because the fonts are declared with `/WinAnsiEncoding`; but a literal
+ * string *outside* a content stream is read as PDFDocEncoding, and the two
+ * disagree above 0x7F. The visible symptom was a report titled "Site visit
+ * report Š SV-001" in the viewer's tab, where the em-dash had been read under
+ * the wrong table — and the same fault turns "Société Générale" into noise on
+ * every document that client is ever sent.
+ *
+ * The format's own answer is UTF-16BE behind a byte-order mark, which every
+ * reader understands unambiguously. Used only where it is needed, so an
+ * ordinary ASCII title stays a readable literal in the file.
+ */
+function pdfTextString(text: string): string {
+  if (!/[^\x20-\x7e]/.test(text)) return pdfString(text);
+
+  let hex = 'FEFF';
+  const utf16 = Buffer.from(text, 'utf16le');
+  // Swap each pair: Node writes UTF-16LE, PDF wants big-endian.
+  for (let i = 0; i < utf16.length; i += 2) {
+    hex += utf16[i + 1]!.toString(16).padStart(2, '0') + utf16[i]!.toString(16).padStart(2, '0');
+  }
+  return `<${hex.toUpperCase()}>`;
 }
 
 function widthOf(text: string, font: FontName, size: number): number {
@@ -227,6 +254,26 @@ class Sheet {
     );
   }
 
+  /**
+   * Place a photograph in the flow, at the left margin, and move the cursor
+   * past it.
+   *
+   * Separate from `image` above rather than a flag on it: the header mark is
+   * decoration placed against the right edge and deliberately does not move the
+   * cursor, while a photograph is content and the next block has to start below
+   * it. One method doing both would be one method with two behaviours.
+   */
+  photo(name: string, width: number, height: number): void {
+    const y = this.#y - height;
+    this.#ops.push(
+      `q`,
+      `${width.toFixed(2)} 0 0 ${height.toFixed(2)} ${MARGIN.left.toFixed(2)} ${y.toFixed(2)} cm`,
+      `/${name} Do`,
+      `Q`,
+    );
+    this.#y = y;
+  }
+
   fill(x: number, y: number, width: number, height: number, colour: [number, number, number]): void {
     const [r, g, b] = colour;
     this.#ops.push(`${r} ${g} ${b} rg`, `${x.toFixed(2)} ${y.toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re f`);
@@ -241,7 +288,15 @@ function hexToRgb(hex: string): [number, number, number] {
   return [((value >> 16) & 255) / 255, ((value >> 8) & 255) / 255, (value & 255) / 255];
 }
 
-function renderBlock(sheet: Sheet, block: DocumentBlock, accent: [number, number, number]): void {
+/** A photograph resolved out of the evidence store, ready to place. */
+type PlacedImage = { name: string; image: DecodedImage };
+
+function renderBlock(
+  sheet: Sheet,
+  block: DocumentBlock,
+  accent: [number, number, number],
+  photos: Map<string, PlacedImage> = new Map(),
+): void {
   switch (block.kind) {
     case 'HEADING': {
       const size = block.level === 1 ? 17 : block.level === 2 ? 13 : 11;
@@ -308,6 +363,45 @@ function renderBlock(sheet: Sheet, block: DocumentBlock, accent: [number, number
 
     case 'TABLE': {
       renderTable(sheet, block, accent);
+      return;
+    }
+
+    case 'PHOTOGRAPH': {
+      const placed = photos.get(block.evidenceHash);
+      const caption = block.takenOn ? `${block.caption} — ${block.takenOn}` : block.caption;
+
+      if (!placed) {
+        // The photograph is named on the document and its bytes are not here:
+        // held on a device that has not synced, or discarded under the
+        // retention policy. Saying so on the page is the only honest option —
+        // a silently missing image reads as a document that had nothing to show.
+        sheet.reserve(34);
+        sheet.advance(8);
+        sheet.text(caption, { font: 'Helvetica-Bold', size: 9 });
+        sheet.advance(12);
+        sheet.text(`Photograph ${block.evidenceHash.slice(0, 23)}… is not in the store`, {
+          font: 'Courier',
+          size: 8,
+          colour: [0.55, 0.35, 0.2],
+        });
+        sheet.advance(14);
+        return;
+      }
+
+      // Sized to the column, and never enlarged: a 400px snap blown up to full
+      // width looks like evidence of nothing. Capped in height as well, so a
+      // portrait photograph from a phone does not take a page to itself.
+      const MAX_HEIGHT = 260;
+      const scale = Math.min(CONTENT_WIDTH / placed.image.width, MAX_HEIGHT / placed.image.height, 1);
+      const width = placed.image.width * scale;
+      const height = placed.image.height * scale;
+
+      sheet.reserve(height + 30);
+      sheet.advance(10);
+      sheet.photo(placed.name, width, height);
+      sheet.advance(13);
+      sheet.text(caption, { size: 9, colour: [0.35, 0.35, 0.38] });
+      sheet.advance(16);
       return;
     }
 
@@ -412,8 +506,42 @@ function renderTable(sheet: Sheet, block: Extract<DocumentBlock, { kind: 'TABLE'
  * page is numbered — a page of an evidence bundle that has become separated
  * from the rest of it should still say what it belongs to.
  */
-export function renderPdf(document: ExportDocument): Uint8Array {
+/**
+ * How the renderer gets at a photograph's bytes.
+ *
+ * Passed in rather than reached for: this module writes PDF and knows nothing
+ * about tenants, evidence stores or signed URLs, and giving it a store handle
+ * would make a page renderer into something that can read customer files.
+ * Returning `undefined` for an absent photograph is normal — bytes held on a
+ * device that has not synced are not an error — and the page says so.
+ */
+export type ImageResolver = (evidenceHash: string) => { mime: string; bytes: Buffer } | undefined;
+
+export function renderPdf(document: ExportDocument, resolveImage?: ImageResolver): Uint8Array {
   const accent = hexToRgb(document.branding.primaryColour);
+
+  // Resolved once, before anything is drawn, and keyed by hash so a photograph
+  // referenced twice is embedded once. A twenty-finding report that shows the
+  // same access gate on three pages must not carry three copies of it.
+  const photos = new Map<string, PlacedImage>();
+  if (resolveImage) {
+    for (const block of document.blocks) {
+      if (block.kind !== 'PHOTOGRAPH' || photos.has(block.evidenceHash)) continue;
+      const held = resolveImage(block.evidenceHash);
+      if (!held) continue;
+      try {
+        photos.set(block.evidenceHash, {
+          name: `Ph${photos.size}`,
+          image: decodeImage(held.mime, held.bytes, 'A photograph'),
+        });
+      } catch (error) {
+        // A photograph in a format the renderer cannot place must not stop an
+        // evidence bundle being produced. It is left out, and the page says the
+        // image is not there — which is true, and visible.
+        if (!(error instanceof UnsupportedImageError)) throw error;
+      }
+    }
+  }
 
   // The client's own mark, if they gave one. A logo that cannot be decoded is a
   // mistake somebody needs to hear about, not something to swallow — but it
@@ -454,7 +582,7 @@ export function renderPdf(document: ExportDocument): Uint8Array {
   header(sheet);
   void logoRefused;
 
-  for (const block of document.blocks) renderBlock(sheet, block, accent);
+  for (const block of document.blocks) renderBlock(sheet, block, accent, photos);
 
   // The footer goes on afterwards, at a fixed position, so it does not compete
   // with the flow for space.
@@ -490,7 +618,7 @@ export function renderPdf(document: ExportDocument): Uint8Array {
   const pageCount = sheet.pages.length;
   const streams = sheet.pages.map((ops, index) => [...ops, ...footerOps(index + 1, pageCount)].join('\n'));
 
-  return assemble(streams, document.title, document.branding.clientName, logo);
+  return assemble(streams, document.title, document.branding.clientName, logo, photos);
 }
 
 /**
@@ -500,7 +628,13 @@ export function renderPdf(document: ExportDocument): Uint8Array {
  * position of the start of its object, and a file whose xref is wrong opens as
  * a blank page in some readers and not at all in others.
  */
-function assemble(streams: string[], title: string, author: string, logo?: DecodedImage): Uint8Array {
+function assemble(
+  streams: string[],
+  title: string,
+  author: string,
+  logo?: DecodedImage,
+  photos: Map<string, PlacedImage> = new Map(),
+): Uint8Array {
   const objects: string[] = [];
   const add = (body: string): number => {
     objects.push(body);
@@ -530,9 +664,24 @@ function assemble(streams: string[], title: string, author: string, logo?: Decod
     );
   }
 
+  // Each photograph once, shared by every page that shows it — the same reason
+  // the logo is embedded once rather than per page.
+  const embedImage = (image: DecodedImage): number =>
+    add(
+      `<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} ` +
+        `/ColorSpace ${image.components === 1 ? '/DeviceGray' : '/DeviceRGB'} /BitsPerComponent ${image.bitsPerComponent} ` +
+        `/Filter /${image.filter} /Length ${image.data.length} >>\nstream\n${image.data.toString('latin1')}\nendstream`,
+    );
+
+  const photoIds: string[] = [];
+  for (const placed of photos.values()) {
+    photoIds.push(`/${placed.name} ${embedImage(placed.image)} 0 R`);
+  }
+
+  const xobjects = [...(logoId ? [`/Logo ${logoId} 0 R`] : []), ...photoIds];
   const resources =
     `<< /Font << /F1 ${fontIds.F1} 0 R /F2 ${fontIds.F2} 0 R /F3 ${fontIds.F3} 0 R >> ` +
-    `${logoId ? `/XObject << /Logo ${logoId} 0 R >> ` : ''}>>`;
+    `${xobjects.length > 0 ? `/XObject << ${xobjects.join(' ')} >> ` : ''}>>`;
 
   const pageIds: number[] = [];
   for (const stream of streams) {
@@ -550,7 +699,7 @@ function assemble(streams: string[], title: string, author: string, logo?: Decod
   objects[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
 
   const infoId = add(
-    `<< /Title ${pdfString(title)} /Author ${pdfString(author)} /Producer ${pdfString('CONSTRUX')} ` +
+    `<< /Title ${pdfTextString(title)} /Author ${pdfTextString(author)} /Producer ${pdfTextString('CONSTRUX')} ` +
       `/CreationDate ${pdfString(pdfDate())} >>`,
   );
 

@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,794 passing, 0 failing, 0 skipped, across 94 files |
+| Tests | 1,840 passing, 0 failing, 0 skipped, across 95 files |
 | Typecheck | clean |
-| Backend | 120 TypeScript files, 59,893 lines |
-| Application | 39 ES modules, 13,895 lines (including a service worker) |
-| API routes | 325 (34 of them public) |
-| Event types | 214 Golden Thread (closed) · 178 communication events (closed) |
-| Entity types | 127, all classified for access |
+| Backend | 121 TypeScript files, 61,355 lines |
+| Application | 39 ES modules, 14,226 lines (including a service worker) |
+| API routes | 331 (34 of them public) |
+| Event types | 218 Golden Thread (closed) · 178 communication events (closed) |
+| Entity types | 130, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -3952,6 +3952,114 @@ QS records an ITT with no stated zone and gets the Critical clarification; a bar
 mandatory deliverable is recorded and the Owner's decision to bid is refused,
 naming it; an addendum moves the deadline and the board shows the re-review. The
 panel and the command are screenshotted.
+
+### The site visit, and what the walk still obliges
+
+A site visit produces a document nobody opens again. Somebody walks the site,
+photographs eleven things, writes them into a template, emails it — and eighteen
+months later a crane is erected over a boundary nobody agreed to oversail. The
+information was never missing. It was recorded and then it stopped being
+anybody's problem.
+
+`backend/src/engines/sitevisit.ts`, six routes, 46 tests, and a panel on the
+field screen with four commands and a report button. **Not a report generator
+with a register attached**: every finding is an obligation with a life, and the
+life runs from the walk to handover.
+
+    walk → finding → what it obliges → who owns it → when it is discharged
+
+**A finding that obliges nothing is a note.** Every finding declares what it
+does to the job — prices something, sequences something, needs a permission, is
+a hazard, changes the design — and one that claims none of those is refused.
+That single rule is what stops the register filling with "the site is muddy".
+
+**A finding seen on site needs a photograph.** Not one read out of a planning
+consent, and not one the client's agent mentioned — those are recorded with
+their source named instead, and the basis of every finding is on the record. An
+assertion about a physical condition with no image is the thing that gets argued
+about later, and the argument is unwinnable.
+
+**A finding that constrains an activity raises a real constraint.** Not a second
+constraints log inside a site-visit module: `raiseConstraint` in the planning
+engine, so the lookahead already refuses to commit that activity and the
+constraint appears in the PPC trend beside every other one. The walk feeds the
+programme rather than a parallel list.
+
+**A permission has a lead time, and a lead time is a programme fact.** A highway
+order quoted at 84 days against work starting in three weeks is not a risk to
+monitor — it is already late, today, before anybody has applied. `permitPosition`
+does that arithmetic from the authority's own quoted lead time and the date the
+work it unlocks starts, so the answer is *"64 days late"* rather than *"needs
+attention"*. An application that has gone in is not called late merely for being
+inside the lead time: the authority may beat its own quote, and crying wolf on
+the one register that must not be ignored is how it gets ignored.
+
+**The logistics checks are the ones arithmetic can settle.** The platform does
+not draw a logistics plan — a drawing is a drawing, and a picture without the
+geometry behind it would be worse than nothing. It records the elements and the
+dimensions and runs seven checks, each of them a thing that is missed often and
+costs a great deal when it is:
+
+- a crane whose radius exceeds the distance to the boundary **oversails**, and
+  needs an agreement from an adjoining owner with no reason to hurry;
+- a jib that reaches further than the distance to an overhead line can be slewed
+  into it;
+- a crane standing inside the network operator's stated exclusion (their figure,
+  asked for — never one the platform derived from a voltage);
+- the longest delivery against each route's length, height and weight limits;
+- a plan with no welfare on it, which CDM 2015 Schedule 2 requires from the
+  first day anybody works on site;
+- a plan with no gate and no access route, which says nothing about how anything
+  arrives.
+
+**Closure is evidenced, and the serious ones are not self-certified.** A finding
+that needed a permission or named a hazard is closed under approval authority
+and never by the person who raised it — you cannot certify your own goalposts.
+Everything else can be closed by whoever did the work, because a two-person
+contractor is a real customer and a second signature on a hoarding line would
+only teach people to route around the register. The permission matrix already
+separates planner from approver; the per-act rule is what holds when one person
+holds both roles, which is the ordinary case on a small job.
+
+**Photographs are in the PDF.** `DocumentBlock` gained a `PHOTOGRAPH` kind that
+names the image by its SHA-256 rather than carrying bytes — the document model
+stays serialisable and hashable, and because the evidence store is
+content-addressed the document's own content hash therefore commits to exactly
+which image was on the page, which is stronger than embedding it. `renderPdf`
+takes a resolver, so the renderer is handed a way to fetch one tenant's bytes by
+hash and never the store itself. A JPEG passes straight through as `DCTDecode`
+— PDF's image filter *is* JPEG — so nothing is decoded and re-encoded, and each
+photograph is embedded once however many times it is referenced. A photograph
+the platform does not hold says so on the page rather than rendering as nothing.
+
+**Verified against a running server with a real evidence store**: the walk is
+recorded, an observed finding with no photograph is refused, a finding that
+obliges nothing is refused, a live 11kV cable raises `CON-0003` against a real
+activity, the highway order reports 64 days late, the planner cannot close their
+own hazard, the logistics plan returns three criticals and a major, and the
+report comes back as a three-page PDF with the photograph embedded under
+`DCTDecode`.
+
+**One defect found by opening the PDF and reading the viewer's tab.** It said
+*"Site visit report Š SV-001"*. A literal string outside a content stream is read
+as PDFDocEncoding, not the WinAnsi the fonts are declared with, and the two
+disagree above 0x7F. Pre-existing, and it would have turned "Société Générale"
+into noise on every document that client was ever sent. Document-level strings
+are now UTF-16BE behind a byte-order mark, which every reader understands; plain
+ASCII titles stay readable literals in the file.
+
+**Not built, and not to be claimed:** a drawn logistics plan; a bid-stage walk
+(there is no `BID` purpose, because that happens before a project exists and
+belongs with tender intake, which is tenant-scoped); multi-crane and multi-route
+plans through the console (the API takes them, the modal sets one of each);
+photographs in the HTML export, which states the hash instead because that
+renderer has no way to serve bytes.
+
+**A site finding is not a site observation.** An observation is about the state
+of the work and closes next week; a finding is about the state of the site and
+governs the job for years. Both exist and neither replaced the other — asserted
+by a test, because the temptation to collapse them is exactly how the long-lived
+one would be lost.
 
 ---
 

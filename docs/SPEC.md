@@ -1244,6 +1244,36 @@ None of these is built; each names what already exists that it would extend.
 | **T-WF-08** submission, award, zero-re-entry conversion | `BID_PACK_LOCKED`, `convertToProject`, and the chain-break exception. The immutable submission pack hash, the submission receipt and the award-delta report do not |
 | **8.4** stage gate Definition of Done | The lifecycle gate machinery and the replayable ledger. The seven-point tender gate itself is not declared, and it depends on the A2 gate work at item 6 below |
 
+## The site visit — walk to handover
+
+Not from the numbered workflow specifications; requested directly. Recorded here
+because it cuts across Concept, Design, Tender and Construction rather than
+sitting in one of them.
+
+**BUILT.** `backend/src/engines/sitevisit.ts`, six routes, 46 tests, a panel on
+the field screen, and a PDF report with the photographs in it.
+
+| Asked for | State |
+|---|---|
+| Site visit recorded with who attended | **BUILT** — purpose, date walked, attendees, weather |
+| Site design and constraints | **BUILT** as a findings register over twelve site categories, each finding declaring what it obliges |
+| Site logistics | **PARTIAL by design** — elements, cranes, routes and the largest delivery are recorded and seven checks run against them. The platform does **not** draw a logistics plan, and says so rather than producing a picture with no geometry behind it |
+| Ongoing planning from the visit to handover | **BUILT** — every finding carries the stage it is discharged at (`MOBILISATION · CONSTRUCTION · COMPLETION · HANDOVER`), and one that sequences work raises a real `Constraint` in the planning engine so the lookahead refuses to commit that activity |
+| Automated reports | **BUILT** — the report is rendered from the ledger on demand, so one pulled today reflects what has been discharged since the walk. Branded, hashed and recorded as an export like every other document |
+| Pictures from the site visit | **BUILT** — mandatory on anything observed on site, embedded in the PDF as `DCTDecode`, captioned with the finding they belong to, each embedded once however many times referenced |
+
+**The mechanism that makes it different from a PDF.** A permission carries the
+lead time the authority itself quotes and the date the work it unlocks starts.
+Those two facts and today's date answer the only question that matters — *is this
+already late* — in days rather than adjectives, and it is answered the day the
+finding is raised rather than the day somebody notices.
+
+**Not built:** a drawn logistics plan; a bid-stage walk (tenant-scoped, belongs
+with tender intake); multi-crane and multi-route plans through the console;
+photographs in the HTML export.
+
+---
+
 ## Implementation order
 
 Set against dependency rather than against the order the clauses arrived in.

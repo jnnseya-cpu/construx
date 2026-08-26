@@ -52,6 +52,12 @@ export async function field(root) {
   // delay forecast, where nothing could read it on its own.
   const productivity = await api.get(`/v1/projects/${projectId}/productivity`).catch(() => null);
 
+  // The site visit: findings that outlive the walk. Not the same thing as the
+  // observation register above — an observation is about the state of the work
+  // and closes next week, a finding is about the state of the site and governs
+  // the job until handover.
+  const site = await api.get(`/v1/projects/${projectId}/site-visits`).catch(() => null);
+
   // What this handset is still holding. The outbox retries on its own, but a
   // file whose operation the platform rejected outright waits for a record that
   // will never exist — and until this screen there was nothing that could tell
@@ -102,6 +108,14 @@ export async function field(root) {
               { id: 'work-order', label: 'Raise work order', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
               { id: 'walk', label: 'Log site observation', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
               { id: 'close-walk', label: 'Close an observation', permitted: can('FIELD_EXECUTION', 'U'), reason: blockedReason('FIELD_EXECUTION', 'U') },
+              // The site visit sits under LOOKAHEAD_CONSTRAINTS rather than
+              // FIELD_EXECUTION: a pre-construction walk happens before the
+              // phase that gates field work opens, and gating it there would
+              // lock the one screen somebody needs before they mobilise.
+              { id: 'site-visit', label: 'Record a site visit', permitted: can('LOOKAHEAD_CONSTRAINTS', 'C'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C') },
+              { id: 'finding', label: 'Raise a site finding', permitted: can('LOOKAHEAD_CONSTRAINTS', 'C'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C') },
+              { id: 'discharge', label: 'Discharge a finding', permitted: can('LOOKAHEAD_CONSTRAINTS', 'U'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'U') },
+              { id: 'logistics', label: 'Set the logistics plan', permitted: can('LOOKAHEAD_CONSTRAINTS', 'C'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C') },
             ]),
           )}
         </div>
@@ -347,6 +361,89 @@ export async function field(root) {
         </div>
       </div>
 
+      ${
+        site
+          ? html`
+            <div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">
+                Site visit — what the walk still obliges
+                ${site.latePermits.length > 0 ? badge(`${site.latePermits.length} late`, 'bad') : ''}
+              </h3>
+              <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                ${site.summary} A finding is not closed when the visit ends — it is closed when the thing it obliged has
+                been done, and some of them are not done until handover.
+              </p>
+
+              ${
+                site.latePermits.length > 0
+                  ? html`<div class="notice bad" style="margin:12px 17px">
+                      <div>
+                        <b>Permissions that cannot arrive in time</b>
+                        ${site.latePermits.map(
+                          (p) => html`<div style="margin-top:6px">${p.name} — ${p.authority}. ${p.note}</div>`,
+                        )}
+                      </div>
+                    </div>`
+                  : ''
+              }
+
+              ${table({
+                headers: ['Ref', 'Category', 'What was found', 'Where', 'Obliges', 'Discharged by', 'Owner', 'Photo', 'Status'],
+                rows: site.findings.map((f) => [
+                  html`${f.reference}${f.constraintReference ? badge(f.constraintReference, 'info') : ''}`,
+                  badge(humanise(f.category), 'neutral'),
+                  String(f.description).slice(0, 60) + (String(f.description).length > 60 ? '…' : ''),
+                  f.location,
+                  f.consequences.map((c) => humanise(c)).join(', '),
+                  badge(humanise(f.closesBy), f.closesBy === 'HANDOVER' ? 'warn' : ''),
+                  f.owner,
+                  f.hasPhotograph ? '📷' : badge(humanise(f.basis), ''),
+                  f.status === 'CLOSED' ? badge(`discharged ${f.daysOpen ?? 0}d`, 'ok') : badge('open', 'warn'),
+                ]),
+                empty: 'No site visit recorded',
+              })}
+
+              ${
+                site.logistics
+                  ? html`<div style="padding:0 17px 4px">
+                      <h3 style="margin-top:12px">Logistics plan, version ${site.logistics.version}</h3>
+                      ${
+                        site.logistics.warnings.length === 0
+                          ? html`<div class="metric-sub">Every check the platform can settle by arithmetic passes.</div>`
+                          : html`<div class="split-list">
+                              ${site.logistics.warnings.map(
+                                (w) => html`<div class="row">
+                                  <span class="lbl">${badge(humanise(w.severity), w.severity === 'CRITICAL' ? 'bad' : 'warn')} ${w.subject}</span>
+                                  <span class="val" style="font-size:12px;color:var(--text-3)">${w.detail}</span>
+                                </div>`,
+                              )}
+                            </div>`
+                      }
+                    </div>`
+                  : ''
+              }
+
+              ${
+                site.visits.length > 0
+                  ? html`<div style="padding:8px 17px 15px">
+                      <div class="split-list">
+                        ${site.visits.map(
+                          (v) => html`<div class="row">
+                            <span class="lbl">${v.reference} · ${humanise(v.purpose)} · ${date(v.visitedOn)} · ${v.attendees.join(', ')}</span>
+                            <span class="val">
+                              ${v.findings} finding${v.findings === 1 ? '' : 's'}
+                              <button class="btn quiet sm" data-report="${raw(v.reference)}">Report</button>
+                            </span>
+                          </div>`,
+                        )}
+                      </div>
+                    </div>`
+                  : ''
+              }
+            </div>`
+          : ''
+      }
+
       <div class="grid g2">
         <div class="card pad0">
           <h3 style="padding:15px 17px 0">Evidence register</h3>
@@ -433,7 +530,219 @@ export async function field(root) {
 
   // --- commands -------------------------------------------------------------
 
+  // The site visit vocabularies. Held here rather than fetched because the route
+  // schemas validate against the same closed lists on the server — a value the
+  // browser offers that the API refuses is caught by the console-forms test.
+  const opts = (values) => values.map((v) => ({ value: v, label: humanise(v) }));
+  const VISIT_PURPOSE = ['PRE_CONSTRUCTION', 'MOBILISATION', 'PROGRESS', 'PRE_HANDOVER'];
+  const FINDING_CATEGORY = [
+    'ACCESS_AND_EGRESS', 'TRAFFIC_AND_HIGHWAYS', 'GROUND_CONDITIONS', 'EXISTING_SERVICES',
+    'OVERHEAD_SERVICES', 'BOUNDARIES_AND_NEIGHBOURS', 'ENVIRONMENT_AND_ECOLOGY', 'EXISTING_STRUCTURES',
+    'SITE_ESTABLISHMENT', 'SECURITY', 'UTILITIES_AND_CONNECTIONS', 'WORKING_HOURS_AND_NOISE',
+  ];
+  const FINDING_CONSEQUENCE = ['PRICES', 'SEQUENCES', 'PERMITS', 'HAZARDS', 'DESIGNS'];
+  const FINDING_BASIS = ['OBSERVED', 'DOCUMENT', 'ADVISED'];
+  const CLOSES_BY = ['MOBILISATION', 'CONSTRUCTION', 'COMPLETION', 'HANDOVER'];
+
+  const openFindings = (site?.findings ?? []).filter((f) => f.status === 'OPEN');
+
   const COMMANDS = {
+    'site-visit': {
+      title: 'Record a site visit',
+      intent:
+        'Who walked it, when, and why. Everything found on the walk hangs off this record, and an unattributed walk ' +
+        'cannot be relied on eighteen months later when somebody asks who saw the overhead line.',
+      path: `/v1/projects/${projectId}/site-visits`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'purpose', label: 'Purpose', type: 'select', options: opts(VISIT_PURPOSE) },
+        { name: 'visitedOn', label: 'Walked on', type: 'date', max: today(),
+          hint: 'The day it was walked, not the day it was written up' },
+        { name: 'attendees', label: 'Who was there', type: 'text',
+          placeholder: 'Site Manager, Planner, Client’s agent', hint: 'Comma separated' },
+        { name: 'weather', label: 'Weather', type: 'text', required: false, placeholder: 'Dry, 11°C' },
+        { name: 'notes', label: 'Notes', type: 'textarea', rows: 2, required: false },
+      ],
+      transform: (v) => ({
+        purpose: v.purpose,
+        visitedOn: v.visitedOn,
+        attendees: String(v.attendees).split(',').map((a) => a.trim()).filter(Boolean),
+        ...(v.weather ? { weather: v.weather } : {}),
+        ...(v.notes ? { notes: v.notes } : {}),
+      }),
+    },
+
+    finding: {
+      title: 'Raise a site finding',
+      intent:
+        'Say what it obliges — it prices something, sequences something, needs a permission, is a hazard, or changes ' +
+        'the design. A finding that obliges none of those is a note, and notes are what fill a register until nobody ' +
+        'reads it. Seen on site? It needs a photograph.',
+      path: (v) => `/v1/projects/${projectId}/site-visits/${v.visitId}/findings`,
+      submitLabel: 'Raise',
+      fields: [
+        { name: 'visitId', label: 'Visit', type: 'select',
+          options: (site?.visits ?? []).map((v) => ({ value: v.visitId, label: `${v.reference} · ${v.visitedOn} · ${humanise(v.purpose)}` })) },
+        { name: 'category', label: 'Category', type: 'select', options: opts(FINDING_CATEGORY) },
+        { name: 'description', label: 'What was found', type: 'textarea', rows: 3,
+          placeholder: 'Site gate measures 3.1m between posts; a 16.5m artic cannot turn in off the main road' },
+        { name: 'location', label: 'Where', type: 'text', placeholder: 'North gate, off Ashworth Road' },
+        { name: 'basis', label: 'How it is known', type: 'select', options: opts(FINDING_BASIS),
+          hint: 'Observed on site needs a photograph; anything else has to name its source' },
+        { name: 'source', label: 'Source', type: 'text', required: false,
+          placeholder: 'Planning consent 2026/00412/FUL, condition 14' },
+        { name: 'consequences', label: 'What it obliges', type: 'select', options: opts(FINDING_CONSEQUENCE) },
+        { name: 'closesBy', label: 'Discharged by', type: 'select', options: opts(CLOSES_BY),
+          hint: 'A reinstatement is not discharged until handover, and stays on the register until it is' },
+        { name: 'owner', label: 'Who carries it', type: 'text', placeholder: 'Site Manager' },
+        { name: 'taskId', label: 'Activity it constrains', type: 'select', required: false,
+          options: [{ value: '', label: 'None' }, ...b.Task.map((t) => ({ value: t._refId, label: `${t.activityCode} · ${t.name}` }))],
+          hint: 'A finding that sequences work raises a real constraint against the activity' },
+        { name: 'permitName', label: 'Permission needed', type: 'text', required: false,
+          placeholder: 'Section 50 highway licence' },
+        { name: 'permitAuthority', label: 'Who grants it', type: 'text', required: false },
+        { name: 'permitLeadTimeDays', label: 'Lead time they quote (days)', type: 'number', required: false, min: 1 },
+        { name: 'permitRequiredBy', label: 'The work it unlocks starts', type: 'date', required: false,
+          hint: 'Lead time and this date are what tell you it is already late' },
+        { name: 'evidenceHash', label: 'Photograph', type: 'file', required: false,
+          nameInto: 'photographName',
+          hint: 'Required for anything observed on site' },
+      ],
+      transform: (v) => ({
+        category: v.category,
+        description: v.description,
+        location: v.location,
+        basis: v.basis,
+        ...(v.source ? { source: v.source } : {}),
+        consequences: [v.consequences],
+        closesBy: v.closesBy,
+        owner: v.owner,
+        ...(v.taskId ? { taskId: v.taskId } : {}),
+        ...(v.evidenceHash ? { evidenceHash: v.evidenceHash } : {}),
+        ...(v.permitName
+          ? {
+              permit: {
+                name: v.permitName,
+                authority: v.permitAuthority,
+                leadTimeDays: Number(v.permitLeadTimeDays),
+                requiredBy: v.permitRequiredBy,
+              },
+            }
+          : {}),
+      }),
+    },
+
+    discharge: {
+      title: 'Discharge a finding',
+      intent:
+        'What actually discharged it. "Done" closes the line and answers nothing when it is asked about later. ' +
+        'A finding that needed a permission or named a hazard needs the licence, the certificate or a photograph — ' +
+        'and cannot be closed by whoever raised it.',
+      path: (v) => `/v1/projects/${projectId}/site-findings/${v.findingId}/discharge`,
+      submitLabel: 'Discharge',
+      fields: [
+        { name: 'findingId', label: 'Finding', type: 'select',
+          options: openFindings.map((f) => ({ value: f.findingId, label: `${f.reference} · ${String(f.description).slice(0, 50)}` })) },
+        { name: 'discharge', label: 'What discharged it', type: 'textarea', rows: 3,
+          placeholder: 'Gate posts moved to 4.8m and the kerb radius eased; swept path re-checked against a 16.5m artic' },
+        { name: 'evidenceHash', label: 'Evidence', type: 'file', required: false,
+          hint: 'Required where the finding needed a permission or named a hazard' },
+      ],
+      transform: (v) => ({ discharge: v.discharge, ...(v.evidenceHash ? { evidenceHash: v.evidenceHash } : {}) }),
+    },
+
+    logistics: {
+      title: 'Set the site logistics plan',
+      intent:
+        'The platform does not draw a logistics plan — a drawing is a drawing. It records the elements and the ' +
+        'dimensions, and runs the checks arithmetic can settle: whether the jib crosses the boundary, whether it can ' +
+        'reach the overhead line, and whether the longest delivery can actually get down the road.',
+      path: `/v1/projects/${projectId}/logistics-plan`,
+      submitLabel: 'Set',
+      fields: [
+        { name: 'elements', label: 'What is on the plan', type: 'text',
+          placeholder: 'GATE, HOARDING, WELFARE, STORAGE, WHEEL_WASH',
+          hint: 'Comma separated. Welfare is a legal duty from day one, so a plan without it is flagged.' },
+        { name: 'craneReference', label: 'Crane', type: 'text', required: false, placeholder: 'TC1' },
+        { name: 'craneType', label: 'Crane type', type: 'select', required: false,
+          options: [{ value: '', label: '—' }, ...opts(['TOWER', 'MOBILE', 'CRAWLER'])] },
+        { name: 'radiusMetres', label: 'Working radius (m)', type: 'number', required: false, min: 0 },
+        { name: 'distanceToBoundaryMetres', label: 'Slew centre to boundary (m)', type: 'number', required: false, min: 0,
+          hint: 'A radius greater than this puts the jib over the neighbour’s land' },
+        { name: 'tipHeightMetres', label: 'Tip height (m)', type: 'number', required: false, min: 0 },
+        { name: 'overheadDistanceMetres', label: 'Distance to overhead line (m)', type: 'number', required: false, min: 0 },
+        { name: 'overheadExclusionMetres', label: 'Exclusion the network operator stated (m)', type: 'number', required: false, min: 0,
+          hint: 'Their figure, not one derived from the voltage — you ask the DNO' },
+        { name: 'routeReference', label: 'Access route', type: 'text', required: false, placeholder: 'R1' },
+        { name: 'routeDescription', label: 'Route', type: 'text', required: false,
+          placeholder: 'Ashworth Road via the railway bridge' },
+        { name: 'maxVehicleLengthMetres', label: 'Route length limit (m)', type: 'number', required: false, min: 0 },
+        { name: 'maxHeightMetres', label: 'Route height limit (m)', type: 'number', required: false, min: 0 },
+        { name: 'maxWeightTonnes', label: 'Route weight limit (t)', type: 'number', required: false, min: 0 },
+        { name: 'deliveryDescription', label: 'Largest delivery', type: 'text', required: false,
+          placeholder: 'Precast stair flights' },
+        { name: 'lengthMetres', label: 'Its length (m)', type: 'number', required: false, min: 0 },
+        { name: 'heightMetres', label: 'Its height (m)', type: 'number', required: false, min: 0 },
+        { name: 'weightTonnes', label: 'Its weight (t)', type: 'number', required: false, min: 0 },
+      ],
+      transform: (v) => {
+        const elements = String(v.elements)
+          .split(',')
+          .map((token) => token.trim().toUpperCase().replace(/[^A-Z_]/g, '_'))
+          .filter(Boolean)
+          .map((type, i) => ({ type, reference: `E${i + 1}`, description: humanise(type) }));
+
+        const crane =
+          v.craneReference && v.craneType
+            ? [
+                {
+                  reference: v.craneReference,
+                  type: v.craneType,
+                  radiusMetres: Number(v.radiusMetres ?? 0),
+                  distanceToBoundaryMetres: Number(v.distanceToBoundaryMetres ?? 0),
+                  tipHeightMetres: Number(v.tipHeightMetres ?? 0),
+                  ...(v.overheadDistanceMetres && v.overheadExclusionMetres
+                    ? {
+                        overhead: {
+                          distanceMetres: Number(v.overheadDistanceMetres),
+                          exclusionMetres: Number(v.overheadExclusionMetres),
+                        },
+                      }
+                    : {}),
+                },
+              ]
+            : [];
+
+        const route = v.routeReference
+          ? [
+              {
+                reference: v.routeReference,
+                description: v.routeDescription ?? v.routeReference,
+                ...(v.maxVehicleLengthMetres ? { maxVehicleLengthMetres: Number(v.maxVehicleLengthMetres) } : {}),
+                ...(v.maxHeightMetres ? { maxHeightMetres: Number(v.maxHeightMetres) } : {}),
+                ...(v.maxWeightTonnes ? { maxWeightTonnes: Number(v.maxWeightTonnes) } : {}),
+              },
+            ]
+          : [];
+
+        return {
+          elements,
+          ...(crane.length > 0 ? { cranes: crane } : {}),
+          ...(route.length > 0 ? { routes: route } : {}),
+          ...(v.deliveryDescription
+            ? {
+                largestDelivery: {
+                  description: v.deliveryDescription,
+                  lengthMetres: Number(v.lengthMetres ?? 0),
+                  heightMetres: Number(v.heightMetres ?? 0),
+                  weightTonnes: Number(v.weightTonnes ?? 0),
+                },
+              }
+            : {}),
+        };
+      },
+    },
+
     progress: {
       title: 'Record progress',
       intent: 'Progress is not accepted without evidence, and it cannot go backwards.',
@@ -529,6 +838,28 @@ export async function field(root) {
   // is being lost. The bytes exist nowhere else — that is the whole reason this
   // panel had to be built.
   root.addEventListener('click', async (event) => {
+    // The site visit report. Rendered from the ledger every time rather than
+    // stored, so a report pulled today reflects what has been discharged since
+    // the walk — which is the point of the register outliving the visit.
+    const report = event.target.closest('[data-report]');
+    if (report) {
+      const visit = (site?.visits ?? []).find((v) => v.reference === report.dataset.report);
+      if (!visit) return;
+      report.disabled = true;
+      try {
+        const { filename } = await api.download(
+          `/v1/projects/${projectId}/site-visits/${visit.visitId}/report.pdf`,
+          { audience: 'INTERNAL' },
+        );
+        toast('Report downloaded', `${filename} — findings, what is late, the logistics checks and the photographs.`, 'ok');
+      } catch (error) {
+        toast('Report not produced', error.message, 'err');
+      } finally {
+        report.disabled = false;
+      }
+      return;
+    }
+
     const button = event.target.closest('[data-discard]');
     if (!button) return;
     const file = carrying.find((entry) => entry.hash === button.dataset.discard);

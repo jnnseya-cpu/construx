@@ -164,6 +164,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   ProgressMeasurement: { area: 'FIELD_EXECUTION' },
   SiteDiary: { area: 'FIELD_EXECUTION' },
   SiteObservation: { area: 'FIELD_EXECUTION' },
+  // The site visit lives with constraints rather than with field execution: it
+  // is walked before construction starts, and FIELD_EXECUTION is phase-gated to
+  // CONSTRUCTION and COMMISSIONING. Its output is constraints, and that is the
+  // area that already owns them.
+  SiteVisit: { area: 'LOOKAHEAD_CONSTRAINTS' },
+  SiteFinding: { area: 'LOOKAHEAD_CONSTRAINTS' },
+  SiteLogisticsPlan: { area: 'LOOKAHEAD_CONSTRAINTS' },
   Snag: { area: 'QUALITY_COMMISSIONING' },
   Defect: { area: 'QUALITY_COMMISSIONING' },
   CommissioningTest: { area: 'QUALITY_COMMISSIONING' },

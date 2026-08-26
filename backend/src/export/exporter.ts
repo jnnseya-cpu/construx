@@ -5,7 +5,7 @@ import type { GoldenThreadLedger } from '../goldenthread/ledger.ts';
 import { replayProject, replayTimeline } from '../goldenthread/replay.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import { formatMoney } from '../domain/locale.ts';
-import { renderPdf } from './pdf.ts';
+import { renderPdf, type ImageResolver } from './pdf.ts';
 
 /**
  * Export service.
@@ -45,7 +45,21 @@ export type DocumentBlock =
   | { kind: 'KEY_VALUES'; rows: Array<{ label: string; value: string }> }
   | { kind: 'TABLE'; caption?: string; headers: string[]; rows: string[][] }
   | { kind: 'LIST'; ordered: boolean; items: string[] }
-  | { kind: 'ATTESTATION'; rootHash: string; chainHead: string; instructions: string };
+  | { kind: 'ATTESTATION'; rootHash: string; chainHead: string; instructions: string }
+  /**
+   * A photograph held in the evidence store, named by its hash rather than
+   * carried as bytes.
+   *
+   * The bytes stay out of the document model on purpose. `ExportDocument` is
+   * serialised to JSON, hashed to produce `contentHash`, and rendered to HTML —
+   * none of which wants a megabyte of JPEG inside it. Naming the photograph by
+   * its SHA-256 is also *stronger* than embedding it: the store is
+   * content-addressed, so the hash in the block identifies exactly one set of
+   * bytes, and the document's own content hash therefore commits to precisely
+   * which image was on the page. The PDF renderer resolves the bytes; the JSON
+   * and HTML forms state the hash, which is the honest thing they can show.
+   */
+  | { kind: 'PHOTOGRAPH'; caption: string; evidenceHash: string; takenOn?: string };
 
 export type ExportDocument = {
   id: string;
@@ -285,6 +299,39 @@ export class ExportService {
     return document;
   }
 
+  /**
+   * Brand, hash and record a document whose blocks the caller has built.
+   *
+   * `projectReport` and `auditExport` below read the ledger and assemble their
+   * own blocks, which is right for documents this file owns. A site visit
+   * report is assembled by the engine that knows what a finding is, and giving
+   * the exporter a second opinion about site findings would put that knowledge
+   * in two places. This is the seam: the domain builds the blocks, the exporter
+   * does what only it should — branding, redaction, the content hash and the
+   * two ledger events that make the document provable.
+   */
+  document(
+    auth: AuthContext,
+    projectId: string,
+    input: {
+      title: string;
+      subtitle?: string;
+      blocks: DocumentBlock[];
+      audience: ExportAudience;
+      format?: ExportFormat;
+      correlationId: string;
+    },
+  ): ExportDocument {
+    return this.#finalise(auth, projectId, {
+      title: input.title,
+      subtitle: input.subtitle,
+      audience: input.audience,
+      format: input.format ?? 'PDF',
+      blocks: input.blocks,
+      correlationId: input.correlationId,
+    });
+  }
+
   /** Project status report — the routine client-facing document. */
   projectReport(
     auth: AuthContext,
@@ -485,8 +532,8 @@ export class ExportService {
    * a reader holds is the content that was attested, rather than whatever a
    * browser's print pipeline made of it.
    */
-  toPdf(document: ExportDocument): Uint8Array {
-    return renderPdf(document);
+  toPdf(document: ExportDocument, resolveImage?: ImageResolver): Uint8Array {
+    return renderPdf(document, resolveImage);
   }
 
   toHtml(document: ExportDocument): string {
@@ -509,6 +556,16 @@ export class ExportService {
               `<table>${block.caption ? `<caption>${escape(block.caption)}</caption>` : ''}` +
               `<thead><tr>${block.headers.map((h) => `<th>${escape(h)}</th>`).join('')}</tr></thead>` +
               `<tbody>${block.rows.map((r) => `<tr>${r.map((c) => `<td>${escape(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+            );
+          case 'PHOTOGRAPH':
+            // The hash, not the image. This renderer produces a self-contained
+            // string with no way to serve bytes, and an `<img>` pointing at an
+            // endpoint the reader may not be able to reach would be a broken
+            // picture where a plain statement of what was photographed works.
+            return (
+              `<figure class="photograph"><figcaption>${escape(block.caption)}` +
+              `${block.takenOn ? ` — ${escape(block.takenOn)}` : ''}</figcaption>` +
+              `<p><code>${escape(block.evidenceHash)}</code></p></figure>`
             );
           case 'ATTESTATION':
             return (

@@ -277,10 +277,21 @@ export function decodeLogo(logoRef: string | undefined): DecodedImage | undefine
     return undefined;
   }
 
-  if (parsed.mime === 'image/jpeg' || parsed.mime === 'image/jpg') return readJpeg(parsed.bytes);
-  if (parsed.mime === 'image/png') return readPng(parsed.bytes);
+  return decodeImage(parsed.mime, parsed.bytes, 'A logo');
+}
 
-  throw new UnsupportedImageError(
-    `A logo of type ${parsed.mime} cannot be placed on a PDF. Supply a PNG or a JPEG.`,
-  );
+/**
+ * Decode bytes that did not arrive as a data URI.
+ *
+ * A site photograph comes out of the evidence store as bytes and a content
+ * type, never as a data URI, and base64-wrapping megabytes of JPEG only to
+ * unwrap it again would be work done to fit a signature. `what` names the thing
+ * in the refusal, because "a logo of type image/heic" is the wrong sentence
+ * when somebody has attached a photograph from a phone.
+ */
+export function decodeImage(mime: string, bytes: Buffer, what = 'An image'): DecodedImage {
+  if (mime === 'image/jpeg' || mime === 'image/jpg') return readJpeg(bytes);
+  if (mime === 'image/png') return readPng(bytes);
+
+  throw new UnsupportedImageError(`${what} of type ${mime} cannot be placed on a PDF. Supply a PNG or a JPEG.`);
 }
