@@ -61,10 +61,18 @@ export async function procurement(root) {
     .catch(() => ({ schedules: [], summary: '' }));
   const openSchedules = bill.schedules.filter((s) => s.status === 'OPEN');
 
+  // T-WF-04. Which revision of the pack each firm actually holds.
+  const enquiries = await api
+    .get(`/v1/projects/${projectId}/enquiries`)
+    .catch(() => ({ enquiries: [], summary: '' }));
+  const liveEnquiries = enquiries.enquiries.filter((e) => e.status !== 'CLOSED');
+  const closedEnquiries = enquiries.enquiries.filter((e) => e.status === 'CLOSED');
+
   const openComparisons = intel.comparisons.filter((c) => c.status === 'OPEN');
   const unanswered = intel.clarifications.filter((c) => c.status === 'OPEN');
   const NO_OPEN_COMPARISON = 'No comparison is open — open one, or the last was closed for adjudication';
   const NO_OPEN_SCHEDULE = 'No measurement schedule is open — open one, or the last was frozen';
+  const NO_LIVE_ENQUIRY = 'No enquiry is live — open one, or the last closed for returns';
 
   // Who was asked against who answered. Every fact was already on the record
   // and nothing stood them beside each other, which from a screen is
@@ -122,6 +130,28 @@ export async function procurement(root) {
             { id: 'issue', label: 'Issue RFQ', permitted: can('PROCUREMENT_AWARD', 'U'), reason: blockedReason('PROCUREMENT_AWARD', 'U') },
             { id: 'submission', label: 'Record submission', permitted: can('SUPPLIER_SUBMISSION', 'C'), reason: blockedReason('SUPPLIER_SUBMISSION', 'C') },
             { id: 'award', label: 'Award', permitted: can('PROCUREMENT_AWARD', 'A'), reason: blockedReason('PROCUREMENT_AWARD', 'A') },
+            { id: 'enquiry', label: 'Open enquiry', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
+            { id: 'packRevision', label: 'Compose pack revision',
+              permitted: can('PROCUREMENT_AWARD', 'C') && liveEnquiries.length > 0,
+              reason: blockedReason('PROCUREMENT_AWARD', 'C') ?? NO_LIVE_ENQUIRY },
+            { id: 'approvePack', label: 'Approve the pack',
+              permitted: can('PROCUREMENT_AWARD', 'A') && liveEnquiries.some((e) => !e.approved),
+              reason: blockedReason('PROCUREMENT_AWARD', 'A') ?? 'Every composed revision has been approved' },
+            { id: 'issueEnquiry', label: 'Issue to bidders',
+              permitted: can('PROCUREMENT_AWARD', 'I') && liveEnquiries.some((e) => e.approved),
+              reason: blockedReason('PROCUREMENT_AWARD', 'I') ?? 'No approved revision is waiting to go out' },
+            { id: 'bidderState', label: 'Record a bidder response',
+              permitted: can('PROCUREMENT_AWARD', 'U') && liveEnquiries.some((e) => e.issued > 0),
+              reason: blockedReason('PROCUREMENT_AWARD', 'U') ?? 'Nothing has been issued to a bidder yet' },
+            { id: 'revokeBidder', label: 'Remove a bidder',
+              permitted: can('PROCUREMENT_AWARD', 'A') && enquiries.enquiries.some((e) => e.issued > 0),
+              reason: blockedReason('PROCUREMENT_AWARD', 'A') ?? 'Nothing has been issued to a bidder yet' },
+            { id: 'closeEnquiry', label: 'Close the return period',
+              permitted: can('PROCUREMENT_AWARD', 'A') && liveEnquiries.some((e) => e.status === 'ISSUED'),
+              reason: blockedReason('PROCUREMENT_AWARD', 'A') ?? 'No enquiry is out with bidders' },
+            { id: 'lateReturn', label: 'Accept a late return',
+              permitted: can('PROCUREMENT_AWARD', 'A') && closedEnquiries.length > 0,
+              reason: blockedReason('PROCUREMENT_AWARD', 'A') ?? 'No return period has closed' },
             { id: 'schedule', label: 'Open measurement schedule', permitted: can('BOQ_TAKEOFF', 'C'), reason: blockedReason('BOQ_TAKEOFF', 'C') },
             { id: 'items', label: 'Record measured items',
               permitted: can('BOQ_TAKEOFF', 'U') && openSchedules.length > 0,
@@ -293,6 +323,65 @@ export async function procurement(root) {
                         ${reconciliation.uninvitedReturns.join(', ')} — either a data fault or a procurement irregularity, and both need somebody to look.
                       </div>
                     </div></div>`
+              }
+            </div>`
+      }
+
+      ${
+        enquiries.enquiries.length === 0
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <h3 style="padding:15px 17px 0">Enquiries — which pack each firm is holding</h3>
+              <div style="padding:8px 17px 0"><div class="metric-sub">
+                An addendum goes out on the Tuesday and two of five bidders price the Monday pack. Nothing in the returns says so,
+                and the comparison then ranks five prices for two different scopes. Every issue record names the exact revision and
+                its content hash, so which pack a firm holds is a fact rather than an assumption.
+              </div></div>
+              ${table({
+                headers: ['Enquiry', 'Package', 'Rev', 'Approved', 'Issued', 'Acknowledged', 'Declined', 'Removed', 'Return by', 'State'],
+                align: ['', '', 'num', '', 'num', 'num', 'num', 'num', '', ''],
+                rows: enquiries.enquiries.map((e) => [
+                  e.reference,
+                  e.exception ? html`${e.title} ${badge('issued short', 'warn')}` : e.title,
+                  e.revision || '—',
+                  e.approved ? badge('approved', 'ok') : badge('draft', 'warn'),
+                  e.issued || '—',
+                  e.acknowledged || '—',
+                  e.declined || '—',
+                  e.revoked || '—',
+                  date(e.returnDeadline),
+                  e.lateReturns > 0
+                    ? html`${badge(badgeText(e.status), statusTone(e.status))} ${badge(`${e.lateReturns} late`, 'warn')}`
+                    : badge(badgeText(e.status), statusTone(e.status)),
+                ]),
+              })}
+              ${
+                enquiries.enquiries.some((e) => e.stale.length > 0)
+                  ? html`<div style="padding:12px 17px 0"><div class="notice err">
+                      <div>
+                        <b>Firms are pricing a superseded pack.</b><br>
+                        ${enquiries.enquiries
+                          .filter((e) => e.stale.length > 0)
+                          .map((e) => `${e.reference}: ${e.stale.join(', ')}`)
+                          .join(' · ')}<br>
+                        Until each has been issued the current revision and acknowledged it, their price is for a different scope
+                        — and the comparison will not say so, because the number looks like every other number.
+                      </div>
+                    </div></div>`
+                  : ''
+              }
+              ${
+                enquiries.enquiries.some((e) => e.exception)
+                  ? html`<div style="padding:12px 17px 15px"><div class="notice warn">
+                      <div>
+                        <b>An enquiry went out short of a mandatory document.</b><br>
+                        ${enquiries.enquiries
+                          .filter((e) => e.exception)
+                          .map((e) => `${e.reference}: no ${e.exception.missing.join(', no ').toLowerCase().replace(/_/g, ' ')} — ${e.exception.reason} (${e.exception.authorisedBy})`)
+                          .join(' · ')}
+                      </div>
+                    </div></div>`
+                  : ''
               }
             </div>`
       }
@@ -761,6 +850,179 @@ export async function procurement(root) {
         ...rest,
         conditions: String(conditions ?? '').split('\n').map((x) => x.trim()).filter(Boolean),
       }),
+    },
+
+    // ---- T-WF-04 -----------------------------------------------------------
+
+    enquiry: {
+      title: 'Open an enquiry',
+      intent:
+        'The pack that goes to the market, and the record of which revision of it each firm actually holds. Everything else on ' +
+        'this enquiry hangs off that one fact.',
+      path: `/v1/projects/${projectId}/enquiries`,
+      submitLabel: 'Open',
+      fields: [
+        { name: 'packageReference', label: 'Package', type: 'text' },
+        { name: 'title', label: 'What is being bought', type: 'text' },
+        { name: 'returnDeadline', label: 'Returns by', type: 'datetime-local' },
+      ],
+      transform: ({ returnDeadline, ...rest }) => ({ ...rest, returnDeadline: new Date(returnDeadline).toISOString() }),
+    },
+
+    packRevision: {
+      title: 'Compose a pack revision',
+      intent:
+        'The first is revision 1; every later one is the addendum. Composing after issue makes every firm’s acknowledgement stale ' +
+        'by name, which is the single thing that stops five prices being compared across two different scopes.',
+      path: (collected) => `/v1/projects/${projectId}/enquiries/${collected.enquiryId}/revisions`,
+      submitLabel: 'Compose',
+      fields: [
+        { name: 'enquiryId', label: 'Enquiry', type: 'select',
+          options: liveEnquiries.map((e) => ({ value: e.enquiryId, label: `${e.reference} · ${e.title}` })) },
+        { name: 'documents', label: 'Documents', type: 'textarea', rows: 6,
+          hint: 'One per line: reference, title, revision, kind. Kind is scope, pricing_schedule, drawings, specification, programme or contract_terms' },
+        { name: 'note', label: 'What changed', type: 'text', required: false },
+        { name: 'missing', label: 'Issuing without', type: 'text', required: false,
+          hint: 'Comma-separated kinds. Only where the pack genuinely lacks them' },
+        { name: 'reason', label: 'Why it is going out short', type: 'textarea', rows: 2, required: false },
+        { name: 'authorisedBy', label: 'Who is accepting that risk', type: 'text', required: false },
+      ],
+      transform: ({ enquiryId, documents, note, missing, reason, authorisedBy }) => ({
+        documents: String(documents ?? '')
+          .split('\n')
+          .map((line) => line.split(',').map((part) => part.trim()))
+          .filter((parts) => parts[0] && parts[3])
+          .map((parts) => ({
+            reference: parts[0],
+            title: parts[1] || parts[0],
+            revision: parts[2] || 'A',
+            kind: String(parts[3]).toUpperCase(),
+          })),
+        ...(String(note ?? '').trim() ? { note } : {}),
+        ...(String(missing ?? '').trim()
+          ? {
+              exception: {
+                missing: String(missing).split(',').map((x) => x.trim().toUpperCase()).filter(Boolean),
+                reason: String(reason ?? ''),
+                authorisedBy: String(authorisedBy ?? ''),
+              },
+            }
+          : {}),
+      }),
+    },
+
+    approvePack: {
+      title: 'Approve the pack for issue',
+      intent:
+        'Approval is somebody taking responsibility for what is about to bind every firm that prices it — so it is never a second ' +
+        'click by the person who assembled it, even where that person holds the authority.',
+      path: (collected) => `/v1/projects/${projectId}/enquiries/${collected.enquiryId}/approve`,
+      submitLabel: 'Approve',
+      fields: [
+        { name: 'enquiryId', label: 'Enquiry', type: 'select',
+          options: liveEnquiries
+            .filter((e) => !e.approved)
+            .map((e) => ({ value: e.enquiryId, label: `${e.reference} · rev ${e.revision}` })) },
+      ],
+      transform: () => ({}),
+    },
+
+    issueEnquiry: {
+      title: 'Issue to bidders',
+      intent:
+        'Each firm gets its own record naming the revision it holds and that revision’s content hash. A firm whose access was ' +
+        'revoked is refused here — re-inviting one is a decision, not a side effect of a distribution list.',
+      path: (collected) => `/v1/projects/${projectId}/enquiries/${collected.enquiryId}/issue`,
+      submitLabel: 'Issue',
+      fields: [
+        { name: 'enquiryId', label: 'Enquiry', type: 'select',
+          options: liveEnquiries
+            .filter((e) => e.approved)
+            .map((e) => ({ value: e.enquiryId, label: `${e.reference} · rev ${e.revision}` })) },
+        { name: 'recipients', label: 'Firms', type: 'textarea', rows: 4, hint: 'One per line: party-id, name' },
+      ],
+      transform: ({ enquiryId, recipients }) => ({
+        recipients: String(recipients ?? '')
+          .split('\n')
+          .map((line) => line.split(',').map((part) => part.trim()))
+          .filter((parts) => parts[0])
+          .map((parts) => ({ partyId: parts[0], name: parts[1] || parts[0] })),
+      }),
+    },
+
+    bidderState: {
+      title: 'Record a bidder response',
+      intent:
+        'Forward only. A delivery receipt arriving after an acknowledgement is an out-of-order webhook, not a firm ' +
+        'un-acknowledging, so the later state stands.',
+      path: (collected) => `/v1/projects/${projectId}/enquiries/${collected.enquiryId}/state`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'enquiryId', label: 'Enquiry', type: 'select',
+          options: liveEnquiries
+            .filter((e) => e.issued > 0)
+            .map((e) => ({ value: e.enquiryId, label: `${e.reference} · ${e.title}` })) },
+        { name: 'partyId', label: 'Firm', type: 'text' },
+        { name: 'state', label: 'What happened', type: 'select',
+          options: [
+            { value: 'DELIVERED', label: 'Delivered' },
+            { value: 'OPENED', label: 'Opened' },
+            { value: 'ACKNOWLEDGED', label: 'Acknowledged — they have the revision they hold' },
+            { value: 'DECLINED', label: 'Declined' },
+          ] },
+      ],
+      transform: ({ enquiryId, ...rest }) => rest,
+    },
+
+    revokeBidder: {
+      title: 'Remove a bidder from the enquiry',
+      intent:
+        'The issue evidence stays. That firm did receive the revision it received, and this is an additional fact rather than a ' +
+        'correction of the earlier one.',
+      path: (collected) => `/v1/projects/${projectId}/enquiries/${collected.enquiryId}/revoke`,
+      submitLabel: 'Remove',
+      fields: [
+        { name: 'enquiryId', label: 'Enquiry', type: 'select',
+          options: enquiries.enquiries
+            .filter((e) => e.issued > 0)
+            .map((e) => ({ value: e.enquiryId, label: `${e.reference} · ${e.title}` })) },
+        { name: 'partyId', label: 'Firm', type: 'text' },
+        { name: 'reason', label: 'Why', type: 'textarea', rows: 2 },
+      ],
+      transform: ({ enquiryId, ...rest }) => rest,
+    },
+
+    closeEnquiry: {
+      title: 'Close the return period',
+      intent:
+        'After this the workspace takes nothing without a person putting their name to it. Declined and silent are reported ' +
+        'separately, because a supply chain is read from the difference between them.',
+      path: (collected) => `/v1/projects/${projectId}/enquiries/${collected.enquiryId}/close`,
+      submitLabel: 'Close',
+      fields: [
+        { name: 'enquiryId', label: 'Enquiry', type: 'select',
+          options: liveEnquiries
+            .filter((e) => e.status === 'ISSUED')
+            .map((e) => ({ value: e.enquiryId, label: `${e.reference} · ${e.title}` })) },
+      ],
+      transform: () => ({}),
+    },
+
+    lateReturn: {
+      title: 'Accept a late return',
+      intent:
+        'Not refused — refusing outright only moves the decision into an email. It costs an approval and a named authority, and it ' +
+        'sits on the record beside every return that met the date.',
+      path: (collected) => `/v1/projects/${projectId}/enquiries/${collected.enquiryId}/late`,
+      submitLabel: 'Accept',
+      fields: [
+        { name: 'enquiryId', label: 'Enquiry', type: 'select',
+          options: closedEnquiries.map((e) => ({ value: e.enquiryId, label: `${e.reference} · ${e.title}` })) },
+        { name: 'partyId', label: 'Firm', type: 'text' },
+        { name: 'reason', label: 'Why it is being accepted', type: 'textarea', rows: 2 },
+        { name: 'authority', label: 'Under whose authority', type: 'text' },
+      ],
+      transform: ({ enquiryId, ...rest }) => rest,
     },
 
     // ---- T-WF-03 -----------------------------------------------------------

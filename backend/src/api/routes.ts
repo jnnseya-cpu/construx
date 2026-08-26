@@ -53,6 +53,7 @@ import * as handover from '../engines/handover.ts';
 import * as planning from '../engines/planning.ts';
 import * as sitevisit from '../engines/sitevisit.ts';
 import * as award from '../domain/award.ts';
+import * as enquiry from '../domain/enquiry.ts';
 import * as measurement from '../domain/measurement.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as tenderintel from '../domain/tenderintel.ts';
@@ -6400,6 +6401,148 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       tenderreview.assessAddendum(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
+  },
+
+  // ------------------------------ the enquiry pack and who holds it (T-WF-04)
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/enquiries',
+    description: 'Every enquiry, its current revision, and which firms hold a superseded pack',
+    handler: (platform, ctx) => enquiry.enquiryPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/enquiries',
+    description: 'Open an enquiry against a package',
+    schema: {
+      type: 'object',
+      required: ['packageReference', 'title', 'returnDeadline'],
+      properties: { packageReference: stringField, title: stringField, returnDeadline: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => enquiry.openEnquiry(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/enquiries/:enquiryId/revisions',
+    description: 'Compose a revision of the pack; after issue this is the addendum',
+    schema: {
+      type: 'object',
+      required: ['documents'],
+      properties: {
+        documents: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['reference', 'title', 'revision', 'kind'],
+            properties: { reference: stringField, title: stringField, revision: stringField, kind: stringField },
+            additionalProperties: false,
+          },
+        },
+        exception: {
+          type: 'object',
+          required: ['missing', 'reason', 'authorisedBy'],
+          properties: {
+            missing: { type: 'array', items: { type: 'string' } },
+            reason: stringField,
+            authorisedBy: stringField,
+          },
+          additionalProperties: false,
+        },
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      enquiry.composeRevision(projectContext(platform, ctx), ctx.params.enquiryId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/enquiries/:enquiryId/approve',
+    description: 'Approve the current revision for issue — never by the person who assembled it',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => enquiry.approveRevision(projectContext(platform, ctx), ctx.params.enquiryId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/enquiries/:enquiryId/issue',
+    description: 'Issue the approved revision, recording per firm which revision they hold',
+    schema: {
+      type: 'object',
+      required: ['recipients'],
+      properties: {
+        recipients: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['partyId', 'name'],
+            properties: { partyId: stringField, name: stringField },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => enquiry.issueTo(projectContext(platform, ctx), ctx.params.enquiryId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/enquiries/:enquiryId/state',
+    description: 'Record delivery, opening, acknowledgement or decline for one firm',
+    schema: {
+      type: 'object',
+      required: ['partyId', 'state'],
+      properties: {
+        partyId: stringField,
+        state: { type: 'string', enum: [...enquiry.ISSUE_STATE] },
+        at: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      enquiry.recordIssueState(projectContext(platform, ctx), ctx.params.enquiryId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/enquiries/:enquiryId/revoke',
+    description: 'Remove a firm from the enquiry; the issue evidence is preserved',
+    schema: {
+      type: 'object',
+      required: ['partyId', 'reason'],
+      properties: { partyId: stringField, reason: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      enquiry.revokeAccess(projectContext(platform, ctx), ctx.params.enquiryId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/enquiries/:enquiryId/bidder/:partyId',
+    description: 'What one firm may see — its own pack revision, and nothing about the field',
+    handler: (platform, ctx) =>
+      enquiry.bidderView(projectContext(platform, ctx), ctx.params.enquiryId as string, ctx.params.partyId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/enquiries/:enquiryId/close',
+    description: 'Close the return period',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => enquiry.closeReturns(projectContext(platform, ctx), ctx.params.enquiryId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/enquiries/:enquiryId/late',
+    description: 'Accept a return after the deadline, under a named authority',
+    schema: {
+      type: 'object',
+      required: ['partyId', 'reason', 'authority'],
+      properties: { partyId: stringField, reason: stringField, authority: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      enquiry.acceptLateReturn(projectContext(platform, ctx), ctx.params.enquiryId as string, body(ctx)),
   },
 
   // --------------------------------------- measurement and the bill (T-WF-03)

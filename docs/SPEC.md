@@ -1228,7 +1228,7 @@ every record already carrying the old name, and the standing principle is that
 nothing is removed or replaced. The mapping is asserted by a test so it stays
 readable against the ledger.
 
-### 8.3 (continued) T-WF-04, T-WF-05 and 8.4 — received, not built
+### 8.3 (continued) T-WF-05 and 8.4 — received, not built
 
 Recorded so the scope is visible and nothing here is mistaken for present.
 None of these is built; each names what already exists that it would extend.
@@ -1237,7 +1237,7 @@ None of these is built; each names what already exists that it would extend.
 |---|---|
 | ~~**T-WF-02** documents, scope gap, contract risk~~ | **BUILT** — see below |
 | ~~**T-WF-03** measurement, BoQ, estimate schedule~~ | **BUILT** — see below |
-| **T-WF-04** package strategy, enquiry, bidder issue | `TENDER_PACKAGE_COMPOSED`, the RFQ engine, the supplier register with prequalification. Pack revisioning, per-recipient issue evidence and the return workspace lock do not |
+| ~~**T-WF-04** package strategy, enquiry, bidder issue~~ | **BUILT** — see below |
 | **T-WF-05** supply-chain and self-delivery pricing routes | `assignScheduleRoute` (SUPPLY_CHAIN / SELF_PRICE), `analyseReturns`, `consolidateMasterPricing`. Normalisation to a common basis with a visible adjustment bridge does not |
 | ~~**T-WF-06** clarifications, addenda, return intelligence~~ | **BUILT** — see below |
 | ~~**T-WF-07** commercial adjudication and governance~~ | **BUILT** — see below |
@@ -1300,6 +1300,66 @@ qualification into the submitted bid pack's qualifications schedule.
 register after a document arrives appends rather than being refused as "already
 exists". Addendum impact is written as `ADDENDUM_IMPACT_ASSESSED`, which is the
 name T-WF-06 gives the same act — one event, not two.
+
+---
+
+### 8.3 (continued) T-WF-04 — Package strategy, enquiry composition and bidder issue
+
+**BUILT.** `backend/src/domain/enquiry.ts`, ten routes, 41 tests, and a panel on
+the Tender & Procurement screen with eight commands.
+
+The RFQ already existed and is not rebuilt: eligibility against the supplier
+register, design maturity governing the pricing basis, acknowledgements, and the
+reconciliation of who was asked against who answered. What did not exist is the
+part that decides whether a comparison is defensible at all.
+
+| Clause | State |
+|---|---|
+| Create the package and a completeness checklist from dependency rules | **BUILT** — six mandatory document kinds, checked at every composition |
+| Generate scope, interface/attendance and design responsibility schedules | **BUILT, already** — `composeTenderPackage` takes the design responsibility matrix and the attendances, and scores completeness. Not rebuilt |
+| Assemble a numbered, versioned enquiry pack from controlled documents | **BUILT** — revisions 1, 2, 3, each with a content hash over its documents and its exception |
+| Approve bidders and issue with confidentiality and access controls | **BUILT** — approval is a separate act from composing and never by the composer; access is per-firm and revocable |
+| Track sent, delivered, opened, acknowledged, declined and clarification participation | **BUILT** for the five states, with the whole history kept. Clarification participation is already on the RFQ reconciliation and is not duplicated |
+| Close the return at the deadline; late return follows configured acceptance authority | **BUILT** — the close names who returned and who went silent, and a late return costs an approval and a named authority |
+| Package cannot issue below full mandatory completeness unless an authorised exception is included | **BUILT** — both halves. The exception names what is missing, why, and who accepted the risk, and it is carried to every recipient |
+| Revoked bidder access does not delete prior issue evidence | **BUILT** — asserted against the ledger, not merely against the read model |
+| Addendum creates a new pack revision and an acknowledgement requirement | **BUILT** — and re-issuing does not discharge it: being sent an addendum is not agreeing to price it |
+| **AC-T-WF-04-01** recipient-specific issue evidence shows the exact pack revision | **BUILT** — revision number and content hash per firm |
+| **AC-T-WF-04-02** a bidder sees only authorised package data | **BUILT** — a domain refusal rather than a rendering filter, and the return type carries no other firm and no count of them |
+| **AC-T-WF-04-03** the return workspace locks at the deadline, preserving an authorised late path | **BUILT** |
+
+**Three decisions worth recording.**
+
+**Incomplete does not mean blocked, it means authorised.** Refusing a short pack
+outright would be simpler and wrong: packages go out missing a document
+constantly, and a platform that only says no teaches people to route around it —
+into a spreadsheet, where nothing is recorded at all. The exception is refused
+if it names no reason or nobody behind it, and refused again if it excepts a
+document that is actually in the pack, which is what stops one being attached
+out of habit.
+
+**A bidder cannot infer the size of the field.** `bidderView` returns one firm's
+own pack and nothing else — no other firm, no count, no acknowledgement rate.
+A field of two is priced differently from a field of six. It is a refusal in the
+domain rather than a filter applied when rendering, because a filter is
+something a later screen forgets to apply, and "never invited" and "removed"
+return the identical answer so nothing can be learned from the difference.
+
+**Revoking access does not delete the evidence.** That firm did receive revision
+2 on the Thursday and did open it, and both stay true. The revocation is an
+additional fact. Re-inviting a removed firm is then refused: it has to be a
+deliberate decision rather than a side effect of a distribution list.
+
+**Not built, and not to be claimed:** any actual transport — the recipients and
+times are recorded, and sending is somebody else's system; a bidder-facing
+portal; and per-recipient watermarking of the documents themselves.
+
+**The event names.** `ENQUIRY_PACK_APPROVED`, `ENQUIRY_ISSUED`,
+`BIDDER_ACKNOWLEDGED` and `RETURN_PERIOD_CLOSED` are the specification's own.
+`TENDER_PACKAGE_CREATED` is `TENDER_PACKAGE_COMPOSED`, already on the ledger and
+mapped rather than renamed. Three are beyond the list because each is a distinct
+fact that would otherwise be hidden inside another event:
+`ENQUIRY_PACK_REVISED`, `BIDDER_ACCESS_REVOKED` and `LATE_RETURN_ACCEPTED`.
 
 ---
 
@@ -1615,6 +1675,13 @@ audit event, the agent contract or the lifecycle gate.
     binds to the pack hash, the departures are computed rather than noticed, and
     the budget and buyout targets come off the estimate. The submission
     completeness checks are the part not built.
+
+12a000000. ~~T-WF-04 — the enquiry pack and who holds it.~~ **Done.** Numbered
+    revisions with a content hash, per-firm issue evidence naming which one they
+    hold, an addendum that makes every acknowledgement stale by name, an
+    authorised exception where a pack goes out short, revocation that preserves
+    the evidence, and a return period that closes with a named authority for the
+    late one. The transport itself is the part not built.
 
 12a00000. ~~T-WF-03 — measurement and the bill.~~ **Done.** Every quantity
     names the drawing and revision it came off or the person who authorised the

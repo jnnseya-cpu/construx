@@ -257,6 +257,16 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('RFQ_CREATED', 'RFQ', 'CREATE', 'PROCUREMENT'),
   def('TENDER_PACKAGE_COMPOSED', 'TenderPackage', 'CREATE', 'PROCUREMENT', { aiAllowed: true }),
   def('RFQ_ISSUED', 'RFQ', 'ISSUE', 'PROCUREMENT', { requiresEvidence: true }),
+  // T-WF-04. An agent may assemble a pack from controlled documents; approving
+  // it and putting it in front of a firm is a person's act, because what goes
+  // out binds everybody who prices it.
+  def('ENQUIRY_PACK_REVISED', 'Enquiry', 'UPDATE', 'PROCUREMENT', { creates: true, aiAllowed: true }),
+  def('ENQUIRY_PACK_APPROVED', 'Enquiry', 'APPROVE', 'PROCUREMENT'),
+  def('ENQUIRY_ISSUED', 'Enquiry', 'ISSUE', 'PROCUREMENT', { requiresEvidence: true }),
+  def('BIDDER_ACKNOWLEDGED', 'Enquiry', 'UPDATE', 'PROCUREMENT'),
+  def('BIDDER_ACCESS_REVOKED', 'Enquiry', 'UPDATE', 'PROCUREMENT'),
+  def('RETURN_PERIOD_CLOSED', 'Enquiry', 'FREEZE', 'PROCUREMENT'),
+  def('LATE_RETURN_ACCEPTED', 'Enquiry', 'APPROVE', 'PROCUREMENT'),
   def('RFQ_ACKNOWLEDGED', 'RFQ', 'UPDATE', 'PROCUREMENT'),
   def('CLARIFICATION_RAISED', 'Clarification', 'CREATE', 'PROCUREMENT', { aiAllowed: true }),
   def('CLARIFICATION_ANSWERED', 'Clarification', 'UPDATE', 'PROCUREMENT'),

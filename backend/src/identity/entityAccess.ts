@@ -111,6 +111,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // sensitive in a tender than this record, and one bidder seeing it would end
   // the process.
   ReturnComparison: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
+  // The enquiry pack and who holds which revision of it. One bidder reading the
+  // distribution learns the size of the field they are competing in, which is
+  // the commercially fatal disclosure — so the generic entity read is gated and
+  // a bidder is served through `bidderView`, which returns only their own row.
+  Enquiry: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Supplier: { area: 'PROCUREMENT_AWARD' },
   Framework: { area: 'PROCUREMENT_AWARD' },
   TenderPackage: { area: 'PROCUREMENT_AWARD' },

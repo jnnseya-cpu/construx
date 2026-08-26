@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 2,025 passing, 0 failing, 0 skipped, across 101 files |
+| Tests | 2,066 passing, 0 failing, 0 skipped, across 102 files |
 | Typecheck | clean |
-| Backend | 126 TypeScript files, 66,362 lines |
-| Application | 39 ES modules, 14,785 lines (including a service worker) |
-| API routes | 373 (34 of them public) |
-| Event types | 239 Golden Thread (closed) · 178 communication events (closed) |
-| Entity types | 134, all classified for access |
+| Backend | 127 TypeScript files, 67,261 lines |
+| Application | 39 ES modules, 15,047 lines (including a service worker) |
+| API routes | 383 (34 of them public) |
+| Event types | 246 Golden Thread (closed) · 178 communication events (closed) |
+| Entity types | 135, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -4258,6 +4258,82 @@ register after a missing document arrives appends rather than being refused as
 "already exists" — validation happens more than once by design. Addendum impact
 writes `ADDENDUM_IMPACT_ASSESSED`, the name T-WF-06 gives the same act, so there
 is one event for it and not two.
+
+---
+
+### The enquiry pack, and which revision each firm is holding
+
+T-WF-04. `backend/src/domain/enquiry.ts`, ten routes, 41 tests, and a panel on
+the Tender & Procurement screen with eight commands.
+
+The failure this exists to prevent is quiet and expensive. An addendum goes out
+on the Tuesday; two of five bidders price the Monday pack. Nothing in the
+returns says so. The comparison then ranks five prices for two different scopes,
+and the cheapest is cheapest because it is pricing less work.
+
+**A pack has numbered revisions and every firm's record says which one they
+hold**, with the content hash of that revision. Composing a new revision after
+issue *is* the addendum: it marks every live firm's acknowledgement stale, by
+name, and the position lists them. Re-issuing does not discharge the debt — it
+moves it onto the revision they now hold, because being sent an addendum is not
+agreeing to price it, and clearing the flag when the email left would report the
+firm as up to date at precisely the moment it is not.
+
+**Approval is a separate act from composing, and never by the composer.** Even
+where one person holds both rights — which on a small commercial team is the
+ordinary Tuesday rather than the exception — the per-act rule refuses it.
+Approval is somebody taking responsibility for what is about to bind every firm
+that prices it, and that is not a second click.
+
+**Incomplete does not mean blocked, it means authorised.** Six document kinds
+are mandatory and a pack short of one is refused — *unless* an exception names
+what is missing, why, and who is accepting the risk. Refusing outright would be
+simpler and wrong: packages go out short of a document constantly, and a
+platform that only says no teaches people to route around it, into a
+spreadsheet, where nothing is recorded at all. The exception is refused if it
+names no reason or nobody behind it, and refused again if it excepts a document
+that is in the pack — which is what stops one being attached out of habit.
+
+**A bidder cannot infer the size of the field.** The bidder view returns that
+firm's own pack and nothing else: no other firm, no count of them, no
+acknowledgement rate. A field of two is priced differently from a field of six.
+It is a refusal in the domain rather than a filter applied when rendering,
+because a filter is something a later screen forgets to apply — and "never
+invited" and "removed" return the identical answer, so nothing can be learned
+from the difference.
+
+**Removing a firm does not remove what happened.** That firm received revision 1
+and opened it, and both stay true in the ledger — asserted against the events
+themselves rather than against the read model. Re-inviting a removed firm is
+then refused, because it has to be a deliberate decision rather than a side
+effect of somebody pasting a distribution list.
+
+**States move forward only.** A delivery receipt arriving after an
+acknowledgement is an out-of-order webhook, not a firm un-acknowledging, and
+treating it as the latter would lose the acknowledgement that matters. Decline
+is terminal and reachable from anywhere.
+
+**The return period closes and the late return goes through a person.** The
+close reports who returned and who went silent as separate facts, because a
+supply chain is read from the difference between a firm that declined and a firm
+that never answered. A late return is not refused — refusing only moves the
+decision into an email — but it costs an approval and a named authority, and it
+sits on the record beside every return that met the date. The figure recorded
+against it is minutes after the stated deadline and deliberately not clamped at
+zero: a negative value means the workspace closed before the date it published,
+which is a real thing to have done by mistake and worth seeing.
+
+**Verified against a running server**, every refusal driven over HTTP as the
+real roles: the short pack names both missing documents in the words a person
+would use, issuing before approval is refused, the QS cannot approve at all, the
+addendum makes all three firms stale and only acknowledging the new revision
+clears one, the bidder view leaks no competitor, the removed firm reads a 404
+identical to a firm never invited, re-inviting it is refused, and the addendum
+after the deadline is refused with the reason.
+
+**Not built, and not to be claimed:** any actual transport — the recipients and
+times are recorded and sending is somebody else's system; a bidder-facing
+portal; and per-recipient watermarking of the documents themselves.
 
 ---
 
