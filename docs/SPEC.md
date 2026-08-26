@@ -450,6 +450,155 @@ auditable after a dispute.
 
 ---
 
+## PART B — STAGE 1: CONCEPT (RIBA 0–1)
+
+> Purpose: convert a client ambition into a governed, evidenced Go/No-Go decision
+> in days, not months. The Concept stage is where 80% of an asset's lifecycle cost
+> is committed with 5% of the information — CONSTRUX attacks that asymmetry with
+> benchmark intelligence drawn from Organisation Memory and market data.
+>
+> **Personas:** Client/Developer Executive · Development Manager · Employer's
+> Agent / PM Consultant · Cost Consultant (QS) · Pre-Construction Director
+> (contractor, if ECI) · Planning Consultant.
+
+**Concept is the least-built stage in the platform.** The lifecycle state exists
+and the gate machinery exists; almost none of the work that happens inside the
+state does. This is consistent with what the A2 and A4 audits already found — the
+CONCEPT exit gate is one weak criterion precisely because the objects it would
+test do not exist.
+
+### B1 — Concept workflows
+
+| Workflow | Clause | State |
+|---|---|---|
+| C-1 · Inception | Create Project → `lifecycle_state = CONCEPT` | **BUILT** |
+| C-1 | Wizard captures client entity, sector, procurement intent, budget envelope, target dates, site address & title | **PARTIAL** — a project is created with a name, sector and jurisdiction; the rest is not captured |
+| C-1 | **HRB flag** (Building Safety Act higher-risk building — triggers Golden Thread from day one) | **NOT BUILT** — nothing marks a project as an HRB, so nothing downstream can behave differently for one |
+| C-1 | Structured Brief Builder: functional requirements, areas schedule, quality benchmarks, sustainability targets, constraints | **NOT BUILT** — no `Brief` object |
+| C-1 | Voice or typed; agent cleans and structures the draft | **PARTIAL** — voice ingestion exists in the perception engine; there is no brief for it to write into |
+| C-1 | Brief locked as v1 → `BRIEF_APPROVED`; every later scope change diffed against this baseline for ever | **NOT BUILT** |
+| C-2 · Feasibility | Feasibility Agent assembles a site appraisal from planning history, flood zone, conservation, utilities, access, ground risk — each finding with a source link | **NOT BUILT** — no `FeasibilityStudy`, and no external data sources are integrated |
+| C-2 | Option Appraisal workspace: 2–5 options with benchmark cost, duration, risk profile, compared side by side with sensitivity toggles | **NOT BUILT** — no `OptionAppraisal` |
+| C-2 | Benchmark Cost Agent → Cost Plan v0 per option, £/m² by element, confidence per element, inclusions/exclusions register | **PARTIAL** — the twenty-cost-head estimate and cost intelligence from committed records both exist and are the hard half; there is no elemental v0 cost plan tied to an option, and no per-element confidence |
+| C-2 | Concept Risk Register seeded automatically with owner, likelihood×impact, mitigation seed | **PARTIAL** — the risk register, scoring and named owners all exist; automatic seeding at CONCEPT does not |
+| C-2 | Business Case Composer drafts the investment paper; HITL Development Manager edits, Executive approves | **NOT BUILT** |
+| C-3 · Gate G1 | Machine-checked, human-chaired checklist; GO → `PROJECT_STATE_CHANGED` → DESIGN with the concept bundle handed forward untouched | **PARTIAL** — the gate mechanism, human chair, machine evaluation and evidence bundle are all built. The **G1 checklist itself is one criterion** where six are specified: brief approved · preferred option selected with rationale · Cost Plan v0 within envelope or variance justified · risk register reviewed · planning strategy defined · funding line evidenced |
+| C-3 | NO-GO → project archived with complete decision record; Organisation Memory learns from killed projects too | **NOT BUILT** — there is no archive path and no learner |
+
+### B2 — Concept AI agents
+
+None of the five exists. The fleet is twelve agents built around bidding,
+delivery and commercial control; the concept fleet is a different set.
+
+| Agent | Triggers | HITL | ACU | State |
+|---|---|---|---|---|
+| `AGT-FEASIBILITY` | `BRIEF_APPROVED`; on-demand | REVIEW | HIGH | **NOT BUILT** |
+| `AGT-BENCH-COST` | `OPTION_CREATED`; brief change | REVIEW | HIGH | **NOT BUILT** |
+| `AGT-CONSENTS` | Feasibility complete | REVIEW | MED | **NOT BUILT** |
+| `AGT-CARBON-ESG` | `OPTION_CREATED` | REVIEW | MED | **NOT BUILT** |
+| `AGT-CONCEPT-RISK` | Continuous in CONCEPT | REVIEW | LOW | **NOT BUILT** |
+
+The *mechanism* each of them needs is built: agents are first-class, declare a
+mandate, propose rather than act, and are metered. What is missing is these five
+agents and the concept objects they would read.
+
+### B3 — Concept dashboard
+
+> Rule for every dashboard in this platform: do NOT build dashboards — build
+> real-time decision command centres. Every panel must answer, without scrolling
+> or interpretation: what is happening, what changed, what is at risk, what is
+> costing money, what needs action today, what will happen next, who owns the
+> decision — plus AI Insight and AI Recommendation panels with Review / Accept /
+> Mitigate / Assign actions on every item. Every KPI tile is clickable and drills
+> to the exact source events ("this metric exists because these events occurred").
+
+**This rule is now met on exactly one screen — the platform operator's command
+centre — and on none of the delivery screens.** The two structural requirements
+are both unmet across the product:
+
+| Requirement | State |
+|---|---|
+| Every KPI tile clickable, drilling to the source events | **NOT BUILT** anywhere. The lineage traversal and the event chronology both exist, so the data is there; no tile links to them |
+| AI Insight and AI Recommendation panels with Review / Accept / Mitigate / Assign on every item | **PARTIAL** — the agent proposal queue has Accept and Reject and is on its own screen. It is not a panel on each command centre, and Mitigate and Assign do not exist |
+
+The seven Concept panels — decision countdown, option comparison, budget
+envelope, constraint radar, risk heat, AI insights, AI recommendations — are
+**NOT BUILT**, following from the objects being absent.
+
+### B4 — Concept data, events and APIs
+
+| Event | State |
+|---|---|
+| `PROJECT_CREATED` | **BUILT** |
+| `BRIEF_APPROVED` | **NOT BUILT** |
+| `OPTION_CREATED` | **NOT BUILT** |
+| `COSTPLAN_V0_ISSUED` | **NOT BUILT** |
+| `RISK_SEEDED` | **NOT BUILT** — `RISK_REGISTERED` exists and is the human act; automatic seeding is the missing half |
+| `GATE_G1_PASSED` / `FAILED` | **PARTIAL** — `GATE_REVIEW_DECIDED` carries the result, and is generic across gates rather than named per gate |
+
+Consumers — Design stage bootstrap, Organisation Memory learner, portfolio
+aggregator, ACU meter: the portfolio aggregator and the ACU meter are **BUILT**;
+the design bootstrap and the memory learner are **NOT BUILT**.
+
+The API shapes differ (`/v1/...` rather than `/api/v1/...`, and command-named
+rather than resource-named in places), which is a convention difference and not a
+gap. The one substantive note: **`POST /api/v1/gates/G1:approve` requires
+authority ≥ Executive, and there is no Executive role.** See the authority note
+below.
+
+### A note that spans Parts A, B and C: the authority vocabulary
+
+The specification repeatedly names authority levels the platform's fifteen roles
+do not express:
+
+| Named in the spec | Where | CONSTRUX |
+|---|---|---|
+| **Executive** | B4 — G1 gate approval | No role. Gate approval is held by `ENTERPRISE_ADMIN` and `OWNER` |
+| **Project Director** | A2 — reverse transitions | No role. Same two hold it |
+| **Development Manager** | B1 — business case HITL | No role |
+| **Principal Designer (CDM 2015)** | Part C personas | Exists as a *supply-chain accreditation code* (`CDM_PRINCIPAL_DESIGNER`), not as a platform role with duties. The CDM work built the Principal **Contractor** duty set; the Principal **Designer** duty set is a separate statutory role and is not built |
+| **Commercial Manager** | A1 Rule 2 — chain-break escalation | No role. `QS` is the nearest |
+
+This is one decision, not five: either these are new roles in the permission
+matrix, or they are a separate *authority level* concept layered over the
+existing roles. It should be settled once, before any of the gates that depend on
+it are written, because every one of them names a holder.
+
+---
+
+## PART C — STAGE 2: DESIGN (RIBA 2–4)
+
+> Purpose: take the approved concept to a coordinated, buildable, priceable design
+> — with cost certainty rising as design matures, and every design decision
+> traceable. Design is where projects are silently lost: uncoordinated packages,
+> drifting cost plans, unanswered RFIs and unallocated design responsibility
+> surface later as claims. CONSTRUX makes design drift visible in real time and
+> makes the Design Manager the best-informed person on the project.
+>
+> **Personas:** Design Manager · Architect / Lead Designer · Structural + MEP
+> Engineers · BIM Manager / Information Manager (ISO 19650) · Cost Consultant ·
+> Principal Designer (CDM 2015) · Client PM.
+
+### C1 — Design mobilisation
+
+| Clause | State |
+|---|---|
+| Auto-bootstrap from the Concept bundle — brief, option, Cost Plan v0, risk register carried forward untouched | **NOT BUILT** — blocked on the concept objects existing at all |
+| **EIR loaded, BEP captured** | **NOT BUILT** — neither the Exchange Information Requirements nor the BIM Execution Plan is modelled |
+| **CDE container structure per ISO 19650** (WIP / Shared / Published / Archive) | **NOT BUILT** — the evidence store is tenant-and-project scoped with signed access, and has no container states |
+| **Naming convention validator; non-compliant uploads quarantined with a fix suggestion, never silently accepted** | **NOT BUILT** |
+| **Design Responsibility Matrix as a first-class object** — every element assigned to a named organisation with a design level (concept / spatial / detailed / installation); unallocated elements glow red until owned | **PARTIAL, and thin** — a `designResponsibilityMatrix` exists only as an array of `{ element, responsibleParty }` *inside a tender package*, checked for presence when a bid pack is assembled. It has no design level, no unallocated tracking, and does not exist during the DESIGN stage where the specification puts it |
+| Design programme with stage milestones (Stage 2 sign-off, Stage 3 coordination freeze, Stage 4 technical freeze) linked to the master programme | **PARTIAL** — programme, baselines, milestones and linkage all exist as machinery; the three named RIBA design freezes are not modelled as milestones |
+
+What *is* built and load-bearing for this stage: the drawing register with
+revisions and supersession, specification ingestion and clause extraction, clash
+detection and resolution with evidence, RFIs with activity references, design
+maturity assessment, and the design-delay cost-through-to-site chain. The
+information-management layer around them — ISO 19650 containers, EIR/BEP, naming
+validation — is the part that is absent.
+
+---
+
 ## Implementation order
 
 Set against dependency rather than against the order the clauses arrived in.
