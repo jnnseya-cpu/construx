@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 1,741 passing, 0 failing, 0 skipped, across 93 files |
+| Tests | 1,783 passing, 0 failing, 0 skipped, across 94 files |
 | Typecheck | clean |
-| Backend | 119 TypeScript files, 58,484 lines |
-| Application | 39 ES modules, 13,652 lines (including a service worker) |
-| API routes | 318 (34 of them public) |
-| Event types | 210 Golden Thread (closed) · 178 communication events (closed) |
-| Entity types | 125, all classified for access |
+| Backend | 120 TypeScript files, 59,893 lines |
+| Application | 39 ES modules, 13,895 lines (including a service worker) |
+| API routes | 325 (34 of them public) |
+| Event types | 214 Golden Thread (closed) · 178 communication events (closed) |
+| Entity types | 127, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -3831,6 +3831,111 @@ containers.
 decide. It does not require the decider to be the `PRINCIPAL_DESIGNER` now that
 role exists, so a `DESIGNER` who did not submit may still accept a design. That
 may be right, and it may not.
+
+### Tender intake, and the deadline that is not an instant
+
+T-WF-01. The pipeline scored opportunities and decided whether to chase them;
+the ITT analyst read an invitation into a compliance matrix with an owner on
+every line. **Nothing existed between them** — the moment an invitation actually
+lands, which is where the deadline is set and where bids are lost.
+
+`backend/src/domain/tenderintake.ts`, seven routes, 42 tests, and a panel on the
+pipeline screen with four commands. Named `tenderintake` rather than `tender`
+because `backend/src/engines/tender.ts` is the estimating and pricing engine and
+already owns that word.
+
+**Most of the workflow was reused, not rebuilt.** The compliance matrix is
+`analyseITT` — its requirement catalogue, owner-by-category table, evidence
+probes and commercial-term assessment are called, not copied. The scoring is the
+existing ten-factor qualification. The decision is `decideBidNoBid`. The
+back-planning calendar is the Construction Act business-day calendar, bank
+holidays and all. Three things are new.
+
+**The deadline is a wall-clock reading plus a zone.** An ITT says "12:00 noon on
+14 October". *Whose* noon is a question almost nobody asks, and a portal that
+closes at noon in Dublin has closed an hour before noon in London. So the
+reading and the IANA zone are recorded separately and resolved to one instant,
+and everything downstream counts from the instant. Where the invitation did not
+state a zone, the assumption made is recorded and raised as a **Critical
+clarification** written in the words it would be put to the buyer in — not
+defaulted silently.
+
+Twice a year a local reading is not one instant at all. 01:30 happens twice on
+the night the clocks go back and never on the night they go forward. Both are
+detected and named, and where there is a choice the **earlier** instant is taken:
+a deadline resolved early is a bid submitted early, and the other way round is a
+bid submitted late. `Intl.DateTimeFormat` does the work — the zone database is
+the runtime's, not a copy in this repository.
+
+**A mandatory deliverable needs a source, an owner and an internal date — and a
+bid is refused until every one of them has all three.** Not warned about:
+refused. A bid disqualified for a missing certificate was priced correctly and
+lost anyway, and that is the single most avoidable way to lose a tender. Optional
+deliverables are deliberately exempt, because blocking on those would teach
+everybody to mark things optional. Declining is never gated: refusing bad work is
+what the qualification algorithm exists to encourage, and making a refusal the
+expensive option would defeat it.
+
+**An addendum appends.** The original issue is never rewritten, because "what
+was the deadline when we planned the bid" is what a late submission turns into a
+dispute about. An addendum that moves the date or adds a mandatory deliverable
+makes the bid decision stale — and staleness is **derived from the order of the
+ledger**, not from timestamps. Both records stamp `new Date().toISOString()` and
+two events written milliseconds apart can carry the same millisecond, so `>`
+misses a real addendum and `>=` invents one. The append-only log already knows
+what came after what; nothing can clear the condition except deciding again.
+
+**The tender programme is back-planned and refused rather than compressed.**
+Eight stages from reading the documents to a checked submission, scaled
+proportionally to the window with a floor of ten business days, landing exactly
+on the last business day before the deadline. Below the floor the platform states
+how many days remain and how many the spine needs. A programme that reads as
+achievable and is not is a worse answer than "this is not enough time". Work
+packages come out of the deliverables and the compliance matrix together — the QS
+who owns the pricing schedule also owns the commercial requirements behind it,
+and giving them two lists is how one goes unread.
+
+**An override needs the authority it was taken under named.** New refusal on
+`decideBidNoBid`: deciding against the algorithm is permitted, and it always was,
+but an override with nobody's authority on it is the finding a post-mortem goes
+looking for and cannot find. Conditions and recorded dissent sit alongside it.
+
+**Two defects the browser found that the tests did not.**
+
+*The refusal did not read as English.* "has no an owner, no a source in the
+invitation, no an internal date" — assembled by joining a list with a separator.
+That sentence is put in front of somebody the day before a return, and a mangled
+one is how a real warning gets skimmed past. It now reads out loud.
+
+*The console applied the wrong project's phase gate.* Every tender command
+showed as locked — "Estimate tender cannot be written during the Operations
+phase" — while the API accepted the same commands. The bid pipeline exists
+**before there is a project**, and the API runs it against the tenant governance
+scope, which has no lifecycle phase. The browser was gating it on whatever
+delivery project the console happened to have selected: the browser holding a
+rule the server does not, which is the exact drift `blockedReason` exists to
+prevent. `can()` and `blockedReason()` now take a `tenantScoped` option. Checked
+against every other screen: `BILLING_ACU` and `ENTERPRISE_STRUCTURE` carry no
+phase gate at all, so no other screen was affected.
+
+**Not built, and not to be claimed:** reading deliverables or requirements out of
+the invitation *file* — they are supplied structured, one at a time by a person
+or in bulk by an agent; a bid-team resource model behind the programme; and any
+link from the tender programme to the delivery programme engine.
+
+**Event names.** `TENDER_RECEIVED`, `TENDER_REQUIREMENTS_EXTRACTED`,
+`TENDER_ADDENDUM_ISSUED` and `TENDER_PROGRAMME_CREATED` are new and take the
+specification's own names. The specification's `COMPLIANCE_MATRIX_CREATED` and
+`BID_DECISION_RECORDED` are `ITT_ANALYSED` and `BID_NO_BID_DECIDED` here, already
+written to an append-only ledger. They are **mapped, not renamed** — renaming
+orphans every record carrying the old name — and a test asserts the mapping so
+it stays readable.
+
+**Verified in a browser against a running server**, not only by the tests: the
+QS records an ITT with no stated zone and gets the Critical clarification; a bare
+mandatory deliverable is recorded and the Owner's decision to bid is refused,
+naming it; an addendum moves the deadline and the board shows the re-review. The
+panel and the command are screenshotted.
 
 ---
 

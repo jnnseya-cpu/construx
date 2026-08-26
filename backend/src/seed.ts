@@ -237,6 +237,10 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     const decision = business.decideBidNoBid(governanceCtx, opportunityId, {
       bid: opportunity.bid,
       rationale: opportunity.rationale,
+      // An override needs the authority it was taken under named. The demo
+      // carries one deliberate override, so it carries one delegated authority
+      // — which is what the record is supposed to look like, not an exception.
+      authority: { delegatedTo: 'Managing Director', reference: 'Scheme of delegation, section 4 — bid approval' },
     });
     if (!opportunity.bid) declined += 1;
     if (decision.againstRecommendation) {

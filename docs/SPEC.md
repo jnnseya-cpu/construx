@@ -1167,32 +1167,82 @@ is pressed.
 
 ### 8.3 T-WF-01 — Tender intake, compliance matrix and bid/no-bid
 
-Audited against what exists rather than restated. **Most of this is built**, in
-`backend/src/domain/itt.ts` and `backend/src/domain/business.ts`.
+**BUILT.** `backend/src/domain/tenderintake.ts`, seven routes, 42 tests.
+
+Most of the workflow already existed and is reused rather than rebuilt: the
+compliance matrix is `analyseITT`, the scoring is the ten-factor qualification,
+the decision is `decideBidNoBid`, the calendar is the Construction Act
+business-day calendar. Three things did not exist and now do — the zoned
+deadline, the deliverable register, and the back-planned bid programme — plus
+the conditions, dissent and delegated authority on the decision.
 
 | Clause | State |
 |---|---|
-| Register the invitation, client and opportunity metadata | **BUILT** — `OPPORTUNITY_REGISTERED`, `OPPORTUNITY_QUALIFIED` |
-| Extract deliverables, forms, limits, signatures and bonds | **PARTIAL** — requirements are supplied structured and analysed; nothing reads them out of the invitation file |
-| Compliance matrix with owner, internal due date and status | **BUILT** — every line carries a `Role` owner from `OWNER_BY_CATEGORY`, a `dueBy`, and `SATISFIED · GAP · UNKNOWN`. A requirement the platform cannot probe is `UNKNOWN`, never `GAP`, so real gaps are not buried |
-| Source clause / page anchor on each line | **NOT BUILT** — `reference` is the invitation's own reference, not a page anchor into a held file |
-| Score strategic fit, capacity, financial, delivery, contract and win risk | **BUILT** — the ten-factor qualification, and the commercial terms are each assessed against the company's own profile with the arithmetic shown |
-| Bid/no-bid with conditions, authority and dissent | **PARTIAL** — the decision records the score, the recommendation, the rationale, the decider and **whether it went against the recommendation**, which is the finding a post-mortem needs. Conditions and delegated-authority reference are not modelled |
-| Bid → tender programme and work packages | **PARTIAL** — tender packages exist; a bid-side programme generated from the return date does not |
-| Deadline conflict or unclear time zone as a Critical clarification | **NOT BUILT** — the return date is a date, not a zoned instant |
-| Mandatory pass/fail without an owner blocks approval | **PARTIAL** — every matrix line has an owner by construction, so the condition cannot arise; a mandatory line with no evidence sets `readyToPrice` false and raises a clarification |
-| Addendum triggers bid/no-bid re-review | **NOT BUILT** |
-| **AC-T-WF-01-03 — a no-bid cannot proceed to pricing** | **BUILT, and enforced structurally** — pricing is project-scoped, and `convertToProject` refuses `OPPORTUNITY_NOT_WON` for anything not decided as a bid. The opportunity stays searchable with its rationale |
+| Register the immutable invitation issue and deadline in the tender's time zone | **BUILT** — a local reading plus a named IANA zone, resolved to one instant. The issue is immutable; addenda append |
+| Extract deliverables, forms, channels, page/file limits, signatures and bonds | **BUILT** as a register with all of those fields. What is **not** built is reading them out of the invitation *file* — they are supplied structured, by a person one at a time or by an agent in bulk |
+| Compliance matrix with owner, internal due date, status and source clause/page | **BUILT** — `analyseITT` already gave every line a role owner and a status; the deliverable register adds the internal date and the source anchor (document, clause, page) |
+| Score strategic fit, capacity, financial, delivery, contract and win risk | **BUILT** — the ten-factor qualification and the commercial-term assessment, each against the company's own recorded profile |
+| Bid/no-bid with conditions, authority and re-review triggers | **BUILT** — conditions, dissent and delegated authority are on the record, and an addendum that moves the deadline or adds a mandatory deliverable makes the decision stale |
+| Bid → tender programme and work packages | **BUILT** — eight stages back-planned across the working calendar, and work packages by owner role from the deliverables and the matrix together |
+| Deadline conflict or unclear time zone is a Critical clarification | **BUILT** — five of them: no zone stated, a reading that occurs twice, a reading that never occurs, a question deadline at or after the return, and an internal date past the return. A site visit after the return is Major |
+| Mandatory pass/fail requirement without an owner blocks Bid approval | **BUILT** — and it is a refusal, not a warning. Source, owner and internal date, on every mandatory deliverable |
+| Addendum triggers bid/no-bid re-review | **BUILT** — derived from ledger order, so nothing can clear it except deciding again |
+| **AC-T-WF-01-01** all mandatory deliverables have source, owner and internal date | **BUILT** — enforced at the gate in front of a decision to bid |
+| **AC-T-WF-01-02** decision shows scoring, dissent/conditions and delegated authority | **BUILT** — and an override with no authority named is refused |
+| **AC-T-WF-01-03** no-bid stays searchable and cannot proceed to pricing | **BUILT** — the rationale is preserved, the opportunity stays in the pipeline, and both `convertToProject` and the tender programme refuse it |
 
-The named events do not exist under the specification's names —
-`TENDER_RECEIVED`, `COMPLIANCE_MATRIX_CREATED`, `BID_DECISION_RECORDED`,
-`TENDER_PROGRAMME_CREATED` are `OPPORTUNITY_REGISTERED`, `ITT_ANALYSED` and
-`BID_NO_BID_DECIDED` here. **These are not renamed.** The catalogue is closed and
-append-only; renaming an event orphans every record already written under the old
-name, and the standing principle is that nothing is removed or replaced. The
-mapping is recorded here so the specification can be read against the ledger.
+**Three decisions worth recording.**
 
----
+**The deadline is a wall-clock reading and a zone, never an instant on its own.**
+An ITT says "12:00 noon on 14 October"; whose noon is a question almost nobody
+asks, and a portal that closes at noon in Dublin has closed an hour before noon
+in London. Where the invitation did not state a zone, the assumption is recorded
+*and raised as a Critical clarification* rather than defaulted. Twice a year a
+local reading is not one instant at all — 01:30 happens twice on the night the
+clocks go back and never on the night they go forward — and both are named, with
+the earlier instant taken, because a deadline resolved early is a bid submitted
+early.
+
+**Staleness is derived from the order of the ledger, not from timestamps.** Both
+records stamp `new Date().toISOString()`, and two events written milliseconds
+apart can carry the same millisecond; `>` misses a real addendum and `>=`
+invents one. The append-only log already knows what came after what.
+
+**The programme is refused rather than compressed.** The eight stages scale
+proportionally to the window with a floor of ten business days. Below that the
+platform says how many days remain and how many the spine needs, because a
+programme that reads as achievable and is not is a worse answer than "this is
+not enough time".
+
+**Not built, and not to be claimed:** reading deliverables or requirements out
+of the invitation file itself (they are supplied structured), a bid-team
+resource model behind the programme, and any link from the bid programme to the
+delivery programme engine.
+
+**The event names.** `TENDER_RECEIVED`, `TENDER_REQUIREMENTS_EXTRACTED`,
+`TENDER_ADDENDUM_ISSUED` and `TENDER_PROGRAMME_CREATED` are new. The
+specification's `COMPLIANCE_MATRIX_CREATED` and `BID_DECISION_RECORDED` are
+`ITT_ANALYSED` and `BID_NO_BID_DECIDED`, already written to an append-only
+ledger under those names. **These are not renamed** — renaming an event orphans
+every record already carrying the old name, and the standing principle is that
+nothing is removed or replaced. The mapping is asserted by a test so it stays
+readable against the ledger.
+
+### 8.3 (continued) T-WF-02 to T-WF-08, and 8.4 — received, not built
+
+Recorded so the scope is visible and nothing here is mistaken for present.
+None of these is built; each names what already exists that it would extend.
+
+| Workflow | Nearest thing that already exists |
+|---|---|
+| **T-WF-02** documents, scope gap, contract risk | `analyseITT`'s commercial-term assessment, the drawing register and the contract clause register. The document register, scope matrix, contract-risk register and the frozen review snapshot do not exist |
+| **T-WF-03** measurement, BoQ, estimate schedule | The twenty-cost-head estimate, take-off with sheet-and-revision evidence, `ESTIMATE_FROZEN`. Rate build-ups separating direct cost / preliminaries / risk / OH&P, and estimate-to-estimate reconciliation, do not |
+| **T-WF-04** package strategy, enquiry, bidder issue | `TENDER_PACKAGE_COMPOSED`, the RFQ engine, the supplier register with prequalification. Pack revisioning, per-recipient issue evidence and the return workspace lock do not |
+| **T-WF-05** supply-chain and self-delivery pricing routes | `assignScheduleRoute` (SUPPLY_CHAIN / SELF_PRICE), `analyseReturns`, `consolidateMasterPricing`. Normalisation to a common basis with a visible adjustment bridge does not |
+| **T-WF-06** clarifications, addenda, return intelligence | The addendum register built above, and `analyseReturns`. A numbered clarification register with issue evidence, and an addendum impact report, do not |
+| **T-WF-07** commercial adjudication and governance | `adjudicate`, `compileBidPack`. Pre/post snapshots reconciling through an adjustment bridge, and approval against personal authority limits, do not |
+| **T-WF-08** submission, award, zero-re-entry conversion | `BID_PACK_LOCKED`, `convertToProject`, and the chain-break exception. The immutable submission pack hash, the submission receipt and the award-delta report do not |
+| **8.4** stage gate Definition of Done | The lifecycle gate machinery and the replayable ledger. The seven-point tender gate itself is not declared, and it depends on the A2 gate work at item 6 below |
 
 ## Implementation order
 
@@ -1243,6 +1293,11 @@ Superseded ordering note, kept for honesty: The
 Recorded separately because they are stage work rather than platform work, and
 because the order above has to be finished first — every item below reads the
 audit event, the agent contract or the lifecycle gate.
+
+12a. ~~T-WF-01 — tender intake.~~ **Done.** The zoned deadline, the deliverable
+    register with source/owner/internal date, the addendum that appends, the
+    back-planned bid programme, and the authority on an override. Reading
+    deliverables out of the invitation file is the part not built.
 
 12b. ~~D-WF-03 — the design review cycle.~~ **Done.** Submit, comment,
     disposition, close, decide, with a blocking-comment rule that "accepted with

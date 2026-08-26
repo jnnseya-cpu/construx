@@ -196,6 +196,23 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // The invitation read properly: every requirement with an owner, and the
   // commercial terms assessed against what this business can actually carry.
   def('ITT_ANALYSED', 'ITTAnalysis', 'CREATE', 'PROCUREMENT'),
+  // Tender intake. The deadline is registered the hour the invitation lands,
+  // before anybody has read it, because a countdown that starts when somebody
+  // gets round to reading the documents is not a countdown. Human-authored: the
+  // return deadline is the most consequential date in the stage and an agent
+  // reading it out of an email is exactly where a silent hour of error lives.
+  def('TENDER_RECEIVED', 'TenderInvitation', 'CREATE', 'PROCUREMENT', { creates: true }),
+  // The one act in this workflow the specification gives to an agent: extract
+  // the requirements and deadlines with source anchors. It extracts; it does
+  // not decide, and the bid decision below refuses an AI actor outright.
+  def('TENDER_REQUIREMENTS_EXTRACTED', 'TenderInvitation', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  // An addendum appends. It never rewrites the issue, because "what was the
+  // deadline when we planned the bid" is what a late submission turns into a
+  // dispute about.
+  def('TENDER_ADDENDUM_ISSUED', 'TenderInvitation', 'UPDATE', 'PROCUREMENT'),
+  // The tender programme, back-planned from the return date across the working
+  // calendar. Follows the decision to bid and never precedes it.
+  def('TENDER_PROGRAMME_CREATED', 'BidProgramme', 'CREATE', 'PROCUREMENT', { creates: true }),
   // Never bid without a cash model. The peak funding requirement is a
   // different question from the margin, and it is the one that closes
   // companies, so it lands on the thread beside the price.

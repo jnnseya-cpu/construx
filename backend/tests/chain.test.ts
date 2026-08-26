@@ -175,6 +175,10 @@ describe('1 · Business development', () => {
     const decision = business.decideBidNoBid(ctx, opportunityId, {
       bid: true,
       rationale: 'Strategic entry into a new client despite the score',
+      // Overriding the algorithm is an exercise of authority, so the authority
+      // has to be named. An override with nobody's name on it is exactly the
+      // finding a post-mortem goes looking for and cannot find.
+      authority: { delegatedTo: 'Managing Director', reference: 'Scheme of delegation, section 4' },
     });
 
     assert.equal(decision.stage, 'BID');

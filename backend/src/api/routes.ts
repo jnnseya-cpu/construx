@@ -36,6 +36,7 @@ import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
 import * as itt from '../domain/itt.ts';
+import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
 import { morningBriefing } from '../agents/briefing.ts';
 import { AGENT_DIVISIONS, type AgentDivision } from '../agents/types.ts';
@@ -1286,15 +1287,204 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/pipeline/opportunities/:opportunityId/decide',
-    description: 'Record the bid / no-bid decision, with its rationale',
+    description: 'Record the bid / no-bid decision, with its rationale, conditions and authority',
     schema: {
       type: 'object',
       required: ['bid', 'rationale'],
-      properties: { bid: { type: 'boolean' }, rationale: stringField },
+      properties: {
+        bid: { type: 'boolean' },
+        rationale: stringField,
+        conditions: { type: 'array', items: { type: 'string' } },
+        dissent: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['by', 'position'],
+            properties: { by: stringField, position: { type: 'string' } },
+            additionalProperties: false,
+          },
+        },
+        // Required by the engine, not by the schema: it is only mandatory where
+        // the decision goes against the recommendation, and that is a fact
+        // about the opportunity rather than about the request body.
+        authority: {
+          type: 'object',
+          required: ['delegatedTo'],
+          properties: {
+            delegatedTo: stringField,
+            reference: { type: 'string' },
+            limitMinor: { type: 'integer', minimum: 0 },
+          },
+          additionalProperties: false,
+        },
+      },
       additionalProperties: false,
     },
     handler: (platform, ctx) =>
       business.decideBidNoBid(tenantContext(platform, ctx), ctx.params.opportunityId as string, body(ctx)),
+  },
+
+  // -------------------------------------------------------- tender intake (T-WF-01)
+  {
+    method: 'GET',
+    pattern: '/v1/pipeline/tenders',
+    description: 'Every recorded invitation, soonest deadline first',
+    handler: (platform, ctx) => tenderintake.tenderBoard(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/pipeline/tenders/:invitationId',
+    description: 'One invitation: deadline in force, blockers, clarifications and addenda',
+    handler: (platform, ctx) => tenderintake.tenderPosition(tenantContext(platform, ctx), ctx.params.invitationId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/opportunities/:opportunityId/tenders',
+    description: 'Record an invitation to tender and its deadline, in the zone the deadline is read in',
+    schema: {
+      type: 'object',
+      required: ['reference', 'issuedAt', 'returnLocal', 'timeZone', 'timeZoneStated', 'channel'],
+      properties: {
+        reference: stringField,
+        issuedAt: stringField,
+        returnLocal: stringField,
+        timeZone: stringField,
+        // Not defaulted. Whether the invitation stated a zone is the fact the
+        // Critical clarification hangs on, and a default would decide it.
+        timeZoneStated: { type: 'boolean' },
+        channel: { type: 'string', enum: [...tenderintake.SUBMISSION_CHANNEL] },
+        clarificationLocal: stringField,
+        siteVisitLocal: stringField,
+        documents: { type: 'array', items: { type: 'string' } },
+        notes: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintake.recordInvitation(tenantContext(platform, ctx), ctx.params.opportunityId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/tenders/:invitationId/requirements',
+    description: 'Extract the return deliverables and build the compliance matrix, with a source on every line',
+    schema: {
+      type: 'object',
+      required: ['deliverables', 'analysis'],
+      properties: {
+        deliverables: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['reference', 'title', 'mandatory'],
+            properties: {
+              reference: stringField,
+              title: stringField,
+              mandatory: { type: 'boolean' },
+              format: { type: 'string' },
+              pageLimit: { type: 'integer', minimum: 1 },
+              fileSizeLimitMb: { type: 'number', minimum: 0 },
+              signatureRequired: { type: 'boolean' },
+              bondRequired: { type: 'boolean' },
+              channel: { type: 'string', enum: [...tenderintake.SUBMISSION_CHANNEL] },
+              owner: { type: 'string', enum: TENANT_GRANTABLE_ROLES },
+              internalDueBy: stringField,
+              source: {
+                type: 'object',
+                required: ['document'],
+                properties: { document: stringField, clause: { type: 'string' }, page: { type: 'integer', minimum: 1 } },
+                additionalProperties: false,
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+        // The analyser's own input, passed through unchanged. It has its own
+        // schema on /v1/projects/:id/itt and its own tests; restating the shape
+        // here would give the platform two opinions about a requirement.
+        analysis: { type: 'object' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const engineCtx = tenantContext(platform, ctx);
+      const input = body(ctx) as { deliverables: tenderintake.TenderDeliverable[]; analysis: Parameters<typeof itt.analyseITT>[1] };
+      const analysis = itt.analyseITT(engineCtx, input.analysis);
+      const bound = tenderintake.extractRequirements(engineCtx, ctx.params.invitationId as string, {
+        deliverables: input.deliverables,
+        analysisId: analysis.analysisId,
+      });
+      return { ...bound, analysis };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/tenders/:invitationId/deliverables',
+    description: 'Add one return deliverable, the way somebody actually reads an invitation',
+    schema: {
+      type: 'object',
+      required: ['reference', 'title', 'mandatory'],
+      properties: {
+        reference: stringField,
+        title: stringField,
+        mandatory: { type: 'boolean' },
+        format: { type: 'string' },
+        pageLimit: { type: 'integer', minimum: 1 },
+        fileSizeLimitMb: { type: 'number', minimum: 0 },
+        signatureRequired: { type: 'boolean' },
+        bondRequired: { type: 'boolean' },
+        channel: { type: 'string', enum: [...tenderintake.SUBMISSION_CHANNEL] },
+        owner: { type: 'string', enum: TENANT_GRANTABLE_ROLES },
+        internalDueBy: stringField,
+        source: {
+          type: 'object',
+          required: ['document'],
+          properties: { document: stringField, clause: { type: 'string' }, page: { type: 'integer', minimum: 1 } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintake.addDeliverable(tenantContext(platform, ctx), ctx.params.invitationId as string, body(ctx) as tenderintake.TenderDeliverable),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/tenders/:invitationId/addenda',
+    description: 'Record an addendum. It appends to the invitation and never rewrites it',
+    schema: {
+      type: 'object',
+      required: ['reference', 'issuedAt', 'summary'],
+      properties: {
+        reference: stringField,
+        issuedAt: stringField,
+        summary: { type: 'string' },
+        returnLocal: stringField,
+        timeZone: stringField,
+        addedDeliverables: { type: 'array', items: { type: 'object' } },
+        source: {
+          type: 'object',
+          required: ['document'],
+          properties: { document: stringField, clause: { type: 'string' }, page: { type: 'integer', minimum: 1 } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintake.issueAddendum(tenantContext(platform, ctx), ctx.params.invitationId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/tenders/:invitationId/programme',
+    description: 'Back-plan the tender programme and the bid work packages from the return deadline',
+    schema: {
+      type: 'object',
+      properties: { from: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintake.generateBidProgramme(tenantContext(platform, ctx), ctx.params.invitationId as string, body(ctx)),
   },
   {
     method: 'POST',

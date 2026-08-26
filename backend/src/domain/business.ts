@@ -3,6 +3,7 @@ import { ulid } from '../core/ids.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
 import { createProject } from './structure.ts';
 import { supplyChainCoverage } from './supplychain.ts';
+import { bidApprovalPosition } from './tenderintake.ts';
 import type { SectorType } from './structure.ts';
 
 /**
@@ -379,6 +380,27 @@ export function qualifyOpportunity(
 // --- Decide -----------------------------------------------------------------
 
 /**
+ * Who took the decision, and under what standing authority.
+ *
+ * `AC-T-WF-01-02` asks the record to show delegated authority alongside the
+ * scoring. It is required only where the decision goes against the algorithm's
+ * recommendation, and that is the whole point: overriding a published rule is
+ * an exercise of authority, and an override with nobody's authority named on it
+ * is the finding a post-mortem cannot answer.
+ */
+export type DecisionAuthority = {
+  /** The person or office the authority sits with. */
+  delegatedTo: string;
+  /** The scheme of delegation, board minute or policy it comes from. */
+  reference?: string;
+  /** The value ceiling that authority carries, where one applies. */
+  limitMinor?: number;
+};
+
+/** A recorded disagreement. Kept because unanimity that was not unanimous is a lie. */
+export type DecisionDissent = { by: string; position: string };
+
+/**
  * The bid/no-bid decision.
  *
  * Requires a qualification first: deciding without a score is the behaviour
@@ -386,12 +408,34 @@ export function qualifyOpportunity(
  * permitted — the tool advises — but the divergence is recorded, because
  * "we overrode the score" is the finding a post-mortem needs and the one
  * nobody writes down at the time.
+ *
+ * One gate sits in front of a decision to **bid**, and it does not apply to a
+ * decision to walk away — declining is always available, and gating a refusal
+ * behind paperwork would make refusing the expensive option.
+ *
+ *   - Where a formal invitation has been recorded (`T-WF-01`), every mandatory
+ *     deliverable must carry a source, an owner and an internal date. A bid
+ *     disqualified for a missing certificate was priced correctly and lost
+ *     anyway.
+ *
+ * What is deliberately **not** gated here is staleness. An addendum makes the
+ * last decision stale, and deciding again is the act that answers it — so
+ * refusing the decision would leave nothing able to clear the condition. The
+ * staleness is reported on the tender position and enforced where it actually
+ * bites: a tender programme cannot be built on a superseded invitation.
  */
 export function decideBidNoBid(
   ctx: EngineContext,
   opportunityId: string,
-  input: { bid: boolean; rationale: string },
-): { stage: OpportunityStage; againstRecommendation: boolean } {
+  input: {
+    bid: boolean;
+    rationale: string;
+    /** Conditions the decision is subject to — "bid, provided the LADs are capped". */
+    conditions?: string[];
+    dissent?: DecisionDissent[];
+    authority?: DecisionAuthority;
+  },
+): { stage: OpportunityStage; againstRecommendation: boolean; conditions: string[] } {
   authorise(ctx, 'BUSINESS_DEVELOPMENT', 'A');
 
   const record = requireOpportunity(ctx, opportunityId);
@@ -412,6 +456,28 @@ export function decideBidNoBid(
     (input.bid && qualification.recommendation === 'NO_BID') ||
     (!input.bid && qualification.recommendation === 'BID');
 
+  if (againstRecommendation && !input.authority?.delegatedTo?.trim()) {
+    throw new DomainError(
+      'AUTHORITY_REQUIRED',
+      `The algorithm recommends ${qualification.recommendation.replace(/_/g, ' ').toLowerCase()} at a score of ${qualification.score}. ` +
+        'Deciding otherwise is permitted, but the authority it is taken under has to be named.',
+    );
+  }
+
+  if (input.bid) {
+    const position = bidApprovalPosition(ctx, opportunityId);
+    if (position.blockers.length > 0) {
+      throw new DomainError(
+        'TENDER_DELIVERABLES_INCOMPLETE',
+        `Invitation ${position.reference} is not ready to bid. ${position.blockers.join('. ')}. ` +
+          'A mandatory deliverable with no owner, no source or no internal date is how a correctly priced bid is disqualified.',
+      );
+    }
+  }
+
+  const conditions = (input.conditions ?? []).map((c) => c.trim()).filter(Boolean);
+  const previous = record.state.decision as { decidedAt?: string } | undefined;
+
   write(ctx, {
     projectId: pipelineProject(ctx),
     eventType: 'BID_NO_BID_DECIDED',
@@ -427,11 +493,17 @@ export function decideBidNoBid(
         score: qualification.score,
         recommendation: qualification.recommendation,
         againstRecommendation,
+        conditions,
+        dissent: input.dissent ?? [],
+        authority: input.authority,
+        // A re-review after an addendum supersedes rather than replaces: the
+        // ledger keeps both, and this says which one this decision answers.
+        supersedes: previous?.decidedAt,
       },
     },
   });
 
-  return { stage, againstRecommendation };
+  return { stage, againstRecommendation, conditions };
 }
 
 // --- Convert ----------------------------------------------------------------

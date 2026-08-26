@@ -136,13 +136,19 @@ const WRITE_CODES = new Set(['C', 'U', 'A', 'I', 'G']);
  * so the interface cannot offer a command the platform will refuse, and cannot
  * hide one it would accept. Duplicating either rule here is how the two drift.
  */
-export function blockedReason(area, code = 'R') {
+export function blockedReason(area, code = 'R', { tenantScoped = false } = {}) {
   const roles = state.session?.user?.roles ?? [];
   if (matrix && !roles.some((role) => (matrix[role]?.[area] ?? []).includes(code))) {
     return `No role of ${roles.join('/')} holds "${code}" on ${area}`;
   }
 
-  const phase = state.project?.phase;
+  // A tenant-scoped command runs against the tenant's governance scope, which
+  // has no lifecycle phase — the bid pipeline exists precisely because there is
+  // no project yet. Gating it on whatever delivery project the console happens
+  // to have selected is the browser holding a rule the server does not, which
+  // is the exact drift this function exists to prevent: the API accepts these
+  // commands whatever phase an unrelated project is in.
+  const phase = tenantScoped ? undefined : state.project?.phase;
   const allowed = writePhaseGates[area];
   if (WRITE_CODES.has(code) && phase && allowed && !allowed.includes(phase)) {
     return `${humanise(area)} cannot be written during the ${humanise(phase)} phase`;
@@ -153,11 +159,13 @@ export function blockedReason(area, code = 'R') {
 
 /**
  * Can the current identity run this, here, now? Reads are role-only; writes are
- * additionally gated by the lifecycle phase, exactly as the platform gates them.
+ * additionally gated by the lifecycle phase, exactly as the platform gates them
+ * — unless the command is tenant-scoped, in which case there is no project and
+ * therefore no phase to gate on.
  */
-export function can(area, code = 'R') {
+export function can(area, code = 'R', options) {
   if (!matrix) return true;
-  return blockedReason(area, code) === null;
+  return blockedReason(area, code, options) === null;
 }
 
 /**

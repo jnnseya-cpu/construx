@@ -1,5 +1,7 @@
 import { api } from '../lib/api.js';
+import { command, commandBar } from '../lib/command.js';
 import { badge, date, html, humanise, money, pct, raw, render, table } from '../lib/ui.js';
+import { blockedReason, can, draw } from '../app.js';
 
 /**
  * Business development — the pipeline, and the discipline of refusing work.
@@ -26,15 +28,47 @@ const STAGE_TONE = {
   LOST: 'warn',
 };
 
+/**
+ * The whole IANA list, from the runtime rather than from a hand-kept copy.
+ *
+ * A short curated list of "common" zones is the obvious shortcut and it is
+ * wrong the first time somebody bids in a country nobody thought of. The
+ * browser already holds the current database; the server validates the same
+ * way. Sorted with the zones a UK contractor reads most often at the top,
+ * because ordering is an affordance and does not narrow what is accepted.
+ */
+const NEAR_THE_TOP = ['Europe/London', 'Europe/Dublin', 'Europe/Paris', 'Europe/Berlin', 'UTC'];
+
+function timeZoneOptions() {
+  const all = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+  const rest = all.filter((zone) => !NEAR_THE_TOP.includes(zone));
+  return [...NEAR_THE_TOP, ...rest].map((zone) => ({ value: zone, label: zone.replace(/_/g, ' ') }));
+}
+
+const SEVERITY_TONE = { CRITICAL: 'bad', MAJOR: 'warn', MINOR: '' };
+
+/** Every command on this screen runs before a project exists. */
+const TENANT = { tenantScoped: true };
+
 export async function pipeline(root) {
-  const [criteria, summary, discipline, radar] = await Promise.all([
+  const [criteria, summary, discipline, radar, tenders, permissions] = await Promise.all([
     api.get('/v1/pipeline/criteria'),
     api.get('/v1/pipeline'),
     api.get('/v1/pipeline/discipline'),
     api.get('/v1/radar/latest').catch(() => ({ run: null })),
+    api.get('/v1/pipeline/tenders'),
+    api.get('/v1/permissions/matrix'),
   ]);
 
   const run = radar?.run ?? null;
+  const board = tenders.tenders ?? [];
+  // The role list comes from the published matrix rather than a second copy in
+  // the browser: an owner on a deliverable has to be a role the platform knows.
+  const roleOptions = Object.keys(permissions.matrix ?? {}).sort().map((role) => ({ value: role, label: humanise(role) }));
+  const invitationOptions = board.map((t) => ({ value: t.invitationId, label: `${t.reference} · ${t.title}` }));
+  const biddableOptions = board
+    .filter((t) => t.stage === 'BID')
+    .map((t) => ({ value: t.invitationId, label: `${t.reference} · closes ${t.deadline.local}` }));
 
   const thresholds = criteria.thresholds;
   const opportunities = summary.opportunities ?? [];
@@ -50,6 +84,73 @@ export async function pipeline(root) {
             will not do is let an override pass unremarked.
           </p>
         </div>
+        <div class="actions cmd-bar">
+          ${raw(
+            commandBar([
+              // Tenant-scoped: the bid pipeline exists before there is a
+              // project, so no project's lifecycle phase gates it. The API
+              // runs these against the tenant governance scope.
+              { id: 'invitation', label: 'Record an ITT', tone: '',
+                permitted: can('ESTIMATE_TENDER', 'C', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'C', TENANT) },
+              { id: 'deliverable', label: 'Add a deliverable',
+                permitted: can('ESTIMATE_TENDER', 'U', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
+              { id: 'addendum', label: 'Record an addendum',
+                permitted: can('ESTIMATE_TENDER', 'U', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
+              { id: 'programme', label: 'Build tender programme',
+                permitted: can('ESTIMATE_TENDER', 'C', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'C', TENANT) },
+            ]),
+          )}
+        </div>
+      </div>
+
+      <div class="card pad0" style="margin-bottom:14px">
+        <h3 style="padding:15px 17px 0">Invitations in hand</h3>
+        <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+          ${tenders.summary} The deadline is recorded in the zone it is read in and resolved to one instant — a portal
+          that closes at noon in Dublin has closed an hour before noon here.
+        </p>
+        ${table({
+          headers: ['Reference', 'Client', 'Closes', 'Zone', 'Left', 'Deliverables', 'Addenda', 'Stage', 'Ready to bid'],
+          align: ['', '', '', '', 'num', 'num', 'num', '', ''],
+          rows: board.map((t) => [
+            html`${t.reference}<br><span style="font-size:11.5px;color:var(--text-3)">${t.title}</span>`,
+            t.clientName,
+            t.deadline.local.replace('T', ' '),
+            html`<span style="font-size:11.5px;color:var(--text-3)">${t.deadline.timeZone}</span>${
+              t.deadline.anomaly ? badge(humanise(t.deadline.anomaly), 'bad') : ''
+            }`,
+            html`<span style="${raw(t.businessDaysRemaining <= 10 ? 'color:var(--orange)' : '')}">${t.businessDaysRemaining}d</span>`,
+            `${t.deliverables.mandatory}/${t.deliverables.total}`,
+            t.addenda,
+            badge(BAND_LABEL[t.stage] ?? humanise(t.stage), STAGE_TONE[t.stage] ?? ''),
+            t.reReviewReasons.length > 0
+              ? badge('re-review', 'warn')
+              : t.blockers.length > 0
+                ? badge(`${t.blockers.length} blocking`, 'bad')
+                : badge('ready', 'ok'),
+          ]),
+          empty: 'No invitation recorded',
+        })}
+        ${
+          board.some((t) => t.blockers.length > 0 || t.reReviewReasons.length > 0 || t.clarifications.length > 0)
+            ? html`<div class="split-list" style="padding:0 17px 15px">
+                ${board.flatMap((t) => [
+                  ...t.reReviewReasons.map(
+                    (reason) => html`<div class="row"><span class="lbl">${t.reference} ${badge('re-review', 'warn')} ${reason}</span></div>`,
+                  ),
+                  ...t.blockers.map(
+                    (blocker) => html`<div class="row"><span class="lbl">${t.reference} ${badge('blocks the bid', 'bad')} ${blocker}</span></div>`,
+                  ),
+                  ...t.clarifications.map(
+                    (c) => html`<div class="row">
+                      <span class="lbl">${t.reference} ${badge(humanise(c.severity), SEVERITY_TONE[c.severity] ?? '')} ${c.subject}</span>
+                      <span class="val" style="font-size:12px;color:var(--text-3)">${c.question}</span>
+                    </div>`,
+                  ),
+                ])}
+              </div>`
+            : ''
+        }
       </div>
 
       <div class="grid g4" style="margin-bottom:14px">
@@ -256,4 +357,134 @@ export async function pipeline(root) {
       </div>
     `,
   );
+
+  const COMMANDS = {
+    invitation: {
+      title: 'Record an invitation to tender',
+      intent:
+        'The deadline is registered before anybody reads the documents, because a countdown that starts when somebody ' +
+        'gets round to it is not a countdown. The time zone is part of the deadline, not a detail — where the invitation ' +
+        'did not state one, say so and the platform raises it as a question for the buyer.',
+      path: (v) => `/v1/pipeline/opportunities/${v.opportunityId}/tenders`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'opportunityId', label: 'Opportunity', type: 'select',
+          options: opportunities.map((o) => ({ value: o.id, label: `${o.title} · ${o.clientName}` })) },
+        { name: 'reference', label: 'The buyer’s reference', type: 'text', placeholder: 'ITT/2027/014' },
+        { name: 'issuedAt', label: 'Issued', type: 'datetime-local',
+          hint: 'When the invitation landed. Immutable — addenda append to it and never rewrite it.' },
+        { name: 'returnLocal', label: 'Returns by (as the invitation states it)', type: 'datetime-local',
+          hint: 'The wall-clock time printed in the ITT, not converted' },
+        { name: 'timeZone', label: 'Read in', type: 'select', options: timeZoneOptions(), value: 'Europe/London' },
+        { name: 'timeZoneStated', label: 'Did the invitation state the zone?', type: 'select',
+          options: [{ value: 'true', label: 'Yes — it says so in the documents' }, { value: 'false', label: 'No — the zone above is our assumption' }],
+          hint: 'An assumed deadline is a critical clarification, not a default' },
+        { name: 'channel', label: 'Returned through', type: 'select',
+          options: ['PORTAL', 'EMAIL', 'PHYSICAL', 'HAND_DELIVERY'].map((c) => ({ value: c, label: humanise(c) })) },
+        { name: 'clarificationLocal', label: 'Last date for questions', type: 'datetime-local', required: false },
+        { name: 'siteVisitLocal', label: 'Site visit', type: 'datetime-local', required: false },
+      ],
+      transform: (v) => ({
+        reference: v.reference,
+        issuedAt: new Date(v.issuedAt).toISOString(),
+        returnLocal: v.returnLocal,
+        timeZone: v.timeZone,
+        timeZoneStated: v.timeZoneStated === 'true',
+        channel: v.channel,
+        ...(v.clarificationLocal ? { clarificationLocal: v.clarificationLocal } : {}),
+        ...(v.siteVisitLocal ? { siteVisitLocal: v.siteVisitLocal } : {}),
+      }),
+    },
+
+    deliverable: {
+      title: 'Add a return deliverable',
+      intent:
+        'A mandatory deliverable needs a source in the invitation, an owner, and our own date — all three, before a bid ' +
+        'can be approved. A bid disqualified for a missing certificate was priced correctly and lost anyway.',
+      path: (v) => `/v1/pipeline/tenders/${v.invitationId}/deliverables`,
+      submitLabel: 'Add',
+      fields: [
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: invitationOptions },
+        { name: 'reference', label: 'Reference', type: 'text', placeholder: 'D-01' },
+        { name: 'title', label: 'What has to be returned', type: 'text', placeholder: 'Priced pricing schedule' },
+        { name: 'mandatory', label: 'Pass / fail?', type: 'select',
+          options: [{ value: 'true', label: 'Mandatory — failing it ends the bid' }, { value: 'false', label: 'Optional' }] },
+        { name: 'owner', label: 'Owner', type: 'select', options: roleOptions, required: false,
+          hint: 'Required on anything mandatory' },
+        { name: 'internalDueBy', label: 'Our date', type: 'date', required: false,
+          hint: 'Earlier than the buyer’s, and the one that actually binds' },
+        { name: 'sourceDocument', label: 'Source document', type: 'text', required: false,
+          placeholder: 'Instructions to Tenderers' },
+        { name: 'sourceClause', label: 'Clause', type: 'text', required: false },
+        { name: 'sourcePage', label: 'Page', type: 'number', required: false, min: 1 },
+        { name: 'pageLimit', label: 'Page limit', type: 'number', required: false, min: 1 },
+        { name: 'signatureRequired', label: 'Needs a signature?', type: 'select', required: false,
+          options: [{ value: '', label: '—' }, { value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }],
+          hint: 'A wet signature is a lead time, not a task' },
+      ],
+      transform: (v) => ({
+        reference: v.reference,
+        title: v.title,
+        mandatory: v.mandatory === 'true',
+        ...(v.owner ? { owner: v.owner } : {}),
+        ...(v.internalDueBy ? { internalDueBy: v.internalDueBy } : {}),
+        ...(v.pageLimit ? { pageLimit: Number(v.pageLimit) } : {}),
+        ...(v.signatureRequired ? { signatureRequired: v.signatureRequired === 'true' } : {}),
+        ...(v.sourceDocument
+          ? {
+              source: {
+                document: v.sourceDocument,
+                ...(v.sourceClause ? { clause: v.sourceClause } : {}),
+                ...(v.sourcePage ? { page: Number(v.sourcePage) } : {}),
+              },
+            }
+          : {}),
+      }),
+    },
+
+    addendum: {
+      title: 'Record an addendum',
+      intent:
+        'It appends. The original issue stays exactly as it was recorded, because "what was the deadline when we planned ' +
+        'the bid" is what a late submission turns into a dispute about.',
+      path: (v) => `/v1/pipeline/tenders/${v.invitationId}/addenda`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: invitationOptions },
+        { name: 'reference', label: 'Addendum reference', type: 'text', placeholder: 'ADD-01' },
+        { name: 'issuedAt', label: 'Issued', type: 'datetime-local' },
+        { name: 'summary', label: 'What it changed', type: 'textarea', rows: 3 },
+        { name: 'returnLocal', label: 'Revised return time', type: 'datetime-local', required: false,
+          hint: 'Leave blank where the addendum does not move the date. Moving it forces the bid decision to be taken again.' },
+      ],
+      transform: (v) => ({
+        reference: v.reference,
+        issuedAt: new Date(v.issuedAt).toISOString(),
+        summary: v.summary,
+        ...(v.returnLocal ? { returnLocal: v.returnLocal } : {}),
+      }),
+    },
+
+    programme: {
+      title: 'Build the tender programme',
+      intent:
+        'Back-planned from the return deadline across the working calendar, bank holidays included. Where the window ' +
+        'cannot hold the eight stages, the platform refuses and shows the arithmetic rather than compressing them silently.',
+      path: (v) => `/v1/pipeline/tenders/${v.invitationId}/programme`,
+      submitLabel: 'Build',
+      fields: [
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: biddableOptions,
+          hint: biddableOptions.length === 0 ? 'Nothing has been decided as a bid yet' : 'Only invitations decided as a bid appear here' },
+      ],
+      transform: () => ({}),
+    },
+  };
+
+  root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-command]');
+    if (!button) return;
+    const spec = COMMANDS[button.dataset.command];
+    if (!spec) return;
+    if (await command(spec)) await draw();
+  });
 }

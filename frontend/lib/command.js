@@ -18,7 +18,11 @@ import { esc, exact, toast } from './ui.js';
  * when it was rejected is worse than one that shows nothing.
  */
 
-const FIELD_TYPES = new Set(['text', 'number', 'date', 'month', 'select', 'textarea', 'hidden']);
+// `datetime-local` is here because a tender deadline is a date *and* a time and
+// a `date` field cannot express one. Falling back to `text` made the person
+// type `2027-03-12T12:00` by hand into the most consequential field in the
+// stage, which is where the typos that lose bids come from.
+const FIELD_TYPES = new Set(['text', 'number', 'date', 'datetime-local', 'month', 'select', 'textarea', 'hidden']);
 
 /**
  * The hash is computed in the browser over the real bytes and becomes the
