@@ -26,13 +26,81 @@ function loadDotEnv(): void {
 
 loadDotEnv();
 
+/**
+ * Every variable this process actually reads, recorded as it reads it.
+ *
+ * Hand-maintaining a second list of variable names beside the config object is
+ * a list that goes stale the first time somebody adds a setting — and it goes
+ * stale silently, in the direction that matters: the new variable is the one
+ * nobody can see whether they set. So the readers register themselves, and the
+ * registry is complete by construction.
+ *
+ * It holds names and types. It never holds a value.
+ */
+const registry = new Map<string, { key: string; kind: 'string' | 'number' | 'boolean'; secret: boolean }>();
+
+/**
+ * Whether a variable's *value* may be shown.
+ *
+ * Decided from the name, deliberately, rather than from a list somebody has to
+ * remember to add to. A new `..._SECRET` or `..._API_KEY` is covered the moment
+ * it exists; the failure mode of a name-based rule is treating a harmless
+ * variable as secret, which costs nothing.
+ */
+function isSecretName(key: string): boolean {
+  // A URL is only a secret when it is a connection string, which carries
+  // credentials inside it. A checkout return address does not, and hiding one
+  // costs something real: a wrong payment return URL is exactly the kind of
+  // mistake this report exists to make visible.
+  if (/_URL$/.test(key)) return /(REDIS|DATABASE|POSTGRES|MONGO|DSN|WEBHOOK)/.test(key);
+  return /(SECRET|_KEY$|_KEY_|^KEY_|PASS|TOKEN|CREDENTIAL|PEM|_DSN)/.test(key);
+}
+
+function register(key: string, kind: 'string' | 'number' | 'boolean'): void {
+  if (!registry.has(key)) registry.set(key, { key, kind, secret: isSecretName(key) });
+}
+
+/**
+ * What the running process sees for every variable it reads.
+ *
+ * Presence and length, and the value only where the name says it is not a
+ * secret. Length is here because it is what catches the mistake this exists
+ * for: a key truncated by a paste that swallowed the end of the line looks
+ * exactly like a correct one from every other angle, and its length does not.
+ */
+export function environmentReport(): Array<{
+  key: string;
+  kind: 'string' | 'number' | 'boolean';
+  secret: boolean;
+  present: boolean;
+  /** Characters received. Absent where the variable is not set. */
+  length?: number;
+  /** The value, only for a variable whose name says it is not a secret. */
+  value?: string;
+}> {
+  return [...registry.values()]
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .map((entry) => {
+      const raw = process.env[entry.key];
+      const present = raw !== undefined && raw !== '';
+      return {
+        ...entry,
+        present,
+        ...(present ? { length: raw.length } : {}),
+        ...(present && !entry.secret ? { value: raw } : {}),
+      };
+    });
+}
+
 function bool(key: string, fallback: boolean): boolean {
+  register(key, 'boolean');
   const raw = process.env[key];
   if (raw === undefined || raw === '') return fallback;
   return raw === 'true' || raw === '1';
 }
 
 function num(key: string, fallback: number): number {
+  register(key, 'number');
   const raw = process.env[key];
   if (raw === undefined || raw === '') return fallback;
   const parsed = Number(raw);
@@ -40,6 +108,7 @@ function num(key: string, fallback: number): number {
 }
 
 function str(key: string, fallback: string): string {
+  register(key, 'string');
   const raw = process.env[key];
   return raw === undefined || raw === '' ? fallback : raw;
 }

@@ -1,4 +1,4 @@
-import { assertProductionSafety, config, isProduction } from '../config.ts';
+import { assertProductionSafety, config, environmentReport, isProduction } from '../config.ts';
 
 /**
  * What this deployment actually has configured.
@@ -56,6 +56,16 @@ export type Readiness = {
   /** Critical capabilities not yet configured — the go-live blocker list. */
   blocking: string[];
   capabilities: Capability[];
+  /**
+   * Every variable this process reads, and what it actually received.
+   *
+   * The capability list above says what works; this says what arrived. They
+   * answer different questions, and the second one is what catches a variable
+   * set under a misspelt name, scoped to the wrong environment, or truncated by
+   * a paste that swallowed the end of the line — all of which look like "not
+   * configured" from the capability view with no way to tell them apart.
+   */
+  variables: ReturnType<typeof environmentReport>;
 };
 
 /** Both halves, one half, or neither — the shape every payment rail has. */
@@ -285,5 +295,6 @@ export function readiness(now = new Date()): Readiness {
     degraded: capabilities.filter((c) => c.state === 'DEGRADED').length,
     blocking: capabilities.filter((c) => c.critical && c.state !== 'CONFIGURED').map((c) => c.label),
     capabilities,
+    variables: environmentReport(),
   };
 }

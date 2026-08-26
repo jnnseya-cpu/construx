@@ -81,6 +81,41 @@ function movement(current, previous) {
   return ((current - previous) / previous) * 100;
 }
 
+/**
+ * The environment report, grouped the way an operator thinks about it.
+ *
+ * By what a variable is *for*, not by its prefix — somebody setting up mail
+ * looks for the mail block, and `SMTP_*`, `NOTIFICATIONS_*` and `NEWSLETTER_*`
+ * are all in it. Presentation only: the report itself is a flat list, and
+ * anything a rule below does not claim lands in "Everything else" rather than
+ * disappearing, because a variable nobody can find is the bug this exists to
+ * catch.
+ */
+function envGroups(vars) {
+  const rules = [
+    ['AI providers', /^(AI_|OPENAI|GEMINI|ANTHROPIC)/],
+    ['Payments — card', /^STRIPE_/],
+    ['Payments — mobile money', /^KODA_/],
+    ['Email and messaging', /^(SMTP_|NOTIFICATIONS_|NEWSLETTER_)/],
+    ['Identity and gateway', /^GATEWAY_/],
+    ['Record and evidence', /^(LEDGER_|EVIDENCE_|SIGNING_)/],
+    ['Commercial rules', /^(ACU_|STORAGE_|MAXIMUM_|FREE_TRIAL|TRIALS_)/],
+    ['Platform and site', /^(PLATFORM_|PUBLIC_|ANALYTICS_|NODE_ENV|PORT|ERASURE_)/],
+  ];
+
+  const claimed = new Set();
+  const groups = rules
+    .map(([label, pattern]) => {
+      const matched = vars.filter((v) => pattern.test(v.key));
+      for (const v of matched) claimed.add(v.key);
+      return { label, vars: matched };
+    })
+    .filter((group) => group.vars.length > 0);
+
+  const rest = vars.filter((v) => !claimed.has(v.key));
+  return rest.length > 0 ? [...groups, { label: 'Everything else', vars: rest }] : groups;
+}
+
 export async function admin(root) {
   const roles = state.session.user.roles ?? [];
   const isOperator = roles.includes('PLATFORM_ADMIN');
@@ -405,7 +440,7 @@ export async function admin(root) {
               </h3>
               <div class="metric-sub" style="padding:0 17px 10px">
                 ${ready.configured} of ${ready.capabilities.length} capabilities configured · environment
-                <b>${ready.environment}</b>. Read from this running process, not from a checklist. Every rail is set with
+                <b>${ready.variables}</b>. Read from this running process, not from a checklist. Every rail is set with
                 environment variables on the server, never from this screen — and this screen reports whether a value is
                 set, never what it is.
               </div>
@@ -441,6 +476,44 @@ export async function admin(root) {
                       This process raised no configuration warning at boot.
                     </div></div>`
               }
+            </div>`
+          : ''
+      }
+
+      ${
+        ready
+          ? html`<div class="card" style="margin-bottom:14px">
+              <details>
+                <summary>Runtime environment — what this process actually received
+                  <span class="metric-sub">${ready.variables.filter((v) => v.present).length} of ${ready.variables.length} variables set</span>
+                </summary>
+                <div class="details-body">
+                  <div class="metric-sub" style="margin-bottom:12px">
+                    Every variable this build reads, registered by the readers themselves so the list cannot go stale.
+                    <b>“not set” means this running server received no value under that exact name</b> — if you set it on the
+                    server and it still reads not set, check the spelling, that it is in the file the process loaded, and that
+                    the container was recreated afterwards. Secret values are never shown; their length is, because a key
+                    truncated by a paste looks correct from every other angle and its length does not.
+                  </div>
+                  ${envGroups(ready.variables).map(
+                    (group) => html`<div style="margin-bottom:14px">
+                      <div class="metric-sub" style="margin-bottom:6px"><b>${group.label}</b></div>
+                      ${table({
+                        headers: ['Variable', 'State', 'Value'],
+                        rows: group.vars.map((v) => [
+                          html`<span class="mono" style="font-size:11px">${v.key}</span>`,
+                          v.present ? badge('set', 'ok') : badge('not set', 'neutral'),
+                          v.present
+                            ? v.secret
+                              ? html`<span class="metric-sub">hidden · ${v.length} character${v.length === 1 ? '' : 's'}</span>`
+                              : html`<span class="mono" style="font-size:11px">${v.value}</span>`
+                            : html`<span class="metric-sub">—</span>`,
+                        ]),
+                      })}
+                    </div>`,
+                  )}
+                </div>
+              </details>
             </div>`
           : ''
       }

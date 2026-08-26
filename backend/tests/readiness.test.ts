@@ -74,6 +74,60 @@ describe('the report never carries a value', () => {
     assert.ok(ledger.env.length > 0, 'a capability published no way to configure it');
   });
 
+  it('never carries the value of a variable its own name marks as secret', () => {
+    // The environment report is the half that could leak by construction: it
+    // publishes values. The classification is by name, so this asserts the
+    // classification is actually honoured rather than that it exists.
+    for (const variable of readiness().variables) {
+      if (!variable.secret) continue;
+      assert.equal(variable.value, undefined, `${variable.key} published its value`);
+    }
+  });
+
+  it('reports length for a secret that is set, which is what catches a truncated paste', () => {
+    // Presence alone cannot tell a correct key from one cut short by a paste
+    // that swallowed the end of the line. Both are "set".
+    for (const variable of readiness().variables) {
+      if (!variable.present) {
+        assert.equal(variable.length, undefined, `${variable.key} reported a length for a value it does not have`);
+        continue;
+      }
+      assert.ok(typeof variable.length === 'number' && variable.length > 0, `${variable.key} is set and reported no length`);
+    }
+  });
+
+  it('registers every variable the process reads, without a hand-kept list', () => {
+    // The registry is populated by the readers themselves. A hand-maintained
+    // list goes stale exactly where it matters — on the setting somebody just
+    // added, which is the one nobody can see whether they set.
+    const keys = new Set(readiness().variables.map((v) => v.key));
+
+    for (const expected of [
+      'LEDGER_JOURNAL_PATH',
+      'GATEWAY_JWT_SECRET',
+      'STRIPE_SECRET_KEY',
+      'STRIPE_WEBHOOK_SECRET',
+      'KODA_SECRET_KEY',
+      'SMTP_HOST',
+      'PLATFORM_OPERATOR_EMAIL',
+      'PUBLIC_BASE_URL',
+      'ANTHROPIC_API_KEY',
+    ]) {
+      assert.ok(keys.has(expected), `${expected} is read by the platform and absent from the environment report`);
+    }
+  });
+
+  it('classifies a checkout return address as showable and a connection string as not', () => {
+    // A URL is only a secret when it carries credentials. Hiding a payment
+    // return address costs something real: a wrong one is exactly the mistake
+    // this report exists to make visible.
+    const by = new Map(readiness().variables.map((v) => [v.key, v]));
+
+    assert.equal(by.get('STRIPE_SUCCESS_URL')?.secret, false, 'a checkout return address was hidden from the operator');
+    assert.equal(by.get('KODA_BASE_URL')?.secret, false);
+    assert.equal(by.get('GATEWAY_RATE_LIMIT_REDIS_URL')?.secret, true, 'a connection string was published');
+  });
+
   it('names a variable for every capability', () => {
     for (const capability of readiness().capabilities) {
       assert.ok(capability.env.length > 0, `${capability.key} says nothing about how to configure it`);
