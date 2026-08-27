@@ -4,9 +4,21 @@ import { ulid } from '../core/ids.ts';
 import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 import { lookupEventType } from '../goldenthread/eventTypes.ts';
 import { replayProject } from '../goldenthread/replay.ts';
+import { constructabilityPosition, freezeBlockersFor } from './constructability.ts';
+import { designBaselinePosition } from './designbaseline.ts';
+import { designChangePosition } from './designchange.ts';
 
 /**
- * The stage gate Definition of Done — 8.4.
+ * The stage gate Definition of Done — 7.4 and 8.4.
+ *
+ * The two are **word for word identical** in the specification, and so is 6.4.
+ * What differs between them is not the standard but the evidence each is
+ * answered from, so the clause list, the titles, the `NOT_ASSESSABLE` rule, the
+ * AI clause, the replay clause and the report arithmetic are shared outright:
+ * `evaluateDesignGate` answers the same seven from the design stage,
+ * `evaluateTenderGate` from the tender, and `gateFor` picks by phase. Three
+ * copies of "every approval satisfies party separation" would be three answers
+ * to one question inside a year.
  *
  * The lifecycle already had a gate: `evaluatePhaseGate` counts the entities a
  * phase cannot be left without, and `transitionPhase` refuses a forward move
@@ -331,7 +343,13 @@ const AI_REQUIREMENTS: Array<{ what: string; recorded: boolean; field?: string }
   { what: 'human disposition', recorded: false },
 ];
 
-function aiAccounted(ctx: EngineContext): ClauseResult {
+/**
+ * `stage` names what the report is about in the prose — "this tender", "this
+ * design stage". The check itself is identical, because 6.4, 7.4 and 8.4 are
+ * word for word the same clause and giving each stage its own copy of it would
+ * guarantee they drifted.
+ */
+function aiAccounted(ctx: EngineContext, stage = 'tender'): ClauseResult {
   const blocking: string[] = [];
   let aiEvents = 0;
 
@@ -364,7 +382,7 @@ function aiAccounted(ctx: EngineContext): ClauseResult {
       clause: 'AI_ACCOUNTED',
       title: TITLES.AI_ACCOUNTED,
       state: 'PASS',
-      detail: 'No AI output was used in this tender, so there is nothing to account for.',
+      detail: `No AI output was used in this ${stage}, so there is nothing to account for.`,
       blocking: [],
     };
   }
@@ -376,7 +394,7 @@ function aiAccounted(ctx: EngineContext): ClauseResult {
       clause: 'AI_ACCOUNTED',
       title: TITLES.AI_ACCOUNTED,
       state: 'FAIL',
-      detail: `${blocking.length} AI output${blocking.length === 1 ? '' : 's'} incompletely recorded across ${aiEvents} used in this tender.`,
+      detail: `${blocking.length} AI output${blocking.length === 1 ? '' : 's'} incompletely recorded across ${aiEvents} used in this ${stage}.`,
       blocking,
     };
   }
@@ -386,7 +404,7 @@ function aiAccounted(ctx: EngineContext): ClauseResult {
     title: TITLES.AI_ACCOUNTED,
     state: 'NOT_ASSESSABLE',
     detail:
-      `All ${aiEvents} AI outputs carry their evidence, confidence, model class and ACU settlement. ` +
+      `All ${aiEvents} AI outputs used in this ${stage} carry their evidence, confidence, model class and ACU settlement. ` +
       `The platform does not record ${absent.join(', ')} at all, so this clause cannot be assessed against the ` +
       'specification in full — and it is reported as unassessable rather than passed, because a gate that passes what it did ' +
       'not check converts a gap into an assurance.',
@@ -471,6 +489,273 @@ export type GateReport = {
   summary: string;
 };
 
+// --- 7.4: the same seven clauses, answered from the design stage ------------
+
+/**
+ * The design stage gate — 7.4.
+ *
+ * 6.4, 7.4 and 8.4 are word for word identical in the specification. What
+ * differs is the evidence each is answered from, so the clause list, the titles,
+ * the `NOT_ASSESSABLE` rule, the AI clause and the replay clause are shared
+ * outright and only the four stage-specific checks are written twice. Three
+ * copies of "every approval satisfies party separation" would be three answers
+ * to one question within a year.
+ */
+
+function designInputsComplete(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  const packages = list(ctx, 'DesignPackage');
+  if (packages.length === 0) {
+    blocking.push('No design package exists, so there is no design to baseline');
+  }
+
+  const midps = list(ctx, 'MIDP');
+  if (midps.length === 0) {
+    blocking.push('No master information delivery plan has been approved, so nothing states what the design owes and when');
+  }
+
+  const baselines = list(ctx, 'DesignBaseline');
+  if (baselines.length === 0 && packages.length > 0) {
+    blocking.push('No design baseline has been approved, so nothing downstream has an accepted revision to work to');
+  }
+
+  // AC-D-WF-08-01. Every container in a baseline carries its revision, its
+  // suitability and who accepts it — checked on the freeze rather than assumed
+  // from the fact that a freeze happened.
+  for (const freeze of list(ctx, 'FrozenPackage')) {
+    if (freeze.supersededBy) continue;
+    const deliverables = (freeze.deliverables as Array<Record<string, unknown>>) ?? [];
+    if (deliverables.length === 0) {
+      blocking.push(`${String(freeze.reference)} froze nothing`);
+    }
+    for (const deliverable of deliverables) {
+      if (!deliverable.state) {
+        blocking.push(`${String(freeze.reference)}: ${String(deliverable.reference)} carries no suitability`);
+      }
+      if (!deliverable.acceptingParty) {
+        blocking.push(`${String(freeze.reference)}: ${String(deliverable.reference)} names nobody who accepts it`);
+      }
+    }
+  }
+
+  return {
+    clause: 'INPUTS_COMPLETE',
+    title: TITLES.INPUTS_COMPLETE,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? `${packages.length} package, ${midps.length} approved delivery plan and ${baselines.length} baseline, every frozen container carrying its suitability and its acceptance.`
+        : `${blocking.length} input${blocking.length === 1 ? '' : 's'} not complete.`,
+    blocking,
+  };
+}
+
+function designApprovalsGoverned(ctx: EngineContext): ClauseResult {
+  // The generic half — every APPROVE and FREEZE names a person and what they
+  // held — is identical across the three gates and is reused rather than
+  // rewritten. What is added here is the separation this stage cares about.
+  const generic = approvalsGoverned(ctx);
+  const blocking = [...generic.blocking];
+
+  for (const change of list(ctx, 'DesignChange')) {
+    const decision = change.decision as Record<string, unknown> | undefined;
+    if (decision && decision.by === change.proposedBy) {
+      blocking.push(`${String(change.reference)} was decided by the person who proposed it`);
+    }
+  }
+
+  // A deliverable whose author checks their own work. The plan refuses it when
+  // it is written; this catches anything written before that refusal existed.
+  for (const designPackage of list(ctx, 'DesignPackage')) {
+    const deliverables = (designPackage.deliverables as Array<Record<string, unknown>>) ?? [];
+    for (const deliverable of deliverables) {
+      if (deliverable.author && deliverable.author === deliverable.checker) {
+        blocking.push(
+          `${String(designPackage.reference)}/${String(deliverable.reference)} is checked by the person who produced it`,
+        );
+      }
+    }
+  }
+
+  return {
+    clause: 'APPROVALS_GOVERNED',
+    title: TITLES.APPROVALS_GOVERNED,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? `${generic.detail} No design change was decided by its proposer and no deliverable is checked by its author.`
+        : `${blocking.length} approval${blocking.length === 1 ? '' : 's'} not properly governed.`,
+    blocking,
+  };
+}
+
+function designBlockersClosed(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  // Constructability. Reused from D-WF-07 rather than re-derived, which is why
+  // `freezeBlockersFor` is exported at all.
+  for (const designPackage of list(ctx, 'DesignPackage')) {
+    for (const blocker of freezeBlockersFor(ctx, String(designPackage.reference))) {
+      if (blocker.severity !== 'CRITICAL' && blocker.severity !== 'MAJOR') continue;
+      blocking.push(`${blocker.package}: ${blocker.reference} — ${blocker.what} (${blocker.owner})`);
+    }
+  }
+
+  // Coordination. Read from the recorded state rather than through
+  // `coordinationPosition`, because that read is gated on BIM_TWIN and not
+  // every role that may read a gate report holds it. What is read is stored
+  // state, not a rule re-implemented.
+  for (const issue of list(ctx, 'CoordinationIssue')) {
+    if (issue.state === 'CLOSED' || issue.state === 'VERIFIED') continue;
+    if (issue.accepted) continue;
+    if (issue.severity !== 'CRITICAL') continue;
+    blocking.push(`${String(issue.reference)}: ${String(issue.title ?? issue.location)} is a critical clash still open`);
+  }
+
+  // Design changes. `designChangePosition` needs only read on design
+  // information, which every role that can read a gate report holds.
+  const changes = designChangePosition(ctx);
+  for (const reference of changes.approvalOwed) {
+    blocking.push(`${reference} was implemented on the emergency path and has never been approved`);
+  }
+  for (const entry of changes.unconfirmed) {
+    blocking.push(`${entry.reference} was implemented with ${entry.items.join(', ')} unconfirmed`);
+  }
+
+  // Residual design risk that has not reached the information it has to reach.
+  // A risk the designer eliminated is discharged; one that stops at the
+  // designer has done two thirds of a duty.
+  for (const risk of constructabilityPosition(ctx).uncommunicated) {
+    blocking.push(`${risk.reference}: ${risk.hazard} does not reach ${risk.missing.join(' or ')}`);
+  }
+
+  return {
+    clause: 'BLOCKERS_CLOSED',
+    title: TITLES.BLOCKERS_CLOSED,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? 'No critical constructability finding, critical clash, unapproved emergency change or uncommunicated residual risk.'
+        : `${blocking.length} blocker${blocking.length === 1 ? '' : 's'} open.`,
+    blocking,
+  };
+}
+
+function designOneCutOff(ctx: EngineContext): ClauseResult {
+  const stated = new Map<string, string[]>();
+  const record = (basis: string, who: string) => {
+    stated.set(basis, [...(stated.get(basis) ?? []), who]);
+  };
+
+  for (const midp of list(ctx, 'MIDP')) {
+    record(String(midp.cutOff).slice(0, 10), 'the information delivery plan');
+  }
+  for (const baseline of list(ctx, 'DesignBaseline')) {
+    record(String(baseline.cutOff).slice(0, 10), `${String(baseline.reference)} (cost, programme and risk)`);
+  }
+
+  if (stated.size === 0) {
+    return {
+      clause: 'ONE_CUT_OFF',
+      title: TITLES.ONE_CUT_OFF,
+      state: 'FAIL',
+      detail: 'Nothing declares the moment it was taken at, so there is no cut-off to reconcile.',
+      blocking: ['No delivery plan or baseline declares a cut-off'],
+    };
+  }
+  if (stated.size > 1) {
+    return {
+      clause: 'ONE_CUT_OFF',
+      title: TITLES.ONE_CUT_OFF,
+      state: 'FAIL',
+      detail: `${stated.size} different cut-offs are in force, so the information plan and the baseline are not describing the same design.`,
+      blocking: [...stated].map(([basis, holders]) => `"${basis}" — ${holders.join(', ')}`),
+    };
+  }
+
+  return {
+    clause: 'ONE_CUT_OFF',
+    title: TITLES.ONE_CUT_OFF,
+    state: 'PASS',
+    detail: `Everything is stated against ${[...stated.keys()][0]}.`,
+    blocking: [],
+  };
+}
+
+function designDownstreamCreated(ctx: EngineContext): ClauseResult {
+  const baselines = list(ctx, 'DesignBaseline');
+  if (baselines.length === 0) {
+    return {
+      clause: 'DOWNSTREAM_CREATED',
+      title: TITLES.DOWNSTREAM_CREATED,
+      state: 'FAIL',
+      detail: 'No baseline has been approved, so nothing downstream has been created from it.',
+      blocking: ['No design baseline exists'],
+    };
+  }
+
+  const blocking: string[] = [];
+
+  // AC-D-WF-08-02. A baseline whose cost snapshot cannot say what it was
+  // measured from hands the tender a figure nobody can check.
+  for (const baseline of baselines) {
+    const snapshots = (baseline.snapshots as Record<string, unknown> | undefined) ?? {};
+    if (snapshots.costMinor !== undefined && !snapshots.costSource) {
+      blocking.push(`${String(baseline.reference)} carries a cost snapshot with no stated model or drawing source`);
+    }
+  }
+
+  // The tender readiness worklist is derived on every read rather than stored,
+  // so it exists by construction — but a package frozen and then revised is a
+  // worklist item nobody has cleared.
+  const invalidated = designBaselinePosition(ctx).invalidated;
+  for (const entry of invalidated) {
+    blocking.push(`${entry.package}: ${entry.freeze} has been invalidated by a later revision and never re-frozen`);
+  }
+
+  if (blocking.length > 0) {
+    return {
+      clause: 'DOWNSTREAM_CREATED',
+      title: TITLES.DOWNSTREAM_CREATED,
+      state: 'FAIL',
+      detail: `${blocking.length} downstream obligation${blocking.length === 1 ? '' : 's'} did not carry through.`,
+      blocking,
+    };
+  }
+
+  return {
+    clause: 'DOWNSTREAM_CREATED',
+    title: TITLES.DOWNSTREAM_CREATED,
+    state: 'NOT_ASSESSABLE',
+    detail:
+      'The tender readiness worklist and the missing-information actions come off the baseline without re-entry, and every ' +
+      'frozen package is current. Tender mobilisation tasks with owners and due dates are not built, and residual ' +
+      'obligations are not inherited into the tender — so the clause is met in part and cannot be assessed in full.',
+    blocking: [
+      'Tender mobilisation tasks with owners and due dates are not created from the baseline',
+      'Residual obligations are not inherited from the design stage into the tender',
+    ],
+  };
+}
+
+export function evaluateDesignGate(ctx: EngineContext): GateReport {
+  authorise(ctx, 'PROJECT_SETUP', 'R');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  const clauses = [
+    designInputsComplete(ctx),
+    designApprovalsGoverned(ctx),
+    designBlockersClosed(ctx),
+    designOneCutOff(ctx),
+    aiAccounted(ctx, 'design stage'),
+    replayable(ctx),
+    designDownstreamCreated(ctx),
+  ];
+
+  return reportOf(ctx, String(project.state.phase), clauses);
+}
+
 export function evaluateTenderGate(ctx: EngineContext): GateReport {
   authorise(ctx, 'PROJECT_SETUP', 'R');
 
@@ -485,6 +770,17 @@ export function evaluateTenderGate(ctx: EngineContext): GateReport {
     downstreamCreated(ctx),
   ];
 
+  return reportOf(ctx, String(project.state.phase), clauses);
+}
+
+/**
+ * Turn seven clause results into a report.
+ *
+ * Shared by every stage gate. The arithmetic is trivial and that is exactly why
+ * it should exist once: a second copy that counted `NOT_ASSESSABLE` towards a
+ * pass would be the one bug this whole file is written to prevent.
+ */
+function reportOf(ctx: EngineContext, phase: string, clauses: ClauseResult[]): GateReport {
   const failed = clauses.filter((c) => c.state === 'FAIL').map((c) => c.clause);
   const unassessable = clauses.filter((c) => c.state === 'NOT_ASSESSABLE').map((c) => c.clause);
   const passed = failed.length === 0 && unassessable.length === 0;
@@ -495,7 +791,7 @@ export function evaluateTenderGate(ctx: EngineContext): GateReport {
 
   return {
     projectId: ctx.projectId,
-    phase: String(project.state.phase),
+    phase,
     clauses,
     passed,
     failed,
@@ -505,6 +801,19 @@ export function evaluateTenderGate(ctx: EngineContext): GateReport {
     contentHash: hashEvidence(JSON.stringify(clauses.map((c) => ({ clause: c.clause, state: c.state, blocking: c.blocking })))),
     summary: passed ? 'All seven clauses met.' : `${parts.join(', ')}.`,
   };
+}
+
+/**
+ * Which of the seven-clause gates applies to this project right now.
+ *
+ * The gate is decided at the end of the phase it governs, so a project sitting
+ * in DESIGN is being assessed against 7.4. Every other phase falls to the
+ * tender gate, which is where the only implemented gate has always pointed —
+ * existing behaviour is unchanged for a project that is not in design.
+ */
+export function gateFor(ctx: EngineContext): GateReport {
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  return String(project.state.phase) === 'DESIGN' ? evaluateDesignGate(ctx) : evaluateTenderGate(ctx);
 }
 
 // --- The decision -----------------------------------------------------------
@@ -539,7 +848,7 @@ export function decideGate(
 ): { decision: GateDecision; contentHash: string; conditions: number } {
   authorise(ctx, 'PROJECT_SETUP', 'A');
 
-  const report = evaluateTenderGate(ctx);
+  const report = gateFor(ctx);
 
   if (!input.rationale.trim()) {
     throw new DomainError('RATIONALE_REQUIRED', 'A gate decision is a governance record. Say what it rests on.');
@@ -590,7 +899,7 @@ export function decideGate(
   const evidence = registerEvidence(ctx, {
     type: 'STAGE_GATE_REPORT',
     hash: report.contentHash,
-    description: `Tender stage gate — ${input.decision} against 7 clauses (${report.summary})`,
+    description: `${report.phase === 'DESIGN' ? 'Design' : 'Tender'} stage gate — ${input.decision} against 7 clauses (${report.summary})`,
     linkedEntities: [{ refType: 'Project', refId: ctx.projectId }],
   });
 

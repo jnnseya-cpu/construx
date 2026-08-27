@@ -962,3 +962,89 @@ Acceptance criteria
 •	Gate report, decision and locked baseline can be replayed from the event store and verified against evidence hashes.
 •	Downstream mobilisation tasks, owners, due dates and inherited residual obligations are automatically created without re-entry.
 ```
+
+---
+
+## 9 — Construction stage control
+
+A different kind of specification from the twenty-four above: not a workflow but
+the **stage control** — the conditions a stage is entered and left under, the
+event that records leaving it, and the state path its records follow. Received
+after sections 6 to 8 and recorded here for the same reason as the rest.
+
+```
+9. Construction stage
+Stage outcome: Control safe, compliant and profitable delivery from mobilisation through physical completion using field evidence as the live source of truth.
+Control	Requirement
+Entry condition	Executed contract/authorised notice to proceed, approved baseline, mobilisation controls and construction information available.
+Exit condition	Works physically complete by system/area, records reconciled, commissioning turnover released and all residual obligations controlled.
+Gate event	CONSTRUCTION_COMPLETION_ACCEPTED
+Default state path	Draft → Validated → Submitted → Under Review → Approved / Approved with Conditions / Rejected → Locked / Superseded
+```
+
+```
+9.1 Mandatory input groups
+Input group	Required construction data
+Baseline	Executed contract, scope, budget/CBS, WBS/programme/calendar, procurement schedule, design information and authority
+Mobilisation	Construction phase plan, logistics, welfare, permits, temporary works, surveys, quality plan/ITPs, RAMS, competence and site controls
+Daily execution	Shift/weather, labour, plant, materials, deliveries, WBS quantities, locations, photos/video, constraints, delay, instructions and diary narrative
+Quality	ITPs, inspection/test requests, checklists, hold/witness points, test readings, NCRs, defects, corrective actions and as-built evidence
+Safety	RAMS, permits, toolbox talks, observations, incidents, isolations, competence, inspections and action closure
+Commercial/contracts	Instructions, variations, notices, applications, certificates, commitments, invoices, accruals, CVR, claims and evidence
+Information/procurement	Current drawings/models/specifications, RFIs, submittals, samples, manufacturing status, delivery notes and material traceability
+
+9.2 Stage workspace
+•	Route: /projects/{projectId}/construction. The page opens on a stage-specific Action Queue, not a static summary.
+•	Header: gate state, completeness, blockers/warnings, approved baseline version, change since baseline, accountable owner, last data cut-off and permitted next command.
+•	Tabs: Overview; Inputs; Workflows; Deliverables; Decisions & Approvals; Risks & Changes; Evidence; AI Runs; History.
+•	Right rail: assigned decisions, overdue items, low-confidence extractions, stale evidence and downstream impacts.
+Gate button remains disabled until all deterministic blockers pass; permitted warning waivers display approver, reason and
+```
+
+*(9.2's last line arrived truncated in the source message; the sentence continues
+beyond "display approver, reason and". Recorded as received rather than guessed
+at.)*
+
+*(The truncated 9.2 line completes: "…permitted warning waivers display approver,
+reason and expiry.")*
+
+## 9.3
+
+## CN-WF-01
+
+```
+CN-WF-01 - Mobilisation and start-work readiness
+Primary owner: Project / Construction Manager  |  Trigger: Award conversion or notice to proceed
+Required inputs
+•	Executed contract/authorisation and possession/access dates
+•	approved programme/budget and construction information
+•	construction phase plan, logistics, welfare and emergency arrangements
+•	insurances, bonds, permits, appointments and competence
+•	package-specific RAMS, ITP, temporary works and procurement readiness
+Deterministic flow
+1.	Create mobilisation checklist by project, site, zone and package.
+2.	Verify contractual preconditions, access, design, permits, welfare, surveys, resources and controls.
+3.	Create unresolved constraints with owner, need date and impact.
+4.	Hold readiness review; approve Ready, Ready with Conditions or Not Ready per package/area.
+5.	Issue start authority only to defined scope/location and linked information revisions.
+6.	Carry mobilisation evidence into the daily control and audit timeline.
+AI-agent duties and human guardrails
+•	Summarise missing prerequisites and likely start impact.
+•	Cannot authorise work, declare competence or waive safety/statutory control.
+Outputs
+•	MobilisationPlan
+•	ReadinessChecklist
+•	StartWork Authorisation
+•	Constraint Register
+•	Mobilisation EvidencePack
+Exception controls
+•	No work authorisation where critical RAMS/permit/design/temporary works/competence prerequisite fails.
+•	Conditional readiness has expiry and named conditions.
+•	Changed information automatically rechecks affected start authority.
+Events: MOBILISATION_STARTED | READINESS_CHECK_COMPLETED | START_WORK_AUTHORISED | WORK_NOT_READY
+APIs:   POST /v1/projects/{id}/mobilisation-plans | POST /v1/work-packages/{id}:readiness-check | POST /v1/work-packages/{id}:authorise-start
+Acceptance criteria
+•	AC-CN-WF-01-01: Every package start shows approved information, RAMS, ITP, resource and access status.
+•	AC-CN-WF-01-02: Not Ready prevents task movement to In Progress.
+•	AC-CN-WF-01-03: Authority identifies scope, location, time window and approver.
+```

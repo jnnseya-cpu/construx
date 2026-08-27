@@ -244,6 +244,17 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // Confirming each affected thing was revised — or established as unaffected
   // after all — and the closure that depends on all of them.
   def('CHANGE_VERIFIED', 'DesignChange', 'UPDATE', 'DESIGN'),
+  // D-WF-08. The moment design stops moving. A freeze copies the exact
+  // deliverable references, suitabilities and acceptance records onto itself,
+  // so a package frozen in March is still readable in September whatever the
+  // model has done since — which is the whole difference between a baseline and
+  // a date with a name on it. One event covers freezing and re-freezing: a
+  // re-freeze supersedes rather than edits, and the supersession is written on
+  // the record it supersedes.
+  def('DESIGN_PACKAGE_FROZEN', 'FrozenPackage', 'FREEZE', 'DESIGN', { creates: true }),
+  // APPROVE, because a baseline is somebody accepting a position rather than
+  // recording one. It is the signature everything downstream is built on.
+  def('DESIGN_BASELINE_APPROVED', 'DesignBaseline', 'APPROVE', 'DESIGN', { creates: true }),
 
   // --- Tender & procurement -------------------------------------------------
   def('TAKEOFF_COMPLETED', 'Takeoff', 'AI_EXECUTE', 'PROCUREMENT', { aiAllowed: true, requiresEvidence: true }),

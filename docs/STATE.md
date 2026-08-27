@@ -4944,8 +4944,8 @@ with the one rule the specification actually names beneath it — nothing reache
 Shared without an author, a checker and its metadata — and who may make each
 move is the permission matrix's answer, given once.
 
-**Still to build in the design block:** D-WF-08 with the 7.4 gate. D-WF-01 to
-D-WF-07 are built.
+**The design block is complete.** D-WF-01 to D-WF-08 and the 7.4 stage gate are
+built.
 
 ---
 
@@ -5190,6 +5190,73 @@ handover, where it is at its most expensive.
 **The proposer cannot be the decider**, on a correction as much as on a client
 change; and no event in the set is `aiAllowed`, because a change to approved
 design is a decision and no agent mandate exceeds propose.
+
+---
+
+### The moment design stops moving
+
+D-WF-08 and the 7.4 stage gate. `backend/src/domain/designbaseline.ts`, four
+routes, 37 tests, plus the design gate inside `backend/src/domain/stagegate.ts`.
+
+**A baseline that does not say what it froze.** "Design is frozen" is worth
+nothing without the revisions. A freeze copies the exact deliverable references,
+their suitability and their acceptance record onto itself, so a package frozen
+in March is still readable in September whatever the model has done since —
+AC-D-WF-08-01. Nothing below `PUBLISHED` can be frozen, because a baseline over
+work in progress is the failure the whole step exists to prevent.
+
+**A partial freeze with no boundary.** Freezing half a package is normal and
+useful. It is also how a project ends up with two halves nobody can tell apart,
+so a partial freeze needs all three of the specification's conditions: a stated
+boundary, the open interfaces across it checked by name and by a person, and its
+own baseline reference. A tick with nobody behind it is refused as a tick.
+
+**A freeze that quietly goes stale.** A deliverable revised after the freeze
+invalidates what depended on it. That is **derived on every read**, never a
+stored flag: the freeze holds what it saw, the package holds what is true now,
+and the difference is computed when somebody asks. A stored flag is a second
+answer to the same question and is always the one nobody updated. Revalidating
+is re-freezing at the new revisions, because there is no honest way to say
+"still fine" without looking — and the superseded freeze stays readable, which
+is the point of baselining at all.
+
+**A tender priced on superseded information.** AC-D-WF-08-03, and the one with
+money behind it. `enquiry.ts` asks `tenderReadinessFor` before composing a pack
+and refuses where the package's design is unfrozen or has moved since. It can
+still go out — a programme sometimes leaves no choice — but only on an
+authorised exception, and on the **same** exception object as the missing
+documents, so the firm pricing it reads one list of what they are pricing
+without rather than two mechanisms disagreeing about whose warning counts. A
+project that runs no design packages at all is pricing client information and is
+left alone; refusing it for want of a baseline would be inventing a requirement.
+
+**A critical finding blocks the affected baseline**, full freeze or partial —
+isolating a boundary does not isolate a hazard. The rule is `freezeBlockersFor`,
+reused from D-WF-07 rather than re-derived, which is why that function is
+exported.
+
+#### The 7.4 gate
+
+6.4, 7.4 and 8.4 are **word for word identical** in the specification. What
+differs is the evidence each is answered from, so the clause list, the titles,
+the `NOT_ASSESSABLE` rule, the AI clause, the replay clause and the report
+arithmetic are shared outright: `evaluateDesignGate` answers the same seven from
+the design stage, `evaluateTenderGate` from the tender, and `gateFor` picks by
+phase — a project in DESIGN is assessed against 7.4 and everything else falls to
+the tender gate, which is where the only implemented gate always pointed. Three
+copies of "every approval satisfies party separation" would be three answers to
+one question inside a year.
+
+The design stage's four specific clauses: inputs are the approved delivery plan
+and a baseline whose every container carries its suitability and its acceptance;
+approvals add "no design change decided by its proposer" and "no deliverable
+checked by its author" to the generic re-verification; blockers are the
+constructability findings, the critical clashes, the emergency changes nobody
+went back and approved and the residual risks that never reached the
+pre-construction information; the cut-off reconciles the delivery plan against
+the baseline. Clause 7 is `NOT_ASSESSABLE` for the same honest reason as the
+tender gate's — the worklist is derived without re-entry, but mobilisation tasks
+with owners and dates are not built and the report says so by name.
 
 ---
 

@@ -56,6 +56,7 @@ import * as award from '../domain/award.ts';
 import * as enquiry from '../domain/enquiry.ts';
 import * as constructability from '../domain/constructability.ts';
 import * as coordination from '../domain/coordination.ts';
+import * as designbaseline from '../domain/designbaseline.ts';
 import * as designchange from '../domain/designchange.ts';
 import * as designplan from '../domain/designplan.ts';
 import * as measurement from '../domain/measurement.ts';
@@ -7299,12 +7300,83 @@ export const ROUTES: Route[] = [
     },
   },
 
-  // ------------------------------- the stage gate Definition of Done (8.4)
+  // ------------------------------- the stage gate Definition of Done (7.4, 8.4)
   {
     method: 'GET',
     pattern: '/v1/projects/:projectId/stage-gate',
-    description: 'The seven-clause Definition of Done, answered from the ledger',
-    handler: (platform, ctx) => stagegate.evaluateTenderGate(projectContext(platform, ctx)),
+    description: 'The seven-clause Definition of Done for the phase the project is in, answered from the ledger',
+    handler: (platform, ctx) => stagegate.gateFor(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/stages/design/validate',
+    description: 'Steps 1 to 4 of the design gate: what may freeze, what is late for its need date, and what tender is waiting for',
+    handler: (platform, ctx) => designbaseline.validateDesignStage(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/design-baselines',
+    description: 'Frozen packages, approved baselines, and which freezes a later revision has invalidated',
+    handler: (platform, ctx) => designbaseline.designBaselinePosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-packages/:packageId/freeze',
+    description: 'Freeze a package at its exact published revisions. A partial freeze needs a boundary and its interfaces checked',
+    schema: {
+      type: 'object',
+      required: ['scope', 'note'],
+      properties: {
+        scope: { type: 'string', enum: ['FULL', 'PARTIAL'] },
+        boundary: { type: 'string' },
+        interfaceChecks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['reference', 'withPackage', 'finding', 'checkedBy'],
+            properties: {
+              reference: stringField,
+              withPackage: stringField,
+              finding: { type: 'string' },
+              checkedBy: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+        deliverableRefs: { type: 'array', items: stringField },
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designbaseline.freezePackage(projectContext(platform, ctx), ctx.params.packageId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-baselines',
+    description: 'Approve a baseline over frozen packages, with one cut-off and a cost snapshot that names its source',
+    schema: {
+      type: 'object',
+      required: ['reference', 'cutOff', 'freezeIds', 'snapshots', 'note'],
+      properties: {
+        reference: stringField,
+        cutOff: stringField,
+        freezeIds: { type: 'array', items: stringField },
+        snapshots: {
+          type: 'object',
+          properties: {
+            costMinor: { type: 'number', minimum: 0 },
+            costSource: { type: 'string' },
+            programmeRef: { type: 'string' },
+            riskRef: { type: 'string' },
+          },
+          additionalProperties: false,
+        },
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => designbaseline.approveBaseline(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'GET',
@@ -7501,6 +7573,7 @@ export const ROUTES: Route[] = [
           required: ['missing', 'reason', 'authorisedBy'],
           properties: {
             missing: { type: 'array', items: { type: 'string' } },
+            supersededDesign: { type: 'string' },
             reason: stringField,
             authorisedBy: stringField,
           },

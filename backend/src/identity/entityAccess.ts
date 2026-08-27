@@ -87,6 +87,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // designers whose change it is; the link between the two registers is a
   // reference on the record, not a shared area.
   DesignChange: { area: 'DESIGN_INFORMATION' },
+  // The baseline and what it froze. Design information rather than project
+  // setup: freezing a package is a design authority's act, and the same people
+  // who accept a deliverable are the ones who can say it has stopped moving.
+  // The 7.4 stage gate that reads them sits under PROJECT_SETUP, which is the
+  // governance layer above and a different question.
+  FrozenPackage: { area: 'DESIGN_INFORMATION' },
+  DesignBaseline: { area: 'DESIGN_INFORMATION' },
   Drawing: { area: 'DESIGN_INFORMATION' },
   DrawingMarkup: { area: 'DESIGN_INFORMATION' },
   RFI: { area: 'DESIGN_INFORMATION' },

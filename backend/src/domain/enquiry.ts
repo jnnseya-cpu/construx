@@ -3,6 +3,7 @@ import { DomainError, ForbiddenError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
+import { tenderReadinessFor } from './designbaseline.ts';
 
 /**
  * The enquiry pack, who it went to, and the workspace that closes — T-WF-04.
@@ -69,6 +70,17 @@ export type MandatoryKind = (typeof MANDATORY_KINDS)[number];
 export type PackException = {
   /** The kinds being issued without. */
   missing: string[];
+  /**
+   * Set where the pack goes out on design information that is not frozen, or
+   * that has been revised since it was. AC-D-WF-08-03: a package may still
+   * issue — a programme sometimes leaves no choice — but the departure travels
+   * with the pack to the bidder rather than staying in somebody's head.
+   *
+   * On the same exception as the missing documents deliberately, so the firm
+   * pricing it reads one list of what they are pricing without rather than two
+   * mechanisms disagreeing about whose warning is authoritative.
+   */
+  supersededDesign?: string;
   reason: string;
   /** The person accepting the risk. Not the person composing the pack. */
   authorisedBy: string;
@@ -232,7 +244,30 @@ export function composeRevision(
     );
   }
 
+  // AC-D-WF-08-03. Where this project designs the package itself, the pack
+  // cannot go out on information the design stage has not frozen — or has
+  // frozen and since revised — unless somebody with the authority says so and
+  // the firm pricing it is told. A project running no design packages at all is
+  // pricing client information and this does not apply to it.
+  const designGap = tenderReadinessFor(ctx, state.packageReference);
+  if (designGap && !input.exception?.supersededDesign?.trim()) {
+    throw new DomainError(
+      'DESIGN_NOT_BASELINED',
+      `${state.reference} buys ${state.packageReference}, and ${designGap} Issuing on it produces prices against a revision ` +
+        'the project has already left behind, which is the difference that turns up as a variation. Record an authorised ' +
+        'exception saying so, and the firms will see it on the pack.',
+      409,
+    );
+  }
+
   if (input.exception) {
+    if (input.exception.supersededDesign !== undefined && !designGap) {
+      throw new DomainError(
+        'EXCEPTION_NOT_NEEDED',
+        `${state.packageReference} is frozen and current, so there is no design departure to except. An exception on every ` +
+          'pack is an exception on none.',
+      );
+    }
     if (!input.exception.reason.trim() || !input.exception.authorisedBy.trim()) {
       throw new DomainError(
         'EXCEPTION_UNAUTHORISED',
