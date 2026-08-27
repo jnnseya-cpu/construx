@@ -1082,6 +1082,36 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SECURITY_POSITION_RECORDED', 'CommercialSecurity', 'CREATE', 'CONTRACTS_CLAIMS', { creates: true }),
   def('FINAL_ACCOUNT_AGREED', 'FinalAccount', 'APPROVE', 'CONTRACTS_CLAIMS', { creates: true }),
 
+  // H-WF-09. `HANDOVER_PACK_COMPILED` and `HANDOVER_ACCEPTED` already exist and
+  // are not duplicated; these are the acts around them that did not.
+  def('HANDOVER_MANIFEST_COMPILED', 'HandoverManifest', 'CREATE', 'HANDOVER_OM', { creates: true }),
+  // Two events, because accepting and refusing are not the same act and the
+  // second one freezes the pack.
+  def('HANDOVER_DECISION_RECORDED', 'HandoverPack', 'APPROVE', 'HANDOVER_OM'),
+  def('HANDOVER_REJECTED', 'HandoverPack', 'REJECT', 'HANDOVER_OM'),
+  // AC-H-WF-09-02: derived from the accepted register, which is why this is an
+  // EXECUTE rather than a CREATE — nothing is authored, something is run.
+  def('ASSET_OPERATION_ACTIVATED', 'OperationalActivation', 'EXECUTE', 'HANDOVER_OM', { creates: true }),
+  def('PROJECT_HANDOVER_BASELINED', 'HandoverBaseline', 'FREEZE', 'HANDOVER_OM', { creates: true }),
+  def('RESIDUAL_OBLIGATIONS_TRANSFERRED', 'ResidualTransfer', 'CREATE', 'HANDOVER_OM', { creates: true }),
+
+  // H-WF-10. `LESSON_CAPTURED` already exists in RISK_SAFETY and is not
+  // duplicated; `LESSON_APPROVED` is the act it never had.
+  def('AFTERCARE_STARTED', 'AftercarePlan', 'CREATE', 'HANDOVER_OM', { creates: true }),
+  // Closes the CM-WF-06 record by its own reference. Nothing is renumbered.
+  def('SEASONAL_TEST_COMPLETED', 'SeasonalTest', 'UPDATE', 'COMMISSIONING', { requiresEvidence: true }),
+  // Two events, because a comparison inside tolerance is a fact worth keeping
+  // and is not a gap. Recording both as gaps would make the register useless.
+  def('PERFORMANCE_COMPARED', 'PerformanceComparison', 'CREATE', 'HANDOVER_OM', { creates: true }),
+  def('PERFORMANCE_GAP_IDENTIFIED', 'PerformanceComparison', 'CREATE', 'HANDOVER_OM', { creates: true }),
+  def('OCCUPANT_FEEDBACK_RECORDED', 'OccupantFeedback', 'CREATE', 'HANDOVER_OM', { creates: true }),
+  def('POST_OCCUPANCY_REVIEWED', 'PostOccupancyReview', 'CREATE', 'HANDOVER_OM', {
+    creates: true,
+    requiresEvidence: true,
+  }),
+  // The approval a lesson needs before organisation memory will serve it.
+  def('LESSON_APPROVED', 'LessonLearned', 'APPROVE', 'RISK_SAFETY'),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

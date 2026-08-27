@@ -87,6 +87,8 @@ import * as ommanual from '../domain/ommanual.ts';
 import * as operatorreadiness from '../domain/operatorreadiness.ts';
 import * as transfer from '../domain/transfer.ts';
 import * as practicalcompletion from '../domain/practicalcompletion.ts';
+import * as handoveracceptance from '../domain/handoveracceptance.ts';
+import * as aftercare from '../domain/aftercare.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
@@ -6002,6 +6004,288 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => practicalcompletion.agreeFinalAccount(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- H-WF-09 acceptance, activation and archive
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/handover-acceptance',
+    description: 'The eight-domain validation, the packs and their decisions, the activation, the baseline and what is still owed',
+    handler: (platform, ctx) => handoveracceptance.handoverAcceptancePosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/handover-packs/:packId/manifest',
+    description: 'Compile the machine-readable evidence manifest: every entity, its hash and its source version',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => handoveracceptance.compileManifest(projectContext(platform, ctx), ctx.params.packId!),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/handover-manifests/:manifestId/verify',
+    description: 'Re-hash every manifest entry against the live record and report what drifted, by name',
+    handler: (platform, ctx) => handoveracceptance.verifyManifest(projectContext(platform, ctx), ctx.params.manifestId!),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/handover-packs/:packId/decide',
+    description: 'Accept, accept with conditions, or reject. Conditions carry a risk owner, a due date, an expiry and an escalation',
+    schema: {
+      type: 'object',
+      required: ['decision', 'decidedBy', 'forOrganisation', 'reasons'],
+      properties: {
+        decision: { type: 'string', enum: ['ACCEPTED', 'ACCEPTED_WITH_CONDITIONS', 'REJECTED'] },
+        decidedBy: stringField,
+        forOrganisation: stringField,
+        reasons: { type: 'string' },
+        manifestId: stringField,
+        conditions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['description', 'riskOwner', 'dueDate', 'expiresOn', 'escalateTo'],
+            properties: {
+              description: { type: 'string' },
+              riskOwner: stringField,
+              dueDate: stringField,
+              expiresOn: stringField,
+              escalateTo: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      handoveracceptance.decideHandover(projectContext(platform, ctx), ctx.params.packId!, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/handover-packs/:packId/activate-operations',
+    description: 'Raise maintenance and warranty obligations from the accepted asset register. No asset field is accepted here',
+    schema: {
+      type: 'object',
+      required: ['activatedBy', 'maintenanceStartsOn'],
+      properties: { activatedBy: stringField, maintenanceStartsOn: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      handoveracceptance.activateOperations(projectContext(platform, ctx), ctx.params.packId!, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/handover-baseline',
+    description: 'Freeze the handover set under a named retention policy, preserving any legal hold',
+    schema: {
+      type: 'object',
+      required: ['baselinedBy', 'retentionPolicy', 'retainUntil', 'legalHold'],
+      properties: {
+        baselinedBy: stringField,
+        retentionPolicy: { type: 'string' },
+        retainUntil: stringField,
+        legalHold: { type: 'boolean' },
+        legalHoldReason: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => handoveracceptance.baselineHandover(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/residual-obligations/transfer',
+    description: 'Hand the residual obligations to their operations and aftercare owners. The list itself stays derived',
+    schema: {
+      type: 'object',
+      required: ['toOperations', 'toAftercare', 'note'],
+      properties: { toOperations: stringField, toAftercare: stringField, note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => handoveracceptance.transferResidualObligations(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- H-WF-10 aftercare, seasonal testing and feedback
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/aftercare',
+    description: 'The aftercare plan and next review, seasonal tests owed and done, performance gaps, feedback clusters and residuals',
+    handler: (platform, ctx) => aftercare.aftercarePosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/aftercare-plans',
+    description: 'Open the aftercare period with its helpdesk, escalation, response targets and scheduled review dates',
+    schema: {
+      type: 'object',
+      required: [
+        'reference',
+        'durationMonths',
+        'startsOn',
+        'helpdesk',
+        'escalation',
+        'responseTargets',
+        'reviewDates',
+        'aftercareOwner',
+      ],
+      properties: {
+        reference: stringField,
+        durationMonths: { type: 'number' },
+        startsOn: stringField,
+        helpdesk: stringField,
+        escalation: { type: 'string' },
+        responseTargets: stringField,
+        reviewDates: { type: 'array', items: { type: 'string' } },
+        aftercareOwner: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => aftercare.startAftercare(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/seasonal-tests/:reference/complete',
+    description: 'Close a seasonal test CM-WF-06 raised, recording the conditions on the day. A fail leaves it outstanding',
+    schema: {
+      type: 'object',
+      required: ['testedOn', 'conditionsObserved', 'result', 'findings', 'testedBy', 'evidenceHash'],
+      properties: {
+        testedOn: stringField,
+        conditionsObserved: { type: 'string' },
+        result: { type: 'string', enum: ['PASS', 'FAIL'] },
+        findings: { type: 'string' },
+        testedBy: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      aftercare.completeSeasonalTest(projectContext(platform, ctx), ctx.params.reference!, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/performance-comparisons',
+    description: 'Compare measured performance against design intent or the commissioning result, with period, baseline and context',
+    schema: {
+      type: 'object',
+      required: [
+        'reference',
+        'metric',
+        'unit',
+        'baselineSource',
+        'baselineValue',
+        'measuredValue',
+        'periodFrom',
+        'periodTo',
+        'operatingContext',
+        'dataSource',
+        'assessedBy',
+      ],
+      properties: {
+        reference: stringField,
+        metric: stringField,
+        unit: stringField,
+        baselineSource: { type: 'string', enum: ['DESIGN_INTENT', 'COMMISSIONING_RESULT'] },
+        baselineValue: { type: 'number' },
+        measuredValue: { type: 'number' },
+        periodFrom: stringField,
+        periodTo: stringField,
+        operatingContext: { type: 'string' },
+        dataSource: stringField,
+        assessedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => aftercare.recordPerformanceComparison(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/occupant-feedback',
+    description: 'Record feedback against a role and a location. There is no field on this route a person could be named in',
+    schema: {
+      type: 'object',
+      required: ['theme', 'reportedByRole', 'location', 'description', 'severity', 'occurrences'],
+      properties: {
+        theme: {
+          type: 'string',
+          enum: [
+            'THERMAL_COMFORT',
+            'AIR_QUALITY',
+            'LIGHTING',
+            'ACOUSTICS',
+            'CONTROLS_USABILITY',
+            'CLEANLINESS',
+            'ACCESSIBILITY',
+            'OTHER',
+          ],
+        },
+        reportedByRole: stringField,
+        location: stringField,
+        description: { type: 'string' },
+        severity: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH'] },
+        occurrences: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => aftercare.recordFeedback(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/post-occupancy-reviews',
+    description: 'Complete the post-occupancy review. Refuses to run with no comparison and no feedback to review',
+    schema: {
+      type: 'object',
+      required: ['reference', 'reviewedBy', 'period', 'findings', 'correctiveActions', 'evidenceHash'],
+      properties: {
+        reference: stringField,
+        reviewedBy: stringField,
+        period: stringField,
+        findings: { type: 'string' },
+        evidenceHash: stringField,
+        correctiveActions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['description', 'owner', 'by', 'priority'],
+            properties: {
+              description: { type: 'string' },
+              owner: stringField,
+              by: stringField,
+              priority: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH'] },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => aftercare.completePostOccupancyReview(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/lessons/:lessonId/approve',
+    description: 'Approve a captured lesson for reuse and tag the sectors and stages where it actually applies',
+    schema: {
+      type: 'object',
+      required: ['approvedBy', 'sectors', 'stages', 'applicabilityNote'],
+      properties: {
+        approvedBy: stringField,
+        sectors: { type: 'array', items: { type: 'string' } },
+        stages: { type: 'array', items: { type: 'string' } },
+        applicabilityNote: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => aftercare.approveLesson(projectContext(platform, ctx), ctx.params.lessonId!, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/lessons/reusable',
+    description: 'Approved lessons only, filtered to the sector and stage their own tags say they apply to',
+    handler: (platform, ctx) =>
+      aftercare.reusableLessons(projectContext(platform, ctx), {
+        sector: ctx.query?.get('sector') ?? undefined,
+        stage: ctx.query?.get('stage') ?? undefined,
+      }),
   },
 
   // ------------------------------------------------------- H-WF-05 regulatory completion and Golden Thread transfer

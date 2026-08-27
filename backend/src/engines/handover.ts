@@ -4,6 +4,7 @@ import { formatRef, ulid } from '../core/ids.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
 import { assertNotFuture } from '../domain/dates.ts';
 import { commissioningBlockedReason } from '../domain/completion.ts';
+import { handoverAcceptanceBlockedReason } from '../domain/handoveracceptance.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
 
 /**
@@ -189,6 +190,13 @@ export function acceptHandover(
   authorise(ctx, 'HANDOVER_OM', 'A', { lifecyclePhase: currentPhase(ctx) });
 
   const pack = ctx.ledger.require({ refType: 'HandoverPack', refId: input.packId });
+
+  // H-WF-09 step 1. The eight-domain validation, which binds only where the
+  // project runs those workflows: a project with no requirements matrix, no
+  // completion inspection and no asset register reports nothing and this
+  // passes, exactly as it did before the check existed.
+  const blocked = handoverAcceptanceBlockedReason(ctx);
+  if (blocked) throw new DomainError('HANDOVER_NOT_READY', blocked);
 
   const evidence = registerEvidence(ctx, {
     type: 'HANDOVER_ACCEPTANCE',

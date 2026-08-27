@@ -379,6 +379,20 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   CompletionRecord: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },
   CommercialSecurity: { area: 'CONTRACTS_CLAIMS', sensitivity: 'COMMERCIAL_L3' },
   FinalAccount: { area: 'CONTRACTS_CLAIMS', sensitivity: 'COMMERCIAL_L3' },
+  // H-WF-09. The manifest and the baseline are the evidence record of what was
+  // handed over and are read through the area the regulator already reads
+  // through; the activation and the transfer are operational.
+  HandoverManifest: { area: 'EVIDENCE_AUDIT' },
+  HandoverBaseline: { area: 'EVIDENCE_AUDIT' },
+  OperationalActivation: { area: 'HANDOVER_OM' },
+  ResidualTransfer: { area: 'HANDOVER_OM' },
+  // H-WF-10. Occupant feedback carries no name — the type has no field one
+  // could go in — but it does say which part of a building people are unhappy
+  // in, which is not a public part of the record.
+  AftercarePlan: { area: 'HANDOVER_OM' },
+  PerformanceComparison: { area: 'HANDOVER_OM' },
+  OccupantFeedback: { area: 'HANDOVER_OM', sensitivity: 'INTERNAL' },
+  PostOccupancyReview: { area: 'HANDOVER_OM' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },

@@ -6561,12 +6561,111 @@ security, and a test asserts that a disputed retention leaves the blocked reason
 null. A blocked-reason function that mentioned retention would turn a commercial
 argument into a reason to leave a building uncertified.
 
-**Still to build in the handover block:** H-WF-09 and H-WF-10, the
-`HANDOVER_ACCEPTED` gate, the 11.4 gate and the stage workspace described in
-11.2. The stage control, 11.1, 11.2, H-WF-01 to H-WF-10, 11.4 and the
-cross-stage sections 12 to 18.1 and the appendices are recorded verbatim in
-`docs/WORKFLOWS.md`; several arrived out of sequence during the build and are
-recorded there in the order they were sent.
+---
+
+### Eight guards already answered it
+
+H-WF-09. `backend/src/domain/handoveracceptance.ts`, seven routes, 35 tests.
+
+**This module composes; it does not re-derive.** Step 1 asks for a final
+cross-domain validation across physical, commissioning, information, asset,
+regulatory, competence, access and commercial conditions — and every one of
+those eight already had a guard, written when its own workflow was built.
+`crossDomainValidation` calls them and computes nothing itself, because a
+second opinion about whether the as-builts are ready is a second thing to keep
+in step with the first. `engines/handover.compileHandoverPack` and
+`acceptHandover` already existed and are not replaced; the validation is wired
+into the *existing* accept.
+
+**The commercial domain reports and never blocks.** H-WF-08 settled that
+commercial closeout does not delay a safety-critical closure, so an unagreed
+final account is shown to the acceptor and is absent from the blocking set. A
+test asserts that specifically.
+
+**AC-H-WF-09-01: a manifest that verifies.** A list of hashes proves nothing
+until somebody recomputes them. `verifyManifest` re-hashes every entry against
+the live ledger and reports drift *by name*, distinguishing three cases:
+drifted, missing, and added. An addition leaves the manifest verified — nothing
+it named has changed, and what it means is that the pack is now a subset.
+Accepting against a manifest that no longer matches is refused; rejecting
+against one is allowed, because refusing a moved target is the right call.
+
+**AC-H-WF-09-02: no re-entry, structurally.** `activateOperations` reads the
+accepted register and raises maintenance and warranty obligations from it.
+There is no parameter on the command an asset attribute could arrive through —
+only who activated it and when — so the criterion is a property of the
+signature rather than a rule. It refuses to run before a decision, after a
+rejection, or twice.
+
+**AC-H-WF-09-03: immediately, because it is derived.** `residualObligations`
+reads the acceptance conditions, the commissioning obligations, the deferred
+defects and the regulatory conditions on every call. A stored transfer list
+would be as current as the last rebuild, and the gap between acceptance and
+that rebuild is exactly the window in which nobody is watching. The transfer
+event records the count and the owners at that moment and does **not** copy the
+obligations into itself.
+
+**Conditional acceptance carries four things.** Risk owner, due date, expiry
+and escalation route — because the common failure is a list of sentences nobody
+owns that quietly become permanent. A condition expiring before it is due is
+refused. Conditions attached to a *clean* acceptance are refused too: that
+leaves obligations nobody is watching, which is the failure the conditional
+decision exists to prevent.
+
+**The archive deletes nothing, and says so.** The ledger is append-only, so an
+archive is a statement about which records are no longer the working set rather
+than an act that removes any. The record carries that sentence explicitly so
+nobody reads "archived" as "disposed of". A legal hold needs a stated reason,
+or nobody will ever know when it can be lifted.
+
+---
+
+### A lesson from a hospital is not a lesson about a warehouse
+
+H-WF-10. `backend/src/domain/aftercare.ts`, eight routes, 33 tests.
+
+**Reused rather than rebuilt.** CM-WF-06's `SeasonalTest` records *are* the
+seasonal tests; `completeSeasonalTest` closes them by their own reference and
+opens no second register, which is the whole of AC-H-WF-10-01 for that class of
+obligation. `domain/control.captureLesson` already writes the lesson with an
+actionable recommendation and an impact in money or days. H-WF-09's
+`residualObligations` is read rather than copied.
+
+**A failed seasonal test does not discharge the obligation.** The building
+still has not been shown to work in the condition the test was deferred for. A
+test run outside its window is *recorded* rather than refused — whether it is
+enough is the operator's judgement, and not flagging it would let it pass as
+though it were in season.
+
+**AC-H-WF-10-02, enforced rather than described.** The period, the baseline and
+the operating context are all required. A building at 140% of its design energy
+figure is unremarkable if it was measured through a winter it was commissioned
+before, or if a third of it is unoccupied — and a register of gaps recorded
+without their context produces a year of arguments and no fixes. A comparison
+inside tolerance writes `PERFORMANCE_COMPARED`, not a gap; recording both as
+gaps would make the register useless.
+
+**The privacy control is structural.** Occupant feedback has **no field a name
+could occupy**. It is recorded against a role and a location, which is what
+makes it actionable: "the second-floor east occupants are cold" is a heating
+problem, and which of them said so is not information the building needs. The
+same approach H-WF-07 took to secrets, for the same reason.
+
+**AC-H-WF-10-03 is the reuse control.** A lesson stays out of organisation
+memory until it is approved *and* tagged with the sectors and stages where
+reuse is valid. `reusableLessons` never returns an unapproved lesson and
+returns an approved one only where its own tags say it applies. A memory that
+serves a hospital's medical-gas lesson up as a warehouse lesson is worse than
+an empty one — it is wrong with authority.
+
+**A post-occupancy review refuses to run with nothing to review.** No
+comparison and no feedback means the document would be produced to close an
+action, which is why the exercise has the reputation it has.
+
+**Still to build in the handover block:** the 11.4 gate and the stage workspace
+described in 11.2. The cross-stage sections 12 to 18.1 and the appendices are
+recorded verbatim in `docs/WORKFLOWS.md`; several arrived out of sequence
+during the build and are recorded there in the order they were sent.
 
 ---
 
