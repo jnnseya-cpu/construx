@@ -115,7 +115,7 @@ export function renderNotificationEmail(input: {
                style="width:100%;max-width:600px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
 
           <tr>
-            <td style="background:#0c0c0e;border-top:3px solid ${esc(accent)};border-radius:12px 12px 0 0;padding:20px 24px">
+            <td style="background:#090a0d;border-top:3px solid ${esc(accent)};border-radius:12px 12px 0 0;padding:20px 24px">
               ${logoBlock(branding)}
             </td>
           </tr>

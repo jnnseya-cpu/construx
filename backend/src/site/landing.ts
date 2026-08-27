@@ -102,7 +102,7 @@ export function landing(): string {
     <svg class="section-art" viewBox="0 0 1440 620" preserveAspectRatio="xMidYMax slice">
       <defs>
         <linearGradient id="steel" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#2a2f37"/><stop offset="100%" stop-color="#0c0c0e"/>
+          <stop offset="0%" stop-color="#2a2f37"/><stop offset="100%" stop-color="#090a0d"/>
         </linearGradient>
         <linearGradient id="edge" x1="0" y1="0" x2="1" y2="0">
           <stop offset="0%" stop-color="#ff6600" stop-opacity="0"/>

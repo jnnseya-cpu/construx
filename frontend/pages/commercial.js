@@ -307,7 +307,7 @@ export async function commercial(root) {
                     ${(cashflow.netByPeriod ?? []).map((value) => {
                       const peak = Math.max(...cashflow.netByPeriod);
                       const height = peak === 0 ? 0 : Math.max(2, Math.round((value / peak) * 100));
-                      return html`<div style="flex:1;background:linear-gradient(180deg,var(--orange),rgba(255,102,0,.25));height:${raw(height)}%;border-radius:2px 2px 0 0" title="${money(value)}"></div>`;
+                      return html`<div style="flex:1;background:linear-gradient(180deg,var(--orange),rgba(255,106,26,.25));height:${raw(height)}%;border-radius:2px 2px 0 0" title="${money(value)}"></div>`;
                     })}
                   </div>
                   <div class="split-list">

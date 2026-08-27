@@ -301,7 +301,7 @@ export class Platform {
       // to work would put the wrong organisation on the one document where it
       // matters most.
       issuingEntity: input.legalName,
-      primaryColour: 'rgba(255, 102, 0, 1)',
+      primaryColour: 'rgba(255, 106, 26, 1)',
       legalFooter: `${input.legalName} · registered in ${input.jurisdiction}`,
       documentReferencePrefix: input.legalName
         .split(/\s+/)

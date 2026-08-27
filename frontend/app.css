@@ -1,41 +1,133 @@
 /* ===========================================================================
    CONSTRUX application — brand system and component library.
+
    Dark-first: this is a control room, not a website. Signal Orange is reserved
    for the things that carry meaning, never for decoration.
+
+   ---------------------------------------------------------------- neutrals
+   Every neutral carries a slight cool bias rather than being mixed from equal
+   parts. A pure grey is what a screen shows when nobody chose a colour, and it
+   reads that way; a carbon with a few points of blue in it reads as a machine
+   somebody built. The four surface levels exist so depth can be expressed by
+   where a thing sits rather than by drawing a heavier border round it.
+
+   ------------------------------------------------------------------- depth
+   Elevation is an ambient shadow plus a one-pixel inset highlight along the
+   top edge. That highlight is the whole trick: a real bevel catches light on
+   its upper edge, and a panel without one sits flat on the page no matter how
+   much shadow is under it.
+
+   -------------------------------------------------------------- typography
+   There is no webfont, and that is a decision rather than an omission. This
+   server sends `font-src 'self'`, so a face from a font CDN would be blocked
+   by the platform's own content-security-policy, and loosening a security
+   header to change how the headings look is not a trade worth making. The
+   identity comes instead from two things that cost nothing: a deliberate
+   native stack, and every number in the interface set in tabular mono.
+
+   That second rule is what separates an instrument from a web page. Currency,
+   durations, counts, percentages, references and timestamps are data, they sit
+   in columns, and digits that do not line up are the reason a dashboard looks
+   like a website with numbers on it.
    =========================================================================== */
 
 :root {
-  --core-black: rgb(12, 12, 14);
-  --carbon: rgb(24, 26, 30);
-  --grey: rgb(38, 42, 48);
-  --orange: rgb(255, 102, 0);
-  --orange-glow: rgb(255, 120, 25);
-  --orange-pressed: rgb(220, 85, 0);
-  --text: rgb(245, 247, 250);
-  --text-2: rgb(180, 186, 196);
-  --text-3: rgb(110, 118, 130);
-  --success: rgb(34, 197, 94);
-  --warning: rgb(255, 166, 0);
-  --critical: rgb(220, 38, 38);
-  --info: rgb(59, 130, 246);
-  --line: rgba(255, 255, 255, 0.07);
-  --line-strong: rgba(255, 255, 255, 0.13);
-  --radius: 9px;
-  --sidebar: 236px;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Surfaces, darkest to lightest. `--core-black` and `--carbon` keep their
+     names: every component and both stylesheets already reference them. */
+  --core-black: rgb(9, 10, 13);
+  --carbon: rgb(17, 19, 23);
+  --slate: rgb(24, 27, 33);
+  --grey: rgb(32, 36, 43);
+  --raised: rgb(41, 46, 55);
+
+  /* Signal Orange. Slightly warmer and a shade brighter than the flat web
+     orange it replaces, which held up poorly against a cool ground. */
+  --orange: rgb(255, 106, 26);
+  --orange-glow: rgb(255, 133, 61);
+  --orange-pressed: rgb(214, 82, 8);
+  --orange-wash: rgba(255, 106, 26, 0.11);
+  --orange-line: rgba(255, 106, 26, 0.34);
+
+  /* Text, with the same cool cast as the surfaces so it sits in the palette
+     rather than on top of it. */
+  --text: rgb(237, 241, 247);
+  --text-2: rgb(167, 175, 189);
+  --text-3: rgb(108, 117, 132);
+
+  /* Semantic five, pulled off their web-safe values. A fully saturated
+     rgb(220,38,38) red is the one every framework ships with; a little
+     desaturation and a little lift reads as chosen. */
+  --success: rgb(46, 184, 116);
+  --warning: rgb(240, 166, 42);
+  --critical: rgb(232, 78, 78);
+  --info: rgb(93, 154, 245);
+
+  --line: rgba(255, 255, 255, 0.065);
+  --line-strong: rgba(255, 255, 255, 0.115);
+  /* The upper-edge catch-light. Applied as an inset shadow, not a border, so
+     it never affects layout. */
+  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.055);
+
+  --e1: 0 1px 2px rgba(0, 0, 0, 0.42);
+  --e2: 0 4px 14px -4px rgba(0, 0, 0, 0.58);
+  --e3: 0 18px 44px -14px rgba(0, 0, 0, 0.78);
+
+  /* Differentiated rather than one radius on everything — a control that is
+     6px and a dialogue that is 14px read as different classes of thing. */
+  --r-sm: 5px;
+  --radius: 8px;
+  --r-lg: 14px;
+
+  --sidebar: 244px;
+
+  /* Led by the faces a workstation actually has, chosen in order rather than
+     falling through to whatever turns up. */
+  --sans: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+    "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: "SF Mono", ui-monospace, SFMono-Regular, "JetBrains Mono", "IBM Plex Mono",
+    "Roboto Mono", Menlo, Consolas, monospace;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  background: var(--core-black);
+  /* A ground with a gradient in it rather than one flat fill. The difference
+     is a few percent of lightness across the viewport and it is most of why
+     premium dark interfaces do not look like a black rectangle. */
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgb(15, 17, 21), transparent 70%),
+    var(--core-black);
+  background-attachment: fixed;
   color: var(--text);
-  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  font: 13.5px/1.6 var(--sans);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+  /* Digits line up everywhere by default. Prose is unaffected; tables,
+     metrics and references are the point. */
+  font-variant-numeric: tabular-nums;
+  text-rendering: optimizeLegibility;
 }
 
 a { color: inherit; }
 button { font: inherit; }
+
+::selection { background: var(--orange-wash); color: var(--text); }
+
+/* Scrollbars are chrome too. The default light-grey track on a dark surface
+   is one of the tells that nobody looked at the window, only at the page. */
+* { scrollbar-width: thin; scrollbar-color: var(--raised) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--raised); border-radius: 999px;
+  border: 3px solid transparent; background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: rgb(58, 65, 77); background-clip: content-box; }
+
+/* One focus treatment for everything, so a keyboard user never meets a
+   control that forgot to declare one. */
+:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; border-radius: 3px; }
 
 /* ---------------------------------------------------------------- splash */
 /*
@@ -49,7 +141,7 @@ button { font: inherit; }
  */
 .splash {
   position: fixed; inset: 0; z-index: 999;
-  background: #0c0c0e;
+  background: #090a0d;
   display: grid; place-content: center; justify-items: center;
   gap: 14px; text-align: center;
   height: 100dvh;
@@ -84,20 +176,42 @@ button { font: inherit; }
 .login-page {
   min-height: 100vh; display: grid; grid-template-columns: 1.1fr 0.9fr;
 }
+/*
+ * The brand panel, without the hero glow.
+ *
+ * A big soft radial of the accent colour behind a headline is the single most
+ * recognisable generated-landing-page gesture, and it was here. What replaces
+ * it is a drafting grid at two per cent opacity and a low horizon — quieter,
+ * specific to what this product is for, and it survives being looked at twice.
+ */
+/* Sticky, so the brand holds its place while a long identity list scrolls past
+   it. Centred in a grid row that is as tall as the whole page put it level with
+   the middle of the scroll, which is nowhere anybody is looking. */
 .login-brand {
   padding: 56px; display: flex; flex-direction: column; justify-content: center;
+  position: sticky; top: 0; align-self: start; height: 100vh; overflow: hidden;
   background:
-    radial-gradient(ellipse 80% 60% at 20% 20%, rgba(255,102,0,.14), transparent 65%),
-    linear-gradient(160deg, var(--carbon), var(--core-black));
+    linear-gradient(180deg, transparent 62%, rgba(255,106,26,.05)),
+    linear-gradient(165deg, var(--slate), var(--core-black) 70%);
   border-right: 1px solid var(--line);
 }
-.login-brand h1 { font-size: 40px; line-height: 1.1; letter-spacing: -1.4px; font-weight: 800; margin: 22px 0 16px; max-width: 14ch; }
+.login-brand::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255,255,255,.021) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.021) 1px, transparent 1px);
+  background-size: 46px 46px;
+  mask-image: radial-gradient(ellipse 90% 70% at 30% 40%, #000, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 70% at 30% 40%, #000, transparent 78%);
+}
+.login-brand > * { position: relative; }
+.login-brand h1 { font-size: 40px; line-height: 1.08; letter-spacing: -1.6px; font-weight: 680; margin: 24px 0 16px; max-width: 14ch; text-wrap: balance; }
 .login-brand p { color: var(--text-2); font-size: 16px; max-width: 46ch; }
 .login-brand .rail { display: flex; gap: 3px; margin-top: 34px; max-width: 520px; }
 .login-brand .rail div {
-  flex: 1; padding: 8px 5px; font-size: 8.5px; font-weight: 700; letter-spacing: .3px;
+  flex: 1; padding: 9px 5px; font-size: 8px; font-weight: 700; letter-spacing: .9px;
   text-transform: uppercase; text-align: center; white-space: nowrap;
-  background: var(--carbon); border-top: 2px solid var(--orange); color: var(--orange);
+  background: rgba(255,255,255,.03); border-top: 1px solid var(--line-strong); color: var(--text-3);
 }
 .login-panel { padding: 56px 48px; display: flex; flex-direction: column; justify-content: center; overflow-y: auto; }
 .login-panel h2 { font-size: 20px; font-weight: 750; letter-spacing: -0.4px; margin-bottom: 6px; }
@@ -109,95 +223,122 @@ button { font: inherit; }
   padding: 12px 14px; margin-bottom: 8px; cursor: pointer; color: var(--text);
   transition: border-color .15s, background .15s;
 }
-.identity:hover { border-color: rgba(255,102,0,.5); background: rgba(255,102,0,.06); }
+.identity:hover { border-color: var(--orange-line); background: var(--orange-wash); }
 .identity .avatar {
   flex: none; width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center;
-  background: var(--grey); color: var(--orange); font-weight: 800; font-size: 12px; letter-spacing: .5px;
+  background: var(--grey); color: var(--text-2); font-weight: 700; font-size: 11px; letter-spacing: .6px;
+  box-shadow: var(--edge);
 }
 .identity .who { flex: 1; min-width: 0; }
 .identity .who b { display: block; font-size: 13.5px; font-weight: 650; }
 .identity .who span { display: block; font-size: 11.5px; color: var(--text-3); }
 .identity .role {
-  font-size: 10px; font-weight: 750; letter-spacing: .5px; padding: 3px 8px; border-radius: 5px;
-  background: rgba(255,102,0,.13); color: var(--orange); white-space: nowrap;
+  /* Neutral, deliberately. Nine identities each wearing an orange badge spends
+     the accent nine times over on a screen where nothing needs attention yet,
+     and an accent that appears everywhere stops meaning anything. */
+  font-size: 9.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 4px; background: rgba(255,255,255,.055);
+  color: var(--text-2); white-space: nowrap; border: 1px solid var(--line-strong);
 }
 
 /* ----------------------------------------------------------------- shell */
 .shell { display: grid; grid-template-columns: var(--sidebar) 1fr; min-height: 100vh; }
 
 .sidebar {
-  background: var(--carbon); border-right: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--carbon), var(--core-black) 78%);
+  border-right: 1px solid var(--line);
   display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; overflow-y: auto;
 }
 .sidebar-mark {
-  display: flex; align-items: center; gap: 9px; padding: 17px 18px;
-  font-weight: 800; font-size: 16px; letter-spacing: -0.3px; border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 9px; padding: 18px;
+  font-weight: 700; font-size: 15px; letter-spacing: 0.6px; border-bottom: 1px solid var(--line);
   /* It is an anchor now, so the inherited link colour and underline have to go
      — the mark's own colours are the brand's, not the link palette's. */
   color: inherit; text-decoration: none;
 }
-.sidebar-mark:hover { background: var(--carbon); }
+.sidebar-mark:hover { background: rgba(255,255,255,.02); }
 .sidebar-mark .x { color: var(--orange); }
 
-.nav-group { padding: 14px 10px 4px; }
+.nav-group { padding: 15px 10px 4px; }
 .nav-group-label {
-  font-size: 9.5px; font-weight: 750; letter-spacing: 1.1px; text-transform: uppercase;
-  color: var(--text-3); padding: 0 8px 7px;
+  font-size: 9px; font-weight: 700; letter-spacing: 1.3px; text-transform: uppercase;
+  color: var(--text-3); padding: 0 10px 8px;
 }
 .nav-item {
-  display: flex; align-items: center; gap: 10px; width: 100%;
-  padding: 8px 10px; border-radius: 6px; border: none; background: none;
-  color: var(--text-2); font-size: 13px; text-align: left; cursor: pointer;
-  transition: background .12s, color .12s;
+  display: flex; align-items: center; gap: 10px; width: 100%; position: relative;
+  padding: 8px 10px; border-radius: var(--r-sm); border: none; background: none;
+  color: var(--text-2); font-size: 12.5px; text-align: left; cursor: pointer;
+  transition: background .12s ease, color .12s ease;
 }
-.nav-item:hover { background: rgba(255,255,255,.05); color: var(--text); }
-.nav-item.active { background: rgba(255,102,0,.13); color: var(--orange); font-weight: 600; }
+.nav-item:hover { background: rgba(255,255,255,.045); color: var(--text); }
+/*
+ * The active item is marked, not filled.
+ *
+ * A solid orange block behind the current page competes with every genuine
+ * orange on the screen — and orange here means "this needs attention", which
+ * "you are on this page" is not. A rail on the leading edge says the same
+ * thing and spends none of the accent's meaning to do it.
+ */
+.nav-item.active { background: rgba(255,255,255,.055); color: var(--text); font-weight: 600; }
+.nav-item.active::before {
+  content: ''; position: absolute; left: -10px; top: 6px; bottom: 6px;
+  width: 2px; border-radius: 0 2px 2px 0; background: var(--orange);
+}
+.nav-item.active .ico { opacity: 1; color: var(--orange); }
 .nav-item.locked { color: var(--text-3); cursor: not-allowed; }
 .nav-item.locked:hover { background: none; color: var(--text-3); }
 .nav-item .ico { flex: none; width: 15px; height: 15px; opacity: .85; }
 .nav-item .lock { margin-left: auto; font-size: 10px; opacity: .6; }
-.nav-count { margin-left: auto; font-size: 10.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.nav-count { margin-left: auto; font-size: 10.5px; color: var(--text-3); font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 .sidebar-foot { margin-top: auto; padding: 12px; border-top: 1px solid var(--line); }
-.acu-mini { background: var(--core-black); border: 1px solid var(--line); border-radius: 7px; padding: 10px 11px; }
-.acu-mini .l { font-size: 9.5px; letter-spacing: .8px; text-transform: uppercase; color: var(--text-3); font-weight: 700; }
-.acu-mini .v { font-size: 17px; font-weight: 800; margin: 3px 0 6px; letter-spacing: -.4px; }
-.acu-bar { height: 4px; background: rgba(255,255,255,.08); border-radius: 2px; overflow: hidden; }
-.acu-bar i { display: block; height: 100%; background: var(--orange); }
+.acu-mini {
+  background: var(--slate); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 11px 12px; box-shadow: var(--edge), var(--e1);
+}
+.acu-mini .l { font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-3); font-weight: 700; }
+/* A balance is a figure. */
+.acu-mini .v { font-family: var(--mono); font-size: 17px; font-weight: 600; margin: 4px 0 7px; letter-spacing: -.4px; }
+.acu-bar { height: 3px; background: rgba(255,255,255,.07); border-radius: 999px; overflow: hidden; }
+.acu-bar i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--orange-pressed), var(--orange)); }
 
 /* ------------------------------------------------------------------ main */
 .main { min-width: 0; display: flex; flex-direction: column; }
 
 .topbar {
-  display: flex; align-items: center; gap: 14px; padding: 0 22px; height: 56px;
-  border-bottom: 1px solid var(--line); background: rgba(12,12,14,.85);
-  backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 40;
+  display: flex; align-items: center; gap: 14px; padding: 0 24px; height: 54px;
+  border-bottom: 1px solid var(--line); background: rgba(9,10,13,.72);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  position: sticky; top: 0; z-index: 40;
 }
-.crumb { font-size: 12.5px; color: var(--text-3); min-width: 0; }
+.crumb { font-size: 12px; color: var(--text-3); min-width: 0; }
 .crumb b { color: var(--text-2); font-weight: 600; }
 .topbar .spacer { flex: 1; }
 .phase-tag {
-  font-size: 10.5px; font-weight: 750; letter-spacing: .5px; padding: 4px 10px;
-  border-radius: 999px; background: rgba(255,102,0,.13); color: var(--orange);
-  border: 1px solid rgba(255,102,0,.3);
+  font-size: 9.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  padding: 4px 10px; border-radius: var(--r-sm); background: var(--orange-wash);
+  color: var(--orange); border: 1px solid var(--orange-line);
 }
 .user-chip {
-  display: flex; align-items: center; gap: 9px; padding: 5px 10px 5px 6px;
-  border: 1px solid var(--line); border-radius: 999px; background: var(--carbon);
-  cursor: pointer; color: var(--text);
+  display: flex; align-items: center; gap: 9px; padding: 4px 12px 4px 5px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--slate);
+  cursor: pointer; color: var(--text); box-shadow: var(--edge);
+  transition: border-color .13s ease, background .13s ease;
 }
-.user-chip:hover { border-color: rgba(255,102,0,.45); }
+.user-chip:hover { border-color: var(--line-strong); background: var(--grey); }
 .user-chip .avatar {
-  width: 24px; height: 24px; border-radius: 50%; background: var(--grey);
-  display: grid; place-items: center; font-size: 10px; font-weight: 800; color: var(--orange);
+  width: 25px; height: 25px; border-radius: 50%; background: var(--raised);
+  display: grid; place-items: center; font-size: 9.5px; font-weight: 700;
+  letter-spacing: .4px; color: var(--orange); box-shadow: var(--edge);
 }
-.user-chip .nm { font-size: 12.5px; }
+.user-chip .nm { font-size: 12px; font-weight: 550; }
 .user-chip .rl { font-size: 10px; color: var(--text-3); }
 
-.view { padding: 26px 22px 60px; flex: 1; }
-.view-head { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
-.view-head h1 { font-size: 22px; font-weight: 750; letter-spacing: -0.5px; }
-.view-head p { color: var(--text-3); font-size: 13px; margin-top: 3px; max-width: 74ch; }
+.view { padding: 28px 24px 64px; flex: 1; }
+.view-head { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
+.view-head h1 { font-size: 21px; font-weight: 650; letter-spacing: -0.5px; text-wrap: balance; }
+.view-head p { color: var(--text-3); font-size: 12.5px; margin-top: 4px; max-width: 74ch; }
 .view-head .actions { margin-left: auto; display: flex; gap: 8px; }
 
 /* --------------------------------------------------------------- widgets */
@@ -209,31 +350,56 @@ button { font: inherit; }
 .g-2-1 { grid-template-columns: 2fr 1fr; }
 .g-1-2 { grid-template-columns: 1fr 2fr; }
 
+/*
+ * A panel, not a rectangle.
+ *
+ * The fill sits one level above the page ground, the shadow puts it in front
+ * of it, and the inset highlight along the top edge is what makes it read as
+ * a physical surface catching light rather than a lighter patch of the same
+ * plane. All three are needed: any one on its own still looks flat.
+ */
 .card {
   background: var(--carbon); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: 16px 17px; min-width: 0;
+  border-radius: var(--radius); padding: 17px 18px; min-width: 0;
+  box-shadow: var(--edge), var(--e1);
 }
 .card > h3 {
-  font-size: 10.5px; font-weight: 750; letter-spacing: 1px; text-transform: uppercase;
-  color: var(--text-3); margin-bottom: 12px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 1.35px; text-transform: uppercase;
+  color: var(--text-3); margin-bottom: 13px;
 }
 .card.pad0 { padding: 0; }
-.card.pad0 > h3 { padding: 15px 17px 0; margin-bottom: 10px; }
+.card.pad0 > h3 { padding: 16px 18px 0; margin-bottom: 11px; }
 
-.metric { font-size: 26px; font-weight: 800; letter-spacing: -0.9px; line-height: 1.1; }
+/*
+ * A metric is a number, so it is set as one.
+ *
+ * Mono and tabular, which means the pound signs align down a row of cards and
+ * a figure that ticks from 9 to 10 does not shift the ones beside it. In the
+ * UI face these were prose that happened to be numeric, and that is most of
+ * what made the dashboard read as a website with figures on it.
+ */
+.metric {
+  /* Tracking stays near zero: a monospace face already has a fixed advance,
+     and pulling it tighter makes the glyphs collide rather than reading as
+     tightly set. */
+  font-family: var(--mono); font-size: 25px; font-weight: 600;
+  letter-spacing: -0.4px; line-height: 1.1; font-variant-numeric: tabular-nums;
+}
 .metric.orange { color: var(--orange); }
 .metric.good { color: var(--success); }
 .metric.warn { color: var(--warning); }
 .metric.bad { color: var(--critical); }
 .metric.info { color: var(--info); }
-.metric-sub { font-size: 11.5px; color: var(--text-3); margin-top: 5px; }
+.metric-sub { font-size: 11.5px; color: var(--text-3); margin-top: 6px; line-height: 1.5; }
 
 /* A KPI that opens to the events behind it. The affordance is deliberately
    quiet — a wall of cards that all look like buttons reads as noise — and
    becomes plain on hover and on keyboard focus. No new colour: the accent is
    the one the design system already carries. */
 .card.drillable { cursor: pointer; position: relative; transition: border-color .12s ease, background .12s ease; }
-.card.drillable:hover, .card.drillable:focus-visible { border-color: var(--line-strong); background: var(--grey); }
+.card.drillable:hover, .card.drillable:focus-visible {
+  border-color: var(--line-strong); background: var(--slate); box-shadow: var(--edge), var(--e2);
+}
 .card.drillable:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
 .drill-hint {
   font-size: 10.5px; color: var(--text-3); margin-top: 8px;
@@ -248,72 +414,113 @@ button { font: inherit; }
   .drill-hint { transition: none; opacity: 1; }
 }
 
-.delta { font-size: 11.5px; font-weight: 650; }
+.delta { font-size: 11.5px; font-weight: 600; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .delta.up { color: var(--success); }
 .delta.down { color: var(--critical); }
 
 /* tables */
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+/*
+ * The header is a rule, not a bar.
+ *
+ * A filled grey block across the top of every table is a heavy piece of
+ * furniture repeated on every panel; a hairline under letterspaced small caps
+ * does the same separating job and lets the data be the darkest thing in the
+ * card, which on a screen full of tables is the whole difference.
+ */
 thead th {
-  text-align: left; padding: 9px 14px; background: var(--grey); color: var(--text-3);
-  font-size: 9.5px; font-weight: 750; letter-spacing: .9px; text-transform: uppercase; white-space: nowrap;
+  text-align: left; padding: 0 14px 8px; background: none; color: var(--text-3);
+  font-size: 9px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+  white-space: nowrap; border-bottom: 1px solid var(--line-strong);
 }
-tbody td { padding: 9px 14px; border-top: 1px solid var(--line); vertical-align: top; }
-tbody tr:hover { background: rgba(255,102,0,.045); }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tbody td { padding: 10px 14px; border-top: 1px solid var(--line); vertical-align: top; }
+tbody tr:first-child td { border-top: none; }
+/* A neutral wash. An orange one implied every row you pointed at needed
+   attention, which is the one thing orange is reserved to mean. */
+tbody tr { transition: background .1s ease; }
+tbody tr:hover { background: rgba(255,255,255,.035); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+th.num { font-family: var(--sans); }
 td.mono { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
 
 /* badges */
 .badge {
-  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .4px;
-  padding: 2.5px 7px; border-radius: 5px; white-space: nowrap;
+  display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: .7px;
+  text-transform: uppercase; padding: 3px 7px; border-radius: 4px; white-space: nowrap;
+  border: 1px solid transparent; line-height: 1.35;
 }
-.badge.ok { background: rgba(34,197,94,.14); color: var(--success); }
-.badge.warn { background: rgba(255,166,0,.14); color: var(--warning); }
-.badge.bad { background: rgba(220,38,38,.15); color: var(--critical); }
-.badge.info { background: rgba(59,130,246,.14); color: var(--info); }
-.badge.neutral { background: rgba(255,255,255,.07); color: var(--text-2); }
-.badge.ai { background: rgba(255,102,0,.14); color: var(--orange); }
+/* Tint plus a hairline of the same hue. The border is what stops a badge
+   dissolving into the row behind it at small sizes. */
+.badge.ok { background: rgba(46,184,116,.12); color: var(--success); border-color: rgba(46,184,116,.3); }
+.badge.warn { background: rgba(240,166,42,.12); color: var(--warning); border-color: rgba(240,166,42,.3); }
+.badge.bad { background: rgba(232,78,78,.13); color: var(--critical); border-color: rgba(232,78,78,.32); }
+.badge.info { background: rgba(93,154,245,.12); color: var(--info); border-color: rgba(93,154,245,.3); }
+.badge.neutral { background: rgba(255,255,255,.055); color: var(--text-2); border-color: var(--line-strong); }
+.badge.ai { background: var(--orange-wash); color: var(--orange); border-color: var(--orange-line); }
 
 /* buttons */
 .btn {
   display: inline-flex; align-items: center; gap: 7px; border: none; cursor: pointer;
-  background: var(--orange); color: var(--core-black); padding: 8px 15px;
-  border-radius: 6px; font-size: 12.5px; font-weight: 700;
-  transition: background .13s;
+  background: linear-gradient(180deg, var(--orange-glow), var(--orange));
+  color: rgb(20, 10, 3); padding: 8px 15px;
+  border-radius: var(--r-sm); font-size: 12.5px; font-weight: 650; letter-spacing: .1px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.22), var(--e1);
+  transition: filter .13s ease, transform .07s ease, box-shadow .13s ease;
 }
-.btn:hover { background: var(--orange-glow); }
-.btn:active { background: var(--orange-pressed); }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn.ghost { background: var(--grey); color: var(--text); border: 1px solid rgba(255,102,0,.4); }
-.btn.ghost:hover { background: rgba(255,102,0,.16); }
-.btn.quiet { background: transparent; color: var(--text-2); border: 1px solid var(--line-strong); }
-.btn.quiet:hover { background: rgba(255,255,255,.05); color: var(--text); }
+.btn:hover { filter: brightness(1.08); }
+/* One pixel down on press. It is the smallest possible affordance and it is
+   the one that makes a control feel like a control. */
+.btn:active { transform: translateY(1px); box-shadow: inset 0 1px 0 rgba(255,255,255,.14); filter: brightness(.95); }
+.btn:disabled { opacity: .4; cursor: not-allowed; filter: none; transform: none; }
+.btn.ghost {
+  background: var(--grey); color: var(--text); border: 1px solid var(--orange-line);
+  box-shadow: var(--edge), var(--e1);
+}
+.btn.ghost:hover { background: var(--orange-wash); filter: none; border-color: var(--orange); }
+.btn.quiet {
+  background: var(--slate); color: var(--text-2); border: 1px solid var(--line-strong);
+  box-shadow: var(--edge);
+}
+.btn.quiet:hover { background: var(--grey); color: var(--text); filter: none; }
 .btn.sm { padding: 5px 11px; font-size: 11.5px; }
 /* Irreversible actions, on the token the critical badge and metric already use. */
-.btn.danger { background: transparent; color: var(--critical); border: 1px solid rgba(220,38,38,.45); }
-.btn.danger:hover { background: rgba(220,38,38,.14); }
+.btn.danger { background: transparent; color: var(--critical); border: 1px solid rgba(232,78,78,.42); box-shadow: none; }
+.btn.danger:hover { background: rgba(232,78,78,.13); filter: none; }
 
 /* progress */
-.track { height: 6px; background: rgba(255,255,255,.08); border-radius: 3px; overflow: hidden; }
-.track i { display: block; height: 100%; border-radius: 3px; background: var(--orange); }
-.track i.good { background: var(--success); }
-.track i.warn { background: var(--warning); }
-.track i.bad { background: var(--critical); }
-.track i.info { background: var(--info); }
+.track { height: 5px; background: rgba(255,255,255,.06); border-radius: 999px; overflow: hidden; box-shadow: inset 0 1px 2px rgba(0,0,0,.4); }
+.track i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--orange-pressed), var(--orange)); }
+.track i.good { background: linear-gradient(90deg, rgb(32,150,92), var(--success)); }
+.track i.warn { background: linear-gradient(90deg, rgb(200,132,20), var(--warning)); }
+.track i.bad { background: linear-gradient(90deg, rgb(190,52,52), var(--critical)); }
+.track i.info { background: linear-gradient(90deg, rgb(58,116,200), var(--info)); }
 
-/* lifecycle rail */
-.rail { display: flex; gap: 3px; }
+/*
+ * The lifecycle rail, as a spine rather than seven coloured tabs.
+ *
+ * Stages are consecutive, so the segments touch; what is finished is a solid
+ * line, what is current is lit, and what is ahead is unlit. Seven equally
+ * bright filled blocks said nothing about direction, which is the only thing
+ * a lifecycle rail is for.
+ */
+.rail { display: flex; gap: 2px; }
 .rail div {
-  flex: 1; padding: 9px 6px; font-size: 9px; font-weight: 750; letter-spacing: .35px;
+  flex: 1; padding: 10px 6px 9px; font-size: 8.5px; font-weight: 700; letter-spacing: .8px;
   text-transform: uppercase; text-align: center; white-space: nowrap;
-  background: var(--grey); border-top: 2px solid rgba(255,255,255,.1); color: var(--text-3);
+  background: var(--slate); border-top: 2px solid rgba(255,255,255,.07); color: var(--text-3);
+  transition: color .15s ease, background .15s ease;
 }
-.rail div:first-child { border-radius: 5px 0 0 5px; }
-.rail div:last-child { border-radius: 0 5px 5px 0; }
-.rail div.done { border-top-color: var(--success); color: var(--text-2); }
-.rail div.current { border-top-color: var(--orange); color: var(--orange); background: rgba(255,102,0,.1); }
+.rail div:first-child { border-radius: var(--r-sm) 0 0 var(--r-sm); }
+.rail div:last-child { border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+/* Behind you, and therefore quiet. A finished stage lit as brightly as the
+   current one gives the rail six focal points and no direction. */
+.rail div.done { border-top-color: rgba(46,184,116,.5); color: var(--text-2); background: var(--slate); }
+.rail div.current {
+  border-top-color: var(--orange); color: var(--orange);
+  background: linear-gradient(180deg, var(--orange-wash), transparent);
+  box-shadow: 0 -1px 12px -2px rgba(255,106,26,.45);
+}
 
 /* gate checklist */
 .gate-row { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
@@ -339,22 +546,37 @@ td.mono { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
 .chips { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 11px; }
 .chip {
   font-size: 11px; padding: 4px 10px; border-radius: 999px;
-  background: rgba(255,102,0,.12); color: var(--orange); border: 1px solid rgba(255,102,0,.32);
+  background: var(--orange-wash); color: var(--orange); border: 1px solid var(--orange-line);
 }
-.chip.denied { background: rgba(220,38,38,.1); color: var(--critical); border-color: rgba(220,38,38,.28); }
+.chip.denied { background: rgba(232,78,78,.11); color: var(--critical); border-color: rgba(232,78,78,.3); }
 .composer { display: flex; gap: 9px; margin-bottom: 18px; max-width: 860px; }
 
+/*
+ * A field is a recess, where a button is a raised surface.
+ *
+ * The inset shadow is the opposite of the button's catch-light, and having the
+ * two read as physically opposite is what makes a form legible at a glance —
+ * you can see what you type into and what you press without reading either.
+ */
 input[type=text], input[type=search], input[type=number], select, textarea {
-  background: var(--grey); border: 1px solid var(--line-strong); color: var(--text);
-  border-radius: 6px; padding: 9px 12px; font: inherit; font-size: 13px; width: 100%;
+  background: var(--core-black); border: 1px solid var(--line-strong); color: var(--text);
+  border-radius: var(--r-sm); padding: 9px 12px; font: inherit; font-size: 13px; width: 100%;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.36);
+  transition: border-color .13s ease, box-shadow .13s ease;
 }
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--orange); outline-offset: -1px; }
+input::placeholder, textarea::placeholder { color: var(--text-3); }
+input:hover, select:hover, textarea:hover { border-color: rgba(255,255,255,.18); }
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--orange);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.36), 0 0 0 3px rgba(255,106,26,.16);
+}
 
 /* code block */
 .code {
-  background: rgb(16,17,20); border: 1px solid var(--line);
-  border-radius: 7px; padding: 13px 15px; font-family: var(--mono);
+  background: rgb(11,12,15); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px 16px; font-family: var(--mono);
   font-size: 11.5px; line-height: 1.7; overflow-x: auto; color: var(--text-2);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.45);
 }
 .code .k { color: var(--info); }
 .code .s { color: var(--success); }
@@ -371,32 +593,45 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--orange); ou
   padding: 11px 14px; border-radius: 7px; font-size: 12.5px; margin-bottom: 14px;
   border: 1px solid; display: flex; gap: 9px; align-items: flex-start;
 }
-.notice.err { background: rgba(220,38,38,.09); border-color: rgba(220,38,38,.3); color: rgb(255,180,180); }
-.notice.warn { background: rgba(255,166,0,.08); border-color: rgba(255,166,0,.28); color: rgb(255,215,150); }
-.notice.ok { background: rgba(34,197,94,.08); border-color: rgba(34,197,94,.26); color: rgb(170,240,200); }
-.notice.info { background: rgba(59,130,246,.08); border-color: rgba(59,130,246,.26); color: rgb(180,210,255); }
+.notice.err { background: rgba(232,78,78,.1); border-color: rgba(232,78,78,.32); color: rgb(255,186,186); }
+.notice.warn { background: rgba(240,166,42,.09); border-color: rgba(240,166,42,.3); color: rgb(255,216,156); }
+.notice.ok { background: rgba(46,184,116,.09); border-color: rgba(46,184,116,.28); color: rgb(163,235,196); }
+.notice.info { background: rgba(93,154,245,.09); border-color: rgba(93,154,245,.28); color: rgb(184,212,255); }
 
-.toast-host { position: fixed; right: 18px; bottom: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 200; }
+.toast-host { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 9px; z-index: 200; }
 .toast {
-  background: var(--carbon); border: 1px solid var(--line-strong); border-left: 3px solid var(--orange);
-  border-radius: 7px; padding: 11px 15px; font-size: 12.5px; max-width: 380px;
-  box-shadow: 0 12px 34px -10px rgba(0,0,0,.8);
+  background: var(--slate); border: 1px solid var(--line-strong); border-left: 2px solid var(--orange);
+  border-radius: var(--radius); padding: 12px 16px; font-size: 12.5px; max-width: 380px;
+  box-shadow: var(--edge), var(--e3);
 }
 .toast.err { border-left-color: var(--critical); }
 .toast.ok { border-left-color: var(--success); }
-.toast b { display: block; margin-bottom: 2px; }
+.toast b { display: block; margin-bottom: 3px; font-weight: 600; }
 .toast span { color: var(--text-3); }
 
 /* modal */
-.modal-host { position: fixed; inset: 0; background: rgba(0,0,0,.66); display: grid; place-items: center; z-index: 300; padding: 20px; }
-.modal { background: var(--carbon); border: 1px solid var(--line-strong); border-radius: 12px; width: min(560px, 100%); max-height: 82vh; overflow-y: auto; }
-.modal header { padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; }
-.modal header h3 { font-size: 15px; font-weight: 700; }
-.modal header button { margin-left: auto; background: none; border: none; color: var(--text-3); font-size: 19px; cursor: pointer; line-height: 1; }
-.modal .body { padding: 18px 20px; }
-.modal .foot { padding: 14px 20px; border-top: 1px solid var(--line); display: flex; gap: 9px; justify-content: flex-end; }
-.field { margin-bottom: 13px; }
-.field label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--text-3); margin-bottom: 5px; }
+.modal-host {
+  position: fixed; inset: 0; background: rgba(5,6,8,.7); display: grid; place-items: center;
+  z-index: 300; padding: 20px;
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+}
+.modal {
+  background: var(--slate); border: 1px solid var(--line-strong); border-radius: var(--r-lg);
+  width: min(560px, 100%); max-height: 82vh; overflow-y: auto;
+  box-shadow: var(--edge), var(--e3);
+}
+.modal header { padding: 17px 21px; border-bottom: 1px solid var(--line); display: flex; align-items: center; }
+.modal header h3 { font-size: 15px; font-weight: 650; letter-spacing: -.2px; }
+.modal header button {
+  margin-left: auto; background: none; border: none; color: var(--text-3);
+  font-size: 19px; cursor: pointer; line-height: 1; border-radius: var(--r-sm);
+  width: 26px; height: 26px; transition: background .12s ease, color .12s ease;
+}
+.modal header button:hover { background: rgba(255,255,255,.06); color: var(--text); }
+.modal .body { padding: 19px 21px; }
+.modal .foot { padding: 15px 21px; border-top: 1px solid var(--line); display: flex; gap: 9px; justify-content: flex-end; background: rgba(0,0,0,.16); }
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 9.5px; font-weight: 700; letter-spacing: 1.1px; text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
 
 /* --- command surfaces ---------------------------------------------------- */
 .modal header { align-items: flex-start; }
@@ -410,7 +645,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--orange); ou
 .field label .opt { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-3); opacity: .8; }
 .field-error, .cmd-error {
   margin-top: 6px; font-size: 12px; color: var(--critical);
-  background: rgba(255,77,79,.08); border: 1px solid rgba(255,77,79,.3); border-radius: 6px; padding: 8px 10px;
+  background: rgba(232,78,78,.09); border: 1px solid rgba(232,78,78,.3); border-radius: var(--r-sm); padding: 8px 10px;
 }
 .cmd-error { margin: 0 0 14px; }
 .btn.locked { opacity: .42; cursor: not-allowed; }
@@ -421,9 +656,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--orange); ou
   border: 1px solid var(--line-strong); border-radius: 8px; padding: 13px 15px;
   background: var(--core); margin-top: 4px;
 }
-.cost-quote.blocked { border-color: rgba(255,166,0,.35); }
+.cost-quote.blocked { border-color: rgba(240,166,42,.36); }
 .cost-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 8px; }
-.cost-balance { text-align: right; font-size: 12.5px; color: var(--text-2); }
+.cost-balance { text-align: right; font-size: 12.5px; color: var(--text-2); font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .cost-quote .notice { margin-top: 10px; }
 
 .cmd-bar { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -435,7 +670,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--orange); ou
 .split-list .row { display: flex; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 12.5px; align-items: center; }
 .split-list .row:first-child { border-top: none; }
 .split-list .row .lbl { color: var(--text-2); }
-.split-list .row .val { margin-left: auto; font-weight: 650; font-variant-numeric: tabular-nums; }
+/* Same rule as the metrics: a value in a label/value pair is data. */
+.split-list .row .val { margin-left: auto; font-weight: 600; font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* charts — inline SVG, no library */
 .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
@@ -465,7 +701,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--orange); ou
 .bar-row { display: grid; grid-template-columns: minmax(150px, 1.5fr) 2.5fr auto; gap: 12px; align-items: center; }
 .bar-label { font-size: 12px; color: var(--text-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar-label span { display: block; font-size: 10px; color: var(--text-3); }
-.bar-value { font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bar-value { font-size: 11.5px; font-weight: 600; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 @media (max-width: 1200px) {
   .g4, .g5 { grid-template-columns: repeat(2, minmax(0,1fr)); }
@@ -515,4 +751,4 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--orange); ou
 
 /* The dictate control, beside a file input rather than instead of one. */
 .voice-field { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
-.voice-field .voice-taken { font-size: 11.5px; color: var(--success); font-variant-numeric: tabular-nums; }
+.voice-field .voice-taken { font-size: 11.5px; color: var(--success); font-family: var(--mono); font-variant-numeric: tabular-nums; }

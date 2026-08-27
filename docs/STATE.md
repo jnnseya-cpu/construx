@@ -6572,6 +6572,64 @@ recorded there in the order they were sent.
 
 ---
 
+### Making it stop looking generated
+
+A visual pass over the whole product, on the brief that it should read as a
+premium instrument rather than as something a machine produced. `frontend/app.css`
+and `frontend/site.css`. **No class name, selector or markup changed**, so no
+page script was touched and nothing had to be re-verified beyond looking at it.
+
+**What was actually giving it away.** Not one big thing — five small ones, each
+a known default. A near-black ground with a single acid accent. Pure neutral
+greys, mixed from equal parts, which is what a screen shows when nobody chose a
+colour. Every surface the same flat fill on one plane. A radial glow of the
+accent behind the login headline, and a left-to-right colour ramp filling the
+landing headline. And every number in the interface set in the UI face.
+
+**The number rule is the one that mattered most.** Currency, durations, counts,
+percentages, references and timestamps are data; they sit in columns; and digits
+that do not line up are most of why a dashboard reads as a website with figures
+on it. Metrics, table numerics, label/value pairs, deltas, bar values, the ACU
+balance and the nav counts are now tabular mono, and `font-variant-numeric:
+tabular-nums` is set on `body` so a new numeric slot inherits it rather than
+having to remember.
+
+**Depth is an ambient shadow plus a one-pixel inset highlight on the top edge.**
+That highlight is the whole trick — a real bevel catches light on its upper
+edge, and a panel without one sits flat however much shadow is under it. Fields
+take the opposite treatment, an inset recess, so a form is legible at a glance
+without reading it: what you press is raised, what you type into is sunk.
+
+**Orange was demoted back to meaning something.** It had spread to the active
+nav item, nine role badges on the sign-in screen, every table hover, the whole
+lifecycle rail and four large figures on the landing page — and an accent that
+appears everywhere carries no information. The active nav item is now a rail on
+its leading edge, role badges and hero figures are neutral, and the table hover
+is a neutral wash. Orange is left where it means attention.
+
+**No webfont, and that is a decision.** The server sends `font-src 'self'`, so a
+face from a font CDN would be blocked by the platform's own
+content-security-policy. Loosening a security header to change how the headings
+look is not a trade worth making, so the identity comes from a deliberate native
+stack and the numeric discipline above.
+
+**One drift found and closed.** `frontend/site.css` carries a duplicate token
+block — the two stylesheets serve different pages and neither should import the
+other — and it had fallen behind the console's. Its own header comment says a
+marketing site in different colours from the tool it sells is a small lie people
+notice on their first login, and it had become one. Both are now on the same
+values, and the launch colour is moved in all eight places that hardcode it
+(manifest, splash, both theme-colour tags, and the three renderers) so the PWA
+launch screen still matches the ground by construction.
+
+**Not claimed:** the screenshots under `frontend/shots/` predate this pass and
+show the previous look. Nothing has been audited against WCAG 2.2 AA, which
+section 16 asks for — the focus treatment is now uniform and every semantic
+colour keeps a non-colour partner, but that is not an audit and is not offered
+as one.
+
+---
+
 ## What is partial
 
 Implemented in a form that works, with a stated part missing. The missing part is

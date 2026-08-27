@@ -142,7 +142,7 @@ export async function programme(root) {
               ${
                 ppc.weeks.length > 0
                   ? html`<div style="display:flex;align-items:flex-end;gap:4px;height:80px;margin:12px 0 4px">
-                      ${ppc.weeks.map((w) => html`<div style="flex:1;background:linear-gradient(180deg,var(--orange),rgba(255,102,0,.25));height:${raw(Math.max(2, Math.round(w.ppcPercent)))}%;border-radius:2px 2px 0 0" title="${w.weekStarting}: ${w.completed}/${w.promised}"></div>`)}
+                      ${ppc.weeks.map((w) => html`<div style="flex:1;background:linear-gradient(180deg,var(--orange),rgba(255,106,26,.25));height:${raw(Math.max(2, Math.round(w.ppcPercent)))}%;border-radius:2px 2px 0 0" title="${w.weekStarting}: ${w.completed}/${w.promised}"></div>`)}
                     </div>
                     <div class="metric-sub">${ppc.weeks.map((w) => `${w.weekStarting} ${w.ppcPercent}%`).join(' · ')}</div>`
                   : ''

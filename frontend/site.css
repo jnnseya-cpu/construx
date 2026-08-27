@@ -10,22 +10,43 @@
    the first paint immediate, the layout unblockable, and the reader unwatched.
    =========================================================================== */
 
+/*
+ * The values below are the application's, copied deliberately.
+ *
+ * The two stylesheets cannot import from each other — they are served to
+ * different pages and neither should pull the other's weight — so this block is
+ * a duplicate by necessity. It had drifted: the site was still on the old flat
+ * orange and the neutral greys while the console had moved to the cool carbon
+ * set, which is the small lie the header above says people notice. Change one,
+ * change both.
+ */
 :root {
-  --core-black: rgb(12, 12, 14);
-  --carbon: rgb(24, 26, 30);
-  --grey: rgb(38, 42, 48);
-  --orange: rgb(255, 102, 0);
-  --orange-glow: rgb(255, 120, 25);
-  --text: rgb(245, 247, 250);
-  --text-2: rgb(180, 186, 196);
-  --text-3: rgb(110, 118, 130);
-  --success: rgb(34, 197, 94);
-  --warning: rgb(255, 166, 0);
-  --critical: rgb(220, 38, 38);
-  --line: rgba(255, 255, 255, 0.07);
-  --line-strong: rgba(255, 255, 255, 0.13);
+  --core-black: rgb(9, 10, 13);
+  --carbon: rgb(17, 19, 23);
+  --slate: rgb(24, 27, 33);
+  --grey: rgb(32, 36, 43);
+  --raised: rgb(41, 46, 55);
+  --orange: rgb(255, 106, 26);
+  --orange-glow: rgb(255, 133, 61);
+  --orange-wash: rgba(255, 106, 26, 0.11);
+  --orange-line: rgba(255, 106, 26, 0.34);
+  --text: rgb(237, 241, 247);
+  --text-2: rgb(167, 175, 189);
+  --text-3: rgb(108, 117, 132);
+  --success: rgb(46, 184, 116);
+  --warning: rgb(240, 166, 42);
+  --critical: rgb(232, 78, 78);
+  --line: rgba(255, 255, 255, 0.065);
+  --line-strong: rgba(255, 255, 255, 0.115);
+  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  --e1: 0 1px 2px rgba(0, 0, 0, 0.42);
+  --e2: 0 4px 14px -4px rgba(0, 0, 0, 0.58);
+  --e3: 0 18px 44px -14px rgba(0, 0, 0, 0.78);
   --radius: 10px;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+    "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: "SF Mono", ui-monospace, SFMono-Regular, "JetBrains Mono", "IBM Plex Mono",
+    "Roboto Mono", Menlo, Consolas, monospace;
   --wrap: 1180px;
 }
 
@@ -34,12 +55,20 @@
 html { scroll-behavior: smooth; }
 
 body.site {
-  background: var(--core-black);
+  background:
+    radial-gradient(120% 70% at 50% 0%, rgb(15, 17, 21), transparent 68%),
+    var(--core-black);
+  background-attachment: fixed;
   color: var(--text);
-  font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  font: 15px/1.65 var(--sans);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+  text-rendering: optimizeLegibility;
   overflow-x: hidden;
 }
+
+::selection { background: var(--orange-wash); color: var(--text); }
 
 a { color: inherit; text-decoration: none; }
 img, svg { max-width: 100%; }
@@ -60,7 +89,7 @@ img, svg { max-width: 100%; }
 
 .site-head {
   position: sticky; top: 0; z-index: 60;
-  background: rgba(12, 12, 14, 0.82);
+  background: rgba(9, 10, 13, 0.78);
   backdrop-filter: saturate(160%) blur(14px);
   border-bottom: 1px solid var(--line);
 }
@@ -83,7 +112,7 @@ img, svg { max-width: 100%; }
   border: 1px solid transparent; cursor: pointer;
   transition: transform .16s ease, background .16s ease, box-shadow .16s ease;
 }
-.btn:hover { background: var(--orange-glow); transform: translateY(-1px); box-shadow: 0 8px 26px rgba(255, 102, 0, .26); }
+.btn:hover { background: var(--orange-glow); transform: translateY(-1px); box-shadow: 0 8px 26px rgba(255, 106, 26, .26); }
 .btn.ghost { background: transparent; color: var(--text); border-color: var(--line-strong); box-shadow: none; }
 .btn.ghost:hover { background: rgba(255, 255, 255, .05); border-color: rgba(255, 255, 255, .24); }
 .btn.lg { padding: 13px 24px; font-size: 15px; border-radius: 9px; }
@@ -112,10 +141,14 @@ img, svg { max-width: 100%; }
 }
 
 .glow {
-  position: absolute; left: 50%; top: -180px; width: 1100px; height: 620px;
+  /* A low warm horizon rather than a lamp behind the headline. The centred
+   * blurred ellipse of accent colour is the other half of the generated-hero
+   * look; this reads as light coming off the ground plane below, which is
+   * what the grid in front of it is drawn as. */
+  position: absolute; left: 50%; top: 120px; width: 1400px; height: 520px;
   transform: translateX(-50%);
-  background: radial-gradient(ellipse at center, rgba(255, 102, 0, .16), transparent 62%);
-  filter: blur(20px);
+  background: radial-gradient(ellipse 60% 100% at 50% 100%, rgba(255, 106, 26, .075), transparent 68%);
+  filter: blur(28px);
 }
 
 .section-art { position: absolute; left: 0; right: 0; bottom: 0; height: 62%; opacity: .55; }
@@ -141,14 +174,19 @@ img, svg { max-width: 100%; }
   font-size: 11.5px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
   color: var(--text-3); margin-bottom: 18px;
 }
-.eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 4px rgba(255, 102, 0, .16); }
+.eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 4px rgba(255, 106, 26, .16); }
 
 .hero h1 {
   font-size: clamp(38px, 5.4vw, 66px); line-height: 1.04; letter-spacing: -1.6px; font-weight: 800;
 }
 .hero h1 .accent {
-  background: linear-gradient(96deg, var(--orange) 8%, #ffb06a 62%, var(--orange) 96%);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
+  /* Solid, not a gradient.
+   *
+   * A headline filled with a left-to-right colour ramp is the single most
+   * recognisable machine-made-landing-page gesture there is, and it was the
+   * first thing on this page. The emphasis is doing the work; the ramp was
+   * only ever decorating it. */
+  color: var(--orange);
 }
 .lede { margin-top: 20px; font-size: 17px; line-height: 1.66; color: var(--text-2); max-width: 55ch; }
 .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
@@ -180,7 +218,7 @@ img, svg { max-width: 100%; }
 
 .panel-shadow {
   position: absolute; left: 8%; right: 8%; bottom: -26px; height: 60px;
-  background: radial-gradient(ellipse at center, rgba(255, 102, 0, .2), transparent 70%);
+  background: radial-gradient(ellipse at center, rgba(255, 106, 26, .2), transparent 70%);
   filter: blur(18px);
 }
 
@@ -230,14 +268,20 @@ img, svg { max-width: 100%; }
 .chain-row .link {
   font-family: var(--mono); font-size: 9px; letter-spacing: .2px;
   padding: 4px 7px; border-radius: 4px;
-  background: rgba(255, 102, 0, .09); border: 1px solid rgba(255, 102, 0, .22); color: #ffb98a;
+  background: rgba(255, 106, 26, .09); border: 1px solid rgba(255, 106, 26, .22); color: #ffb98a;
   animation: rise .5s both; animation-delay: calc(var(--i) * 90ms + .3s);
 }
 .chain-row .join { width: 10px; height: 1px; background: var(--line-strong); }
 
 .hero-stats { position: relative; z-index: 1; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: rgba(0, 0, 0, .28); }
 .hero-stats .wrap { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; padding-block: 22px; }
-.hero-stats b { display: block; font-size: 26px; font-weight: 800; letter-spacing: -.8px; color: var(--orange); }
+/* Mono and neutral. Four large figures in the accent turned the proof strip
+   into the loudest thing on the page, and a specification sheet is convincing
+   because it is plain, not because it shouts. */
+.hero-stats b {
+  display: block; font-family: var(--mono); font-size: 25px; font-weight: 600;
+  letter-spacing: -.4px; color: var(--text); font-variant-numeric: tabular-nums;
+}
 .hero-stats span { font-size: 12px; color: var(--text-3); }
 
 /* ------------------------------------------------------------------ blocks */
@@ -274,7 +318,7 @@ img, svg { max-width: 100%; }
 .page-head { padding: 62px 0 34px; border-bottom: 1px solid var(--line); position: relative; overflow: hidden; }
 .page-head::before {
   content: ''; position: absolute; left: 50%; top: -220px; width: 900px; height: 460px; transform: translateX(-50%);
-  background: radial-gradient(ellipse at center, rgba(255, 102, 0, .1), transparent 65%);
+  background: radial-gradient(ellipse at center, rgba(255, 106, 26, .1), transparent 65%);
 }
 .page-head > .wrap { position: relative; }
 .page-head h1 { font-size: clamp(30px, 4.2vw, 48px); letter-spacing: -1.2px; font-weight: 800; }
@@ -297,7 +341,7 @@ img, svg { max-width: 100%; }
 .prose a:not(.btn) { color: var(--orange); text-decoration: underline; text-underline-offset: 2px; }
 .prose code { font-family: var(--mono); font-size: 12.5px; background: rgba(255, 255, 255, .06); padding: 1.5px 5px; border-radius: 4px; color: #ffb98a; }
 .prose .note { font-size: 13.5px; color: var(--text-3); border-left: 2px solid var(--line-strong); padding-left: 14px; margin-top: 20px; }
-.prose .callout { background: rgba(255, 102, 0, .07); border: 1px solid rgba(255, 102, 0, .2); border-radius: 8px; padding: 14px 16px; color: var(--text-2); }
+.prose .callout { background: rgba(255, 106, 26, .07); border: 1px solid rgba(255, 106, 26, .2); border-radius: 8px; padding: 14px 16px; color: var(--text-2); }
 
 .rules { list-style: none; margin: 12px 0; }
 .rules li { color: var(--text-2); margin-bottom: 11px; padding-left: 20px; position: relative; }
@@ -341,7 +385,7 @@ img, svg { max-width: 100%; }
 
 .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 16px; }
 .plan { position: relative; border: 1px solid var(--line); border-radius: var(--radius); padding: 22px 20px; background: linear-gradient(180deg, rgba(255, 255, 255, .026), transparent); display: flex; flex-direction: column; }
-.plan.featured { border-color: rgba(255, 102, 0, .42); box-shadow: 0 0 0 1px rgba(255, 102, 0, .16), 0 16px 44px rgba(255, 102, 0, .09); }
+.plan.featured { border-color: rgba(255, 106, 26, .42); box-shadow: 0 0 0 1px rgba(255, 106, 26, .16), 0 16px 44px rgba(255, 106, 26, .09); }
 .plan-flag { position: absolute; top: -10px; left: 20px; background: var(--orange); color: #fff; font-size: 10px; font-weight: 750; letter-spacing: .5px; padding: 3px 9px; border-radius: 999px; }
 .plan h3 { font-size: 17px; }
 .plan-for { font-size: 12.5px; color: var(--text-3); margin: 4px 0 14px; min-height: 34px; }
@@ -379,7 +423,7 @@ img, svg { max-width: 100%; }
 
 /* --------------------------------------------------------------- cta band */
 
-.cta-band { padding: 66px 0; border-top: 1px solid var(--line); text-align: center; background: radial-gradient(ellipse at 50% 120%, rgba(255, 102, 0, .12), transparent 62%); }
+.cta-band { padding: 66px 0; border-top: 1px solid var(--line); text-align: center; background: radial-gradient(ellipse at 50% 120%, rgba(255, 106, 26, .12), transparent 62%); }
 .cta-band.big { padding: 92px 0; }
 .cta-band h2 { font-size: clamp(24px, 3.4vw, 36px); letter-spacing: -.9px; }
 .cta-band p { margin-top: 11px; color: var(--text-2); }

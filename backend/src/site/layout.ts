@@ -112,7 +112,7 @@ ${meta.published ? `<meta property="article:published_time" content="${esc(meta.
 <meta name="twitter:title" content="${title}">
 <meta name="twitter:description" content="${esc(meta.description)}">
 <meta name="twitter:image" content="${esc(absolute(PREVIEW_IMAGE))}">
-<meta name="theme-color" content="#0c0c0e">
+<meta name="theme-color" content="#090a0d">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/site.css">
 ${meta.jsonLd ? `<script type="application/ld+json">${meta.jsonLd}</script>\n` : ''}</head>`;

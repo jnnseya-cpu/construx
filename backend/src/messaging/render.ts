@@ -17,7 +17,7 @@ import { unsubscribeUrl, type Recipient } from './audience.ts';
  */
 
 const BRAND = {
-  black: '#0c0c0e',
+  black: '#090a0d',
   carbon: '#181a1e',
   grey: '#262a30',
   orange: '#ff6600',
