@@ -4,7 +4,9 @@ import { AIOrchestrator } from '../src/ai/orchestrator.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
 import * as documents from '../src/documents/generate.ts';
 import { narrativeBlocks } from '../src/documents/engine.ts';
+import * as safety from '../src/engines/safety.ts';
 import * as structure from '../src/domain/structure.ts';
+import { aiProvenanceOf, wasSynthetic } from '../src/engines/context.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 import type { DocumentBlock } from '../src/export/exporter.ts';
@@ -192,6 +194,77 @@ describe('documents · the narrative block itself', () => {
     assert.match(unnamed, /Written by the platform’s reasoning engine/);
     assert.equal(unnamed.includes(' via '), false);
     assert.equal(unnamed.includes('confidence'), false);
+  });
+});
+
+describe('runAI · every AI-written record says who produced what is in it', () => {
+  let platform: Platform;
+  let seed: SeedResult;
+
+  before(async () => {
+    ({ platform, seed } = await projectWith());
+  });
+
+  it('stamps provenance on every record an engine wrote through runAI', () => {
+    // The whole point of doing it in `runAI` rather than at each engine's call
+    // site: the check is over *every* AI-authored event on a fully seeded
+    // project, so a nineteenth engine that forgot would fail here without
+    // anybody adding a case for it.
+    const aiEvents = platform.ledger
+      .events({ projectId: seed.projectId })
+      .filter((event) => event.actor.refType === 'AI' && event.entity.refType !== 'AIExecution');
+    assert.ok(aiEvents.length > 10, `only ${aiEvents.length} AI-authored events on the seeded project`);
+
+    const bare: string[] = [];
+    for (const event of aiEvents) {
+      const record = platform.ledger.get(event.entity);
+      if (!aiProvenanceOf(record?.state)) bare.push(`${event.entity.refType} via ${event.eventType}`);
+    }
+    assert.deepEqual(bare, [], `these AI-written records carry no provenance:\n  ${bare.join('\n  ')}`);
+  });
+
+  it('names the engine, the task and the model on each of them', () => {
+    const manual = platform.ledger.list(seed.projectId, 'OMManual')[0];
+    const provenance = aiProvenanceOf(manual?.state);
+    assert.ok(provenance);
+    assert.equal(provenance.engine, 'HANDOVER_OM');
+    assert.ok(provenance.taskType.length > 0);
+    assert.ok(provenance.provider.length > 0);
+  });
+
+  it('says synthetic where the local adapter answered', () => {
+    // This whole project ran with no provider configured, which is what every
+    // deployment with no key does.
+    const manual = platform.ledger.list(seed.projectId, 'OMManual')[0];
+    assert.equal(wasSynthetic(manual?.state), true);
+  });
+
+  it('says nothing about a record no model wrote', () => {
+    // A human-authored record carries no provenance, and `wasSynthetic` answers
+    // false for it — there is no model-derived content on it to misrepresent,
+    // and answering true would mark every hand-typed record as a stand-in.
+    const project = platform.ledger.get({ refType: 'Project', refId: seed.projectId });
+    assert.equal(aiProvenanceOf(project?.state), undefined);
+    assert.equal(wasSynthetic(project?.state), false);
+  });
+
+  it('says not-synthetic where a model actually answered', async () => {
+    const { platform: live, seed: liveSeed } = await projectWith(
+      new AIOrchestrator({ reasoning: writingProvider('Real prose from a real model.') }),
+    );
+    const ctx = live.context(liveSeed.users.safety!.auth, liveSeed.projectId, { source: 'WEB' });
+    const drafted = await safety.draftRAMS(ctx, {
+      workPackageId: 'wp-1',
+      activityDescription: 'Hot work — welding the access frame',
+      location: 'Inlet chamber',
+      steps: [{ description: 'Purge and gas test', activityType: 'CONFINED_SPACE' }],
+    });
+
+    const record = live.ledger.get({ refType: 'RAMS', refId: drafted.ramsId });
+    const provenance = aiProvenanceOf(record?.state);
+    assert.equal(provenance?.synthetic, false);
+    assert.equal(provenance?.modelClass, 'stub-reasoning-v9');
+    assert.equal(wasSynthetic(record?.state), false);
   });
 });
 

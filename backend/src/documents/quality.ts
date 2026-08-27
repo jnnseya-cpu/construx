@@ -1,6 +1,6 @@
-import { isLocalStandIn } from '../ai/providers/mock.ts';
 import { formatMoney } from '../domain/locale.ts';
 import type { DocumentBlock } from '../export/exporter.ts';
+import { wasSynthetic } from '../engines/context.ts';
 import {
   gapBlock,
   humanValue,
@@ -968,7 +968,12 @@ function omBlocks(input: ComposeInput): DocumentBlock[] {
       // presenting the second as an extraction would tell a facilities manager
       // that a maintenance regime was derived from the manufacturer's own
       // manuals when nothing read them.
-      const stood_in = isLocalStandIn(manual.maintenanceNarrative);
+      // Asked of the record's own provenance, which `runAI` stamps on every
+      // AI-written record, rather than of the shape of the sentence. Matching
+      // on the stand-in's wording worked and was brittle: it would have missed
+      // a record whose engine phrased it differently, and there are seven
+      // engines writing prose into state.
+      const stood_in = wasSynthetic(manual);
       blocks.push({
         kind: 'KEY_VALUES',
         rows: [

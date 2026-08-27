@@ -251,6 +251,22 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
   const events: GoldenThreadEvent[] = [];
   const outputRefs: EntityRef[] = [];
 
+  /**
+   * Who produced the judgement in the records below.
+   *
+   * `synthetic` is the one that matters to a reader: it says no model was
+   * called and the output is a deterministic stand-in. Anything putting this
+   * record in front of a person must not present it as reasoning.
+   */
+  const provenance = {
+    provider: run.response.provider,
+    modelClass: run.response.modelClass,
+    engine: task.engine,
+    taskType: task.taskType,
+    synthetic: run.response.synthetic === true,
+    at: new Date().toISOString(),
+  };
+
   try {
     for (const spec of task.toWrites(run.response.output, run.response.confidence)) {
       const { event } = ctx.ledger.commit({
@@ -264,7 +280,23 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
         causationId: run.aiRequest.id,
         eventType: spec.eventType,
         entity: spec.entity,
-        nextState: spec.nextState,
+        // Stamped here rather than at each engine's call site.
+        //
+        // Eighteen `toWrites` callbacks across seven engines put a provider's
+        // prose into ledger state — `narrative`, `reviewNotes`,
+        // `entitlementNarrative`, `maintenanceNarrative` and the rest — and
+        // none of them recorded which model produced it. The event already
+        // carried the answer in its `ai` block, but a *reader* holding the
+        // materialised record could not see it, and the O&M manual duly
+        // presented the local stand-in's sentence as a maintenance regime
+        // somebody had extracted.
+        //
+        // Doing it here rather than in each engine is the whole point: the
+        // nineteenth engine gets it without being told, and there is one place
+        // for it to be right. `runAI` is already the choke point every AI write
+        // passes through, which is where the other two platform-wide invariants
+        // are enforced for the same reason.
+        nextState: { ...spec.nextState, aiProvenance: provenance },
         evidenceRefs: spec.evidenceRefs,
         ai: {
           aiRequestId: run.aiRequest.id,
@@ -346,6 +378,43 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
     events,
     output: run.response.output,
   };
+}
+
+/**
+ * The provenance `runAI` stamps on every record it writes.
+ *
+ * Read it rather than the shape of the state: an engine's field names differ —
+ * `narrative`, `reviewNotes`, `maintenanceNarrative` — and a consumer that
+ * matched on those would need updating each time one was added.
+ */
+export type AIProvenance = {
+  provider: string;
+  modelClass?: string;
+  engine: string;
+  taskType: string;
+  /** No model was called; the output is a deterministic stand-in. */
+  synthetic: boolean;
+  at: string;
+};
+
+export function aiProvenanceOf(state: Record<string, unknown> | undefined): AIProvenance | undefined {
+  const provenance = state?.aiProvenance;
+  if (!provenance || typeof provenance !== 'object') return undefined;
+  return provenance as AIProvenance;
+}
+
+/**
+ * Whether the model-derived content on a record came from a stand-in.
+ *
+ * The answer anything showing that content to a person has to ask before
+ * presenting it as reasoning. `true` for a record written with no provider
+ * configured; `false` for one a model actually answered.
+ *
+ * A record carrying no provenance at all answers `false` — it was not written
+ * by `runAI`, so there is no model-derived content on it to misrepresent.
+ */
+export function wasSynthetic(state: Record<string, unknown> | undefined): boolean {
+  return aiProvenanceOf(state)?.synthetic === true;
 }
 
 /** Register an evidence item and return its ref, for events that require evidence. */

@@ -83,17 +83,14 @@ class MockAdapter implements AIProviderAdapter {
 /**
  * How the local stand-in narrative opens.
  *
- * Exported so that a consumer reading a narrative back off a *record* can tell
- * it apart from prose a model wrote. `ProviderResponse.synthetic` answers the
- * question at the moment of the call; by the time an engine has written the
- * text into state, that flag is gone and the sentence is all that is left.
+ * A reader asking whether stored prose came from a model asks the record, not
+ * the sentence: `runAI` stamps `aiProvenance` on everything it writes and
+ * `wasSynthetic` in `engines/context.ts` answers from it. This constant exists
+ * so the wording lives in one place, and it is deliberately not a predicate —
+ * matching on prose was the brittle version of that question and there are
+ * seven engines phrasing it differently.
  */
 export const LOCAL_STAND_IN = 'Deterministic local analysis';
-
-/** Whether a narrative stored on a record came from the local stand-in. */
-export function isLocalStandIn(narrative: unknown): boolean {
-  return typeof narrative === 'string' && narrative.trimStart().startsWith(LOCAL_STAND_IN);
-}
 
 /**
  * Produce the judgement-shaped half of an engine's answer. Everything here is a

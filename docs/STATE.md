@@ -4866,17 +4866,26 @@ is the only way to verify it from here: **no call has been made to a real
 provider from this environment**, and nothing in this repository should be read
 as saying one has.
 
-**A wider gap, recorded rather than fixed.** Seven engines write a narrative
-from a provider's output into ledger state — `bim`, `claims`, `cost`,
-`handover`, `planning`, `safety`, `tender`, at eighteen call sites — and none of
-them records whether the text came from a model or from the local stand-in. By
-the time the text is state, `synthetic` is gone and the sentence is all that is
-left. `isLocalStandIn` in `ai/providers/mock.ts` recovers the answer from the
-sentence, and the O&M manual uses it to refuse to present a stand-in as a
-maintenance regime somebody extracted. That is a repair at the reading end. The
-correct fix is a field on each record, and it is not made here: it touches
-eighteen call sites in working engines, for a defect that is only visible where
-a stored narrative is shown to a person, which today is one document.
+**And the wider gap it exposed, now closed.** Seven engines write a provider's
+prose into ledger state — `bim`, `claims`, `cost`, `handover`, `planning`,
+`safety`, `tender`, at eighteen call sites under eleven different field names —
+and none of them recorded which model produced it. The event carried the answer
+in its `ai` block; a *reader* holding the materialised record could not see it,
+and the O&M manual duly presented the local stand-in's sentence as a maintenance
+regime somebody had extracted.
+
+The fix is one line in `runAI`, not eighteen at the call sites. Every record it
+writes is stamped with `aiProvenance` — provider, model class, engine, task type
+and `synthetic`. Doing it at the choke point is the whole point: the nineteenth
+engine gets it without being told, there is one place for it to be right, and a
+test asserts it over *every* AI-authored event on a fully seeded project rather
+than over a list somebody maintains.
+
+`wasSynthetic(state)` is what a consumer asks. The first version of this
+recovered the answer by matching the stand-in's opening words, which worked and
+was brittle — it would have missed any engine that phrased it differently, and
+there are seven. That predicate is gone; the constant stays so the wording lives
+in one place.
 
 ---
 
