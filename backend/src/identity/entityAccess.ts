@@ -323,6 +323,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   CommissioningPlan: { area: 'QUALITY_COMMISSIONING' },
   TestPackRequirement: { area: 'QUALITY_COMMISSIONING' },
   TemporaryOperation: { area: 'QUALITY_COMMISSIONING' },
+  TestPack: { area: 'QUALITY_COMMISSIONING' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },

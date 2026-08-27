@@ -5914,7 +5914,53 @@ commissioning would require; if the answer to that last one is genuinely
 nothing, the system is ready to be commissioned rather than temporarily
 operated. A system running past the end of its period is named in the position.
 
-**Still to build in the commissioning block:** CM-WF-02 to CM-WF-06, the
+---
+
+### A revision that stops moving
+
+CM-WF-02. `backend/src/domain/testpack.ts`, seven routes, 23 tests.
+
+Reused: the instrument register and `qualitycontrol.calibrationBlockedReason`,
+which already answers "was this instrument in calibration when the reading was
+taken"; the readiness-check pattern from `domain/mobilisation.ts`; and
+CM-WF-01's boundaries and test-pack requirements.
+
+**The frozen revision.** A test executed against a procedure somebody edited
+afterwards proves nothing, and the edit is invisible — the pack reads as current,
+the result reads as a pass, and only the person who made the change knows the two
+do not belong together. Release hashes the procedure; `executionBlockedReason`
+is AC-CM-WF-02-01 in one call, and it catches both the unreleased pack and the
+released one whose steps have since moved. A revision after release **cancels**
+it rather than amending it, because the readiness check was carried out against
+the old steps.
+
+**Criteria that can be argued from.** AC-CM-WF-02-02: every criterion cites a
+controlled source and names the raw reading and unit that answer it. "To the
+satisfaction of the engineer" is not an acceptance criterion, and a criterion
+with no measurement behind it produces an opinion. Contradictory tolerances — a
+lower limit above the upper — are refused at creation, which is the
+specification's "identify contradictory tolerances" as a rule rather than a
+review.
+
+**Nine readiness items, of which five block.** The three the exception control
+names — calibration expiry, an open critical defect, a missing safe isolation —
+are all the same failure in different clothes: the reading cannot be relied on.
+Instrument calibration is **derived from the register, never declared**: a
+checklist that let somebody tick "instruments" over an expired certificate would
+be a checklist that could be wrong. An unanswered item is refused rather than
+treated as passed, and a blocker with no description is refused because nobody
+except the person who raised it could clear it. A blocked release is **written to
+the ledger** as well as refused — the pattern of blocked tests is how a late
+commissioning stage is diagnosed, and a refusal leaving no trace makes the same
+blocker look new every week.
+
+**A witness is a person and a time.** AC-CM-WF-02-03: notification and response
+are separate events, so both carry their own timestamp. Short notice is reported
+rather than refused — it happens, and the contractual consequence is somebody
+else's to draw. A waiver is an authorised record naming the contract rule that
+permits it; the witness who did not turn up has not waived anything.
+
+**Still to build in the commissioning block:** CM-WF-03 to CM-WF-06, the
 `COMMISSIONING_COMPLETE` gate, and the stage workspace described in 10.2.
 
 ---

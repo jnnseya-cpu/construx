@@ -72,6 +72,7 @@ import * as meetings from '../domain/meetings.ts';
 import * as mobilisation from '../domain/mobilisation.ts';
 import * as submittals from '../domain/submittals.ts';
 import * as systemisation from '../domain/systemisation.ts';
+import * as testpack from '../domain/testpack.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
@@ -5528,6 +5529,156 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => systemisation.declareTemporaryOperation(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- CM-WF-02 test procedure, pack and readiness release
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/test-packs',
+    description: 'Every test pack, its revision and status, what blocks it and what the plan requires that nobody raised',
+    handler: (platform, ctx) => testpack.testPackPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/test-packs',
+    description: 'Create the controlled procedure: steps, and every criterion mapped to a source, a reading and a unit',
+    schema: {
+      type: 'object',
+      required: ['reference', 'systemTag', 'title', 'objective', 'steps', 'criteria', 'instrumentIds'],
+      properties: {
+        reference: stringField,
+        systemTag: stringField,
+        title: stringField,
+        objective: { type: 'string' },
+        requirementRef: stringField,
+        steps: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['step', 'instruction'],
+            properties: { step: { type: 'number' }, instruction: { type: 'string' } },
+            additionalProperties: false,
+          },
+        },
+        criteria: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['reference', 'criterion', 'source', 'requiredReading', 'unit'],
+            properties: {
+              reference: stringField,
+              criterion: { type: 'string' },
+              source: stringField,
+              requiredReading: stringField,
+              unit: stringField,
+              lowerLimit: { type: 'number' },
+              upperLimit: { type: 'number' },
+            },
+            additionalProperties: false,
+          },
+        },
+        instrumentIds: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => testpack.createTestPack(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/test-packs/:packId/revise',
+    description: 'Revise the procedure — which cancels any release, because readiness was checked against the old steps',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: {
+        reason: { type: 'string' },
+        steps: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        criteria: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        instrumentIds: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      testpack.reviseTestPack(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/test-packs/:packId/readiness-check',
+    description: 'Run the nine-item readiness check. Instrument calibration is read from the register, never declared',
+    schema: {
+      type: 'object',
+      required: ['checkedBy', 'items'],
+      properties: {
+        checkedBy: stringField,
+        on: stringField,
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['key', 'ready', 'note'],
+            properties: {
+              key: { type: 'string', enum: testpack.READINESS_ITEM.map((item) => item.key) },
+              ready: { type: 'boolean' },
+              note: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      testpack.checkTestReadiness(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/test-packs/:packId/witness-notifications',
+    description: 'Notify a named witness at a named organisation, time-stamped',
+    schema: {
+      type: 'object',
+      required: ['recipient', 'organisation', 'testDate', 'noticeDays'],
+      properties: {
+        recipient: stringField,
+        organisation: stringField,
+        testDate: stringField,
+        noticeDays: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      testpack.notifyWitness(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/test-packs/:packId/witness-response',
+    description: 'Record what the witness said, or an authorised waiver naming the contract rule that permits it',
+    schema: {
+      type: 'object',
+      required: ['notificationId'],
+      properties: {
+        notificationId: stringField,
+        attending: { type: 'boolean' },
+        note: { type: 'string' },
+        waivedBy: stringField,
+        contractRule: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      testpack.recordWitnessResponse(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/test-packs/:packId/release',
+    description: 'Release to test, freezing the revision the result must have been executed against',
+    schema: {
+      type: 'object',
+      required: ['releasedBy'],
+      properties: { releasedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      testpack.releaseForTest(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
   },
 
   // ------------------------------------------------------- CN-WF-12 reporting, recovery, turnover and completion

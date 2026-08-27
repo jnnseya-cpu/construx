@@ -824,6 +824,27 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // anything.
   def('TEMPORARY_OPERATION_DECLARED', 'TemporaryOperation', 'APPROVE', 'COMMISSIONING', { creates: true }),
 
+  // --- CM-WF-02 the procedure, the pack and the release to test -------------
+  def('TEST_PROCEDURE_CREATED', 'TestPack', 'CREATE', 'COMMISSIONING', { creates: true }),
+  // A revision is its own event. An audit reading the ledger can see that the
+  // procedure moved without inspecting state, which matters because a revision
+  // after release cancels the release.
+  def('TEST_PROCEDURE_REVISED', 'TestPack', 'UPDATE', 'COMMISSIONING'),
+  def('TEST_READINESS_CHECKED', 'TestPack', 'UPDATE', 'COMMISSIONING'),
+  // Notice and response are separate events because AC-CM-WF-02-03 asks for both
+  // to be time-stamped, and one event carrying both would date the pair by
+  // whichever happened last.
+  def('WITNESS_NOTIFIED', 'TestPack', 'UPDATE', 'COMMISSIONING'),
+  def('WITNESS_RESPONSE_RECORDED', 'TestPack', 'UPDATE', 'COMMISSIONING'),
+  // FREEZE rather than APPROVE. What actually happens at release is that the
+  // revision stops moving: the hash taken here is what a result has to have been
+  // executed against, and an edit afterwards cancels the release.
+  def('TEST_RELEASED', 'TestPack', 'FREEZE', 'COMMISSIONING'),
+  // Its own event, because a blocked test is a fact about the programme and the
+  // pattern of them is how a late commissioning stage is diagnosed. A refusal
+  // that left no trace would make the same blocker look new every week.
+  def('TEST_BLOCKED', 'TestPack', 'REJECT', 'COMMISSIONING'),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),
