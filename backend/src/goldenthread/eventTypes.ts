@@ -909,6 +909,23 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('INTEGRATED_TEST_COMPLETED', 'FunctionalTest', 'APPROVE', 'COMMISSIONING'),
   def('RETEST_REQUIRED', 'FunctionalTest', 'UPDATE', 'COMMISSIONING'),
 
+  // --- CM-WF-06 reliability, soak and the seasonal plan ---------------------
+  def('RELIABILITY_TEST_STARTED', 'ReliabilityRun', 'CREATE', 'COMMISSIONING', { creates: true }),
+  // Trend arrives as segments and coverage is derived from them, so a gap is a
+  // hole in the evidence nobody has to remember to mention.
+  def('RELIABILITY_TREND_IMPORTED', 'ReliabilityRun', 'IMPORT', 'COMMISSIONING', { requiresEvidence: true }),
+  def('RELIABILITY_INTERVENTION_LOGGED', 'ReliabilityRun', 'UPDATE', 'COMMISSIONING'),
+  def('PERFORMANCE_ANOMALY_DETECTED', 'ReliabilityRun', 'UPDATE', 'COMMISSIONING'),
+  // Continue, reset or retest is the most consequential decision in a soak test
+  // — a reset costs the whole duration again — and the one most often taken by
+  // whoever is standing nearest the panel. APPROVE, and it names an authority.
+  def('RELIABILITY_ANOMALY_DECIDED', 'ReliabilityRun', 'APPROVE', 'COMMISSIONING'),
+  def('RELIABILITY_TEST_ACCEPTED', 'ReliabilityRun', 'APPROVE', 'COMMISSIONING'),
+  // A test that cannot happen before handover, with its criteria fixed now and a
+  // named party accepting the obligation. Criteria agreed later against a system
+  // already in use are agreed under pressure.
+  def('SEASONAL_TEST_PLANNED', 'SeasonalTest', 'APPROVE', 'COMMISSIONING', { creates: true }),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

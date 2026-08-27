@@ -328,6 +328,8 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   CommissioningException: { area: 'QUALITY_COMMISSIONING' },
   PreFunctionalCheck: { area: 'QUALITY_COMMISSIONING' },
   FunctionalTest: { area: 'QUALITY_COMMISSIONING' },
+  ReliabilityRun: { area: 'QUALITY_COMMISSIONING' },
+  SeasonalTest: { area: 'QUALITY_COMMISSIONING' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },

@@ -6103,9 +6103,56 @@ open exception invalidated cannot be re-run as though nothing happened — it ha
 to be run as a retest against that exception, so the failure and the succeeding
 result stay one chain.
 
-**Still to build in the commissioning block:** CM-WF-06, CM-WF-08, the 10.4 gate
-and the `COMMISSIONING_COMPLETE` event, and the stage workspace described in
-10.2. **Stage 11 (Handover)** has begun arriving: the stage control with its
+---
+
+### The only test that cannot be passed by doing something well once
+
+CM-WF-06. `backend/src/domain/reliability.ts`, seven routes, 19 tests.
+
+A soak test asks whether the plant *keeps* working, and everything that makes it
+hard is about the gaps: the hour the trend logger was down, the night somebody
+put a valve in hand to stop an alarm, the fortnight the run was quietly
+restarted after a failure.
+
+**Metrics are derived on every read, never stored.** AC-CM-WF-06-01: they
+reproduce from the raw trend and the configuration. Coverage is the **union** of
+the imported segments — two exports of the same fortnight is how a trend is
+usually assembled, and a naive sum would report 200% coverage — and availability
+is available time over *covered* time, with the uncovered part reported
+separately as the gap. Rolling the two together would let a fortnight of missing
+trend read as a fortnight of unavailability, which is a much more specific claim
+than the truth, which is that nobody knows. A stored availability figure is the
+one that stays at 99.4% throughout the fortnight the logger was off.
+
+**A data gap is a hole in the evidence.** Derived from what was imported rather
+than declared, so nobody has to remember to mention one, and judged against a
+configured tolerance. A soak test passed on a dataset with a day missing from
+the middle proves nothing about that day.
+
+**A manual override is a fact about the result.** Putting a valve in hand is the
+single most effective way to pass a soak test and is invisible in the trend
+unless somebody records it. An override counts against availability like a
+failure, and the refusal names the minutes — for that period the system was not
+controlling itself. Availability is checked **before** duration deliberately: a
+run that lost ten hours to a valve in hand is also short of its duration, and
+telling somebody to run it longer would be advice that fixes nothing.
+
+**Continue, reset or retest is authorised.** AC-CM-WF-06-02. It is the most
+consequential decision in a soak test — a reset costs the whole duration again —
+and the one most often taken by whoever is standing nearest the panel. An
+anomaly pauses the run; acceptance over an undecided one is refused; and a run
+that was reset cannot be accepted for the part of it that ran.
+
+**A seasonal test is an accepted obligation, not an intention.** AC-CM-WF-06-03.
+Heating cannot be proven in July. The criteria are fixed *now*, because criteria
+agreed in November against a system already in use are agreed under pressure and
+the party that has to meet them is by then least able to argue. A named party
+accepts the obligation, and `outstandingSeasonalTests` is exported as one list
+for the handover stage to inherit by reference rather than copy.
+
+**Still to build in the commissioning block:** CM-WF-08, the 10.4 gate and the
+`COMMISSIONING_COMPLETE` event, and the stage workspace described in 10.2.
+**Stage 11 (Handover)** has begun arriving: the stage control with its
 `HANDOVER_ACCEPTED` gate event, 11.1 and 11.2 are recorded verbatim in
 `docs/WORKFLOWS.md`. CM-WF-07, CM-WF-08 and 10.4 arrived out of sequence during
 the build and are recorded there in the order they were sent.

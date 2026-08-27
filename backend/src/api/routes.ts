@@ -38,6 +38,7 @@ import * as progressverification from '../domain/progressverification.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
+import * as reliability from '../domain/reliability.ts';
 import * as informationcontrol from '../domain/informationcontrol.ts';
 import * as itt from '../domain/itt.ts';
 import * as tenderintake from '../domain/tenderintake.ts';
@@ -5533,6 +5534,169 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => systemisation.declareTemporaryOperation(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- CM-WF-06 reliability, soak and the seasonal plan
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/reliability',
+    description: 'Reliability runs with their metrics recomputed from the trend, and the seasonal tests still owed',
+    handler: (platform, ctx) => reliability.reliabilityPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/reliability',
+    description: 'Configure and start a soak run: window, duration, envelope, availability target and reset rule',
+    schema: {
+      type: 'object',
+      required: [
+        'reference',
+        'systemTag',
+        'from',
+        'to',
+        'requiredHours',
+        'operatingEnvelope',
+        'availabilityTargetPercent',
+        'permittedInterruptionMinutes',
+        'dataGapToleranceMinutes',
+        'resetRule',
+        'operationsAttendance',
+      ],
+      properties: {
+        reference: stringField,
+        systemTag: stringField,
+        from: stringField,
+        to: stringField,
+        requiredHours: { type: 'number' },
+        operatingEnvelope: { type: 'string' },
+        availabilityTargetPercent: { type: 'number' },
+        permittedInterruptionMinutes: { type: 'number' },
+        dataGapToleranceMinutes: { type: 'number' },
+        resetRule: { type: 'string' },
+        operationsAttendance: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => reliability.startReliabilityRun(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/reliability/:runId/trend',
+    description: 'Import a segment of trend data. Coverage, gaps and availability are derived from these',
+    schema: {
+      type: 'object',
+      required: ['source', 'from', 'to', 'points', 'datasetHash'],
+      properties: {
+        source: stringField,
+        from: stringField,
+        to: stringField,
+        points: { type: 'number' },
+        datasetHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      reliability.importTrendSegment(projectContext(platform, ctx), ctx.params.runId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/reliability/:runId/interventions',
+    description: 'Log an intervention or downtime. A manual override counts against availability like a failure',
+    schema: {
+      type: 'object',
+      required: ['at', 'kind', 'description', 'downtimeMinutes', 'by'],
+      properties: {
+        at: stringField,
+        kind: { type: 'string', enum: [...reliability.INTERVENTION_KIND] },
+        description: { type: 'string' },
+        downtimeMinutes: { type: 'number' },
+        by: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      reliability.recordIntervention(projectContext(platform, ctx), ctx.params.runId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/reliability/:runId/anomalies',
+    description: 'Flag a drift, data gap, hidden intervention or performance anomaly, which pauses the run',
+    schema: {
+      type: 'object',
+      required: ['reference', 'kind', 'detail', 'detectedBy'],
+      properties: {
+        reference: stringField,
+        kind: { type: 'string', enum: ['DATA_GAP', 'DRIFT', 'HIDDEN_INTERVENTION', 'PERFORMANCE'] },
+        detail: { type: 'string' },
+        detectedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      reliability.flagAnomaly(projectContext(platform, ctx), ctx.params.runId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/reliability/:runId/anomaly-decision',
+    description: 'Continue, reset or retest, under a named authority with the reasoning behind it',
+    schema: {
+      type: 'object',
+      required: ['reference', 'decision', 'rationale', 'authorisedBy'],
+      properties: {
+        reference: stringField,
+        decision: { type: 'string', enum: ['CONTINUE', 'RESET', 'RETEST'] },
+        rationale: { type: 'string' },
+        authorisedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      reliability.decideAnomaly(projectContext(platform, ctx), ctx.params.runId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/reliability/:runId/accept',
+    description: 'Accept the run. Every refusal is arithmetic: duration, availability and missing trend',
+    schema: {
+      type: 'object',
+      required: ['acceptedBy', 'note'],
+      properties: { acceptedBy: stringField, note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      reliability.acceptReliabilityRun(projectContext(platform, ctx), ctx.params.runId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/seasonal-tests',
+    description: 'Plan a test that cannot happen before handover, with criteria fixed now and responsibility accepted',
+    schema: {
+      type: 'object',
+      required: [
+        'reference',
+        'systemTag',
+        'condition',
+        'criteria',
+        'owner',
+        'ownerOrganisation',
+        'responsibilityAcceptedBy',
+        'windowFrom',
+        'windowTo',
+      ],
+      properties: {
+        reference: stringField,
+        systemTag: stringField,
+        condition: { type: 'string' },
+        criteria: { type: 'string' },
+        owner: stringField,
+        ownerOrganisation: stringField,
+        responsibilityAcceptedBy: stringField,
+        windowFrom: stringField,
+        windowTo: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => reliability.planSeasonalTest(projectContext(platform, ctx), body(ctx)),
   },
 
   // ------------------------------------------------------- CM-WF-05 functional and integrated systems testing
