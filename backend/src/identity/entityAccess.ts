@@ -142,6 +142,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // — the site manager, safety and quality hold create and update so they run
   // the readiness check, and only the project or construction manager holds
   // approve, which is the authority to put people to work.
+  // The receipt a device leaves when it comes back into signal. Field
+  // execution, because it is a fact about the site record rather than about the
+  // platform's plumbing.
+  SyncSession: { area: 'FIELD_EXECUTION' },
   MobilisationPlan: { area: 'FIELD_EXECUTION' },
   ReadinessCheck: { area: 'FIELD_EXECUTION' },
   StartWorkAuthorisation: { area: 'FIELD_EXECUTION' },

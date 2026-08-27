@@ -1205,3 +1205,82 @@ Acceptance criteria
 •	AC-CN-WF-05-02: Accepted quantity updates inventory once and financial accrual consistently.
 •	AC-CN-WF-05-03: Material/asset serials can be traced to installed location and test evidence.
 ```
+
+## CN-WF-06
+
+```
+CN-WF-06 - Quality planning, inspection, testing, NCR and defect control
+Primary owner: Quality Manager / Site Manager  |  Trigger: Work package mobilisation, inspection point or nonconformance
+Required inputs
+•	Quality plan and ITP revision
+•	specification/drawing acceptance criteria
+•	inspection lot/location and preceding work
+•	hold/witness/review point and notification period
+•	checklist, readings, calibration, photos and signatures
+Deterministic flow
+1.	Create ITP from scope with inspection/test points, parties and evidence requirements.
+2.	Request inspection only when prerequisites and current information are confirmed.
+3.	Record Pass, Fail, Observation or Not Applicable per item with evidence and signatory.
+4.	Hold point prevents successor release until authorised acceptance.
+5.	Failed item creates NCR/defect with containment, root cause, corrective/preventive action and disposition.
+6.	Verify repair/rework/use-as-is/reject decision, retest and closure; feed handover readiness.
+AI-agent duties and human guardrails
+•	Draft ITP/checklist from specification and detect recurring defects.
+•	Flag visual anomalies; qualified inspector controls result and disposition.
+Outputs
+•	ITP
+•	Inspection/Test Record
+•	HoldPoint Release
+•	NCR/Defect
+•	CorrectiveAction
+•	QualityTrend
+Exception controls
+•	Use-as-is requires designated technical/commercial authority.
+•	Calibration expiry invalidates affected measurement until reviewed.
+•	Closed defect can reopen if verification evidence is withdrawn/superseded.
+Events: ITP_APPROVED | INSPECTION_REQUESTED | HOLD_POINT_RELEASED | NCR_RAISED | NCR_CLOSED
+APIs:   POST /v1/work-packages/{id}/itps | POST /v1/inspections | POST /v1/ncrs/{id}:close
+Acceptance criteria
+•	AC-CN-WF-06-01: Inspection links exact acceptance criteria and current information revision.
+•	AC-CN-WF-06-02: Hold-point successor activity cannot start without release.
+•	AC-CN-WF-06-03: NCR closure contains disposition approval and verified corrective evidence.
+```
+
+## CN-WF-07
+
+```
+CN-WF-07 - RAMS, permit, toolbox, observation and incident control
+Primary owner: HSE Manager / Site Manager  |  Trigger: High-risk activity planning, shift start, observation or incident
+Required inputs
+•	Activity/method sequence and location
+•	hazards, inherent/residual scoring and controls
+•	PPE/plant/tools/materials/access/temporary works
+•	competence, supervision, emergency/rescue and permits/isolations
+•	programme date, workforce and approved design information
+Deterministic flow
+1.	Generate/revise RAMS through activity → steps → hazards → controls → resources → emergency → review.
+2.	Obtain competent review/approval and issue controlled version to workface.
+3.	Verify workforce briefing/acknowledgement, competence and permits before start.
+4.	Record observations and actions; stop/escalate unsafe work through authorised process.
+5.	For incident, secure immediate facts/evidence, classify, notify, investigate causes and actions.
+6.	Supersede RAMS when method/design/conditions change and rebrief affected workforce.
+AI-agent duties and human guardrails
+•	Suggest hazards/controls from project and approved knowledge sources; never set acceptability.
+•	Structure voice observations and detect trends; human confirms classification and reportability.
+Outputs
+•	RAMS Revision
+•	Permit/Isolation Record
+•	Toolbox/Acknowledgement
+•	Observation/Action
+•	Incident/Investigation Report
+Exception controls
+•	Expired/superseded RAMS or competence blocks start.
+•	Permit extension/handback follows defined authorised states.
+•	Potentially reportable incident routes to compliance lead; system does not make legal determination alone.
+Events: RAMS_APPROVED | WORKFORCE_BRIEFED | PERMIT_ISSUED | SAFETY_OBSERVATION_RECORDED | INCIDENT_RECORDED
+APIs:   POST /v1/projects/{id}/rams | POST /v1/permits/{id}:issue | POST /v1/projects/{id}/incidents
+Acceptance criteria
+•	AC-CN-WF-07-01: Start readiness sees current RAMS, competence, permit and briefing status.
+•	AC-CN-WF-07-02: Every control/action has owner and verification evidence.
+•	AC-CN-WF-07-03: Incident evidence is access-controlled, immutable and chronologically ordered.
+```

@@ -58,6 +58,7 @@ import * as enquiry from '../domain/enquiry.ts';
 import * as constructability from '../domain/constructability.ts';
 import * as coordination from '../domain/coordination.ts';
 import * as designbaseline from '../domain/designbaseline.ts';
+import * as dailylog from '../domain/dailylog.ts';
 import * as designchange from '../domain/designchange.ts';
 import * as designplan from '../domain/designplan.ts';
 import * as measurement from '../domain/measurement.ts';
@@ -4084,6 +4085,105 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => planning.recordSiteDiary(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------ CN-WF-03 offline daily log, captured over a shift
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/daily-logs',
+    description: 'Drafts still on a device, days recorded, amendments with their before and after, and any device clock drift',
+    handler: (platform, ctx) => dailylog.dailyLogPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/daily-logs',
+    description: 'Open a daily log from a device. Idempotent on the id the device minted, so a retried sync writes it once',
+    schema: {
+      type: 'object',
+      required: ['clientUuid', 'deviceId', 'capturedAt', 'diaryDate', 'shift', 'weather', 'labour', 'plant', 'progressNarrative', 'workedTaskIds', 'location'],
+      properties: {
+        clientUuid: stringField,
+        deviceId: stringField,
+        capturedAt: stringField,
+        diaryDate: stringField,
+        shift: { type: 'string', enum: [...dailylog.SHIFT] },
+        weather: {
+          type: 'object',
+          required: ['conditions', 'workingStopped'],
+          properties: {
+            conditions: { type: 'string', enum: values(WEATHER_CONDITION) },
+            temperatureC: { type: 'number' },
+            workingStopped: { type: 'boolean' },
+            hoursLost: { type: 'number', minimum: 0 },
+          },
+          additionalProperties: false,
+        },
+        labour: { type: 'array' },
+        plant: { type: 'array' },
+        progressNarrative: stringField,
+        workedTaskIds: { type: 'array', items: stringField },
+        location: stringField,
+        deliveries: { type: 'array' },
+        blockers: { type: 'array' },
+        visitors: { type: 'array' },
+        safetyEvents: { type: 'array' },
+        voiceSegments: { type: 'array' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => dailylog.draftDailyLog(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/daily-logs/:logId/submit',
+    description: 'Submit the shift once. Anomalous totals are confirmed rather than refused, and never submitted unseen',
+    schema: {
+      type: 'object',
+      required: ['evidenceHash'],
+      properties: {
+        evidenceHash: stringField,
+        confirmedAnomalies: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      dailylog.submitDailyLog(projectContext(platform, ctx), ctx.params.logId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/daily-logs/:logId/amend',
+    description: 'Amend a submitted log. A new record naming what it supersedes, with the before and after of every change',
+    schema: {
+      type: 'object',
+      required: ['content', 'reason', 'evidenceHash'],
+      properties: {
+        content: { type: 'object' },
+        reason: { type: 'string' },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      dailylog.amendDailyLog(projectContext(platform, ctx), ctx.params.logId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/sync-sessions',
+    description: 'Record that a device came back into signal and what it brought, with the variance on its clock',
+    schema: {
+      type: 'object',
+      required: ['deviceId', 'syncSessionId', 'accepted', 'duplicates', 'conflicts', 'deviceTimestamp'],
+      properties: {
+        deviceId: stringField,
+        syncSessionId: stringField,
+        accepted: { type: 'integer', minimum: 0 },
+        duplicates: { type: 'integer', minimum: 0 },
+        conflicts: { type: 'integer', minimum: 0 },
+        deviceTimestamp: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => dailylog.recordSyncCompleted(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'GET',

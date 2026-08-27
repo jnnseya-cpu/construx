@@ -625,10 +625,13 @@ export function recordProgress(
  * The superseded entry stays readable in full, because somebody may have acted
  * on it and an append-only ledger never removes what was relied upon.
  */
-function currentDiaries(ctx: EngineContext): ReturnType<EngineContext['ledger']['list']> {
+export function currentDiaries(ctx: EngineContext): ReturnType<EngineContext['ledger']['list']> {
   const all = ctx.ledger.list(ctx.projectId, 'SiteDiary');
   const replaced = new Set(all.map((record) => record.state.supersedes).filter((id): id is string => typeof id === 'string'));
-  return all.filter((record) => !replaced.has(record.refId));
+  // A draft is not the record for its day. CN-WF-03 lets a shift be captured
+  // before it is submitted, and counting an unsubmitted draft as the day's
+  // diary would close a gap in the evidence that is still open.
+  return all.filter((record) => !replaced.has(record.refId) && record.state.status !== 'DRAFT');
 }
 
 export type DiaryLabour = { trade: string; headcount: number; hours: number; subcontractorId?: string };
@@ -663,6 +666,85 @@ export type DiaryWeather = {
  * most common ground for an extension of time, and a diary with weather only on
  * the bad days is a diary that proves nothing about the good ones.
  */
+/**
+ * The diary's evidential rules, in one place.
+ *
+ * `recordSiteDiary` is the one-shot desk entry; `domain/dailylog.ts` submits
+ * one captured on a device over a shift. Both have to apply the same rules, and
+ * two copies of "a diary cannot be dated ahead" would eventually be one copy
+ * and one omission.
+ */
+export type DiaryContentCheck = {
+  diaryDate: string;
+  daysLate: number;
+  /** Written the same day or the next working morning. */
+  contemporaneous: boolean;
+  labourHours: number;
+  plantIdleHours: number;
+  /**
+   * Totals that are improbable rather than impossible — reported so a person
+   * confirms them, never refused. Refusing the merely unlikely teaches people
+   * to enter numbers the form will accept instead of the ones they measured.
+   */
+  anomalies: string[];
+};
+
+export function checkDiaryContent(
+  input: { diaryDate: string; weather: DiaryWeather; labour: DiaryLabour[]; plant: DiaryPlant[] },
+  now = new Date(),
+): DiaryContentCheck {
+  const diaryDate = input.diaryDate.slice(0, 10);
+  const today = now.toISOString().slice(0, 10);
+  if (diaryDate > today) {
+    throw new DomainError('DIARY_DATE_IN_FUTURE', 'A site diary records a day that has happened; it cannot be dated ahead');
+  }
+  if (!input.weather.conditions.trim()) {
+    throw new DomainError(
+      'DIARY_WEATHER_REQUIRED',
+      'Record the weather even when it was fine. A diary with weather only on the bad days proves nothing about the good ones.',
+    );
+  }
+
+  const anomalies: string[] = [];
+  for (const line of input.labour) {
+    if (line.headcount < 0 || line.hours < 0) {
+      throw new DomainError('DIARY_TOTALS_IMPOSSIBLE', `${line.trade}: a negative headcount or hours cannot be recorded.`);
+    }
+    if (line.hours > 24) {
+      throw new DomainError('DIARY_TOTALS_IMPOSSIBLE', `${line.trade}: ${line.hours} hours in one day is not a shift.`);
+    }
+    if (line.hours > 0 && line.headcount === 0) {
+      anomalies.push(`${line.trade} records ${line.hours} hours against nobody`);
+    }
+    if (line.hours > 12) anomalies.push(`${line.trade} worked ${line.hours} hours, which is a long shift to confirm`);
+  }
+  for (const line of input.plant) {
+    if (line.hoursWorked < 0 || line.hoursIdle < 0) {
+      throw new DomainError('DIARY_TOTALS_IMPOSSIBLE', `${line.description}: negative plant hours cannot be recorded.`);
+    }
+    if (line.hoursWorked + line.hoursIdle > 24) {
+      throw new DomainError(
+        'DIARY_TOTALS_IMPOSSIBLE',
+        `${line.description}: ${line.hoursWorked + line.hoursIdle} hours worked and idle is more than the day is long.`,
+      );
+    }
+    if (line.hoursIdle > line.hoursWorked && line.hoursIdle > 0 && !line.downtimeReason?.trim()) {
+      anomalies.push(`${line.description} was idle longer than it worked with no downtime reason`);
+    }
+  }
+
+  const daysLate = Math.round((Date.parse(today) - Date.parse(diaryDate)) / 86_400_000);
+
+  return {
+    diaryDate,
+    daysLate,
+    contemporaneous: daysLate <= 1,
+    labourHours: Number(input.labour.reduce((sum, line) => sum + line.headcount * line.hours, 0).toFixed(2)),
+    plantIdleHours: Number(input.plant.reduce((sum, line) => sum + line.hoursIdle, 0).toFixed(2)),
+    anomalies,
+  };
+}
+
 export function recordSiteDiary(
   ctx: EngineContext,
   input: {
@@ -687,18 +769,8 @@ export function recordSiteDiary(
 ): { diaryId: string; contemporaneous: boolean; daysLate: number; labourHours: number } {
   authorise(ctx, 'FIELD_EXECUTION', 'C', { lifecyclePhase: currentPhase(ctx) });
 
-  const diaryDate = input.diaryDate.slice(0, 10);
-  const today = now.toISOString().slice(0, 10);
-  if (diaryDate > today) {
-    throw new DomainError('DIARY_DATE_IN_FUTURE', 'A site diary records a day that has happened; it cannot be dated ahead');
-  }
-
-  if (!input.weather.conditions.trim()) {
-    throw new DomainError(
-      'DIARY_WEATHER_REQUIRED',
-      'Record the weather even when it was fine. A diary with weather only on the bad days proves nothing about the good ones.',
-    );
-  }
+  const check = checkDiaryContent(input, now);
+  const diaryDate = check.diaryDate;
 
   const existing = currentDiaries(ctx).filter((record) => String(record.state.diaryDate) === diaryDate);
 
@@ -717,13 +789,9 @@ export function recordSiteDiary(
     }
   }
 
-  const daysLate = Math.round((Date.parse(today) - Date.parse(diaryDate)) / 86_400_000);
   // Written the same day or the next working morning is contemporaneous. Beyond
   // that it is a reconstruction, and it is labelled as one.
-  const contemporaneous = daysLate <= 1;
-
-  const labourHours = input.labour.reduce((sum, line) => sum + line.headcount * line.hours, 0);
-  const plantIdleHours = input.plant.reduce((sum, line) => sum + line.hoursIdle, 0);
+  const { daysLate, contemporaneous, labourHours, plantIdleHours } = check;
 
   const evidence = registerEvidence(ctx, {
     type: 'SITE_DIARY_RECORD',
@@ -742,8 +810,9 @@ export function recordSiteDiary(
       weather: input.weather,
       labour: input.labour,
       plant: input.plant,
-      labourHours: Number(labourHours.toFixed(2)),
-      plantIdleHours: Number(plantIdleHours.toFixed(2)),
+      labourHours,
+      plantIdleHours,
+      anomalies: check.anomalies,
       progressNarrative: input.progressNarrative,
       workedTaskIds: input.workedTaskIds ?? [],
       deliveries: input.deliveries ?? [],
@@ -765,7 +834,7 @@ export function recordSiteDiary(
   // creates rather than updates, and more to the point the original record is
   // evidence: the fact that it was replaced belongs on the replacement, which is
   // what a corrected record looks like on paper too. Readers resolve it.
-  return { diaryId, contemporaneous, daysLate, labourHours: Number(labourHours.toFixed(2)) };
+  return { diaryId, contemporaneous, daysLate, labourHours };
 }
 
 /**

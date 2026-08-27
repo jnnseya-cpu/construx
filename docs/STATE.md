@@ -5375,10 +5375,61 @@ the same stored programme give the same hash and the same critical path, and a
 different hash is evidence the programme moved rather than noise from record
 ordering.
 
-**Still to build in the construction block:** CN-WF-03 onwards, the stage
+---
+
+### A shift is captured over a day, not in one shot
+
+CN-WF-03. `backend/src/domain/dailylog.ts`, five routes, 22 tests.
+
+**Most of what this workflow asks for was already built and none of it is
+rebuilt.** `field/sync.ts` is the offline path — operations carry a
+client-minted id so a retried batch changes nothing the second time, device
+timestamps survive the server's receipt time, and conflicts resolve
+deterministically with the losing change still recorded. `engines/perception.ts`
+takes a voice capture to a draft a person confirms before anything becomes a
+record, which is this workflow's own guardrail. And `recordSiteDiary` already
+held the evidential rules: no future dating, contemporaneity stated, weather on
+the good days too.
+
+What was missing was the **lifecycle**. The diary was written in one shot, and a
+shift is not: it is captured across a day, on a device, often with no signal, and
+submitted once at the end of it.
+
+**A draft that survives.** The device mints the id, so a capture interrupted by
+a flat battery is the same capture when it comes back rather than a second one,
+and a sync that runs twice writes it once — AC-CN-WF-03-01, done by the client
+id rather than by a server-side guess about what looks like a duplicate.
+
+**The device's clock is kept, and its error with it.** The receipt time never
+replaces the capture time, and the *variance* is stored as well. A handset
+eleven minutes fast is a fact about the evidence, and the position surfaces any
+device out by more than a minute — somebody has to fix the phone.
+
+**Submitted once.** After submission, editing is an amendment: a new record
+naming what it supersedes, with the reason, and the **before and after of every
+field that changed** computed onto it. AC-CN-WF-03-03 asks for exactly that, and
+a diff nobody computes is a diff nobody reads. The original is never touched. An
+amendment that changes nothing is refused, as is amending an entry something has
+already superseded — two corrections of one day with no way to tell which is
+current is worse than one wrong entry.
+
+**Anomalous totals are reported, not refused.** Twenty-six hours in a day is
+impossible and is refused; a fourteen-hour shift is unusual and is surfaced for
+the supervisor to confirm, and cannot be submitted unseen. Refusing the merely
+unlikely teaches people to enter the number the form will accept instead of the
+one they measured, which is how a diary stops being evidence.
+
+The rules now live in one place: `checkDiaryContent` is exported from
+`engines/planning.ts` and used by both the one-shot desk entry and the device
+submission, because two copies of "a diary cannot be dated ahead" eventually
+become one copy and one omission. `currentDiaries` excludes drafts, so a shift
+captured but not submitted leaves the gap in the evidence visible rather than
+quietly closing it.
+
+**Still to build in the construction block:** CN-WF-04 onwards, the stage
 control (entry and exit conditions, `CONSTRUCTION_COMPLETION_ACCEPTED`) and the
 stage workspace described in 9.2. The specifications received so far — the stage
-control, 9.1, 9.2 and CN-WF-01 to CN-WF-05 — are recorded verbatim in
+control, 9.1, 9.2 and CN-WF-01 to CN-WF-07 — are recorded verbatim in
 `docs/WORKFLOWS.md`.
 
 ---

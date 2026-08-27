@@ -457,6 +457,21 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('CONSTRAINT_CLOSED', 'Constraint', 'UPDATE', 'DELIVERY'),
   def('PROGRESS_RECORDED', 'ProgressMeasurement', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
   def('SITE_DIARY_RECORDED', 'SiteDiary', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
+  // CN-WF-03. A shift is captured across a day on a device, often with no
+  // signal, and submitted once at the end of it. The draft carries the id the
+  // device minted, so a capture interrupted by a flat battery is the same
+  // capture when it comes back rather than a second one.
+  def('DAILY_LOG_DRAFTED', 'SiteDiary', 'CREATE', 'DELIVERY', { creates: true }),
+  def('DAILY_LOG_SUBMITTED', 'SiteDiary', 'UPDATE', 'DELIVERY', { requiresEvidence: true }),
+  // An amendment creates a new record naming what it supersedes, with the
+  // before and after of every field that changed on it. The original is never
+  // touched: somebody may have acted on it, and an append-only ledger does not
+  // remove what was relied upon.
+  def('DAILY_LOG_AMENDED', 'SiteDiary', 'CREATE', 'DELIVERY', { creates: true, requiresEvidence: true }),
+  // Not the sync itself, which `field/sync.ts` performs — the mark it leaves.
+  // The question after a handset has been out of signal for four days is never
+  // "did the sync work" but "when did this device last reach us".
+  def('OFFLINE_SYNC_COMPLETED', 'SyncSession', 'CREATE', 'DELIVERY', { creates: true }),
   def('SITE_OBSERVATION_CAPTURED', 'SiteObservation', 'CREATE', 'DELIVERY', { aiAllowed: true, requiresEvidence: true }),
   def('SITE_OBSERVATION_CLOSED', 'SiteObservation', 'UPDATE', 'DELIVERY'),
   // The site visit. Not the same act as a site observation above: an
