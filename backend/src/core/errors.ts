@@ -2,6 +2,7 @@
  * Error semantics. Everything surfaced to a client is rendered as
  * application/problem+json (RFC 7807) by the gateway.
  */
+import { config } from '../config.ts';
 
 export type ProblemDetail = {
   type: string;
@@ -80,10 +81,33 @@ export class ACUExhaustedError extends DomainError {
   }
 }
 
+/**
+ * The base a problem `type` URL is built on.
+ *
+ * Derived from `PUBLIC_BASE_URL` rather than hardcoded. RFC 7807 says the type
+ * should be a URI that documents the problem, so it has to be a domain this
+ * deployment actually answers on — a build serving one domain while naming
+ * another in every error is telling clients to look somewhere it does not live.
+ *
+ * This was a literal `https://construxvg.com`, which meant the domain could
+ * only be changed by editing source. Two deployments on two domains therefore
+ * needed two source trees, and the difference between them was invisible except
+ * in the error bodies.
+ */
+function problemBase(): string {
+  try {
+    return new URL(config.publicBaseUrl).origin;
+  } catch {
+    // A malformed PUBLIC_BASE_URL is its own problem, reported elsewhere at
+    // boot. An error response is the wrong place to throw a second error.
+    return 'about:blank';
+  }
+}
+
 export function toProblem(error: unknown, instance: string, traceId: string, correlationId: string): ProblemDetail {
   if (error instanceof DomainError) {
     const problem: ProblemDetail = {
-      type: `https://construxvg.com/problems/${error.code.toLowerCase().replace(/_/g, '-')}`,
+      type: `${problemBase()}/problems/${error.code.toLowerCase().replace(/_/g, '-')}`,
       title: error.code,
       status: error.status,
       detail: error.message,
@@ -95,7 +119,7 @@ export function toProblem(error: unknown, instance: string, traceId: string, cor
     return problem;
   }
   return {
-    type: 'https://construxvg.com/problems/internal-error',
+    type: `${problemBase()}/problems/internal-error`,
     title: 'INTERNAL_ERROR',
     status: 500,
     detail: 'The request could not be completed.',

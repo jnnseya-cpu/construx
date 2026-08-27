@@ -156,3 +156,36 @@ describe('the deployed container receives the settings a deployment is told it c
     );
   });
 });
+
+/**
+ * The problem `type` URL names the domain this deployment answers on.
+ *
+ * RFC 7807 says the type should be a URI documenting the problem, so it has to
+ * be a host the deployment actually lives at. It was a literal, which meant a
+ * second domain needed a second source tree — and the only visible difference
+ * between the two builds was the string inside their error bodies.
+ */
+describe('errors name the domain this deployment actually serves', () => {
+  const errors = readFileSync(resolve(ROOT, 'backend/src/core/errors.ts'), 'utf8');
+
+  it('does not hardcode a domain', () => {
+    const literals = errors.match(/https:\/\/[a-z0-9.-]+\/problems/g) ?? [];
+    assert.deepEqual(
+      literals,
+      [],
+      `errors.ts hardcodes ${literals.join(', ')} — one build then cannot serve two domains, and the mismatch is invisible except in error bodies`,
+    );
+  });
+
+  it('derives the base from PUBLIC_BASE_URL', () => {
+    assert.match(errors, /config\.publicBaseUrl/);
+  });
+
+  it('renders the configured origin at runtime', async () => {
+    const { toProblem } = await import('../src/core/errors.ts');
+    const { DomainError } = await import('../src/core/errors.ts');
+    const { config } = await import('../src/config.ts');
+    const problem = toProblem(new DomainError('NOT_FOUND', 'nope', 404), '/x', 't', 'c');
+    assert.equal(problem.type, `${new URL(config.publicBaseUrl).origin}/problems/not-found`);
+  });
+});

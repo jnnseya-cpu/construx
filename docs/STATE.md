@@ -6899,6 +6899,33 @@ variable nobody can discover is worse than one somebody sets wrongly.
 
 ---
 
+### An error that names the wrong house
+
+Found from a live 404, not from the code. Two requests against the running
+platform came back with different problem `type` URLs — one naming
+`construxvg.com`, the other `construx.ai` — which is only possible if two
+deployments are running two different source trees, because the domain was a
+**literal** in `backend/src/core/errors.ts`.
+
+RFC 7807 says a problem `type` is a URI that documents the problem, so it has
+to be a host the deployment actually answers on. Hardcoded, it could only be
+changed by editing source: a second domain needed a second fork, and the sole
+visible difference between the two builds was the string inside their error
+bodies. Nothing else would have shown it.
+
+It is now derived from `PUBLIC_BASE_URL`, with a malformed value falling back
+to `about:blank` rather than throwing — an error response is the wrong place to
+raise a second error. Three tests hold it: no domain literal may reappear, the
+config value must be read, and the rendered origin must match the configured
+one.
+
+**What this does not tell us** is which of the two deployments is the one that
+matters, or whether the second is an old fork nobody meant to leave running.
+That is a question for whoever owns the DNS, and it is not answerable from the
+repository.
+
+---
+
 ## What is partial
 
 Implemented in a form that works, with a stated part missing. The missing part is
