@@ -242,6 +242,34 @@ export const config = {
   notifications: {
     fromName: str('NOTIFICATIONS_FROM_NAME', str('NEWSLETTER_FROM_NAME', 'CONSTRUX')),
     fromAddress: str('NOTIFICATIONS_FROM_ADDRESS', str('NEWSLETTER_FROM_ADDRESS', 'contact@construxvg.com')),
+    /**
+     * How many times the outbox will try to deliver a notice before it stops.
+     *
+     * Five, because the failures worth retrying are transient — a relay
+     * refusing a connection, a DNS blip, a restart mid-send — and the ones that
+     * are not transient do not become deliverable on the sixth attempt. A queue
+     * that retries for ever is a queue that hides a permanently bad address
+     * behind a number that never stops going up.
+     */
+    maxAttempts: num('NOTIFICATIONS_MAX_ATTEMPTS', 5),
+    /**
+     * How long the outbox waits before retrying, doubling per attempt.
+     *
+     * The first retry is a minute out, then two, four, eight. A relay that
+     * refused because it was overloaded is not helped by being asked again
+     * immediately, and a person waiting for a sign-in code is not helped by
+     * an hour.
+     */
+    retryBackoffSeconds: num('NOTIFICATIONS_RETRY_BACKOFF_SECONDS', 60),
+    /**
+     * How often the outbox drains on its own.
+     *
+     * The queue is drained inline on every `notify()`, so this timer exists for
+     * exactly one case: notices queued by a process that died before delivering
+     * them. Every sixty seconds is often enough that nobody notices the
+     * difference and rare enough to cost nothing on an empty queue.
+     */
+    drainIntervalSeconds: num('NOTIFICATIONS_DRAIN_INTERVAL_SECONDS', 60),
   },
 
   /**

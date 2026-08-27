@@ -414,7 +414,7 @@ against intent.
 | 14.1 API conventions | **Built** | `api/middleware.ts` — RFC 7807 problem+json, `x-correlation-id` on every response, `buildTrace`/`logRequest` |
 | 14.1b Representative endpoints | **Built** | 642 routes registered in `api/routes.ts`, covered by real HTTP tests |
 | 14.2 Golden Thread event envelope | **Built** | `goldenthread/types.ts` — actor, source, entity, action, before/after hash, diff, evidence refs, AI block, policy block, correlation and causation ids, chain hash |
-| 14.3 Event processing guarantees | **Partial** | Append-only with a hash chain, a durable journal and replay verification are built. Operation-id idempotency exists for field sync. There is **no transactional outbox** — the ledger is in-process, which `STATE.md` records under "what is not built" |
+| 14.3 Event processing guarantees | **Partial** | Append-only with a hash chain, a durable journal and replay verification are built. Operation-id idempotency exists for field sync. The notification **outbox** is built (`notifications/outbox.ts`): the intent is committed to the ledger before anything is transmitted, so delivery is at-least-once with retry and a stated give-up, and a process that dies mid-send leaves a notice the platform still owes. It is an outbox, not a distributed transaction — the domain event and the queue entry are two journal appends, and that window is stated in the module rather than papered over |
 | 14.4 Integration adapters | **Design only** | Modelled as inputs the engines accept; no adapter is connected to a real external system |
 
 ### 15 — AI control plane
@@ -464,11 +464,14 @@ against intent.
 | B.2 Industry references | **Built** | The standards are what the domain rules were written against — HGCRA payment and notice logic, CDM duty holders, RIBA stage structure, ISO 19650 information control, CIBSE Code M commissioning sequence |
 
 **The honest summary of this table:** most of sections 12–18 describe
-architecture that already exists, and the genuine gaps cluster in four places —
-the AI output schema's known gaps and alternatives considered (assumptions,
-prompt version and human disposition are now recorded, and the stage gates
-assess them), the transactional outbox, the offline `Conflict` record, and the
-AI evaluation harness. None of those is hidden behind a claim that it is done.
+architecture that already exists. What was listed here as the four genuine gaps
+is now two. The AI output schema records assumptions, prompt version and human
+disposition, and every stage gate assesses them; the notification outbox makes
+delivery at-least-once with a durable queue; the offline `Conflict` record is
+built with a human resolution behind it. What remains is the AI evaluation
+harness, and the AI schema's *known gaps and alternatives considered* — the two
+fields of 15.4 that are still not carried. Neither is hidden behind a claim that
+it is done.
 
 ---
 

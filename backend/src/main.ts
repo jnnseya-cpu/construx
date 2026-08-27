@@ -5,6 +5,7 @@ import { assertProductionSafety, config } from './config.ts';
 import { Journal, RecordJournal } from './goldenthread/journal.ts';
 import type { ACUEntry } from './billing/acu.ts';
 import { startNewsletterSchedule } from './messaging/newsletter.ts';
+import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.ts';
 import { Platform } from './platform.ts';
 
 /**
@@ -155,6 +156,20 @@ if (config.demo.enabled) {
 
 const server = await startGateway(platform, config.port);
 
+// Anything a previous process queued and died before sending. This is the
+// whole reason the outbox exists, and boot is when it matters: on a restored
+// journal these are notices the platform decided to send and never did.
+const owed = outboxPosition(platform).due;
+if (owed > 0) {
+  process.stdout.write(`[outbox] ${owed} notice${owed === 1 ? '' : 's'} queued by a previous process — delivering\n`);
+  void drain(platform).then((report) => {
+    process.stdout.write(
+      `[outbox] ${report.sent} sent, ${report.retrying} still owed, ${report.abandoned} out of attempts\n`,
+    );
+  });
+}
+const outboxTimer = startOutboxDrain(platform);
+
 const newsletter = startNewsletterSchedule(platform, (report) => {
   process.stdout.write(
     `[newsletter] ${report.campaign.week} issued — ${report.sent} sent, ${report.recorded} recorded, ${report.failed} failed\n`,
@@ -204,6 +219,7 @@ process.stdout.write(
 const shutdown = (signal: string): void => {
   process.stdout.write(`\nReceived ${signal}, shutting down.\n`);
   newsletter.stop();
+  outboxTimer();
   server.close(() => {
     platform.ledger.journal?.close();
     process.exit(0);

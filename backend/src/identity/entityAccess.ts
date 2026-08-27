@@ -440,6 +440,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // record additionally names their address and whether it reached them, which
   // is why the two are classified apart rather than together.
   NotificationDispatch: { area: 'PLATFORM_ADMINISTRATION' },
+  // The queue holds the rendered payload and the recipients' addresses until it
+  // settles, so it is classified with the delivery record rather than with the
+  // dispatch summary above.
+  NotificationOutbox: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
   NotificationDelivery: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
   NotificationPreferences: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
 

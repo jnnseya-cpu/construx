@@ -5,6 +5,7 @@ import { buildMime } from '../messaging/render.ts';
 import { sendMail } from '../messaging/smtp.ts';
 import type { Platform } from '../platform.ts';
 import { fillTemplate, requireEvent, type Channel, type NotificationEvent } from './catalogue.ts';
+import * as outbox from './outbox.ts';
 import { allows, NOTIFICATIONS_PROJECT_ID, type Verdict } from './preferences.ts';
 import { renderNotificationEmail, type Branding } from './render.ts';
 
@@ -218,6 +219,48 @@ export async function notify(
     recipients: Recipient[];
     payload?: Record<string, unknown>;
     /** Narrow the routing. Omitted means the event's declared channels. */
+    channels?: Channel[];
+    branding: Branding;
+    actorId: string;
+    correlationId: string;
+  },
+): Promise<Dispatch> {
+  // Through the outbox, always. The intent goes onto the volume before anything
+  // is transmitted, so a process that dies mid-send leaves a notice the
+  // platform still owes rather than nothing at all. Every existing caller keeps
+  // its signature and its inline delivery: the queue is drained immediately,
+  // and the returned dispatch is the one this call produced.
+  const entry = outbox.queue(platform, input);
+  const dispatch = await dispatchNow(platform, entry);
+  outbox.recordAttempt(platform, entry, {
+    // No delivery at all is not a failure to deliver: the event may route to no
+    // channel this recipient allows, and retrying that four more times would
+    // produce four more identical nothings.
+    delivered: dispatch.deliveries.length === 0 || dispatch.deliveries.some((delivery) => delivery.status !== 'FAILED'),
+    dispatchId: dispatch.id,
+    error: dispatch.deliveries
+      .filter((delivery) => delivery.status === 'FAILED')
+      .map((delivery) => delivery.detail)
+      .join('; '),
+  });
+  return dispatch;
+}
+
+/**
+ * Deliver one queued notice, now.
+ *
+ * The whole of what `notify` used to be, minus the decision to send. Called by
+ * `notify` inline and by the outbox drain for anything a dead process left
+ * behind, which is why it takes an outbox entry rather than a request: on the
+ * second path there is nobody left to ask what was intended, and the entry is
+ * the record of it.
+ */
+export async function dispatchNow(
+  platform: Platform,
+  input: {
+    code: string;
+    recipients: Recipient[];
+    payload?: Record<string, unknown>;
     channels?: Channel[];
     branding: Branding;
     actorId: string;

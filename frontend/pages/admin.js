@@ -117,6 +117,62 @@ function envGroups(vars) {
 }
 
 /**
+ * What the platform still owes in notifications.
+ *
+ * A notice is queued before anything is transmitted, so a process that dies
+ * mid-send leaves the intent on the volume rather than nothing at all. The
+ * number worth reading here is **abandoned**: those are notices somebody was
+ * entitled to and did not get, and nothing will try them again. Queued is
+ * ordinary — it clears on the next drain — unless it stops going down.
+ */
+function outboxPanel(position) {
+  return html`<div class="card" id="outbox" style="margin-bottom:14px">
+    <h2>Notifications the platform owes</h2>
+    <p class="metric-sub" style="margin:8px 0 14px">
+      Every notice is written down before it is transmitted, so nothing is lost between deciding to tell somebody and
+      telling them. Queued clears on the next drain. <b>Abandoned does not</b> — those are out of attempts, and each one
+      is somebody who was entitled to a notice and did not get it.
+    </p>
+
+    <div class="split-list">
+      <div class="row"><span class="lbl">Delivered</span><span class="val">${position.sent}</span></div>
+      <div class="row">
+        <span class="lbl">Queued</span>
+        <span class="val">${position.queued}${position.due > 0 ? ` · ${position.due} due now` : ''}</span>
+      </div>
+      <div class="row">
+        <span class="lbl">Out of attempts</span>
+        <span class="val">${badge(String(position.abandoned), position.abandoned > 0 ? 'bad' : 'ok')}</span>
+      </div>
+      ${position.oldestQueuedAt
+        ? html`<div class="row"><span class="lbl">Oldest still owed</span><span class="val">${time(position.oldestQueuedAt)}</span></div>`
+        : ''}
+    </div>
+
+    ${position.abandonedEntries.length > 0
+      ? html`<div style="margin-top:14px">
+          ${table({
+            headers: ['Notice', 'Tenancy', 'Attempts', 'Queued', 'Last error'],
+            align: ['', 'mono', '', '', ''],
+            rows: position.abandonedEntries.map((entry) => [
+              entry.code,
+              String(entry.tenantId).slice(-8),
+              entry.attempts,
+              time(entry.queuedAt),
+              entry.lastError ?? '—',
+            ]),
+            empty: 'Nothing has been abandoned',
+          })}
+        </div>`
+      : ''}
+
+    <div class="actions" style="margin-top:14px">
+      <button class="btn quiet sm" id="drain-outbox">Deliver what is owed now</button>
+    </div>
+  </div>`;
+}
+
+/**
  * The pictures on the landing page.
  *
  * Five slots have been on that page since it was built, and until now the only
@@ -179,7 +235,7 @@ export async function admin(root) {
   const isOperator = roles.includes('PLATFORM_ADMIN');
   const operatorOnly = (path) => (isOperator ? api.get(path).catch(() => null) : Promise.resolve(null));
 
-  const [routes, plane, matrix, overview, estate, burn, payments, security, logs, ready, governance, vocab, media] =
+  const [routes, plane, matrix, overview, estate, burn, payments, security, logs, ready, governance, vocab, media, outbox] =
     await Promise.all([
       api.get('/v1/routes').catch(() => ({ routes: [] })),
       api.get('/v1/ai/control-plane').catch(() => null),
@@ -199,6 +255,10 @@ export async function admin(root) {
       // The landing page's own pictures. Operator-only in both directions: a
       // customer has no business editing the marketing site.
       operatorOnly('/v1/site/media'),
+      // What the platform still owes in notifications. The number worth reading
+      // is `abandoned`: those are notices somebody was entitled to and did not
+      // get, and nothing will try them again.
+      operatorOnly('/v1/admin/outbox'),
     ]);
 
   const areas = new Set();
@@ -495,6 +555,8 @@ export async function admin(root) {
             : ''
         }
       </div>
+
+      ${outbox ? outboxPanel(outbox) : ''}
 
       ${media ? mediaPanel(media) : ''}
 
@@ -849,6 +911,25 @@ export async function admin(root) {
   if (!isOperator) return;
 
   const again = () => admin(root);
+
+  document.getElementById('drain-outbox')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = 'Delivering…';
+    try {
+      const report = await api.post('/v1/admin/outbox/drain');
+      toast(
+        'Outbox drained',
+        `${report.sent} sent, ${report.retrying} still owed, ${report.abandoned} out of attempts`,
+        report.abandoned > 0 ? 'warn' : 'ok',
+      );
+      await again();
+    } catch (error) {
+      toast('Drain failed', error.message, 'err');
+      button.disabled = false;
+      button.textContent = 'Deliver what is owed now';
+    }
+  });
 
   // The landing page's pictures. A file input rather than a generated command
   // form: the body is the image itself, not JSON, so this posts the bytes the

@@ -7598,6 +7598,49 @@ to protect. The safety-stop rule stays first and unchanged.
 
 ---
 
+## Nothing lost between deciding to tell somebody and telling them
+
+A notification was transmitted first and recorded afterwards. That ordering has
+exactly one failure and it is the worst one: a process that dies between
+deciding to send and sending leaves **nothing at all** — no notice, no record,
+and nobody who could know a notice was owed. The payment-failure email that
+never went is indistinguishable from the payment that never failed.
+
+The intent is now written down first. `NOTIFICATION_QUEUED` goes into the
+ledger, which means onto the volume through the journal's write-ahead fsync,
+carrying everything a later process needs to deliver it: the catalogue code, the
+recipients, the payload, the branding. Only then is anything transmitted, and
+`NOTIFICATION_QUEUE_SETTLED` records how it went.
+
+Every existing caller keeps its signature and its inline delivery — `notify()`
+queues, drains that one entry and returns the dispatch it produced. What changes
+is what remains when the send does not happen.
+
+**Two things the platform did not have before.** A queued notice that was never
+settled is one it still owes, so `drain()` picks it up at boot and on a timer:
+delivery is **at-least-once** instead of at-most-once. And a refused relay used
+to record `FAILED` and be forgotten in the same breath; there is now a retry,
+five attempts with a doubling backoff, and an **abandoned** state with the
+relay's own words on it. The operator's screen reads the abandoned count,
+because each one is somebody who was entitled to a notice and did not get it.
+
+**What this is not, said plainly.** It is an outbox: the intent is durable in
+the same store as the record, and nothing is lost after the decision to send.
+It is *not* a distributed transaction. The domain event that prompted the notice
+and the queue entry are two appends to the same journal, one after the other, so
+a crash in the microseconds between them loses the notice and keeps the fact.
+Closing that would take committing both in one journal write — a batched commit
+on `ledger.commit`, the most load-bearing function in the codebase — for a
+window this narrow. It is stated in the module and here rather than papered
+over, and it is one of the things the Postgres design closes properly.
+
+**Nothing about who gets told moved.** Preference checks, channel routing and
+the transports all stay in `notify.ts`. The outbox owns durability and ordering.
+A second opinion about who may be emailed, one file away from the first, is the
+duplication rule 6 exists to prevent.
+
+---
+
 ## Working notes
 
 - The seeded demo project sits in the **Operations** phase, so field-execution

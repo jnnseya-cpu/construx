@@ -672,6 +672,13 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   //
   // No AI actor may author either. An agent that could set somebody's
   // notification preferences could silence the alert about what it did next.
+  // The outbox. Queued before anything is transmitted, settled after — so a
+  // process that dies between deciding to tell somebody and telling them leaves
+  // the intent on the volume rather than nothing at all. A queued notice that
+  // was never settled is redelivered on the next drain, which is what makes
+  // delivery at-least-once instead of at-most-once.
+  def('NOTIFICATION_QUEUED', 'NotificationOutbox', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('NOTIFICATION_QUEUE_SETTLED', 'NotificationOutbox', 'UPDATE', 'GOVERNANCE'),
   def('NOTIFICATION_DISPATCHED', 'NotificationDispatch', 'ISSUE', 'GOVERNANCE', { creates: true }),
   def('NOTIFICATION_DELIVERY_RECORDED', 'NotificationDelivery', 'CREATE', 'GOVERNANCE'),
   def('NOTIFICATION_PREFERENCES_SET', 'NotificationPreferences', 'UPDATE', 'GOVERNANCE', { creates: true }),

@@ -129,6 +129,7 @@ import { isPlatformGovernanceEvent } from '../goldenthread/eventTypes.ts';
 import * as evidence from '../evidence/registry.ts';
 import * as siteMedia from '../site/media.ts';
 import * as conflicts from '../field/conflicts.ts';
+import * as outbox from '../notifications/outbox.ts';
 import * as designreview from '../engines/designreview.ts';
 import * as perception from '../engines/perception.ts';
 import * as signing from '../signing/signature.ts';
@@ -1056,6 +1057,31 @@ export const ROUTES: Route[] = [
     handler: (_platform, ctx) => {
       if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Operator access required');
       return { logs: recentLogs(200), metrics: metrics(), gateway: gatewayMetrics() };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/outbox',
+    readOnly: true,
+    description: 'What the platform still owes in notifications, and what it gave up on',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read the notification outbox');
+      // Across every tenancy: "is anything failing to go out" is an operator's
+      // question, and the outbox is a platform chain rather than a project one.
+      return outbox.outboxPosition(platform);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/outbox/drain',
+    description: 'Deliver what is owed now, rather than waiting for the timer',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      operatorOnly(ctx, 'drain the notification outbox');
+      // Nothing here forces a send that the queue would not have made on its
+      // own — it is the same drain the timer runs, brought forward. An entry
+      // that is out of attempts stays out of attempts.
+      return outbox.drain(platform);
     },
   },
   {
