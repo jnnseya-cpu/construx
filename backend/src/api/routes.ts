@@ -54,6 +54,7 @@ import * as planning from '../engines/planning.ts';
 import * as sitevisit from '../engines/sitevisit.ts';
 import * as award from '../domain/award.ts';
 import * as enquiry from '../domain/enquiry.ts';
+import * as designplan from '../domain/designplan.ts';
 import * as measurement from '../domain/measurement.ts';
 import * as meetings from '../domain/meetings.ts';
 import * as submittals from '../domain/submittals.ts';
@@ -5230,6 +5231,170 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/specifications/coverage',
     description: 'Which specified tests, submittals and hold points have an inspection stage against them',
     handler: (platform, ctx) => bim.specificationCoverage(projectContext(platform, ctx)),
+  },
+
+  // ------------------------------------------------------- D-WF-01 design packages and the MIDP
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/design-packages',
+    description: 'The design plan: packages, their deliverables and interfaces, and what the MIDP reconciles to',
+    handler: (platform, ctx) => designplan.designPlanPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-packages',
+    description: 'Create a design package with a named lead — a package with no lead has no interface owner',
+    schema: {
+      type: 'object',
+      required: ['reference', 'title', 'discipline', 'zone', 'leadDesigner', 'leadOrganisation'],
+      properties: {
+        reference: stringField,
+        title: stringField,
+        discipline: stringField,
+        zone: stringField,
+        leadDesigner: stringField,
+        leadOrganisation: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => designplan.createPackage(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-packages/:packageId/deliverables',
+    description: 'Plan a deliverable. The slack between issue, review and the date it is needed is computed, not asked for',
+    schema: {
+      type: 'object',
+      required: [
+        'reference',
+        'title',
+        'kind',
+        'purpose',
+        'format',
+        'author',
+        'checker',
+        'approver',
+        'acceptingParty',
+        'dueBy',
+        'neededBy',
+        'neededFor',
+        'reviewDays',
+      ],
+      properties: {
+        reference: stringField,
+        title: stringField,
+        kind: { type: 'string', enum: [...designplan.DELIVERABLE_KIND] },
+        purpose: stringField,
+        format: stringField,
+        author: stringField,
+        checker: stringField,
+        approver: stringField,
+        acceptingParty: stringField,
+        dueBy: stringField,
+        neededBy: stringField,
+        neededFor: stringField,
+        reviewDays: { type: 'number', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designplan.planDeliverable(projectContext(platform, ctx), ctx.params.packageId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-packages/:packageId/interfaces',
+    description: 'Record an interface, owned on both sides. One owner is a boundary somebody drew and nobody agreed',
+    schema: {
+      type: 'object',
+      required: ['reference', 'description', 'withPackage', 'ourOwner', 'theirOwner', 'resolveBy'],
+      properties: {
+        reference: stringField,
+        description: { type: 'string' },
+        withPackage: stringField,
+        ourOwner: stringField,
+        theirOwner: stringField,
+        resolveBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designplan.recordInterface(projectContext(platform, ctx), ctx.params.packageId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-packages/:packageId/interfaces/agree',
+    description: 'Agree an interface, with what was actually agreed rather than a tick',
+    schema: {
+      type: 'object',
+      required: ['reference', 'what'],
+      properties: { reference: stringField, what: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designplan.agreeInterface(projectContext(platform, ctx), ctx.params.packageId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-packages/:packageId/deliverables/delegate',
+    description: 'Sublet production. The author of record and the package’s interface obligations do not move',
+    schema: {
+      type: 'object',
+      required: ['deliverableReference', 'party', 'organisation', 'why'],
+      properties: {
+        deliverableReference: stringField,
+        party: stringField,
+        organisation: stringField,
+        why: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designplan.delegate(projectContext(platform, ctx), ctx.params.packageId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-packages/:packageId/deliverables/transfer',
+    description: 'Move a responsibility. Needs the outgoing party’s release and the incoming party’s acceptance',
+    schema: {
+      type: 'object',
+      required: ['deliverableReference', 'role', 'to', 'acceptedByOutgoing', 'acceptedByIncoming', 'reason'],
+      properties: {
+        deliverableReference: stringField,
+        role: { type: 'string', enum: ['author', 'checker', 'approver', 'acceptingParty'] },
+        to: stringField,
+        acceptedByOutgoing: stringField,
+        acceptedByIncoming: stringField,
+        reason: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designplan.transferResponsibility(projectContext(platform, ctx), ctx.params.packageId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-packages/:packageId/deliverables/advance',
+    description: 'Move a deliverable along the CDE ladder. Nothing reaches Shared without an author, a checker and its metadata',
+    schema: {
+      type: 'object',
+      required: ['reference', 'to'],
+      properties: { reference: stringField, to: { type: 'string', enum: [...designplan.CDE_STATE] } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designplan.advanceDeliverable(projectContext(platform, ctx), ctx.params.packageId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/midp',
+    description: 'Approve the master information delivery plan. Refused while the reconciliation shows a contradiction',
+    schema: {
+      type: 'object',
+      required: ['cutOff', 'note'],
+      properties: { cutOff: stringField, note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => designplan.approveMIDP(projectContext(platform, ctx), body(ctx)),
   },
 
   // ------------------------------------------------------- material and technical submittals

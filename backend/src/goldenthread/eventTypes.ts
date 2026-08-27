@@ -172,6 +172,19 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('COMMENT_DISPOSITIONED', 'DesignReviewComment', 'UPDATE', 'DESIGN'),
   def('DESIGN_ACCEPTED', 'DesignReviewCycle', 'APPROVE', 'DESIGN'),
   def('DESIGN_REJECTED', 'DesignReviewCycle', 'REJECT', 'DESIGN'),
+  // D-WF-01. The plan for who produces what information, by when, for whom.
+  // Deliverables and interfaces live on the package rather than as entities of
+  // their own: a deliverable is meaningless outside the package that owes it,
+  // and splitting them would let one exist against a package nobody created.
+  def('DESIGN_PACKAGE_CREATED', 'DesignPackage', 'CREATE', 'DESIGN', { creates: true }),
+  def('DESIGN_RESPONSIBILITY_ASSIGNED', 'DesignPackage', 'UPDATE', 'DESIGN'),
+  // Its own event because a transfer is a different act from an assignment: it
+  // needs both parties' acceptance, and an audit reading the ledger can tell
+  // the two apart without inspecting state.
+  def('DESIGN_RESPONSIBILITY_TRANSFERRED', 'DesignPackage', 'UPDATE', 'DESIGN'),
+  // The master plan is what the team plans add up to, so it is approved rather
+  // than authored. APPROVE with `creates` says exactly that.
+  def('MIDP_APPROVED', 'MIDP', 'APPROVE', 'DESIGN', { creates: true }),
   def('SPECIFICATION_INGESTED', 'Specification', 'IMPORT', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),
   def('SPEC_CLAUSE_EXTRACTED', 'SpecClause', 'CREATE', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),
   def('DESIGN_MATURITY_ASSESSED', 'DesignMaturityAssessment', 'CREATE', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),

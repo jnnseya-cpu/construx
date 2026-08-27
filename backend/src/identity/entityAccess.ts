@@ -59,6 +59,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // Design and information
   Specification: { area: 'DESIGN_INFORMATION' },
   SpecClause: { area: 'DESIGN_INFORMATION' },
+  // D-WF-01. The package carries its own deliverables and interfaces; the MIDP
+  // is the reconciliation across them. Both under DESIGN_INFORMATION, which
+  // already splits the parties the plan needs: the designer and principal
+  // designer hold A and approve the plan, the contractor and EPC hold C and U
+  // and build it.
+  DesignPackage: { area: 'DESIGN_INFORMATION' },
+  MIDP: { area: 'DESIGN_INFORMATION' },
   // With the clause it answers, not with quality. QUALITY_COMMISSIONING is
   // phase-gated to CONSTRUCTION onwards, and a long-lead submittal raised in
   // design — which is the only time a fourteen-week item can be raised usefully

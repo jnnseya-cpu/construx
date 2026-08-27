@@ -4880,6 +4880,70 @@ a stored narrative is shown to a person, which today is one document.
 
 ---
 
+### The design information plan, and the three things it refuses
+
+D-WF-01. `backend/src/domain/designplan.ts`, nine routes, 34 tests.
+
+The plan for who produces what information, by when, for whom, and who checks
+it. It is the first thing set up after the concept gate and the last thing
+anybody looks at, which is why design programmes fail quietly. Three refusals
+carry it, and none of them is about a missing record.
+
+**Information planned to arrive after it was needed.** A deliverable carries the
+date it will be issued, the date the thing waiting for it needs it, and the
+review period between them. On most projects those three numbers live in three
+documents held by three people. Here the platform subtracts them: a drawing due
+on day 30, reviewed for fifteen days, needed on day 35 is ten days short — and
+it is ten days short on the day the plan is written rather than the week it
+fails. It is **recorded anyway**. A plan with negative slack is a plan a real
+project is working to, and refusing it would push it into a spreadsheet nothing
+can see; it blocks the MIDP approval instead.
+
+**An interface with an owner on one side.** Every expensive coordination failure
+lives at a boundary both sides assumed the other held, and an interface with one
+name on it is that assumption written down. Two owners or it is not recorded.
+Closing one needs what was agreed, not a tick.
+
+**Responsibility that moved without the incoming party seeing it.** A transfer
+needs the outgoing party's release *and* the incoming party's acceptance,
+because a reassignment nobody accepted reads afterwards exactly like a clean
+handover. Prior holders are kept rather than replaced: somebody who held a duty
+for four months held it for four months. And a transfer that would leave one
+person as both author and checker is refused, because the separation is worth as
+much after a reassignment as when the plan was written.
+
+**Delegation is not transfer, and the platform will not let it become one.** A
+lead designer who sublets a deliverable keeps the author of record and keeps
+every interface the package crosses. That is the rule the CDM regime already
+states and the one most information plans quietly lose the moment a specialist
+is appointed.
+
+**The MIDP is reconciled, not written.** It is what the team plans add up to, so
+it is computed across every package: one reference planned twice, an interface
+naming a package that does not exist, anything late by its own arithmetic.
+Approval is refused while any of those stands — approving a plan the platform
+can already prove does not work is the signature that makes everything
+downstream somebody else's problem. A master plan maintained by hand beside the
+team plans it summarises diverges within a fortnight and nobody notices for a
+quarter.
+
+**A departure from the specification, recorded rather than argued later.**
+D-WF-01 step 4 asks for CDE states to be *configured* with permission rules.
+That would be a second permission model beside `identity/roles.ts` answering the
+same question differently. The four states are implemented as a fixed ladder
+with the one rule the specification actually names beneath it — nothing reaches
+Shared without an author, a checker and its metadata — and who may make each
+move is the permission matrix's answer, given once.
+
+**Still to build in the design block:** D-WF-04 (federation sets bound to exact
+model revisions and the coordination issue lifecycle — `Model` and `Clash` exist,
+the immutable run and the issue states do not), D-WF-06 (design change before
+baseline, distinct from the construction change `ChangeRequest` already covers),
+D-WF-07 (constructability, temporary works and residual design risk), and
+D-WF-08 with the 7.4 gate. D-WF-02, D-WF-03 and D-WF-05 are built.
+
+---
+
 ---
 
 ## What is partial
