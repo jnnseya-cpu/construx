@@ -154,6 +154,24 @@ export const config = {
   port: num('PORT', 8080),
 
   /**
+   * The commit this process is running.
+   *
+   * Set by the deployer, which is the only thing that knows it. Reported on
+   * `/readyz` so the question "is the live site running the latest?" has an
+   * answer somebody can read, rather than being inferred from whether a page
+   * looks different.
+   *
+   * That gap is not hypothetical: `docs/STATE.md` records a day on which every
+   * commit passed CI and none of it was running, because the deployer itself
+   * had never been deployed. Nothing detected it — CI answers "does this
+   * build" and, until this field, nothing answered "is this running".
+   *
+   * Unknown is reported as unknown. A default of "main" or a build timestamp
+   * would answer the question wrongly rather than admit it cannot.
+   */
+  buildCommit: str('BUILD_COMMIT', ''),
+
+  /**
    * Durability. An empty path means the ledger is in-process only, which is
    * correct for a test run and is total data loss on restart anywhere else —
    * so `assertProductionSafety` refuses to stay quiet about it.

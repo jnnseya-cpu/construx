@@ -151,6 +151,12 @@ if ! git merge --ff-only --quiet "origin/$BRANCH"; then
 fi
 
 deploy() {
+  # The commit the container is about to run, passed through compose so
+  # `/readyz` reports it. This is what makes "the box sat eleven commits
+  # behind for a day" a thing somebody can see from a browser rather than
+  # something discovered by noticing a page had not changed.
+  BUILD_COMMIT="$(git rev-parse HEAD)"
+  export BUILD_COMMIT
   $COMPOSE up -d --build
 }
 

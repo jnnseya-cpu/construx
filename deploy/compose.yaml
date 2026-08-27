@@ -72,6 +72,11 @@ services:
       # have not set this" instead of a service that starts and signs tokens
       # anybody could forge.
       GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:?set GATEWAY_JWT_SECRET before starting}
+      # The commit being deployed, so `/readyz` can answer "is the live site
+      # running the latest?" without anybody needing a shell on the host.
+      # `autodeploy.sh` sets it; started by hand it reads `unknown`, which is
+      # the honest answer rather than a wrong one.
+      BUILD_COMMIT: ${BUILD_COMMIT:-}
     volumes:
       - ledger:/data
     restart: unless-stopped

@@ -223,3 +223,51 @@ describe('a deploy is not done until the site answers from outside', () => {
     assert.match(script, /\[ -z "\$PUBLIC_HEALTH_URL" \] && return 0/, 'an unset public URL is not skipped');
   });
 });
+
+/**
+ * "Is the live site running the latest?"
+ *
+ * `docs/STATE.md` records a day on which every commit passed CI and none of it
+ * was running, because the commit that added the deployer had itself never been
+ * deployed. Nothing detected it: CI answers "does this build" and, until the
+ * platform reported its own commit, nothing answered "is this running".
+ *
+ * These assert the chain that makes the question answerable from a browser —
+ * the deployer knows the commit, compose carries it into the container, and the
+ * readiness probe reports it.
+ */
+describe('the running commit is reportable', () => {
+  const compose = readFileSync(resolve(ROOT, 'deploy/compose.yaml'), 'utf8');
+
+  it('the deployer passes the commit it is deploying', () => {
+    assert.match(
+      script,
+      /BUILD_COMMIT="\$\(git rev-parse HEAD\)"/,
+      'autodeploy must tell the container which commit it is running',
+    );
+    assert.match(script, /export BUILD_COMMIT/, 'the variable has to reach compose');
+  });
+
+  it('compose carries it into the container', () => {
+    assert.match(compose, /BUILD_COMMIT:\s*\$\{BUILD_COMMIT:-\}/);
+  });
+
+  it('is set inside deploy(), so a rollback reports the commit it rolled back to', () => {
+    // The rollback re-runs `deploy` after resetting the checkout. If the commit
+    // were captured once at the top of the script, a rolled-back site would
+    // report the commit that failed — which is worse than reporting nothing,
+    // because it looks like a successful deploy of the broken build.
+    const deployFn = script.slice(script.indexOf('deploy() {'), script.indexOf('# Poll one URL'));
+    assert.match(deployFn, /git rev-parse HEAD/, 'the commit must be read at deploy time, not once at startup');
+  });
+
+  it('reports the commit on the readiness probe, and says unknown rather than guessing', async () => {
+    const { Platform } = await import('../src/platform.ts');
+    const health = new Platform().health();
+    assert.ok('commit' in health, '/readyz must carry the running commit');
+    // No BUILD_COMMIT is set in the test environment, so this is the honest
+    // path. A default of "main" or a build timestamp would answer the question
+    // wrongly rather than admit it cannot.
+    assert.equal(health.commit, 'unknown');
+  });
+});

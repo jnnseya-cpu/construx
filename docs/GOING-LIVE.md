@@ -630,7 +630,8 @@ provided step 3 has propagated. Watch `docker logs caddy` if it does not.
 | Check | Expected |
 |---|---|
 | `curl -I http://construxvg.com` | `301` to https |
-| `curl -fsS https://construxvg.com/readyz` | `200` |
+| `curl -fsS https://construxvg.com/readyz` | `200`, and a `commit` field |
+| `curl -sS https://construxvg.com/readyz \| grep -o '"commit":"[^"]*"'` | the commit the site is **actually** running — compare it against `git rev-parse origin/<branch>`. `unknown` means the container was started by hand rather than by the deployer; a commit that is not the branch head means the deploy has not run or has failed |
 | `curl -sI https://construxvg.com/v1/console/session -X POST` | `403` — the console is not open to strangers |
 | `https://construxvg.com/` | the landing page, valid certificate |
 | `https://construxvg.com/app` | the console sign-in |

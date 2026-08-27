@@ -1379,6 +1379,8 @@ export class Platform {
   health(): {
     status: 'ok';
     env: string;
+    /** The commit this process is running, or `unknown` if the deployer did not say. */
+    commit: string;
     aiMode: string;
     tenants: number;
     events: number;
@@ -1387,6 +1389,10 @@ export class Platform {
     return {
       status: 'ok',
       env: config.env,
+      // Public on purpose. This is the answer to "is what I am looking at the
+      // build we shipped", and it is useless if only somebody with a shell on
+      // the host can read it.
+      commit: config.buildCommit || 'unknown',
       aiMode: config.ai.mode,
       tenants: this.#tenants.size,
       events: this.ledger.size,

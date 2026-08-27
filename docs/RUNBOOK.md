@@ -73,6 +73,29 @@ docker build -f deploy/Dockerfile -t construx:$(git rev-parse --short HEAD) .
 
 **Readiness, not liveness, gates traffic.** `/healthz` answers as soon as the
 process is up; `/readyz` answers when the platform is actually able to serve.
+
+`/readyz` also carries the **commit the running container was built from**, so
+"is the live site on the latest?" is a question anybody can answer from a
+browser:
+
+```
+curl -sS https://construxvg.com/readyz | grep -o '"commit":"[^"]*"'
+```
+
+Compare it against `git rev-parse origin/claude/ai-agent-construction-os-999410`.
+
+- **They match** — the deploy has run and the site is current.
+- **They differ** — the deployer has not picked the push up. Check
+  `systemctl status construx-deploy.timer` and
+  `journalctl -u construx-deploy -n 50` on the host.
+- **`unknown`** — the container was started by hand rather than by
+  `autodeploy.sh`, which is the only thing that sets `BUILD_COMMIT`. It is
+  serving, but nothing knows what it is serving.
+
+This exists because of a real failure recorded in `docs/STATE.md`: every commit
+passed CI, none of it was running, and the box sat eleven commits behind for a
+day. Nothing noticed, because CI answers "does this build" and nothing was
+answering "is this running".
 Between them sits the journal replay, and a container marked ready during a
 replay answers "no such project" for projects that exist.
 

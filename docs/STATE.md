@@ -6862,6 +6862,43 @@ are all genuinely held by other roles on the same project.
 
 ---
 
+### "Is the live site running the latest?"
+
+Until now, nothing could answer that. `/readyz` reported status, environment,
+AI mode, tenant and event counts — and not one thing identifying the build. The
+only way to tell whether a push had reached the site was to look at a page and
+judge whether it had changed.
+
+That is not hypothetical. This document already records a day on which every
+commit passed CI and none of it was running: the commit that *added* the
+deployer had itself never been deployed, so the deployer was never installed
+and the box sat eleven commits behind. Nothing detected it, because CI answers
+"does this build" and nothing was answering "is this running".
+
+`/readyz` now carries the commit the running container was built from.
+`autodeploy.sh` reads it with `git rev-parse HEAD` **inside `deploy()`**, which
+matters: the rollback path re-runs `deploy` after resetting the checkout, so a
+rolled-back site reports the commit it rolled back *to* rather than the one
+that failed — reporting the failed commit would look like a successful deploy
+of a broken build. Compose passes it through, and CI asserts the whole chain by
+booting the image and checking the value comes back out.
+
+Unset reads as `unknown`, which is what a container started by hand produces.
+A default of `main` or a build timestamp would answer the question wrongly
+rather than admit it cannot.
+
+**One test caught this and was right to.** `deployment.test.ts` refuses any
+variable in compose's `environment:` block that is not declared and justified,
+because `environment:` outranks `env_file:` — so a passthrough written as
+`${BUILD_COMMIT:-}` would silently replace a `.env` value with an empty string.
+The variable is a third category the test did not model: not container-owned
+(a path or port where a `.env` value would be *wrong*) but deployer-supplied
+(known only to the thing running the deploy). It is now declared as that, and
+documented in `.env.example` with an explicit "do not set this" — because a
+variable nobody can discover is worse than one somebody sets wrongly.
+
+---
+
 ## What is partial
 
 Implemented in a form that works, with a stated part missing. The missing part is

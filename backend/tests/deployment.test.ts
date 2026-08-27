@@ -60,6 +60,24 @@ const CONTAINER_OWNED = new Set([
   'GATEWAY_JWT_SECRET',
 ]);
 
+/**
+ * Variables the *deployer* supplies, which belong to neither the container nor
+ * the deployment.
+ *
+ * `BUILD_COMMIT` is the only one: it identifies the commit being deployed, so
+ * it is different on every deploy and there is no sensible value for it in
+ * `.env`. It is still listed in `.env.example` — with an explicit "do not set
+ * this" — because the reverse check below is right that a variable nobody can
+ * discover is worse than one somebody sets wrongly.
+ *
+ * The distinction from `CONTAINER_OWNED` matters. Those name a path or a port
+ * inside the image, where a `.env` value would be *wrong*. This names something
+ * only the thing running the deploy knows. Both shadow `.env` — compose's
+ * `environment:` outranks `env_file:` — which is exactly why each has to be
+ * declared here and justified rather than simply added to the compose file.
+ */
+const DEPLOYER_SUPPLIED = new Set(['BUILD_COMMIT']);
+
 describe('the deployed container receives the settings a deployment is told it can set', () => {
   it('passes the whole .env through rather than enumerating part of it', () => {
     // `.dockerignore` excludes `.env` from the image on purpose, so no published
@@ -77,7 +95,7 @@ describe('the deployed container receives the settings a deployment is told it c
   });
 
   it('leaves every documented variable settable', () => {
-    const shadowed = hardcoded().filter((name) => !CONTAINER_OWNED.has(name));
+    const shadowed = hardcoded().filter((name) => !CONTAINER_OWNED.has(name) && !DEPLOYER_SUPPLIED.has(name));
     assert.deepEqual(
       shadowed,
       [],
@@ -90,7 +108,7 @@ describe('the deployed container receives the settings a deployment is told it c
     // mention is a setting nobody can discover; one it does mention is a
     // setting somebody will try to change and cannot.
     const names = new Set(documented());
-    for (const name of CONTAINER_OWNED) {
+    for (const name of [...CONTAINER_OWNED, ...DEPLOYER_SUPPLIED]) {
       assert.ok(names.has(name), `${name} is fixed by compose but absent from .env.example`);
     }
   });

@@ -77,6 +77,7 @@ jobs:
           docker run -d --name construx-ci -p 8080:8080 \
             -e GATEWAY_JWT_SECRET=ci-only-not-a-real-secret \
             -e LEDGER_JOURNAL_PATH=/data/ledger.jsonl \
+            -e BUILD_COMMIT="$GITHUB_SHA" \
             construx:ci
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:8080/readyz > /dev/null; then
@@ -86,6 +87,13 @@ jobs:
                 -H 'content-type: application/json' -d '{}' \
                 http://localhost:8080/v1/console/session)
               test "$status" = "403" || { echo "console session returned $status, expected 403"; exit 1; }
+              # The running commit has to reach `/readyz`, or the question
+              # "is the live site on the latest?" has no answer once this is
+              # deployed. Checked here because a broken passthrough — compose,
+              # env, config or the probe — is invisible until somebody needs it.
+              reported=$(curl -fsS http://localhost:8080/readyz | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p')
+              test "$reported" = "$GITHUB_SHA" || {
+                echo "/readyz reported commit '$reported', expected '$GITHUB_SHA'"; exit 1; }
               curl -fsS http://localhost:8080/ > /dev/null
               docker logs construx-ci
               exit 0
