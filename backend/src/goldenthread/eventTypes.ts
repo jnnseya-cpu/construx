@@ -980,6 +980,22 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // drawing while the drawing does not know the asset is on it.
   def('ASSET_INFORMATION_LINKED', 'AssetInformationLink', 'CREATE', 'DESIGN', { creates: true }),
 
+  // --- H-WF-03 O&M manuals and the technical file ---------------------------
+  // `OM_MANUAL_PUBLISHED` above stays as it is: extracting maintenance tasks
+  // from manufacturer documentation is a legitimate AI act, and what it produces
+  // is a draft. These events are the structure, the review and the acceptance
+  // that turn a draft into something an operator can run a building on.
+  def('OM_MANUAL_DRAFTED', 'OMManualStructure', 'CREATE', 'HANDOVER_OM', { creates: true }),
+  def('OM_SECTION_WRITTEN', 'OMManualStructure', 'UPDATE', 'HANDOVER_OM'),
+  // Two reviews, not one: the technical checker and the operator who has to use
+  // it are different assurances and the specification asks for both.
+  def('OM_SECTION_REVIEWED', 'OMManualStructure', 'UPDATE', 'HANDOVER_OM'),
+  // When an asset changes, the sections that described the old one are wrong and
+  // read as current until somebody notices.
+  def('OM_SECTION_REVISION_REQUIRED', 'OMManualStructure', 'UPDATE', 'HANDOVER_OM'),
+  def('OM_MANUAL_ACCEPTED', 'OMManualStructure', 'APPROVE', 'HANDOVER_OM'),
+  def('OM_MANUAL_REJECTED', 'OMManualStructure', 'REJECT', 'HANDOVER_OM'),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

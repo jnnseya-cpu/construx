@@ -347,6 +347,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // the specification's "authorised professionals verify".
   AsBuiltSet: { area: 'DESIGN_INFORMATION' },
   AssetInformationLink: { area: 'DESIGN_INFORMATION' },
+  // H-WF-03. The structured manual, distinct from the AI-drafted `OMManual`
+  // that feeds it: one is an extraction, the other is what the operator accepts.
+  OMManualStructure: { area: 'HANDOVER_OM' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },

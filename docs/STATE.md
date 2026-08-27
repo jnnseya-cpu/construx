@@ -6254,11 +6254,89 @@ has read.
 against the whole project's matrix means accepting it against requirements that
 do not apply to it, and a section is scored against its own.
 
-**Still to build in the handover block:** H-WF-02 to H-WF-08, the
-`HANDOVER_ACCEPTED` gate and the stage workspace described in 11.2. The stage
-control, 11.1, 11.2 and H-WF-01 to H-WF-08 are recorded verbatim in
-`docs/WORKFLOWS.md`; several arrived out of sequence during the build and are
-recorded there in the order they were sent.
+---
+
+### As-built status from a person, not a filename
+
+H-WF-02. `backend/src/domain/asbuilt.ts`, eight routes, 21 tests.
+
+`engines/bim.ts` already generates an as-built model by reconciling design intent
+against captured site reality, and it is untouched: that is the *drafting* side
+and legitimately an AI act. What an agent cannot do — the specification says so
+plainly — is certify accuracy, and this is the verification layer.
+
+**AC-H-WF-02-01.** A set called "AS-BUILT-FINAL-rev-C" is a set somebody named.
+A set that *is* as-built is one an authorised professional has verified against
+the approved design and the changes implemented since, with their name and
+registration on it. Until then it is submitted, and an unverified set cannot be
+published for operational use.
+
+**AC-H-WF-02-02.** The commonest defect in an as-built package is not a wrong
+line — it is a change that was approved, built and never drawn. Every
+implemented change is answered `REFLECTED` or `NOT_APPLICABLE`, and both need a
+reason: "not applicable" is a claim about the change, and one with no reasoning
+is how a change gets lost.
+
+**AC-H-WF-02-03.** One link record answers both directions, so the asset cannot
+open from the drawing while the drawing does not know the asset is on it — and
+it carries the set's status, so a maintenance engineer knows whether they are
+reading published information or a submission somebody is still arguing about.
+
+The three exception controls are enforced rather than reported: a **material
+variance** blocks verification and, through an exported guard, the handover of
+the system it touches; a converted deliverable needs the **native file** behind
+it and a note of what the conversion dropped; and publishing a revision
+**supersedes** the earlier one, because an operator with two current as-builts
+has none.
+
+---
+
+### A manual is not a folder of PDFs
+
+H-WF-03. `backend/src/domain/ommanual.ts`, eight routes, 26 tests.
+
+`handover.publishOMManual` still extracts maintenance tasks, intervals and
+spares from manufacturer documentation and is untouched — extraction is a
+legitimate AI act, and what it produces is a **draft**. This is the structure,
+the review and the acceptance that turn a draft into something an operator can
+run a building on.
+
+**Eleven sections, each answering a question an operator asks.** A section with
+a manufacturer catalogue behind it and no mapping to the installed tags is
+refused: a generic pump manual covering forty models tells an operator nothing
+about the two in the plant room. Troubleshooting must carry symptoms and
+maintenance must carry tasks with frequency and skill — prose describing
+maintenance is not a schedule anybody can plan from.
+
+**AC-H-WF-03-02: source, version and approval on every section.** The question
+asked of a maintenance interval at three in the morning is where it came from
+and who agreed it. Acceptance needs **two** reviews — the technical checker and
+the operator who has to use it — and a section checked by the person who wrote
+it is refused.
+
+**AC-H-WF-03-01: searchable four ways.** Symptom is the one usually missing from
+an O&M and the one that matters: nobody looks up "AHU-01 maintenance" at three
+in the morning, they look up "no heating on level three". Every hit carries the
+section's source and status, so nobody works from a draft believing it is
+accepted.
+
+**AC-H-WF-03-03: changed asset data finds its sections.** When a pump is
+replaced with a different model, the maintenance schedule, spares list and
+troubleshooting entries that named the old one are wrong and read as current
+until somebody notices. They are flagged for revision.
+
+Acceptance is refused on the things an operator cannot start without: a missing
+emergency or safety section, AI-drafted text nobody accepted, an asset the
+manual names and never describes, and — the quiet one — **the same task given
+two different frequencies**, which comes from two source documents neither of
+which was wrong.
+
+**Still to build in the handover block:** H-WF-04 to H-WF-10, the
+`HANDOVER_ACCEPTED` gate, the 11.4 gate and the stage workspace described in
+11.2. The stage control, 11.1, 11.2, H-WF-01 to H-WF-10, 11.4 and the
+cross-stage sections 12 to 14.1 are recorded verbatim in `docs/WORKFLOWS.md`;
+several arrived out of sequence during the build and are recorded there in the
+order they were sent.
 
 ---
 

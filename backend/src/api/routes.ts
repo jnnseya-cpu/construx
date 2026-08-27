@@ -81,6 +81,7 @@ import * as systemisation from '../domain/systemisation.ts';
 import * as testpack from '../domain/testpack.ts';
 import * as vendortest from '../domain/vendortest.ts';
 import * as prefunctional from '../domain/prefunctional.ts';
+import * as ommanual from '../domain/ommanual.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
@@ -5537,6 +5538,156 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => systemisation.declareTemporaryOperation(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- H-WF-03 O&M manuals and the technical file
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/om-manuals',
+    description: 'Manual completeness by section, AI drafts nobody accepted, and sections the asset data has overtaken',
+    handler: (platform, ctx) => ommanual.omManualPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/om-manuals/search',
+    description: 'Search by asset tag, system, symptom or task — symptom being what an operator actually starts from',
+    handler: (platform, ctx) => {
+      const query = ctx.query;
+      return ommanual.searchManuals(projectContext(platform, ctx), {
+        assetTag: query?.get('assetTag') ?? undefined,
+        systemTag: query?.get('systemTag') ?? undefined,
+        symptom: query?.get('symptom') ?? undefined,
+        task: query?.get('task') ?? undefined,
+      });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/om-manuals',
+    description: 'Create the manual structure for a system and the installed assets it covers',
+    schema: {
+      type: 'object',
+      required: ['reference', 'systemTag', 'assetTags', 'title', 'author'],
+      properties: {
+        reference: stringField,
+        systemTag: stringField,
+        assetTags: { type: 'array', items: { type: 'string' } },
+        title: stringField,
+        author: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => ommanual.createManual(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/om-manuals/:manualId/sections',
+    description: 'Write a section with its source, revision and the installed tags it actually describes',
+    schema: {
+      type: 'object',
+      required: ['key', 'content', 'source', 'mappedAssetTags', 'authoredBy', 'aiDrafted'],
+      properties: {
+        key: { type: 'string', enum: ommanual.MANUAL_SECTION.map((section) => section.key) },
+        content: { type: 'string' },
+        source: {
+          type: 'object',
+          required: ['kind', 'reference', 'revision'],
+          properties: {
+            kind: { type: 'string', enum: [...ommanual.SOURCE_KIND] },
+            reference: stringField,
+            revision: stringField,
+          },
+          additionalProperties: false,
+        },
+        mappedAssetTags: { type: 'array', items: { type: 'string' } },
+        symptoms: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['symptom', 'probableCause', 'task'],
+            properties: { symptom: stringField, probableCause: stringField, task: stringField },
+            additionalProperties: false,
+          },
+        },
+        tasks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['task', 'frequency', 'skill'],
+            properties: { task: stringField, frequency: stringField, skill: stringField },
+            additionalProperties: false,
+          },
+        },
+        authoredBy: stringField,
+        aiDrafted: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      ommanual.writeSection(projectContext(platform, ctx), ctx.params.manualId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/om-manuals/:manualId/reviews',
+    description: 'Review a section as the technical checker or as the operator who has to use it',
+    schema: {
+      type: 'object',
+      required: ['key', 'role', 'decision', 'reviewedBy', 'comment'],
+      properties: {
+        key: { type: 'string', enum: ommanual.MANUAL_SECTION.map((section) => section.key) },
+        role: { type: 'string', enum: ['CHECKER', 'OPERATOR'] },
+        decision: { type: 'string', enum: ['ACCEPTED', 'REJECTED'] },
+        reviewedBy: stringField,
+        comment: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      ommanual.reviewSection(projectContext(platform, ctx), ctx.params.manualId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/om-manuals/:manualId/validate',
+    description: 'What is missing, unaccepted, contradictory or overtaken, computed rather than stored',
+    handler: (platform, ctx) => ommanual.validateManual(projectContext(platform, ctx), ctx.params.manualId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/om-manuals/:manualId/accept',
+    description: 'Accept the manual for operational use, for a named operator',
+    schema: {
+      type: 'object',
+      required: ['acceptedBy', 'forOperator'],
+      properties: { acceptedBy: stringField, forOperator: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      ommanual.acceptManual(projectContext(platform, ctx), ctx.params.manualId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/om-manuals/:manualId/reject',
+    description: 'Reject it, naming what is wrong — a manual rejected with no reasons comes back unchanged',
+    schema: {
+      type: 'object',
+      required: ['reasons', 'rejectedBy'],
+      properties: { reasons: { type: 'array', items: { type: 'string' } }, rejectedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      ommanual.rejectManual(projectContext(platform, ctx), ctx.params.manualId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/om-manuals/asset-change',
+    description: 'Record an asset data change, flagging every manual section that described the old one',
+    schema: {
+      type: 'object',
+      required: ['assetTag', 'what', 'changedBy'],
+      properties: { assetTag: stringField, what: { type: 'string' }, changedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => ommanual.flagAssetDataChange(projectContext(platform, ctx), body(ctx)),
   },
 
   // ------------------------------------------------------- H-WF-02 as-built verification
