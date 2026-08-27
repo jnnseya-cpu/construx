@@ -139,6 +139,16 @@ export function openMeeting(
   if (Number.isNaN(Date.parse(input.heldAt))) {
     throw new DomainError('HELD_AT_INVALID', 'The date and time the meeting was held is not a date.');
   }
+  // A meeting is minuted after it happens. A record dated forward is minutes of
+  // a meeting nobody has been to, and the generated document would assert what
+  // was agreed at it in exactly the same words as one that took place.
+  if (Date.parse(input.heldAt) > Date.now()) {
+    throw new DomainError(
+      'MEETING_NOT_YET_HELD',
+      `${input.heldAt} is in the future. Minutes are a record of what happened, and a meeting recorded before it takes ` +
+        'place would produce a document asserting decisions nobody has taken yet, in the same words as one that did.',
+    );
+  }
   if (input.attendees.length === 0) {
     throw new DomainError('NOBODY_ATTENDED', 'A meeting with nobody at it produces no minutes.');
   }

@@ -177,7 +177,7 @@ const DISPLAY_NAMES = {
 /** Left alone, because sentence-casing them makes them harder to read. */
 const ACRONYMS = new Set([
   'CVR', 'RFQ', 'RFI', 'NCR', 'RAMS', 'BIM', 'ACU', 'AI', 'BOQ', 'EVM', 'CPI', 'SPI',
-  'PM', 'QS', 'FM', 'HSE', 'EPC', 'QAQC', 'API', 'MEP', 'WBS', 'CPM',
+  'PM', 'QS', 'FM', 'HSE', 'EPC', 'QAQC', 'API', 'MEP', 'WBS', 'CPM', 'CDM', 'ITP', 'ITT', 'PPC', 'O&M',
 ]);
 
 /**
@@ -191,8 +191,25 @@ export function humanise(token) {
   if (DISPLAY_NAMES[raw]) return DISPLAY_NAMES[raw];
   if (ACRONYMS.has(raw)) return raw;
 
-  const spaced = raw.includes('_') ? raw.replace(/_/g, ' ') : raw.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
-  return spaced.toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+  // Two splits, not one. `([a-z0-9])([A-Z])` alone leaves a leading acronym
+  // welded to the word after it — `CDMDocument` came out as "Cdmdocument" on
+  // the documents screen, which reads as a bug in the platform rather than as
+  // a record type. The second rule breaks the run of capitals before the last
+  // one, which is where the next word starts.
+  const spaced = raw.includes('_')
+    ? raw.replace(/_/g, ' ')
+    : raw.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
+
+  // Lowercasing the whole phrase turns an acronym that was split out of a
+  // CamelCase name into a word — `CDMDocument` became "Cdm document", which is
+  // not what the industry calls it. Restore the ones the platform knows.
+  return spaced
+    .toLowerCase()
+    .replace(/^\w/, (c) => c.toUpperCase())
+    .replace(/\b\w+\b/g, (word) => {
+      const upper = word.toUpperCase();
+      return ACRONYMS.has(upper) ? upper : word;
+    });
 }
 
 // --- components -------------------------------------------------------------

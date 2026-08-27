@@ -161,12 +161,13 @@ export const PERMIT_TO_WORK: DocumentDefinition = {
     'under which method statement, and what has to be in place before it starts.',
   scope: 'RECORD',
   subject: 'Permit',
+  subjectRecordedBy: 'the All commands screen — there is no curated permit panel yet',
   audience: 'INTERNAL',
   sources: [
     {
       refType: 'RAMS',
       contributes: 'the method statement the permit is worked to',
-      recordedBy: 'the Risk & Safety screen',
+      recordedBy: 'the All commands screen',
       mandatory: true,
       predicate: approved,
       qualifier: 'approved',
@@ -174,7 +175,7 @@ export const PERMIT_TO_WORK: DocumentDefinition = {
     {
       refType: 'Competency',
       contributes: 'the qualification that authorises each operative, and its expiry',
-      recordedBy: 'the Risk & Safety screen',
+      recordedBy: 'the All commands screen',
       mandatory: true,
     },
   ],
@@ -426,13 +427,13 @@ export const CONSTRUCTION_PHASE_PLAN: DocumentDefinition = {
     {
       refType: 'CDMDocument',
       contributes: 'the plan’s own sections and the approval it needs',
-      recordedBy: 'the Risk & Safety screen',
+      recordedBy: 'the All commands screen',
       mandatory: true,
     },
     {
       refType: 'RAMS',
       contributes: 'the method statements the plan governs',
-      recordedBy: 'the Risk & Safety screen',
+      recordedBy: 'the All commands screen',
       mandatory: false,
     },
   ],
@@ -546,6 +547,7 @@ export const RAMS_DOCUMENT: DocumentDefinition = {
     'controls effective — together with what must be on site before the first step begins.',
   scope: 'RECORD',
   subject: 'RAMS',
+  subjectRecordedBy: 'the All commands screen — there is no curated method statement panel yet',
   audience: 'INTERNAL',
   sources: [],
   narrative: [
@@ -656,18 +658,37 @@ export const INDUCTION_REGISTER: DocumentDefinition = {
     {
       refType: 'Induction',
       contributes: 'the induction records themselves',
-      recordedBy: 'the Risk & Safety screen',
+      recordedBy: 'the All commands screen',
       mandatory: true,
     },
     {
       refType: 'Competency',
       contributes: 'the people known to this project, so those without an induction can be named',
-      recordedBy: 'the Risk & Safety screen',
+      recordedBy: 'the All commands screen',
       mandatory: false,
     },
   ],
-  narrative: [],
-  compose: inductionBlocks,
+  narrative: [
+    {
+      heading: 'What the people with no induction against them have in common',
+      brief:
+        'Reason about the negative space in this register: which employers, trades or dates the people with no induction ' +
+        'recorded fall under, and what that pattern suggests about how people are reaching this site. Do not state any ' +
+        'name, employer, date or figure that is not already on the document.',
+    },
+  ],
+  // The register was the one document type that asked the reasoning engine for
+  // nothing. Its facts are a table, but the question a safety manager actually
+  // has of it — what the people missing from it have in common — is exactly the
+  // kind of pattern reasoning belongs to, and the same question the site diary
+  // already asks of forty entries.
+  compose: (input) => [
+    ...inductionBlocks(input),
+    ...narrativeBlocks(
+      'What the people with no induction against them have in common',
+      input.narrative.get('What the people with no induction against them have in common'),
+    ),
+  ],
 };
 
 export const SAFETY_DOCUMENTS = [

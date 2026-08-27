@@ -1,0 +1,315 @@
+import { api } from '../lib/api.js';
+import { command } from '../lib/command.js';
+import { badge, html, humanise, notice, raw, render, table, toast } from '../lib/ui.js';
+// No `can` gate on the row buttons: the navigation already reaches this screen
+// only for a role holding EVIDENCE_AUDIT read, which is the same authority
+// generation checks. A second copy of that rule here would be a second place
+// for it to drift.
+import { draw, state } from '../app.js';
+
+/**
+ * Site Documents.
+ *
+ * Fifteen document types, one screen, and the whole point of it is the column
+ * that says **why not**.
+ *
+ * A generated document on this platform is composed from records rather than
+ * written from a template, so a type whose records do not exist cannot be
+ * produced — and the interesting question is never "can I generate this", it is
+ * "what would I have to record first". The catalogue answers that per type, in
+ * sentences, and this screen shows the sentence rather than greying a button
+ * out and leaving somebody to guess.
+ *
+ * The lesson already learnt on the procurement screen applies twice here. A
+ * record-scoped type with no record to generate against opens a modal with an
+ * empty required dropdown — a dead end nobody can diagnose — so those commands
+ * lock with the reason instead, using the affordance the permission matrix
+ * already uses.
+ */
+
+const CATEGORIES = [
+  {
+    key: 'SAFETY_AND_HEALTH',
+    label: 'Safety and health',
+    blurb:
+      'The documents that authorise people to do dangerous things. Each is cross-referenced against the records a paper ' +
+      'form cannot see — a permit against the expiry date of the ticket that authorises each operative, checked against ' +
+      'the permit’s own end date rather than against today.',
+  },
+  {
+    key: 'PROJECT_MANAGEMENT',
+    label: 'Project management and planning',
+    blurb:
+      'The documents that carry arithmetic nobody does by hand: a dimension formula re-evaluated against the quantity it ' +
+      'produced, a day named because no diary entry covers it, an action measured against the date it was originally ' +
+      'given rather than the date it was last restated.',
+  },
+  {
+    key: 'QUALITY_AND_COMPLIANCE',
+    label: 'Quality and compliance',
+    blurb:
+      'The documents read years later by somebody who was not there. A hold point with no recorded release is named; a ' +
+      'non-conformance closed as use-as-is says in plain words that a departure was accepted into the permanent works, ' +
+      'and by whom.',
+  },
+];
+
+export async function documents(root) {
+  const projectId = state.session.projectId;
+
+  const catalogue = await api.get(`/v1/projects/${projectId}/documents`).catch(() => ({ documents: [], summary: '' }));
+  const all = catalogue.documents ?? [];
+  const generable = all.filter((document) => document.generable);
+
+  // Where a type cannot be generated, the records it is waiting on. Deduplicated
+  // across types, because five documents blocked on the same missing register is
+  // one thing to go and do, not five.
+  const waitingOn = new Map();
+  for (const document of all) {
+    for (const source of document.missing ?? []) {
+      const existing = waitingOn.get(source.refType) ?? { ...source, blocks: [] };
+      existing.blocks.push(document.title);
+      waitingOn.set(source.refType, existing);
+    }
+  }
+
+  render(
+    root,
+    html`
+      <div class="view-head">
+        <div>
+          <h1>Site Documents</h1>
+          <p>
+            Composed from this project’s records, branded for the client, and hashed so the issue can be proved later.
+            Nothing here is written to fill a gap.
+          </p>
+        </div>
+        <div class="actions">
+          <div class="metric-sub" style="max-width:280px;text-align:right">
+            ${generable.length} of ${all.length} types can be generated. Each is generated from its own row, so the
+            record list offered is only ever that type's own.
+          </div>
+        </div>
+      </div>
+
+      <div class="grid g4" style="margin-bottom:14px">
+        <div>
+          <h3>Can be generated now</h3>
+          <div class="metric ${raw(generable.length === 0 ? 'warn' : 'good')}">${generable.length}</div>
+          <div class="metric-sub">of ${all.length} document types</div>
+        </div>
+        <div>
+          <h3>Waiting on a record</h3>
+          <div class="metric">${all.length - generable.length}</div>
+          <div class="metric-sub">${waitingOn.size} distinct record${waitingOn.size === 1 ? '' : 's'} would unblock them</div>
+        </div>
+        <div>
+          <h3>Composed, not written</h3>
+          <div class="metric">100%</div>
+          <div class="metric-sub">every figure traces to a record on this project</div>
+        </div>
+        <div>
+          <h3>Branding</h3>
+          <div class="metric-sub" style="margin-top:8px">
+            Every document carries the issuing entity, the client and a document control block. Generation refuses
+            outright where branding is not configured — an unbranded document sent to a client is worse than none.
+          </div>
+        </div>
+      </div>
+
+      ${
+        waitingOn.size > 0
+          ? html`<div class="card" style="margin-bottom:14px">
+              <h2>What to record next</h2>
+              <p class="metric-sub">
+                One row per missing record, not one per blocked document. A register that does not exist blocks
+                everything composed from it, and going and creating it once clears all of them.
+              </p>
+              ${raw(table({
+                headers: ['Record', 'What it contributes', 'Where it is recorded', 'Documents it is blocking'],
+                rows: [...waitingOn.values()].map((source) => [
+                  humanise(source.refType),
+                  source.qualifier ? `${source.contributes} (${source.qualifier} only)` : source.contributes,
+                  source.recordedBy,
+                  source.blocks.join(', '),
+                ]),
+              }))}
+            </div>`
+          : raw(notice('Every document type on this platform can be generated from what this project already holds.', 'ok'))
+      }
+
+      ${CATEGORIES.map((category) => {
+        const rows = all.filter((document) => document.category === category.key);
+        return html`<div class="card" style="margin-bottom:14px">
+          <h2>${category.label}</h2>
+          <p class="metric-sub">${category.blurb}</p>
+          ${raw(table({
+            headers: ['Document', 'What it is for', 'Covers', 'Status', ''],
+            rows: rows.map((document) => [
+              document.title,
+              document.purpose,
+              // No leading article. "One rams" and "One ncr" both read wrong,
+              // and fixing the casing to "One RAMS" only moves the problem to
+              // "One Site meeting". The column header already says Covers.
+              document.scope === 'RECORD'
+                ? `${humanise(document.subject ?? 'record')} · ${
+                    document.subjects.length === 0 ? 'none' : document.subjects.length
+                  } on this project`
+                : 'The whole project',
+              document.generable
+                ? badge('Ready', 'ok')
+                : // Composed with `html`, not a bare template literal. `badge`
+                  // returns a raw-marked value, and interpolating it into a
+                  // plain string renders "[object Object]" — which looks like
+                  // data and tells the reader the platform is broken.
+                  html`${badge('Waiting', 'warn')}
+                    ${(document.missing ?? [])
+                      .map((source) => `no ${humanise(source.refType).toLowerCase()} yet — ${source.contributes}`)
+                      .join('; ')}`,
+              // The door, on the row. The type is settled before the modal
+              // opens, so the record list inside it can be — and is — only this
+              // type's own records. A single modal asking for both offered every
+              // record on the project against every type, and the only thing
+              // catching the wrong pick was the server refusing it.
+              document.generable
+                ? html`<button class="btn sm" data-generate="${document.code}">Generate</button>`
+                : raw(
+                    `<button class="btn quiet sm locked" disabled title="${(document.missing ?? [])
+                      .map((source) => `Record a ${humanise(source.refType).toLowerCase()} first — ${source.recordedBy}.`)
+                      .join(' ')
+                      .replace(/"/g, '&quot;')}">Generate 🔒</button>`,
+                  ),
+            ]),
+            empty: 'No document types in this category',
+          }))}
+        </div>`;
+      })}
+
+      <div class="card">
+        <h2>Why a document can refuse to exist</h2>
+        <p>
+          Every type declares the records it is composed from. A mandatory record that does not exist is a refusal naming
+          exactly what is missing and where to create it — never a document with the section filled in from what the
+          platform assumed. A section with no record behind it reads exactly like one with a record behind it, and nobody
+          downstream can tell them apart.
+        </p>
+        <p>
+          The reasoning engine writes the connective sections — why this sequence, how a hazard leads to the control
+          chosen for it, what the pattern across forty diary entries says. It is given the records and asked to reason
+          about them; it is never asked for a fact. Each of those sections is marked on the page as machine-written, with
+          the model’s own stated confidence beside it.
+        </p>
+      </div>
+    `,
+  );
+
+  const specFor = (document) => ({
+    title: `Generate: ${document.title}`,
+    intent: document.purpose,
+    path: `/v1/projects/${projectId}/documents`,
+    submitLabel: 'Generate',
+    fields: [
+      { name: 'code', type: 'hidden', label: 'Document', value: document.code },
+      ...(document.scope === 'RECORD'
+        ? [
+            {
+              name: 'subjectId',
+              label: `Which ${humanise(document.subject).toLowerCase()}`,
+              type: 'select',
+              // Only this type's own records. Nothing else on the project can
+              // be chosen, so nothing else can be got wrong.
+              options: document.subjects.map((subject) => ({ value: subject.id, label: subject.label })),
+            },
+          ]
+        : []),
+      { name: 'preparedBy', label: 'Prepared by', type: 'text', value: state.session.user.name },
+      {
+        name: 'checkedBy',
+        label: 'Checked by',
+        type: 'text',
+        required: false,
+        hint: 'Left blank the document says "Not yet checked" rather than implying somebody did.',
+      },
+      { name: 'approvedBy', label: 'Approved by', type: 'text', required: false },
+      {
+        name: 'status',
+        label: 'Status of this issue',
+        type: 'select',
+        options: [
+          { value: 'DRAFT', label: 'Draft' },
+          { value: 'FOR_REVIEW', label: 'For review' },
+          { value: 'ISSUED', label: 'Issued' },
+          { value: 'SUPERSEDED', label: 'Superseded' },
+        ],
+      },
+      {
+        name: 'audience',
+        label: 'Audience',
+        type: 'select',
+        required: false,
+        placeholder: 'The type’s own default',
+        hint: 'The exporter redacts for the audience and says on the document what it withheld.',
+        options: [
+          { value: 'INTERNAL', label: 'Internal' },
+          { value: 'CLIENT', label: 'Client' },
+          { value: 'SUPPLIER', label: 'Supplier' },
+          { value: 'REGULATOR', label: 'Regulator' },
+          { value: 'INSURER', label: 'Insurer' },
+          { value: 'ADJUDICATOR', label: 'Adjudicator' },
+          { value: 'COURT', label: 'Court' },
+        ],
+      },
+      {
+        name: 'distribution',
+        label: 'Issued to',
+        type: 'textarea',
+        rows: 3,
+        required: false,
+        hint: 'One party per line. A distribution nobody recorded is a document nobody can prove they sent.',
+      },
+      {
+        name: 'withNarrative',
+        label: 'Machine-written sections',
+        type: 'select',
+        options: [
+          { value: 'true', label: 'Include them — marked as machine-written, with the stated confidence' },
+          { value: 'false', label: 'Leave them out — every fact is on the document either way' },
+        ],
+      },
+    ],
+    transform: ({ distribution, withNarrative, subjectId, audience, checkedBy, approvedBy, ...rest }) => ({
+      ...rest,
+      code: document.code,
+      ...(subjectId ? { subjectId } : {}),
+      ...(audience ? { audience } : {}),
+      ...(checkedBy ? { checkedBy } : {}),
+      ...(approvedBy ? { approvedBy } : {}),
+      withNarrative: withNarrative !== 'false',
+      distribution: String(distribution ?? '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean),
+    }),
+  });
+
+  root.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-generate]');
+    if (!button) return;
+    const document_ = all.find((entry) => entry.code === button.dataset.generate);
+    if (!document_) return;
+    const result = await command(specFor(document_));
+    if (!result) return;
+    // The document's own reference, not the export id. They are different
+    // numbers and only one of them is what the site calls the document.
+    const issued = result.document ?? {};
+    const control = result.control ?? {};
+    toast(
+      'Document generated',
+      `${control.reference ?? ''} revision ${control.revision ?? ''} · ${issued.blocks?.length ?? 0} sections · ` +
+        `hash ${String(issued.contentHash ?? '').slice(0, 14)}…` +
+        (result.narrativeSections ? ` · ${result.narrativeSections} machine-written section(s)` : ''),
+      'ok',
+    );
+    await draw();
+  });
+}

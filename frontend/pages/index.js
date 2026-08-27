@@ -10,6 +10,7 @@ import { contracts } from './contracts.js';
 import { control } from './control.js';
 import { copilot } from './copilot.js';
 import { design } from './design.js';
+import { documents } from './documents.js';
 import { enterprise } from './enterprise.js';
 import { field } from './field.js';
 import { handover } from './handover.js';
@@ -37,6 +38,7 @@ export const PAGES = {
   programme,
   field,
   design,
+  documents,
   commercial,
   commands,
   procurement,

@@ -61,6 +61,11 @@ export const NAV = [
       { id: 'risk', label: 'Risk & Safety', area: 'RISK_REGISTER', icon: 'shield' },
       { id: 'handover', label: 'Handover & O&M', area: 'HANDOVER_OM', icon: 'key' },
       { id: 'audit', label: 'Golden Thread', area: 'EVIDENCE_AUDIT', icon: 'link' },
+      // The fifteen generated document types. Under EVIDENCE_AUDIT read for the
+      // same reason the command catalogue is: the screen is a statement about
+      // what can be composed from this project's records, and each generation
+      // still authorises itself against the records it reads.
+      { id: 'documents', label: 'Site Documents', area: 'EVIDENCE_AUDIT', icon: 'clipboard' },
       // Every write command, with a door generated from the platform's own
       // schema. Under EVIDENCE_AUDIT read because the catalogue is a statement
       // about what the platform accepts, not an authority to run any of it —

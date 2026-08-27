@@ -12,6 +12,8 @@ import {
   type MissingSource,
   type Row,
 } from './engine.ts';
+import { PLANNING_DOCUMENTS } from './planning.ts';
+import { QUALITY_DOCUMENTS } from './quality.ts';
 import { SAFETY_DOCUMENTS } from './safety.ts';
 
 /**
@@ -21,7 +23,7 @@ import { SAFETY_DOCUMENTS } from './safety.ts';
  * place where branding, the refusal, the AI marking and the content hash could
  * each be got wrong independently.
  */
-export const DOCUMENT_TYPES: DocumentDefinition[] = [...SAFETY_DOCUMENTS];
+export const DOCUMENT_TYPES: DocumentDefinition[] = [...SAFETY_DOCUMENTS, ...PLANNING_DOCUMENTS, ...QUALITY_DOCUMENTS];
 
 const BY_CODE = new Map(DOCUMENT_TYPES.map((definition) => [definition.code, definition]));
 
@@ -142,7 +144,20 @@ export async function generateDocument(
   ctx: EngineContext,
   exports: ExportService,
   input: GenerateInput,
-): Promise<{ document: ExportDocument; acuConsumed: number; narrativeSections: number }> {
+): Promise<{
+  document: ExportDocument;
+  /**
+   * The document's own reference and revision, returned rather than left to be
+   * read back out of the subtitle.
+   *
+   * `ExportDocument.reference` is the export's id — what the platform calls the
+   * act of exporting. It is not what the site calls the document, and the
+   * console was showing it as though it were.
+   */
+  control: { reference: string; revision: string; status: string };
+  acuConsumed: number;
+  narrativeSections: number;
+}> {
   const definition = documentType(input.code);
 
   // Read authority on the records, plus export authority on the way out. The
@@ -222,7 +237,12 @@ export async function generateDocument(
     suppressHeader: true,
   });
 
-  return { document, acuConsumed, narrativeSections: narrative.size };
+  return {
+    document,
+    control: { reference: control.reference, revision: control.revision, status: control.status },
+    acuConsumed,
+    narrativeSections: narrative.size,
+  };
 }
 
 /**

@@ -28,11 +28,24 @@ export async function design(root) {
     'DigitalTwinState',
     'RFI',
     'DesignMaturityAssessment',
+    // The clauses a submittal cites. A submittal that answers nothing cannot be
+    // reviewed against anything, so the form offers real clauses rather than a
+    // text box called clauseId.
+    'SpecClause',
   ]);
+
+  const clauses = b.SpecClause;
 
   // Where every review stands. The engine computes duration, overdue and whose
   // it is, so the screen renders an answer rather than doing arithmetic.
   const reviews = await api.get(`/v1/projects/${projectId}/design/reviews`).catch(() => null);
+
+  // Material and technical submittals. On this screen because a submittal
+  // answers a specification clause and is decided by the designer, which is the
+  // same two parties and the same area as everything else here.
+  const submittals = await api
+    .get(`/v1/projects/${projectId}/submittals`)
+    .catch(() => ({ submittals: [], summary: '', pastOrderingDate: 0, reviewsOverdue: 0, atRisk: 0, circling: 0 }));
 
   // Who could check a design, read from the ownership map rather than guessed.
   // The author picks a name from people the matrix says can actually do it —
@@ -107,6 +120,22 @@ export async function design(root) {
             { id: 'answer', label: 'Answer an RFI', permitted: can('DESIGN_INFORMATION', 'U'), reason: blockedReason('DESIGN_INFORMATION', 'U') },
             { id: 'resolve-clash', label: 'Close a clash', permitted: can('BIM_TWIN', 'A'), reason: blockedReason('BIM_TWIN', 'A') },
             { id: 'specification', label: 'Read a specification', permitted: can('DESIGN_INFORMATION', 'I'), reason: blockedReason('DESIGN_INFORMATION', 'I') },
+            {
+              id: 'submittal',
+              label: 'Raise a submittal',
+              permitted: can('DESIGN_INFORMATION', 'C') && clauses.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'C')
+                ? blockedReason('DESIGN_INFORMATION', 'C')
+                : 'No specification clause has been read on this project. A submittal answers a clause, and one citing a clause that does not exist cannot be reviewed against anything.',
+            },
+            {
+              id: 'decide-submittal',
+              label: 'Decide a submittal',
+              permitted: can('DESIGN_INFORMATION', 'A') && underReview.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'A')
+                ? blockedReason('DESIGN_INFORMATION', 'A')
+                : 'Nothing is with the reviewer.',
+            },
           ]))}
         </div>
       </div>
@@ -471,6 +500,50 @@ export async function design(root) {
         }
 
         <div class="card pad0">
+          <h3 style="padding:15px 17px 0">Material and technical submittals</h3>
+          <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+            ${submittals.summary || 'Nothing submitted for approval on this project.'}
+            Ordered by when the decision is needed — the date the material has to be on site less its procurement lead
+            time — rather than by when it was raised.
+          </p>
+          ${table({
+            // Five columns, not eight. This card sits in a half-width column,
+            // and the last two of eight were being clipped — a number nobody
+            // can see is worse than one that was never offered.
+            headers: ['Ref', 'Product and clause', 'Status', 'Decision needed', 'Days'],
+            align: ['', '', '', '', 'num'],
+            rows: (submittals.submittals ?? []).map((sub) => [
+              html`${sub.reference}<span class="metric-sub"> rev ${sub.revision}</span>`,
+              html`${sub.manufacturer} ${sub.productReference}<span class="metric-sub"> · ${sub.clauseRef}</span>${
+                sub.isSubstitution ? badge('substitution', 'warn') : ''
+              }${sub.departures ? badge(`${sub.departures} departure(s)`, 'warn') : ''}${
+                // Three cycles is a product nobody is converging on, which is
+                // the one fact this register exists to surface.
+                sub.cycles >= 3 ? badge(`${sub.cycles} cycles`, 'warn') : ''
+              }`,
+              html`${badge(humanise(sub.status), statusTone(sub.status))}${
+                sub.orderedAtRisk ? badge('ordered at risk', 'warn') : ''
+              }${sub.reviewOverdueByDays ? badge(`review ${sub.reviewOverdueByDays}d late`, 'warn') : ''}`,
+              sub.approvalNeededBy,
+              sub.daysToDecision < 0 ? badge(`${Math.abs(sub.daysToDecision)} past`, 'warn') : sub.daysToDecision,
+            ]),
+            empty: 'Nothing submitted for approval — the approval status of what is being installed cannot be asserted',
+          })}
+          ${
+            submittals.pastOrderingDate > 0
+              ? html`<div style="padding:0 17px 15px">
+                  <div class="notice warn">
+                    <b>${submittals.pastOrderingDate} submittal(s) are past the date the material had to be ordered and
+                    are still undecided.</b><br>
+                    That date is worked back from the lead time rather than typed, which is why it is visible here and
+                    not on a register that tracks status alone.
+                  </div>
+                </div>`
+              : ''
+          }
+        </div>
+
+        <div class="card pad0">
           <h3 style="padding:15px 17px 0">RFIs raised from markups</h3>
           ${table({
             headers: ['Ref', 'Question', 'Against rev', 'Due', 'Days open', 'Status'],
@@ -512,8 +585,92 @@ export async function design(root) {
   );
 
   const openReviews = (reviews?.cycles ?? []).filter((cycle) => cycle.status === 'IN_REVIEW');
+  const underReview = (submittals.submittals ?? []).filter((sub) => sub.status === 'UNDER_REVIEW');
 
   const COMMANDS = {
+    submittal: {
+      title: 'Raise a submittal',
+      intent:
+        'A product proposed against a clause, with what the specification demands and what the product achieves side by ' +
+        'side. The date approval is needed is worked back from the lead time rather than asked for.',
+      path: `/v1/projects/${projectId}/submittals`,
+      submitLabel: 'Raise',
+      fields: [
+        { name: 'clauseId', label: 'Clause it answers', type: 'select',
+          hint: 'A submittal with no clause behind it approves a product rather than a compliance.',
+          options: clauses.map((c) => ({ value: c._refId, label: `${c.specificationRef}/${c.clauseRef} — ${String(c.text).slice(0, 60)}…` })) },
+        { name: 'kind', label: 'Kind', type: 'select', options: [
+          { value: 'MATERIAL', label: 'Material — a named product' },
+          { value: 'SAMPLE', label: 'Sample or benchmark panel' },
+          { value: 'SHOP_DRAWING', label: 'Shop drawing' },
+          { value: 'CALCULATION', label: 'Calculation' },
+          { value: 'METHOD', label: 'Method of installation' },
+          { value: 'CERTIFICATE', label: 'Certificate or declaration of performance' },
+        ] },
+        { name: 'title', label: 'What it is', type: 'text', placeholder: 'Concrete mix design — clarifier walls' },
+        { name: 'manufacturer', label: 'Manufacturer', type: 'text' },
+        { name: 'productReference', label: 'Product reference', type: 'text',
+          hint: '“Proprietary insulation board” is not something anybody can order or check on delivery.' },
+        {
+          name: 'claims',
+          label: 'What is specified, and what is offered',
+          type: 'textarea',
+          rows: 6,
+          hint: 'One per line: requirement, specified, offered, and — where it does not comply — the reason it is offered anyway.',
+          placeholder: 'Strength class, C32/40, C32/40\nCement type, CEM I with 25% PFA, CEM IIIA 50% GGBS, the PFA source named in the specification closed',
+        },
+        { name: 'requiredOnSiteBy', label: 'Required on site by', type: 'date' },
+        { name: 'procurementLeadTimeDays', label: 'Procurement lead time (days)', type: 'number', min: 0,
+          hint: 'Zero is a legitimate answer for something held in stock. Leaving it out is not — without it nothing can say when this decision is needed.' },
+        { name: 'reviewPeriodDays', label: 'Contractual review period (days)', type: 'number', min: 1 },
+        { name: 'differsFrom', label: 'It is offered instead of', type: 'text', required: false,
+          placeholder: 'Only if this is a substitution' },
+        { name: 'whyProposed', label: 'Why the substitution', type: 'textarea', rows: 2, required: false },
+      ],
+      transform: ({ claims, differsFrom, whyProposed, procurementLeadTimeDays, reviewPeriodDays, ...rest }) => ({
+        ...rest,
+        procurementLeadTimeDays: Number(procurementLeadTimeDays),
+        reviewPeriodDays: Number(reviewPeriodDays),
+        ...(String(differsFrom ?? '').trim()
+          ? { substitution: { differsFrom: String(differsFrom), whyProposed: String(whyProposed ?? '') } }
+          : {}),
+        claims: String(claims ?? '')
+          .split('\n')
+          .map((line) => line.split(',').map((part) => part.trim()))
+          .filter((parts) => parts[0])
+          .map((parts) => ({
+            requirement: parts[0],
+            specified: parts[1] ?? '',
+            offered: parts[2] ?? '',
+            // A fourth field on the line is the reason it does not comply, so
+            // its presence is what marks the departure. The server refuses a
+            // departure with no reason either way.
+            compliant: parts.length < 4 || !parts[3],
+            ...(parts[3] ? { justification: parts.slice(3).join(', ') } : {}),
+          })),
+      }),
+    },
+    'decide-submittal': {
+      title: 'Decide a submittal',
+      intent:
+        'Approved with comments still permits the order; revise-and-resubmit does not. The person who submitted it ' +
+        'cannot be the person who approves it.',
+      path: ({ submittalId }) => `/v1/projects/${projectId}/submittals/${submittalId}/review`,
+      submitLabel: 'Record the decision',
+      fields: [
+        { name: 'submittalId', label: 'Submittal', type: 'select',
+          options: underReview.map((sub) => ({ value: sub.submittalId, label: `${sub.reference} rev ${sub.revision} — ${sub.title}` })) },
+        { name: 'outcome', label: 'Outcome', type: 'select', options: [
+          { value: 'APPROVED', label: 'Approved' },
+          { value: 'APPROVED_WITH_COMMENTS', label: 'Approved with comments — work may proceed and something still has to be done' },
+          { value: 'REVISE_AND_RESUBMIT', label: 'Revise and resubmit' },
+          { value: 'REJECTED', label: 'Rejected' },
+        ] },
+        { name: 'comments', label: 'Comments', type: 'textarea', rows: 4,
+          hint: 'Required for anything but a clean approval. A rejection with nothing beside it sends the contractor back to guess.' },
+      ],
+      transform: ({ submittalId: _submittalId, ...rest }) => rest,
+    },
     'submit-review': {
       title: 'Submit for review',
       intent:

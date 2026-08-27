@@ -27,6 +27,17 @@ const asPM = () => platform.context(seed.users.pm!.auth, seed.projectId, { sourc
 /** Holds LOOKAHEAD_CONSTRAINTS R and nothing else on it — reads, never writes. */
 const asSafety = () => platform.context(seed.users.safety!.auth, seed.projectId, { source: 'WEB' });
 
+/**
+ * Dates relative to today rather than fixed.
+ *
+ * `openMeeting` refuses a meeting dated forward — minutes are a record of what
+ * happened — so a fixture pinned to a hardcoded year is a fixture that starts
+ * failing when the calendar reaches it.
+ */
+const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+const HELD_AT = daysAgo(30);
+const HELD_ON = HELD_AT.slice(0, 10);
+
 const ROOM: meetings.Attendee[] = [
   { name: 'A. Okafor', organisation: 'Construx Build Ltd', role: 'Project manager', attended: true },
   { name: 'R. Sandhu', organisation: 'Meridian Developments', role: 'Client representative', attended: true },
@@ -37,7 +48,7 @@ function openProgressMeeting(): string {
   return meetings.openMeeting(asPlanner(), {
     type: 'PROGRESS',
     title: 'Monthly progress meeting',
-    heldAt: '2027-06-10T10:00:00.000Z',
+    heldAt: HELD_AT,
     location: 'Site office, meeting room 1',
     chair: 'A. Okafor',
     attendees: ROOM,
@@ -72,7 +83,7 @@ describe('site meeting · the record', () => {
     const opened = meetings.openMeeting(asPlanner(), {
       type: 'DESIGN_COORDINATION',
       title: 'Cladding interface coordination',
-      heldAt: '2027-06-11T14:00:00.000Z',
+      heldAt: daysAgo(29),
       location: 'Teams',
       chair: 'R. Sandhu',
       attendees: ROOM,
@@ -98,7 +109,7 @@ describe('site meeting · refuses a meeting nobody was at', () => {
         meetings.openMeeting(asPlanner(), {
           type: 'PROGRESS',
           title: 'Progress',
-          heldAt: '2027-06-10T10:00:00.000Z',
+          heldAt: HELD_AT,
           location: 'Site office',
           chair: 'A. Okafor',
           attendees: [],
@@ -116,12 +127,30 @@ describe('site meeting · refuses a meeting nobody was at', () => {
         meetings.openMeeting(asPlanner(), {
           type: 'PROGRESS',
           title: 'Progress',
-          heldAt: '2027-06-10T10:00:00.000Z',
+          heldAt: HELD_AT,
           location: 'Site office',
           chair: 'A. Okafor',
           attendees: ROOM.map((attendee) => ({ ...attendee, attended: false })),
         }),
       'EVERYBODY_SENT_APOLOGIES',
+    );
+  });
+
+  it('refuses a meeting dated in the future', () => {
+    // Found by rendering a set of minutes. The document asserted what was
+    // agreed at a meeting that had not happened, in exactly the same words it
+    // would have used for one that had.
+    throwsCode(
+      () =>
+        meetings.openMeeting(asPlanner(), {
+          type: 'PROGRESS',
+          title: 'Progress',
+          heldAt: daysAgo(-7),
+          location: 'Site office',
+          chair: 'A. Okafor',
+          attendees: ROOM,
+        }),
+      'MEETING_NOT_YET_HELD',
     );
   });
 
@@ -177,9 +206,9 @@ describe('site meeting · a carried action keeps the date it was originally give
       owner: 'D. Whyte',
       ownerOrganisation: 'Meridian Design',
       // Re-dated in this meeting, as happens on every register.
-      by: '2027-06-24',
+      by: daysAgo(-14).slice(0, 10),
       raisedAtMeeting: 'PROGRESS-002',
-      originallyDue: '2027-03-20',
+      originallyDue: daysAgo(112).slice(0, 10),
     });
 
     // Measured against 20 March, not 24 June. A register that reset the clock on
@@ -188,7 +217,7 @@ describe('site meeting · a carried action keeps the date it was originally give
     // as clean.
     assert.equal(carried.daysOverdue, 82);
 
-    const position = meetings.meetingPosition(asPM(), '2027-06-10');
+    const position = meetings.meetingPosition(asPM(), HELD_ON);
     const open = position.openActions.find((action) => action.reference === carried.reference);
     assert.equal(open?.daysOverdue, 82);
   });
@@ -198,10 +227,10 @@ describe('site meeting · a carried action keeps the date it was originally give
       what: 'Book the concrete pour inspection',
       owner: 'S. Iqbal',
       ownerOrganisation: 'Construx Build Ltd',
-      by: '2027-07-15',
+      by: daysAgo(-35).slice(0, 10),
     });
 
-    const position = meetings.meetingPosition(asPM(), '2027-06-10');
+    const position = meetings.meetingPosition(asPM(), HELD_ON);
     const overdue = position.openActions.map((action) => action.daysOverdue);
     assert.deepEqual([...overdue].sort((a, b) => b - a), overdue);
     assert.equal(position.openActions[0]?.daysOverdue, 82);
@@ -223,7 +252,7 @@ describe('site meeting · minutes are issued once', () => {
       what: 'Reissue the site induction slides with the revised traffic route',
       owner: 'M. Osei',
       ownerOrganisation: 'Construx Build Ltd',
-      by: '2027-06-17',
+      by: daysAgo(-4).slice(0, 10),
     });
   });
 
@@ -253,7 +282,7 @@ describe('site meeting · minutes are issued once', () => {
           what: 'A thing somebody thought of afterwards',
           owner: 'A. Okafor',
           ownerOrganisation: 'Construx Build Ltd',
-          by: '2027-07-01',
+          by: daysAgo(-21).slice(0, 10),
         }),
       'MINUTES_ISSUED',
     );
@@ -283,7 +312,7 @@ describe('site meeting · minutes are issued once', () => {
       what: 'Confirm the scaffold handover certificate',
       owner: 'L. Grant',
       ownerOrganisation: 'Apex Access',
-      by: '2027-06-20',
+      by: daysAgo(-10).slice(0, 10),
     });
     meetings.closeAction(asPM(), fresh, {
       reference: raised.reference,
@@ -301,7 +330,7 @@ describe('site meeting · minutes are issued once', () => {
       what: 'Chase the structural calculations',
       owner: 'D. Whyte',
       ownerOrganisation: 'Meridian Design',
-      by: '2027-06-20',
+      by: daysAgo(-10).slice(0, 10),
     });
     throwsCode(
       () => meetings.closeAction(asPlanner(), fresh, { reference: raised.reference, closureNote: '' }),
@@ -373,7 +402,7 @@ describe('site meeting · the position', () => {
         meetings.openMeeting(asSafety(), {
           type: 'PROGRESS',
           title: 'Progress',
-          heldAt: '2027-06-10T10:00:00.000Z',
+          heldAt: HELD_AT,
           location: 'Site office',
           chair: 'A. Okafor',
           attendees: ROOM,

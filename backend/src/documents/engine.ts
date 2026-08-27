@@ -104,6 +104,15 @@ export type DocumentDefinition = {
   scope: DocumentScope;
   /** For RECORD scope: the entity one document covers. */
   subject?: string;
+  /**
+   * For RECORD scope: where a person goes to create that record.
+   *
+   * Named per type rather than left generic. "The screen that creates it" is
+   * true and useless — it was what the console showed for four of the fifteen
+   * types, beside four others that named a real screen, and the contrast made
+   * the platform look like it did not know.
+   */
+  subjectRecordedBy?: string;
   audience: ExportAudience;
   sources: SourceBinding[];
   narrative: NarrativeSection[];
@@ -174,8 +183,9 @@ export function resolveSources(
   if (definition.scope === 'RECORD' && !subject) {
     missing.push({
       refType: definition.subject ?? 'record',
-      contributes: 'the record this document is about',
-      recordedBy: 'the screen that creates it',
+      contributes: `the ${humanEntity(definition.subject ?? 'record')} this document is written about — every figure, ` +
+        'date and name on it comes from that one record',
+      recordedBy: definition.subjectRecordedBy ?? 'the screen that creates it',
     });
   }
 

@@ -1,4 +1,13 @@
 import { api } from '../lib/api.js';
+/**
+ * Now, in the shape a `datetime-local` input wants and in the viewer's own
+ * timezone. `toISOString` would give UTC and set the field an hour out for
+ * anybody east or west of it.
+ */
+function localNow() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
 import { command, commandBar } from '../lib/command.js';
 import { badge, drillable, html, humanise, money, pct, raw, render, table, toast } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -58,6 +67,21 @@ export async function control(root) {
     api.get(`/v1/projects/${projectId}/stage-gate/decisions`).catch(() => ({ decisions: [], summary: '' })),
   ]);
 
+  // Meetings and the actions out of them. On this screen rather than its own,
+  // because a meeting action nobody closed and a control item nobody evidenced
+  // are the same failure seen twice, and a person chasing one is chasing both.
+  const meetings = await api
+    .get(`/v1/projects/${projectId}/meetings`)
+    .catch(() => ({ meetings: [], openActions: [], summary: '' }));
+
+  // Only a draft meeting can still be minuted into. Issued minutes are not
+  // amended, so offering them in the dropdown would offer a refusal.
+  const draftMeetings = (meetings.meetings ?? []).filter((m) => m.status === 'DRAFT');
+  const draftReason = (code) =>
+    !can('LOOKAHEAD_CONSTRAINTS', code)
+      ? blockedReason('LOOKAHEAD_CONSTRAINTS', code)
+      : 'No meeting is still in draft. Minutes are written into the meeting they belong to, and issued minutes are not amended.';
+
   // What the records say against each other. Every module here is right about
   // its own subject and none of them looks at the others, which is where the
   // expensive mistakes live.
@@ -99,6 +123,27 @@ export async function control(root) {
         <div class="actions cmd-bar">
           ${raw(commandBar([
             { id: 'gate', label: 'Decide the stage gate', tone: '', permitted: can('PROJECT_SETUP', 'A'), reason: blockedReason('PROJECT_SETUP', 'A') },
+            { id: 'meeting', label: 'Minute a meeting', permitted: can('LOOKAHEAD_CONSTRAINTS', 'C'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C') },
+            {
+              id: 'item',
+              label: 'Minute an item',
+              permitted: can('LOOKAHEAD_CONSTRAINTS', 'U') && draftMeetings.length > 0,
+              // The dead end this affordance exists to prevent: a modal whose
+              // required dropdown is empty, which a person cannot diagnose.
+              reason: draftReason('U'),
+            },
+            {
+              id: 'action',
+              label: 'Record an action',
+              permitted: can('LOOKAHEAD_CONSTRAINTS', 'U') && draftMeetings.length > 0,
+              reason: draftReason('U'),
+            },
+            {
+              id: 'issue',
+              label: 'Issue minutes',
+              permitted: can('LOOKAHEAD_CONSTRAINTS', 'A') && draftMeetings.length > 0,
+              reason: draftReason('A'),
+            },
           ]))}
         </div>
       </div>
@@ -430,6 +475,52 @@ export async function control(root) {
           `
           : ''
       }
+
+      <div class="card pad0" style="margin-top:14px">
+        <h3 style="padding:15px 17px 0">Meetings, and what came out of them</h3>
+        <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+          ${meetings.summary || 'No meeting has been minuted on this project.'}
+          An action carried from an earlier meeting keeps the date it was originally given, so the overdue column below
+          measures against that date and not against the date it was last restated.
+        </p>
+        ${table({
+          headers: ['Meeting', 'Type', 'Held', 'Present', 'Apologies', 'Open actions', 'Overdue', 'Minutes'],
+          align: ['', '', '', 'num', 'num', 'num', 'num', ''],
+          rows: (meetings.meetings ?? []).map((m) => [
+            m.title,
+            humanise(m.type),
+            String(m.heldAt ?? '').slice(0, 10),
+            m.attended,
+            m.apologies || '—',
+            m.openActions || '—',
+            m.overdueActions ? badge(String(m.overdueActions), 'warn') : '—',
+            html`${badge(humanise(m.status), m.status === 'ISSUED' ? 'ok' : 'info')}${
+              m.corrections ? badge(`${m.corrections} correction(s)`, 'warn') : ''
+            }`,
+          ]),
+          empty: 'No meeting minuted — nothing agreed on this project has a record behind it',
+        })}
+      </div>
+
+      ${
+        (meetings.openActions ?? []).length === 0
+          ? ''
+          : html`<div class="card pad0" style="margin-top:14px">
+              <h3 style="padding:15px 17px 0">Every open action, worst first</h3>
+              ${table({
+                headers: ['Ref', 'Action', 'Owner', 'Organisation', 'Due', 'Overdue by'],
+                align: ['', '', '', '', '', 'num'],
+                rows: meetings.openActions.map((a) => [
+                  a.reference,
+                  a.what,
+                  a.owner,
+                  a.ownerOrganisation,
+                  String(a.originallyDue ?? a.by ?? '').slice(0, 10),
+                  a.daysOverdue > 0 ? badge(`${a.daysOverdue} days`, 'warn') : '—',
+                ]),
+              })}
+            </div>`
+      }
     `,
   );
 
@@ -481,10 +572,131 @@ export async function control(root) {
         : { decision, rationale },
   };
 
+  const COMMANDS = {
+    gate: GATE_COMMAND,
+    meeting: {
+      title: 'Minute a meeting',
+      intent:
+        'The record a set of minutes is generated from. Apologies are recorded rather than omitted: a decision taken in ' +
+        'the absence of the party it binds is a different decision from one taken in front of them.',
+      path: `/v1/projects/${projectId}/meetings`,
+      submitLabel: 'Open the record',
+      fields: [
+        { name: 'type', label: 'Meeting', type: 'select', options: [
+          { value: 'PROGRESS', label: 'Progress' },
+          { value: 'DESIGN_COORDINATION', label: 'Design coordination' },
+          { value: 'SITE_SAFETY', label: 'Site safety' },
+          { value: 'COMMERCIAL', label: 'Commercial' },
+          { value: 'PRE_START', label: 'Pre-start' },
+          { value: 'SUBCONTRACTOR', label: 'Subcontractor' },
+          { value: 'CLIENT', label: 'Client' },
+        ] },
+        { name: 'title', label: 'Subject', type: 'text', placeholder: 'Monthly progress meeting no.7' },
+        {
+          // `datetime-local`, not `date`. A date alone had to be turned into an
+          // instant somewhere, and midday was chosen — which is in the future
+          // for anybody minuting a morning meeting before lunch, so the record
+          // was refused with a message about the future that made no sense to
+          // the person reading it. The time is asked for instead of guessed,
+          // and the document prints it: "Held 2027-06-10 at 10:00".
+          name: 'heldAt',
+          label: 'Held',
+          type: 'datetime-local',
+          value: localNow(),
+          max: localNow(),
+          hint: 'A meeting is minuted after it happens, so a time in the future is refused.',
+        },
+        { name: 'location', label: 'Where', type: 'text', placeholder: 'Site office, meeting room 1' },
+        { name: 'chair', label: 'Chaired by', type: 'text' },
+        {
+          name: 'attendees',
+          label: 'Who was there',
+          type: 'textarea',
+          rows: 5,
+          hint: 'One per line: name, organisation, role. Add "apologies" to the end of the line for anyone who did not attend.',
+          placeholder: 'A. Okafor, Meridian Infrastructure Group, Project manager\nT. Brennan, Northgate Mechanical, Package manager, apologies',
+        },
+      ],
+      transform: ({ attendees, heldAt, ...rest }) => ({
+        ...rest,
+        // Parsed as local time and converted, because that is what the person
+        // typed. Sending the string through as though it were UTC would move a
+        // London afternoon meeting by an hour in summer.
+        heldAt: new Date(heldAt).toISOString(),
+        attendees: String(attendees ?? '')
+          .split('\n')
+          .map((line) => line.split(',').map((part) => part.trim()))
+          .filter((parts) => parts[0])
+          .map((parts) => ({
+            name: parts[0],
+            organisation: parts[1] ?? 'Not recorded',
+            role: parts[2] ?? 'Not recorded',
+            attended: !parts.some((part) => /^apolog/i.test(part)),
+          })),
+      }),
+    },
+    item: {
+      title: 'Minute an item',
+      intent:
+        'What was actually said and decided, not the agenda heading repeated. Minutes with no item recorded cannot be ' +
+        'issued, because there is nothing in them to issue.',
+      // The meeting is chosen in the form, so the path is not known until it is.
+      path: ({ meetingId }) => `/v1/projects/${projectId}/meetings/${meetingId}/agenda`,
+      submitLabel: 'Minute it',
+      fields: [
+        { name: 'meetingId', label: 'Which meeting', type: 'select',
+          options: draftMeetings.map((m) => ({ value: m.meetingId, label: `${m.reference} — ${m.title}` })) },
+        { name: 'subject', label: 'Item', type: 'text', placeholder: 'Programme' },
+        { name: 'discussion', label: 'What was said about it', type: 'textarea', rows: 5 },
+      ],
+      transform: ({ meetingId: _meetingId, ...rest }) => rest,
+    },
+    issue: {
+      title: 'Issue the minutes',
+      intent:
+        'After this they are the record of what was agreed and are not amended. A correction is recorded beside them, ' +
+        'never applied to them. Closing an action stays possible, because the register is live and the minutes are not.',
+      path: ({ meetingId }) => `/v1/projects/${projectId}/meetings/${meetingId}/issue`,
+      submitLabel: 'Issue',
+      fields: [
+        { name: 'meetingId', label: 'Which meeting', type: 'select',
+          options: draftMeetings.map((m) => ({ value: m.meetingId, label: `${m.reference} — ${m.title}` })) },
+      ],
+      transform: () => ({}),
+    },
+    action: {
+      title: 'Record an action',
+      intent:
+        'An action needs a person and a date. Without both it is a topic somebody mentioned, and a register of those ' +
+        'stops being read.',
+      path: ({ meetingId }) => `/v1/projects/${projectId}/meetings/${meetingId}/actions`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'meetingId', label: 'Out of which meeting', type: 'select',
+          options: draftMeetings.map((m) => ({ value: m.meetingId, label: `${m.reference} — ${m.title}` })) },
+        { name: 'what', label: 'What has to happen', type: 'textarea', rows: 3 },
+        { name: 'owner', label: 'Owner', type: 'text' },
+        { name: 'ownerOrganisation', label: 'Their organisation', type: 'text' },
+        { name: 'by', label: 'By', type: 'date' },
+        { name: 'raisedAtMeeting', label: 'Carried from', type: 'text', required: false,
+          placeholder: 'PROGRESS-002', hint: 'Leave blank if this was raised here.' },
+        { name: 'originallyDue', label: 'Originally due', type: 'date', required: false,
+          hint: 'For a carried action. The overdue count is measured against this, never against the restated date.' },
+      ],
+      transform: ({ meetingId: _meetingId, raisedAtMeeting, originallyDue, ...rest }) => ({
+        ...rest,
+        ...(raisedAtMeeting ? { raisedAtMeeting } : {}),
+        ...(originallyDue ? { originallyDue } : {}),
+      }),
+    },
+  };
+
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
-    if (!button || button.dataset.command !== 'gate') return;
-    if (await command(GATE_COMMAND)) await draw();
+    if (!button) return;
+    const spec = COMMANDS[button.dataset.command];
+    if (!spec) return;
+    if (await command(spec)) await draw();
   });
 
   root.querySelector('#raise-chain')?.addEventListener('click', async (event) => {

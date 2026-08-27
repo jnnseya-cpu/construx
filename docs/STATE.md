@@ -4744,6 +4744,89 @@ approved on the strength of a review of revision C.
 
 ---
 
+### The fifteen documents, and the screen that says why not
+
+`backend/src/documents/planning.ts` and `backend/src/documents/quality.ts`
+complete the catalogue: five safety, five planning, five quality, one generation
+path, 46 tests. `frontend/pages/documents.js` is the screen.
+
+The safety five were built around **cross-reference** — a permit checked against
+the expiry date of the ticket that authorises each operative, against the
+permit's own end date rather than against today. The ten added here are built
+around **arithmetic nobody does by hand**, and each one exists to surface a
+number that is invisible on the paper version of the same document.
+
+- **Master Programme.** The critical path the platform computed, and — for each
+  critical activity — the constraints and unanswered RFIs currently in front of
+  it. That join is between three record sets, none of which knows about the
+  others, and it is the only column that says why a date will move. It also
+  names activities with no logic at either end: an unlinked activity floats free
+  in the calculation and can never appear on the critical path, whatever it
+  actually depends on.
+- **Bill of Quantities.** Every dimension formula is re-evaluated against the
+  quantity billed *when the document is composed*, and any that no longer agrees
+  is named with both numbers. A formula and a quantity that have drifted apart
+  is the commonest error in a bill and the least visible one. Dimensions the
+  evaluator cannot parse are reported as unchecked rather than counted as fine.
+- **Site Diary.** Named gaps. Every calendar day between the first and last
+  entry that carries no entry is listed, because a diary that skips a day
+  silently reads as a project where nothing happened, and on a delay claim the
+  silence is the whole argument. Each entry states whether it was written on the
+  day or afterwards.
+- **Meeting Minutes.** Apologies shown rather than filtered out, and an action
+  carried from an earlier meeting measured against the date it was originally
+  given.
+- **Request for Information.** The revision the question was asked against,
+  beside the revision now on the register, with a paragraph when they differ.
+- **Inspection and Test Plan.** Each stage beside the inspection actually
+  recorded against it, and hold points with no recorded release named outright.
+- **Material Approval Submittal.** Both sides of every compliance claim, and the
+  date approval was needed derived from the lead time rather than typed.
+- **Non-Conformance Report.** Where the disposition is use-as-is, a paragraph
+  saying in plain words that a departure has been accepted into the permanent
+  works, with the name of the person who accepted it.
+- **As-Built Drawing Register.** File hashes beside every drawing, drawings still
+  at a preliminary revision named, and the models section counting how many are
+  actually recorded as as-built rather than claiming all of them are.
+- **Operation and Maintenance Manual.** Warranties crossed against open defects,
+  so an unclaimed defect under a warranty running out in four months is visible
+  from two registers that never meet.
+
+**The screen.** `Site Documents`, under Assure. Its most useful column is
+**why not**: for each of the fifteen it shows either Ready or the sentence naming
+the record it is waiting on and where that record is created. Above the
+categories, one row per *missing record* rather than one per blocked document —
+a register that does not exist blocks everything composed from it, and creating
+it once clears all of them. Generation is a button on the row, not one modal
+asking for a type and then offering every record on the project: with the type
+settled first, the record list can only ever be that type's own.
+
+**Two panels, so two of the fifteen have somewhere to come from.** Meetings and
+their action register sit on Project Control; material submittals sit on Design
+& BIM. Both are curated rather than reached through the generated command
+catalogue, because both need this project's own records in a dropdown.
+
+**Nine of the source bindings now say "the All commands screen".** They used to
+name screens that do not exist — "the Quality screen", "the Delivery screen" —
+and four record-scoped types said "the screen that creates it", which is true
+and useless. A refusal that sends somebody somewhere the console does not have
+is the same dead end as a greyed-out button with no reason on it. A test asserts
+every screen named is one the navigation actually carries.
+
+**Ten defects found by rendering rather than by testing**, which is the method
+that has caught every real one: a formula check that silently skipped what it
+could not parse; `1 of 3 items carry`; a quantity formatted two ways in two
+tables on the same page; an action's overdue count replaced by "Closed"; a
+warranty reported in force before it had commenced; a models table claiming
+every model was an as-built one; `[object Object]` where a badge was
+interpolated into a plain template literal instead of an `html` one; `Cdm
+document`, because `humanise` split CamelCase but not a leading acronym; a
+meeting minutable in the future, which produced a document asserting decisions
+nobody had taken; and a subject list offering a method statement for a set of
+minutes, caught only by the server refusing it.
+
+---
+
 ---
 
 ## What is partial
