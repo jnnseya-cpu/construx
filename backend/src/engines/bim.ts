@@ -343,6 +343,50 @@ export type ClashInput = {
 };
 
 /**
+ * How expensive each clash is to fix once it is built.
+ *
+ * Rework cost rises steeply once a discipline is installed, so structural and
+ * below-ground clashes triage first. Extracted from `detectClashes` when
+ * `domain/coordination.ts` needed the same answer: two severity scales over one
+ * set of clashes would let the same overlap read CRITICAL on one screen and
+ * MEDIUM on another, and nobody could say which was the platform's view.
+ *
+ * Pure, so it is the arithmetic and nothing else — no ledger, no authorisation,
+ * no provider.
+ */
+export type ScoredClash<T extends { disciplineA: string; disciplineB: string; overlapVolume: number }> = T & {
+  severityScore: number;
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+};
+
+const DISCIPLINE_WEIGHT: Record<string, number> = {
+  STRUCTURE: 1,
+  SUBSTRUCTURE: 1,
+  DRAINAGE: 0.9,
+  MECHANICAL: 0.6,
+  ELECTRICAL: 0.5,
+  ARCHITECTURE: 0.4,
+  FINISHES: 0.2,
+};
+
+export function scoreClashes<T extends { disciplineA: string; disciplineB: string; overlapVolume: number }>(
+  clashes: T[],
+): Array<ScoredClash<T>> {
+  return clashes.map((clash) => {
+    const weight = Math.max(
+      DISCIPLINE_WEIGHT[clash.disciplineA.toUpperCase()] ?? 0.5,
+      DISCIPLINE_WEIGHT[clash.disciplineB.toUpperCase()] ?? 0.5,
+    );
+    const severityScore = Math.min(1, weight * (0.4 + Math.min(1, clash.overlapVolume / 0.5) * 0.6));
+    return {
+      ...clash,
+      severityScore: Number(severityScore.toFixed(3)),
+      severity: severityScore >= 0.7 ? 'CRITICAL' : severityScore >= 0.45 ? 'HIGH' : severityScore >= 0.2 ? 'MEDIUM' : 'LOW',
+    };
+  });
+}
+
+/**
  * Clash detection with cost-aware triage. Raw clash counts are noise; what
  * matters is which clashes are expensive to fix once built, and when they must
  * be resolved to avoid disrupting the programme.
@@ -354,31 +398,7 @@ export async function detectClashes(
   authorise(ctx, 'BIM_TWIN', 'X', { lifecyclePhase: currentPhase(ctx) });
 
   const clashIds: string[] = [];
-
-  // Rework cost rises steeply once a discipline is installed. Structural and
-  // below-ground clashes are the expensive ones, so they triage first.
-  const disciplineWeight: Record<string, number> = {
-    STRUCTURE: 1,
-    SUBSTRUCTURE: 1,
-    DRAINAGE: 0.9,
-    MECHANICAL: 0.6,
-    ELECTRICAL: 0.5,
-    ARCHITECTURE: 0.4,
-    FINISHES: 0.2,
-  };
-
-  const scored = input.clashes.map((clash) => {
-    const weight = Math.max(
-      disciplineWeight[clash.disciplineA.toUpperCase()] ?? 0.5,
-      disciplineWeight[clash.disciplineB.toUpperCase()] ?? 0.5,
-    );
-    const severityScore = Math.min(1, weight * (0.4 + Math.min(1, clash.overlapVolume / 0.5) * 0.6));
-    return {
-      ...clash,
-      severityScore: Number(severityScore.toFixed(3)),
-      severity: severityScore >= 0.7 ? 'CRITICAL' : severityScore >= 0.45 ? 'HIGH' : severityScore >= 0.2 ? 'MEDIUM' : 'LOW',
-    };
-  });
+  const scored = scoreClashes(input.clashes);
 
   const result = await runAI(ctx, {
     engine: 'BIM_TWIN',

@@ -4944,11 +4944,10 @@ with the one rule the specification actually names beneath it — nothing reache
 Shared without an author, a checker and its metadata — and who may make each
 move is the permission matrix's answer, given once.
 
-**Still to build in the design block:** D-WF-04 (federation sets bound to exact
-model revisions and the coordination issue lifecycle — `Model` and `Clash` exist,
-the immutable run and the issue states do not), D-WF-06 (design change before
-baseline, distinct from the construction change `ChangeRequest` already covers),
-and D-WF-08 with the 7.4 gate. D-WF-02, D-WF-03, D-WF-05 and D-WF-07 are built.
+**Still to build in the design block:** D-WF-06 (design change before baseline,
+distinct from the construction change `ChangeRequest` already covers) and
+D-WF-08 with the 7.4 gate. D-WF-01, D-WF-02, D-WF-03, D-WF-04, D-WF-05 and
+D-WF-07 are built.
 
 ---
 
@@ -5072,6 +5071,73 @@ ticket recorded, permit issued against the approved method statement, operative
 competency checked, document generated at `MIGL-PTW-0001` revision A. The nine
 document source bindings that said "the All commands screen" now say "the
 Construction screen", because it exists.
+
+---
+
+### Four thousand clashes are forty problems
+
+D-WF-04. `backend/src/domain/coordination.ts`, six routes, 33 tests.
+
+A clash report is the easiest document in construction to produce and the
+hardest to act on. Four failures, and the module is built around them.
+
+**A result nobody can reproduce.** "The models clashed" is worthless a week
+later because the models moved. A run is against a **federation set**: an
+immutable list of exact model revisions with their file hashes, formed once and
+never edited. The hash is checked against the model the platform holds, so the
+set commits to the bytes — "revision C" is a name somebody typed and a hash is
+not. Every run copies those revisions onto itself, so a result stays readable
+whatever happens to the set afterwards.
+
+**A run that measures the misalignment rather than the design.** Two models in
+different units, or on different coordinate systems, clash everywhere. Reporting
+that as findings would bury the real ones, so the federation refuses to form and
+the refusal names what disagrees with what. The platform does not parse IFC —
+that is a declared gap — so units and coordinate system are **declared** by the
+person federating, and the platform holds them to it across the set.
+
+**Four thousand rows that are forty problems.** Raw clashes are grouped by
+location and by the unordered pair of systems, because that is what a fix
+addresses: a duct through a beam clashes with every rebar it meets and somebody
+moves the duct once. The pair is sorted, so a duct-through-beam and a
+beam-through-duct are one problem — and so the same issue is recognised again in
+a later run. Severity comes from `scoreClashes`, extracted out of the BIM
+engine's `detectClashes` rather than reimplemented: two severity scales over one
+set of clashes would let the same overlap read CRITICAL on one screen and MEDIUM
+on another, and nobody could say which was the platform's view.
+
+**An accepted clash marked as resolved.** The rule the specification states
+outright and the one that matters most. Accepting needs a reason, a named risk
+owner and an approval, and the issue's state is **not** changed — resolved means
+the geometry changed, accepted means somebody decided to live with it. It gets
+its own event so an audit can tell the two apart without inspecting state, it is
+refused to anybody without approve on the area, and an accepted issue cannot
+then be walked through verification because there is nothing to verify. It also
+leaves the blocker list, because somebody with the authority decided: a blocker
+list that included decisions would never clear, and a list that never clears
+stops being read.
+
+**A closed issue that comes back.** The next run reopens anything closed that it
+finds again, automatically, with what reopened it and what state it had been in
+written on the history. An issue closed on the strength of a revision that did
+not fix it is the commonest way a clash reaches site. The reverse — a clash a run
+*stops* finding — is reported and never closed: a clash disappearing is evidence,
+not a decision, and closing on it would let a model somebody broke close forty
+issues.
+
+**Verification is somebody else's.** The designer holds create and update on the
+area and resolves; only the BIM lead holds approve, so confirming a clash is
+actually gone is the coordination authority's rather than the party who says
+they fixed it. Verification can send an issue back to resolution, which is the
+whole point of having the state.
+
+**A guardrail that could not see round a ternary.** `catalogue.test.ts` asserts
+every event type has a command able to emit it, by reading the source for
+`eventType: 'X'`. Two of these events were written as
+`eventType: recurred ? 'A' : 'B'` — real emissions the pattern could not see, so
+both branches read as dead events. The code is now two explicit writes, which is
+clearer anyway, and the detector reads the whole expression: it has to be at
+least as clever as the code it audits.
 
 ---
 

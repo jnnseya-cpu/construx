@@ -555,6 +555,24 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('MODEL_INGESTED', 'Model', 'IMPORT', 'BIM_TWIN', { aiAllowed: true, requiresEvidence: true }),
   def('CLASH_DETECTED', 'Clash', 'AI_EXECUTE', 'BIM_TWIN', { aiAllowed: true, requiresEvidence: true }),
   def('CLASH_RESOLVED', 'Clash', 'APPROVE', 'BIM_TWIN', { requiresEvidence: true }),
+  // D-WF-04. An immutable set of exact model revisions. Never updated: a set
+  // that could gain a model would make every run against it incomparable with
+  // every other, which is the one thing the set exists to prevent.
+  def('MODEL_FEDERATION_CREATED', 'FederationSet', 'CREATE', 'BIM_TWIN', { creates: true }),
+  def('CLASH_RUN_COMPLETED', 'ClashRun', 'CREATE', 'BIM_TWIN', { creates: true }),
+  // The grouped, owned, verifiable thing — four thousand raw clashes are forty
+  // problems, and this is the forty. One event covers raising and every move
+  // along the ladder because they are the same act on the same record; the
+  // three below are the ones that differ in kind.
+  def('COORDINATION_ISSUE_ASSIGNED', 'CoordinationIssue', 'UPDATE', 'BIM_TWIN', { creates: true }),
+  // Its own event because a later run found it again after it was closed, which
+  // is a fact about the model rather than about anybody's decision.
+  def('COORDINATION_ISSUE_REOPENED', 'CoordinationIssue', 'UPDATE', 'BIM_TWIN'),
+  // Deliberately not CLASH_RESOLVED. Accepting a clash is a decision to live
+  // with geometry that did not change, and an audit reading the ledger must be
+  // able to tell it from a fix without inspecting state.
+  def('COORDINATION_ISSUE_ACCEPTED', 'CoordinationIssue', 'APPROVE', 'BIM_TWIN'),
+  def('ISSUE_VERIFIED', 'CoordinationIssue', 'APPROVE', 'BIM_TWIN'),
   def('TWIN_STATE_UPDATED', 'DigitalTwinState', 'UPDATE', 'BIM_TWIN', { aiAllowed: true, creates: true }),
   def('SENSOR_READING_INGESTED', 'SensorReading', 'IMPORT', 'BIM_TWIN'),
   def('AS_BUILT_GENERATED', 'Model', 'AI_EXECUTE', 'BIM_TWIN', { aiAllowed: true, requiresEvidence: true }),

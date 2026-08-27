@@ -98,6 +98,15 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // BIM and twin
   Model: { area: 'BIM_TWIN' },
   Clash: { area: 'BIM_TWIN' },
+  // D-WF-04. The set is the exact revisions a run was made against, the run is
+  // what it found, and the issue is the grouped thing somebody owns. All three
+  // under BIM_TWIN, which already splits the parties: the EPC and the designer
+  // hold C and U so they federate, run and resolve; the BIM lead alone holds A,
+  // so verifying that a clash is actually gone — and accepting one that is not
+  // — is the coordination authority's, not the party who says they fixed it.
+  FederationSet: { area: 'BIM_TWIN' },
+  ClashRun: { area: 'BIM_TWIN' },
+  CoordinationIssue: { area: 'BIM_TWIN' },
   DigitalTwinState: { area: 'BIM_TWIN' },
   SensorReading: { area: 'BIM_TWIN' },
 

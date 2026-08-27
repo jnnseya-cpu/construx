@@ -75,16 +75,33 @@ async function sourceFiles(dir: string): Promise<string[]> {
   return files;
 }
 
+/**
+ * Every event type a command can emit.
+ *
+ * Reads the whole `eventType:` expression rather than only a literal directly
+ * after the colon. A name written inside a ternary —
+ * `eventType: recurred ? 'A' : 'B'` — is a real emission that the narrower
+ * pattern could not see, which made both branches read as dead events. That is
+ * exactly the silent hole this file exists to close, so the detector has to be
+ * at least as clever as the code it audits.
+ */
+function emittedIn(corpus: string): Set<string> {
+  const emitted = new Set<string>();
+  // Up to the end of the line, so a ternary is covered and the next property is
+  // not: an event name three lines further down belongs to a different write.
+  for (const match of corpus.matchAll(/eventType:([^\n]*)/g)) {
+    for (const literal of match[1]!.matchAll(/'([A-Z][A-Z0-9_]{3,})'/g)) emitted.add(literal[1]!);
+  }
+  return emitted;
+}
+
 describe('the closed event catalogue', () => {
   it('has a command behind every event, or a stated reason it has none', async () => {
     const files = await sourceFiles(SRC_ROOT);
     const sources = await Promise.all(files.map((file) => readFile(file, 'utf8')));
     const corpus = sources.join('\n');
 
-    const emitted = new Set<string>();
-    for (const match of corpus.matchAll(/eventType:\s*'([A-Z_]+)'/g)) {
-      emitted.add(match[1]!);
-    }
+    const emitted = emittedIn(corpus);
 
     const dead = EVENT_TYPES.map((event) => event.code).filter((type) => !emitted.has(type));
     const undocumented = dead.filter((type) => !(type in NOT_EMITTED));
@@ -104,10 +121,7 @@ describe('the closed event catalogue', () => {
     const sources = await Promise.all(files.map((file) => readFile(file, 'utf8')));
     const corpus = sources.join('\n');
 
-    const emitted = new Set<string>();
-    for (const match of corpus.matchAll(/eventType:\s*'([A-Z_]+)'/g)) {
-      emitted.add(match[1]!);
-    }
+    const emitted = emittedIn(corpus);
 
     const stale = Object.keys(NOT_EMITTED).filter((type) => emitted.has(type));
     assert.deepEqual(stale, [], `these are listed as not emitted but something emits them: ${stale.join(', ')}`);

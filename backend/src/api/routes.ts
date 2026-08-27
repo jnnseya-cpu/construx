@@ -55,6 +55,7 @@ import * as sitevisit from '../engines/sitevisit.ts';
 import * as award from '../domain/award.ts';
 import * as enquiry from '../domain/enquiry.ts';
 import * as constructability from '../domain/constructability.ts';
+import * as coordination from '../domain/coordination.ts';
 import * as designplan from '../domain/designplan.ts';
 import * as measurement from '../domain/measurement.ts';
 import * as meetings from '../domain/meetings.ts';
@@ -5534,6 +5535,124 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       constructability.raiseTemporaryWorks(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
+  },
+
+
+  // ------------------------------------------------------- D-WF-04 federation, clash runs and coordination issues
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/coordination',
+    description: 'Federation sets, the issues grouped out of their runs, and which critical ones are still unresolved',
+    handler: (platform, ctx) => coordination.coordinationPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/federation-sets',
+    description: 'Form an immutable set from exact model revisions. Refused where units or coordinate systems disagree',
+    schema: {
+      type: 'object',
+      required: ['reference', 'models'],
+      properties: {
+        reference: stringField,
+        models: {
+          type: 'array',
+          // No `minItems`: "one model clashes with nothing" is a sentence worth
+          // reading and VALIDATION_FAILED is not.
+          items: {
+            type: 'object',
+            required: ['modelId', 'discipline', 'revision', 'fileHash', 'units', 'coordinateSystem'],
+            properties: {
+              modelId: stringField,
+              discipline: stringField,
+              revision: stringField,
+              fileHash: stringField,
+              units: { type: 'string', enum: [...coordination.UNITS] },
+              coordinateSystem: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => coordination.createFederationSet(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/federation-sets/:federationSetId/runs',
+    description: 'Run the checks and group what they find into issues — four thousand clashes are usually forty problems',
+    schema: {
+      type: 'object',
+      required: ['ruleSet', 'clashes'],
+      properties: {
+        ruleSet: stringField,
+        clashes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['elementA', 'elementB', 'disciplineA', 'disciplineB', 'systemA', 'systemB', 'overlapVolume', 'location'],
+            properties: {
+              elementA: stringField,
+              elementB: stringField,
+              disciplineA: stringField,
+              disciplineB: stringField,
+              systemA: stringField,
+              systemB: stringField,
+              overlapVolume: { type: 'number', minimum: 0 },
+              location: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      coordination.runClashDetection(projectContext(platform, ctx), ctx.params.federationSetId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/coordination-issues/:issueId/assign',
+    description: 'Give an issue one owner, the parties it affects, a date and the model revision it will be fixed in',
+    schema: {
+      type: 'object',
+      required: ['owner', 'affectedParties', 'by', 'targetRevision'],
+      properties: {
+        owner: stringField,
+        affectedParties: { type: 'array', items: stringField },
+        by: stringField,
+        targetRevision: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      coordination.assignIssue(projectContext(platform, ctx), ctx.params.issueId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/coordination-issues/:issueId/advance',
+    description: 'Move an issue along its ladder. Verification can send it back, which is why the state exists',
+    schema: {
+      type: 'object',
+      required: ['to', 'note'],
+      properties: { to: { type: 'string', enum: [...coordination.ISSUE_STATE] }, note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      coordination.advanceIssue(projectContext(platform, ctx), ctx.params.issueId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/coordination-issues/:issueId/accept',
+    description: 'Accept a clash rather than resolve it — with a reason and a named risk owner, and never marked resolved',
+    schema: {
+      type: 'object',
+      required: ['reason', 'riskOwner'],
+      properties: { reason: { type: 'string' }, riskOwner: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      coordination.acceptIssue(projectContext(platform, ctx), ctx.params.issueId as string, body(ctx)),
   },
 
   {
