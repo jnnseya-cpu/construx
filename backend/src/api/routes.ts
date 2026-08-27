@@ -85,6 +85,7 @@ import * as vendortest from '../domain/vendortest.ts';
 import * as prefunctional from '../domain/prefunctional.ts';
 import * as ommanual from '../domain/ommanual.ts';
 import * as operatorreadiness from '../domain/operatorreadiness.ts';
+import * as transfer from '../domain/transfer.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
@@ -5643,6 +5644,133 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => operatorreadiness.acceptOperatorReadiness(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- H-WF-07 keys, credentials, spares, tools and service transfer
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/transfer',
+    description: 'The transfer inventory, shortages and their owners, lost items and the service contacts',
+    handler: (platform, ctx) => transfer.transferPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/transfer-items',
+    description: 'Register a key, card, spare, tool or credential for transfer. A credential carries a vault reference, never a value',
+    schema: {
+      type: 'object',
+      required: [
+        'reference',
+        'kind',
+        'description',
+        'quantityRequired',
+        'quantityHeld',
+        'condition',
+        'storageLocation',
+        'critical',
+        'transferOwner',
+      ],
+      properties: {
+        reference: stringField,
+        kind: {
+          type: 'string',
+          enum: ['KEY', 'ACCESS_CARD', 'CREDENTIAL', 'SPARE', 'CONSUMABLE', 'SPECIAL_TOOL', 'TEST_EQUIPMENT'],
+        },
+        description: { type: 'string' },
+        quantityRequired: { type: 'number' },
+        quantityHeld: { type: 'number' },
+        condition: stringField,
+        storageLocation: stringField,
+        critical: { type: 'boolean' },
+        transferOwner: stringField,
+        // The schema admits an identifier and nothing that could hold a secret.
+        vaultReference: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => transfer.registerTransferItem(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/transfer-items/:itemId/accept',
+    description: 'Hand an item over with both parties named, the retained receipt and any shortage owned from the moment it is counted',
+    schema: {
+      type: 'object',
+      required: ['quantityReceived', 'condition', 'sender', 'recipient', 'location', 'receiptReference', 'receiptHash'],
+      properties: {
+        quantityReceived: { type: 'number' },
+        condition: stringField,
+        sender: stringField,
+        recipient: stringField,
+        location: stringField,
+        receiptReference: stringField,
+        receiptHash: stringField,
+        shortage: {
+          type: 'object',
+          required: ['owner', 'by', 'note'],
+          properties: { owner: stringField, by: stringField, note: { type: 'string' } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      transfer.acceptTransfer(projectContext(platform, ctx), ctx.params.itemId!, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/transfer-items/:itemId/confirm-credential',
+    description: 'Confirm a credential moved through the approved mechanism. Status metadata only',
+    schema: {
+      type: 'object',
+      required: ['mechanism', 'confirmedBy'],
+      properties: { mechanism: { type: 'string' }, confirmedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      transfer.confirmCredentialTransfer(projectContext(platform, ctx), ctx.params.itemId!, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/transfer-items/:itemId/lost',
+    description: 'Report a key or card that cannot be accounted for. A security incident, not a shortage',
+    schema: {
+      type: 'object',
+      required: ['what', 'reportedBy'],
+      properties: { what: { type: 'string' }, reportedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => transfer.reportLostItem(projectContext(platform, ctx), ctx.params.itemId!, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/service-contacts',
+    description: 'Register a service or warranty contact with its response time, escalation route and cover end date',
+    schema: {
+      type: 'object',
+      required: [
+        'system',
+        'provider',
+        'contractReference',
+        'contact',
+        'telephone',
+        'responseTime',
+        'escalation',
+        'coverUntil',
+      ],
+      properties: {
+        system: stringField,
+        provider: stringField,
+        contractReference: stringField,
+        contact: stringField,
+        telephone: stringField,
+        responseTime: stringField,
+        escalation: { type: 'string' },
+        coverUntil: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => transfer.registerServiceContact(projectContext(platform, ctx), body(ctx)),
   },
 
   // ------------------------------------------------------- H-WF-05 regulatory completion and Golden Thread transfer

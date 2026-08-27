@@ -367,6 +367,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   TrainingGapPlan: { area: 'HANDOVER_OM' },
   RetrainingObligation: { area: 'HANDOVER_OM' },
   OperatorReadiness: { area: 'HANDOVER_OM' },
+  // H-WF-07. The register holds no secret value — a credential is recorded by
+  // its vault reference — but it does say which doors exist and where the keys
+  // are kept, so it is not a public part of the handover pack.
+  TransferItem: { area: 'HANDOVER_OM', sensitivity: 'INTERNAL' },
+  ServiceContact: { area: 'HANDOVER_OM' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },

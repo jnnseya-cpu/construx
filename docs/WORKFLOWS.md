@@ -2535,3 +2535,167 @@ D - Prohibited autonomy	Approve design, safety, baseline, payment, claim, comple
 •	Prompt injection and malicious document instructions are treated as untrusted content. Tools, secrets, cross-tenant retrieval and system prompts remain inaccessible.
 •	If citations cannot be resolved, output is Unsupported and cannot be accepted as a published finding.
 ```
+
+## 16 — Non-functional, security and offline requirements
+
+```
+16. Non-functional, security and offline requirements
+Area	Minimum production requirement
+Availability	Set service SLOs by criticality; graceful read-only degradation; multi-zone database/object storage; tested restore and failover
+Performance	P95 ordinary API <500 ms excluding external/AI jobs; dashboards progressively load; long tasks async with progress and cancellation
+Scale	Tenant-isolated quotas; queue backpressure; large-model/file processing chunked; no tenant can exhaust another tenant's capacity
+Security	TLS in transit, encryption at rest, managed secrets, MFA/SSO, least privilege, tenant row-level controls, malware scan and vulnerability management
+Privacy	Purpose/minimisation, retention and deletion policy; field location/audio/competence data classified; export and support access auditable
+Integrity	SHA-256 or approved hash, immutable original evidence, append-only events, signed/time-stamped exports where required and replay verification
+Offline	Encrypted local store, device-bound session, client UUID/idempotency, attachment resume, deterministic merge, sync status and remote-wipe policy
+Accessibility	WCAG 2.2 AA target: keyboard, focus, labels, contrast, non-colour status, scalable text and screen-reader tables/forms
+Internationalisation	IANA time zones, project calendars, currencies/base dates, SI/imperial units, locale formats and translation-ready strings
+Observability	Trace/log/metric correlation, audit of auth/authz/AI/exports, dashboards and alert runbooks; sensitive values redacted
+Business continuity	RPO/RTO defined and tested; offline field continuity; event/outbox recovery; immutable backups and legal hold
+```
+
+## 16.1
+
+```
+16.1 Offline conflict policy
+•	Append-only evidence and diary entries merge by stable client ID; duplicates are idempotent.
+•	Editable draft scalar fields use expectedVersion. Non-conflicting field changes may merge; conflicting material fields create a Conflict record for human resolution.
+•	Approved/issued/locked records never merge. Offline edit becomes a proposed amendment against the approved version.
+•	Attachment upload may resume; record cannot show Complete until every required attachment hash is acknowledged.
+•	Server time, device time and original local offset are retained; time correction adds metadata and never rewrites original evidence time.
+```
+
+## 17 — Quality assurance, acceptance and Definition of Done
+
+```
+17.1 Test pyramid
+•	Unit/property tests: formulas, date calendars, state guards, scoring, unit/currency conversion, hash canonicalisation and permission decisions.
+•	Schema/contract tests: OpenAPI, AsyncAPI/event schema, backward compatibility, idempotency and external adapters.
+•	Service integration tests: state + outbox atomicity, event projection, search/vector indexing, object storage and ACU hold/settlement.
+•	End-to-end role tests: each lifecycle workflow from permitted role, denied role, maker-checker, conditional approval, supersession and export.
+•	Offline/device tests: process kill, app upgrade, duplicate submit, clock drift, attachment interruption, two-device conflict and later sync.
+•	AI evaluations: extraction accuracy, grounded citation resolution, unsupported assertion rate, prompt injection, cross-tenant leakage, schema adherence and cost/latency.
+•	Performance/resilience tests: peak file ingest, dashboard fan-out, queue backlog, provider outage, database failover, replay and restore.
+•	Construction SME UAT: estimator, planner, QS, design manager, site/HSE, commissioning and asset manager sign off real project scenarios.
+```
+
+## 17.2
+
+```
+17.2 Critical end-to-end acceptance scenarios
+ID	Scenario
+E2E-01	Enterprise creates project; trial ACUs auto-provision; Platform Admin cannot create/edit project; execution user sees action-first workspace.
+E2E-02	Concept requirement extracted from source, reviewed, baselined, changed and all affected cost/programme/design objects flagged.
+E2E-03	New drawing revision supersedes prior, alerts affected package, invalidates linked takeoff and records revalidation.
+E2E-04	Tender return is preserved raw, normalised, clarified, adjudicated and converted to contract/budget/commitment without re-entry.
+E2E-05	Airplane-mode daily log with voice/photos survives restart, syncs once and updates verified progress only after approval.
+E2E-06	Failed hold-point inspection blocks successor; NCR/rework/reinspection closes with complete chronology.
+E2E-07	Potential change creates notice deadline from configured contract/calendar, evidence pack and upstream/downstream CVR exposure.
+E2E-08	AI request previews ACU, holds balance, times out/falls back, commits provenance and settles only successful durable output.
+E2E-09	Functional test records calibrated readings and witness; failure creates retest; prior failed data remains immutable.
+E2E-10	Asset data fails IDS/COBie validation, is corrected, reconciles with EAM and activates maintenance/warranty tasks.
+E2E-11	Golden Thread handover pack transfers to named recipient in usable format with hash manifest and receipt.
+E2E-12	Regulator can read/export permitted evidence but every write/approve/AI mutation is denied and audited.
+```
+
+## 17.3
+
+```
+17.3 Global Definition of Done
+•	UI, API, domain state machine, policy, event, notification, reporting projection and audit replay are implemented together.
+•	Positive, denied, boundary, conflict, retry/idempotency, offline and supersession tests pass.
+•	No fake data, dead button, unhandled state or generic AI response remains in production path.
+•	Accessibility, security, privacy, performance and observability acceptance are evidenced.
+•	Data migration/backfill, version compatibility, rollback and runbook are supplied.
+•	Construction SME and product owner accept the workflow against real project evidence.
+•	User guidance, in-product empty/error/loading states and support diagnostics are complete.
+```
+
+## 18 — Delivery backlog and build sequence
+
+```
+18. Delivery backlog and build sequence
+Sequencing rule: Do not build six disconnected stage frontends. Build the shared control spine first, then deliver vertical lifecycle slices that include UI, state, data, events, policy, AI, offline and tests.
+Phase	Build scope	Exit test
+0 - Control foundation	Tenancy/domains; enterprise project creation; seats/RBAC/ABAC; project config; event/outbox; evidence store; autosave; notification; audit replay; ACU hold/settle	Role isolation, project setup, immutable event and AI debit paths pass
+1 - Input and information spine	Project Input Hub; schemas/validation; file/CDE/revision/extraction; requirements; stage gate; dashboards shell	Concept baseline and design information supersession pass end-to-end
+2 - Tender/commercial core	BoQ/estimate; packages; returns; clarification; adjudication; contract; procurement; change; payment; CVR	Award converts to live commercial controls without re-entry
+3 - Field delivery	Mobile/offline; daily log; lookahead/constraints; progress; resources/delivery; quality; RAMS/permit/incidents; RFI/instruction	Offline site-to-programme/commercial/evidence loop passes
+4 - Commissioning/handover	Systemisation; test packs/readings/witness; exceptions/retest; as-built; O&M; asset/COBie; training; Golden Thread transfer	System test to accepted operational asset passes
+5 - Intelligence hardening	Specialist agents, scenario/forecast, evaluation harness, organisation memory, advanced BIM/vision, performance and scale	AI quality/cost/security SLOs and resilience pass
+```
+
+## 18.1
+
+```
+18.1 Epic naming
+•	EPIC-FND: Identity, tenancy, policies, authority and Golden Thread
+•	EPIC-CDE: Evidence, document/drawing/model and information control
+•	EPIC-CON: Concept requirements, feasibility, cost/programme and stage gate
+•	EPIC-DES: Design planning, reviews, coordination, changes and design gate
+•	EPIC-TEN: Tender intake, estimating, packages, returns, adjudication and award
+•	EPIC-FLD: Programme/field/resource/quality/HSE execution
+•	EPIC-COM: Contract/change/notice/payment/CVR/claims
+•	EPIC-CMN: Commissioning systemisation, testing, exceptions and acceptance
+•	EPIC-HOV: Handover requirements, as-built/O&M/assets/training/transfer/aftercare
+•	EPIC-AI: AI gateway, specialist agents, provenance, evaluation and ACU enforcement
+```
+
+## Appendix A — KPI and status dictionaries
+
+```
+A.1 KPI calculation rules
+KPI	Calculation / guardrail
+Stage completeness	Weighted accepted mandatory requirements / total mandatory weight. Uploaded-but-unaccepted evidence does not count.
+Milestone confidence	Model output with feature snapshot, calibration and confidence band; never displayed as deterministic date.
+Schedule Performance Index	Earned Value / Planned Value at declared cut-off; source progress version and measurement basis required.
+Cost Performance Index	Earned Value / Actual Cost at declared cut-off; division-by-zero returns Not Available.
+Forecast final cost	Actual cost + commitments/accruals + approved remaining estimate + risk-weighted forecast; components visible.
+Unapproved change exposure	Sum of assessed/forecast cost for open change states not agreed upstream, with separate downstream exposure.
+Design readiness	Accepted deliverables due before need date, adjusted for blocking comments/interfaces and supersession.
+Commissioning readiness	Weighted accepted prerequisites/test-pack requirements by system; critical blocker forces Not Ready.
+Handover readiness	Weighted accepted requirements across technical, asset, regulatory, competence, access and commercial streams.
+Data freshness	Age since required source cut-off by domain; report shows stale/missing, never assumes no change.
+```
+
+## A.2
+
+```
+A.2 Shared status enums
+Object	Canonical statuses
+Task	Created; Accepted; In Progress; Blocked; Complete; Verified; Closed; Cancelled
+Information container	WIP; Shared; Published; Archive; Rejected; Superseded
+Review	Not Started; In Review; Comments Open; Ready for Decision; Accepted; Rejected; Closed
+Change	Identified; Notified; Assessing; Quoted; Submitted; Instructed; Approved; Rejected; Implemented; Verified; Closed
+Payment	Planned; Draft; Submitted; Notice Received; Certified; Invoiced; Paid; Reconciled; Disputed
+Inspection/test	Planned; Ready; Released; In Progress; Pass; Fail; Conditional; Aborted; Retest Required; Accepted
+Defect/NCR/exception	Open; Contained; Root Cause; Corrective Action; Ready for Verification; Closed; Reopened
+Handover deliverable	Not Started; Draft; Submitted; In Review; Rejected; Accepted with Conditions; Accepted; Superseded
+```
+
+## Appendix B.2 — Industry and regulatory references
+
+```
+B.2 Primary industry and regulatory references used for validation
+Reference	Use	URL
+RIBA Plan of Work	Lifecycle stage structure and project process	https://www.ribaplanofwork.com/
+UK BIM Framework	ISO 19650 implementation guidance, CDE, information delivery and open data	https://www.ukbimframework.org/resources/
+HSE CDM 2015 guidance	Construction dutyholders, pre-construction and construction-phase safety management	https://www.hse.gov.uk/pubns/books/l153.htm
+UK Government Golden Thread guidance	Digital, secure, available, usable and up-to-date safety information and transfer	https://www.gov.uk/guidance/keeping-information-about-a-higher-risk-building-the-golden-thread
+Building Safety Regulator - changes	Approval requirements for major changes on higher-risk building projects	https://www.gov.uk/guidance/making-changes-to-a-higher-risk-building-project
+Building (Higher-Risk Buildings Procedures) Regulations 2023	Current statutory procedure reference	https://www.legislation.gov.uk/uksi/2023/909/contents
+Housing Grants, Construction and Regeneration Act 1996 Part II	Construction payment mechanism and notice framework	https://www.legislation.gov.uk/ukpga/1996/53/part/II/crossheading/payment
+NEC official resources	Early warning, compensation event, programme and notification process context	https://www.neccontract.com/resources/dictionary
+JCT official resources	Current contract families and payment/process guidance	https://www.jctltd.co.uk/useful-documents
+buildingSMART IFC	Open model exchange standard and current IFC release	https://www.buildingsmart.org/standards/bsi-standards/industry-foundation-classes/
+buildingSMART BCF	Model-based issue communication	https://www.buildingsmart.org/standards/bsi-standards/bim-collaboration-format/
+buildingSMART IDS	Computer-interpretable information requirements and model checking	https://www.buildingsmart.org/standards/bsi-standards/information-delivery-specification-ids/
+CIBSE Commissioning Code M	Commissioning management, FAT, pre-functional, functional, integrated, performance, training and handover	https://www.cibse.org/knowledge-research/knowledge-portal/commissioning-code-m-ccm-commissioning-management-2022/
+NBS Uniclass	Unified construction classification for information and asset records	https://www.thenbs.com/our-tools/uniclass
+```
+
+## Legal and professional limitation
+
+```
+Legal and professional limitation: CONSTRUX must support project-specific legal, technical and professional review. This specification defines software controls; it does not replace a contract, statutory duty, competent designer, surveyor, engineer, HSE professional, commissioning authority or legal adviser.
+```

@@ -1035,6 +1035,26 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('RETRAINING_REQUIRED', 'RetrainingObligation', 'CREATE', 'HANDOVER_OM', { creates: true }),
   def('OPERATOR_READY', 'OperatorReadiness', 'APPROVE', 'HANDOVER_OM', { creates: true }),
 
+  // H-WF-07. None of these is `aiAllowed`. The specification's guardrail is "no
+  // access to or reproduction of secret values; only status metadata", and the
+  // cheapest way to honour it is that no agent mandate reaches the register at
+  // all — a credential's whereabouts is as useful to an attacker as its value.
+  def('TRANSFER_ITEM_REGISTERED', 'TransferItem', 'CREATE', 'HANDOVER_OM', { creates: true }),
+  // Two events for the two things a key and a spare are. Whoever reads the
+  // ledger for "who holds the keys" is not asking the same question as whoever
+  // reads it for "did the spares arrive".
+  def('KEYS_TRANSFERRED', 'TransferItem', 'UPDATE', 'HANDOVER_OM', { requiresEvidence: true }),
+  def('SPARES_ACCEPTED', 'TransferItem', 'UPDATE', 'HANDOVER_OM', { requiresEvidence: true }),
+  // Separate from the transfer, because the transfer happened and the shortage
+  // is the fact somebody still has to act on.
+  def('TRANSFER_SHORTAGE_RECORDED', 'TransferItem', 'UPDATE', 'HANDOVER_OM'),
+  // Status metadata only: which vault reference, by what mechanism, confirmed by
+  // whom. The value never enters the platform.
+  def('CREDENTIAL_TRANSFER_CONFIRMED', 'TransferItem', 'UPDATE', 'HANDOVER_OM'),
+  // A security incident, not a shortage.
+  def('TRANSFER_ITEM_LOST', 'TransferItem', 'UPDATE', 'HANDOVER_OM'),
+  def('SERVICE_CONTACT_REGISTERED', 'ServiceContact', 'CREATE', 'HANDOVER_OM', { creates: true }),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

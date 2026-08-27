@@ -6454,12 +6454,61 @@ classified `SAFETY_L2`, which is a real restriction and the nearest available,
 but it is not a purpose-built personal-data control and is not claimed as one.
 The retention half is not implemented.
 
-**Still to build in the handover block:** H-WF-07 to H-WF-10, the
+---
+
+### There is no field a secret could go in
+
+H-WF-07. `backend/src/domain/transfer.ts`, six routes, 47 tests.
+
+The unglamorous half of a handover, and the half that decides whether anybody
+can get into the plant room on Monday.
+
+**AC-H-WF-07-02 is structural, not a rule.** "No secret value appears in the
+audit log or export" cannot be enforced by validating input, because a rule that
+inspects a secret has already handled one. So the credential path has **no field
+a secret could occupy**: a credential is registered by its vault reference and
+its status, and the transfer records that it happened through a named mechanism.
+The platform never holds, sees or moves the value, and because the type has no
+place for one, no future caller can supply it by accident. The test for this
+walks the serialised ledger rather than asserting that a validator stripped
+something — the point is the absence of the field, not the presence of a guard.
+A vague mechanism is refused: "sent it over" covers an approved secret store and
+an email, and the difference between those two is the whole control.
+
+**AC-H-WF-07-01: both parties, and a receipt that was kept.** An inventory
+transfer signed by one side is a note somebody wrote, so the sender and the
+recipient are both named and cannot be the same person. The criterion says
+*retain* the receipt: it is registered as hashed evidence rather than cited as a
+reference, and both transfer events carry `requiresEvidence`. A reference to a
+document nobody kept is what either party finds six months later when the tools
+are not where they should be.
+
+**AC-H-WF-07-03: a shortage is an obligation, not a note.** The commonest
+outcome of a handover inventory is that most of it arrives, and what happens to
+the rest is decided in the fortnight afterwards or never. The moment the
+recipient counts what arrived is the only moment anybody is looking, so a short
+delivery cannot be accepted without an owner and a date, and it is written as a
+**second event** — the transfer happened; separately, some of it did not arrive,
+and that second fact is the one somebody has to act on. A critical item short
+blocks readiness; a non-critical one does not.
+
+**A lost key is a security incident, not a shortage.** Deliberately a separate
+route from the shortage, and reported ahead of every other blocking reason. A
+spare that never arrived is a commercial problem. A key that was issued and
+cannot be accounted for is a building somebody may be able to get into.
+
+**No agent mandate reaches the register at all.** Every one of the seven events
+is `aiAllowed: false`, including the register itself. The specification's
+guardrail is "no access to or reproduction of secret values; only status
+metadata", and a credential's whereabouts is as useful to an attacker as its
+value.
+
+**Still to build in the handover block:** H-WF-08 to H-WF-10, the
 `HANDOVER_ACCEPTED` gate, the 11.4 gate and the stage workspace described in
 11.2. The stage control, 11.1, 11.2, H-WF-01 to H-WF-10, 11.4 and the
-cross-stage sections 12 to 15.5 are recorded verbatim in `docs/WORKFLOWS.md`;
-several arrived out of sequence during the build and are recorded there in the
-order they were sent.
+cross-stage sections 12 to 18.1 and the appendices are recorded verbatim in
+`docs/WORKFLOWS.md`; several arrived out of sequence during the build and are
+recorded there in the order they were sent.
 
 ---
 
