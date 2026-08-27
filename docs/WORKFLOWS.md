@@ -2513,3 +2513,25 @@ B - Analytical	Compare bids, detect clashes, forecast delay/cost	Publish insight
 C - Controlled draft	RAMS, notice, valuation, claim, regulatory pack	Draft only; mandatory domain approval and evidence review
 D - Prohibited autonomy	Approve design, safety, baseline, payment, claim, completion, competence or regulatory submission	Human command required; AI cannot execute or impersonate signatory
 ```
+
+## 15.4
+
+```
+15.4 Mandatory AI output schema
+•	finding/summary; evidenceRefs with page/object/time anchors; confidence and confidence basis
+•	assumptions; knownGaps; alternatives considered; riskLevel
+•	commercialImpact; programmeImpact; contractImpact; safety/complianceImpact; downstreamImpact
+•	recommendedAction; actionOwner; requiredBy; approvalRequired and requiredAuthority
+•	provider/model, prompt/template version, retrieval snapshot, tool calls, createdAt and ACU consumed
+```
+
+## 15.5
+
+```
+15.5 Confidence and failure policy
+•	Confidence thresholds are configured by task risk. Default extraction below 0.85 requires review; below 0.70 cannot auto-create a material entity. Safety, legal, payment and regulatory tasks may require stricter thresholds.
+•	Confidence is not a substitute for accuracy testing. Each agent has a gold-set evaluation, false-positive/negative targets and monitored drift.
+•	Provider timeout/failure may route to approved fallback. Cross-provider result is separately identified; no silent model substitution.
+•	Prompt injection and malicious document instructions are treated as untrusted content. Tools, secrets, cross-tenant retrieval and system prompts remain inaccessible.
+•	If citations cannot be resolved, output is Unsupported and cannot be accepted as a published finding.
+```

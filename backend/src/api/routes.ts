@@ -84,6 +84,7 @@ import * as testpack from '../domain/testpack.ts';
 import * as vendortest from '../domain/vendortest.ts';
 import * as prefunctional from '../domain/prefunctional.ts';
 import * as ommanual from '../domain/ommanual.ts';
+import * as operatorreadiness from '../domain/operatorreadiness.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
@@ -5540,6 +5541,108 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => systemisation.declareTemporaryOperation(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- H-WF-06 operator training, competence and readiness
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/operator-readiness',
+    description: 'Who can actually run the building, role by role, and what blocks the handover',
+    handler: (platform, ctx) => operatorreadiness.operatorReadinessPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/training-needs',
+    description: 'Define what the operating model needs, role by role, with the competences each requires',
+    schema: {
+      type: 'object',
+      required: ['reference', 'operatingModel', 'roles', 'definedBy'],
+      properties: {
+        reference: stringField,
+        operatingModel: { type: 'string' },
+        definedBy: stringField,
+        roles: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['role', 'headcountRequired', 'competences', 'assessmentRequired', 'critical'],
+            properties: {
+              role: stringField,
+              headcountRequired: { type: 'number' },
+              competences: { type: 'array', items: { type: 'string' } },
+              assessmentRequired: { type: 'boolean' },
+              critical: { type: 'boolean' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => operatorreadiness.defineTrainingNeeds(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/competence-assessments',
+    description: 'Assess a person against the competence the role requires. Attendance is not competence',
+    schema: {
+      type: 'object',
+      required: ['person', 'employer', 'role', 'sessionReference', 'method', 'result', 'assessedBy', 'evidence'],
+      properties: {
+        person: stringField,
+        employer: stringField,
+        role: stringField,
+        sessionReference: stringField,
+        method: { type: 'string', enum: ['PRACTICAL_DEMONSTRATION', 'WRITTEN', 'OBSERVATION'] },
+        result: { type: 'string', enum: ['COMPETENT', 'NOT_YET_COMPETENT'] },
+        assessedBy: stringField,
+        evidence: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => operatorreadiness.assessCompetence(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/training-gap-plans',
+    description: 'Record a controlled gap plan: what is missing, what happens meanwhile, who owns it and by when',
+    schema: {
+      type: 'object',
+      required: ['role', 'gap', 'interimArrangement', 'owner', 'by'],
+      properties: {
+        role: stringField,
+        gap: { type: 'string' },
+        interimArrangement: { type: 'string' },
+        owner: stringField,
+        by: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => operatorreadiness.recordGapPlan(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/retraining',
+    description: 'Require retraining for a role where a change has invalidated what was taught',
+    schema: {
+      type: 'object',
+      required: ['role', 'reason', 'owner', 'by'],
+      properties: { role: stringField, reason: { type: 'string' }, owner: stringField, by: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => operatorreadiness.requireRetraining(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/operator-readiness',
+    description: 'Accept that the operator is ready, with the outstanding support arrangement stated',
+    schema: {
+      type: 'object',
+      required: ['acceptedBy', 'forOperator', 'supportPlan'],
+      properties: { acceptedBy: stringField, forOperator: stringField, supportPlan: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => operatorreadiness.acceptOperatorReadiness(projectContext(platform, ctx), body(ctx)),
   },
 
   // ------------------------------------------------------- H-WF-05 regulatory completion and Golden Thread transfer

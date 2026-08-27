@@ -359,6 +359,14 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   CompletionReadiness: { area: 'HANDOVER_OM' },
   RegulatoryPack: { area: 'HANDOVER_OM' },
   GoldenThreadTransfer: { area: 'EVIDENCE_AUDIT' },
+  // H-WF-06. The competence assessment carries SAFETY_L2, which is the nearest
+  // restriction the sensitivity ladder offers for personal data — it has no
+  // personal-data tier, and this is not claimed to be one.
+  TrainingNeeds: { area: 'HANDOVER_OM' },
+  CompetenceAssessment: { area: 'HANDOVER_OM', sensitivity: 'SAFETY_L2' },
+  TrainingGapPlan: { area: 'HANDOVER_OM' },
+  RetrainingObligation: { area: 'HANDOVER_OM' },
+  OperatorReadiness: { area: 'HANDOVER_OM' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },

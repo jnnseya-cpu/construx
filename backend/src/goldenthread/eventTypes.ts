@@ -1021,6 +1021,20 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // of them false means the duty has not moved.
   def('GOLDEN_THREAD_TRANSFERRED', 'GoldenThreadTransfer', 'ISSUE', 'EVIDENCE', { creates: true }),
 
+  // --- H-WF-06 operator training, competence and operational readiness ------
+  // CM-WF-08's `TRAINING_DELIVERED` already records a session against the
+  // revision it taught, and is not duplicated here. What these add is the part
+  // it does not answer: whether anybody is competent, and whether the roles the
+  // building needs are covered.
+  def('TRAINING_NEEDS_DEFINED', 'TrainingNeeds', 'CREATE', 'HANDOVER_OM', { creates: true }),
+  // A separate act by a separate assessor. Attendance proves somebody was in
+  // the room, and the specification is explicit that the platform never
+  // certifies competence.
+  def('COMPETENCE_ASSESSED', 'CompetenceAssessment', 'CREATE', 'HANDOVER_OM', { creates: true }),
+  def('TRAINING_GAP_PLANNED', 'TrainingGapPlan', 'APPROVE', 'HANDOVER_OM', { creates: true }),
+  def('RETRAINING_REQUIRED', 'RetrainingObligation', 'CREATE', 'HANDOVER_OM', { creates: true }),
+  def('OPERATOR_READY', 'OperatorReadiness', 'APPROVE', 'HANDOVER_OM', { creates: true }),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

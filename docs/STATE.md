@@ -6413,10 +6413,51 @@ obligations to inherit by their own reference. A refusal leaves the submitted
 pack untouched — it is the evidence of what was applied for — and a corrective
 version is a new pack that names it.
 
-**Still to build in the handover block:** H-WF-06 to H-WF-10, the
+---
+
+### Attendance is not competence
+
+H-WF-06. `backend/src/domain/operatorreadiness.ts`, six routes, 21 tests.
+
+CM-WF-08 already ties a training session to the revision it taught and
+invalidates it on supersession — that is AC-H-WF-06-02 and the second exception
+control, already built, and this reads those sessions rather than keeping a
+second set. An invalidated session drops out of the coverage entirely, and an
+assessment cannot be recorded against one: assessing somebody on a building that
+no longer exists proves nothing about the one that does.
+
+**Attendance is not competence.** The exception control every training record in
+construction gets wrong. A signature on a sheet proves somebody was in the room.
+Where the needs analysis says an assessment is required, it is a separate act by
+a separate assessor with a method and evidence — and until it happens the person
+is *awaiting assessment*, not competent. A self-assessment is refused: that is
+not an assessment, it is a declaration.
+
+**AC-H-WF-06-01: every operational role covered, or a controlled gap plan.** The
+question at handover is not "was training delivered" but "is there a competent
+named person for every role this building needs to run". A gap plan is accepted
+in place of one, but it needs the **interim arrangement** — somebody still has
+to operate the building on Monday — with an owner and a date. A readiness
+acceptance also needs the outstanding support arrangement stated: nobody runs a
+new building unaided in the first month, and one that pretends otherwise is
+withdrawn in week two.
+
+**AC-H-WF-06-03: the blocker names the person, not the consequence.** A failed
+assessment is reported before the coverage shortfall it causes, because "K. Osei
+was assessed as not yet competent" is actionable and "no competent named person"
+describes what follows from it.
+
+**One honest limit, stated in the code and here.** The specification asks for
+personal competence data to carry restricted access *and retention*. The
+sensitivity ladder has **no personal-data tier**; a competence assessment is
+classified `SAFETY_L2`, which is a real restriction and the nearest available,
+but it is not a purpose-built personal-data control and is not claimed as one.
+The retention half is not implemented.
+
+**Still to build in the handover block:** H-WF-07 to H-WF-10, the
 `HANDOVER_ACCEPTED` gate, the 11.4 gate and the stage workspace described in
 11.2. The stage control, 11.1, 11.2, H-WF-01 to H-WF-10, 11.4 and the
-cross-stage sections 12 to 15.3 are recorded verbatim in `docs/WORKFLOWS.md`;
+cross-stage sections 12 to 15.5 are recorded verbatim in `docs/WORKFLOWS.md`;
 several arrived out of sequence during the build and are recorded there in the
 order they were sent.
 
