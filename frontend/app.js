@@ -128,12 +128,15 @@ export function icon(name) {
 
 let matrix = null;
 let writePhaseGates = {};
+/** The roles a tenant admin may grant — published by the API, not assumed here. */
+let grantableRoles = [];
 
 async function loadMatrix() {
   if (matrix) return matrix;
   const result = await api.get('/v1/permissions/matrix');
   matrix = result.matrix;
   writePhaseGates = result.writePhaseGates ?? {};
+  grantableRoles = result.tenantGrantableRoles ?? [];
   // The same call carries which events a device may never originate, so the
   // outbox refuses a governance action at the point of the press rather than
   // queuing one the sync engine will certainly reject.
@@ -377,11 +380,15 @@ function sidebar(active) {
     </a>
 
     ${NAV.map((group) => {
-      const visible = group.items.filter((item) => reachable(item));
-      if (visible.length === 0) return '';
+      // A group where the viewer can reach nothing is hidden outright — an
+      // entire section of locks teaches less than it costs. Within a group the
+      // viewer *can* use, the unreachable items stay visible and locked,
+      // because there a lock names a colleague to ask.
+      if (!group.items.some((item) => reachable(item))) return '';
+      const visible = group.items.filter((item) => worthShowing(item));
       return html`<nav class="nav-group" aria-labelledby="navgroup-${raw(group.group.toLowerCase().replace(/[^a-z]+/g, '-'))}">
         <div class="nav-group-label" id="navgroup-${raw(group.group.toLowerCase().replace(/[^a-z]+/g, '-'))}">${group.group}</div>
-        ${group.items.map((item) => {
+        ${visible.map((item) => {
           if (!reachable(item)) {
             return html`<button class="nav-item locked" title="${lockReason(item)}">
               ${icon(item.icon)}<span>${item.label}</span><span class="lock">🔒</span>
@@ -420,6 +427,32 @@ function reachable(item) {
   if (isOperator()) return item.area === 'PLATFORM_ADMINISTRATION';
   if (item.area === 'PLATFORM_ADMINISTRATION') return false;
   return can(item.area, 'R') || item.id === 'overview' || item.id === 'copilot' || item.id === 'account';
+}
+
+/**
+ * Is this item worth showing at all, locked or not?
+ *
+ * The sidebar's rule is that a capability the viewer cannot reach is shown
+ * locked with the reason, because somebody needs to know the capability exists
+ * and who to ask for it. That is right for a capability a *colleague* holds —
+ * an FM seeing Programme locked learns something true and actionable.
+ *
+ * It is wrong for a capability nobody in the customer's world can ever hold.
+ * Platform Admin and Newsletter sit under an area only the platform operator
+ * role holds, and that role is not one a tenant administrator can grant — so
+ * for every customer account, on every screen, forever, those two were dead
+ * items with a lock on them. There is no colleague to ask. That is not
+ * information, it is furniture.
+ *
+ * Reachability-by-anybody is computed from the published matrix and the
+ * published grantable-role list rather than from a hard-coded role name here,
+ * so it cannot drift from the server's own answer.
+ */
+function worthShowing(item) {
+  if (isOperator()) return true;
+  if (!matrix || grantableRoles.length === 0) return true;
+  if (reachable(item)) return true;
+  return grantableRoles.some((role) => (matrix[role]?.[item.area] ?? []).includes('R'));
 }
 
 function lockReason(item) {

@@ -2400,6 +2400,12 @@ export const ROUTES: Route[] = [
       // operation the sync engine will certainly reject, and showing the
       // operative an approval as "pending sync" until it does.
       neverOffline: [...FIELD_FORBIDDEN_EVENTS],
+      // The roles a tenant administrator may actually grant. Published for the
+      // same reason as everything else here: a console that wants to know
+      // whether a capability is reachable *by anybody in this customer's world*
+      // would otherwise have to hard-code which roles are operator-only, and
+      // that rule would then drift from this one.
+      tenantGrantableRoles: [...TENANT_GRANTABLE_ROLES],
     }),
   },
 

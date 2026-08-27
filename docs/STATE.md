@@ -6830,6 +6830,38 @@ regenerated against the redesigned console for local reference.
 
 ---
 
+### Two menu items nobody could ever open
+
+The sidebar's rule is that a capability the viewer cannot reach is shown locked
+with the reason, because somebody needs to know it exists and who to ask. That
+is right for a capability a *colleague* holds: a facilities manager seeing
+Programme locked learns something true and actionable.
+
+It was wrong for two of them. **Platform Admin and Newsletter** sit under
+`PLATFORM_ADMINISTRATION`, which only the `PLATFORM_ADMIN` role holds — and
+that role is in `OPERATOR_ONLY_ROLES`, so no tenant administrator can grant it
+to anybody. Those two items were therefore locked, on every screen, for every
+customer account, permanently. There was no colleague to ask. That is not
+information, it is furniture, and it made the permission model look arbitrary
+rather than considered.
+
+An item is now shown only if *somebody in the customer's world* could hold read
+on its area. That is computed from the published permission matrix and a newly
+published `tenantGrantableRoles`, rather than from a hard-coded role name in the
+browser — the same reason the matrix and the phase gates were published in the
+first place, so the console cannot drift from the server's own answer.
+
+The group-level rule is unchanged and deliberate: a group where the viewer can
+reach nothing is hidden outright, because a whole section of locks teaches less
+than it costs, while inside a group they do use, an unreachable item stays
+visible and locked because there the lock names somebody to ask.
+
+For a facilities manager this takes the sidebar from six locks to four, and the
+four that remain — Programme, Field Execution, ACU & Billing, Communications —
+are all genuinely held by other roles on the same project.
+
+---
+
 ## What is partial
 
 Implemented in a form that works, with a stated part missing. The missing part is
