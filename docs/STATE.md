@@ -1852,6 +1852,41 @@ access control and serve it to whoever opens the app on that device next.
 Offline field work is the sync protocol's job, not a cache's. Shell only,
 network-first for navigation, verified by test and in a browser.
 
+**The handset was audited at 393×852, not assumed.** Three defects were found
+by measuring, and all three are fixed:
+
+- The lifecycle rail's seven `nowrap` stages rendered the console **541px wide
+  in a 393px viewport** — the whole page scrolled sideways. The rail now scrolls
+  within itself, bleeding to the screen edges so it reads as a scrollable strip
+  rather than a clipped one.
+- Controls and fields were below the 44px minimum a thumb needs. Every button,
+  navigation item and field is now at least 44px under
+  `(hover: none) and (pointer: coarse)`, and every text input is set at 16px —
+  below that iOS zooms the page on focus and leaves the field off-screen, which
+  reads as a broken layout.
+- `span.mono` had **no rule behind it**: clause references, environment keys and
+  state hashes were rendering in the prose face. Worse, an unbreakable 71-char
+  `sha256:` on Project Control was the second source of horizontal overflow. The
+  class now sets the mono family and `overflow-wrap: anywhere`, which breaks
+  only a token that would not otherwise fit.
+
+Verified by sweeping every route reachable by a project manager (20) and by the
+platform operator (2) at phone width: no horizontal overflow, no empty view, no
+page error on any of them.
+
+**iOS is told how to install, because Safari will not offer.** `beforeinstallprompt`
+is captured on Chromium so the offer appears where the work is rather than
+buried in a browser menu. Safari fires no such event and exposes no API that
+can start an installation — it is Share → Add to Home Screen and nothing else —
+so a page that says nothing reads to an iPhone user as an application that
+cannot be installed. `frontend/lib/install.js` says it in words, and this is
+where a platform sniff is legitimate: the instruction genuinely differs by
+browser. It is shown once, four seconds in so it does not compete with the first
+screen, dismissed with one touch, and the dismissal is remembered. It is not
+shown to Chrome or Firefox on iOS, which cannot install at all, nor inside an
+already-installed application — checked in script and again by a
+`display-mode: standalone` media query.
+
 **The outbox is what makes it a field application rather than an installable
 bookmark.** `frontend/lib/outbox.js` holds captured work in IndexedDB until the
 sync engine has decided about it. Three properties, each verified in a browser
@@ -7055,3 +7090,11 @@ Re-opening these is what caused churn before.
   a restart cannot skip a send. Week-keyed campaigns make the polling safe.
 - With no `SMTP_HOST`, the Newsletter screen states plainly that nothing is
   being transmitted. That is the configured state in development, not a fault.
+- The install prompt's **iOS branch is verified** — shown under a Safari agent,
+  suppressed under Chrome-on-iOS, suppressed once dismissed, dismissal
+  persisted. Its **Chromium branch is not**, and cannot be here: headless
+  Chromium does not fire `beforeinstallprompt` (it is gated behind the browser's
+  own installability and engagement heuristics), so the listener is exercised
+  by no test. What is verified is that the listener is attached and that nothing
+  paints when the event does not arrive. The Android offer needs a real handset
+  to confirm.

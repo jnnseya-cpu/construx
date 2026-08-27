@@ -1,6 +1,7 @@
 import { api, ApiError, resetWithheld, session, withheldRecords } from './lib/api.js';
 import { esc, html, humanise, initials, money, raw, render, toast } from './lib/ui.js';
 import { wireDrill } from './lib/drill.js';
+import { armInstallPrompt } from './lib/install.js';
 import * as outbox from './lib/outbox.js';
 import { PAGES } from './pages/index.js';
 
@@ -672,6 +673,10 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js', { scope: '/app' }).catch(() => {});
   });
 }
+
+// Armed after registration, not before: it only listens, and what it offers is
+// worth nothing until there is a service worker behind it to install.
+armInstallPrompt();
 
 window.addEventListener('unhandledrejection', (event) => {
   const error = event.reason;

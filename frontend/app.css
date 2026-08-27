@@ -462,7 +462,16 @@ tbody tr { transition: background .1s ease; }
 tbody tr:hover { background: rgba(255,255,255,.035); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
 th.num { font-family: var(--sans); }
-td.mono { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+/* References, hashes and identifiers.
+   The class was being set on spans with no rule behind it, so the one thing in
+   the interface that must not be mistaken for prose — a clause reference, a
+   state hash, an environment key — was rendering in the prose face.
+   `overflow-wrap: anywhere` is the other half of it: a sha256 is a single
+   71-character word, and on a handset one unbreakable string pushed the whole
+   page sideways. It breaks only a token that would not otherwise fit, so short
+   references are untouched. */
+.mono { font-family: var(--mono); overflow-wrap: anywhere; }
+td.mono { font-size: 11px; color: var(--text-3); }
 
 /* badges */
 .badge {
@@ -733,6 +742,112 @@ input:focus, select:focus, textarea:focus {
   .g2, .g4, .g5 { grid-template-columns: 1fr; }
   .login-page { grid-template-columns: 1fr; }
   .login-brand { display: none; }
+}
+
+/* --- phone ---------------------------------------------------------------
+ *
+ * This is the field app. It is opened on a phone, outdoors, by somebody
+ * wearing gloves, and two things were wrong with it there.
+ *
+ * **The page scrolled sideways.** The lifecycle rail lays seven stages in a
+ * row with `white-space: nowrap`, which is 541px of content — so on a 393px
+ * screen the whole document became 541 wide and every page slid under the
+ * thumb. Wide content has to scroll inside its own box; the body must never
+ * scroll horizontally. The rail now does that, with each segment given a
+ * floor so the labels stay readable rather than being squeezed to nothing.
+ *
+ * **Touch targets were desktop-sized.** WCAG 2.5.8 asks for 24×24 and the
+ * interface already passed that, but a control that is legally large enough
+ * is not the same as one a person can hit in the rain. These meet the 44px
+ * that both Apple and Android recommend, on touch devices only — a mouse
+ * does not need it and the density is worth keeping on a desk.
+ */
+@media (max-width: 620px) {
+  .rail {
+    overflow-x: auto;
+    scrollbar-width: none;
+    /* Bleeds to the card edge so the cut-off segment reads as scrollable
+       rather than as a layout mistake. */
+    margin: 0 -18px;
+    padding: 0 18px;
+  }
+  .rail::-webkit-scrollbar { display: none; }
+  .rail div { flex: 0 0 auto; min-width: 104px; }
+
+  .view { padding: 18px 14px 48px; }
+  .view-head h1 { font-size: 19px; }
+  .card { padding: 15px 14px; }
+  .card.pad0 > h2, .card.pad0 > h3 { padding: 14px 14px 0; }
+  .metric { font-size: 22px; }
+
+  /* The command bar wraps rather than overflowing, and each button is a
+     thumb-sized target. */
+  .cmd-bar { gap: 7px; }
+  .view-head .actions { width: 100%; }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .btn,
+  .nav-item,
+  .identity,
+  .user-chip {
+    min-height: 44px;
+  }
+  .btn.sm { min-height: 38px; }
+  input[type=text], input[type=search], input[type=number], input[type=email], select, textarea {
+    min-height: 44px;
+    /* 16px or iOS zooms the whole page on focus, which then leaves the field
+       off-screen and the layout apparently broken. */
+    font-size: 16px;
+  }
+  .modal header button { width: 44px; height: 44px; }
+}
+
+/* --- install prompt ------------------------------------------------------
+   Anchored to the bottom because that is where a thumb is, and clear of the
+   home indicator via `safe-area-inset-bottom` — an iPhone in standalone mode
+   paints under it, and a dismiss button beneath the indicator cannot be
+   pressed. It sits above the toast host so a dismissal never has to be aimed
+   past a notification. */
+.install-bar {
+  position: fixed; z-index: 210;
+  left: 14px; right: 14px; bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  display: flex; align-items: center; gap: 13px;
+  padding: 13px 15px;
+  background: var(--slate);
+  border: 1px solid var(--line-strong); border-radius: var(--r-lg);
+  box-shadow: var(--edge), var(--e3);
+  animation: install-rise .28s cubic-bezier(.2, .8, .3, 1);
+}
+@keyframes install-rise { from { opacity: 0; transform: translateY(14px); } }
+@media (prefers-reduced-motion: reduce) { .install-bar { animation: none; } }
+
+.install-mark { flex: 0 0 auto; width: 34px; height: 34px; }
+.install-mark svg { width: 100%; height: 100%; display: block; }
+
+/* Basis zero, not auto: with `auto` the message's own content width is its
+   flex base, which on a handset exceeds the row and pushes it below the mark
+   instead of sitting beside it. */
+.install-text { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.install-text strong { font-size: 13px; font-weight: 650; }
+.install-text span { font-size: 12px; line-height: 1.45; color: var(--text-3); }
+
+.install-actions { flex: 0 0 auto; display: flex; gap: 7px; }
+
+@media (max-width: 620px) {
+  /* The two-line message and the buttons will not both fit across a handset,
+     so the buttons drop to their own full-width row rather than squeezing the
+     text into a column three words wide. */
+  .install-bar { flex-wrap: wrap; }
+  .install-actions { width: 100%; }
+  .install-actions .btn { flex: 1 1 0; justify-content: center; }
+}
+
+/* Belt and braces on top of the checks in install.js: a browser that launches
+   standalone without ever firing the events we listen to still never paints
+   an install offer inside an installed application. */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  .install-bar { display: none; }
 }
 
 /* --- voice capture -------------------------------------------------------
