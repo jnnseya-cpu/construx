@@ -441,6 +441,58 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   NotificationDispatch: { area: 'PLATFORM_ADMINISTRATION' },
   NotificationDelivery: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
   NotificationPreferences: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
+
+  // --- Concept, stage 6 ------------------------------------------------------
+  //
+  // The configuration and the authority matrix are governance records: they say
+  // who may decide what on this project, which is the question every later
+  // refusal resolves to. Classified with the rest of governance rather than with
+  // project control, so a delivery role can read them and no delivery role can
+  // rewrite them.
+  ProjectConfiguration: { area: 'PROJECT_SETUP' },
+  AuthorityMatrix: { area: 'PROJECT_SETUP' },
+
+  // The brief. Readable by everyone who delivers against it — a requirement
+  // nobody on the project can see is a requirement nobody will meet.
+  ProjectRequirement: { area: 'PROJECT_SETUP' },
+  BriefBaseline: { area: 'PROJECT_SETUP' },
+
+  // Due diligence. A survey and its constraints are engineering evidence, and
+  // the whole team designs and prices against them.
+  SiteSurvey: { area: 'PROJECT_SETUP' },
+  SiteConstraint: { area: 'PROJECT_SETUP' },
+  InvestigationAction: { area: 'PROJECT_SETUP' },
+  DueDiligenceReview: { area: 'PROJECT_SETUP' },
+
+  // Options carry order-of-cost figures and the reasons a client's money went
+  // one way rather than another, so they are commercial rather than open.
+  FeasibilityOption: { area: 'PROJECT_SETUP', sensitivity: 'COMMERCIAL_L3' },
+
+  // The concept cost position. Commercial by nature: it holds the budget the
+  // client is working to and the affordability gap against it.
+  ConceptCostPlan: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
+  ConceptCashflow: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
+  ConceptControls: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
+  // The programme is not commercial. Everybody plans against it, and a
+  // milestone date hidden behind a commercial band is a date nobody works to.
+  MilestoneProgramme: { area: 'PROGRAMME_BASELINES' },
+
+  // Strategy. What will be bought, how, and under what contract — commercially
+  // sensitive before the market sees it, and the contract strategy is the
+  // decision a legal review is later given.
+  ProcurementStrategy: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
+  PackageStrategy: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
+  ContractStrategy: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },
+
+  // Compliance and risk at concept. The applicability record decides which
+  // statutory gateways bind this project, so it is safety-critical reading for
+  // everyone rather than a commercial secret.
+  ComplianceApplicability: { area: 'SAFETY_RAMS', sensitivity: 'SAFETY_L2' },
+  ConceptRiskReview: { area: 'RISK_REGISTER' },
+
+  // The frozen concept position. Audit material: its whole purpose is to be
+  // checked later against what was approved.
+  ConceptBaseline: { area: 'EVIDENCE_AUDIT' },
 };
 
 export function classifyEntity(refType: string): EntityClassification | undefined {

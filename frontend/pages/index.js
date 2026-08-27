@@ -5,6 +5,7 @@ import { autopilot } from './autopilot.js';
 import { billing } from './billing.js';
 import { commands } from './commands.js';
 import { commercial } from './commercial.js';
+import { concept } from './concept.js';
 import { communications } from './communications.js';
 import { contracts } from './contracts.js';
 import { construction } from './construction.js';
@@ -39,6 +40,7 @@ export const PAGES = {
   programme,
   field,
   construction,
+  concept,
   design,
   documents,
   commercial,

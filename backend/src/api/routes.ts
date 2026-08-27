@@ -89,6 +89,13 @@ import * as transfer from '../domain/transfer.ts';
 import * as practicalcompletion from '../domain/practicalcompletion.ts';
 import * as handoveracceptance from '../domain/handoveracceptance.ts';
 import * as aftercare from '../domain/aftercare.ts';
+import * as conceptbrief from '../domain/conceptbrief.ts';
+import * as conceptcompliance from '../domain/conceptcompliance.ts';
+import * as conceptcontrols from '../domain/conceptcontrols.ts';
+import * as conceptduediligence from '../domain/conceptduediligence.ts';
+import * as conceptinitiation from '../domain/conceptinitiation.ts';
+import * as conceptoptions from '../domain/conceptoptions.ts';
+import * as conceptstrategy from '../domain/conceptstrategy.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
@@ -13404,7 +13411,745 @@ export const ROUTES: Route[] = [
         ...body<{ reason: string }>(ctx),
       }),
   },
+  // =========================================================== Concept, stage 6
+  //
+  // C-WF-01 to C-WF-08. One console door per command, following the rule that
+  // holds everywhere else here: a write the platform can perform and the UI
+  // cannot reach is a capability that does not exist.
+
+  // ------------------------------------------------- C-WF-01 initiation
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/concept/initiation',
+    description: 'The configuration in force, its version history, the authority matrix and what blocks baseline work',
+    handler: (platform, ctx) => conceptinitiation.initiationPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/configuration',
+    description: 'Version the project configuration. Reconfiguring after approved work requires an impact assessment',
+    schema: {
+      type: 'object',
+      required: [
+        'projectCode', 'jurisdiction', 'jurisdictionPack', 'classificationPack', 'contractCalendarPack',
+        'calendar', 'reportingCurrency', 'measurementSystem', 'sponsorId', 'projectDirectorId',
+        'dataResidency', 'retentionYears', 'defaultSensitivity', 'reason',
+      ],
+      properties: {
+        projectCode: stringField,
+        jurisdiction: stringField,
+        jurisdictionPack: stringField,
+        classificationPack: stringField,
+        contractCalendarPack: stringField,
+        calendar: {
+          type: 'object',
+          required: ['timeZone', 'workingDays', 'holidays'],
+          properties: {
+            timeZone: stringField,
+            workingDays: { type: 'array', items: { type: 'number' } },
+            holidays: { type: 'array', items: { type: 'string' } },
+          },
+          additionalProperties: false,
+        },
+        reportingCurrency: stringField,
+        measurementSystem: { type: 'string', enum: ['METRIC', 'IMPERIAL'] },
+        sponsorId: stringField,
+        projectDirectorId: stringField,
+        dataResidency: stringField,
+        retentionYears: { type: 'number' },
+        defaultSensitivity: stringField,
+        reason: { type: 'string' },
+        impactAssessment: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptinitiation.versionConfiguration(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/authority-matrix',
+    description: 'Approve the delegated authority matrix. Bound to the configuration version it was approved under',
+    schema: {
+      type: 'object',
+      required: ['delegations'],
+      properties: {
+        delegations: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['decision', 'holderId'],
+            properties: {
+              decision: stringField,
+              holderId: stringField,
+              limitMinor: { type: 'number' },
+              escalatesToId: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptinitiation.approveAuthorityMatrix(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------- C-WF-02 brief
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/concept/brief',
+    description: 'The requirements position: counts by status and category, the baseline, drift and open conflicts',
+    handler: (platform, ctx) => conceptbrief.briefPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/concept/requirements',
+    description: 'Every requirement, superseded ones included',
+    handler: (platform, ctx) => ({ requirements: conceptbrief.requirementRegister(projectContext(platform, ctx)) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/requirements',
+    description: 'Record a requirement. An extracted one below the confidence threshold lands as NEEDS_REVIEW',
+    schema: {
+      type: 'object',
+      required: [
+        'reference', 'category', 'statement', 'source', 'sourceAnchor', 'ownerId',
+        'priority', 'verification', 'acceptanceCriteria', 'origin',
+      ],
+      properties: {
+        reference: stringField,
+        category: { type: 'string', enum: [...conceptbrief.REQUIREMENT_CATEGORY] },
+        statement: { type: 'string' },
+        source: stringField,
+        sourceAnchor: stringField,
+        ownerId: stringField,
+        priority: { type: 'string', enum: [...conceptbrief.REQUIREMENT_PRIORITY] },
+        verification: {
+          type: 'object',
+          required: ['method', 'stage'],
+          properties: {
+            method: { type: 'string' },
+            stage: { type: 'string', enum: [...conceptbrief.VERIFICATION_STAGE] },
+          },
+          additionalProperties: false,
+        },
+        acceptanceCriteria: { type: 'string' },
+        origin: { type: 'string', enum: ['AI', 'HUMAN'] },
+        confidence: { type: 'number' },
+        conflictsWith: { type: 'array', items: { type: 'string' } },
+        confidenceThreshold: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptbrief.extractRequirement(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/requirements/:requirementId/accept',
+    description: 'A person accepts an extracted requirement into the brief. Until then it stays visibly unadopted',
+    schema: { type: 'object', properties: { note: { type: 'string' } }, additionalProperties: false },
+    handler: (platform, ctx) =>
+      conceptbrief.acceptRequirement(projectContext(platform, ctx), {
+        requirementId: ctx.params.requirementId as string,
+        ...body<{ note?: string }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/requirements/:requirementId/supersede',
+    description: 'Supersede a requirement with a reason. Deletion after baseline is prohibited',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string' }, replacedByRequirementId: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      conceptbrief.supersedeRequirement(projectContext(platform, ctx), {
+        requirementId: ctx.params.requirementId as string,
+        ...body<{ reason: string; replacedByRequirementId?: string }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/brief/baseline',
+    description: 'Freeze the brief, recording the hash of every accepted requirement at the moment of freezing',
+    schema: {
+      type: 'object',
+      required: ['evidenceHash'],
+      properties: { evidenceHash: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptbrief.baselineBrief(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------- C-WF-03 due diligence
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/concept/due-diligence',
+    description: 'Survey coverage, the constraint register, open investigations and the readiness score',
+    handler: (platform, ctx) => conceptduediligence.dueDiligencePosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/surveys',
+    description: 'Register a survey with its coordinate system and its limitations. Both are mandatory',
+    schema: {
+      type: 'object',
+      required: ['reference', 'discipline', 'author', 'surveyedOn', 'coverage', 'coordinateSystem', 'limitations', 'evidenceHash'],
+      properties: {
+        reference: stringField,
+        discipline: stringField,
+        author: stringField,
+        surveyedOn: stringField,
+        coverage: { type: 'array', items: { type: 'string', enum: [...conceptduediligence.IMPACT_CATEGORY] } },
+        coordinateSystem: stringField,
+        limitations: { type: 'string' },
+        relianceStatus: { type: 'string', enum: [...conceptduediligence.RELIANCE_STATUS] },
+        validUntil: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptduediligence.registerSurvey(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/surveys/:surveyId/supersede',
+    description: 'Supersede a survey with a later one. It stays readable as historic evidence and stops counting toward coverage',
+    schema: {
+      type: 'object',
+      required: ['replacedBySurveyId', 'reason'],
+      properties: { replacedBySurveyId: stringField, reason: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      conceptduediligence.supersedeSurvey(projectContext(platform, ctx), {
+        surveyId: ctx.params.surveyId as string,
+        ...body<{ replacedBySurveyId: string; reason: string }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/constraints',
+    description: 'Identify a site constraint against the survey that evidences it',
+    schema: {
+      type: 'object',
+      required: ['reference', 'description', 'constraintClass', 'severity', 'impacts', 'spatialScope', 'surveyId', 'ownerId'],
+      properties: {
+        reference: stringField,
+        description: { type: 'string' },
+        constraintClass: { type: 'string', enum: [...conceptduediligence.CONSTRAINT_CLASS] },
+        severity: { type: 'string', enum: [...conceptduediligence.CONSTRAINT_SEVERITY] },
+        impacts: { type: 'array', items: { type: 'string', enum: [...conceptduediligence.IMPACT_CATEGORY] } },
+        spatialScope: { type: 'string' },
+        geometryRef: stringField,
+        surveyId: stringField,
+        ownerId: stringField,
+        allowanceMinor: { type: 'number' },
+        origin: { type: 'string', enum: ['AI', 'HUMAN'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptduediligence.identifyConstraint(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/constraints/:constraintId/assess',
+    description: 'Assess a constraint. An assumption leaves here with an allowance or a named acceptance',
+    schema: {
+      type: 'object',
+      required: ['assessment'],
+      properties: {
+        assessment: { type: 'string' },
+        allowanceMinor: { type: 'number' },
+        acceptedUnknownBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      conceptduediligence.assessConstraint(projectContext(platform, ctx), {
+        constraintId: ctx.params.constraintId as string,
+        ...body<{ assessment: string; allowanceMinor?: number; acceptedUnknownBy?: string }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/investigations',
+    description: 'Assign further investigation against a constraint or a coverage gap',
+    schema: {
+      type: 'object',
+      required: ['reference', 'description', 'ownerId', 'dueDate'],
+      properties: {
+        reference: stringField,
+        description: { type: 'string' },
+        constraintId: stringField,
+        coverageGap: { type: 'string', enum: [...conceptduediligence.IMPACT_CATEGORY] },
+        ownerId: stringField,
+        dueDate: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptduediligence.assignInvestigation(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/investigations/:actionId/close',
+    description: 'Close an investigation with what it found. A closure with no finding records only that somebody stopped looking',
+    schema: {
+      type: 'object',
+      required: ['finding', 'evidenceHash'],
+      properties: { finding: { type: 'string' }, evidenceHash: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      conceptduediligence.closeInvestigation(projectContext(platform, ctx), {
+        actionId: ctx.params.actionId as string,
+        ...body<{ finding: string; evidenceHash: string }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/due-diligence/review',
+    description: 'Record a due-diligence review. The readiness figure is stored as it stood, not recomputed later',
+    schema: {
+      type: 'object',
+      required: ['note'],
+      properties: { note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptduediligence.reviewDueDiligence(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------- C-WF-04 options
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/concept/options',
+    description: 'The options, the comparison, the selected one and every rejection with its reason',
+    handler: (platform, ctx) => conceptoptions.optionPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/options',
+    description: 'Create a feasibility option with its scope, assumptions, price base and ranges',
+    schema: {
+      type: 'object',
+      required: [
+        'reference', 'name', 'description', 'scopeStatement', 'assumptions', 'exclusions',
+        'baseDate', 'currency', 'orderOfCostMinor', 'costLowMinor', 'costHighMinor',
+        'durationDaysLow', 'durationDaysMostLikely', 'durationDaysHigh',
+      ],
+      properties: {
+        reference: stringField,
+        name: stringField,
+        description: { type: 'string' },
+        scopeStatement: { type: 'string' },
+        assumptions: { type: 'array', items: { type: 'string' } },
+        exclusions: { type: 'array', items: { type: 'string' } },
+        dependencies: { type: 'array', items: { type: 'string' } },
+        baseDate: stringField,
+        currency: stringField,
+        orderOfCostMinor: { type: 'number' },
+        costLowMinor: { type: 'number' },
+        costHighMinor: { type: 'number' },
+        durationDaysLow: { type: 'number' },
+        durationDaysMostLikely: { type: 'number' },
+        durationDaysHigh: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptoptions.createOption(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/options/:optionId/analyse',
+    description: 'Score an option. Raw values are preserved separately from the weighted total',
+    schema: {
+      type: 'object',
+      required: ['scores'],
+      properties: {
+        scores: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['criterion', 'rawValue', 'weight', 'basis'],
+            properties: {
+              criterion: stringField,
+              rawValue: { type: 'number' },
+              weight: { type: 'number' },
+              basis: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      conceptoptions.analyseOption(projectContext(platform, ctx), {
+        optionId: ctx.params.optionId as string,
+        ...body<{ scores: [] }>(ctx),
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/concept/options/sensitivity',
+    description: 'Vary one criterion and report whether the leading option changes',
+    handler: (platform, ctx) =>
+      conceptoptions.sensitivity(projectContext(platform, ctx), {
+        criterion: ctx.query.get('criterion') ?? '',
+        changePercent: Number(ctx.query.get('changePercent') ?? '10'),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/options/:optionId/select',
+    description: 'Select the option, freezing the brief baseline hash it was chosen against',
+    schema: {
+      type: 'object',
+      required: ['rationale', 'evidenceHash'],
+      properties: {
+        rationale: { type: 'string' },
+        decisionRecordId: stringField,
+        evidenceHash: stringField,
+        exception: {
+          type: 'object',
+          required: ['approvedBy', 'reason'],
+          properties: { approvedBy: stringField, reason: { type: 'string' } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      conceptoptions.selectOption(projectContext(platform, ctx), {
+        optionId: ctx.params.optionId as string,
+        ...body<{ rationale: string; evidenceHash: string }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/options/:optionId/reject',
+    description: 'Reject an option with its reason. A rejection with no reason is the option somebody proposes again next year',
+    schema: {
+      type: 'object',
+      required: ['rationale'],
+      properties: { rationale: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      conceptoptions.rejectOption(projectContext(platform, ctx), {
+        optionId: ctx.params.optionId as string,
+        ...body<{ rationale: string }>(ctx),
+      }),
+  },
+
+  // ------------------------------------------------- C-WF-05 controls
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/concept/controls',
+    description: 'The cost plan and its totals, the milestone programme, the cashflow and the approved position',
+    handler: (platform, ctx) => conceptcontrols.conceptControlsPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/cost-plan',
+    description: 'Open a concept cost plan against the selected option, in the project reporting currency',
+    schema: {
+      type: 'object',
+      required: ['baseDate'],
+      properties: {
+        baseDate: stringField,
+        rangeMethod: { type: 'string', enum: [...conceptcontrols.RANGE_METHOD] },
+        budgetCapMinor: { type: 'number' },
+        tolerancePercent: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptcontrols.createCostPlan(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/cost-plan/lines',
+    description: 'Add a cost line. A rate with no source and base date is provisional and excluded from the high-confidence total',
+    schema: {
+      type: 'object',
+      required: ['wbsCode', 'category', 'description', 'quantity', 'unit', 'rateMinor'],
+      properties: {
+        wbsCode: stringField,
+        category: { type: 'string', enum: [...conceptcontrols.COST_CATEGORY] },
+        description: { type: 'string' },
+        quantity: { type: 'number' },
+        unit: stringField,
+        rateMinor: { type: 'number' },
+        rateSource: { type: 'string' },
+        rateBaseDate: { type: 'string' },
+        locationFactor: { type: 'number' },
+        lowMinor: { type: 'number' },
+        highMinor: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptcontrols.addCostLine(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/programme',
+    description: 'Create the milestone programme. An undeclared open start or finish is refused',
+    schema: {
+      type: 'object',
+      required: ['dataDate', 'milestones'],
+      properties: {
+        dataDate: stringField,
+        milestones: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['reference', 'name', 'plannedDate'],
+            properties: {
+              reference: stringField,
+              name: stringField,
+              plannedDate: stringField,
+              predecessors: { type: 'array', items: { type: 'string' } },
+              openStartReason: { type: 'string' },
+              openFinishReason: { type: 'string' },
+              statutory: { type: 'boolean' },
+              leadTimeDays: { type: 'number' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptcontrols.createMilestoneProgramme(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/cashflow',
+    description: 'Time-phase the cost plan. A cashflow that does not reconcile to its own cost plan is refused',
+    schema: {
+      type: 'object',
+      required: ['periods'],
+      properties: {
+        periods: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['period', 'spendMinor'],
+            properties: {
+              period: stringField,
+              spendMinor: { type: 'number' },
+              fundingMinor: { type: 'number' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptcontrols.generateCashflow(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/controls/approve',
+    description: 'Approve cost, programme and cashflow together under one declared cut-off',
+    schema: {
+      type: 'object',
+      required: ['cutOffDate', 'evidenceHash'],
+      properties: {
+        cutOffDate: stringField,
+        affordabilityActions: { type: 'array', items: { type: 'string' } },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptcontrols.approveConceptControls(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------- C-WF-06 strategy
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/concept/strategy',
+    description: 'The procurement route, the packages, the contract family, long-lead items and any scope gap or overlap',
+    handler: (platform, ctx) => conceptstrategy.strategyPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/procurement-strategy',
+    description: 'Choose the procurement route against weighted criteria. A single-source route needs an authorised justification',
+    schema: {
+      type: 'object',
+      required: ['weights', 'assessments', 'selectedRoute', 'rationale', 'designResponsibility', 'riskAppetite'],
+      properties: {
+        weights: { type: 'object' },
+        assessments: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['route', 'scores', 'note'],
+            properties: {
+              route: { type: 'string', enum: [...conceptstrategy.PROCUREMENT_ROUTE] },
+              scores: { type: 'object' },
+              note: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+        selectedRoute: { type: 'string', enum: [...conceptstrategy.PROCUREMENT_ROUTE] },
+        rationale: { type: 'string' },
+        designResponsibility: { type: 'string' },
+        riskAppetite: { type: 'string' },
+        socialValueObligations: { type: 'array', items: { type: 'string' } },
+        singleSourceJustification: { type: 'string' },
+        singleSourceApprovedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptstrategy.createProcurementStrategy(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/package-strategy',
+    description: 'Approve the packages. A scope element in two packages or in none refuses the approval',
+    schema: {
+      type: 'object',
+      required: ['worksScopeElements', 'packages'],
+      properties: {
+        worksScopeElements: { type: 'array', items: { type: 'string' } },
+        packages: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: [
+              'reference', 'name', 'scopeElements', 'interfaces', 'ownerId',
+              'requiredOnSiteMilestoneRef', 'enquiryDate', 'awardDate', 'leadTimeWeeks',
+            ],
+            properties: {
+              reference: stringField,
+              name: stringField,
+              scopeElements: { type: 'array', items: { type: 'string' } },
+              interfaces: { type: 'array', items: { type: 'string' } },
+              ownerId: stringField,
+              requiredOnSiteMilestoneRef: stringField,
+              enquiryDate: stringField,
+              awardDate: stringField,
+              leadTimeWeeks: { type: 'number' },
+              retainedRisks: { type: 'array', items: { type: 'string' } },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptstrategy.approvePackageStrategy(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/contract-strategy',
+    description: 'Select the contract-form family. Provisional until the executed contract is ingested and validated',
+    schema: {
+      type: 'object',
+      required: ['contractFamily', 'contractOption', 'paymentTerms', 'insuranceRequirements', 'bondsAndGuarantees', 'provisionalNotices'],
+      properties: {
+        contractFamily: stringField,
+        contractOption: stringField,
+        paymentTerms: { type: 'string' },
+        insuranceRequirements: { type: 'array', items: { type: 'string' } },
+        bondsAndGuarantees: { type: 'array', items: { type: 'string' } },
+        provisionalNotices: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptstrategy.selectContractStrategy(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------- C-WF-07 risk and compliance
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/concept/compliance',
+    description: 'The statutory screening, the risk exposure and the allowance reconciliation against the cost plan',
+    handler: (platform, ctx) => conceptcompliance.compliancePosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/compliance-screen',
+    description: 'Confirm which statutory regimes apply. Requires a named competent person and their basis',
+    schema: {
+      type: 'object',
+      required: ['regimes', 'confirmedByName', 'confirmedByRole', 'competenceBasis', 'evidenceHash'],
+      properties: {
+        regimes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['regime', 'applicable', 'basis'],
+            properties: {
+              regime: { type: 'string', enum: [...conceptcompliance.COMPLIANCE_REGIME] },
+              applicable: { type: 'boolean' },
+              basis: { type: 'string' },
+              milestoneRef: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+        confirmedByName: stringField,
+        confirmedByRole: stringField,
+        competenceBasis: { type: 'string' },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      conceptcompliance.confirmComplianceApplicability(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/risk-review',
+    description: 'Approve the concept risk review, reconciling the declared allowance against the cost plan',
+    schema: {
+      type: 'object',
+      required: ['declaredAllowanceMinor', 'retainedExposureNote', 'evidenceHash'],
+      properties: {
+        declaredAllowanceMinor: { type: 'number' },
+        retainedExposureNote: { type: 'string' },
+        escalated: { type: 'array', items: { type: 'string' } },
+        reconciliationToleranceMinor: { type: 'number' },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => conceptcompliance.approveRiskReview(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------- C-WF-08 the gate
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/concept/gate',
+    description: 'The 6.4 Definition of Done, evaluated from the ledger. A clause the platform cannot assess is reported unassessable, never passed',
+    handler: (platform, ctx) => stagegate.evaluateConceptGate(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/concept/baseline',
+    description: 'Freeze the concept baseline: every component with its version and the hash of its state',
+    schema: {
+      type: 'object',
+      required: ['evidenceHash'],
+      properties: { evidenceHash: stringField, note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => stagegate.approveConceptBaseline(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/concept/baseline/drift',
+    description: 'Components that have moved since the concept baseline froze them',
+    handler: (platform, ctx) => ({ drift: stagegate.conceptBaselineDrift(projectContext(platform, ctx)) }),
+  },
 ];
+
 
 /**
  * The tenancy a signed link names, if the signature over it is good.

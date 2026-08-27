@@ -209,6 +209,54 @@ not pretend to have done.
 | Design maturity gates the pricing basis | Built | `assessDesignMaturity()`; a lump sum against immature design is refused |
 | Estimate frozen before bid submission | Built | `compileBidPack()` refuses an unfrozen estimate |
 | Award blocked on insurance gaps | Built | `BLOCKING_FLAGS` in bid scoring, tested |
+| Every specified stage gate has an implemented seven-clause Definition of Done | Built | 6.4, 7.4, 8.4, 9.4, 10.4 and 11.4. `gateFor()` picks by phase; TENDER is the fall-through |
+
+## 8a. Concept, stage 6 (C-WF-01 to C-WF-08 and 6.4)
+
+| Requirement | Status | Where |
+|---|---|---|
+| C-WF-01 · Configuration versioned, never edited | Built | `conceptinitiation.versionConfiguration()`; version 2 onwards requires an impact assessment |
+| C-WF-01 · Duplicate project code blocks creation | Built | Checked across the tenancy against each project's *current* version |
+| C-WF-01 · Missing jurisdiction / time zone / currency blocks baseline work | Built | `configurationBlockedReason()`, read by the brief baseline and the gate. Time zones are validated against `Intl`, not a hand-kept list |
+| AC-C-WF-01-01 · Platform operator cannot execute any of it | Built, structurally | `tenantContext` bars the operator layer before any command is reached, and `PLATFORM_ADMIN` holds no `PROJECT_SETUP` in the matrix. Not restated in the module |
+| AC-C-WF-01-03 · Dates in project time zone, persisted as UTC | **Partial** | The zone is recorded and validated on the configuration; rendering per-project time zone in the console is not built — the console renders in the viewer's locale |
+| C-WF-02 · Requirement carries source, owner, priority, verification method | Built | Required at creation and re-checked at the baseline |
+| AC-C-WF-02-02 · AI requirements visibly marked until accepted | Built | Two events rather than a flag; badged on the row in `frontend/pages/concept.js` |
+| C-WF-02 · Below-threshold extraction stays Draft-Needs-Review | Built | `NEEDS_REVIEW` is a distinct status from `DRAFT` |
+| C-WF-02 · Deletion after baseline prohibited | Built | `supersedeRequirement()` is the only exit and requires a reason |
+| C-WF-02 · Conflicting mandatory requirements block option approval | Built | `briefConflictReason()`, read by `optionSelectionBlockedReason()`. Only *declared* conflicts — the platform does not infer them |
+| AC-C-WF-02-03 · A changed requirement shows what it affects before approval | **Not built** | The baseline shows drift after the fact; there is no forward impact analysis from a requirement to design, cost and programme |
+| C-WF-03 · Survey carries coordinate system and limitations | Built | Both mandatory. `NONE` is a legitimate coordinate system and is distinguished from an absent one |
+| C-WF-03 · Readiness from evidence coverage, not document count | Built | `dueDiligenceReadiness()` over impact categories covered by *live* surveys |
+| C-WF-03 · Superseded or expired survey usable only as history | Built | Stays readable; stops counting toward coverage |
+| AC-C-WF-03-02 · Options cannot be recommended over an unassessed critical constraint | Built | `constraintAssessmentBlockedReason()` |
+| C-WF-03 · Material unknown carries an allowance or explicit acceptance | Built | Enforced on `ASSUMPTION` constraints at assessment |
+| AC-C-WF-03-03 · Map and register share stable IDs | **Partial** | The register's `reference` is the stable id and `geometryRef` is carried; there is no map surface to share it with |
+| C-WF-04 · Raw values preserved separately from the weighted score | Built | `CriterionScore` stores both; `weightedScore()` is computed on read |
+| C-WF-04 · Options not comparable across scope or price base | Built | `compareOptions()` refuses across base dates, currencies or criteria sets rather than normalising with an invented index |
+| AC-C-WF-04-02 · Scenario results reproducible from stored inputs | Built | `sensitivity()` is deterministic arithmetic over the stored option states — nothing samples |
+| AC-C-WF-04-03 · Selected option links to the brief it was approved against | Built | The brief baseline hash is frozen onto the option at selection and re-checked by the gate |
+| AC-C-WF-04-01 · Rejected rationale recorded | Built | Rejection is its own act, never a side effect of selecting another |
+| C-WF-05 · Unverified rate excluded from the high-confidence total | Built | `provisional` is derived from source and base date, not asserted by the caller. Two totals, not one with a caveat |
+| AC-C-WF-05-03 · P50/P80 show method and assumptions | Built | Derived from the stored line ranges by the declared `rangeMethod`. Independence between lines is assumed and said so in the module — a real P80 is wider |
+| AC-C-WF-05-02 · Logic or a documented open start/finish | Built | An undeclared dangler is refused; a declared one is accepted |
+| C-WF-05 · Cost and programme cannot be approved independently | Built | One command over both, under one declared cut-off |
+| AC-C-WF-05-01 · Totals reconcile line → option → project | Built | The cashflow must reconcile to the cost plan, and both must cite the selected option |
+| C-WF-05 · Currency conversion stores rate, provider, timestamp | **Not applicable here** | No conversion happens: a concept cost plan must be in the project's reporting currency, and a mismatch is refused rather than converted |
+| AC-C-WF-06-01 · Every package has scope, interfaces, dates and an owner | Built | Required per package |
+| C-WF-06 · Package scope overlap or gap blocks approval | Built | `packageScopeIssues()` — computed, not eyeballed |
+| AC-C-WF-06-03 · Long-lead dates trace to a required-on-site milestone | Built | And the lead time must fit between award and need, or the order is late before it is placed |
+| C-WF-06 · Single-source route requires authorised justification | Built | Refused without both the justification and the approver |
+| C-WF-06 · Contract rules remain provisional | Built | `provisional: true` is a literal on the type, not a settable field |
+| AC-C-WF-07-01 · No critical risk without owner and response | Built | `riskReviewBlockedReason()` over the existing `RiskRegisterItem` register — not rebuilt |
+| AC-C-WF-07-02 · Risk allowance reconciles without double counting | Built | The declared allowance is reconciled against `RISK_ALLOWANCE` in the cost plan and refused outside tolerance |
+| AC-C-WF-07-03 · Statutory gateways are non-bypassable milestones | Built | An applicable regime must name a milestone that exists on the concept programme *and* is marked statutory |
+| C-WF-07 · AI safety or legal classification needs competent-person confirmation | Built | Name, role and competence basis are recorded separately from the acting user |
+| AC-C-WF-08-01 · Gate pack reproducible, exact component versions | Built | `approveConceptBaseline()` freezes twelve components with the hash of each; `conceptBaselineDrift()` re-checks |
+| AC-C-WF-08-02 · A rejected gate leaves the project in Concept | Built | `decideGate()` records the decision; the phase moves only through `transitionPhase()`, which is a separate governed act |
+| AC-C-WF-08-03 · Design cannot publish before the concept gate | **Not built** | The coarse `evaluatePhaseGate` requires a scope package to leave CONCEPT; there is no rule barring a design publication that predates a concept gate decision |
+| 6.4 clause 5 · AI outputs fully accounted for | **NOT_ASSESSABLE** | The same honest answer every gate gives: the AI event block records no assumptions, prompt version or human disposition |
+| 6.4 clause 7 · Design mobilisation worklist | **NOT_ASSESSABLE** | The package strategy carries the dates it would be derived from; the worklist itself is not generated, and the clause says so rather than passing |
 
 ## 9. Procurement and tender workflow
 

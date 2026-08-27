@@ -7114,6 +7114,138 @@ Re-opening these is what caused churn before.
 
 ---
 
+## Concept, stage 6 — C-WF-01 to C-WF-08 and the 6.4 gate
+
+The head of the lifecycle, and the last stage to be built. That is the right way
+round: every rule here had to be answerable by something downstream before it
+was worth writing. A requirement that nothing verifies is a wish; an option
+selected against no cost plan is a preference.
+
+Six modules, twenty-eight events, seventeen entities, fifty-two routes, one
+console screen and 103 tests. What follows is what each one refuses, because
+that is the part that does the work.
+
+**C-WF-01 — the configuration is versioned, never edited.** Changing
+jurisdiction, time zone or currency after work has been approved against them is
+a different act from setting them up, so version 2 onwards requires an impact
+assessment and records what it supersedes. A mutable configuration cannot answer
+"under what rules was this approved", which is the only question it gets asked
+two years later. Time zones are validated against `Intl` rather than a list this
+codebase maintains — a zone the platform accepts is a zone every later
+`toLocaleString` will accept. The authority matrix is bound to the configuration
+version it was approved under, so a reconfiguration surfaces it as needing
+re-approval rather than leaving a stale delegation in force.
+
+**C-WF-02 — an extracted requirement is two events, not a flag.**
+AC-C-WF-02-02 asks that a machine-created requirement be visibly distinct until a
+person accepts it, and a single event carrying `accepted: false` is exactly the
+shape that gets defaulted to true by the next caller. `REQUIREMENT_EXTRACTED`
+creates it; `REQUIREMENT_ACCEPTED` is somebody's act, and the acceptor is
+recorded separately from the author. The brief baseline freezes the **hash** of
+every requirement rather than a list of ids: a list proves the same requirements
+exist, a hash proves they have not moved.
+
+A conflict between two mandatory requirements does **not** block the baseline. A
+brief can honestly record two mandatory requirements that conflict, and
+pretending otherwise is how the conflict gets buried. What it blocks is choosing
+an option, because no option satisfies both and selecting one decides the
+conflict silently. Only *declared* conflicts count — the platform does not infer
+that two requirements conflict, because that is a professional judgement and a
+machine guessing at it produces a register of false conflicts nobody trusts.
+
+**C-WF-03 — `SiteConstraint` is not `Constraint`.** The platform already has a
+`Constraint` entity and it is untouched: that one is the Last Planner constraint
+log, something blocking a task next week, closed by a phone call. This is a
+permanent property of the ground. Overloading one entity with both would put
+"waiting for the crane" and "the aquifer is six metres down" in the same list,
+sorted by date.
+
+Readiness is **evidence coverage, not document count**, which is the rule that
+makes the score worth reading: registering the same report three times moves
+nothing, and a superseded or expired survey stops counting while staying
+readable as history. The coordinate system and the limitations are both
+mandatory at registration — `NONE` is a legitimate coordinate system for a desk
+study and is a different fact from an unrecorded one, and the limitations field
+is where "no access to the eastern boundary" lives. Its absence is how a project
+prices ground nobody has seen.
+
+**C-WF-04 — the raw score survives the weighting.** Once they are multiplied
+together the raw value is gone, and with it any ability to ask what the answer
+would have been under different weights — which is the question every option
+review actually asks. `compareOptions` **refuses** across different base dates,
+currencies or criteria sets rather than normalising: normalising a 2024-base
+option to 2026 requires an inflation assumption, and inventing one inside a
+comparison function would put an unstated assumption at the centre of the
+decision. The refusal names what to do about it and still returns the rows.
+
+The brief baseline hash is frozen onto the selected option, so AC-C-WF-04-03 is
+a property of the record rather than a claim about it: the option links to the
+brief it was chosen against, not to whatever the brief later became. Rejection is
+its own act — a rejection that happened automatically has no rationale, which is
+the gap that turns a decision record into a record of a preference.
+
+**C-WF-05 — two totals, not one with a footnote.** An unverified rate is
+excluded from the high-confidence total, and `provisional` is *derived* from
+whether the rate has a named source and a base date rather than asserted by the
+caller — letting a caller assert it would make the exception control a matter of
+opinion. P50 and P80 are computed from the stored line ranges by the plan's
+declared method, and the independence assumption behind the P80 is stated in the
+module rather than buried: a real construction P80 is wider, and AC-C-WF-05-03
+asks for the method precisely so somebody can disagree with it. The count of
+lines carrying no range is reported, because a P80 built from point estimates is
+a P80 of nothing.
+
+Cost and programme are approved by **one** command under one declared cut-off.
+Time-related cost is material on every construction project, so approving a
+programme without the cost of it is approving half of a coupled pair. An
+affordability gap is not refused — a project can be legitimately unaffordable at
+concept — but approving one with no actions against it is.
+
+**C-WF-06 — the gap is the expensive half.** Every package declares the scope
+elements it carries, and approval refuses if an element appears twice or in
+none. An overlap gets argued about at tender; a gap gets discovered on site. The
+lead time must also fit between award and required-on-site, which is the
+arithmetic that puts a sixty-week switchgear order in month fourteen when nobody
+checks it. The contract strategy is `provisional: true` as a literal on the type
+rather than a settable field: the real clause register comes from the executed
+contract through the path that already exists, and nothing here is presented as
+a legal position.
+
+**C-WF-07 — the risk register was already built and is not rebuilt.**
+`engines/safety.ts` carries `RiskRegisterItem` with three-point impacts,
+probability and residual exposure; `engines/maths/risk.ts` is the arithmetic.
+Two acts were missing. Statutory applicability is an approval carrying a named
+competent person and their basis — "the person who pressed the button" is not
+evidence of competence — and an applicable gateway must be a milestone that
+exists on the concept programme *and* is marked statutory, or a resequence walks
+straight past it. The risk review reconciles the declared allowance against
+`RISK_ALLOWANCE` in the cost plan: two numbers for the same money is how a
+contingency gets counted twice.
+
+**C-WF-08 and 6.4.** Five stage-specific clauses; the AI and replay clauses are
+the shared ones every other gate uses. `gateFor` now routes CONCEPT to it, so
+every lifecycle phase with a specified gate has an implemented one and TENDER is
+the fall-through.
+
+Two clauses report `NOT_ASSESSABLE`, and both name what cannot be seen:
+
+- **AI accounted for** — the same answer at every gate since the first. The AI
+  event block records no assumptions, no prompt version and no human
+  disposition. On a project that used no AI at all the clause passes and says
+  so, which is a different statement and is worded as one.
+- **Downstream created** — the package strategy carries the dates design plans
+  to, and the design mobilisation worklist the specification names is not
+  generated by this platform. Said, rather than passed.
+
+**Two defects the tests found in this work.** A mandatory conflict declared from
+only one side was silently dropped whenever the declaring requirement sorted
+higher, which is most of them — people write the conflict down when they meet
+the second one. And the gate's downstream clause required a concept baseline
+that `approveConceptBaseline` would only produce over a passing gate, so neither
+could ever happen. The baseline is the gate's output, not its input.
+
+---
+
 ## Working notes
 
 - The seeded demo project sits in the **Operations** phase, so field-execution

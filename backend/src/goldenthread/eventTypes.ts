@@ -1151,6 +1151,87 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('TOPUP_REQUESTED', 'TopUpIntent', 'CREATE', 'AI_BILLING', { creates: true }),
   def('TOPUP_SETTLED', 'TopUpIntent', 'UPDATE', 'AI_BILLING'),
   def('PAYMENT_RECEIVED', 'PaymentReceipt', 'CREATE', 'AI_BILLING', { creates: true }),
+
+  // --- Concept, stage 6 -----------------------------------------------------
+  //
+  // The head of the lifecycle, and the last stage to be built — which is the
+  // right way round. Every rule here had to be answerable by something
+  // downstream before it was worth writing: a requirement that nothing verifies
+  // is a wish, and an option selected against no cost plan is a preference.
+  //
+  // `PROJECT_CREATED` and `PROGRAMME_CREATED` are already in the catalogue and
+  // are not duplicated. What was missing is everything that turns a project
+  // shell into a governed concept: what it is for, what the site will allow,
+  // which option was chosen and why, and what it is expected to cost.
+
+  // C-WF-01. The configuration is versioned rather than edited, because
+  // changing it after an approved output has been produced against it is a
+  // different act from setting it up — the exception control says so, and a
+  // mutable configuration cannot show what an approval was given under.
+  def('PROJECT_CONFIGURATION_VERSIONED', 'ProjectConfiguration', 'CREATE', 'PROJECT_CONTROL', { creates: true }),
+  def('AUTHORITY_MATRIX_APPROVED', 'AuthorityMatrix', 'APPROVE', 'GOVERNANCE', { creates: true }),
+
+  // C-WF-02. Extraction and acceptance are two events, not one with a flag:
+  // AC-C-WF-02-02 requires an AI-created requirement to be visibly distinct
+  // until a person accepts it, and a single event with `accepted: false` is
+  // exactly the shape that gets defaulted to true by the next caller.
+  def('REQUIREMENT_EXTRACTED', 'ProjectRequirement', 'CREATE', 'PROJECT_CONTROL', { aiAllowed: true, creates: true }),
+  def('REQUIREMENT_ACCEPTED', 'ProjectRequirement', 'APPROVE', 'PROJECT_CONTROL'),
+  // Deletion after baseline is prohibited. Superseding is the only way out, and
+  // it carries the reason and the replacement.
+  def('REQUIREMENT_SUPERSEDED', 'ProjectRequirement', 'UPDATE', 'PROJECT_CONTROL'),
+  def('BRIEF_BASELINED', 'BriefBaseline', 'APPROVE', 'PROJECT_CONTROL', { requiresEvidence: true, creates: true }),
+
+  // C-WF-03. `Constraint` is already taken by the Last Planner constraint log,
+  // which is a different thing entirely — something blocking a task next week,
+  // not something the ground will never permit. `SiteConstraint` is its own
+  // entity for that reason rather than an overloaded status on the other.
+  def('SURVEY_REGISTERED', 'SiteSurvey', 'CREATE', 'PROJECT_CONTROL', { requiresEvidence: true, creates: true }),
+  def('SURVEY_SUPERSEDED', 'SiteSurvey', 'UPDATE', 'PROJECT_CONTROL'),
+  def('CONSTRAINT_IDENTIFIED', 'SiteConstraint', 'CREATE', 'PROJECT_CONTROL', { aiAllowed: true, creates: true }),
+  def('CONSTRAINT_ASSESSED', 'SiteConstraint', 'APPROVE', 'PROJECT_CONTROL'),
+  def('INVESTIGATION_ASSIGNED', 'InvestigationAction', 'CREATE', 'PROJECT_CONTROL', { creates: true }),
+  def('INVESTIGATION_CLOSED', 'InvestigationAction', 'UPDATE', 'PROJECT_CONTROL', { requiresEvidence: true }),
+  def('DUE_DILIGENCE_REVIEWED', 'DueDiligenceReview', 'APPROVE', 'PROJECT_CONTROL', { creates: true }),
+
+  // C-WF-04. Four events because rejection is a record, not an absence: the
+  // rejected options are the evidence that a choice was made rather than a
+  // preference expressed, and AC-C-WF-04-01 requires their rationale.
+  def('OPTION_CREATED', 'FeasibilityOption', 'CREATE', 'PROJECT_CONTROL', { creates: true }),
+  def('OPTION_ANALYSED', 'FeasibilityOption', 'UPDATE', 'PROJECT_CONTROL', { aiAllowed: true }),
+  def('OPTION_SELECTED', 'FeasibilityOption', 'APPROVE', 'PROJECT_CONTROL', { requiresEvidence: true }),
+  def('OPTION_REJECTED', 'FeasibilityOption', 'APPROVE', 'PROJECT_CONTROL'),
+
+  // C-WF-05. The approval is one event over both, because the exception control
+  // forbids approving cost and programme independently where time-related cost
+  // is material — and on a construction project it always is.
+  def('COST_PLAN_CREATED', 'ConceptCostPlan', 'CREATE', 'COMMERCIAL', { creates: true }),
+  def('COST_PLAN_LINE_ADDED', 'ConceptCostPlan', 'UPDATE', 'COMMERCIAL'),
+  def('MILESTONE_PROGRAMME_CREATED', 'MilestoneProgramme', 'CREATE', 'PROJECT_CONTROL', { creates: true }),
+  def('CONCEPT_CASHFLOW_GENERATED', 'ConceptCashflow', 'CREATE', 'COMMERCIAL', { creates: true }),
+  def('CONCEPT_CONTROLS_APPROVED', 'ConceptControls', 'APPROVE', 'COMMERCIAL', { requiresEvidence: true, creates: true }),
+
+  // C-WF-06. Strategy, not procurement. The tender-stage entities are separate
+  // and downstream; this is the decision about which of them will exist.
+  def('PROCUREMENT_STRATEGY_CREATED', 'ProcurementStrategy', 'CREATE', 'PROCUREMENT', { creates: true }),
+  def('PACKAGE_STRATEGY_APPROVED', 'PackageStrategy', 'APPROVE', 'PROCUREMENT', { creates: true }),
+  def('CONTRACT_STRATEGY_SELECTED', 'ContractStrategy', 'APPROVE', 'CONTRACTS_CLAIMS', { creates: true }),
+
+  // C-WF-07. `RISK_REGISTERED`, `RISK_SCORED` and `RISK_MITIGATION_SET` already
+  // exist and carry the register; they are not duplicated. Missing were the two
+  // acts that make a register a governed position rather than a list.
+  def('COMPLIANCE_APPLICABILITY_CONFIRMED', 'ComplianceApplicability', 'APPROVE', 'RISK_SAFETY', { creates: true }),
+  def('RISK_REVIEW_APPROVED', 'ConceptRiskReview', 'APPROVE', 'RISK_SAFETY', { creates: true }),
+
+  // C-WF-08. The specification names `STAGE_VALIDATED` and
+  // `PROJECT_STAGE_TRANSITIONED`; this platform already carries both acts under
+  // the names every other stage uses — `STAGE_INSTANCE_STATUS_CHANGED` and
+  // `PROJECT_PHASE_TRANSITIONED` — together with `STAGE_GATE_DECIDED` and
+  // `STAGE_INSTANCE_LOCKED`. Registering synonyms would give the same act two
+  // codes and split every query over the gate ceremony in half. The concept
+  // baseline is the one thing stage 6 freezes that no other stage does, and it
+  // is the only new event the gate needs.
+  def('CONCEPT_BASELINE_APPROVED', 'ConceptBaseline', 'APPROVE', 'PROJECT_CONTROL', { requiresEvidence: true, creates: true }),
 ];
 
 /**

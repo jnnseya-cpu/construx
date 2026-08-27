@@ -9,6 +9,13 @@ import { designBaselinePosition } from './designbaseline.ts';
 import { validateProgrammeLogic } from './programmecontrol.ts';
 import { designChangePosition } from './designchange.ts';
 import { crossDomainValidation, residualObligations } from './handoveracceptance.ts';
+import * as conceptbrief from './conceptbrief.ts';
+import * as conceptcompliance from './conceptcompliance.ts';
+import * as conceptcontrols from './conceptcontrols.ts';
+import * as conceptduediligence from './conceptduediligence.ts';
+import * as conceptinitiation from './conceptinitiation.ts';
+import * as conceptoptions from './conceptoptions.ts';
+import * as conceptstrategy from './conceptstrategy.ts';
 
 /**
  * The stage gate Definition of Done — 7.4, 8.4 and 9.4.
@@ -1350,6 +1357,458 @@ function handoverDownstreamCreated(ctx: EngineContext): ClauseResult {
  * the same honest reason: the AI event block records no assumptions and no
  * prompt version.
  */
+// --- 6.4, the concept gate --------------------------------------------------
+//
+// The first gate in the lifecycle and the last one built, which is the right
+// way round: every clause here had to be answerable by something downstream
+// before it was worth writing. It reads the six concept modules through the
+// blocked-reason functions each of them owns, rather than re-deriving their
+// rules — a gate with its own opinion about when a brief is baselined is a
+// second opinion that will disagree with the command inside a year.
+
+function conceptInputsComplete(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  const configuration = conceptinitiation.configurationBlockedReason(ctx);
+  if (configuration) blocking.push(configuration);
+
+  const authority = conceptinitiation.authorityBlockedReason(ctx);
+  if (authority) blocking.push(authority);
+
+  const brief = conceptbrief.briefBaselineBlockedReason(ctx);
+  if (brief) blocking.push(brief);
+  else if (!conceptbrief.currentBriefBaseline(ctx)) {
+    blocking.push('The brief is ready to baseline and has not been baselined.');
+  }
+
+  if (!conceptoptions.selectedOption(ctx)) {
+    blocking.push('No option has been selected, so the concept has no subject.');
+  }
+
+  const controls = conceptcontrols.conceptControlsBlockedReason(ctx);
+  if (controls) blocking.push(controls);
+  else if (!conceptcontrols.currentConceptControls(ctx)) {
+    blocking.push('Cost, programme and cashflow are complete and have not been approved.');
+  }
+
+  const strategy = conceptstrategy.strategyBlockedReason(ctx);
+  if (strategy) blocking.push(strategy);
+
+  // AC-C-WF-02-02, read at the gate: an extracted requirement nobody accepted
+  // is an input the machine supplied and no person adopted.
+  const unaccepted = conceptbrief.briefPosition(ctx).unacceptedAiRequirements;
+  if (unaccepted > 0) {
+    blocking.push(
+      `${unaccepted} machine-extracted requirement${unaccepted === 1 ? '' : 's'} ` +
+        `${unaccepted === 1 ? 'has' : 'have'} not been accepted by a person`,
+    );
+  }
+
+  return {
+    clause: 'INPUTS_COMPLETE',
+    title: TITLES.INPUTS_COMPLETE,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? 'Configuration, authority matrix, baselined brief, selected option, approved controls and delivery ' +
+          'strategy are all present and tied to their versions.'
+        : `${blocking.length} concept input${blocking.length === 1 ? '' : 's'} incomplete.`,
+    blocking,
+  };
+}
+
+function conceptApprovalsGoverned(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  // Re-verified from the events rather than trusted because the command
+  // refused at the time — the same argument every other stage makes, and the
+  // one that catches anything written before a control existed.
+  const separations: Array<{ label: string; a?: string; b?: string; why: string }> = [];
+
+  const option = conceptoptions.selectedOption(ctx);
+  const brief = conceptbrief.currentBriefBaseline(ctx);
+  if (option && brief) {
+    separations.push({
+      label: `option ${option.reference}`,
+      a: option.decidedBy,
+      b: brief.approvedBy,
+      why: 'the person who baselined the brief also selected the option it was measured against',
+    });
+  }
+
+  const controls = conceptcontrols.currentConceptControls(ctx);
+  if (controls && option) {
+    separations.push({
+      label: 'concept controls',
+      a: controls.approvedBy,
+      b: option.decidedBy,
+      why: 'the person who selected the option also approved the cost and programme for it',
+    });
+  }
+
+  for (const check of separations) {
+    if (check.a !== undefined && check.a === check.b) blocking.push(`On ${check.label}, ${check.why}.`);
+  }
+
+  // The authority matrix has to be current, not merely present. A matrix
+  // approved under a superseded configuration reads as approved on every
+  // screen and delegates authority under rules that have since changed.
+  const authority = conceptinitiation.authorityBlockedReason(ctx);
+  if (authority) blocking.push(authority);
+
+  // The statutory classification is a professional judgement and the record
+  // has to name whose. Absent, no approval below it is governed.
+  const screening = conceptcompliance.currentComplianceScreening(ctx);
+  if (screening && screening.competenceBasis.trim() === '') {
+    blocking.push('The statutory applicability screening names no competence basis.');
+  }
+
+  return {
+    clause: 'APPROVALS_GOVERNED',
+    title: TITLES.APPROVALS_GOVERNED,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? 'The brief, the option and the controls were each approved by a different party, under a current ' +
+          'authority matrix, with the statutory classification confirmed by a named competent person.'
+        : `${blocking.length} approval${blocking.length === 1 ? '' : 's'} not governed.`,
+    blocking,
+  };
+}
+
+function conceptBlockersClosed(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  // The three registers that can hold a critical open item at concept, each
+  // asked of the module that owns it.
+  const constraints = conceptduediligence.constraintAssessmentBlockedReason(ctx);
+  if (constraints) blocking.push(constraints);
+
+  const conflict = conceptbrief.briefConflictReason(ctx);
+  if (conflict) blocking.push(conflict);
+
+  const risk = conceptcompliance.riskReviewBlockedReason(ctx);
+  if (risk) blocking.push(risk);
+  else if (!conceptcompliance.currentConceptRiskReview(ctx)) {
+    blocking.push('The risk register is reviewable and no concept risk review has been approved.');
+  }
+
+  const compliance = conceptcompliance.complianceBlockedReason(ctx);
+  if (compliance) blocking.push(compliance);
+
+  // An overdue investigation is a blocker at concept in a way it is not later:
+  // the whole stage exists to close unknowns before money is committed.
+  const diligence = conceptduediligence.dueDiligencePosition(ctx);
+  if (diligence.investigationsOverdue > 0) {
+    blocking.push(
+      `${diligence.investigationsOverdue} site investigation${diligence.investigationsOverdue === 1 ? '' : 's'} ` +
+        'past due date',
+    );
+  }
+
+  return {
+    clause: 'BLOCKERS_CLOSED',
+    title: TITLES.BLOCKERS_CLOSED,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? 'Every critical constraint is assessed, no mandatory requirements conflict, the risk review is ' +
+          'approved and every applicable statutory gateway is a non-bypassable milestone.'
+        : `${blocking.length} blocker${blocking.length === 1 ? '' : 's'} open.`,
+    blocking,
+  };
+}
+
+function conceptOneCutOff(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  const controls = conceptcontrols.currentConceptControls(ctx);
+  if (!controls) {
+    return {
+      clause: 'ONE_CUT_OFF',
+      title: TITLES.ONE_CUT_OFF,
+      state: 'FAIL',
+      detail: 'No concept controls have been approved, so no cut-off has been declared.',
+      blocking: ['Cost, programme and cashflow have not been approved under a declared cut-off.'],
+    };
+  }
+
+  // The declared cut-off is on the controls. What this clause verifies is that
+  // the cost plan, programme and cashflow the controls named are still the
+  // current ones — the ordinary way the three drift apart is that somebody
+  // adds a cost line after approval and nothing says so.
+  const plan = conceptcontrols.currentCostPlan(ctx);
+  if (plan && plan.costPlanId !== controls.costPlanId) {
+    blocking.push(
+      `The approved controls cite a cost plan that is no longer current (v${plan.version} exists now).`,
+    );
+  }
+  const programme = conceptcontrols.currentMilestoneProgramme(ctx);
+  if (programme && programme.programmeId !== controls.programmeId) {
+    blocking.push(
+      `The approved controls cite a programme that is no longer current (v${programme.version} exists now).`,
+    );
+  }
+  const cashflow = conceptcontrols.currentConceptCashflow(ctx);
+  if (cashflow && cashflow.cashflowId !== controls.cashflowId) {
+    blocking.push('The approved controls cite a cashflow that is no longer current.');
+  }
+
+  // The brief the option was selected against, still the brief in force. The
+  // hash comparison is what makes this a check rather than a formality.
+  const option = conceptoptions.selectedOption(ctx) as unknown as
+    | { reference: string; briefBaselineHash?: string }
+    | undefined;
+  const baseline = conceptbrief.currentBriefBaseline(ctx);
+  if (option && baseline && option.briefBaselineHash !== undefined) {
+    if (option.briefBaselineHash !== baseline.baselineHash) {
+      blocking.push(
+        `${option.reference} was selected against a brief baseline whose hash no longer matches the one ` +
+          'in force. The option was chosen for a different brief.',
+      );
+    }
+  }
+
+  // And the brief register itself, unmoved since it was frozen.
+  const drift = conceptbrief.briefDrift(ctx);
+  for (const entry of drift) {
+    blocking.push(`${entry.reference} has ${entry.state === 'MISSING' ? 'gone' : 'changed'} since the baseline.`);
+  }
+
+  return {
+    clause: 'ONE_CUT_OFF',
+    title: TITLES.ONE_CUT_OFF,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? `Cost, programme, cashflow and brief all stand at the ${controls.cutOffDate} cut-off, and the ` +
+          'selected option still points at the brief baseline in force.'
+        : `${blocking.length} component${blocking.length === 1 ? '' : 's'} moved since the declared cut-off.`,
+    blocking,
+  };
+}
+
+function conceptDownstreamCreated(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+  const unseen: string[] = [];
+
+  // What concept genuinely creates for design, and can be checked: the package
+  // strategy's procurement milestones, which the design programme has to hit.
+  const strategy = conceptstrategy.currentPackageStrategy(ctx);
+  if (!strategy) blocking.push('No package strategy exists, so design has no procurement dates to plan to.');
+  else if (strategy.packages.length === 0) blocking.push('The package strategy names no packages.');
+
+  // The concept baseline is deliberately *not* checked here.
+  //
+  // It is the output of passing this gate, not an input to it —
+  // `approveConceptBaseline` evaluates the gate and refuses over a failing
+  // clause. Requiring it here made the two circular: the baseline needed the
+  // gate to pass, and the gate needed the baseline to exist, so neither could
+  // ever happen. AC-C-WF-08-01's "exact component versions" is satisfied by the
+  // baseline record itself and verified afterwards by `conceptBaselineDrift`.
+
+  // The honest half. The specification's output is a "Design Mobilisation
+  // Worklist" and this platform does not build one — the design stage's own
+  // D-WF-01 plan is created there, by hand, from these packages. Reported as
+  // unseen rather than passed, because a gate that quietly passes what it did
+  // not check converts a gap into a signed assurance.
+  unseen.push(
+    'The design mobilisation worklist is not built by this platform. The package strategy carries the dates ' +
+      'it would be derived from, and the design management plan is created in D-WF-01 rather than generated here.',
+  );
+
+  if (blocking.length > 0) {
+    return {
+      clause: 'DOWNSTREAM_CREATED',
+      title: TITLES.DOWNSTREAM_CREATED,
+      state: 'FAIL',
+      detail: `${blocking.length} downstream obligation${blocking.length === 1 ? '' : 's'} not created.`,
+      blocking: [...blocking, ...unseen],
+    };
+  }
+
+  return {
+    clause: 'DOWNSTREAM_CREATED',
+    title: TITLES.DOWNSTREAM_CREATED,
+    state: 'NOT_ASSESSABLE',
+    detail:
+      'The package strategy and the concept baseline exist and carry the dates and versions design works to. ' +
+      'One output of this clause is not built and is named rather than assumed.',
+    blocking: unseen,
+  };
+}
+
+/**
+ * The concept stage gate — 6.4.
+ *
+ * Word for word identical to 7.4, 8.4, 9.4, 10.4 and 11.4, which is why only
+ * the five stage-specific clauses are written here and the AI and replay
+ * clauses stay shared. The fifth clause has read `NOT_ASSESSABLE` at every gate
+ * since the first, for the same honest reason: the AI event block records no
+ * assumptions and no prompt version.
+ */
+export function evaluateConceptGate(ctx: EngineContext): GateReport {
+  authorise(ctx, 'PROJECT_SETUP', 'R');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  const clauses = [
+    conceptInputsComplete(ctx),
+    conceptApprovalsGoverned(ctx),
+    conceptBlockersClosed(ctx),
+    conceptOneCutOff(ctx),
+    aiAccounted(ctx, 'concept stage'),
+    replayable(ctx),
+    conceptDownstreamCreated(ctx),
+  ];
+
+  return reportOf(ctx, String(project.state.phase), clauses);
+}
+
+export type ConceptBaselineComponent = {
+  component: string;
+  refType: string;
+  refId: string;
+  version?: number;
+  /** The hash of the component's state at the moment of freezing. */
+  stateHash: string;
+};
+
+/**
+ * Freeze the concept baseline.
+ *
+ * AC-C-WF-08-01: the gate pack must be reproducible and reference *exact
+ * component versions*. A list of ids proves only that the same records exist;
+ * a list of state hashes proves they are unchanged, which is the claim a
+ * baseline actually makes.
+ *
+ * Called after the gate is decided rather than as part of deciding it. The two
+ * are separate acts: the decision is a judgement about whether the stage is
+ * done, and the baseline is the record of what was true when that judgement was
+ * made. Collapsing them would mean a HOLD produced a baseline.
+ */
+export function approveConceptBaseline(
+  ctx: EngineContext,
+  input: { evidenceHash: string; note?: string },
+): { baselineId: string; components: number; baselineHash: string } {
+  authorise(ctx, 'PROJECT_SETUP', 'A');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  if (String(project.state.phase) !== 'CONCEPT') {
+    throw new DomainError(
+      'NOT_IN_CONCEPT',
+      `The project is in ${String(project.state.phase)}. A concept baseline freezes the concept stage, ` +
+        'and this one has been left.',
+      409,
+    );
+  }
+
+  const report = evaluateConceptGate(ctx);
+  if (report.failed.length > 0) {
+    throw new DomainError(
+      'GATE_NOT_MET',
+      `${report.failed.length} concept gate clause${report.failed.length === 1 ? '' : 's'} failed: ` +
+        `${report.failed.join(', ')}. A baseline over a failing gate freezes a position nobody approved.`,
+      409,
+    );
+  }
+
+  const components: ConceptBaselineComponent[] = [];
+  const add = (component: string, refType: string, refId: string | undefined, version?: number): void => {
+    if (!refId) return;
+    const record = ctx.ledger.require({ refType, refId });
+    components.push({ component, refType, refId, version, stateHash: hashState(record.state) });
+  };
+
+  const configuration = conceptinitiation.currentConfiguration(ctx);
+  add('Configuration', 'ProjectConfiguration', configuration?.configurationId, configuration?.version);
+  const matrix = conceptinitiation.currentAuthorityMatrix(ctx);
+  add('AuthorityMatrix', 'AuthorityMatrix', matrix?.matrixId, matrix?.version);
+  const brief = conceptbrief.currentBriefBaseline(ctx);
+  add('BriefBaseline', 'BriefBaseline', brief?.baselineId, brief?.version);
+  const option = conceptoptions.selectedOption(ctx);
+  add('SelectedOption', 'FeasibilityOption', option?.optionId);
+  const controls = conceptcontrols.currentConceptControls(ctx);
+  add('ConceptControls', 'ConceptControls', controls?.controlsId, controls?.version);
+  add('CostPlan', 'ConceptCostPlan', controls?.costPlanId);
+  add('MilestoneProgramme', 'MilestoneProgramme', controls?.programmeId);
+  add('Cashflow', 'ConceptCashflow', controls?.cashflowId);
+  const procurement = conceptstrategy.currentProcurementStrategy(ctx);
+  add('ProcurementStrategy', 'ProcurementStrategy', procurement?.strategyId, procurement?.version);
+  const packages = conceptstrategy.currentPackageStrategy(ctx);
+  add('PackageStrategy', 'PackageStrategy', packages?.packageStrategyId, packages?.version);
+  const contract = conceptstrategy.currentContractStrategy(ctx);
+  add('ContractStrategy', 'ContractStrategy', contract?.contractStrategyId, contract?.version);
+  const screening = conceptcompliance.currentComplianceScreening(ctx);
+  add('ComplianceApplicability', 'ComplianceApplicability', screening?.screeningId, screening?.version);
+  const riskReview = conceptcompliance.currentConceptRiskReview(ctx);
+  add('ConceptRiskReview', 'ConceptRiskReview', riskReview?.reviewId, riskReview?.version);
+
+  const evidence = registerEvidence(ctx, {
+    type: 'CONCEPT_BASELINE',
+    hash: input.evidenceHash,
+    description: `Concept baseline — ${components.length} components frozen`,
+  });
+
+  const baselineId = ulid();
+  const baselineHash = hashState({ components } as unknown as Record<string, unknown>);
+  write(ctx, {
+    eventType: 'CONCEPT_BASELINE_APPROVED',
+    entity: { refType: 'ConceptBaseline', refId: baselineId },
+    nextState: {
+      baselineId,
+      projectId: ctx.projectId,
+      components,
+      baselineHash,
+      // The gate as it read at the moment of freezing, so the pack is
+      // reproducible without re-evaluating against a project that has moved.
+      gateClauses: report.clauses.map((clause) => ({
+        clause: clause.clause,
+        state: clause.state,
+        detail: clause.detail,
+      })),
+      unassessable: report.unassessable,
+      note: input.note,
+      approvedBy: ctx.auth.actorId,
+      approvedAt: new Date().toISOString(),
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return { baselineId, components: components.length, baselineHash };
+}
+
+/**
+ * Components that have moved since the concept baseline froze them.
+ *
+ * The check that makes the baseline worth taking. Empty on a project nobody has
+ * edited since; anything in it is a component the design stage is working from
+ * that is not the component concept approved.
+ */
+export function conceptBaselineDrift(
+  ctx: EngineContext,
+): Array<{ component: string; state: 'DRIFTED' | 'MISSING' }> {
+  const baseline = ctx.ledger
+    .list(ctx.projectId, 'ConceptBaseline')
+    .map((record) => record.state as unknown as { components?: ConceptBaselineComponent[] })
+    .at(-1);
+  if (!baseline?.components) return [];
+
+  const drift: Array<{ component: string; state: 'DRIFTED' | 'MISSING' }> = [];
+  for (const component of baseline.components) {
+    let record;
+    try {
+      record = ctx.ledger.require({ refType: component.refType, refId: component.refId });
+    } catch {
+      drift.push({ component: component.component, state: 'MISSING' });
+      continue;
+    }
+    if (hashState(record.state) !== component.stateHash) {
+      drift.push({ component: component.component, state: 'DRIFTED' });
+    }
+  }
+  return drift;
+}
+
 export function evaluateHandoverGate(ctx: EngineContext): GateReport {
   authorise(ctx, 'PROJECT_SETUP', 'R');
 
@@ -1484,13 +1943,14 @@ function reportOf(ctx: EngineContext, phase: string, clauses: ClauseResult[]): G
  * Which of the seven-clause gates applies to this project right now.
  *
  * The gate is decided at the end of the phase it governs, so a project sitting
- * in DESIGN is being assessed against 7.4. Every other phase falls to the
- * tender gate, which is where the only implemented gate has always pointed —
- * existing behaviour is unchanged for a project that is not in design.
+ * in DESIGN is being assessed against 7.4. Every lifecycle phase that has a
+ * specified gate now has an implemented one; TENDER is the fall-through, which
+ * is where the first gate always pointed.
  */
 export function gateFor(ctx: EngineContext): GateReport {
   const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
   const phase = String(project.state.phase);
+  if (phase === 'CONCEPT') return evaluateConceptGate(ctx);
   if (phase === 'DESIGN') return evaluateDesignGate(ctx);
   if (phase === 'CONSTRUCTION') return evaluateConstructionGate(ctx);
   if (phase === 'COMMISSIONING') return evaluateCommissioningGate(ctx);

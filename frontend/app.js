@@ -41,6 +41,12 @@ export const NAV = [
   {
     group: 'Deliver',
     items: [
+      // First in the group because it is first in the lifecycle. Under
+      // PROJECT_SETUP read, which is the area the configuration, the brief, the
+      // constraints and the options all sit in; the cost and programme panels
+      // authorise themselves separately from BUDGET_COST and
+      // PROGRAMME_BASELINES, panel by panel.
+      { id: 'concept', label: 'Concept', area: 'PROJECT_SETUP', icon: 'target' },
       { id: 'programme', label: 'Programme', area: 'PROGRAMME_BASELINES', icon: 'chart' },
       { id: 'field', label: 'Field Execution', area: 'FIELD_EXECUTION', icon: 'clipboard' },
       // The five registers a site runs on: permits, method statements,
