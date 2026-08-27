@@ -326,8 +326,7 @@ export const CONTROL_ITEMS: ControlItem[] = [
     label: 'Technical submittals',
     purpose: 'Materials and details approved before they are ordered or built.',
     dueFrom: 'CONSTRUCTION',
-    notTrackedReason:
-      'Supplier submissions are tender returns, not technical submittals. Nothing tracks a product or detail submitted for approval, so the approval status of what is being installed cannot be asserted.',
+    evidence: { refType: 'MaterialSubmittal', predicate: any, minimum: 1, counts: 'submittals' },
   },
   {
     id: 'DEL.INSPECTIONS',

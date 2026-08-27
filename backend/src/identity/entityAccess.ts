@@ -59,6 +59,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // Design and information
   Specification: { area: 'DESIGN_INFORMATION' },
   SpecClause: { area: 'DESIGN_INFORMATION' },
+  // With the clause it answers, not with quality. QUALITY_COMMISSIONING is
+  // phase-gated to CONSTRUCTION onwards, and a long-lead submittal raised in
+  // design — which is the only time a fourteen-week item can be raised usefully
+  // — is not a process error. The area also already splits the two parties
+  // correctly: the contractor and EPC hold C and U so they submit, the designer
+  // and principal designer hold A so they decide.
+  MaterialSubmittal: { area: 'DESIGN_INFORMATION' },
   Drawing: { area: 'DESIGN_INFORMATION' },
   DrawingMarkup: { area: 'DESIGN_INFORMATION' },
   RFI: { area: 'DESIGN_INFORMATION' },
@@ -203,6 +210,16 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   SiteVisit: { area: 'LOOKAHEAD_CONSTRAINTS' },
   SiteFinding: { area: 'LOOKAHEAD_CONSTRAINTS' },
   SiteLogisticsPlan: { area: 'LOOKAHEAD_CONSTRAINTS' },
+  // A meeting sits with constraints for the same reason a site visit does: what
+  // comes out of it is actions somebody owns by a date, which is the thing this
+  // area already governs. It is also the area that is not phase-gated, and a
+  // design coordination meeting held in CONCEPT is not a process error.
+  //
+  // The split falls out of the matrix rather than being invented beside it: the
+  // planner, supervisor and EPC hold C and U, so they minute; the project
+  // manager and project director hold A, so they issue. That is exactly how a
+  // set of minutes is produced on site.
+  SiteMeeting: { area: 'LOOKAHEAD_CONSTRAINTS' },
   Snag: { area: 'QUALITY_COMMISSIONING' },
   Defect: { area: 'QUALITY_COMMISSIONING' },
   CommissioningTest: { area: 'QUALITY_COMMISSIONING' },

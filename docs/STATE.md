@@ -4673,6 +4673,77 @@ addendum impact — they need T-WF-03's measured items, which do not exist;
 automatic outlier detection across a comparison; and any bidder-facing portal.
 The recipients are recorded; sending is somebody else's system.
 
+### The two records a document could not be composed from
+
+Meeting minutes and material approval submittals are on the list of documents
+this platform generates, and neither had a record behind it. Generating them
+anyway would have produced exactly the invented content the document engine
+exists to refuse: a set of minutes with no meeting behind it reads precisely
+like one with a meeting behind it, and nobody downstream can tell them apart.
+So the two records were built first.
+
+**`backend/src/domain/meetings.ts` — the `SiteMeeting`.** Seven meeting types,
+attendance with apologies recorded rather than omitted, agenda items, and an
+action register. Seven routes, 21 tests.
+
+Three refusals carry it. An action needs an owner *and* a date — without both it
+is a topic somebody mentioned, and a register of those stops being read. Minutes
+are issued once and a correction is recorded *beside* them, never applied to
+them: the commonest abuse of a set of minutes is quietly amending what was
+agreed after somebody objects, and rewriting the text destroys the only thing
+minutes are for. And an action carried forward from an earlier meeting keeps the
+date it was originally given, so an action raised in March and still open in
+June reports as eighty-two days overdue rather than as due next Tuesday — which
+is how registers full of overdue actions report themselves as healthy.
+
+Closing an action is deliberately permitted *after* issue. The minutes record
+what was agreed on the day and do not change; the register is live, and freezing
+it would mean every closure needed a new meeting.
+
+The `LOOKAHEAD_CONSTRAINTS` classification is not a convenience. It is the area
+that already owns actions somebody owns by a date, it is not phase-gated — a
+design coordination meeting in CONCEPT is not a process error — and it splits
+the two parties correctly without widening the matrix: the planner, supervisor
+and EPC hold C and U, so they minute; the project manager and project director
+hold A, so they issue. That is how a set of minutes is actually produced.
+
+**`backend/src/domain/submittals.ts` — the `MaterialSubmittal`.** Six kinds,
+four review outcomes, revisions on one record, six routes, 37 tests. This closes
+a gap the corporate control standard had declared open rather than hidden:
+`DEL.SUBMITTALS` carried a `notTrackedReason` saying supplier submissions are
+tender returns and nothing tracked a product submitted for approval. It is
+tracked now, and a test asserts the excuse is gone.
+
+The number that makes the register worth keeping is **the date the decision was
+actually needed** — the date the material must be on site, less its procurement
+lead time. Nobody types it; typing it is how it ends up agreeing with nothing.
+A register that tracks status alone discovers its delays after they have
+happened. The platform also reports *negative slack*: where the contractual
+review period runs past the ordering date, the reviewer can answer entirely
+within the contract and the material still cannot arrive. No status field can
+express that.
+
+Two more refusals. A compliance claim carries the specified value and the
+offered value or it is not recorded — one side of a comparison is an assertion
+the reviewer is being asked to countersign. And a submittal cites a clause that
+exists on the project, so the reviewer is approving a compliance rather than a
+product.
+
+**What it deliberately does not refuse** is a late approval or an order placed
+before one. Both are real acts real projects perform for good commercial
+reasons. Ordering an unapproved long-lead item is refused only as an *ordinary*
+order: `atRisk` with a justification and a named person records it truthfully.
+Refusing the act outright would push it into an inbox, which is the one outcome
+that makes the register worse than useless.
+
+Revisions stay on one record rather than opening a new row per cycle. A product
+that has been round three times is the one fact the register exists to surface,
+and splitting the cycles is how that becomes invisible. Each new revision clears
+the previous decision, because carrying it forward would show revision D as
+approved on the strength of a review of revision C.
+
+---
+
 ---
 
 ## What is partial

@@ -55,6 +55,8 @@ import * as sitevisit from '../engines/sitevisit.ts';
 import * as award from '../domain/award.ts';
 import * as enquiry from '../domain/enquiry.ts';
 import * as measurement from '../domain/measurement.ts';
+import * as meetings from '../domain/meetings.ts';
+import * as submittals from '../domain/submittals.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
@@ -4364,6 +4366,120 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) => sitevisit.setLogisticsPlan(projectContext(platform, ctx), body(ctx)),
   },
+
+  // ------------------------------------------------------- site meetings and minutes
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/meetings',
+    description: 'Meetings held, and every open action across all of them ordered by how far past its date it is',
+    handler: (platform, ctx) => meetings.meetingPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/meetings',
+    description: 'Open a meeting record — what it was, where, who chaired it and who was in the room',
+    schema: {
+      type: 'object',
+      required: ['type', 'title', 'heldAt', 'location', 'chair', 'attendees'],
+      properties: {
+        type: { type: 'string', enum: [...meetings.MEETING_TYPE] },
+        title: stringField,
+        heldAt: stringField,
+        location: stringField,
+        chair: stringField,
+        // No `minItems`. "A meeting with nobody at it produces no minutes" is a
+        // sentence worth reading; VALIDATION_FAILED is not.
+        attendees: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['name', 'organisation', 'role', 'attended'],
+            properties: {
+              name: stringField,
+              organisation: stringField,
+              role: stringField,
+              attended: { type: 'boolean' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => meetings.openMeeting(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/meetings/:meetingId/agenda',
+    description: 'Minute an item: what was raised and what was actually said about it',
+    schema: {
+      type: 'object',
+      required: ['subject', 'discussion'],
+      properties: { subject: stringField, discussion: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      meetings.recordAgendaItem(projectContext(platform, ctx), ctx.params.meetingId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/meetings/:meetingId/actions',
+    description: 'Record an action out of the meeting — what, who, and by when',
+    schema: {
+      type: 'object',
+      required: ['what', 'owner', 'ownerOrganisation', 'by'],
+      properties: {
+        what: { type: 'string' },
+        owner: stringField,
+        ownerOrganisation: stringField,
+        by: stringField,
+        // Both present together carry an action forward from an earlier meeting
+        // without resetting its clock.
+        raisedAtMeeting: stringField,
+        originallyDue: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      meetings.recordAction(projectContext(platform, ctx), ctx.params.meetingId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/meetings/:meetingId/actions/close',
+    description: 'Close an action with what actually discharged it — permitted after the minutes are issued',
+    schema: {
+      type: 'object',
+      required: ['reference', 'closureNote'],
+      properties: { reference: stringField, closureNote: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      meetings.closeAction(projectContext(platform, ctx), ctx.params.meetingId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/meetings/:meetingId/issue',
+    description: 'Issue the minutes. After this they are the record of what was agreed and are not amended',
+    // Takes no body. The empty schema is not a formality — it refuses one
+    // carrying fields, so a caller who thinks this route accepts arguments finds
+    // out here rather than by having them silently ignored.
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => meetings.issueMinutes(projectContext(platform, ctx), ctx.params.meetingId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/meetings/:meetingId/corrections',
+    description: 'Record a correction against issued minutes — beside them, never applied to them',
+    schema: {
+      type: 'object',
+      required: ['raisedBy', 'what'],
+      properties: { raisedBy: stringField, what: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      meetings.recordCorrection(projectContext(platform, ctx), ctx.params.meetingId as string, body(ctx)),
+  },
+
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/work-packages',
@@ -5115,6 +5231,152 @@ export const ROUTES: Route[] = [
     description: 'Which specified tests, submittals and hold points have an inspection stage against them',
     handler: (platform, ctx) => bim.specificationCoverage(projectContext(platform, ctx)),
   },
+
+  // ------------------------------------------------------- material and technical submittals
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/submittals',
+    description: 'The submittal register ordered by when the decision is needed, not by when it was raised',
+    handler: (platform, ctx) => submittals.submittalPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/submittals',
+    description: 'Raise a submittal against a specification clause, with the compliance comparison and the lead time',
+    schema: {
+      type: 'object',
+      required: [
+        'kind',
+        'title',
+        'clauseId',
+        'manufacturer',
+        'productReference',
+        'claims',
+        'procurementLeadTimeDays',
+        'requiredOnSiteBy',
+        'reviewPeriodDays',
+      ],
+      properties: {
+        kind: { type: 'string', enum: [...submittals.SUBMITTAL_KIND] },
+        title: stringField,
+        clauseId: stringField,
+        manufacturer: stringField,
+        productReference: stringField,
+        // No `minItems`, for the usual reason: "a submittal with no requirement
+        // compared is a product data sheet with a cover sheet on it" is worth
+        // reading, and VALIDATION_FAILED is not.
+        claims: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['requirement', 'specified', 'offered', 'compliant'],
+            properties: {
+              requirement: stringField,
+              specified: stringField,
+              offered: stringField,
+              compliant: { type: 'boolean' },
+              justification: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+        procurementLeadTimeDays: { type: 'number', minimum: 0 },
+        requiredOnSiteBy: stringField,
+        reviewPeriodDays: { type: 'number', minimum: 0 },
+        substitution: {
+          type: 'object',
+          required: ['differsFrom', 'whyProposed'],
+          properties: { differsFrom: { type: 'string' }, whyProposed: { type: 'string' } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => submittals.raiseSubmittal(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/submittals/:submittalId/submit',
+    description: 'Send it for review, which starts the contractual clock and fixes the review due date',
+    // Takes no body. The empty schema is not a formality — it refuses one
+    // carrying fields, so a caller who thinks this route accepts arguments finds
+    // out here rather than by having them silently ignored.
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      submittals.submitForReview(projectContext(platform, ctx), ctx.params.submittalId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/submittals/:submittalId/review',
+    description: 'Decide it — approved, approved with comments, revise and resubmit, or rejected',
+    schema: {
+      type: 'object',
+      required: ['outcome', 'comments'],
+      properties: {
+        outcome: { type: 'string', enum: [...submittals.REVIEW_OUTCOME] },
+        comments: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      submittals.reviewSubmittal(projectContext(platform, ctx), ctx.params.submittalId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/submittals/:submittalId/resubmit',
+    description: 'Resubmit as the next revision on the same record, saying what changed',
+    schema: {
+      type: 'object',
+      required: ['claims', 'whatChanged'],
+      properties: {
+        manufacturer: { type: 'string' },
+        productReference: { type: 'string' },
+        claims: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['requirement', 'specified', 'offered', 'compliant'],
+            properties: {
+              requirement: stringField,
+              specified: stringField,
+              offered: stringField,
+              compliant: { type: 'boolean' },
+              justification: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+        substitution: {
+          type: 'object',
+          required: ['differsFrom', 'whyProposed'],
+          properties: { differsFrom: { type: 'string' }, whyProposed: { type: 'string' } },
+          additionalProperties: false,
+        },
+        whatChanged: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      submittals.resubmit(projectContext(platform, ctx), ctx.params.submittalId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/submittals/:submittalId/ordered',
+    description: 'Record the order. Before approval it is recorded as placed at risk, with the reason it was worth taking',
+    schema: {
+      type: 'object',
+      required: ['orderReference'],
+      properties: {
+        orderReference: stringField,
+        atRisk: { type: 'boolean' },
+        justification: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      submittals.recordOrdered(projectContext(platform, ctx), ctx.params.submittalId as string, body(ctx)),
+  },
+
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/bim/clashes',

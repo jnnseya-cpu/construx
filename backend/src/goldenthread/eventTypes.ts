@@ -175,6 +175,22 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SPECIFICATION_INGESTED', 'Specification', 'IMPORT', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),
   def('SPEC_CLAUSE_EXTRACTED', 'SpecClause', 'CREATE', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),
   def('DESIGN_MATURITY_ASSESSED', 'DesignMaturityAssessment', 'CREATE', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),
+  // Technical and material approval submittals. A submittal answers a clause,
+  // so it belongs beside the clause rather than in delivery, and the same
+  // record carries every revision of it — a register that split each cycle into
+  // its own row would hide the product that has been round three times, which
+  // is the one fact the register exists to surface.
+  def('SUBMITTAL_RAISED', 'MaterialSubmittal', 'CREATE', 'DESIGN', { creates: true }),
+  def('SUBMITTAL_ISSUED', 'MaterialSubmittal', 'UPDATE', 'DESIGN'),
+  // APPROVE covers all four outcomes: this is the act of deciding, and a
+  // separate REJECT would say a rejection is a different kind of event when it
+  // is the same event with a different answer in it.
+  def('SUBMITTAL_REVIEWED', 'MaterialSubmittal', 'APPROVE', 'DESIGN'),
+  def('SUBMITTAL_RESUBMITTED', 'MaterialSubmittal', 'UPDATE', 'DESIGN'),
+  // Its own event because ordering is the act the approval was for, and an
+  // order placed before the decision is the exposure the register is built to
+  // make visible.
+  def('SUBMITTAL_ORDERED', 'MaterialSubmittal', 'UPDATE', 'DESIGN'),
   def('RFI_RAISED', 'RFI', 'CREATE', 'DESIGN', { aiAllowed: true }),
   def('RFI_ANSWERED', 'RFI', 'UPDATE', 'DESIGN', { requiresEvidence: true }),
   def('CORRESPONDENCE_ISSUED', 'Correspondence', 'ISSUE', 'DESIGN', { aiAllowed: true, creates: true }),
@@ -373,6 +389,24 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // One current plan per project, superseding rather than accumulating. A site
   // with two logistics plans has none.
   def('LOGISTICS_PLAN_SET', 'SiteLogisticsPlan', 'UPDATE', 'DELIVERY', { creates: true }),
+  // The meeting and everything minuted in it — attendance, agenda, actions —
+  // are one event because they are one act. Splitting the agenda item out would
+  // let a set of minutes exist with items recorded against a meeting nobody
+  // held.
+  def('MEETING_HELD', 'SiteMeeting', 'UPDATE', 'DELIVERY', { creates: true }),
+  // Its own event, because closing an action is permitted after the minutes are
+  // frozen and every other change to the meeting is not. An audit reading the
+  // ledger can tell the two apart without inspecting state.
+  def('MEETING_ACTION_CLOSED', 'SiteMeeting', 'UPDATE', 'DELIVERY'),
+  // FREEZE, not ISSUE. ISSUE would say the minutes went out; FREEZE says what
+  // actually changed, which is that the narrative stopped being editable. The
+  // refusal itself lives in `domain/meetings.ts` — the ledger does not act on
+  // this action, so the action is a description of the event, not the guard.
+  def('MINUTES_ISSUED', 'SiteMeeting', 'FREEZE', 'DELIVERY'),
+  // A correction is recorded beside issued minutes, never applied to them.
+  // Somebody disagreeing with what the minutes say is itself a fact about the
+  // meeting; overwriting the text destroys the only thing minutes are for.
+  def('MINUTES_CORRECTED', 'SiteMeeting', 'UPDATE', 'DELIVERY'),
   // Quality assurance: the plan, the hold points, and the record against them.
   def('ITP_CREATED', 'InspectionPlan', 'CREATE', 'DELIVERY', { creates: true }),
   def('ITP_STAGE_UPDATED', 'InspectionPlan', 'UPDATE', 'DELIVERY'),
