@@ -6331,10 +6331,46 @@ manual names and never describes, and — the quiet one — **the same task give
 two different frequencies**, which comes from two source documents neither of
 which was wrong.
 
-**Still to build in the handover block:** H-WF-04 to H-WF-10, the
+---
+
+### Blank is not pass, and export success is not acceptance
+
+H-WF-04. `backend/src/domain/assetregister.ts`, four routes, 17 tests, plus one
+correctness fix in `engines/handover.ts`.
+
+`registerAsset` and `registerWarranty` are reused unchanged. What was absent is
+everything that decides whether the register is **fit to hand over**.
+
+**Blank is not pass.** An asset register with empty serial columns scores as
+complete on every tool that counts rows, because a blank passes a presence check
+by not being examined. Here a mandatory attribute is either supplied or recorded
+as an explicit **Unknown with an owner, a reason and a date** — a different
+thing entirely, because somebody has to be asked about it, and readiness blocks
+once that date passes. The asset's own identity — tag, manufacturer, model —
+cannot be declared Unknown at all: an asset with none of those is not a record,
+it is a row.
+
+**A duplicate identity blocks acceptance.** The tag is what the maintenance
+system, the O&M manual, the drawing link and the warranty all resolve to a
+single machine, so `registerAsset` now refuses a tag that is already registered
+— a correctness fix to existing code, not a new rule. A duplicate *serial* is
+reported rather than refused, because it usually means a row was copied rather
+than a machine registered twice.
+
+**Export success is not acceptance.** AC-H-WF-04-03, and the failure that makes
+asset handovers famous: a COBie file uploads cleanly, the project closes, and
+eighteen months later the maintenance system turns out to have silently rejected
+four hundred rows for a classification value it did not recognise. An export
+here is a claim; **reconciliation** against what the target actually accepted is
+the answer, the totals have to add up, and a rejected row with no reason — or
+one that was never in the export — is refused. Exporting a register that still
+carries validation errors is refused too: it does not fix them, it copies them
+somewhere harder to correct.
+
+**Still to build in the handover block:** H-WF-05 to H-WF-10, the
 `HANDOVER_ACCEPTED` gate, the 11.4 gate and the stage workspace described in
 11.2. The stage control, 11.1, 11.2, H-WF-01 to H-WF-10, 11.4 and the
-cross-stage sections 12 to 14.1 are recorded verbatim in `docs/WORKFLOWS.md`;
+cross-stage sections 12 to 14.4 are recorded verbatim in `docs/WORKFLOWS.md`;
 several arrived out of sequence during the build and are recorded there in the
 order they were sent.
 

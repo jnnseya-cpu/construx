@@ -350,6 +350,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // H-WF-03. The structured manual, distinct from the AI-drafted `OMManual`
   // that feeds it: one is an extraction, the other is what the operator accepts.
   OMManualStructure: { area: 'HANDOVER_OM' },
+  // H-WF-04. The validation and the exchange sit beside the register they judge.
+  AssetValidation: { area: 'HANDOVER_OM' },
+  AssetExchange: { area: 'HANDOVER_OM' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },

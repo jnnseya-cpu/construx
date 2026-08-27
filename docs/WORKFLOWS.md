@@ -2419,3 +2419,60 @@ Downstream invalidation	Keep source approval but mark dependent output Revalidat
 •	Large files use authorised pre-signed upload, completion callback, malware scan, hash, immutable storage and separate extraction status.
 Exports are asynchronous jobs with requester, data scope, branding, recipient class, hash, expiry and audit event.
 ```
+
+## 14.1b — Representative endpoints
+
+*(Continues 14.1. Sent as a table with a leading bullet, recorded as received.)*
+
+```
+•	
+Area	Representative endpoints
+Project/stage	POST /v1/projects; POST /v1/projects/{id}/stages/{stage}:validate|submit; POST /v1/stage-gates/{id}:decide
+Information	POST /v1/projects/{id}/files:presign|complete; POST /v1/information-containers/{id}:validate|publish|supersede
+Programme	POST /v1/projects/{id}/programme-baselines; POST /v1/projects/{id}/lookaheads; POST /v1/progress/{id}:verify
+Commercial	POST /v1/projects/{id}/estimates; POST /v1/contracts/{id}/payment-cycles:generate; POST /v1/projects/{id}/cvr-snapshots
+Contract/change	POST /v1/contracts/{id}/notices; POST /v1/projects/{id}/change-events; POST /v1/claims/{id}:build-evidence-pack
+Field/quality/HSE	POST /v1/projects/{id}/daily-logs; POST /v1/inspections; POST /v1/ncrs; POST /v1/rams; POST /v1/permits/{id}:issue
+Commissioning	POST /v1/systems/{id}/test-packs; POST /v1/tests/{id}/readings; POST /v1/commissioning-exceptions/{id}:retest
+Handover	POST /v1/projects/{id}/handover-packs:compile; POST /v1/assets:validate-exchange; POST /v1/golden-thread/{id}:transfer
+AI/ACU	POST /v1/ai/requests:estimate; POST /v1/ai/requests; GET /v1/ai/executions/{id}; GET /v1/acu/transactions
+Audit	GET /v1/projects/{id}/events; POST /v1/event-replay; POST /v1/exports
+```
+
+## 14.2
+
+```
+14.2 Golden Thread event envelope
+eventId, tenantId, enterpriseId, projectId, streamId, streamVersion
+eventType, action, occurredAtUtc, projectTimeZone, actor{type,id,partyId,roleAtTime}
+entity{type,id,version}, source{web|android|ios|api|import|system|ai}
+beforeHash, afterHash, diff{RFC6902}, evidenceRefs[], correlationId, causationId
+policy{policyId,version,decision}, ai{requestId,executionId,provider,model,promptVersion,acu}
+schemaVersion, signature/integrity metadata
+```
+
+## 14.3
+
+```
+14.3 Event processing guarantees
+•	Append state and event atomically through transaction/outbox. Consumers are idempotent by eventId and track last processed stream version.
+•	Partition/order project aggregates by tenantId + projectId + streamId. Cross-aggregate projections are eventually consistent and expose freshness.
+•	Retries use exponential backoff and dead-letter queues; an operator can replay safely without duplicate business effect.
+•	Event schemas are versioned and backward-compatible; breaking changes use a new event type/version and migration projection.
+•	Audit events are append-only. Correction is a new event; delete commands tombstone permitted operational records but preserve evidence and retention policy.
+```
+
+## 14.4
+
+```
+14.4 Integration adapters
+Adapter	Minimum contract
+CDE/document platform	Container metadata, revision/status/suitability, file hash/URL, transmittal, acknowledgement, webhook idempotency
+Planning tools	WBS/activity/logic/calendar/baseline/current progress import-export with stable external IDs and reconciliation
+ERP/accounting	Supplier, PO, commitment, invoice, certificate, payment, cost code and ledger sync with exception queue
+E-signature	Envelope ID, recipients, sent/viewed/signed/declined timestamps, signed file hash and certificate
+EAM/CAFM	Asset/location/system, maintenance, warranty, documents, external IDs and bidirectional reconciliation
+BIM/open standards	IFC including current supported schema, BCF, IDS, COBie/configured asset exchange and validation results
+IoT/BMS	Point/tag mapping, units, sampling, quality flag, timestamp/time zone, retention and anomaly event
+Weather/GIS/cost data	Provider, licence, location, effective time/base date, unit/currency, provenance and cache policy
+```

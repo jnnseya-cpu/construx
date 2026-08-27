@@ -996,6 +996,17 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('OM_MANUAL_ACCEPTED', 'OMManualStructure', 'APPROVE', 'HANDOVER_OM'),
   def('OM_MANUAL_REJECTED', 'OMManualStructure', 'REJECT', 'HANDOVER_OM'),
 
+  // --- H-WF-04 asset register validation, exchange and reconciliation -------
+  // A blank passes a presence check by not being examined. An explicit Unknown
+  // with an owner and a date is a different thing entirely, because somebody has
+  // to be asked about it.
+  def('ASSET_DATA_VALIDATED', 'AssetValidation', 'UPDATE', 'HANDOVER_OM', { creates: true }),
+  def('ASSET_EXCHANGE_EXPORTED', 'AssetExchange', 'IMPORT', 'HANDOVER_OM', { creates: true }),
+  // Export success is not acceptance. A COBie file uploads cleanly, the project
+  // closes, and eighteen months later the maintenance system turns out to have
+  // silently rejected four hundred rows. APPROVE, and the totals have to add up.
+  def('ASSET_RECONCILED', 'AssetExchange', 'APPROVE', 'HANDOVER_OM'),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

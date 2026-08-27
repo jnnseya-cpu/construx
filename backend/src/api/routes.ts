@@ -60,6 +60,7 @@ import * as handover from '../engines/handover.ts';
 import * as planning from '../engines/planning.ts';
 import * as sitevisit from '../engines/sitevisit.ts';
 import * as asbuilt from '../domain/asbuilt.ts';
+import * as assetregister from '../domain/assetregister.ts';
 import * as award from '../domain/award.ts';
 import * as enquiry from '../domain/enquiry.ts';
 import * as constructability from '../domain/constructability.ts';
@@ -5538,6 +5539,92 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => systemisation.declareTemporaryOperation(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- H-WF-04 asset register validation and exchange
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/asset-register',
+    description: 'Attribute completeness, duplicate identities, declared Unknowns and every unreconciled export',
+    handler: (platform, ctx) => assetregister.assetRegisterPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/asset-register/validate',
+    description: 'Machine-readable validation errors, computed rather than stored',
+    handler: (platform, ctx) => assetregister.validateRegister(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/asset-register/unknowns',
+    description: 'Declare what is not known about an asset, with an owner and a date. Blank is not pass',
+    schema: {
+      type: 'object',
+      required: ['assetTag', 'declaredUnknowns', 'declaredBy'],
+      properties: {
+        assetTag: stringField,
+        declaredBy: stringField,
+        declaredUnknowns: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['attribute', 'owner', 'reason', 'by'],
+            properties: {
+              attribute: { type: 'string', enum: assetregister.ASSET_ATTRIBUTE.map((entry) => entry.key) },
+              owner: stringField,
+              reason: { type: 'string' },
+              by: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => assetregister.declareUnknowns(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/asset-register/exports',
+    description: 'Export the register to an external system, refused while the selected assets carry errors',
+    schema: {
+      type: 'object',
+      required: ['reference', 'format', 'externalSystem', 'assetTags', 'exportedBy'],
+      properties: {
+        reference: stringField,
+        format: { type: 'string', enum: [...assetregister.EXCHANGE_FORMAT] },
+        externalSystem: stringField,
+        assetTags: { type: 'array', items: { type: 'string' } },
+        exportedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => assetregister.exportExchange(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/asset-register/exports/:exportId/reconcile',
+    description: 'Reconcile what the target system actually accepted. The totals have to add up',
+    schema: {
+      type: 'object',
+      required: ['rowsAccepted', 'rejected', 'reconciledBy'],
+      properties: {
+        rowsAccepted: { type: 'number' },
+        reconciledBy: stringField,
+        rejected: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['externalId', 'reason'],
+            properties: { externalId: stringField, reason: { type: 'string' } },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      assetregister.reconcileExchange(projectContext(platform, ctx), ctx.params.exportId as string, body(ctx)),
   },
 
   // ------------------------------------------------------- H-WF-03 O&M manuals and the technical file

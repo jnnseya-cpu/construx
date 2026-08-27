@@ -239,6 +239,19 @@ export function registerAsset(
   // year lifecycle plan is built off that one number.
   assertNotFuture(input.installedAt, 'installedAt');
 
+  // The tag is the identity the maintenance system, the O&M manual, the drawing
+  // link and the warranty all hang off. Registering it twice silently merges two
+  // machines, and the merge is discovered years later by whoever goes looking
+  // for the one that is not there. H-WF-04's exception control, applied at the
+  // point the duplicate would be created rather than found afterwards.
+  if (ctx.ledger.list(ctx.projectId, 'AssetRegisterItem').some((r) => r.state.assetTag === input.assetTag)) {
+    throw new DomainError(
+      'ASSET_TAG_TAKEN',
+      `${input.assetTag} is already on the asset register. Two assets carrying one tag is not a data-quality nuisance: ` +
+        'everything downstream resolves the tag to a single machine.',
+    );
+  }
+
   const assetId = ulid();
   write(ctx, {
     eventType: 'ASSET_REGISTERED',
