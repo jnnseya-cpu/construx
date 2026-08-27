@@ -33,6 +33,7 @@ import * as portfolio from '../domain/portfolio.ts';
 import * as correspondence from '../domain/correspondence.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as programmecontrol from '../domain/programmecontrol.ts';
+import * as progressverification from '../domain/progressverification.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
@@ -4085,6 +4086,80 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => planning.recordSiteDiary(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------ CN-WF-04 progress claimed, then certified by somebody else
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/progress-verification',
+    description: 'What was claimed against what was accepted, what is awaiting a verifier, and the rework that earns nothing',
+    handler: (platform, ctx) => progressverification.progressVerificationPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tasks/:taskId/measurement-basis',
+    description: 'What the activity is measured in, how, and against what control total — with the drawing it came from',
+    schema: {
+      type: 'object',
+      required: ['unit', 'controlTotal', 'measurementRule', 'source'],
+      properties: {
+        unit: stringField,
+        controlTotal: { type: 'number', exclusiveMinimum: 0 },
+        measurementRule: { type: 'string' },
+        source: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      progressverification.setMeasurementBasis(projectContext(platform, ctx), {
+        ...body(ctx),
+        taskId: ctx.params.taskId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tasks/:taskId/progress-claims',
+    description: 'Claim installed quantity against an activity, a location and a period. The same three twice is refused',
+    schema: {
+      type: 'object',
+      required: ['quantity', 'unit', 'location', 'periodFrom', 'periodTo', 'evidenceDescription', 'evidenceHash'],
+      properties: {
+        quantity: { type: 'number', exclusiveMinimum: 0 },
+        unit: stringField,
+        location: stringField,
+        periodFrom: stringField,
+        periodTo: stringField,
+        costCode: stringField,
+        rework: { type: 'boolean' },
+        evidenceDescription: { type: 'string' },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      progressverification.submitProgress(projectContext(platform, ctx), {
+        ...body(ctx),
+        taskId: ctx.params.taskId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/progress-claims/:submissionId/verify',
+    description: 'Accept, adjust or reject a claim. The submitted quantity is never overwritten, and an adjustment needs evidence',
+    schema: {
+      type: 'object',
+      required: ['decision', 'rationale'],
+      properties: {
+        decision: { type: 'string', enum: [...progressverification.VERIFICATION] },
+        acceptedQuantity: { type: 'number', minimum: 0 },
+        rationale: { type: 'string' },
+        evidenceDescription: { type: 'string' },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      progressverification.verifyProgress(projectContext(platform, ctx), ctx.params.submissionId as string, body(ctx)),
   },
 
   // ------------------------------------------ CN-WF-03 offline daily log, captured over a shift

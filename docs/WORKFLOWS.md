@@ -1284,3 +1284,82 @@ Acceptance criteria
 •	AC-CN-WF-07-02: Every control/action has owner and verification evidence.
 •	AC-CN-WF-07-03: Incident evidence is access-controlled, immutable and chronologically ordered.
 ```
+
+## CN-WF-08
+
+```
+CN-WF-08 - Construction information, RFI, submittal and instruction control
+Primary owner: Information Manager / Project Manager  |  Trigger: Information issue, ambiguity, product proposal or instruction
+Required inputs
+•	Drawing/model/specification revision and work package
+•	RFI/submittal/markup/instruction content
+•	contract clause and response calendar
+•	required-by activity/date and affected location
+•	response, approval and distribution parties
+Deterministic flow
+1.	Publish current information through controlled transmittal and notify affected workfaces.
+2.	Detect superseded information access and require acknowledgement of replacement.
+3.	Raise RFI/submittal from markup/voice with source and programme impact.
+4.	Route, chase and record controlled response/decision.
+5.	Issue instruction only by authorised role using sequential numbering and clause template.
+6.	Create variation/change and programme impact candidates; verify site implementation.
+AI-agent duties and human guardrails
+•	Draft RFI/instruction text and find source clauses/drawings.
+•	Detect likely change/delay but cannot issue contractual communication.
+Outputs
+•	Transmittal
+•	RFI/Submittal
+•	Instruction
+•	AffectedParty Notifications
+•	Change/Delay Candidates
+Exception controls
+•	Verbal direction is logged as Unconfirmed Direction and chased for formal confirmation.
+•	Unauthorised response cannot alter controlled design.
+•	Working to superseded information creates quality/change investigation.
+Events: INFORMATION_PUBLISHED | RFI_RAISED | SUBMITTAL_DECIDED | INSTRUCTION_ISSUED | UNCONFIRMED_DIRECTION_RECORDED
+APIs:   POST /v1/transmittals | POST /v1/projects/{id}/rfis | POST /v1/contracts/{id}/instructions
+Acceptance criteria
+•	AC-CN-WF-08-01: Site user can identify current applicable revision in two taps.
+•	AC-CN-WF-08-02: RFI required-by and due dates are separate and traceable.
+•	AC-CN-WF-08-03: Instruction shows authority, clause, recipients, issue evidence and implementation status.
+```
+
+## CN-WF-09
+
+```
+CN-WF-09 - Change, variation, notice, delay and claim evidence
+Primary owner: Commercial Manager / Project Manager  |  Trigger: Instruction, condition, revision, delay, disruption or cost event
+Required inputs
+•	Originating event/evidence and contract clause
+•	cause-event-effect and dates
+•	affected scope/packages/activities/resources
+•	notice requirement/deadline and recipient
+•	cost/time/quality/safety/procurement impacts and mitigation
+Deterministic flow
+1.	Create a single change event with linked upstream and downstream records.
+2.	Determine notice/early-warning/compensation-event/variation route from versioned contract rules and validated clause extraction.
+3.	Issue authorised notice and preserve delivery/acknowledgement.
+4.	Build contemporaneous chronology from diaries, programme, information, labour/plant, photos and correspondence.
+5.	Assess quotation/valuation and time impact using approved method; maintain submitted/assessed/agreed values separately.
+6.	Update CVR, programme and risk; close only after instruction, value/time and downstream liability are reconciled.
+AI-agent duties and human guardrails
+•	Detect candidate events, draft notices and map evidence/chronology.
+•	Legal entitlement, causation and submission remain human-approved with clause citations.
+Outputs
+•	ChangeEvent
+•	ContractNotice
+•	Variation/Compensation Event
+•	DelayEvent
+•	EvidencePack
+•	CVR/Programme Updates
+Exception controls
+•	Deadline alert escalates before expiry using project business calendar.
+•	Uninstructed work and verbal direction remain visible exposure.
+•	Downstream cost without upstream recovery is flagged; records are linked but not assumed equal.
+Events: CHANGE_EVENT_CREATED | NOTICE_ISSUED | VARIATION_VALUED | DELAY_EVENT_RECORDED | CLAIM_EVIDENCE_PACK_BUILT
+APIs:   POST /v1/projects/{id}/change-events | POST /v1/contracts/{id}/notices | POST /v1/claims/{id}:build-evidence-pack
+Acceptance criteria
+•	AC-CN-WF-09-01: Each notice deadline shows rule source, calculation inputs and human validation status.
+•	AC-CN-WF-09-02: Raw records cannot be edited through claim workspace.
+•	AC-CN-WF-09-03: Submitted, assessed, certified, agreed and paid values remain separate.
+```

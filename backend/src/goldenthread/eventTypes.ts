@@ -456,6 +456,19 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // business takes to unblock its own work.
   def('CONSTRAINT_CLOSED', 'Constraint', 'UPDATE', 'DELIVERY'),
   def('PROGRESS_RECORDED', 'ProgressMeasurement', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
+  // CN-WF-04. What the activity is measured in and against, which every later
+  // refusal needs: without a unit there is nothing to check a claim against,
+  // and without a control total "more installed than exists" cannot be seen.
+  def('MEASUREMENT_BASIS_SET', 'MeasurementBasis', 'UPDATE', 'DELIVERY', { creates: true }),
+  // A claim and its certification are different records made by different
+  // people, and the submitted quantity is written once and never touched
+  // again — the gap between claimed and accepted is the finding.
+  def('PROGRESS_REPORTED', 'ProgressSubmission', 'CREATE', 'DELIVERY', { requiresEvidence: true, creates: true }),
+  def('PROGRESS_VERIFIED', 'ProgressSubmission', 'APPROVE', 'DELIVERY'),
+  // Its own event because an adjustment is a different fact from an
+  // acceptance: two people measured the same work and got different answers,
+  // and that is what gets argued about later.
+  def('PROGRESS_ADJUSTED', 'ProgressSubmission', 'APPROVE', 'DELIVERY', { requiresEvidence: true }),
   def('SITE_DIARY_RECORDED', 'SiteDiary', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
   // CN-WF-03. A shift is captured across a day on a device, often with no
   // signal, and submitted once at the end of it. The draft carries the id the

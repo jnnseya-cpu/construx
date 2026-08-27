@@ -2,6 +2,7 @@ import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { startBlockedReason } from '../domain/mobilisation.ts';
+import { directProgressBlockedReason } from '../domain/progressverification.ts';
 import { baselineChangeBlockedReason } from '../domain/programmecontrol.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
 import { isBusinessDay } from './maths/constructionAct.ts';
@@ -563,6 +564,13 @@ export function recordProgress(
     const blocked = startBlockedReason(ctx, task.state.workPackageId);
     if (blocked) throw new DomainError('WORK_NOT_AUTHORISED', blocked, 409);
   }
+
+  // CN-WF-04. Where an activity has a measurement basis it is under the
+  // claim-and-certify workflow, and two doors to one money field is how the
+  // valuation and the programme come to disagree with nothing saying which is
+  // right. An activity with no basis is untouched.
+  const measured = directProgressBlockedReason(ctx, input.taskId);
+  if (measured) throw new DomainError('PROGRESS_REQUIRES_VERIFICATION', measured, 409);
 
   const evidence = registerEvidence(ctx, {
     type: 'PROGRESS_EVIDENCE',

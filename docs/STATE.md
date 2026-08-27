@@ -5426,10 +5426,64 @@ become one copy and one omission. `currentDiaries` excludes drafts, so a shift
 captured but not submitted leaves the gap in the evidence visible rather than
 quietly closing it.
 
-**Still to build in the construction block:** CN-WF-04 onwards, the stage
+---
+
+### A claim and an acceptance are different records
+
+CN-WF-04. `backend/src/domain/progressverification.ts`, four routes, 27 tests.
+
+The money path. Progress is what a valuation is built on, what earned value is
+computed from and what the programme's remaining duration comes off, so a figure
+that is wrong here is wrong in three places at once.
+`engines/planning.ts` already measures productivity against baseline and
+`engines/cost.ts` already computes earned value; neither is rebuilt. What was
+missing is the thing that makes those numbers trustworthy.
+
+**Submitted and accepted stay separately auditable.** AC-CN-WF-04-01. A verifier
+who adjusts a claim from 240m³ to 180m³ cannot leave a record saying 180 was
+claimed — the gap *is* the finding, and it is what a productivity argument and a
+payment dispute both turn on. `submittedQuantity` is written once and never
+touched. An adjustment needs a rationale **and** evidence of what the verifier
+saw that the claim did not show; without it the record says only that two people
+disagreed, which is exactly what gets argued about later. The claimant cannot be
+the verifier.
+
+**Nothing is claimed twice.** AC-CN-WF-04-03. A claim is against an activity, a
+location and a period, and the same three arriving again is refused. Duplicate
+reporting is rarely dishonest — a gang reporting the same pour on Thursday and
+again on Friday — and it inflates earned value by exactly the amount nobody
+notices. Rework is exempt from the duplicate rule, because redoing a bay is the
+same place in the same week and treating it as a duplicate would make it
+unrecordable, which is how rework disappears.
+
+**Cumulative quantity cannot exceed the control total**, checked at *acceptance*
+rather than submission: the claim is a fact about what somebody measured, and
+refusing to record it would lose the evidence that the scope has moved. The
+refusal names the drawing the control total came from, because that is what the
+conversation will be about.
+
+**Rework earns nothing.** Recorded against the same activity so the productivity
+picture is honest, and contributing zero to the accepted quantity — recording it
+as progress would report a project going backwards as one going forwards.
+
+**One accepted figure, read by everything.** AC-CN-WF-04-02. Acceptance is what
+writes the activity's percentage, so the programme, earned value and the
+valuation read the same version by construction rather than by three modules
+agreeing to; the task carries the accepted version number that produced it.
+Where an activity has a measurement basis it is under this workflow and
+`recordProgress` is refused for it — two doors to one money field is how they
+diverge. An activity with no basis is untouched.
+
+**Observed, not changed:** the quantity surveyor holds no `FIELD_EXECUTION`
+entry at all, so they cannot read the progress verification register even though
+they own the valuation it feeds. `acceptedProgressFor` is an unauthorised helper
+so the valuation path itself works, but this is a permission-matrix gap worth a
+product-owner decision rather than a silent edit.
+
+**Still to build in the construction block:** CN-WF-05 onwards, the stage
 control (entry and exit conditions, `CONSTRUCTION_COMPLETION_ACCEPTED`) and the
 stage workspace described in 9.2. The specifications received so far — the stage
-control, 9.1, 9.2 and CN-WF-01 to CN-WF-07 — are recorded verbatim in
+control, 9.1, 9.2 and CN-WF-01 to CN-WF-08 — are recorded verbatim in
 `docs/WORKFLOWS.md`.
 
 ---
