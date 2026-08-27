@@ -1534,3 +1534,44 @@ Operations	O&M drafts, asset data, spares, maintenance tasks, operator training 
 •	Right rail: assigned decisions, overdue items, low-confidence extractions, stale evidence and downstream impacts.
 •	Gate button remains disabled until all deterministic blockers pass; permitted warning waivers display approver, reason and expiry.
 ```
+
+## 10.3
+
+## CM-WF-01
+
+```
+CM-WF-01 - Systemisation and commissioning plan
+Primary owner: Commissioning Manager  |  Trigger: Design maturity or construction mobilisation milestone
+Required inputs
+•	Design system schematics/models and asset hierarchy
+•	contract and employer commissioning requirements
+•	construction and handover milestones
+•	system dependencies, utilities, energisation and operational interfaces
+•	witness authorities and acceptance roles
+Deterministic flow
+1.	Define facility → system → subsystem → equipment boundaries with stable IDs and tags.
+2.	Map construction completion, pre-commissioning, commissioning, integrated testing, training and handover milestones.
+3.	Assign commissioning lead, contractor, vendor, witness and accepting authority per test level.
+4.	Create deliverable/test pack matrix and notification periods.
+5.	Link dependencies, temporary services, energisation/isolations and permit controls.
+6.	Approve baseline commissioning plan and update under version control.
+AI-agent duties and human guardrails
+•	Suggest system hierarchy and missing tests from specifications/schematics.
+•	Detect sequence and witness conflicts; competent Commissioning Manager approves.
+Outputs
+•	SystemHierarchy
+•	CommissioningPlan
+•	CommissioningProgramme
+•	Responsibility/Witness Matrix
+•	TestPack Matrix
+Exception controls
+•	Boundary overlap/gap blocks plan approval.
+•	Change to systemisation requires impact to tests, assets and handover records.
+•	Temporary operation is a separate controlled state, not implicit commissioning.
+Events: SYSTEM_HIERARCHY_APPROVED | COMMISSIONING_PLAN_APPROVED | TEST_PACK_REQUIRED | COMMISSIONING_BASELINE_UPDATED
+APIs:   POST /v1/projects/{id}/systems | POST /v1/projects/{id}/commissioning-plans | POST /v1/commissioning-plans/{id}:approve
+Acceptance criteria
+•	AC-CM-WF-01-01: Every commissioned asset belongs to one defined system boundary.
+•	AC-CM-WF-01-02: Each required test has stage, owner, witness, criteria and prerequisite.
+•	AC-CM-WF-01-03: Commissioning programme logic traces to construction and handover milestones.
+```

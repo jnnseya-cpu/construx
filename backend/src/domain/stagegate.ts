@@ -6,19 +6,21 @@ import { lookupEventType } from '../goldenthread/eventTypes.ts';
 import { replayProject } from '../goldenthread/replay.ts';
 import { constructabilityPosition, freezeBlockersFor } from './constructability.ts';
 import { designBaselinePosition } from './designbaseline.ts';
+import { validateProgrammeLogic } from './programmecontrol.ts';
 import { designChangePosition } from './designchange.ts';
 
 /**
- * The stage gate Definition of Done — 7.4 and 8.4.
+ * The stage gate Definition of Done — 7.4, 8.4 and 9.4.
  *
- * The two are **word for word identical** in the specification, and so is 6.4.
+ * All three are **word for word identical** in the specification, and so is 6.4.
  * What differs between them is not the standard but the evidence each is
  * answered from, so the clause list, the titles, the `NOT_ASSESSABLE` rule, the
  * AI clause, the replay clause and the report arithmetic are shared outright:
  * `evaluateDesignGate` answers the same seven from the design stage,
- * `evaluateTenderGate` from the tender, and `gateFor` picks by phase. Three
- * copies of "every approval satisfies party separation" would be three answers
- * to one question inside a year.
+ * `evaluateConstructionGate` from the construction stage, `evaluateTenderGate`
+ * from the tender, and `gateFor` picks by phase. Four copies of "every approval
+ * satisfies party separation" would be four answers to one question inside a
+ * year.
  *
  * The lifecycle already had a gate: `evaluatePhaseGate` counts the entities a
  * phase cannot be left without, and `transitionPhase` refuses a forward move
@@ -739,6 +741,238 @@ function designDownstreamCreated(ctx: EngineContext): ClauseResult {
   };
 }
 
+// --- 9.4: the same seven clauses, answered from the construction stage -------
+
+function constructionInputsComplete(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  const plans = list(ctx, 'MobilisationPlan');
+  if (plans.length === 0) {
+    blocking.push('No mobilisation plan exists, so nothing readied any package before work started');
+  }
+
+  // A package that was worked without a readiness check behind it is the
+  // failure CN-WF-01 exists to prevent, and at the gate it is an input that
+  // was never present rather than one that failed.
+  const checked = new Set(list(ctx, 'ReadinessCheck').map((row) => String(row.workPackageId)));
+  const authorised = new Set(list(ctx, 'StartWorkAuthorisation').map((row) => String(row.workPackageId)));
+  const started = new Set(
+    list(ctx, 'Task')
+      .filter((task) => Number(task.percentComplete ?? 0) > 0 || task.status === 'IN_PROGRESS' || task.status === 'COMPLETE')
+      .map((task) => String(task.workPackageId)),
+  );
+  for (const workPackageId of started) {
+    if (!checked.has(workPackageId)) {
+      blocking.push(`Work was recorded against ${workPackageId} with no readiness check behind it`);
+    } else if (!authorised.has(workPackageId)) {
+      blocking.push(`${workPackageId} was readied but no start was ever authorised against it`);
+    }
+  }
+
+  // A shift captured and never submitted is a day of evidence that does not
+  // exist, and a delay claim stands on an unbroken contemporaneous record.
+  const drafts = list(ctx, 'SiteDiary').filter((row) => row.status === 'DRAFT');
+  for (const draft of drafts) {
+    blocking.push(`The daily log for ${String(draft.diaryDate)} is still a draft on a device`);
+  }
+
+  return {
+    clause: 'INPUTS_COMPLETE',
+    title: TITLES.INPUTS_COMPLETE,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? `${plans.length} mobilisation plan, ${checked.size} package readied and authorised, and every daily log submitted.`
+        : `${blocking.length} input${blocking.length === 1 ? '' : 's'} not complete.`,
+    blocking,
+  };
+}
+
+function constructionApprovalsGoverned(ctx: EngineContext): ClauseResult {
+  const generic = approvalsGoverned(ctx);
+  const blocking = [...generic.blocking];
+
+  // The separations this stage turns on, re-verified from the records rather
+  // than trusted because the command refused at the time.
+  for (const claim of list(ctx, 'ProgressSubmission')) {
+    const verification = claim.verification as Record<string, unknown> | undefined;
+    if (verification && verification.by === claim.submittedBy) {
+      blocking.push(`${String(claim.reference)} was certified by the person who claimed it`);
+    }
+  }
+  for (const ncr of list(ctx, 'NCR')) {
+    if (ncr.disposition !== 'USE_AS_IS') continue;
+    if (!ncr.concession) {
+      blocking.push(`${String(ncr.reference)} was closed as use-as-is with no design concession behind it`);
+    }
+  }
+
+  return {
+    clause: 'APPROVALS_GOVERNED',
+    title: TITLES.APPROVALS_GOVERNED,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? `${generic.detail} No progress was certified by its claimant and no use-as-is closed without a concession.`
+        : `${blocking.length} approval${blocking.length === 1 ? '' : 's'} not properly governed.`,
+    blocking,
+  };
+}
+
+function constructionBlockersClosed(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  for (const check of list(ctx, 'ReadinessCheck')) {
+    if (check.readiness !== 'NOT_READY') continue;
+    blocking.push(`${String(check.reference)} found ${String(check.wbsCode)} not ready and it has never been redone`);
+  }
+  for (const entry of list(ctx, 'Delivery')) {
+    if (entry.state !== 'QUARANTINED') continue;
+    const quarantine = entry.quarantine as Record<string, unknown> | undefined;
+    blocking.push(`${String(entry.reference)} is quarantined on site: ${String(quarantine?.why ?? '')}`);
+  }
+  for (const ncr of list(ctx, 'NCR')) {
+    if (ncr.status !== 'OPEN') continue;
+    if (ncr.severity !== 'CRITICAL' && ncr.severity !== 'MAJOR') continue;
+    blocking.push(`${String(ncr.reference)} is an open ${String(ncr.severity).toLowerCase()} non-conformance`);
+  }
+  for (const task of list(ctx, 'Task')) {
+    if (task.status !== 'BLOCKED') continue;
+    const blocked = task.blocked as Record<string, unknown> | undefined;
+    blocking.push(`${String(task.name)} is blocked: ${String(blocked?.reason ?? '')} (${String(blocked?.owner ?? '')})`);
+  }
+  // Hold points passed and never released: work behind them either stopped or
+  // went ahead without the authority, and both need saying at a gate.
+  const released = new Set(
+    list(ctx, 'HoldPointRelease').map((row) => `${String(row.planId)}/${String(row.stageReference)}`),
+  );
+  for (const plan of ctx.ledger.list(ctx.projectId, 'InspectionPlan')) {
+    for (const stage of (plan.state.stages as Array<Record<string, unknown>>) ?? []) {
+      if (stage.type !== 'HOLD' || stage.status !== 'PASSED') continue;
+      if (released.has(`${String(plan.state.id)}/${String(stage.reference)}`)) continue;
+      blocking.push(`${String(plan.state.reference)}/${String(stage.reference)} passed and was never released`);
+    }
+  }
+
+  return {
+    clause: 'BLOCKERS_CLOSED',
+    title: TITLES.BLOCKERS_CLOSED,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? 'Nothing not ready, nothing quarantined, no open major non-conformance, no blocked task and no unreleased hold point.'
+        : `${blocking.length} blocker${blocking.length === 1 ? '' : 's'} open.`,
+    blocking,
+  };
+}
+
+function constructionOneCutOff(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+  const forecasts = list(ctx, 'ProgrammeForecast');
+  const latest = forecasts[forecasts.length - 1];
+
+  if (!latest) {
+    return {
+      clause: 'ONE_CUT_OFF',
+      title: TITLES.ONE_CUT_OFF,
+      state: 'FAIL',
+      detail: 'No forecast has been approved, so the programme states no position to reconcile the cost against.',
+      blocking: ['No current forecast exists'],
+    };
+  }
+
+  // The programme's own reproducibility claim, used as the cut-off test: if the
+  // logic has moved since the forecast was taken, the cost and the programme
+  // are not describing the same job.
+  const current = validateProgrammeLogic(ctx);
+  if (String(latest.logicHash) !== current.logicHash) {
+    blocking.push(
+      `Forecast ${String(latest.version)} was taken against a programme that has since changed, so the cost and the programme are not describing the same job`,
+    );
+  }
+
+  const claims = list(ctx, 'ProgressSubmission').filter((claim) => claim.status === 'SUBMITTED');
+  if (claims.length > 0) {
+    blocking.push(
+      `${claims.length} progress claim${claims.length === 1 ? '' : 's'} awaiting verification, so the valuation and the programme are reading different progress`,
+    );
+  }
+
+  return {
+    clause: 'ONE_CUT_OFF',
+    title: TITLES.ONE_CUT_OFF,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? `Forecast ${String(latest.version)} still matches the stored programme, and every progress claim has been certified.`
+        : `${blocking.length} thing${blocking.length === 1 ? '' : 's'} not reconciled at one cut-off.`,
+    blocking,
+  };
+}
+
+function constructionDownstreamCreated(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  // AC-CN-WF-05-03's chain, read at the gate: an accepted serial with no
+  // installed location is an as-built record with a hole in it.
+  for (const entry of list(ctx, 'Delivery')) {
+    if (entry.state !== 'ACCEPTED') continue;
+    const units = (entry.units as Array<Record<string, unknown>>) ?? [];
+    const uninstalled = units.filter((unit) => !unit.installedAt).map((unit) => String(unit.identifier));
+    if (uninstalled.length > 0) {
+      blocking.push(`${String(entry.reference)}: ${uninstalled.join(', ')} accepted but never traced to a location`);
+    }
+  }
+
+  if (blocking.length > 0) {
+    return {
+      clause: 'DOWNSTREAM_CREATED',
+      title: TITLES.DOWNSTREAM_CREATED,
+      state: 'FAIL',
+      detail: `${blocking.length} thing${blocking.length === 1 ? '' : 's'} did not carry through to the as-built record.`,
+      blocking,
+    };
+  }
+
+  return {
+    clause: 'DOWNSTREAM_CREATED',
+    title: TITLES.DOWNSTREAM_CREATED,
+    state: 'NOT_ASSESSABLE',
+    detail:
+      'Every accepted serial traces to an installed location and its test evidence, and the inventory and accrual come off ' +
+      'acceptance without re-entry. The commissioning turnover pack, the system boundaries it transfers and the retained ' +
+      'construction obligations are not built — CM-WF-01 onwards — so the clause is met in part and cannot be assessed in ' +
+      'full.',
+    blocking: [
+      'The commissioning turnover pack is not created from the construction record',
+      'System boundaries and retained construction obligations are not transferred to commissioning',
+    ],
+  };
+}
+
+/**
+ * The construction stage gate — 9.4.
+ *
+ * Word for word identical to 6.4, 7.4 and 8.4, which is why only the four
+ * stage-specific clauses are written here and the rest is shared.
+ */
+export function evaluateConstructionGate(ctx: EngineContext): GateReport {
+  authorise(ctx, 'PROJECT_SETUP', 'R');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  const clauses = [
+    constructionInputsComplete(ctx),
+    constructionApprovalsGoverned(ctx),
+    constructionBlockersClosed(ctx),
+    constructionOneCutOff(ctx),
+    aiAccounted(ctx, 'construction stage'),
+    replayable(ctx),
+    constructionDownstreamCreated(ctx),
+  ];
+
+  return reportOf(ctx, String(project.state.phase), clauses);
+}
+
 export function evaluateDesignGate(ctx: EngineContext): GateReport {
   authorise(ctx, 'PROJECT_SETUP', 'R');
 
@@ -813,7 +1047,10 @@ function reportOf(ctx: EngineContext, phase: string, clauses: ClauseResult[]): G
  */
 export function gateFor(ctx: EngineContext): GateReport {
   const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
-  return String(project.state.phase) === 'DESIGN' ? evaluateDesignGate(ctx) : evaluateTenderGate(ctx);
+  const phase = String(project.state.phase);
+  if (phase === 'DESIGN') return evaluateDesignGate(ctx);
+  if (phase === 'CONSTRUCTION') return evaluateConstructionGate(ctx);
+  return evaluateTenderGate(ctx);
 }
 
 // --- The decision -----------------------------------------------------------

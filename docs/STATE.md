@@ -5580,13 +5580,38 @@ And a closed defect **reopens** when the evidence it closed on is withdrawn —
 the survey sheet that turns out to be for the adjacent bay. The original closure
 is kept in full on the record, because somebody acted on it.
 
-**Still to build in the construction block:** CN-WF-07 onwards, the stage
-control (entry and exit conditions, `CONSTRUCTION_COMPLETION_ACCEPTED`) and the
+---
+
+#### The 9.4 gate
+
+9.4 arrived **word for word identical to 6.4, 7.4 and 8.4**, which is exactly
+what the shared machinery was built for: `evaluateConstructionGate` adds four
+stage-specific clauses and shares the other three outright, and `gateFor` now
+picks design, construction or tender by phase.
+
+The construction stage's four: **inputs** are a mobilisation plan, a readiness
+check and a start authority behind every package that was worked, and no daily
+log left as a draft on a device — a shift captured and never submitted is a day
+of evidence that does not exist. **Approvals** add "no progress certified by its
+claimant" and "no use-as-is closed without a design concession" to the generic
+re-verification. **Blockers** are the packages found not ready, the material
+still quarantined, the open major non-conformances, the blocked tasks and the
+hold points that passed and were never released. **The cut-off** uses the
+programme's own reproducibility hash: if the logic has moved since the forecast
+was taken, the cost and the programme are not describing the same job — and a
+progress claim still awaiting verification means the valuation and the programme
+are reading different numbers.
+
+Clause 7 is `NOT_ASSESSABLE` and says why: every accepted serial traces to an
+installed location, but the commissioning turnover pack, the system boundaries
+it transfers and the retained construction obligations are CM-WF-01 onwards and
+are not built.
+
+**Still to build in the construction block:** CN-WF-07 to CN-WF-12, and the
 stage workspace described in 9.2. The specifications received so far — the
-construction stage control, 9.1, 9.2, CN-WF-01 to CN-WF-12, the 9.4 gate, and
-the commissioning stage control with 10.1 and 10.2 — are recorded verbatim in
-`docs/WORKFLOWS.md`. **9.4 is word for word identical to 6.4, 7.4 and 8.4**,
-which is what the shared gate machinery in `domain/stagegate.ts` was built for.
+construction stage control, 9.1, 9.2, CN-WF-01 to CN-WF-12, the 9.4 gate, the
+commissioning stage control with 10.1 and 10.2, and CM-WF-01 — are recorded
+verbatim in `docs/WORKFLOWS.md`.
 
 ---
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import * as qualitycontrol from '../src/domain/qualitycontrol.ts';
+import * as stagegate from '../src/domain/stagegate.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as planning from '../src/engines/planning.ts';
 import * as quality from '../src/engines/quality.ts';
@@ -493,6 +494,48 @@ describe('CN-WF-06 a defect closed on evidence that did not hold', () => {
     throwsCode(
       () => qualitycontrol.reopenNCR(asQAQC(), ncrId, { reason: 'I disagree.', withdrawnEvidence: '  ' }),
       'REOPENING_UNEXPLAINED',
+    );
+  });
+});
+
+describe('9.4 the construction stage gate', () => {
+  it('answers the same seven clauses as 6.4, 7.4 and 8.4', () => {
+    const report = stagegate.evaluateConstructionGate(asPM());
+    assert.deepEqual(
+      report.clauses.map((clause) => clause.clause),
+      [...stagegate.GATE_CLAUSE],
+    );
+  });
+
+  it('never reports a clause it cannot assess as passed', () => {
+    const report = stagegate.evaluateConstructionGate(asPM());
+    for (const clause of report.clauses) {
+      if (clause.state !== 'NOT_ASSESSABLE') continue;
+      assert.ok(clause.blocking.length > 0, `${clause.clause} is unassessable but names nothing it cannot see`);
+    }
+    assert.equal(report.passed, report.failed.length === 0 && report.unassessable.length === 0);
+  });
+
+  it('names the hold points that passed and were never released', () => {
+    const report = stagegate.evaluateConstructionGate(asPM());
+    const blockers = report.clauses.find((clause) => clause.clause === 'BLOCKERS_CLOSED')!;
+    assert.ok(blockers.blocking.some((entry) => entry.includes('never released')));
+  });
+
+  it('names the commissioning turnover it cannot see, rather than passing it', () => {
+    const report = stagegate.evaluateConstructionGate(asPM());
+    const downstream = report.clauses.find((clause) => clause.clause === 'DOWNSTREAM_CREATED')!;
+    if (downstream.state === 'NOT_ASSESSABLE') {
+      assert.match(downstream.detail, /commissioning turnover pack/);
+      assert.match(downstream.detail, /CM-WF-01/);
+    }
+  });
+
+  it('is the gate a project standing in construction is measured against', () => {
+    // `gateFor` picks by phase, and this project was moved to CONSTRUCTION.
+    assert.equal(
+      stagegate.gateFor(asPM()).contentHash,
+      stagegate.evaluateConstructionGate(asPM()).contentHash,
     );
   });
 });
