@@ -2,7 +2,7 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, write, type EngineContext } from '../engines/context.ts';
 import { calibrationBlockedReason } from './qualitycontrol.ts';
-import { executionBlockedReason, type AcceptanceCriterion } from './testpack.ts';
+import { executionBlockedReason, satisfies, type AcceptanceCriterion } from './testpack.ts';
 
 /**
  * CM-WF-03 — FAT, SAT and vendor test control.
@@ -246,9 +246,7 @@ export function recordReading(
   const calibration = calibrationBlockedReason(ctx, input.instrumentId, takenAt.slice(0, 10));
   if (calibration) throw new DomainError('INSTRUMENT_NOT_CALIBRATED', calibration);
 
-  const withinLimits =
-    (criterion.lowerLimit === undefined || input.value >= criterion.lowerLimit) &&
-    (criterion.upperLimit === undefined || input.value <= criterion.upperLimit);
+  const withinLimits = satisfies(criterion, input.value);
 
   const reading: TestReading = {
     criterionRef: input.criterionRef,

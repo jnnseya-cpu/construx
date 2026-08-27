@@ -6057,11 +6057,58 @@ conditional acceptance is deliberately harder than a closure: an exceptional
 authority by name, an operating restriction saying what may not happen while it
 stands, and a review date.
 
-**Still to build in the commissioning block:** CM-WF-05, CM-WF-06, CM-WF-08, the
-10.4 gate and the `COMMISSIONING_COMPLETE` event, and the stage workspace
-described in 10.2. CM-WF-07, CM-WF-08 and 10.4 arrived out of sequence while
-CM-WF-03 and CM-WF-04 were being built, and are recorded verbatim in
-`docs/WORKFLOWS.md` in the order they were sent.
+---
+
+### A response rather than a number, and an abort that is not a fail
+
+CM-WF-05. `backend/src/domain/functionaltest.ts`, eight routes, 22 tests.
+
+Almost nothing here is a new idea, which is the point: the criteria come from
+CM-WF-02's released pack, the calculated-result-beside-authorised-decision split
+is CM-WF-03's, the static-completion guard is CM-WF-04's and failures raise into
+CM-WF-07's exception. One small refactor removed a real duplication —
+`testpack.satisfies` is now the single definition of whether a reading meets a
+criterion, where CM-WF-03 had its own copy.
+
+**A response, not just a number.** AC-CM-WF-05-01. A damper that eventually
+closed and a damper that closed in eight seconds give the same reading and are
+different systems, so every step records what was observed and when, and a
+criterion answered by a description alone is refused — nobody could recalculate
+it. A response *time* is a measurement the criterion judges, on the same
+footing as a value. The trend dataset is referenced by hash and never
+summarised, because a summary of a trend is an opinion about a trend.
+
+**An abort is not a fail.** The exception control, and it matters because the
+two are recorded identically on most systems and mean opposite things about the
+equipment. A test abandoned because the chilled water was off tells you nothing
+about the plant; recording it as a failure puts a defect against equipment
+nobody tested. The partial data and the reason stay, somebody decides afterwards
+what it meant, and the one decision refused is a pass — that would assert a
+result nobody observed.
+
+**A deviation is an annotation, not an edit.** Engineers deviate for good
+reasons and the deviation is often the most useful thing in the record; what it
+may not do is quietly change what was proven. It is authorised by name and
+carries an explicit judgement on whether the result still stands — and where it
+does not, the platform refuses a pass over it.
+
+**An integrated test cannot pass on unproven dependencies.** Checked when the
+test *starts* rather than when it completes, because the wasted day is the point
+of checking it. A fire-alarm cause-and-effect test that passes while the
+ventilation it commands is conditionally accepted has proved the ventilation did
+what it was told this once, which is not the same as the ventilation working.
+
+**AC-CM-WF-07-02 turned out to be enforceable, not merely visible.** A test some
+open exception invalidated cannot be re-run as though nothing happened — it has
+to be run as a retest against that exception, so the failure and the succeeding
+result stay one chain.
+
+**Still to build in the commissioning block:** CM-WF-06, CM-WF-08, the 10.4 gate
+and the `COMMISSIONING_COMPLETE` event, and the stage workspace described in
+10.2. **Stage 11 (Handover)** has begun arriving: the stage control with its
+`HANDOVER_ACCEPTED` gate event, 11.1 and 11.2 are recorded verbatim in
+`docs/WORKFLOWS.md`. CM-WF-07, CM-WF-08 and 10.4 arrived out of sequence during
+the build and are recorded there in the order they were sent.
 
 ---
 

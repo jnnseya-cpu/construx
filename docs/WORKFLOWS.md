@@ -1869,3 +1869,38 @@ rather than cross-referenced, because that is how it was sent.)*
 •	Gate report, decision and locked baseline can be replayed from the event store and verified against evidence hashes.
 •	Downstream mobilisation tasks, owners, due dates and inherited residual obligations are automatically created without re-entry.
 ```
+
+## 11 — Handover stage control
+
+*(Stage 11 began arriving while CM-WF-05 was being built. Recorded in the order
+sent, as with every other specification here.)*
+
+```
+11. Handover stage
+Stage outcome: Transfer a legally compliant, safe, usable and information-complete asset to the operator with no loss of accountability.
+Control	Requirement
+Entry condition	Commissioned systems accepted or controlled under authorised conditions; handover requirements matrix active.
+Exit condition	Client/operator accepts physical asset, information, access, competence and residual obligations; operational asset records are activated.
+Gate event	HANDOVER_ACCEPTED
+Default state path	Draft → Validated → Submitted → Under Review → Approved / Approved with Conditions / Rejected → Locked / Superseded
+```
+
+```
+11.1 Mandatory input groups
+Input group	Required construction data
+Requirements	Contract/employer handover deliverables, information requirements, regulatory completion, acceptance authority and phased/sectional strategy
+Technical information	As-built drawings/models, calculations, specifications, O&M manuals, commissioning dossiers, certificates and fire/safety information
+Asset data	Tags, classification, locations, manufacturer/model/serial, warranty, maintenance, spares, consumables and criticality
+Operational transfer	Training, competence, keys/access/credentials, isolations, permits, emergency procedures, spares/tools and service contacts
+Completion/commercial	Defects/punch, practical/sectional completion, final account status, retention, bonds/insurance, warranties and outstanding obligations
+Aftercare	Soft Landings, seasonal tests, fine-tuning, performance review, defects period and post-occupancy evaluation
+```
+
+```
+11.2 Stage workspace
+•	Route: /projects/{projectId}/handover. The page opens on a stage-specific Action Queue, not a static summary.
+•	Header: gate state, completeness, blockers/warnings, approved baseline version, change since baseline, accountable owner, last data cut-off and permitted next command.
+•	Tabs: Overview; Inputs; Workflows; Deliverables; Decisions & Approvals; Risks & Changes; Evidence; AI Runs; History.
+•	Right rail: assigned decisions, overdue items, low-confidence extractions, stale evidence and downstream impacts.
+•	Gate button remains disabled until all deterministic blockers pass; permitted warning waivers display approver, reason and expiry.
+```

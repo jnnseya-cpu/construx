@@ -50,6 +50,21 @@ export type AcceptanceCriterion = {
 
 export type ProcedureStep = { step: number; instruction: string };
 
+/**
+ * Whether a reading satisfies a criterion.
+ *
+ * One definition, used by every workflow that takes a reading. A second one kept
+ * beside it would be a second answer to "did this pass", and the two diverge the
+ * first time either is edited — which is precisely the failure the whole
+ * frozen-revision idea exists to prevent, one level down.
+ */
+export function satisfies(criterion: AcceptanceCriterion, value: number): boolean {
+  return (
+    (criterion.lowerLimit === undefined || value >= criterion.lowerLimit) &&
+    (criterion.upperLimit === undefined || value <= criterion.upperLimit)
+  );
+}
+
 export type TestPackState = {
   packId: string;
   reference: string;

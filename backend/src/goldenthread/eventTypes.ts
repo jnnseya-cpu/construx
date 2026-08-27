@@ -893,6 +893,22 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // unanswered rather than failed, because nobody has looked at them since.
   def('STATIC_COMPLETION_INVALIDATED', 'PreFunctionalCheck', 'UPDATE', 'COMMISSIONING'),
 
+  // --- CM-WF-05 functional performance and integrated systems testing -------
+  def('FUNCTIONAL_TEST_STARTED', 'FunctionalTest', 'CREATE', 'COMMISSIONING', { creates: true }),
+  def('INTEGRATED_TEST_STARTED', 'FunctionalTest', 'CREATE', 'COMMISSIONING', { creates: true }),
+  // Carries the trend dataset by hash as well as the step results, because a
+  // summary of a trend is an opinion about a trend and AC-CM-WF-05-01 asks the
+  // response to be reconstructable from the raw evidence.
+  def('FUNCTIONAL_STEP_RECORDED', 'FunctionalTest', 'UPDATE', 'COMMISSIONING'),
+  def('TEST_SCRIPT_DEVIATION_RECORDED', 'FunctionalTest', 'UPDATE', 'COMMISSIONING'),
+  // An abort is not a fail. A test abandoned because the chilled water was off
+  // tells you nothing about the plant, and recording it as a failure puts a
+  // defect against equipment nobody tested.
+  def('FUNCTIONAL_TEST_ABORTED', 'FunctionalTest', 'UPDATE', 'COMMISSIONING'),
+  def('FUNCTIONAL_TEST_COMPLETED', 'FunctionalTest', 'APPROVE', 'COMMISSIONING'),
+  def('INTEGRATED_TEST_COMPLETED', 'FunctionalTest', 'APPROVE', 'COMMISSIONING'),
+  def('RETEST_REQUIRED', 'FunctionalTest', 'UPDATE', 'COMMISSIONING'),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

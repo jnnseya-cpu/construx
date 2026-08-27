@@ -46,6 +46,7 @@ import { morningBriefing } from '../agents/briefing.ts';
 import { AGENT_DIVISIONS, type AgentDivision } from '../agents/types.ts';
 import { AGENTS } from '../agents/registry.ts';
 import * as framework from '../domain/framework.ts';
+import * as functionaltest from '../domain/functionaltest.ts';
 import * as lifecycleControl from '../lifecycle/control.ts';
 import * as stages from '../lifecycle/stages.ts';
 import * as costModel from '../engines/maths/costModel.ts';
@@ -5532,6 +5533,150 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => systemisation.declareTemporaryOperation(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- CM-WF-05 functional and integrated systems testing
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/functional-tests',
+    description: 'Functional and integrated tests, which systems are proven, what was aborted and what awaits retest',
+    handler: (platform, ctx) => functionaltest.functionalTestPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/functional-tests',
+    description: 'Start a functional or integrated test. An integrated one names its dependencies and its scenario',
+    schema: {
+      type: 'object',
+      required: ['reference', 'kind', 'packId', 'systemTag', 'witnesses'],
+      properties: {
+        reference: stringField,
+        kind: { type: 'string', enum: [...functionaltest.FUNCTIONAL_TEST_KIND] },
+        packId: stringField,
+        systemTag: stringField,
+        dependentSystems: { type: 'array', items: { type: 'string' } },
+        scenario: { type: 'string' },
+        retestOf: stringField,
+        witnesses: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['name', 'organisation', 'attended'],
+            properties: { name: stringField, organisation: stringField, attended: { type: 'boolean' } },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => functionaltest.startFunctionalTest(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/functional-tests/:testId/steps',
+    description: 'Record what the system did at one step, timestamped, with the value or response time behind it',
+    schema: {
+      type: 'object',
+      required: ['step', 'actualResponse', 'performedBy'],
+      properties: {
+        step: { type: 'number' },
+        criterionRef: stringField,
+        actualResponse: { type: 'string' },
+        value: { type: 'number' },
+        unit: stringField,
+        instrumentId: stringField,
+        responseTimeSeconds: { type: 'number' },
+        performedBy: stringField,
+        observedAt: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      functionaltest.recordStepResult(projectContext(platform, ctx), ctx.params.testId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/functional-tests/:testId/trends',
+    description: 'Attach the trend or alarm dataset by hash — never a summary of one',
+    schema: {
+      type: 'object',
+      required: ['source', 'from', 'to', 'points', 'datasetHash'],
+      properties: {
+        source: stringField,
+        from: stringField,
+        to: stringField,
+        points: { type: 'number' },
+        datasetHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      functionaltest.attachTrendDataset(projectContext(platform, ctx), ctx.params.testId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/functional-tests/:testId/deviations',
+    description: 'Annotate a deviation from the script, authorised by name, with whether the result still stands',
+    schema: {
+      type: 'object',
+      required: ['step', 'deviation', 'authorisedBy', 'invalidatesResult'],
+      properties: {
+        step: { type: 'number' },
+        deviation: { type: 'string' },
+        authorisedBy: stringField,
+        invalidatesResult: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      functionaltest.recordScriptDeviation(projectContext(platform, ctx), ctx.params.testId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/functional-tests/:testId/abort',
+    description: 'Abort the test, keeping the partial data. An abort is not a failure',
+    schema: {
+      type: 'object',
+      required: ['reason', 'abortedBy'],
+      properties: { reason: { type: 'string' }, abortedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      functionaltest.abortTest(projectContext(platform, ctx), ctx.params.testId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/functional-tests/:testId/decide',
+    description: 'Decide the test. The calculated result stands beside the decision and is never overwritten by it',
+    schema: {
+      type: 'object',
+      required: ['decision', 'decidedBy', 'decisionNote'],
+      properties: {
+        decision: { type: 'string', enum: ['PASS', 'FAIL', 'CONDITIONAL'] },
+        decidedBy: stringField,
+        decisionNote: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      functionaltest.completeFunctionalTest(projectContext(platform, ctx), ctx.params.testId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/functional-tests/:testId/retest-required',
+    description: 'Route a failure to a retest, linking the exception and saying what is different this time',
+    schema: {
+      type: 'object',
+      required: ['exceptionReference', 'changedCondition', 'requestedBy'],
+      properties: {
+        exceptionReference: stringField,
+        changedCondition: { type: 'string' },
+        requestedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      functionaltest.requireRetest(projectContext(platform, ctx), ctx.params.testId as string, body(ctx)),
   },
 
   // ------------------------------------------------------- CM-WF-04 pre-functional and static completion
