@@ -134,6 +134,15 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   LookaheadPlan: { area: 'LOOKAHEAD_CONSTRAINTS' },
   Constraint: { area: 'LOOKAHEAD_CONSTRAINTS' },
 
+  // CN-WF-01. Field execution rather than safety or work packages: mobilisation
+  // is the construction manager's, and the area already splits it the right way
+  // — the site manager, safety and quality hold create and update so they run
+  // the readiness check, and only the project or construction manager holds
+  // approve, which is the authority to put people to work.
+  MobilisationPlan: { area: 'FIELD_EXECUTION' },
+  ReadinessCheck: { area: 'FIELD_EXECUTION' },
+  StartWorkAuthorisation: { area: 'FIELD_EXECUTION' },
+
   // Take-off, estimate and tender — commercial
   Takeoff: { area: 'BOQ_TAKEOFF' },
   BoQItem: { area: 'BOQ_TAKEOFF' },

@@ -1,6 +1,7 @@
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
+import { startBlockedReason } from '../domain/mobilisation.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
 import { isBusinessDay } from './maths/constructionAct.ts';
 import {
@@ -536,6 +537,15 @@ export function recordProgress(
   const task = ctx.ledger.require({ refType: 'Task', refId: input.taskId });
   if (input.percentComplete < Number(task.state.percentComplete ?? 0)) {
     throw new DomainError('PROGRESS_REGRESSION', 'Progress cannot go backwards without a formal correction');
+  }
+
+  // AC-CN-WF-01-02. A package assessed and found not ready cannot be worked on.
+  // The rule is exactly the acceptance criterion and no wider: a package this
+  // workflow has never seen is untouched, because refusing progress on every
+  // project that does not run mobilisation would be inventing a requirement.
+  if (typeof task.state.workPackageId === 'string') {
+    const blocked = startBlockedReason(ctx, task.state.workPackageId);
+    if (blocked) throw new DomainError('WORK_NOT_AUTHORISED', blocked, 409);
   }
 
   const evidence = registerEvidence(ctx, {

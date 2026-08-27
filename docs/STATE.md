@@ -5260,6 +5260,68 @@ with owners and dates are not built and the report says so by name.
 
 ---
 
+### Start is an authorisation, not a date
+
+CN-WF-01, the first workflow of the construction stage.
+`backend/src/domain/mobilisation.ts`, five routes, 35 tests.
+
+The failure this is written against is the commonest one on site. Work starts
+on a Monday because the programme said Monday. The method statement is still in
+draft, the temporary works design has not been checked, and the drawing the gang
+is working to was superseded on the Friday. Nobody decided any of that — it
+happened because start was a date.
+
+**No authorisation over a failed critical prerequisite.** Twelve are checked.
+The specification names five as blocking — design, RAMS, permit, temporary
+works, competence — and contractual authority and possession are added to that
+list, because work you have no possession of is not work you can authorise
+whatever the paperwork says. The remaining five (quality plan, welfare, survey,
+resource, logistics) are what a *conditional* readiness can carry.
+
+**What the platform can check, it checks.** A readiness check does not ask
+whether the RAMS is approved; it reads it — and an approved method statement
+nobody has been briefed on counts as not met, because the briefing is the
+control and a RAMS in a drawer is a document. It does not ask whether the gang
+is ticketed; it reads the competency records against the **whole window**, so a
+ticket lapsing on the Wednesday does not cover a start that runs to Friday. It
+reuses `packageReadiness` from D-WF-08 for the design answer rather than growing
+a second opinion about whether a package's information is current. Every result
+records whether it was `VERIFIED` or `DECLARED`, and **a declaration over a
+verification is refused outright** rather than ignored — an ignored input is one
+somebody believes took effect. Competence with nobody named is never "not
+applicable": an unanswerable question reported that way reads as satisfied to
+whoever scans the list.
+
+**Conditional readiness expires.** Every condition needs an owner and a date,
+and the readiness itself needs an expiry — without one the conditions stop being
+conditions and become a description of the site. An authority cannot run past
+its check's window or its expiry.
+
+**Changed information rechecks the authority.** Derived, not stamped: the
+authorisation records the freeze it was issued against and the exact revisions,
+and the position reports it as needing recheck the moment the design moves.
+
+**And Not Ready stops work.** `recordProgress` asks `startBlockedReason` before
+a task can move to in progress — AC-CN-WF-01-02. The rule is exactly the
+acceptance criterion and no wider: a package **assessed and found not ready** is
+stopped, and a package this workflow has never seen is untouched, because
+refusing progress on every project that does not run mobilisation would be
+inventing a requirement rather than enforcing one.
+
+Authorising is `FIELD_EXECUTION` **approve** and never `aiAllowed`: the site
+manager, safety and quality run the check, and only the project or construction
+manager gives the authority to put people to work. Revocation writes the same
+event as the authority — withdrawing is that authority saying something
+different, not a new kind of act, and the record of what was authorised and
+against which revisions stays exactly where it was.
+
+**Still to build in the construction block:** CN-WF-02 onwards, the stage
+control (entry and exit conditions, `CONSTRUCTION_COMPLETION_ACCEPTED`) and the
+stage workspace described in 9.2. The specifications received so far are
+recorded verbatim in `docs/WORKFLOWS.md`.
+
+---
+
 ---
 
 ## What is partial

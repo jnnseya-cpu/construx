@@ -409,6 +409,21 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('NOTICE_ISSUED', 'Notice', 'ISSUE', 'CONTRACTS_CLAIMS', { requiresEvidence: true, creates: true }),
 
   // --- Programme & delivery -------------------------------------------------
+  // CN-WF-01. Start is an authorisation rather than a date. The checklist is by
+  // package because start authority is by package: one plan covering "the site"
+  // authorises everything and therefore nothing.
+  def('MOBILISATION_STARTED', 'MobilisationPlan', 'CREATE', 'DELIVERY', { creates: true }),
+  // Two events for one act, deliberately. "Not ready" is the fact somebody has
+  // to find in the ledger without opening state — it is what stops work, and an
+  // audit reading the log should see it as its own kind of thing.
+  def('READINESS_CHECK_COMPLETED', 'ReadinessCheck', 'CREATE', 'DELIVERY', { creates: true }),
+  def('WORK_NOT_READY', 'ReadinessCheck', 'CREATE', 'DELIVERY', { creates: true }),
+  // APPROVE, and never `aiAllowed`: authorising a start is somebody taking
+  // responsibility for people going to work, and the specification is explicit
+  // that no agent mandate reaches it. Revocation writes the same event, because
+  // withdrawing an authority is the same authority saying something different
+  // rather than a new kind of act.
+  def('START_WORK_AUTHORISED', 'StartWorkAuthorisation', 'APPROVE', 'DELIVERY', { creates: true }),
   def('WBS_GENERATED', 'WorkPackage', 'AI_EXECUTE', 'DELIVERY', { aiAllowed: true }),
   def('TASK_CREATED', 'Task', 'CREATE', 'DELIVERY'),
   def('TASK_UPDATED', 'Task', 'UPDATE', 'DELIVERY'),

@@ -1048,3 +1048,43 @@ Acceptance criteria
 •	AC-CN-WF-01-02: Not Ready prevents task movement to In Progress.
 •	AC-CN-WF-01-03: Authority identifies scope, location, time window and approver.
 ```
+
+## CN-WF-02
+
+```
+CN-WF-02 - Baseline, lookahead, task and constraint control
+Primary owner: Planner + Construction Manager  |  Trigger: Construction baseline approved or weekly planning cycle
+Required inputs
+•	Contract/approved baseline and current forecast
+•	WBS, calendars, logic, quantities and resource plan
+•	design, procurement, access, permit and predecessor constraints
+•	actual progress and productivity
+•	subcontractor short-term plans
+Deterministic flow
+1.	Import/create logic-linked baseline and run open-end, constraint, calendar and critical-path validation.
+2.	Create rolling six-week lookahead and weekly work plan from current forecast.
+3.	Run make-ready screening: information, material, labour, plant, access, permit, predecessor and inspection.
+4.	Assign constraints and commitments with need-by/owner; track aging and reliability.
+5.	Freeze weekly plan; daily updates record Complete, In Progress, Blocked or Not Started with reason.
+6.	Calculate plan-percent-complete, variance and forecast impact; propose recovery options.
+AI-agent duties and human guardrails
+•	Detect logic/float/resource anomalies and forecast constraint impact.
+•	Generate scenario options; planner validates logic and authorises forecast/baseline submissions.
+Outputs
+•	ApprovedBaseline
+•	CurrentForecast
+•	SixWeekLookahead
+•	WeeklyWorkPlan
+•	Constraint/Commitment Register
+•	RecoveryScenarios
+Exception controls
+•	Baseline change requires separate change request and approval; forecast does not overwrite baseline.
+•	Out-of-sequence progress follows configured retained-logic/progress-override decision record.
+•	Tasks cannot be marked Complete without required verification evidence.
+Events: BASELINE_APPROVED | LOOKAHEAD_CREATED | CONSTRAINT_ADDED | WEEKLY_PLAN_FROZEN | PROGRESS_STATUS_UPDATED
+APIs:   POST /v1/projects/{id}/programme-baselines | POST /v1/projects/{id}/lookaheads | POST /v1/tasks/{id}/constraints
+Acceptance criteria
+•	AC-CN-WF-02-01: Critical path and float calculation are reproducible from stored calendar/logic/version.
+•	AC-CN-WF-02-02: Each blocked task has reason, owner, impact and next action.
+•	AC-CN-WF-02-03: Baseline, current forecast and what-if scenarios are visually distinct.
+```

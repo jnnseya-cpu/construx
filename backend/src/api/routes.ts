@@ -61,6 +61,7 @@ import * as designchange from '../domain/designchange.ts';
 import * as designplan from '../domain/designplan.ts';
 import * as measurement from '../domain/measurement.ts';
 import * as meetings from '../domain/meetings.ts';
+import * as mobilisation from '../domain/mobilisation.ts';
 import * as submittals from '../domain/submittals.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
@@ -4527,6 +4528,125 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => planning.createWorkPackage(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ----------------------------------------- CN-WF-01 mobilisation and start-work readiness
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/mobilisation',
+    description: 'Readiness by package, what is not ready and why, and which start authorities the information has overtaken',
+    handler: (platform, ctx) => mobilisation.mobilisationPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/mobilisation-plans',
+    description: 'Open the mobilisation checklist by site, zone and package. Start authority is by package, so the plan is too',
+    schema: {
+      type: 'object',
+      required: ['reference', 'site', 'workPackageIds'],
+      properties: {
+        reference: stringField,
+        site: stringField,
+        workPackageIds: { type: 'array', items: stringField },
+        zoneOf: { type: 'object', additionalProperties: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => mobilisation.openMobilisation(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/mobilisation-plans/:planId/readiness-checks',
+    description: 'Run the readiness review. What the platform can verify it verifies; the rest is declared, with a name on it',
+    schema: {
+      type: 'object',
+      required: ['workPackageId', 'window', 'declarations', 'note'],
+      properties: {
+        workPackageId: stringField,
+        window: {
+          type: 'object',
+          required: ['from', 'to'],
+          properties: { from: stringField, to: stringField },
+          additionalProperties: false,
+        },
+        operativeIds: { type: 'array', items: stringField },
+        designPackageReference: stringField,
+        permitActivity: stringField,
+        temporaryWorksPackageReference: stringField,
+        declarations: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['kind', 'met', 'detail', 'declaredBy'],
+            properties: {
+              kind: { type: 'string', enum: [...mobilisation.PREREQUISITE_KINDS] },
+              met: { type: 'boolean' },
+              detail: { type: 'string' },
+              declaredBy: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+        conditions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['what', 'owner', 'by'],
+            properties: { what: { type: 'string' }, owner: stringField, by: stringField },
+            additionalProperties: false,
+          },
+        },
+        expiresAt: stringField,
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      mobilisation.checkReadiness(projectContext(platform, ctx), ctx.params.planId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/readiness-checks/:checkId/authorise-start',
+    description: 'Authorise a start against a named scope, location, window and the exact information revisions it runs on',
+    schema: {
+      type: 'object',
+      required: ['scope', 'location', 'window', 'informationRevisions'],
+      properties: {
+        scope: { type: 'string' },
+        location: stringField,
+        window: {
+          type: 'object',
+          required: ['from', 'to'],
+          properties: { from: stringField, to: stringField },
+          additionalProperties: false,
+        },
+        informationRevisions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['reference', 'revision', 'source'],
+            properties: { reference: stringField, revision: stringField, source: stringField },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      mobilisation.authoriseStart(projectContext(platform, ctx), ctx.params.checkId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/start-authorisations/:authorisationId/revoke',
+    description: 'Withdraw a start authority. Not a deletion — people may have been working under it',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      mobilisation.revokeAuthorisation(projectContext(platform, ctx), ctx.params.authorisationId as string, body(ctx)),
   },
 
   {
