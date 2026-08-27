@@ -517,9 +517,15 @@ describe('the 10.4 stage gate', () => {
     assert.ok(blockers.blocking.some((entry) => entry.includes('CX-901')));
   });
 
-  it('reports the AI clause as not assessable, as every other gate does', () => {
-    const ai = stagegate.evaluateCommissioningGate(asOwner()).clauses.find((clause) => clause.clause === 'AI_ACCOUNTED')!;
-    assert.equal(ai.state, 'NOT_ASSESSABLE');
+  it('accounts for the AI clause as every other gate does', () => {
+    // This read NOT_ASSESSABLE at every gate until assumptions, prompt version
+    // and human disposition were built. It now passes on a project whose AI
+    // outputs a person has decided about, and the shared clause is what all six
+    // gates use — so asserting it here is asserting they still share it.
+    const ai = stagegate.evaluateCommissioningGate(asOwner()).clauses.find((c) => c.clause === 'AI_ACCOUNTED');
+    assert.ok(ai, 'the shared AI clause is missing from this gate');
+    assert.equal(ai.state, 'PASS', ai.blocking.join('; '));
+    assert.match(ai.detail, /accepted or rejected by a named person/);
   });
 
   it('refuses a clean pass while clauses are outstanding', () => {

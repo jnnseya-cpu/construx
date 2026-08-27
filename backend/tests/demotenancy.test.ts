@@ -72,8 +72,10 @@ async function withEnv<T>(vars: Record<string, string | undefined>, run: () => P
 const asProductionWithDemo = <T>(run: () => Promise<T>): Promise<T> =>
   withEnv({ NODE_ENV: 'production', DEMO_TENANCY_ENABLED: 'true' }, run);
 
+// Explicitly `false`, not merely unset: unset is now the default, and the
+// default is on.
 const asProductionWithoutDemo = <T>(run: () => Promise<T>): Promise<T> =>
-  withEnv({ NODE_ENV: 'production', DEMO_TENANCY_ENABLED: undefined }, run);
+  withEnv({ NODE_ENV: 'production', DEMO_TENANCY_ENABLED: 'false' }, run);
 
 async function login(email: string): Promise<Record<string, unknown>> {
   const response = await fetch(`${base}/v1/auth/login`, {
@@ -87,10 +89,21 @@ async function login(email: string): Promise<Record<string, unknown>> {
 // --- the switch itself ------------------------------------------------------
 
 describe('reading the switch', () => {
-  it('is off when the variable is absent, empty or anything but a truth', async () => {
-    for (const value of [undefined, '', 'false', '0', 'yes', 'TRUE', 'enabled']) {
+  it('is on when the variable is absent or empty, which is the default', async () => {
+    // The default changed from off to on once seeding stopped costing money:
+    // the seed runs against the deterministic local engines whatever AI_MODE
+    // says, so a deployment showing a prospective customer an empty sign-in
+    // page was the broken common case rather than the safe one.
+    for (const value of [undefined, '']) {
       const on = await withEnv({ DEMO_TENANCY_ENABLED: value }, async () => demonstrationEnabled());
-      assert.equal(on, false, `DEMO_TENANCY_ENABLED=${String(value)} switched it on`);
+      assert.equal(on, true, `DEMO_TENANCY_ENABLED=${String(value)} did not take the default`);
+    }
+  });
+
+  it('is off for anything that is not a truth, so a typo closes it rather than opening it', async () => {
+    for (const value of ['false', '0', 'yes', 'TRUE', 'enabled', 'off']) {
+      const on = await withEnv({ DEMO_TENANCY_ENABLED: value }, async () => demonstrationEnabled());
+      assert.equal(on, false, `DEMO_TENANCY_ENABLED=${value} switched it on`);
     }
   });
 

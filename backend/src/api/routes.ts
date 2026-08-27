@@ -89,6 +89,7 @@ import * as transfer from '../domain/transfer.ts';
 import * as practicalcompletion from '../domain/practicalcompletion.ts';
 import * as handoveracceptance from '../domain/handoveracceptance.ts';
 import * as aftercare from '../domain/aftercare.ts';
+import * as aidisposition from '../domain/aidisposition.ts';
 import * as conceptbrief from '../domain/conceptbrief.ts';
 import * as conceptcompliance from '../domain/conceptcompliance.ts';
 import * as conceptcontrols from '../domain/conceptcontrols.ts';
@@ -590,6 +591,30 @@ export const ROUTES: Route[] = [
           actorId: user.id,
           correlationId: ctx.correlationId,
         });
+
+        // The last-resort fallback, and the blocker it removes.
+        //
+        // With no SMTP host the notification engine records the message and
+        // transmits nothing — correctly; there is nowhere to send it. The
+        // effect was that a production deployment with mail not yet configured
+        // could not be signed into by anybody, including the operator whose
+        // job is to configure it. Every credential correct, and a locked door.
+        //
+        // So when, and only when, no SMTP host is configured, the code goes to
+        // **stderr**. Not to the response, not to the ledger, not to any
+        // route: reading it requires a shell on the server, which is a
+        // strictly higher bar than an email inbox and is already the level of
+        // access needed to change the secret that signs the tokens.
+        //
+        // It is loud on purpose. A deployment sending one-time codes to its
+        // own logs should be uncomfortable to look at until SMTP is set.
+        if (config.smtp.host === '') {
+          process.stderr.write(
+            `[auth] NO SMTP HOST CONFIGURED — the one-time code for ${user.email} could not be sent and is ` +
+              `printed here instead: ${challenge.code} (expires in five minutes). ` +
+              'Set SMTP_HOST to stop writing sign-in codes to the log.\n',
+          );
+        }
       }
 
       return {
@@ -14147,6 +14172,36 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/concept/baseline/drift',
     description: 'Components that have moved since the concept baseline froze them',
     handler: (platform, ctx) => ({ drift: stagegate.conceptBaselineDrift(projectContext(platform, ctx)) }),
+  },
+  // --------------------------------------------- AI output disposition
+  //
+  // The third of the three things every stage gate's fifth clause asked for.
+  // The other two are written onto the AI event itself; this one is a later act
+  // by a person, so it is its own record.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/ai/dispositions',
+    description: 'How much of this project’s AI output a person has stood behind, and which executions nobody has decided about',
+    handler: (platform, ctx) => aidisposition.aiDispositionPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/ai/executions/:executionId/dispose',
+    description: 'Accept, accept with change, or reject an AI output. A model cannot dispose of its own work',
+    schema: {
+      type: 'object',
+      required: ['decision'],
+      properties: {
+        decision: { type: 'string', enum: [...aidisposition.AI_DISPOSITION] },
+        reason: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      aidisposition.disposeAIOutput(projectContext(platform, ctx), {
+        executionId: ctx.params.executionId as string,
+        ...body<{ decision: aidisposition.AIDisposition; reason?: string }>(ctx),
+      }),
   },
 ];
 

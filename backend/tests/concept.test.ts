@@ -2095,26 +2095,69 @@ describe('C-WF-08 — concept stage assurance and the 6.4 gate', () => {
     assert.equal(state('REPLAYABLE'), 'PASS');
   });
 
-  it('passes the AI clause only because this concept stage used no AI', () => {
-    // The shared clause is honest in both directions: nothing to account for
-    // is a pass, and an AI output that *is* used makes it unassessable,
-    // because the platform records no prompt version or assumptions. This walk
-    // uses no AI, so the pass has to say why rather than being read as an
-    // assurance about AI governance.
+  it('passes the AI clause, and says which of the two reasons applies', () => {
+    // The shared clause is honest in both directions. This walk runs no AI of
+    // its own, so on a fresh project the pass says exactly that rather than
+    // being read as an assurance about AI governance; on the seeded project it
+    // passes because every output carries its accounting and a disposition.
     walkToGate();
     const ai = stagegate.evaluateConceptGate(as('pm')).clauses.find((c) => c.clause === 'AI_ACCOUNTED');
     assert.equal(ai?.state, 'PASS');
-    assert.match(ai!.detail, /No AI output was used in this concept stage/);
     assert.deepEqual(ai!.blocking, []);
+    assert.ok(
+      /No AI output was used in this concept stage/.test(ai!.detail) ||
+        /accepted or rejected by a named person/.test(ai!.detail),
+      ai!.detail,
+    );
   });
 
-  it('reports the design mobilisation worklist as not built rather than passing it', () => {
+  it('derives the design mobilisation worklist from the packages, with an owner and a date on each task', () => {
     walkToGate();
     const downstream = stagegate
       .evaluateConceptGate(as('pm'))
       .clauses.find((c) => c.clause === 'DOWNSTREAM_CREATED');
-    assert.equal(downstream?.state, 'NOT_ASSESSABLE');
-    assert.ok(downstream!.blocking.some((b) => /mobilisation worklist/i.test(b)));
+    assert.ok(downstream);
+    assert.equal(downstream.state, 'PASS', downstream.blocking.join('; '));
+    assert.match(downstream.detail, /mobilisation task/);
+
+    const worklist = conceptstrategy.designMobilisationWorklist(as('pm'));
+    assert.ok(worklist.length >= 4, `only ${worklist.length} tasks derived`);
+    for (const task of worklist) {
+      assert.ok(task.ownerId.trim().length > 0, `${task.reference} has no owner`);
+      assert.ok(task.by.trim().length > 0, `${task.reference} has no date`);
+      assert.ok(task.derivedFrom.trim().length > 0, `${task.reference} came from nowhere`);
+    }
+    // Every task traces to something concept actually settled, so the list
+    // cannot contain somebody's idea.
+    assert.ok(worklist.every((t) => /Package |Contract strategy/.test(t.derivedFrom)));
+    // The long-lead package produces its advance-order decision.
+    assert.ok(worklist.some((t) => t.reference === 'MOB-LL-PKG-MEP'), 'the long-lead package raised no order decision');
+  });
+
+  it('re-derives the worklist when the package strategy changes, rather than going stale', () => {
+    walkToGate();
+    const before = conceptstrategy.designMobilisationWorklist(as('pm')).length;
+
+    conceptstrategy.approvePackageStrategy(as('pm'), {
+      worksScopeElements: ['CIVILS', 'MECHANICAL', 'ELECTRICAL'],
+      packages: [
+        {
+          reference: 'PKG-ALL',
+          name: 'Single package',
+          scopeElements: ['CIVILS', 'MECHANICAL', 'ELECTRICAL'],
+          interfaces: [],
+          ownerId: seed.users.pm!.id,
+          requiredOnSiteMilestoneRef: 'M-SITE',
+          enquiryDate: iso(60),
+          awardDate: iso(140),
+          leadTimeWeeks: 10,
+        },
+      ],
+    });
+
+    const after = conceptstrategy.designMobilisationWorklist(as('pm'));
+    assert.notEqual(after.length, before, 'the worklist did not move with the strategy');
+    assert.ok(after.every((t) => !t.reference.includes('PKG-CIV')), 'a task from the superseded strategy survived');
   });
 
   it('fails the cut-off clause when the cost plan moves after approval', () => {
@@ -2241,26 +2284,46 @@ describe('C-WF-08 — concept stage assurance and the 6.4 gate', () => {
     throwsCode(() => stagegate.approveConceptBaseline(as('owner'), { evidenceHash: '1'.repeat(64) }), 'NOT_IN_CONCEPT');
   });
 
-  it('will not pass the gate cleanly while a clause is unassessable', () => {
+  it('passes cleanly once all seven clauses are met', () => {
     walkToGate();
-    const error = throwsCode(
+    const report = stagegate.evaluateConceptGate(as('pm'));
+    assert.equal(
+      report.passed,
+      true,
+      [...report.failed, ...report.unassessable].join(', ') || report.summary,
+    );
+    assert.equal(report.summary, 'All seven clauses met.');
+
+    const decided = stagegate.decideGate(as('owner'), {
+      decision: 'PASS',
+      rationale: 'Concept complete against all seven clauses of the 6.4 Definition of Done.',
+    });
+    assert.equal(decided.decision, 'PASS');
+  });
+
+  it('refuses a clean pass the moment a clause opens, and takes a conditional one instead', () => {
+    walkToGate();
+
+    // Open a clause deliberately: a cost plan superseding the approved one
+    // breaks the single cut-off, which is a real failure rather than a gap in
+    // the platform.
+    conceptcontrols.createCostPlan(as('qs'), { baseDate: iso(0) });
+
+    const report = stagegate.evaluateConceptGate(as('pm'));
+    const outstanding = [...report.failed, ...report.unassessable];
+    assert.ok(outstanding.includes('ONE_CUT_OFF'), outstanding.join(', '));
+
+    throwsCode(
       () => stagegate.decideGate(as('owner'), { decision: 'PASS', rationale: 'Looks fine' }),
       'GATE_NOT_MET',
     );
-    assert.match(String(error.message), /AI_ACCOUNTED|DOWNSTREAM_CREATED/);
-  });
-
-  it('accepts a conditional pass that names an owner and a date against every open clause', () => {
-    walkToGate();
-    const report = stagegate.evaluateConceptGate(as('pm'));
-    const outstanding = [...report.failed, ...report.unassessable];
 
     const decided = stagegate.decideGate(as('owner'), {
       decision: 'PASS_WITH_CONDITIONS',
-      rationale: 'Concept complete; the two unassessable clauses are platform gaps, not project gaps',
+      rationale: 'Cost plan restated after the gate pack; re-approve the controls before the design gate.',
       conditions: outstanding.map((clause) => ({
         clause,
-        what: 'Close before the design gate',
+        what: 'Re-approve the concept controls against the current cost plan',
         owner: seed.users.pm!.id,
         by: iso(90),
       })),

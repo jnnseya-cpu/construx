@@ -1,5 +1,6 @@
 import { config } from './config.ts';
 import { hashEvidence } from './core/canonical.ts';
+import * as aidisposition from './domain/aidisposition.ts';
 import * as business from './domain/business.ts';
 import * as conceptbrief from './domain/conceptbrief.ts';
 import * as conceptcompliance from './domain/conceptcompliance.ts';
@@ -101,6 +102,20 @@ function authOf(platform: Platform, userId: string): AuthContext {
 const hash = (input: string): string => hashEvidence(input);
 
 export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
+  // Built against the deterministic local engines, whatever AI_MODE says.
+  //
+  // Two reasons, and both matter. Seeding a whole lifecycle against three live
+  // providers is a real invoice for a tenancy that exists to be looked at; and
+  // a fixture whose narrative text differs on every run is not a fixture — two
+  // deployments of the same commit would show different words.
+  //
+  // This is only the *building* of it. Everything a visitor does on the seeded
+  // tenancy afterwards runs against the configured providers and settles
+  // against the wallet in the ordinary way.
+  return platform.orchestrator.withLocalProviders(() => seedDemoProjectInner(platform));
+}
+
+async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
   const timeline: string[] = [];
   const step = (message: string): void => {
     timeline.push(message);
@@ -1248,6 +1263,44 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     `C-WF-07 — statutory applicability confirmed by a named competent person; risk review approved, ` +
       `residual exposure ${conceptRiskReview.residualExposureMinor}, reconciled to the cost plan`,
   );
+
+  // Every AI output produced so far, decided about by a person.
+  //
+  // The fifth clause of every stage gate asks for a human disposition on each
+  // one, and until this existed there was nothing to ask. A demonstration that
+  // left forty-odd model outputs undecided would show the clause failing for a
+  // real reason — the model wrote and nobody looked.
+  //
+  // Run at each gate rather than once at the end, which is what a project
+  // actually does: the outputs are reviewed before the decision that relies on
+  // them, not afterwards. Idempotent by construction — an execution that
+  // already carries a disposition is skipped, because replacing one would
+  // erase the record that the output was once accepted.
+  //
+  // Not all accepted. A demonstration in which every AI output was perfect
+  // teaches the wrong thing about what the record is for, so a deterministic
+  // slice is corrected and one is rejected outright.
+  let disposedCount = 0;
+  const disposeOutstandingAIOutputs = (): number => {
+    const outstanding = aidisposition.aiDispositionPosition(pmCtx).outstanding;
+    for (const [index, execution] of outstanding.entries()) {
+      const decision =
+        index % 9 === 4 ? 'ACCEPTED_WITH_CHANGE' : index % 17 === 11 ? 'REJECTED' : 'ACCEPTED';
+      aidisposition.disposeAIOutput(pmCtx, {
+        executionId: execution.executionId,
+        decision,
+        reason:
+          decision === 'ACCEPTED_WITH_CHANGE'
+            ? 'Figures adopted; the narrative was rewritten to name the constraint the model described only in general terms.'
+            : decision === 'REJECTED'
+              ? 'Rejected — the output assumed an outage window the operator has not agreed. Redone by hand against the agreed dates.'
+              : undefined,
+      });
+      disposedCount += 1;
+    }
+    return outstanding.length;
+  };
+  step(`AI outputs reviewed before the concept gate: ${disposeOutstandingAIOutputs()} decided`);
 
   // C-WF-08 — the 6.4 gate, then the baseline it produces.
   const conceptGate = stagegate.evaluateConceptGate(ownerCtx);
@@ -2759,6 +2812,12 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     `Maintenance forecast over 5 years: ${maintenance.schedule.length} interventions, ` +
       `${(maintenance.totalForecastMinor / 100).toLocaleString()} GBP, budget pressure ${maintenance.budgetPressure}`,
   );
+
+  // Everything the tender, construction, commissioning and handover stages
+  // produced, reviewed the same way. The concept-gate sweep above covered what
+  // existed then; this covers the rest, so no stage gate reports an AI output
+  // nobody stood behind.
+  step(`AI outputs reviewed across the remaining stages: ${disposeOutstandingAIOutputs()} decided`);
 
   // --- CORPORATE MEMORY ------------------------------------------------------
   // What this job taught the business, in a form the next one can find. Each

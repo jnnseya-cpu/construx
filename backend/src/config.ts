@@ -302,11 +302,20 @@ export const config = {
    * the seed. When it runs out the platform refuses to call a provider, which
    * is existing, tested behaviour and reads correctly on screen.
    *
-   * Off unless deliberately switched on. A deployment carrying real customers
-   * should think before adding a tenancy anyone may write to.
+   * **On by default**, and the cost argument above no longer applies: the seed
+   * runs against the deterministic local engines whatever `AI_MODE` says, so
+   * building the fixture is free and reproducible. Only what a visitor does
+   * afterwards spends anything, and that is bounded by the wallet.
+   *
+   * The default was `false` while seeding could spend money. It is `true` now
+   * because a deployment that shows a prospective customer an empty sign-in
+   * page is a deployment that does not work, and requiring somebody to know
+   * about a variable before the product demonstrates itself made the common
+   * case the broken one. A deployment carrying real customers that would rather
+   * not publish a sandbox sets `DEMO_TENANCY_ENABLED=false`.
    */
   demo: {
-    enabled: bool('DEMO_TENANCY_ENABLED', false),
+    enabled: bool('DEMO_TENANCY_ENABLED', true),
     /**
      * Opening credit for the demonstration wallet, in minor units.
      *
@@ -676,7 +685,10 @@ export function isProduction(): boolean {
  */
 export function demonstrationEnabled(): boolean {
   const raw = process.env.DEMO_TENANCY_ENABLED;
-  if (raw === undefined || raw === '') return false;
+  // Unset means on, matching `config.demo.enabled`. The two must agree or a
+  // deployment seeds a demonstration at boot that every route then refuses to
+  // show — working, invisible, and very hard to explain.
+  if (raw === undefined || raw === '') return true;
   return raw === 'true' || raw === '1';
 }
 

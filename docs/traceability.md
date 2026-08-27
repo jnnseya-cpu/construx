@@ -255,8 +255,8 @@ not pretend to have done.
 | AC-C-WF-08-01 · Gate pack reproducible, exact component versions | Built | `approveConceptBaseline()` freezes twelve components with the hash of each; `conceptBaselineDrift()` re-checks |
 | AC-C-WF-08-02 · A rejected gate leaves the project in Concept | Built | `decideGate()` records the decision; the phase moves only through `transitionPhase()`, which is a separate governed act |
 | AC-C-WF-08-03 · Design cannot publish before the concept gate | **Not built** | The coarse `evaluatePhaseGate` requires a scope package to leave CONCEPT; there is no rule barring a design publication that predates a concept gate decision |
-| 6.4 clause 5 · AI outputs fully accounted for | **NOT_ASSESSABLE** | The same honest answer every gate gives: the AI event block records no assumptions, prompt version or human disposition |
-| 6.4 clause 7 · Design mobilisation worklist | **NOT_ASSESSABLE** | The package strategy carries the dates it would be derived from; the worklist itself is not generated, and the clause says so rather than passing |
+| 6.4 clause 5 · AI outputs fully accounted for | Built | Assessed at all six gates. Assumptions and prompt version are written onto every AI event by `runAI`; the human disposition is its own event, `AI_OUTPUT_DISPOSED`. The clause fails naming the execution nobody has decided about |
+| 6.4 clause 7 · Design mobilisation worklist | Built | `designMobilisationWorklist()` derives the packages to mobilise from the approved package strategy — award date, lead time and required-on-site — with no re-entry |
 
 ## 9. Procurement and tender workflow
 
@@ -422,9 +422,9 @@ against intent.
 | Requirement | Status | Where |
 |---|---|---|
 | 15.1 Three visible AI modes | **Built** | Workflow AI (named task buttons), Copilot and the Knowledge/audit read are all in the console and named at the point of use |
-| 15.2 AI execution sequence | **Partial** | Authorisation, input resolution, ACU estimate and hold, provider routing with fallback, ledger write and human disposition are all built (`ai/orchestrator.ts`, `engines/context.runAI`). Steps that are **not** built: no prompt/template version is recorded, and no retrieval snapshot is stored |
+| 15.2 AI execution sequence | **Partial** | Authorisation, input resolution, ACU estimate and hold, provider routing with fallback, ledger write, prompt version and human disposition are all built (`ai/orchestrator.ts`, `engines/context.runAI`, `domain/aidisposition.ts`). The step that is **not** built: no retrieval snapshot is stored |
 | 15.3 Risk tiers A–D and automation ceiling | **Partial** | The ceiling is enforced, but through a different mechanism than the specification's four tiers: `aiAllowed` on each event type in the closed catalogue, defaulting to false. Tier D — "AI cannot execute or impersonate signatory" — is met by construction, because every approval, completion, competence and regulatory event carries `aiAllowed: false`. The A/B/C gradations are not modelled as named tiers |
-| 15.4 Mandatory AI output schema | **Partial** | The AI event block carries provider, model class, ACU held and consumed, input refs, confidence, policy id and decision. It does **not** carry assumptions, known gaps, alternatives considered, or a prompt/template version — which is exactly why clause five of every stage gate reads `NOT_ASSESSABLE` rather than passing |
+| 15.4 Mandatory AI output schema | **Partial** | The AI event block carries provider, model class, ACU held and consumed, input refs, confidence, policy id, decision, **assumptions** and **prompt version**; the human disposition is a separate event because it is a later act by a different party. Clause five of every stage gate now assesses all three and passes. Still **not** carried: known gaps and alternatives considered |
 | 15.5 Confidence and failure policy | **Partial** | Provider timeout and fallback are built and tested, cross-provider results are identified, and a wallet with no balance refuses the call rather than running it free. Configurable per-task confidence thresholds and a gold-set evaluation harness are not built |
 
 ### 16 — Non-functional, security and offline
@@ -465,10 +465,10 @@ against intent.
 
 **The honest summary of this table:** most of sections 12–18 describe
 architecture that already exists, and the genuine gaps cluster in four places —
-the AI output schema's missing assumptions and prompt version (which the stage
-gates already report as unassessable), the transactional outbox, the offline
-`Conflict` record, and the AI evaluation harness. None of those is hidden
-behind a claim that it is done.
+the AI output schema's known gaps and alternatives considered (assumptions,
+prompt version and human disposition are now recorded, and the stage gates
+assess them), the transactional outbox, the offline `Conflict` record, and the
+AI evaluation harness. None of those is hidden behind a claim that it is done.
 
 ---
 

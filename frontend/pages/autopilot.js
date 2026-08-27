@@ -21,10 +21,13 @@ const TONE = { URGENT: 'bad', ATTENTION: 'warn', INFO: 'info' };
 export async function autopilot(root) {
   const projectId = state.session.projectId;
 
-  const [proposals, fleet, runs] = await Promise.all([
+  const [proposals, fleet, runs, ai] = await Promise.all([
     api.get(`/v1/projects/${projectId}/proposals`).catch(() => ({ proposals: [] })),
     api.get('/v1/agents').catch(() => ({ agents: [] })),
     api.get(`/v1/projects/${projectId}/entities/AgentRun`).catch(() => ({ entities: [] })),
+    api
+      .get(`/v1/projects/${projectId}/ai/dispositions`)
+      .catch(() => ({ executions: 0, disposed: 0, accepted: 0, acceptedWithChange: 0, rejected: 0, outstanding: [] })),
   ]);
 
   const open = proposals.proposals ?? [];
@@ -109,6 +112,8 @@ export async function autopilot(root) {
             </div>`
       }
 
+      ${dispositionPanel(ai)}
+
       <div class="card pad0" style="margin-top:14px">
         <h2 style="padding:15px 17px 0">The fleet and what each agent may do</h2>
         ${table({
@@ -153,6 +158,44 @@ export async function autopilot(root) {
     }
   });
 
+  root.querySelector('#dispositions')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-dispose]');
+    if (!button) return;
+
+    const card = button.closest('[data-execution]');
+    const executionId = card.dataset.execution;
+    const decision = button.dataset.dispose;
+    const reason = card.querySelector('[name="why"]').value.trim();
+    const errorBox = card.querySelector('.cmd-error');
+    errorBox.hidden = true;
+
+    // The server refuses this too. Checking here as well is not a duplicate
+    // rule — it is the difference between a message beside the field and a
+    // round trip that returns the same answer more slowly.
+    if (decision !== 'ACCEPTED' && !reason) {
+      errorBox.textContent = 'A reason is required — a correction nobody wrote down is one nobody can learn from.';
+      errorBox.hidden = false;
+      return;
+    }
+
+    button.disabled = true;
+    const original = button.textContent;
+    button.textContent = 'Recording…';
+    try {
+      await api.post(`/v1/projects/${projectId}/ai/executions/${executionId}/dispose`, {
+        decision,
+        ...(reason ? { reason } : {}),
+      });
+      toast('Recorded', 'The decision is on the execution and the stage gate can read it', 'ok');
+      await draw();
+    } catch (error) {
+      errorBox.textContent = `${error.code ? `${error.code} — ` : ''}${error.message}`;
+      errorBox.hidden = false;
+      button.disabled = false;
+      button.textContent = original;
+    }
+  });
+
   root.querySelector('#queue')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-decide]');
     if (!button) return;
@@ -193,6 +236,84 @@ export async function autopilot(root) {
       }
     }
   });
+}
+
+/**
+ * What the project has actually stood behind.
+ *
+ * The fifth clause of every stage gate fails naming an execution nobody has
+ * decided about, so there has to be somewhere to go and decide. This is it.
+ *
+ * The decision is deliberately not a proposal: a proposal is the platform
+ * asking whether to run something, and this is a person saying what they did
+ * with the answer after it ran. Accepting with a change and rejecting both
+ * require a reason, because a correction with no reason recorded is a
+ * correction nobody can learn from.
+ */
+function dispositionPanel(ai) {
+  const outstanding = ai.outstanding ?? [];
+  const mayDispose = can('AI_EXECUTION', 'X');
+
+  return html`<div id="dispositions" style="margin-top:14px">
+    <div class="card" style="margin-bottom:${raw(outstanding.length > 0 ? '12px' : '0')}">
+      <h2>AI output, and what a person did with it</h2>
+      <div class="split-list" style="margin-top:10px">
+        <div class="row"><span class="lbl">Accepted as produced</span><span class="val">${ai.accepted ?? 0}</span></div>
+        <div class="row"><span class="lbl">Accepted, then changed</span><span class="val">${ai.acceptedWithChange ?? 0}</span></div>
+        <div class="row"><span class="lbl">Rejected</span><span class="val">${ai.rejected ?? 0}</span></div>
+        <div class="row">
+          <span class="lbl">Nobody has decided</span>
+          <span class="val">${badge(String(outstanding.length), outstanding.length > 0 ? 'warn' : 'ok')}</span>
+        </div>
+      </div>
+      ${
+        outstanding.length === 0
+          ? html`<div class="metric-sub" style="margin-top:12px">
+              All ${ai.disposed ?? 0} of ${ai.executions ?? 0} executions carry a named person's decision — which is what the
+              fifth clause of each stage gate reads before it passes.
+            </div>`
+          : mayDispose
+            ? html`<div class="metric-sub" style="margin-top:12px">
+                Each one below ran, was charged and was written to the ledger. None has a person's name against it, and every
+                stage gate reports it by name until one does.
+              </div>`
+            : html`<div class="metric-sub" style="margin-top:12px">
+                ${blockedReason('AI_EXECUTION', 'X') ?? 'Your roles do not carry this decision.'}
+              </div>`
+      }
+    </div>
+
+    ${
+      !mayDispose
+        ? ''
+        : outstanding.map(
+            (item) => html`<div class="card proposal" data-execution="${item.executionId}" style="margin-bottom:12px">
+              <div style="display:flex;gap:11px;align-items:center;margin-bottom:11px">
+                ${badge(humanise(item.taskType ?? 'unknown task'), 'ai')}
+                ${item.engine ? badge(humanise(item.engine), 'neutral') : ''}
+                <div class="metric-sub mono" style="margin-left:auto;font-size:11px">
+                  ${String(item.executionId).slice(-8)}
+                </div>
+              </div>
+
+              <div class="cmd-error" hidden></div>
+
+              <div class="input-zone">
+                <div class="field">
+                  <label for="why-${item.executionId}">Reason <span class="opt">required unless accepted unchanged</span></label>
+                  <input id="why-${item.executionId}" name="why" type="text"
+                    placeholder="What you changed, or why you are not using it">
+                </div>
+                <div class="actions">
+                  <button class="btn" data-dispose="ACCEPTED">Accept as produced</button>
+                  <button class="btn quiet" data-dispose="ACCEPTED_WITH_CHANGE">Accept with change</button>
+                  <button class="btn quiet" data-dispose="REJECTED">Reject</button>
+                </div>
+              </div>
+            </div>`,
+          )
+    }
+  </div>`;
 }
 
 function proposalCard(proposal) {

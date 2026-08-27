@@ -47,12 +47,19 @@ after(() => server.close());
  */
 async function asProduction<T>(run: () => Promise<T>): Promise<T> {
   const previous = process.env.NODE_ENV;
+  const previousDemo = process.env.DEMO_TENANCY_ENABLED;
   process.env.NODE_ENV = 'production';
+  // Explicitly off. The demonstration tenancy now defaults to *on*, and this
+  // file is about the surface a deployment presents when it is not offering
+  // one — the switched-on case is covered in full by demotenancy.test.ts.
+  process.env.DEMO_TENANCY_ENABLED = 'false';
   try {
     return await run();
   } finally {
     if (previous === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previous;
+    if (previousDemo === undefined) delete process.env.DEMO_TENANCY_ENABLED;
+    else process.env.DEMO_TENANCY_ENABLED = previousDemo;
   }
 }
 
@@ -174,7 +181,7 @@ describe('the demonstration surface in production', () => {
     assert.equal(body.title, 'DEMO_DISABLED');
   });
 
-  it('refuses to list demonstration identities', async () => {
+  it('refuses to list demonstration identities when the demonstration is switched off', async () => {
     const response = await asProduction(() =>
       fetch(`${base}/v1/console/identities`, {
         method: 'POST',
@@ -212,11 +219,15 @@ describe('the demonstration surface in production', () => {
     const text = await response.text();
     assert.ok(!/"devCode"/.test(text), 'the MFA challenge code was returned in production');
     // Its production-only sibling. `demoCode` is returned for an identity the
-    // demonstration seed created, on a deployment that has switched the
-    // demonstration on — and this platform has neither. If it appears here,
-    // the narrow rule has become a wide one. The switched-on case is covered
-    // in full by demotenancy.test.ts.
-    assert.ok(!/"demoCode"/.test(text), 'a demonstration code was returned with no demonstration tenancy seeded');
+    // demonstration seed created, on a deployment that has the demonstration
+    // switched on. `asProduction` switches it off, so nothing here qualifies —
+    // and if a code appears anyway the narrow rule has become a wide one.
+    //
+    // Note this is a stronger check than it looks: a sibling test in this file
+    // calls /v1/console/identities, which *seeds* the tenancy when the
+    // demonstration is on. Without the explicit off, that seed would make
+    // pm@meridian.example a published identity here by test-ordering accident.
+    assert.ok(!/"demoCode"/.test(text), 'a demonstration code was returned with the demonstration switched off');
   });
 });
 

@@ -127,10 +127,15 @@ before(async () => {
   email = user.email;
 
   process.env.NODE_ENV = 'production';
+  // Explicitly off. The demonstration tenancy now defaults to on, and this file
+  // is about a *real* customer signing in on a deployment that offers no
+  // demonstration — which is the case the whole SMTP path exists for.
+  process.env.DEMO_TENANCY_ENABLED = 'false';
 });
 
 after(() => {
   process.env.NODE_ENV = 'test';
+  delete process.env.DEMO_TENANCY_ENABLED;
   server.close();
   smtp.close();
 });
@@ -191,9 +196,11 @@ describe('a production deployment lets a real person sign in', () => {
   });
 });
 
-describe('the demonstration doors stay shut', () => {
-  // These are what the console used to depend on entirely. They are correctly
-  // refused in production, and the sign-in path must not need them.
+describe('the demonstration doors stay shut where no demonstration is offered', () => {
+  // These are what the console used to depend on entirely. The sign-in path
+  // must not need them, and on a deployment with the demonstration switched
+  // off they are refused outright. `/v1/console/session` is refused in
+  // production whatever the switch says — see demotenancy.test.ts.
   it('refuses the demonstration identities', async () => {
     assert.equal((await call('POST', '/v1/console/identities')).status, 403);
   });

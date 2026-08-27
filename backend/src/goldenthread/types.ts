@@ -46,6 +46,29 @@ export type AIEventBlock = {
    * write; it was simply never recorded beside the change it justified.
    */
   confidence?: number;
+  /**
+   * Which prompt produced this, and which version of it.
+   *
+   * Derived rather than declared: `${taskType}@${hash}` over the canonical
+   * task and response schema the engine actually sent. A hand-maintained
+   * version string is one somebody forgets to bump on the change that
+   * mattered; this one changes exactly when the prompt changes and cannot
+   * disagree with what was sent.
+   *
+   * Optional on the type because events written before this field existed do
+   * not carry it, and nothing may be backfilled onto a hash-chained event.
+   * Every event written from now on has it.
+   */
+  promptVersion?: string;
+  /**
+   * What the model took as given.
+   *
+   * `[]` means the model declared none, which is a recorded answer. The field
+   * being *absent* means the event predates the field. The stage gates
+   * distinguish the two, because "it assumed nothing" and "nobody wrote down
+   * what it assumed" are different facts.
+   */
+  assumptions?: string[];
 };
 
 export type PolicyBlock = {

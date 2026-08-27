@@ -752,11 +752,14 @@ describe('11.4 the handover stage gate', () => {
    * gate that counted that as a pass would be the one defect this file exists
    * to prevent.
    */
-  it('reports the AI clause as not assessable, as every other gate does', () => {
-    const ai = stagegate
-      .evaluateHandoverGate(asOwner())
-      .clauses.find((clause) => clause.clause === 'AI_ACCOUNTED')!;
-    assert.equal(ai.state, 'NOT_ASSESSABLE');
-    assert.equal(stagegate.evaluateHandoverGate(asOwner()).passed, false);
+  it('accounts for the AI clause as every other gate does', () => {
+    // This read NOT_ASSESSABLE at every gate until assumptions, prompt version
+    // and human disposition were built. It now passes on a project whose AI
+    // outputs a person has decided about, and the shared clause is what all six
+    // gates use — so asserting it here is asserting they still share it.
+    const ai = stagegate.evaluateHandoverGate(asFM()).clauses.find((c) => c.clause === 'AI_ACCOUNTED');
+    assert.ok(ai, 'the shared AI clause is missing from this gate');
+    assert.equal(ai.state, 'PASS', ai.blocking.join('; '));
+    assert.match(ai.detail, /accepted or rejected by a named person/);
   });
 });

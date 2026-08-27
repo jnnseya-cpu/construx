@@ -72,6 +72,16 @@ class MockAdapter implements AIProviderAdapter {
       rawCostMinor: Math.max(1, Math.round(this.estimateCostMinor(request) * (0.8 + seededUnit(seed, 1) * 0.4))),
       latencyMs: Date.now() - started,
       confidence: Number((0.72 + seededUnit(seed, 2) * 0.24).toFixed(3)),
+      // The assumptions this output was produced under, and they are true
+      // rather than decorative: the stand-in reasons about nothing, sees only
+      // the structured payload the engine assembled, and is deterministic —
+      // which is precisely what somebody reading the record two years later
+      // needs to know before relying on it.
+      assumptions: [
+        'No external model was called; the output is a deterministic stand-in derived from the structured payload.',
+        'Only the inputs the engine assembled were considered. No document, drawing or record outside them was read.',
+        'Figures are computed by the engine, not judged by a model. The narrative is advisory and is never hashed as state.',
+      ],
       // Said out loud. Nothing here reasoned about anything, and a caller
       // putting this in front of a person needs to know that from the response
       // rather than by inspecting the model name or the platform's config.

@@ -524,6 +524,114 @@ export function strategyBlockedReason(ctx: EngineContext): string | null {
   return null;
 }
 
+export type MobilisationTask = {
+  reference: string;
+  what: string;
+  ownerId: string;
+  /** The date it must be done by, taken from what actually depends on it. */
+  by: string;
+  /** Where it came from, so nothing on the list is somebody's idea. */
+  derivedFrom: string;
+};
+
+/**
+ * The design mobilisation worklist — C-WF-08's fourth output.
+ *
+ * Derived, never stored. Every task on it comes from something the concept
+ * stage already decided: a package needs its employer's requirements written
+ * before it can be enquired, a long-lead item needs an advance-order decision
+ * before its award date, and a retained risk needs an owner on day one of
+ * design rather than at the first design review.
+ *
+ * Deriving it is the point. A stored worklist is a list somebody wrote once
+ * and nobody updated when the package strategy changed, and the whole reason
+ * the specification asks for it is that the design stage should start from
+ * what concept actually settled rather than from a fresh conversation.
+ *
+ * The dates are not invented. Each is the date of the thing that depends on
+ * the task — an enquiry date, an award date — so a task with no downstream
+ * date does not appear, because there would be nothing to be late against.
+ */
+export function designMobilisationWorklist(ctx: EngineContext): MobilisationTask[] {
+  const packages = currentPackageStrategy(ctx);
+  const contract = currentContractStrategy(ctx);
+  if (!packages) return [];
+
+  const tasks: MobilisationTask[] = [];
+
+  for (const pkg of packages.packages) {
+    // Every package needs its scope written up before it can go to market, and
+    // the enquiry date is the date that says when.
+    tasks.push({
+      reference: `MOB-ER-${pkg.reference}`,
+      what: `Write the employer's requirements for ${pkg.name}, covering ${pkg.scopeElements.join(', ')}`,
+      ownerId: pkg.ownerId,
+      by: pkg.enquiryDate,
+      derivedFrom: `Package ${pkg.reference}, enquiry ${pkg.enquiryDate}`,
+    });
+
+    // Interfaces are where packages meet, and they are agreed before the
+    // enquiry or they are argued about after the award.
+    for (const [index, boundary] of pkg.interfaces.entries()) {
+      tasks.push({
+        reference: `MOB-IF-${pkg.reference}-${index + 1}`,
+        what: `Agree and draw the interface: ${boundary}`,
+        ownerId: pkg.ownerId,
+        by: pkg.enquiryDate,
+        derivedFrom: `Package ${pkg.reference} interface`,
+      });
+    }
+
+    // A long-lead package needs the advance-order decision taken before the
+    // award, not at it. Twenty-six weeks is the same threshold the position
+    // report uses, so the two cannot disagree about what "long lead" means.
+    if (pkg.leadTimeWeeks >= 26) {
+      tasks.push({
+        reference: `MOB-LL-${pkg.reference}`,
+        what:
+          `Decide whether to advance-order the long-lead content of ${pkg.name} ` +
+          `(${pkg.leadTimeWeeks}-week lead) under a pre-construction services agreement`,
+        ownerId: pkg.ownerId,
+        by: pkg.enquiryDate,
+        derivedFrom: `Package ${pkg.reference}, ${pkg.leadTimeWeeks}-week lead against ${pkg.requiredOnSiteMilestoneRef}`,
+      });
+    }
+
+    // A risk the client is keeping needs a named owner in design, or it is
+    // discovered on site as a surprise nobody was watching for.
+    for (const [index, risk] of pkg.retainedRisks.entries()) {
+      tasks.push({
+        reference: `MOB-RR-${pkg.reference}-${index + 1}`,
+        what: `Assign and plan the retained risk carried into ${pkg.reference}: ${risk}`,
+        ownerId: pkg.ownerId,
+        by: pkg.enquiryDate,
+        derivedFrom: `Package ${pkg.reference} retained risk`,
+      });
+    }
+  }
+
+  // The contract's notices have to exist as a register before the first one is
+  // due, and the earliest enquiry is the date by which the form is being
+  // quoted at bidders.
+  const earliestEnquiry = packages.packages
+    .map((p) => p.enquiryDate)
+    .sort()
+    .at(0);
+  if (contract && earliestEnquiry) {
+    tasks.push({
+      reference: 'MOB-CONTRACT',
+      what:
+        `Open the notice register for ${contract.contractFamily} ${contract.contractOption} ` +
+        `(${contract.provisionalNotices.length} provisional notices) and replace it from the executed contract`,
+      ownerId: packages.approvedBy,
+      by: earliestEnquiry,
+      derivedFrom: `Contract strategy ${contract.contractFamily}, provisional until execution`,
+    });
+  }
+
+  return tasks.sort((a, b) => (a.by === b.by ? a.reference.localeCompare(b.reference) : a.by.localeCompare(b.by)));
+}
+
 export type StrategyPosition = {
   procurement?: ProcurementStrategyState;
   packages?: PackageStrategyState;
@@ -532,6 +640,8 @@ export type StrategyPosition = {
   /** Packages whose order must be placed within a year of the cut-off. */
   longLead: Array<{ reference: string; leadTimeWeeks: number; awardDate: string }>;
   scopeIssues: ReturnType<typeof packageScopeIssues>;
+  /** C-WF-08's fourth output, derived from the packages above. */
+  mobilisation: MobilisationTask[];
   blocked: string | null;
 };
 
@@ -550,6 +660,7 @@ export function strategyPosition(ctx: EngineContext): StrategyPosition {
       .map((p) => ({ reference: p.reference, leadTimeWeeks: p.leadTimeWeeks, awardDate: p.awardDate }))
       .sort((a, b) => b.leadTimeWeeks - a.leadTimeWeeks),
     scopeIssues: packageScopeIssues(packages?.worksScopeElements ?? [], packages?.packages ?? []),
+    mobilisation: designMobilisationWorklist(ctx),
     blocked: strategyBlockedReason(ctx),
   };
 }

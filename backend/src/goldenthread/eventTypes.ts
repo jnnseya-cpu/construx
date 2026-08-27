@@ -1132,6 +1132,20 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // --- AI & billing ---------------------------------------------------------
   def('AI_REQUEST_QUEUED', 'AIRequest', 'CREATE', 'AI_BILLING'),
   def('AI_EXECUTION_COMPLETED', 'AIExecution', 'AI_EXECUTE', 'AI_BILLING', { aiAllowed: true }),
+  /**
+   * What a person decided about an AI output.
+   *
+   * The last of the three things every stage gate's fifth clause asked for and
+   * the platform did not record. The other two — assumptions and prompt
+   * version — are properties of the call and are written on the event itself.
+   * This one cannot be: it is a *later* act by a different party, and the
+   * ledger is append-only, so it is its own event pointing back at the
+   * execution.
+   *
+   * `aiAllowed: false`, emphatically. A model marking its own output as
+   * accepted is the exact failure this clause exists to catch.
+   */
+  def('AI_OUTPUT_DISPOSED', 'AIExecution', 'APPROVE', 'GOVERNANCE'),
   def('AI_EXECUTION_FAILED', 'AIExecution', 'UPDATE', 'AI_BILLING', { aiAllowed: true }),
   def('ACU_WALLET_OPENED', 'ACUWallet', 'CREATE', 'AI_BILLING'),
   def('ACU_TOPPED_UP', 'ACUWallet', 'UPDATE', 'AI_BILLING'),

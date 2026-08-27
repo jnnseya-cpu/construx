@@ -4381,9 +4381,10 @@ what is missing:
 
 - **AI accounted for.** Every AI output carries its evidence, its confidence,
   its model class and its ACU settlement. **Assumptions, prompt version and
-  human disposition are not recorded anywhere in the platform.** The clause
-  therefore cannot be assessed against the specification in full, and it says
-  those three words rather than a tick.
+  human disposition were not recorded anywhere in the platform**, so the clause
+  could not be assessed in full and said those three words rather than a tick.
+  All three are now recorded and the clause passes — see *The three words the
+  gate had been saying since the first one* at the end of this file.
 - **Downstream created.** The contract, the cost baseline and the buyout targets
   come off the estimate without re-entry. **Mobilisation tasks with owners and
   due dates, and inherited residual obligations, are not built.**
@@ -5333,7 +5334,8 @@ exported.
 
 6.4, 7.4 and 8.4 are **word for word identical** in the specification. What
 differs is the evidence each is answered from, so the clause list, the titles,
-the `NOT_ASSESSABLE` rule, the AI clause, the replay clause and the report
+the `NOT_ASSESSABLE` rule, the AI clause (unassessable when this was written,
+assessed now), the replay clause and the report
 arithmetic are shared outright: `evaluateDesignGate` answers the same seven from
 the design stage, `evaluateTenderGate` from the tender, and `gateFor` picks by
 phase — a project in DESIGN is assessed against 7.4 and everything else falls to
@@ -6291,9 +6293,9 @@ stage-specific clauses are written and the AI and replay clauses stay shared.
 Approvals are checked for maker-checker on the thing that matters most here — a
 test decided by the actor who ran it — and the blockers clause treats a
 conditional acceptance as the permitted time-bound condition the clause allows,
-until its review date passes. Clause 5 reports `NOT_ASSESSABLE` as it does at
-every other gate, for the same honest reason: the AI event block records no
-assumptions and no prompt version.
+until its review date passes. Clause 5 reported `NOT_ASSESSABLE` as it did at
+every other gate, for the same honest reason — the AI event block recorded no
+assumptions and no prompt version. That is closed; the clause now assesses.
 
 One stale claim was corrected on the way: the **9.4 downstream clause** had read
 `NOT_ASSESSABLE` because the commissioning turnover pack did not exist. CN-WF-12
@@ -7292,6 +7294,118 @@ wrapped. Six commands fit on a laptop; Concept carries seven and pushed the
 whole page sideways on a phone, and every other screen was one button away from
 the same. Swept afterwards: all 21 routes an enterprise admin can reach render
 at 393px with no horizontal overflow and no page error.
+
+---
+
+## The three words the gate had been saying since the first one
+
+Every stage gate's fifth clause — *AI outputs fully accounted for* — has read
+`NOT_ASSESSABLE` since the first gate was built, and it named the same three
+missing things at all six: **assumptions**, **prompt version**, **human
+disposition**. That is the oldest open answer in the product. It is closed.
+
+The three are not one problem. Two are properties of the call and belong on the
+event; the third can never be a field at all.
+
+**Assumptions** now ride on the AI event block (`ai.assumptions`), sourced from
+the provider response. An empty array is a recorded answer — *this run declared
+none* — not a gap, which is why the clause checks for the array rather than for
+content. The local stand-in declares the three assumptions that are actually
+true of it, the first being that no external model was called.
+
+**Prompt version** is derived, not declared: `promptVersionOf()` is
+`${taskType}@${8 hex}` over the task string and the response schema the engine
+sent. Derived because a hand-maintained version string is one somebody forgets
+to bump on exactly the change that mattered, and because a derived one cannot
+disagree with what was sent. The **payload is deliberately excluded** — it is
+this project's data and differs on every call, so including it would give every
+execution its own "version", which is a fingerprint rather than a version.
+
+**Human disposition** could not have been a field. It is a later act by a
+different party, and on an append-only ledger a field cannot be filled in
+afterwards. So it is its own event, `AI_OUTPUT_DISPOSED`, merged onto the
+execution record rather than replacing it: `backend/src/domain/aidisposition.ts`,
+two routes, 14 tests. Three decisions — accepted, accepted with change,
+rejected — and anything but a clean acceptance requires a reason. A second
+disposition is refused, because replacing one would erase an acceptance
+somebody stood behind. **No model may dispose of its own output**: refused in
+the command by `ctx.source === 'AI'`, and again in the catalogue by
+`aiAllowed: false`. One rule, both layers.
+
+The clause now assesses all three at all six gates and **passes**, and fails
+naming the execution nobody has decided about — not a count. That distinction
+is the whole point: a gate that says "3 outstanding" sends somebody hunting.
+
+And because a gate that names something has to lead somewhere, the decision has
+a curated door on **Autopilot** rather than only the generated one: what has
+been accepted, accepted-and-changed and rejected, and every execution still
+waiting, each with the engine and task that produced it and three buttons. It
+belongs on that screen because it is the same shape as everything else there —
+something the platform did, waiting on a person who holds the authority. The
+difference is stated in the code: a proposal asks whether to run something, a
+disposition is a person saying what they did with the answer after it ran.
+
+**One defect found writing the test for it, and it was real.** `hashEvidence()`
+returns an algorithm-prefixed value, `sha256:<hex>`. `promptVersionOf` sliced
+the first eight characters of that, which is `sha256:` plus **one** hex
+character — four bits of entropy wearing a version's clothes, sixteen possible
+versions across the entire platform. Every prompt version written to the ledger
+before this was very nearly meaningless. The prefix is stripped now, and a test
+asserts thirty-two distinct questions produce thirty-two distinct versions,
+which the old code could not have passed.
+
+### The mobilisation worklist the concept gate needed
+
+Clause 7 at the concept gate wanted a design mobilisation worklist and reported
+that it did not exist. It did exist, in pieces: the approved package strategy
+already carries the award date, the lead time and the required-on-site date for
+every package. `designMobilisationWorklist()` in `domain/conceptstrategy.ts`
+derives the worklist from those three, with no re-entry and nothing stored —
+the same derived-never-stored rule the readiness, availability and residual
+obligation positions follow. The clause reads it and passes. The design and
+tender gates' clause 7 still read `NOT_ASSESSABLE`, correctly: their
+mobilisation tasks with owners and due dates are a different thing and are not
+built.
+
+### Unblocking the two things a fresh deployment could not do
+
+**The demonstration tenancy is on by default.** It was off, and the argument for
+that was cost: a demonstration wallet is real money and a visitor can spend it.
+That argument no longer holds, because `seedDemoProject` now runs inside
+`AIOrchestrator.withLocalProviders()` — the seed executes against the
+deterministic local engines whatever `AI_MODE` says, restoring the real
+providers in a `finally`. Seeding is therefore free, and it is also
+**reproducible**: two deployments of the same commit seed the identical
+lifecycle, which is a second and independent reason to do it this way. What was
+left was a deployment that came up, served a sign-in page onto an empty world,
+and required the operator to know about an environment variable before the
+product would demonstrate itself. That made the common case the broken one. A
+deployment carrying real customers that would rather not publish a sandbox sets
+`DEMO_TENANCY_ENABLED=false`.
+
+**A deployment with no mail server can be signed into.** Sign-in requires a
+one-time code, the code goes by email, and in production it is not returned in
+the response. With `SMTP_HOST` unset that locked out everybody — including the
+operator whose job is to configure SMTP. Every credential correct, and a locked
+door.
+
+So when, and **only** when, no SMTP host is configured, the code is written to
+**stderr**. Not to the response, not to the ledger, not to any route. Reading it
+requires a shell on the server, which is a strictly higher bar than an email
+inbox and is already the level of access needed to change the secret that signs
+the tokens. The message is loud on purpose — a deployment sending sign-in codes
+to its own logs should be uncomfortable to look at until SMTP is set. This
+reverses an earlier decision to have no logged-code path at all; the trade is
+stated here so it is a choice on the record rather than a drift.
+
+### One test that was passing by accident
+
+`publicsurface.test.ts` asserted that no demonstration identity is published on
+a production deployment. With the demo now on by default, a sibling test calling
+`/v1/console/identities` *seeds* — so `pm@meridian.example` became a published
+identity by test-ordering accident, and the assertion's outcome depended on
+which file ran first. `asProduction` now sets `DEMO_TENANCY_ENABLED='false'`
+alongside `NODE_ENV`, which is what "production" meant in that test all along.
 
 ---
 

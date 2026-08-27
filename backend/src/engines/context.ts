@@ -8,6 +8,7 @@ import { assertAccess, type AccessAttributes } from '../identity/abac.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
 import type { GoldenThreadLedger, CommitInput } from '../goldenthread/ledger.ts';
 import type { EntityRef, EventSource, GoldenThreadEvent } from '../goldenthread/types.ts';
+import { hashEvidence } from '../core/canonical.ts';
 import { ulid } from '../core/ids.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
 import type { TenancyStanding } from '../billing/entitlement.ts';
@@ -163,6 +164,32 @@ export type AITaskInput = {
   toWrites: (output: Record<string, unknown>, confidence: number | undefined) => AIWriteSpec[];
 };
 
+/**
+ * Which prompt produced an output, and which version of it.
+ *
+ * `${taskType}@${hash}` over the task string and the response schema the
+ * engine actually sent — the two things that define what was asked. Derived
+ * rather than declared because a hand-maintained version string is one
+ * somebody forgets to bump on exactly the change that mattered, and because a
+ * derived one cannot disagree with what was sent.
+ *
+ * The payload is deliberately *not* in the hash. The payload is this
+ * project's data and differs on every call; including it would give every
+ * single execution its own "version", which is a fingerprint rather than a
+ * version. What is hashed is the shape of the question.
+ *
+ * Eight hex characters of the digest. Enough to distinguish the prompts one
+ * platform has, short enough to read in a table. `hashEvidence` returns an
+ * algorithm-prefixed value (`sha256:…`), so the prefix is dropped first —
+ * slicing the prefixed string would yield `sha256:` plus one hex character,
+ * which is four bits of entropy wearing a version's clothes.
+ */
+export function promptVersionOf(task: { taskType: string; request: ProviderRequest }): string {
+  const shape = JSON.stringify({ task: task.request.task, schema: task.request.responseSchema ?? null });
+  const digest = hashEvidence(shape).split(':').pop() ?? '';
+  return `${task.taskType}@${digest.slice(0, 8)}`;
+}
+
 export type AITaskResult = {
   aiRequestId: string;
   executionId: string;
@@ -312,6 +339,13 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
           // this figure and used it to decide what to write; until now it was
           // discarded at the moment it became evidence.
           ...(run.response.confidence === undefined ? {} : { confidence: run.response.confidence }),
+          // Which prompt, and which version of it. Derived from what was
+          // actually sent rather than declared by hand — see `promptVersion`.
+          promptVersion: promptVersionOf(task),
+          // Always written, `[]` included. An empty array says the model
+          // declared no assumptions; an absent field would say nobody
+          // recorded whether it did, and those are different facts.
+          assumptions: run.response.assumptions ?? [],
         },
         // The human who pressed the button, and the phase the project was in.
         // The actor on an AI-authored event is the engine — liability follows

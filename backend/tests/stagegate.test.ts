@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
+import * as aidisposition from '../src/domain/aidisposition.ts';
+import * as safetyEngine from '../src/engines/safety.ts';
 import * as stagegate from '../src/domain/stagegate.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tenderreview from '../src/domain/tenderreview.ts';
@@ -28,6 +30,7 @@ let seed: SeedResult;
 
 const asPM = () => platform.context(seed.users.pm!.auth, seed.projectId, { source: 'WEB' });
 const asOwner = () => platform.context(seed.users.owner!.auth, seed.projectId, { source: 'WEB' });
+const asSafety = () => platform.context(seed.users.safety!.auth, seed.projectId, { source: 'WEB' });
 
 before(async () => {
   platform = new Platform();
@@ -109,25 +112,80 @@ describe('stage gate · a clause it cannot assess is not a clause it passed', ()
    * the platform, so the clause cannot be assessed in full — and it says which
    * three, by name, on the screen rather than only in a document.
    */
-  it('reports the AI clause as unassessable and names exactly what is missing', () => {
+  /**
+   * This clause read `NOT_ASSESSABLE` at every gate from the first one until
+   * the three missing pieces were built: assumptions and prompt version, now
+   * written onto the AI event by `runAI`, and human disposition, which could
+   * never be a field because it is a later act by a different party and is
+   * `AI_OUTPUT_DISPOSED`.
+   *
+   * The tests below no longer assert the gap. They assert the two things that
+   * replaced it: that a fully-accounted output passes, and — far more
+   * important — that an output nobody has decided about does **not**.
+   */
+  it('passes the AI clause once every output is accounted for and disposed of', () => {
     const ai = stagegate.evaluateTenderGate(asPM()).clauses.find((c) => c.clause === 'AI_ACCOUNTED')!;
-    assert.equal(ai.state, 'NOT_ASSESSABLE');
-    assert.match(ai.detail, /assumptions, prompt version, human disposition/);
-    assert.match(ai.detail, /reported as unassessable rather than passed/);
-    assert.equal(ai.blocking.length, 3);
+    assert.equal(ai.state, 'PASS', ai.blocking.join('; '));
+    assert.match(ai.detail, /assumptions and prompt version/);
+    assert.match(ai.detail, /accepted or rejected by a named person/);
+    assert.deepEqual(ai.blocking, []);
   });
 
-  it('separates what it could not see from what it checked and found wanting', () => {
+  it('fails the AI clause for an output nobody has stood behind, naming it', async () => {
+    // A genuine new AI output, left undisposed. This is the failure the clause
+    // exists for: the model wrote and nobody looked.
+    const before = stagegate.evaluateTenderGate(asPM()).clauses.find((c) => c.clause === 'AI_ACCOUNTED')!;
+    assert.equal(before.state, 'PASS');
+
+    // A real AI run — `forecastSafetyRisk` goes through `runAI` — left
+    // undisposed. `assessContingency` would not do: it is pure arithmetic and
+    // produces no AI event at all, so it could never have failed the clause.
+    await safetyEngine.forecastSafetyRisk(asSafety(), {
+      headcount: 40,
+      highRiskActivitiesPlanned: 3,
+      adverseWeatherDays: 2,
+    });
+
+    const after = stagegate.evaluateTenderGate(asPM()).clauses.find((c) => c.clause === 'AI_ACCOUNTED')!;
+    assert.equal(after.state, 'FAIL', 'an undisposed AI output did not fail the clause');
+    assert.ok(
+      after.blocking.some((b) => /has not been accepted or rejected by a person/.test(b)),
+      after.blocking.join('; '),
+    );
+
+    // And it clears the moment a person decides about it.
+    const outstanding = aidisposition.aiDispositionPosition(asPM()).outstanding;
+    assert.ok(outstanding.length > 0);
+    for (const execution of outstanding) {
+      aidisposition.disposeAIOutput(asPM(), { executionId: execution.executionId, decision: 'ACCEPTED' });
+    }
+    assert.equal(
+      stagegate.evaluateTenderGate(asPM()).clauses.find((c) => c.clause === 'AI_ACCOUNTED')!.state,
+      'PASS',
+    );
+  });
+
+  it('still separates what it could not see from what it checked and found wanting', () => {
+    // The distinction itself, which outlives any particular gap: a clause the
+    // platform cannot assess is never counted as failed, and never as passed.
     const report = stagegate.evaluateTenderGate(asPM());
-    assert.ok(report.unassessable.includes('AI_ACCOUNTED'));
-    assert.equal(report.failed.includes('AI_ACCOUNTED'), false);
-    assert.equal(report.passed, false);
+    for (const clause of report.unassessable) {
+      assert.equal(report.failed.includes(clause), false, `${clause} is both failed and unassessable`);
+    }
+    for (const clause of report.clauses) {
+      if (clause.state === 'NOT_ASSESSABLE') {
+        assert.ok(clause.blocking.length > 0, `${clause.clause} cannot be assessed and says nothing about why`);
+      }
+    }
   });
 
   it('says how many of the seven are met and how many it cannot answer', () => {
     const report = stagegate.evaluateTenderGate(asPM());
-    assert.match(report.summary, /not met/);
-    assert.match(report.summary, /cannot assess/);
+    if (report.passed) {
+      assert.equal(report.summary, 'All seven clauses met.');
+    } else {
+      assert.ok(/not met|cannot assess/.test(report.summary), report.summary);
+    }
   });
 });
 

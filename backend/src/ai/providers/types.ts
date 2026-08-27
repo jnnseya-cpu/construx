@@ -59,6 +59,20 @@ export type ProviderResponse = {
    * section states its own absence, which is what actually happened.
    */
   synthetic?: boolean;
+  /**
+   * What the model took as given, in its own words.
+   *
+   * Present so the record can answer "under what assumptions" rather than
+   * leave it to whoever reads the output later. An **empty array is an
+   * answer** — "none declared" — and is not the same as the field being
+   * absent, which is why `runAI` writes `[]` rather than omitting it when a
+   * provider returns nothing.
+   *
+   * A provider populates this from its own structured output where the
+   * response schema asks for it. The deterministic stand-in states the one
+   * assumption that is always true of it: no model was called.
+   */
+  assumptions?: string[];
 };
 
 export interface AIProviderAdapter {

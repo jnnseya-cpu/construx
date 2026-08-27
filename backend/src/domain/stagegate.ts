@@ -9,6 +9,7 @@ import { designBaselinePosition } from './designbaseline.ts';
 import { validateProgrammeLogic } from './programmecontrol.ts';
 import { designChangePosition } from './designchange.ts';
 import { crossDomainValidation, residualObligations } from './handoveracceptance.ts';
+import * as aidisposition from './aidisposition.ts';
 import * as conceptbrief from './conceptbrief.ts';
 import * as conceptcompliance from './conceptcompliance.ts';
 import * as conceptcontrols from './conceptcontrols.ts';
@@ -60,10 +61,13 @@ import * as conceptstrategy from './conceptstrategy.ts';
  *    material query and open award departure, by name.
  * 4. **One cut-off.** Price, programme and information all stated against the
  *    same addendum.
- * 5. **AI accounted for.** Partly assessable: provider, model class, ACU
- *    settlement and confidence are on every AI event. Prompt version,
- *    assumptions and human disposition are not recorded at all, so this clause
- *    is `NOT_ASSESSABLE` and names exactly which three.
+ * 5. **AI accounted for.** Fully assessable since the three missing pieces
+ *    were built: provider, model class, ACU settlement, confidence,
+ *    **assumptions** and **prompt version** are on every AI event, and every
+ *    execution carries a **human disposition** through `AI_OUTPUT_DISPOSED`.
+ *    The clause names any output that is missing one, rather than reporting
+ *    that the platform cannot see them. It falls back to `NOT_ASSESSABLE` only
+ *    if `AI_REQUIREMENTS` ever again declares something unrecorded.
  * 6. **Replayable.** The whole event log re-verified against its own state and
  *    chain hashes.
  * 7. **Downstream created.** The budget and buyout targets come off the
@@ -348,9 +352,19 @@ const AI_REQUIREMENTS: Array<{ what: string; recorded: boolean; field?: string }
   { what: 'confidence', recorded: true, field: 'confidence' },
   { what: 'model class', recorded: true, field: 'modelClass' },
   { what: 'ACU settlement', recorded: true, field: 'acuConsumed' },
-  { what: 'assumptions', recorded: false },
-  { what: 'prompt version', recorded: false },
-  { what: 'human disposition', recorded: false },
+  // The three that were absent, and now are not.
+  //
+  // Assumptions and prompt version are properties of the call and are written
+  // onto the event by `runAI` — `assumptions: []` where the model declared
+  // none, which is an answer rather than a gap, and `promptVersion` derived
+  // from the task and response schema actually sent.
+  //
+  // Human disposition could never be a field: it is a later act by a different
+  // party, and on an append-only ledger a field cannot be filled in
+  // afterwards. It is `AI_OUTPUT_DISPOSED`, merged onto the execution record.
+  { what: 'assumptions', recorded: true, field: 'assumptions' },
+  { what: 'prompt version', recorded: true, field: 'promptVersion' },
+  { what: 'human disposition', recorded: true, field: 'AI_OUTPUT_DISPOSED' },
 ];
 
 /**
@@ -362,6 +376,11 @@ const AI_REQUIREMENTS: Array<{ what: string; recorded: boolean; field?: string }
 function aiAccounted(ctx: EngineContext, stage = 'tender'): ClauseResult {
   const blocking: string[] = [];
   let aiEvents = 0;
+
+  // Which executions a person has stood behind. Read once rather than per
+  // event: a project with hundreds of AI events would otherwise walk the
+  // entity list hundreds of times to answer the same question.
+  const disposed = aidisposition.dispositions(ctx);
 
   for (const event of ctx.ledger.events({ tenantId: ctx.tenantId, projectId: ctx.projectId })) {
     if (!event.ai) continue;
@@ -382,6 +401,26 @@ function aiAccounted(ctx: EngineContext, stage = 'tender'): ClauseResult {
     }
     if (event.ai.acuConsumed === undefined) {
       blocking.push(`${event.eventType} at ${event.timestamp} was not settled against the wallet`);
+    }
+    // `undefined`, not `[]`. An empty array is the model declaring no
+    // assumptions, which is a recorded answer; an absent field means the event
+    // predates the field and nobody knows whether it assumed anything.
+    if (event.ai.assumptions === undefined) {
+      blocking.push(`${event.eventType} at ${event.timestamp} records no assumptions, not even that there were none`);
+    }
+    if (event.ai.promptVersion === undefined) {
+      blocking.push(`${event.eventType} at ${event.timestamp} does not say which prompt produced it`);
+    }
+    // The disposition, which is the one that needs a person rather than a
+    // deployment. An execution nobody has decided about is a model writing
+    // unopposed, and the gate names it by what produced it so somebody can
+    // find it.
+    const executionId = event.ai.aiExecutionId;
+    if (executionId !== undefined && !disposed.has(executionId)) {
+      blocking.push(
+        `${event.eventType} at ${event.timestamp} has not been accepted or rejected by a person ` +
+          `(execution ${executionId})`,
+      );
     }
   }
 
@@ -412,12 +451,16 @@ function aiAccounted(ctx: EngineContext, stage = 'tender'): ClauseResult {
   return {
     clause: 'AI_ACCOUNTED',
     title: TITLES.AI_ACCOUNTED,
-    state: 'NOT_ASSESSABLE',
+    state: absent.length === 0 ? 'PASS' : 'NOT_ASSESSABLE',
     detail:
-      `All ${aiEvents} AI outputs used in this ${stage} carry their evidence, confidence, model class and ACU settlement. ` +
-      `The platform does not record ${absent.join(', ')} at all, so this clause cannot be assessed against the ` +
-      'specification in full — and it is reported as unassessable rather than passed, because a gate that passes what it did ' +
-      'not check converts a gap into an assurance.',
+      absent.length === 0
+        ? `All ${aiEvents} AI outputs used in this ${stage} carry their evidence, confidence, model class, ` +
+          'ACU settlement, assumptions and prompt version, and every one has been accepted or rejected by a ' +
+          'named person.'
+        : `All ${aiEvents} AI outputs used in this ${stage} carry their evidence, confidence, model class and ACU settlement. ` +
+          `The platform does not record ${absent.join(', ')} at all, so this clause cannot be assessed against the ` +
+          'specification in full — and it is reported as unassessable rather than passed, because a gate that passes what it did ' +
+          'not check converts a gap into an assurance.',
     blocking: absent.map((what) => `${what} is not recorded against an AI output anywhere in the platform`),
   };
 }
@@ -1353,9 +1396,9 @@ function handoverDownstreamCreated(ctx: EngineContext): ClauseResult {
  * the blocker clause *is* the eight-domain validation, and restating it as a
  * second set of thresholds is the duplication this file exists to avoid.
  *
- * The fifth clause has read `NOT_ASSESSABLE` at every gate since the first, for
- * the same honest reason: the AI event block records no assumptions and no
- * prompt version.
+ * The fifth clause read `NOT_ASSESSABLE` at every gate from the first until
+ * assumptions, prompt version and human disposition were recorded. It now
+ * assesses all three, and fails naming the execution nobody decided about.
  */
 // --- 6.4, the concept gate --------------------------------------------------
 //
@@ -1607,15 +1650,25 @@ function conceptDownstreamCreated(ctx: EngineContext): ClauseResult {
   // ever happen. AC-C-WF-08-01's "exact component versions" is satisfied by the
   // baseline record itself and verified afterwards by `conceptBaselineDrift`.
 
-  // The honest half. The specification's output is a "Design Mobilisation
-  // Worklist" and this platform does not build one — the design stage's own
-  // D-WF-01 plan is created there, by hand, from these packages. Reported as
-  // unseen rather than passed, because a gate that quietly passes what it did
-  // not check converts a gap into a signed assurance.
-  unseen.push(
-    'The design mobilisation worklist is not built by this platform. The package strategy carries the dates ' +
-      'it would be derived from, and the design management plan is created in D-WF-01 rather than generated here.',
-  );
+  // The design mobilisation worklist — the specification's fourth output, and
+  // the thing this clause used to report as unbuilt.
+  //
+  // Derived from the packages rather than stored, so it cannot go stale
+  // against the strategy it came from. Every task carries the date of the
+  // thing that depends on it, which is what makes it a worklist rather than a
+  // wish list: a task with no downstream date has nothing to be late against
+  // and does not appear.
+  const worklist = strategy ? conceptstrategy.designMobilisationWorklist(ctx) : [];
+  if (strategy && worklist.length === 0) {
+    blocking.push(
+      'The package strategy produces no mobilisation tasks, so design would start from a blank page rather ' +
+        'than from what concept settled.',
+    );
+  }
+  for (const task of worklist) {
+    if (task.ownerId.trim() === '') blocking.push(`${task.reference} has no owner`);
+    if (task.by.trim() === '') blocking.push(`${task.reference} has no date`);
+  }
 
   if (blocking.length > 0) {
     return {
@@ -1630,11 +1683,12 @@ function conceptDownstreamCreated(ctx: EngineContext): ClauseResult {
   return {
     clause: 'DOWNSTREAM_CREATED',
     title: TITLES.DOWNSTREAM_CREATED,
-    state: 'NOT_ASSESSABLE',
+    state: 'PASS',
     detail:
-      'The package strategy and the concept baseline exist and carry the dates and versions design works to. ' +
-      'One output of this clause is not built and is named rather than assumed.',
-    blocking: unseen,
+      `The package strategy and the concept baseline carry the dates and versions design works to, and ` +
+      `${worklist.length} mobilisation task${worklist.length === 1 ? '' : 's'} are derived from them, each with ` +
+      'an owner and a date taken from what actually depends on it.',
+    blocking: [],
   };
 }
 
@@ -1643,9 +1697,9 @@ function conceptDownstreamCreated(ctx: EngineContext): ClauseResult {
  *
  * Word for word identical to 7.4, 8.4, 9.4, 10.4 and 11.4, which is why only
  * the five stage-specific clauses are written here and the AI and replay
- * clauses stay shared. The fifth clause has read `NOT_ASSESSABLE` at every gate
- * since the first, for the same honest reason: the AI event block records no
- * assumptions and no prompt version.
+ * clauses stay shared. The fifth clause assesses assumptions, prompt version
+ * and human disposition on every AI event of the project — the three things it
+ * reported as missing at every gate until they were recorded.
  */
 export function evaluateConceptGate(ctx: EngineContext): GateReport {
   authorise(ctx, 'PROJECT_SETUP', 'R');
@@ -1831,9 +1885,9 @@ export function evaluateHandoverGate(ctx: EngineContext): GateReport {
  *
  * Word for word identical to 6.4, 7.4, 8.4 and 9.4, so only the five
  * stage-specific clauses are written here and the AI and replay clauses stay
- * shared. The fifth clause has read `NOT_ASSESSABLE` at every gate since the
- * first, for the same honest reason: the AI event block records no assumptions
- * and no prompt version.
+ * shared. The fifth clause assesses assumptions, prompt version and human
+ * disposition on every AI event of the project — the three things it reported
+ * as missing at every gate until they were recorded.
  */
 export function evaluateCommissioningGate(ctx: EngineContext): GateReport {
   authorise(ctx, 'PROJECT_SETUP', 'R');

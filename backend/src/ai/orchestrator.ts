@@ -334,6 +334,42 @@ export class AIOrchestrator {
   }
 
   /**
+   * Run a block against the deterministic local engines, whatever `AI_MODE`
+   * says, and restore the configured providers afterwards.
+   *
+   * There is exactly one caller and one reason: the demonstration seed.
+   *
+   * A fixture that calls live models is a bad fixture twice over. It **costs
+   * money** — seeding a whole lifecycle against three live providers is a real
+   * invoice for a tenancy that exists to be looked at — and it is **not
+   * reproducible**, because the narrative text differs on every run, so two
+   * deployments of the same commit show different words and no two seeds hash
+   * alike. Neither is acceptable for the one tenancy whose whole job is to be
+   * the same thing every time.
+   *
+   * This is not a way to avoid paying for AI. Everything a *visitor* does on
+   * the seeded tenancy afterwards runs against whatever `AI_MODE` selects and
+   * settles against the wallet in the ordinary way. Only the building of the
+   * fixture is local.
+   *
+   * `finally` rather than a plain restore: a seed that throws part-way must not
+   * leave the platform pointing at the mocks, or every later call on that
+   * process would silently be answered by a stand-in.
+   */
+  async withLocalProviders<T>(run: () => Promise<T>): Promise<T> {
+    const reasoning = this.#reasoning;
+    const perception = this.#perception;
+    this.#reasoning = mockReasoning;
+    this.#perception = mockPerception;
+    try {
+      return await run();
+    } finally {
+      this.#reasoning = reasoning;
+      this.#perception = perception;
+    }
+  }
+
+  /**
    * Vendors that could have served this call and were not cleared for it.
    *
    * Recorded rather than merely acted on. An audit that shows only the vendor
