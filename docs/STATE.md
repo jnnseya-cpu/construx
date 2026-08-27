@@ -5868,6 +5868,57 @@ recorded verbatim in `docs/WORKFLOWS.md`.
 
 ---
 
+## The commissioning block (stage 10)
+
+### Every asset in exactly one boundary
+
+CM-WF-01. `backend/src/domain/systemisation.ts`, eight routes, 19 tests.
+
+The commissioning stage's first workflow, and the one thing the platform had no
+representation of at all. `engines/handover.ts` records a commissioning test
+against a `systemId`, and until now that was a free-text string: two engineers
+could test "AHU-1" and "AHU-01" and the platform would hold two systems, or one
+could test a fan coil nobody had said belonged to anything.
+
+**The hierarchy.** Facility → system → subsystem → equipment, each with a stable
+tag, a boundary description and its own asset list. A level cannot be skipped: a
+subsystem hanging off a facility is a missing system, and the level nobody owns
+is the level nobody tests.
+
+**Both silent failures, detected rather than asked about.** AC-CM-WF-01-01. A
+**gap** is an asset in nobody's boundary — the asset nobody tests. An **overlap**
+is an asset in two — the asset each team believes the other is testing. Assets
+are declared on the boundary that owns them rather than on the asset itself,
+because the question is about the boundaries, and an answer stored on the asset
+would let two boundaries disagree with it. Either blocks approval, as does a
+boundary drawn around nothing, which produces a test pack with no scope.
+
+**A test with no witness is a test nobody has to attend.** AC-CM-WF-01-02: stage,
+owner, witness, acceptance criteria, the controlled source those criteria come
+from, and the prerequisite — all six checked at approval, plus a notice period,
+because a witness who finds out on the day does not attend. Approval then
+records a `TestPackRequirement` per planned test, so a test executed without a
+pack is visibly outside the plan rather than merely undocumented.
+
+**The programme has to reach both ends.** AC-CM-WF-01-03: a commissioning
+programme naming no construction milestone and no handover milestone is a plan
+for a building nobody is constructing and nobody is taking over. A milestone
+depending on one nobody planned is refused too.
+
+**Temporary operation is a separate state, never implicit commissioning.** The
+exception control, and it matters because running plant to dry out a building or
+provide temporary heat is not commissioning it — but the plant runs, the hours
+accrue and the manufacturer's warranty starts. It is its own record with a
+purpose, a bounded period, a responsible party and what is *not* in place that
+commissioning would require; if the answer to that last one is genuinely
+nothing, the system is ready to be commissioned rather than temporarily
+operated. A system running past the end of its period is named in the position.
+
+**Still to build in the commissioning block:** CM-WF-02 to CM-WF-06, the
+`COMMISSIONING_COMPLETE` gate, and the stage workspace described in 10.2.
+
+---
+
 ---
 
 ## What is partial

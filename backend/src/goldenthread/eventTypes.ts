@@ -806,6 +806,24 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
     requiresEvidence: true,
   }),
 
+  // --- CM-WF-01 systemisation and the commissioning plan --------------------
+  // The tag is the stable identity every test, reading and certificate hangs
+  // off, so defining a node and approving the hierarchy are separate events: the
+  // second is the point after which the boundaries stop moving.
+  def('SYSTEM_NODE_DEFINED', 'SystemNode', 'CREATE', 'COMMISSIONING', { creates: true }),
+  def('SYSTEM_HIERARCHY_APPROVED', 'SystemNode', 'APPROVE', 'COMMISSIONING'),
+  def('COMMISSIONING_PLAN_DRAFTED', 'CommissioningPlan', 'CREATE', 'COMMISSIONING', { creates: true }),
+  def('COMMISSIONING_PLAN_APPROVED', 'CommissioningPlan', 'APPROVE', 'COMMISSIONING'),
+  // One per planned test. Recorded so a test executed without a pack is visibly
+  // outside the plan rather than merely undocumented.
+  def('TEST_PACK_REQUIRED', 'TestPackRequirement', 'CREATE', 'COMMISSIONING', { creates: true }),
+  def('COMMISSIONING_BASELINE_UPDATED', 'CommissioningPlan', 'UPDATE', 'COMMISSIONING'),
+  // Its own entity, never a state of commissioning. Running plant to dry out a
+  // building is not commissioning it, but the hours accrue and the warranty
+  // starts, and conflating the two reports a system as proven when nobody tested
+  // anything.
+  def('TEMPORARY_OPERATION_DECLARED', 'TemporaryOperation', 'APPROVE', 'COMMISSIONING', { creates: true }),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

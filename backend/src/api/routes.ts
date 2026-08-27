@@ -71,6 +71,7 @@ import * as measurement from '../domain/measurement.ts';
 import * as meetings from '../domain/meetings.ts';
 import * as mobilisation from '../domain/mobilisation.ts';
 import * as submittals from '../domain/submittals.ts';
+import * as systemisation from '../domain/systemisation.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
@@ -5370,6 +5371,163 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       meetings.recordCorrection(projectContext(platform, ctx), ctx.params.meetingId as string, body(ctx)),
+  },
+
+  // ------------------------------------------------------- CM-WF-01 systemisation and the commissioning plan
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/systemisation',
+    description: 'The system hierarchy, whether it holds together, the plans and what is running temporarily',
+    handler: (platform, ctx) => systemisation.systemisationPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/systems',
+    description: 'Define a node of the facility, system, subsystem and equipment hierarchy',
+    schema: {
+      type: 'object',
+      required: ['tag', 'level', 'name', 'boundary'],
+      properties: {
+        tag: stringField,
+        level: { type: 'string', enum: [...systemisation.SYSTEM_LEVEL] },
+        parentTag: stringField,
+        name: stringField,
+        boundary: { type: 'string' },
+        location: stringField,
+        assetTags: { type: 'array', items: { type: 'string' } },
+        energisationSequence: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => systemisation.defineSystem(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/systems/integrity',
+    description: 'Assets in two boundaries, assets in none, and boundaries around nothing',
+    handler: (platform, ctx) => systemisation.checkHierarchy(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/systems/approve',
+    description: 'Approve the systemisation — after this the tags are what every test hangs off',
+    schema: {
+      type: 'object',
+      required: ['approvedBy'],
+      properties: { approvedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => systemisation.approveHierarchy(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commissioning-plans',
+    description: 'Draft the commissioning plan: the test matrix and the programme it hangs on',
+    schema: {
+      type: 'object',
+      required: ['title', 'tests', 'milestones'],
+      properties: {
+        title: stringField,
+        tests: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: [
+              'reference',
+              'systemTag',
+              'stage',
+              'objective',
+              'owner',
+              'witness',
+              'acceptanceCriteria',
+              'criteriaSource',
+              'prerequisite',
+              'noticePeriodDays',
+            ],
+            properties: {
+              reference: stringField,
+              systemTag: stringField,
+              stage: { type: 'string', enum: [...systemisation.TEST_STAGE] },
+              objective: { type: 'string' },
+              owner: stringField,
+              witness: stringField,
+              acceptanceCriteria: { type: 'string' },
+              criteriaSource: stringField,
+              prerequisite: { type: 'string' },
+              noticePeriodDays: { type: 'number' },
+            },
+            additionalProperties: false,
+          },
+        },
+        milestones: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['milestone', 'type', 'date'],
+            properties: {
+              milestone: stringField,
+              type: { type: 'string', enum: ['CONSTRUCTION', 'COMMISSIONING', 'HANDOVER'] },
+              date: stringField,
+              dependsOn: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => systemisation.draftCommissioningPlan(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commissioning-plans/:planId/approve',
+    description: 'Approve the plan, and record the test pack each planned test now owes',
+    schema: {
+      type: 'object',
+      required: ['approvedBy'],
+      properties: { approvedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      systemisation.approveCommissioningPlan(projectContext(platform, ctx), ctx.params.planId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commissioning-plans/:planId/baseline',
+    description: 'Change the approved baseline, stating the impact on tests, assets and handover',
+    schema: {
+      type: 'object',
+      required: ['change', 'impactOnTests', 'impactOnAssets', 'impactOnHandover', 'updatedBy'],
+      properties: {
+        change: { type: 'string' },
+        impactOnTests: { type: 'string' },
+        impactOnAssets: { type: 'string' },
+        impactOnHandover: { type: 'string' },
+        updatedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      systemisation.updateCommissioningBaseline(projectContext(platform, ctx), ctx.params.planId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/temporary-operation',
+    description: 'Declare temporary operation of a system — a controlled state, never implicit commissioning',
+    schema: {
+      type: 'object',
+      required: ['systemTag', 'purpose', 'from', 'until', 'responsibleParty', 'conditions'],
+      properties: {
+        systemTag: stringField,
+        purpose: { type: 'string' },
+        from: stringField,
+        until: stringField,
+        responsibleParty: stringField,
+        conditions: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => systemisation.declareTemporaryOperation(projectContext(platform, ctx), body(ctx)),
   },
 
   // ------------------------------------------------------- CN-WF-12 reporting, recovery, turnover and completion

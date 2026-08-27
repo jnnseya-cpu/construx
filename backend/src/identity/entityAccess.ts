@@ -317,6 +317,12 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // evidence is checked against a rule — while the period report and the
   // completion certificate belong to whoever governs the project itself.
   SystemTurnover: { area: 'QUALITY_COMMISSIONING' },
+  // CM-WF-01. The hierarchy, the plan and the packs it requires all sit with the
+  // commissioning manager, which the matrix already places in quality.
+  SystemNode: { area: 'QUALITY_COMMISSIONING' },
+  CommissioningPlan: { area: 'QUALITY_COMMISSIONING' },
+  TestPackRequirement: { area: 'QUALITY_COMMISSIONING' },
+  TemporaryOperation: { area: 'QUALITY_COMMISSIONING' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },
