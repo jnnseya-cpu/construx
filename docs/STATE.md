@@ -7481,6 +7481,123 @@ about which picture belongs where.
 
 ---
 
+## Order, and who lost
+
+Two acceptance criteria and one whole offline behaviour, all three about the
+same thing: something happened before something else, and the platform had no
+opinion about it.
+
+### What a change reaches, before it is made
+
+AC-C-WF-02-03. `briefDrift()` already answered this question backwards — it
+reports, after the fact, that the baseline no longer matches the register. That
+is the right thing on a dashboard and the wrong thing to show somebody about to
+press supersede, because by then the damage is a fact rather than a decision.
+
+`requirementImpact()` names what a change would reach: the brief baseline the
+requirement is frozen in, the option selected against that baseline, the cost
+and programme approved after it, the package strategy, the concept baseline the
+gate produced, and the design packages downstream.
+
+**Every link is one the ledger already holds.** Nothing is inferred from the
+text of a requirement and nothing is guessed from its category. An impact
+appears because an artefact froze this brief baseline's hash, or was approved at
+a cut-off after it — both recorded values. A tool that guessed which cost lines
+"relate to" a requirement would produce a plausible list nobody could check,
+which is worse than no list at all.
+
+`HARD` and `SOFT` are not severities of consequence but of **provenance**. Hard
+means an approval names the hash that is about to change, so the approval will
+no longer describe what was approved. Soft means the work sits downstream of the
+brief without having frozen this version of it. Only the first is a
+contradiction; the second is a re-read by somebody who knows the design.
+
+The selected option is matched through the baseline **it** froze rather than the
+one in force. They are usually the same, and the difference matters: an option
+chosen against an earlier baseline is affected if the requirement was in *that*
+one, because that is the brief the decision was actually taken on.
+
+**One defect of my own, caught by its own test.** The first version reported the
+concept baseline as affected by every requirement, including ones added after
+the gate. A requirement that was not in the brief the gate read is not something
+the gate was answered on, and saying otherwise is exactly the plausible,
+uncheckable claim the whole function exists to avoid.
+
+### Design cannot publish before the concept gate
+
+AC-C-WF-08-03. The coarse phase gate requires a scope package to leave CONCEPT,
+and that is a different rule about a different thing: it governs the project's
+*phase*, not what design *issues*. A project could be moved into DESIGN and
+start freezing packages with 6.4 never decided — design published against a
+concept nobody approved, arriving through the door beside the gate.
+
+The rule lives in `stagegate.ts` beside the gate it is about, and `freezePackage`
+reads it rather than restating it. A freeze is the moment design publishes:
+creating a package is planning, and the baseline is over freezes that already
+happened.
+
+**What counts as a decision.** A `PASS` or a `PASS_WITH_CONDITIONS` is one —
+conditions are the mechanism for proceeding with work outstanding. A `HOLD` or a
+`REJECT` is a decision *not* to proceed and does not open the door either. And
+the decision has to **predate** the freeze: a gate decided afterwards ratified
+what had already been issued, which is the thing the criterion is about.
+
+### Every conflict has a losing side
+
+The sync engine has always resolved offline conflicts deterministically and
+reported what it did. What it did not do was *keep* the report — and the device
+receiving it is, by construction, the one on the bad connection. A supervisor's
+pour record refused for progress regression simply vanished: the work was done,
+the record was made, and nothing in the platform said it had been discarded.
+
+Every conflict is now a `SyncConflict` record in `OPEN` state, written before
+anything else happens, with **both sides kept whole**: the device's payload and
+the server's state at that moment. Deciding after the fact means reading what
+each party actually wrote, not a summary of the difference. That includes the
+ones the engine let through — a `DEVICE_WINS` overwrote somebody's server-side
+change, and a governance action refused offline is work attempted and lost.
+
+`resolveSyncConflict()` is where a person decides. Two decisions, and the second
+one **writes**: `KEPT_SERVER` confirms the engine's pick by a named person with
+a reason, and `APPLIED_DEVICE` overturns it and commits the device's payload —
+because a resolution that only annotated the conflict would leave the paperwork
+tidy and the site record wrong, which is the wrong way round. The re-commit is
+made under the resolver's identity, not the device's: overturning a refusal
+means taking responsibility for the write, not laundering it back through the
+supervisor who was refused. It needs `A` on field execution rather than `U`, so
+the person whose record was refused cannot reinstate it alone.
+
+### The merge that was in the vocabulary and could never happen
+
+`MERGED` has been one of four resolutions since the first day and nothing could
+produce it. Two people editing one record usually edited different parts of it —
+a supervisor sets the plant on site while the engineer sets the pour volume —
+and picking a winner there throws away a change nobody disagreed with.
+
+It needs the base state, so `SyncOperation` gained an optional `baseState`. The
+hash said *that* the device was out of date; this says *what it was out of date
+from*, which is the only way to tell a field the device deliberately changed
+from one it merely carried along. Absent, everything resolves exactly as before.
+
+A merge is refused unless every changed field on both sides is a **scalar**. Two
+devices appending to the same array have not edited different fields — they have
+both edited the array, and merging them means choosing an order neither asked
+for. Getting that wrong invents site data, which is worse than a conflict
+somebody has to look at. Any overlap at all refuses too, including two people
+setting a field to the same value by coincidence: that is a race whose outcome
+happens not to matter, and treating it as agreement hides the next one where it
+does.
+
+**A defect in the existing rules, found by building this.** The monotonic
+progress check read the device's raw payload. A device sends the whole record,
+so a handset that never touched progress still carries the figure it last saw —
+and the rule was reading that as the device's claim, refusing a note about
+formwork because somebody else had moved the percentage meanwhile. It now reads
+what would **actually be committed**, which is what the guard was always meant
+to protect. The safety-stop rule stays first and unchanged.
+
+---
+
 ## Working notes
 
 - The seeded demo project sits in the **Operations** phase, so field-execution

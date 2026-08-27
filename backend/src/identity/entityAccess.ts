@@ -148,6 +148,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // execution, because it is a fact about the site record rather than about the
   // platform's plumbing.
   SyncSession: { area: 'FIELD_EXECUTION' },
+  SyncConflict: { area: 'FIELD_EXECUTION' },
   // CN-WF-04. The basis sits with the work package it measures, because it is
   // a statement about scope; the claim and its certification sit with field
   // execution, where the area already splits the two parties — the site

@@ -358,6 +358,224 @@ export function liveRequirements(ctx: EngineContext): BriefRequirementState[] {
   return requirementsOf(ctx).filter((r) => r.status === 'ACCEPTED');
 }
 
+// --- AC-C-WF-02-03: what a change to this requirement reaches ---------------
+
+/** One thing downstream that was settled on the strength of this requirement. */
+export type RequirementImpact = {
+  /** The artefact, as it is referred to on screen. */
+  what: string;
+  refType: string;
+  refId: string;
+  /** Why a change here reaches it. Never a category — the actual link. */
+  because: string;
+  /** What somebody has to do about it, in the imperative. */
+  action: string;
+  /**
+   * `HARD` where the artefact was approved against the frozen requirement and
+   * the approval no longer describes what was approved. `SOFT` where the work
+   * is downstream of the brief but was not frozen against this version.
+   */
+  severity: 'HARD' | 'SOFT';
+};
+
+export type RequirementImpactReport = {
+  requirementId: string;
+  reference: string;
+  statement: string;
+  priority: RequirementPriority;
+  status: BriefRequirementStatus;
+  /** Whether this requirement is in the baseline in force. */
+  inBaseline: boolean;
+  baselineVersion?: number;
+  impacts: RequirementImpact[];
+  /** The one-line answer, for the confirmation the user actually reads. */
+  summary: string;
+};
+
+/**
+ * What changing this requirement affects, **before** anybody changes it.
+ *
+ * AC-C-WF-02-03. `briefDrift()` already answers the same question backwards —
+ * it reports, after the fact, that the baseline no longer matches the register.
+ * That is the right thing to show on a dashboard and the wrong thing to show
+ * somebody about to press supersede, because by then the damage is a fact
+ * rather than a decision.
+ *
+ * **Every link here is one the ledger already holds.** Nothing is inferred from
+ * the text of a requirement, and nothing is guessed from a category: an impact
+ * appears because an artefact froze this brief baseline's hash, or was approved
+ * at a cut-off after it, and both of those are recorded values. A tool that
+ * guessed which cost lines "relate to" a requirement would produce a plausible
+ * list that nobody could check, which is worse than no list.
+ *
+ * **`HARD` and `SOFT` are not severities of consequence but of provenance.**
+ * Hard means an approval names the hash that is about to change, so the
+ * approval will no longer describe what was approved. Soft means the work sits
+ * downstream of the brief without having frozen this version of it. Only the
+ * first is a contradiction; the second is a re-read.
+ */
+export function requirementImpact(ctx: EngineContext, requirementId: string): RequirementImpactReport {
+  authorise(ctx, 'PROJECT_SETUP', 'R');
+
+  const item = requirement(ctx, requirementId);
+  const baseline = currentBriefBaseline(ctx);
+  const frozen = baseline?.frozen.find((entry) => entry.requirementId === requirementId);
+  const impacts: RequirementImpact[] = [];
+
+  if (baseline && frozen) {
+    impacts.push({
+      what: `Brief baseline v${baseline.version}`,
+      refType: 'BriefBaseline',
+      refId: baseline.baselineId,
+      because: `${item.reference} is one of the ${baseline.frozen.length} requirements frozen in it.`,
+      action: 'Re-baseline the brief once the change is agreed, or the baseline reports drift.',
+      severity: 'HARD',
+    });
+  }
+
+  // The selected option froze the baseline hash it was chosen against. If this
+  // requirement is in that baseline, the option was chosen on a brief that is
+  // about to stop existing in the form it was read in.
+  const selected = ctx.ledger
+    .list(ctx.projectId, 'FeasibilityOption')
+    .map(
+      (record) =>
+        record.state as unknown as {
+          optionId: string;
+          reference: string;
+          name: string;
+          status: string;
+          briefBaselineId?: string;
+        },
+    )
+    .find((option) => option.status === 'SELECTED');
+
+  // Matched through the baseline the option itself froze, not through the one
+  // in force. They are usually the same, and the difference matters: an option
+  // chosen against an earlier baseline is affected if the requirement was in
+  // *that* one, because that is the brief the decision was actually taken on.
+  const optionBaseline = selected?.briefBaselineId
+    ? ctx.ledger
+        .list(ctx.projectId, 'BriefBaseline')
+        .map((record) => record.state as unknown as BriefBaselineState)
+        .find((candidate) => candidate.baselineId === selected.briefBaselineId)
+    : undefined;
+
+  if (selected && optionBaseline?.frozen.some((entry) => entry.requirementId === requirementId)) {
+    impacts.push({
+      what: `Selected option ${selected.reference} — ${selected.name}`,
+      refType: 'FeasibilityOption',
+      refId: selected.optionId,
+      because: `It was selected against brief baseline v${optionBaseline.version}, whose hash is frozen on the decision.`,
+      action: 'Confirm the option still satisfies the changed requirement, or re-run the comparison.',
+      severity: 'HARD',
+    });
+  }
+
+  // Approved concept controls and the delivery strategy carry a cut-off. Where
+  // the approval came after the baseline, it was made in the knowledge of this
+  // requirement — so a change to it reaches the figures that were approved.
+  const controls = ctx.ledger
+    .list(ctx.projectId, 'ConceptControls')
+    .map((record) => record.state as unknown as { controlsId: string; version: number; approvedAt: string; totalMinor: number })
+    .sort((a, b) => a.version - b.version)
+    .at(-1);
+
+  if (controls && baseline && frozen && controls.approvedAt >= baseline.approvedAt) {
+    impacts.push({
+      what: `Concept cost, programme and cashflow v${controls.version}`,
+      refType: 'ConceptControls',
+      refId: controls.controlsId,
+      because: `Approved on ${controls.approvedAt.slice(0, 10)}, against the brief baseline this requirement is in.`,
+      action: 'Re-check the cost plan and the milestone dates against the changed requirement before the gate.',
+      severity: 'HARD',
+    });
+  }
+
+  const packages = ctx.ledger
+    .list(ctx.projectId, 'PackageStrategy')
+    .map(
+      (record) =>
+        record.state as unknown as {
+          packageStrategyId: string;
+          version: number;
+          approvedAt: string;
+          packages: readonly unknown[];
+        },
+    )
+    .sort((a, b) => a.version - b.version)
+    .at(-1);
+
+  if (packages && baseline && frozen) {
+    impacts.push({
+      what: `Package strategy v${packages.version}`,
+      refType: 'PackageStrategy',
+      refId: packages.packageStrategyId,
+      because: `The ${packages.packages.length} packages were scoped from the baselined brief.`,
+      action: 'Check whether the change moves scope between packages or alters a lead time.',
+      severity: packages.approvedAt >= baseline.approvedAt ? 'HARD' : 'SOFT',
+    });
+  }
+
+  // The concept baseline is the gate's output and freezes twelve components. A
+  // requirement change after it is a change to something already signed off.
+  // The concept baseline has no version of its own — it is the gate's output
+  // and there is one in force — so the latest by approval date is the one.
+  const conceptBaseline = ctx.ledger
+    .list(ctx.projectId, 'ConceptBaseline')
+    .map((record) => record.state as unknown as { baselineId: string; approvedAt: string })
+    .sort((a, b) => (a.approvedAt < b.approvedAt ? -1 : 1))
+    .at(-1);
+
+  // Only where the requirement is in the brief the gate was answered from. A
+  // requirement added after the baseline was not part of what the gate read,
+  // and reporting the gate as affected by it would be the kind of plausible,
+  // uncheckable claim this whole function exists to avoid.
+  if (conceptBaseline && frozen) {
+    impacts.push({
+      what: 'The approved concept baseline',
+      refType: 'ConceptBaseline',
+      refId: conceptBaseline.baselineId,
+      because: `The 6.4 gate was answered on ${conceptBaseline.approvedAt.slice(0, 10)} from a brief that included this requirement.`,
+      action: 'The gate decision has to be revisited: it was taken on a brief that no longer reads this way.',
+      severity: 'HARD',
+    });
+  }
+
+  // Design packages are downstream of the brief without freezing an individual
+  // requirement, which is exactly the SOFT case: they need re-reading by
+  // somebody who knows the design, not re-approving by the platform's say-so.
+  const designPackages = ctx.ledger.list(ctx.projectId, 'DesignPackage');
+  if (designPackages.length > 0) {
+    impacts.push({
+      what: `${designPackages.length} design package${designPackages.length === 1 ? '' : 's'}`,
+      refType: 'DesignPackage',
+      refId: '',
+      because: 'Design works to the brief, though no package freezes an individual requirement.',
+      action: 'The design manager should confirm which packages the change reaches.',
+      severity: 'SOFT',
+    });
+  }
+
+  const hard = impacts.filter((impact) => impact.severity === 'HARD').length;
+
+  return {
+    requirementId,
+    reference: item.reference,
+    statement: item.statement,
+    priority: item.priority,
+    status: item.status,
+    inBaseline: frozen !== undefined,
+    baselineVersion: frozen ? baseline?.version : undefined,
+    impacts,
+    summary:
+      impacts.length === 0
+        ? `${item.reference} has not been baselined and nothing downstream has been approved against it. Changing it now costs nothing.`
+        : `${item.reference} reaches ${impacts.length} downstream record${impacts.length === 1 ? '' : 's'}` +
+          `${hard > 0 ? `, ${hard} of which ${hard === 1 ? 'was' : 'were'} approved against it and would no longer describe what was approved` : ''}.`,
+  };
+}
+
 /**
  * Mandatory requirements in declared conflict with each other.
  *

@@ -15,6 +15,97 @@ import { blockedReason, can, draw, state } from '../app.js';
  * hashed record behind it.
  */
 
+/**
+ * Two records of the same thing, and what the platform did about it.
+ *
+ * The sync engine has to pick a side at push time — the handset is waiting on a
+ * bad connection and cannot be asked — and it picks well: safety stops hold,
+ * progress does not go backwards, edits to different fields merge. But every
+ * pick discards somebody's work, and a pick reported only in the sync response
+ * is invisible the moment the handset drops it.
+ *
+ * So this is the queue that outlives the connection. The ones worth acting on
+ * are the ones where the site's record was thrown away: a supervisor's figure
+ * refused for regression is work that was done and is not in the platform.
+ * A merge is here to be confirmed, not rescued.
+ */
+function conflictPanel(position) {
+  if (!position || position.conflicts.length === 0) return '';
+
+  const open = position.conflicts.filter((entry) => entry.status === 'OPEN');
+  if (open.length === 0) return '';
+
+  const mayDecide = can('FIELD_EXECUTION', 'A');
+  const lost = (entry) => entry.autoResolution === 'SERVER_WINS' || entry.autoResolution === 'REJECTED';
+
+  return html`<div id="sync-conflicts" style="margin-bottom:14px">
+    <div class="card" style="margin-bottom:${raw(mayDecide ? '12px' : '0')}">
+      <h2>Two records of the same thing</h2>
+      <p class="metric-sub" style="margin:8px 0 12px">
+        The handset and the platform both had a version, and the engine had to pick one with nobody to ask.
+        ${position.workLost > 0
+          ? html`<b>${position.workLost} of these threw away what the site recorded.</b> That work was done; it is not
+              in the platform until somebody says it should be.`
+          : 'None of these discarded a site record outright — each one committed something and wants confirming.'}
+      </p>
+      <div class="split-list">
+        <div class="row"><span class="lbl">Site record discarded</span><span class="val">${position.workLost}</span></div>
+        <div class="row"><span class="lbl">Merged, awaiting confirmation</span><span class="val">${position.merged}</span></div>
+        <div class="row"><span class="lbl">Already decided</span><span class="val">${position.resolved}</span></div>
+        ${position.oldestOpenAt
+          ? html`<div class="row"><span class="lbl">Oldest still open</span><span class="val">${time(position.oldestOpenAt)}</span></div>`
+          : ''}
+      </div>
+      ${mayDecide
+        ? ''
+        : html`<div class="metric-sub" style="margin-top:12px">
+            ${blockedReason('FIELD_EXECUTION', 'A') ?? 'Deciding between two site records is not yours to do.'}
+          </div>`}
+    </div>
+
+    ${!mayDecide
+      ? ''
+      : open.map(
+          (entry) => html`<div class="card proposal" data-conflict="${entry.conflictId}" style="margin-bottom:12px">
+            <div style="display:flex;gap:11px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+              ${badge(humanise(entry.reason), lost(entry) ? 'bad' : 'warn')}
+              ${badge(humanise(entry.autoResolution), 'neutral')}
+              ${badge(`${humanise(entry.subject.refType)} ${String(entry.subject.refId).slice(-6)}`, '')}
+              <div class="metric-sub" style="margin-left:auto">
+                ${entry.deviceId} · captured ${time(entry.deviceTimestamp)}
+              </div>
+            </div>
+
+            <div style="font-size:14.5px;font-weight:650;margin-bottom:6px">${entry.message}</div>
+            <div class="metric-sub" style="margin-bottom:12px">
+              ${lost(entry)
+                ? 'The handset’s version was not applied. Applying it now writes it as you.'
+                : 'The handset’s version was applied. Keeping the server’s version is no longer possible without a new record.'}
+              ${entry.mergedFields.length > 0
+                ? ` Fields taken from the handset: ${entry.mergedFields.join(', ')}.`
+                : ''}
+            </div>
+
+            <div class="cmd-error" hidden></div>
+
+            <div class="input-zone">
+              <div class="field">
+                <label for="why-${entry.conflictId}">Reason</label>
+                <input id="why-${entry.conflictId}" name="why" type="text"
+                  placeholder="Why this version and not the other">
+              </div>
+              <div class="actions">
+                ${lost(entry)
+                  ? html`<button class="btn" data-decide="APPLIED_DEVICE">Apply the site’s record</button>`
+                  : ''}
+                <button class="btn quiet" data-decide="KEPT_SERVER">Confirm what the platform holds</button>
+              </div>
+            </div>
+          </div>`,
+        )}
+  </div>`;
+}
+
 export async function field(root) {
   const projectId = state.session.projectId;
 
@@ -63,6 +154,11 @@ export async function field(root) {
   // will never exist — and until this screen there was nothing that could tell
   // anybody a photograph was sitting on a phone rather than in the record.
   const carrying = await outbox.pendingFiles().catch(() => []);
+
+  // Conflicts the sync engine resolved on its own. Every resolution has a
+  // losing side, and until these were recorded the only trace of a discarded
+  // site record was a line in a response the handset may never have received.
+  const conflicts = await api.get(`/v1/projects/${projectId}/sync/conflicts`).catch(() => null);
   const openObservations = b.SiteObservation.filter((o) => o.status === 'OPEN');
 
   const measured = b.Task.filter((t) => Number(t.percentComplete ?? 0) > 0);
@@ -148,6 +244,8 @@ export async function field(root) {
               })}
             </div>`
       }
+
+      ${conflictPanel(conflicts)}
 
       <div class="card" style="margin-bottom:14px">
         <h2>Daily site record</h2>
@@ -867,6 +965,46 @@ export async function field(root) {
     await outbox.discardFile(button.dataset.discard);
     toast('Capture discarded', 'The file was removed from this device and was never filed.', 'err');
     await draw();
+  });
+
+  root.querySelector('#sync-conflicts')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-decide]');
+    if (!button) return;
+
+    const card = button.closest('[data-conflict]');
+    const reason = card.querySelector('[name="why"]').value.trim();
+    const errorBox = card.querySelector('.cmd-error');
+    errorBox.hidden = true;
+
+    // The server refuses this too. Saying it beside the field is the difference
+    // between an answer and a round trip that returns the same answer slower.
+    if (!reason) {
+      errorBox.textContent =
+        'A reason is required — it is the only account of why the other record is not the one that stands.';
+      errorBox.hidden = false;
+      return;
+    }
+
+    button.disabled = true;
+    const original = button.textContent;
+    button.textContent = 'Recording…';
+    try {
+      const result = await api.post(
+        `/v1/projects/${projectId}/sync/conflicts/${encodeURIComponent(card.dataset.conflict)}/resolve`,
+        { decision: button.dataset.decide, reason },
+      );
+      toast(
+        'Decided',
+        result.appliedEventId ? 'The site’s record was written, as you' : 'The platform’s record stands',
+        'ok',
+      );
+      await draw();
+    } catch (error) {
+      errorBox.textContent = `${error.code ? `${error.code} — ` : ''}${error.message}`;
+      errorBox.hidden = false;
+      button.disabled = false;
+      button.textContent = original;
+    }
   });
 
   void insightPanel(root.querySelector('#field-insight'), {

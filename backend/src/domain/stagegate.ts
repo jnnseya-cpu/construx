@@ -1863,6 +1863,94 @@ export function conceptBaselineDrift(
   return drift;
 }
 
+/**
+ * AC-C-WF-08-03 — design cannot publish before the concept gate is decided.
+ *
+ * The coarse phase gate already requires a scope package to leave CONCEPT, and
+ * that is a different rule: it governs the project's phase, not what design
+ * issues. A project can be moved into DESIGN and start freezing packages while
+ * the 6.4 gate has never been decided, and the freeze is then design published
+ * against a concept nobody approved — which is exactly the thing the gate
+ * exists to prevent, arriving through a door beside it.
+ *
+ * **What counts as a decision, and what does not.** A `PASS` or a
+ * `PASS_WITH_CONDITIONS` on the concept gate is a decision: somebody with the
+ * authority looked and said go, and conditions are the mechanism for going with
+ * work outstanding. A `HOLD` or a `REJECT` is a decision *not* to proceed, so
+ * it does not open this door either. No decision at all is the case this was
+ * written for.
+ *
+ * **Ordering, not merely existence.** The decision has to predate the freeze.
+ * A gate decided afterwards is a gate that ratified what had already been
+ * issued, and the acceptance criterion is about publishing *before* the gate.
+ * The ledger holds both timestamps, so this is a comparison rather than a
+ * judgement.
+ *
+ * Returns the reason it is blocked, or `null`. One rule, read by the design
+ * command that enforces it and by anything that wants to show it greyed out
+ * before somebody presses the button.
+ */
+export function designPublicationBlockedReason(ctx: EngineContext): string | null {
+  const decisions = ctx.ledger
+    .list(ctx.projectId, 'StageGateDecision')
+    .map((record) => record.state as unknown as { phase: string; decision: string; decidedAt: string })
+    .filter((decision) => decision.phase === 'CONCEPT');
+
+  if (decisions.length === 0) {
+    return (
+      'The concept stage gate has not been decided. Design published before 6.4 is design issued against a concept ' +
+      'nobody approved, and every hour spent on it is at risk of the gate.'
+    );
+  }
+
+  const proceed = decisions
+    .filter((decision) => decision.decision === 'PASS' || decision.decision === 'PASS_WITH_CONDITIONS')
+    .sort((a, b) => (a.decidedAt < b.decidedAt ? -1 : 1));
+
+  if (proceed.length === 0) {
+    const latest = decisions.sort((a, b) => (a.decidedAt < b.decidedAt ? -1 : 1)).at(-1)!;
+    return (
+      `The concept gate was decided ${latest.decision} on ${latest.decidedAt.slice(0, 10)}. That is a decision not to ` +
+      'proceed; design cannot publish against it.'
+    );
+  }
+
+  return null;
+}
+
+/**
+ * The same rule, applied to a publication that is about to happen now.
+ *
+ * Separate from the reason above because the ordering half only has an answer
+ * once there is a moment to compare against. The command calls this; a screen
+ * showing whether the button is available calls the other.
+ */
+export function assertDesignMayPublish(ctx: EngineContext, at: string = new Date().toISOString()): void {
+  const blocked = designPublicationBlockedReason(ctx);
+  if (blocked) throw new DomainError('CONCEPT_GATE_NOT_DECIDED', blocked, 409);
+
+  const earliest = ctx.ledger
+    .list(ctx.projectId, 'StageGateDecision')
+    .map((record) => record.state as unknown as { phase: string; decision: string; decidedAt: string })
+    .filter(
+      (decision) =>
+        decision.phase === 'CONCEPT' &&
+        (decision.decision === 'PASS' || decision.decision === 'PASS_WITH_CONDITIONS'),
+    )
+    .map((decision) => decision.decidedAt)
+    .sort()
+    .at(0)!;
+
+  if (at < earliest) {
+    throw new DomainError(
+      'PUBLICATION_PREDATES_GATE',
+      `This publication is dated ${at.slice(0, 10)} and the concept gate was decided ${earliest.slice(0, 10)}. ` +
+        'Design published before the gate it depends on is not made compliant by a gate decided afterwards.',
+      409,
+    );
+  }
+}
+
 export function evaluateHandoverGate(ctx: EngineContext): GateReport {
   authorise(ctx, 'PROJECT_SETUP', 'R');
 

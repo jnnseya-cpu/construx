@@ -37,6 +37,19 @@ export type SyncOperation = {
   /** State hash the device believed current when it made the change. */
   baseStateHash?: string;
   /**
+   * The state the device was working from, where it still has it.
+   *
+   * The hash above says *that* the device was out of date. This says *what it
+   * was out of date from*, which is the difference between picking a winner and
+   * merging: without the base there is no way to tell a field the device
+   * deliberately changed from one it merely carried along unchanged.
+   *
+   * Optional, and its absence changes nothing — a push without it resolves
+   * exactly as it did before. The device already holds this locally; it is the
+   * object it hashed.
+   */
+  baseState?: Record<string, unknown>;
+  /**
    * Offline capture only. `WEB` is excluded deliberately: a desk browser has no
    * reason to push a batch, and allowing it would let an online client
    * backdate work through `deviceTimestamp` without the offline provenance
@@ -52,6 +65,14 @@ export type SyncConflict = {
   resolution: 'SERVER_WINS' | 'DEVICE_WINS' | 'MERGED' | 'REJECTED';
   /** What the caller should show the operative, if anything. */
   message: string;
+  /**
+   * The `SyncConflict` record this raised, for anyone who has to resolve it
+   * later. Absent only where the record could not be written, which is itself
+   * reported rather than swallowed.
+   */
+  conflictId?: string;
+  /** On a merge, the fields taken from the device. Named, never counted. */
+  mergedFields?: readonly string[];
 };
 
 export type SyncPushResult = {
@@ -94,6 +115,64 @@ const ROLE_PRIORITY: Record<string, number> = {
 
 function priorityOf(auth: AuthContext): number {
   return Math.max(0, ...auth.roles.map((role) => ROLE_PRIORITY[role] ?? 0));
+}
+
+/** A resolution, plus the state to commit where it is not the device's own. */
+type Resolution = SyncConflict & { state?: Record<string, unknown> };
+
+/** Values a merge will reason about. Anything else is left to the winner rules. */
+function isScalar(value: unknown): boolean {
+  return value === null || ['string', 'number', 'boolean', 'undefined'].includes(typeof value);
+}
+
+/**
+ * Merge two edits that touched different fields.
+ *
+ * Returns the merged state and the fields taken from the device, or `undefined`
+ * where a merge is not safe — in which case the caller falls back to picking a
+ * winner, exactly as it did before this existed.
+ *
+ * **A merge is refused unless every changed field on both sides is a scalar.**
+ * Two devices appending to the same array have not edited different fields;
+ * they have both edited the array, and "merging" them means choosing a
+ * concatenation order that neither of them asked for. Nested objects are the
+ * same problem one level down. Getting this wrong invents site data, which is
+ * worse than reporting a conflict somebody has to look at.
+ *
+ * **And unless both sides actually changed something.** If only one did, there
+ * is no conflict to merge — the hash mismatch came from somewhere else, and the
+ * priority rules are the honest answer.
+ */
+function mergeDisjoint(
+  baseState: Record<string, unknown> | undefined,
+  deviceState: Record<string, unknown>,
+  serverState: Record<string, unknown>,
+): { state: Record<string, unknown>; fields: string[] } | undefined {
+  if (!baseState) return undefined;
+
+  const changed = (candidate: Record<string, unknown>): string[] =>
+    [...new Set([...Object.keys(baseState), ...Object.keys(candidate)])].filter(
+      (key) => JSON.stringify(candidate[key]) !== JSON.stringify(baseState[key]),
+    );
+
+  const byDevice = changed(deviceState);
+  const byServer = changed(serverState);
+  if (byDevice.length === 0 || byServer.length === 0) return undefined;
+
+  // Any overlap at all, and this is a genuine disagreement about one field.
+  // Not "an overlap where the values differ": two people setting the same field
+  // to the same value by coincidence is not a merge, it is a race whose outcome
+  // happens not to matter, and treating it as agreement would hide the next one
+  // where it does.
+  if (byDevice.some((key) => byServer.includes(key))) return undefined;
+
+  for (const key of [...byDevice, ...byServer]) {
+    if (!isScalar(baseState[key]) || !isScalar(deviceState[key]) || !isScalar(serverState[key])) return undefined;
+  }
+
+  const state = { ...serverState };
+  for (const key of byDevice) state[key] = deviceState[key];
+  return { state, fields: byDevice.sort() };
 }
 
 /**
@@ -163,12 +242,16 @@ export class SyncEngine {
 
       // --- What a device is allowed to do ----------------------------------
       if (FIELD_FORBIDDEN_EVENTS.has(operation.eventType)) {
-        conflicts.push({
+        const refusal: Resolution = {
           operationId: operation.operationId,
           entity: operation.entity,
           reason: 'EVENT_NOT_PERMITTED_OFFLINE',
           resolution: 'REJECTED',
           message: `${operation.eventType} is a governance action and must be performed online with approval.`,
+        };
+        conflicts.push({
+          ...refusal,
+          conflictId: this.#raise(auth, projectId, correlationId, syncSessionId, operation, refusal, undefined),
         });
         continue;
       }
@@ -176,16 +259,27 @@ export class SyncEngine {
       const current = this.#ledger.get(operation.entity);
 
       // --- Conflict detection ----------------------------------------------
+      //
+      // Every resolution has a losing side, so every one of them is recorded
+      // as a `SyncConflict` before anything else happens. Reporting it in the
+      // response alone loses it the moment the device drops the response —
+      // and the device is, by construction, the one with the bad connection.
+      let toCommit = operation.nextState;
+
       if (operation.baseStateHash && current && operation.baseStateHash !== current.stateHash) {
         const resolution = this.#resolve(auth, operation, current.state);
+        const conflictId = this.#raise(auth, projectId, correlationId, syncSessionId, operation, resolution, current.state);
 
-        if (resolution.resolution === 'SERVER_WINS') {
-          conflicts.push(resolution);
-          continue;
-        }
+        // `state` is the engine's business, not the caller's: it is how a
+        // merge reaches the commit below, and publishing it would invite a
+        // client to send one back.
+        const { state, ...reported } = resolution;
+        conflicts.push({ ...reported, conflictId });
+
+        if (resolution.resolution === 'SERVER_WINS') continue;
         // DEVICE_WINS and MERGED both fall through and commit, with the
         // conflict recorded so the operative and the audit both see it.
-        conflicts.push(resolution);
+        if (state) toCommit = state;
       }
 
       try {
@@ -198,7 +292,9 @@ export class SyncEngine {
           causationId: syncSessionId,
           eventType: operation.eventType,
           entity: operation.entity,
-          nextState: operation.nextState,
+          // The device's own state, except on a merge, where it is the server's
+          // record with the device's disjoint fields laid over it.
+          nextState: toCommit,
           evidenceRefs: operation.evidenceRefs,
           // The server records receipt time; the device time is preserved
           // alongside it as the time the work actually happened.
@@ -209,13 +305,25 @@ export class SyncEngine {
         this.#applied.set(operation.operationId, event.eventId);
         accepted.push(operation.operationId);
       } catch (error) {
-        conflicts.push({
+        const rejection: Resolution = {
           operationId: operation.operationId,
           entity: operation.entity,
           reason: error instanceof DomainError ? error.code : 'COMMIT_FAILED',
           resolution: 'REJECTED',
           message: error instanceof Error ? error.message : 'The operation could not be applied',
-        });
+        };
+        // A rejection loses the device's work outright, so it is the case that
+        // most needs a record somebody can find later.
+        const conflictId = this.#raise(
+          auth,
+          projectId,
+          correlationId,
+          syncSessionId,
+          operation,
+          rejection,
+          current?.state,
+        );
+        conflicts.push({ ...rejection, conflictId });
       }
     }
 
@@ -260,7 +368,7 @@ export class SyncEngine {
    * observation. Conflicts only arise on shared mutable state, and there the
    * rule is: safety-critical always wins, then role priority, then last write.
    */
-  #resolve(auth: AuthContext, operation: SyncOperation, serverState: Record<string, unknown>): SyncConflict {
+  #resolve(auth: AuthContext, operation: SyncOperation, serverState: Record<string, unknown>): Resolution {
     const base = { operationId: operation.operationId, entity: operation.entity };
 
     // A safety stop must never be overwritten by a routine progress update
@@ -274,10 +382,31 @@ export class SyncEngine {
       };
     }
 
+    // Field-level merge, before anybody has to win.
+    //
+    // Two people editing one record usually edited different parts of it: a
+    // supervisor sets the plant on site while the engineer sets the pour
+    // volume. Picking a winner there throws away a change nobody disagreed
+    // with, and it is the most common conflict on a site.
+    //
+    // Only possible with the base state — see `SyncOperation.baseState`. Where
+    // the device did not send it this falls straight through to the priority
+    // rule, exactly as before.
+    const merged = mergeDisjoint(operation.baseState, operation.nextState, serverState);
+
     // Progress is monotonic. A device that was offline reporting 40% must not
     // pull back a later, higher figure recorded by someone else.
+    //
+    // Read from what would actually be committed, not from the device's raw
+    // payload. A device sends the whole record, so a handset that never touched
+    // progress still carries the figure it last saw — and reading that as the
+    // device's claim refused a note about formwork because somebody else had
+    // moved the percentage in the meantime. The merged state keeps the server's
+    // figure, so the rule now fires on a device that really did report
+    // backwards and not on one that merely carried a stale field along.
     if (operation.entity.refType === 'Task') {
-      const devicePercent = Number(operation.nextState.percentComplete ?? 0);
+      const candidate = merged?.state ?? operation.nextState;
+      const devicePercent = Number(candidate.percentComplete ?? 0);
       const serverPercent = Number(serverState.percentComplete ?? 0);
       if (devicePercent < serverPercent) {
         return {
@@ -287,6 +416,20 @@ export class SyncEngine {
           message: `Progress on site is already recorded at ${serverPercent}%; the offline figure of ${devicePercent}% was not applied.`,
         };
       }
+    }
+
+    if (merged) {
+      return {
+        ...base,
+        reason: 'DISJOINT_FIELDS',
+        resolution: 'MERGED',
+        message:
+          `This item changed while the device was offline, but in different fields. ` +
+          `${merged.fields.join(', ')} ${merged.fields.length === 1 ? 'was' : 'were'} taken from the device and the ` +
+          'rest of the record was left as the server had it.',
+        mergedFields: merged.fields,
+        state: merged.state,
+      };
     }
 
     const devicePriority = priorityOf(auth);
@@ -307,6 +450,74 @@ export class SyncEngine {
       resolution: 'DEVICE_WINS',
       message: 'This item changed while the device was offline; the field record was applied over it.',
     };
+  }
+
+  /**
+   * Record that two writes disagreed, and what was done about it.
+   *
+   * A `SyncConflict` in `OPEN` state, holding enough for somebody who was not
+   * there to decide what should have happened: the device's payload, the
+   * server's state at the moment, and which side the engine took automatically.
+   *
+   * **The automatic resolution is not the end of it.** The engine has to pick
+   * something at push time — the device is waiting and cannot be asked — but
+   * every pick discards somebody's work, and until now the only trace of that
+   * was a line in a response the device may never have received. This is the
+   * queue that outlives the connection.
+   *
+   * Failure to write the record is reported through the absent `conflictId`
+   * rather than thrown: the batch is half-applied by this point, and abandoning
+   * it over a bookkeeping write would lose more than it protects.
+   */
+  #raise(
+    auth: AuthContext,
+    projectId: string,
+    correlationId: string,
+    syncSessionId: string,
+    operation: SyncOperation,
+    resolution: Resolution,
+    serverState: Record<string, unknown> | undefined,
+  ): string | undefined {
+    const conflictId = ulid();
+    try {
+      this.#ledger.commit({
+        tenantId: auth.tenantId,
+        projectId,
+        actor: { refType: 'User', refId: auth.actorId },
+        source: operation.source,
+        correlationId,
+        causationId: syncSessionId,
+        eventType: 'SYNC_CONFLICT_RAISED',
+        entity: { refType: 'SyncConflict', refId: conflictId },
+        nextState: {
+          conflictId,
+          projectId,
+          syncSessionId,
+          operationId: operation.operationId,
+          deviceId: operation.deviceId,
+          deviceTimestamp: operation.deviceTimestamp,
+          raisedBy: auth.actorId,
+          raisedAt: new Date().toISOString(),
+          subject: operation.entity,
+          eventType: operation.eventType,
+          reason: resolution.reason,
+          autoResolution: resolution.resolution,
+          message: resolution.message,
+          mergedFields: resolution.mergedFields ?? [],
+          // Both sides, kept whole. Deciding after the fact means reading what
+          // each party actually wrote, not a summary of the difference.
+          deviceState: operation.nextState,
+          serverState: serverState ?? null,
+          baseStateHash: operation.baseStateHash ?? null,
+          status: 'OPEN',
+        },
+        timestamp: new Date().toISOString(),
+        deviceTimestamp: operation.deviceTimestamp,
+      });
+      return conflictId;
+    } catch {
+      return undefined;
+    }
   }
 
   #issueCursor(deviceId: string, projectId: string): string {

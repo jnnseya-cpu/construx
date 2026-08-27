@@ -4,6 +4,7 @@ import { ulid } from '../core/ids.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
 import { freezeBlockersFor } from './constructability.ts';
+import { assertDesignMayPublish } from './stagegate.ts';
 
 /**
  * D-WF-08 — design cost, programme, compliance and the baseline.
@@ -316,6 +317,13 @@ export function freezePackage(
   if (!input.note.trim()) {
     throw new DomainError('FREEZE_UNEXPLAINED', 'A freeze is the moment design stops moving. Say what it rests on.');
   }
+
+  // AC-C-WF-08-03. A freeze is the moment design publishes, and it cannot
+  // predate the concept gate it depends on. The rule lives in `stagegate.ts`
+  // beside the gate it is about, and is read here rather than restated: a
+  // second opinion here about what counts as a gate decision would disagree
+  // with the first one inside a year.
+  assertDesignMayPublish(ctx);
 
   // The second exception control. A critical or major open item blocks the
   // affected baseline, whether the freeze is full or partial — isolating a

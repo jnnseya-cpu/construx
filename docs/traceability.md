@@ -225,7 +225,7 @@ not pretend to have done.
 | C-WF-02 · Below-threshold extraction stays Draft-Needs-Review | Built | `NEEDS_REVIEW` is a distinct status from `DRAFT` |
 | C-WF-02 · Deletion after baseline prohibited | Built | `supersedeRequirement()` is the only exit and requires a reason |
 | C-WF-02 · Conflicting mandatory requirements block option approval | Built | `briefConflictReason()`, read by `optionSelectionBlockedReason()`. Only *declared* conflicts — the platform does not infer them |
-| AC-C-WF-02-03 · A changed requirement shows what it affects before approval | **Not built** | The baseline shows drift after the fact; there is no forward impact analysis from a requirement to design, cost and programme |
+| AC-C-WF-02-03 · A changed requirement shows what it affects before approval | Built | `requirementImpact()` names what was approved against the requirement — the brief baseline, the selected option, the approved controls, the package strategy, the concept baseline — before the change is made. `HARD` where an approval names the hash about to change, `SOFT` where the work is downstream without freezing it. Every link is one the ledger holds; nothing is inferred from the text |
 | C-WF-03 · Survey carries coordinate system and limitations | Built | Both mandatory. `NONE` is a legitimate coordinate system and is distinguished from an absent one |
 | C-WF-03 · Readiness from evidence coverage, not document count | Built | `dueDiligenceReadiness()` over impact categories covered by *live* surveys |
 | C-WF-03 · Superseded or expired survey usable only as history | Built | Stays readable; stops counting toward coverage |
@@ -254,7 +254,7 @@ not pretend to have done.
 | C-WF-07 · AI safety or legal classification needs competent-person confirmation | Built | Name, role and competence basis are recorded separately from the acting user |
 | AC-C-WF-08-01 · Gate pack reproducible, exact component versions | Built | `approveConceptBaseline()` freezes twelve components with the hash of each; `conceptBaselineDrift()` re-checks |
 | AC-C-WF-08-02 · A rejected gate leaves the project in Concept | Built | `decideGate()` records the decision; the phase moves only through `transitionPhase()`, which is a separate governed act |
-| AC-C-WF-08-03 · Design cannot publish before the concept gate | **Not built** | The coarse `evaluatePhaseGate` requires a scope package to leave CONCEPT; there is no rule barring a design publication that predates a concept gate decision |
+| AC-C-WF-08-03 · Design cannot publish before the concept gate | Built | `designPublicationBlockedReason()` and `assertDesignMayPublish()` in `stagegate.ts`, read by `freezePackage()` — the moment design publishes. A `PASS` or `PASS_WITH_CONDITIONS` on 6.4 opens the door; a `HOLD`, a `REJECT` or no decision does not, and the decision must predate the freeze |
 | 6.4 clause 5 · AI outputs fully accounted for | Built | Assessed at all six gates. Assumptions and prompt version are written onto every AI event by `runAI`; the human disposition is its own event, `AI_OUTPUT_DISPOSED`. The clause fails naming the execution nobody has decided about |
 | 6.4 clause 7 · Design mobilisation worklist | Built | `designMobilisationWorklist()` derives the packages to mobilise from the approved package strategy — award date, lead time and required-on-site — with no re-entry |
 
@@ -438,7 +438,7 @@ against intent.
 | Accessibility | **Partial** | Audited and fixed against the automated WCAG 2.2 AA checks in this build — see `STATE.md`. Not a conformance statement; reflow, announcement order and the cognitive criteria are unaudited |
 | Availability, Scale, Business continuity | **Design only** | Single instance by design; the ledger is in-process. Multi-zone, failover and RPO/RTO need the Postgres design that is not implemented |
 | Privacy | **Partial** | Sensitivity classification and export redaction are built; H-WF-06 and H-WF-10 both take the structural approach of having no field a name could occupy. There is **no personal-data tier** in the sensitivity ladder and no retention/deletion engine |
-| 16.1 Offline conflict policy | **Partial** | Stable client id, idempotent duplicates, base state hash and typed conflict resolutions are built, and device time is preserved alongside server time. Not built: `expectedVersion` field-level merge of non-conflicting scalars, and a first-class `Conflict` record for human resolution — a conflict is currently resolved at push time and reported, not queued |
+| 16.1 Offline conflict policy | **Built** | Stable client id, idempotent duplicates, base state hash, typed resolutions, device time preserved. Field-level merge of non-conflicting scalars is built on the optional `baseState` the device sends — disjoint edits merge instead of picking a winner, and `MERGED` is now reachable. Every conflict is written as a `SyncConflict` record in `OPEN` state with both sides kept whole, and `resolveSyncConflict()` is where a person confirms the engine or writes the device's record over it |
 
 ### 17 — Quality assurance
 

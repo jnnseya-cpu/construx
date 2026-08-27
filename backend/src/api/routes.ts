@@ -128,6 +128,7 @@ import { estateOverview } from '../billing/overview.ts';
 import { isPlatformGovernanceEvent } from '../goldenthread/eventTypes.ts';
 import * as evidence from '../evidence/registry.ts';
 import * as siteMedia from '../site/media.ts';
+import * as conflicts from '../field/conflicts.ts';
 import * as designreview from '../engines/designreview.ts';
 import * as perception from '../engines/perception.ts';
 import * as signing from '../signing/signature.ts';
@@ -10917,6 +10918,32 @@ export const ROUTES: Route[] = [
         ctx.query.get('since') ?? undefined,
         ctx.query.get('limit') ? Number(ctx.query.get('limit')) : undefined,
       ),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/sync/conflicts',
+    readOnly: true,
+    description: 'Offline conflicts the engine resolved on its own, and what a person decided about them',
+    handler: (platform, ctx) => conflicts.conflictPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/sync/conflicts/:conflictId/resolve',
+    description: 'Decide what should have happened — confirm the engine, or apply the device’s record',
+    schema: {
+      type: 'object',
+      required: ['decision', 'reason'],
+      properties: {
+        decision: { type: 'string', enum: [...conflicts.CONFLICT_DECISION] },
+        reason: { type: 'string', minLength: 4 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      conflicts.resolveSyncConflict(projectContext(platform, ctx), {
+        conflictId: ctx.params.conflictId as string,
+        ...body<{ decision: conflicts.ConflictDecision; reason: string }>(ctx),
+      }),
   },
 
   // ---------------------------------------------------------------- exports

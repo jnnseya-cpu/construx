@@ -520,6 +520,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // The question after a handset has been out of signal for four days is never
   // "did the sync work" but "when did this device last reach us".
   def('OFFLINE_SYNC_COMPLETED', 'SyncSession', 'CREATE', 'DELIVERY', { creates: true }),
+  // A conflict resolved at push time and reported in the response is a conflict
+  // nobody sees if the device drops the response — and somebody's work lost
+  // either way, because every resolution has a losing side. These two make the
+  // loss a record with a queue behind it rather than a line in a payload.
+  //
+  // Raised by the sync engine, never by a person: it is the mechanical fact
+  // that two writes disagreed. Resolving it is the human act.
+  def('SYNC_CONFLICT_RAISED', 'SyncConflict', 'CREATE', 'DELIVERY', { creates: true }),
+  def('SYNC_CONFLICT_RESOLVED', 'SyncConflict', 'UPDATE', 'DELIVERY'),
   def('SITE_OBSERVATION_CAPTURED', 'SiteObservation', 'CREATE', 'DELIVERY', { aiAllowed: true, requiresEvidence: true }),
   def('SITE_OBSERVATION_CLOSED', 'SiteObservation', 'UPDATE', 'DELIVERY'),
   // The site visit. Not the same act as a site observation above: an
