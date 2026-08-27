@@ -313,6 +313,14 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   Snag: { area: 'QUALITY_COMMISSIONING' },
   Defect: { area: 'QUALITY_COMMISSIONING' },
   CommissioningTest: { area: 'QUALITY_COMMISSIONING' },
+  // CN-WF-12. Turnover is a quality act — it is the point the construction
+  // evidence is checked against a rule — while the period report and the
+  // completion certificate belong to whoever governs the project itself.
+  SystemTurnover: { area: 'QUALITY_COMMISSIONING' },
+  TurnoverException: { area: 'QUALITY_COMMISSIONING' },
+  PeriodSnapshot: { area: 'PROJECT_SETUP' },
+  RecoveryPlan: { area: 'PROGRAMME_BASELINES' },
+  ConstructionCompletion: { area: 'PROJECT_SETUP' },
   InspectionPlan: { area: 'QUALITY_COMMISSIONING' },
   QualityInspection: { area: 'QUALITY_COMMISSIONING' },
   NCR: { area: 'QUALITY_COMMISSIONING' },

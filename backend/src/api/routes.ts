@@ -59,6 +59,7 @@ import * as sitevisit from '../engines/sitevisit.ts';
 import * as award from '../domain/award.ts';
 import * as enquiry from '../domain/enquiry.ts';
 import * as constructability from '../domain/constructability.ts';
+import * as completion from '../domain/completion.ts';
 import * as coordination from '../domain/coordination.ts';
 import * as designbaseline from '../domain/designbaseline.ts';
 import * as dailylog from '../domain/dailylog.ts';
@@ -5369,6 +5370,159 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       meetings.recordCorrection(projectContext(platform, ctx), ctx.params.meetingId as string, body(ctx)),
+  },
+
+  // ------------------------------------------------------- CN-WF-12 reporting, recovery, turnover and completion
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/completion',
+    description: 'Period snapshots, recovery plans, systems released to commissioning and whether completion is accepted',
+    handler: (platform, ctx) => completion.completionPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/reports/snapshot',
+    description: 'Take a cut-off snapshot of the ledger, naming what is stale and what is not reported at all',
+    schema: {
+      type: 'object',
+      required: ['cutOff', 'audience'],
+      properties: { cutOff: stringField, audience: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => completion.createSnapshot(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/reports/:snapshotId/reconcile',
+    description: 'Re-run a snapshot cut-off and confirm the figures a report was built on still hold',
+    handler: (platform, ctx) =>
+      completion.reconcileSnapshot(projectContext(platform, ctx), ctx.params.snapshotId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/recovery-plans',
+    description: 'Approve a recovery plan — the platform forecasts and costs the options, a person selects them',
+    schema: {
+      type: 'object',
+      required: ['delayDaysForecast', 'measures', 'approvedBy', 'rationale'],
+      properties: {
+        delayDaysForecast: { type: 'number' },
+        measures: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['measure', 'recoveryDays', 'costMinor', 'owner'],
+            properties: {
+              measure: { type: 'string' },
+              recoveryDays: { type: 'number' },
+              costMinor: { type: 'number' },
+              owner: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+        approvedBy: stringField,
+        rationale: { type: 'string' },
+        forecastRef: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => completion.approveRecoveryPlan(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/systems/turnover',
+    description: 'Release a system to commissioning: boundary, isolations, retained obligations and residual defects',
+    schema: {
+      type: 'object',
+      required: [
+        'systemId',
+        'systemName',
+        'boundary',
+        'isolations',
+        'retainedObligations',
+        'residualDefects',
+        'evidenceRefs',
+        'releasedBy',
+      ],
+      properties: {
+        systemId: stringField,
+        systemName: stringField,
+        boundary: { type: 'string' },
+        isolations: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['point', 'heldBy'],
+            properties: { point: stringField, heldBy: stringField },
+            additionalProperties: false,
+          },
+        },
+        retainedObligations: { type: 'array', items: { type: 'string' } },
+        residualDefects: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['reference', 'description', 'classification', 'owner', 'completionCondition', 'by'],
+            properties: {
+              reference: stringField,
+              description: { type: 'string' },
+              classification: { type: 'string', enum: ['BLOCKING', 'RESTRICTING', 'NON_BLOCKING'] },
+              owner: stringField,
+              completionCondition: { type: 'string' },
+              by: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+        evidenceRefs: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['check', 'reference'],
+            properties: {
+              check: { type: 'string', enum: completion.TURNOVER_CHECK.map((check) => check.key) },
+              reference: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+        releasedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => completion.releaseSystemForTurnover(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/systems/turnover-exception',
+    description: 'Accept commissioning on an unreleased system — signed, explained and with an expiry',
+    schema: {
+      type: 'object',
+      required: ['systemId', 'systemName', 'whatIsMissing', 'why', 'acceptedBy', 'expiresOn'],
+      properties: {
+        systemId: stringField,
+        systemName: stringField,
+        whatIsMissing: { type: 'string' },
+        why: { type: 'string' },
+        acceptedBy: stringField,
+        expiresOn: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => completion.recordTurnoverException(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/construction-complete',
+    description: 'Accept construction completion — the stage 9 exit, issued only by an authorised party',
+    schema: {
+      type: 'object',
+      required: ['acceptedBy', 'statement', 'certificateHash'],
+      properties: { acceptedBy: stringField, statement: { type: 'string' }, certificateHash: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => completion.acceptConstructionCompletion(projectContext(platform, ctx), body(ctx)),
   },
 
   // ------------------------------------------------------- CN-WF-11 approved minutes, actions and decisions

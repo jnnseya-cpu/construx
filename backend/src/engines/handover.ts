@@ -3,6 +3,7 @@ import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
 import { assertNotFuture } from '../domain/dates.ts';
+import { commissioningBlockedReason } from '../domain/completion.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
 
 /**
@@ -30,6 +31,10 @@ export function recordCommissioningTest(
   },
 ): { testId: string; outstandingObservations: number } {
   authorise(ctx, 'QUALITY_COMMISSIONING', 'C', { lifecyclePhase: currentPhase(ctx) });
+
+  // AC-CN-WF-12-03. Binds only where the project runs turnover at all.
+  const blocked = commissioningBlockedReason(ctx, input.systemId);
+  if (blocked) throw new DomainError('SYSTEM_NOT_RELEASED', blocked);
 
   const evidence = registerEvidence(ctx, {
     type: 'COMMISSIONING_CERTIFICATE',

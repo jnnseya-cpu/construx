@@ -782,6 +782,30 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('EXPORT_GENERATED', 'Export', 'EXECUTE', 'EVIDENCE', { requiresEvidence: true }),
   def('REPLAY_SNAPSHOT_TAKEN', 'ReplaySnapshot', 'EXECUTE', 'EVIDENCE'),
 
+  // --- CN-WF-12 reporting, recovery, completion and turnover ---------------
+  // The ledger as at a stated instant, with what it could not see named rather
+  // than rendered as a zero. Evidence-bearing because the snapshot's hash is
+  // what a report reconciles to, and a figure nobody can reproduce is an
+  // assertion.
+  def('REPORT_SNAPSHOT_CREATED', 'PeriodSnapshot', 'CREATE', 'PROJECT_CONTROL', { creates: true, requiresEvidence: true }),
+  // The forecast produces costed options; a person selects them. APPROVE rather
+  // than CREATE because selecting a recovery is a commitment of money, and the
+  // specification's guardrail is that no agent makes it.
+  def('RECOVERY_PLAN_APPROVED', 'RecoveryPlan', 'APPROVE', 'PROJECT_CONTROL', { creates: true }),
+  // The boundary, the isolations and what construction retains. Without these
+  // three, two parties each believe the other holds the isolation.
+  def('SYSTEM_READY_FOR_TURNOVER', 'SystemTurnover', 'APPROVE', 'COMMISSIONING', { creates: true }),
+  // The exception AC-CN-WF-12-03 permits, as a signed record with an expiry
+  // rather than a flag. An exception nobody signed cannot be told apart from the
+  // rule never having been applied.
+  def('TURNOVER_EXCEPTION_ACCEPTED', 'TurnoverException', 'APPROVE', 'COMMISSIONING', { creates: true }),
+  // The stage 9 exit. The certificate the defects period, the retention release
+  // and half the insurance run from, so it carries its evidence.
+  def('CONSTRUCTION_COMPLETION_ACCEPTED', 'ConstructionCompletion', 'APPROVE', 'PROJECT_CONTROL', {
+    creates: true,
+    requiresEvidence: true,
+  }),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

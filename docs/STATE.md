@@ -5799,7 +5799,68 @@ different names and are not duplicated: `MEETING_RECORDED` is `MEETING_HELD`,
 and `ACTION_ASSIGNED` is part of it, because attendance, agenda and actions are
 one act. The register derives rather than re-emitting them.
 
-**Still to build in the construction block:** CN-WF-12, and the
+---
+
+### A cut-off that reconciles, and a system with a boundary on it
+
+CN-WF-12. `backend/src/domain/completion.ts`, seven routes, 30 tests. This
+completes the construction workflow block: CN-WF-01 to CN-WF-12 are built.
+
+Reused rather than rebuilt: the delay forecast with its costed corrective
+measures, the CVR and cashflow, the commissioning test and system acceptance,
+the document engine that renders a report once the numbers exist, the stage gate,
+and every position function the construction block added. Four things were
+absent.
+
+**A report with no cut-off.** AC-CN-WF-12-01. Every position function on the
+platform answers *now*, so a monthly report built from four screens read on four
+different days reconciles to nothing — and the discrepancy is always found by
+whoever is arguing with it. A snapshot is defined as **the ledger as at a stated
+instant**, the same definition replay uses, and its content hash is over what
+was read rather than over the record, so anybody re-running the cut-off
+reproduces it. `reconcileSnapshot` proves it still holds after the project has
+moved on.
+
+**A report that hides what it could not see.** The exception control. A source
+with no records renders as a zero on every reporting tool ever built, and a zero
+looks like good news. Here an unreported source is **named**, a source nobody
+has touched in more than a fortnight is named as **stale with how many days**,
+and the sources whose absence is a reporting failure rather than a genuine nil
+are separated into `criticalGaps` — a project with no deliveries this period is
+not a project with no progress records.
+
+**A recovery option nobody chose.** The forecast produced costed measures; what
+could not be recorded was a person selecting them, which is exactly the
+specification's guardrail — the platform "cannot declare completion or select
+recovery". An approved plan names the measures, their owners, what they recover
+and what they cost, and reports the **shortfall** rather than refusing it: a
+plan that recovers part of a delay is a real plan, and one presented as
+recovering all of it is the problem.
+
+**Turnover as a state rather than a boundary.** AC-CN-WF-12-02 and -03. A system
+handed to commissioning with no defined boundary is how two parties each conclude
+the other holds the isolation. Release requires the boundary, the isolations with
+their holders, what construction **retains** after turnover, every residual
+defect classified with an owner and a completion condition, and evidence against
+each of eight rules — completeness is computed from a table, not declared by a
+tick. A defect classified as blocking cannot be carried through the release that
+starts commissioning. `handover.recordCommissioningTest` now refuses a system
+that has not been released, unless somebody with authority has recorded an
+exception saying what is missing, why, and when it will be in place — an
+exception with no expiry becomes the permanent state.
+
+**The stage 9 exit.** `CONSTRUCTION_COMPLETION_ACCEPTED` is issued only by a
+role holding approve on the project itself, which is the matrix's existing answer
+to "only by authorised party". It is refused while no system has been turned
+over, while a residual obligation has no owner, and over a turnover exception
+that has passed its date — accepting completion over an expired exception accepts
+the thing the exception was covering, without saying so.
+
+One defect in existing code was found and fixed on the way: the stage-gate
+evidence description used a two-way ternary and labelled every construction gate
+report as a tender one.
+
+**Still to build in the construction block:** the
 stage workspace described in 9.2. The specifications received so far — the
 construction stage control, 9.1, 9.2, CN-WF-01 to CN-WF-12, the 9.4 gate, the
 commissioning stage control with 10.1 and 10.2, and CM-WF-01 to CM-WF-06 — are

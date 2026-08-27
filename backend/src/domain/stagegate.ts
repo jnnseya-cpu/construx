@@ -1136,7 +1136,10 @@ export function decideGate(
   const evidence = registerEvidence(ctx, {
     type: 'STAGE_GATE_REPORT',
     hash: report.contentHash,
-    description: `${report.phase === 'DESIGN' ? 'Design' : 'Tender'} stage gate — ${input.decision} against 7 clauses (${report.summary})`,
+    // Named from the report rather than a two-way ternary: the same clause list
+    // now serves the tender, design and construction gates, and a ternary would
+    // have labelled every construction gate report as a tender one.
+    description: `${report.phase} stage gate — ${input.decision} against 7 clauses (${report.summary})`,
     linkedEntities: [{ refType: 'Project', refId: ctx.projectId }],
   });
 
