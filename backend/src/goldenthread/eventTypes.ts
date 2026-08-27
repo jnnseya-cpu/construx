@@ -863,6 +863,36 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SAT_COMPLETED', 'VendorTest', 'APPROVE', 'COMMISSIONING'),
   def('SHIPPING_RELEASED', 'VendorTest', 'APPROVE', 'COMMISSIONING'),
 
+  // --- CM-WF-07 commissioning exception, punch, defect and retest -----------
+  // One entity owns the open item, raised from the failed record rather than
+  // retyped beside it: an exception whose failed reading was entered by hand can
+  // disagree with the test it came from, and the two are never reconciled.
+  def('COMMISSIONING_EXCEPTION_RAISED', 'CommissioningException', 'CREATE', 'COMMISSIONING', { creates: true }),
+  def('CORRECTIVE_ACTION_COMPLETED', 'CommissioningException', 'UPDATE', 'COMMISSIONING', { requiresEvidence: true }),
+  // APPROVE: which other tests a failure invalidates is confirmed by a person,
+  // never assumed by the platform, and the tests already passed are the
+  // dangerous ones because they read as complete.
+  def('EXCEPTION_IMPACT_ASSESSED', 'CommissioningException', 'APPROVE', 'COMMISSIONING'),
+  def('RETEST_STARTED', 'CommissioningException', 'UPDATE', 'COMMISSIONING'),
+  def('RETEST_RESULT_RECORDED', 'CommissioningException', 'UPDATE', 'COMMISSIONING'),
+  // Closure adds a verified succeeding result. It changes nothing about the
+  // failure, which is why there is no event that could.
+  def('EXCEPTION_CLOSED', 'CommissioningException', 'APPROVE', 'COMMISSIONING'),
+  def('EXCEPTION_CONDITIONALLY_ACCEPTED', 'CommissioningException', 'APPROVE', 'COMMISSIONING'),
+
+  // --- CM-WF-04 pre-functional and static completion ------------------------
+  def('PREFUNCTIONAL_CHECK_STARTED', 'PreFunctionalCheck', 'CREATE', 'COMMISSIONING', { creates: true }),
+  def('PREFUNCTIONAL_ITEM_RECORDED', 'PreFunctionalCheck', 'UPDATE', 'COMMISSIONING'),
+  // Static completion is not construction completion: it is the statement that
+  // the system is safe to energise and operate, which is a different question
+  // with different evidence behind it.
+  def('STATIC_COMPLETION_ACCEPTED', 'PreFunctionalCheck', 'APPROVE', 'COMMISSIONING'),
+  def('FUNCTIONAL_TEST_RELEASED', 'PreFunctionalCheck', 'APPROVE', 'COMMISSIONING'),
+  // Construction returning to a system after static completion means the system
+  // tested is no longer the system installed. The affected items go back to
+  // unanswered rather than failed, because nobody has looked at them since.
+  def('STATIC_COMPLETION_INVALIDATED', 'PreFunctionalCheck', 'UPDATE', 'COMMISSIONING'),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

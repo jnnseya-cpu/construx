@@ -1812,3 +1812,60 @@ Acceptance criteria
 •	AC-CM-WF-07-02: Affected-test invalidation is visible and actionable.
 •	AC-CM-WF-07-03: A closed exception retains all prior failed evidence.
 ```
+
+## CM-WF-08
+
+*(Received after CM-WF-07, with 10.4 immediately following.)*
+
+```
+CM-WF-08 - Training, documentation readiness and commissioning gate
+Primary owner: Commissioning Manager + Asset/Handover Manager  |  Trigger: System tests substantially complete
+Required inputs
+•	Accepted test records and exceptions
+•	draft/final O&M and as-built information
+•	asset/tag/warranty/spares data
+•	training needs, materials, attendees and competence evidence
+•	system acceptance authority and operating restrictions
+Deterministic flow
+1.	Assess system handover readiness across tests, defects, documentation, assets and training.
+2.	Create role-based operator training plan using actual installed configuration.
+3.	Deliver training, assess attendance/competence and record outstanding sessions.
+4.	Compile commissioning dossier by system with immutable evidence index.
+5.	Submit system acceptance; record Accepted, Conditional or Rejected and conditions.
+6.	Lock accepted commissioning baseline and create Handover stage obligations.
+AI-agent duties and human guardrails
+•	Draft readiness report and training aids grounded in approved O&M/design/test data.
+•	Cannot certify competence or system acceptance.
+Outputs
+•	TrainingPlan/Records
+•	CommissioningDossier
+•	SystemAcceptance
+•	CommissioningGateReport
+•	HandoverObligations
+Exception controls
+•	Critical open exception blocks acceptance.
+•	Conditional acceptance states operating limits, risk owner, expiry and closure plan.
+•	Training on superseded information is invalidated/reissued as required.
+Events: TRAINING_DELIVERED | COMMISSIONING_DOSSIER_COMPILED | SYSTEM_COMMISSIONING_ACCEPTED | COMMISSIONING_COMPLETE | PROJECT_STAGE_TRANSITIONED
+APIs:   POST /v1/systems/{id}/training-records | POST /v1/systems/{id}:compile-commissioning-dossier | POST /v1/stage-gates/{id}:decide
+Acceptance criteria
+•	AC-CM-WF-08-01: Dossier completeness is calculated from required records by system, not file count.
+•	AC-CM-WF-08-02: Accepted system has named operator/owner acknowledgement and conditions state.
+•	AC-CM-WF-08-03: Handover inherits every residual/seasonal obligation by stable ID.
+```
+
+## 10.4
+
+*(Word for word identical to 6.4, 7.4, 8.4 and 9.4. Recorded in full as received
+rather than cross-referenced, because that is how it was sent.)*
+
+```
+10.4 Stage gate Definition of Done
+•	All mandatory inputs are present, validated and tied to exact source versions; completeness is 100% and blocking issues equal zero.
+•	All approvals satisfy appointment, authority, maker-checker and party-separation policies.
+•	All critical/major safety, compliance, interface and information blockers are closed or governed by a permitted, time-bound condition.
+•	Cost, programme, risk, information and commercial snapshots share one declared cut-off and are cross-reconciled.
+•	AI outputs used in the decision have evidence, confidence, assumptions, model/prompt versions, ACU settlement and human disposition.
+•	Gate report, decision and locked baseline can be replayed from the event store and verified against evidence hashes.
+•	Downstream mobilisation tasks, owners, due dates and inherited residual obligations are automatically created without re-entry.
+```

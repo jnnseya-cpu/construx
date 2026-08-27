@@ -6002,10 +6002,66 @@ the vendor's assurance. A serial mismatch between the unit ordered and the unit
 tested blocks shipping release: either the wrong unit was tested or the wrong
 unit is being shipped, and both are found on site months later.
 
-**Still to build in the commissioning block:** CM-WF-04 to CM-WF-07, the
-`COMMISSIONING_COMPLETE` gate, and the stage workspace described in 10.2.
-CM-WF-07 arrived out of sequence, while CM-WF-03 was being built, and is
-recorded verbatim in `docs/WORKFLOWS.md` in the order it was sent.
+---
+
+### Static completion is a statement, and a fail is never edited into a pass
+
+CM-WF-04 and CM-WF-07 together. `backend/src/domain/prefunctional.ts` and
+`backend/src/domain/commissioningexception.ts`, twelve routes, 24 tests.
+
+Built as one vertical although the specification numbers them apart: a failed
+pre-functional check has to go somewhere, and two modules each keeping their own
+idea of an open item is exactly what rule 6 forbids. The exception module was
+written first so there is one owner of the entity, and CM-WF-05's failures will
+raise into the same one.
+
+**Readiness from accepted checks, not file count.** AC-CM-WF-04-01. Thirteen
+checks, weighted, and only items somebody accepted count towards the numerator —
+the number this replaces goes up when somebody attaches the wrong drawing twice.
+A **not applicable** item leaves the denominator rather than counting as a pass,
+and it needs a rationale and an approver, because "N/A" is the commonest way a
+check is skipped and the ones skipped are disproportionately the ones that would
+have failed. An observation counts as accepted; a failure counts for nothing.
+
+**Static completion is not construction completion.** It is the statement that
+the system is safe to energise and operate. It is refused while any item is
+unanswered, while any item is failed, and specifically over the four the
+exception control names — guarding, isolation, earthing and pressure integrity —
+with a message saying why those four are never carried.
+
+**Rework invalidates what it reaches.** The platform does not guess the scope: a
+rule that invalidated everything would be ignored within a fortnight. A person
+names the affected checks, and those items return to **unanswered** rather than
+failed — nobody has looked at them since the rework, and "not looked at" is the
+true state. `functionalTestBlockedReason` is AC-CM-WF-04-03 in one call and
+binds only where the project runs pre-functional checks.
+
+**The exception chain is references, not retyped sentences.** AC-CM-WF-07-01:
+criterion → raw result → action → retest → closure. The specification's "create
+exception from failed item **without re-entry**" is implemented literally — the
+raw result is read out of the failed check or the failed reading, so an exception
+can never disagree with the test it came from.
+
+**A fail is never edited into a pass.** Closure does not change the original
+result; it *adds* a verified succeeding one, and every failed attempt stays
+(AC-CM-WF-07-03). Closing is refused while no retest has passed, and refused
+while nobody has confirmed what the failure invalidates — the tests that assumed
+the failed one was right are the dangerous ones, because they read as complete.
+The platform proposes no scope: the specification says a human confirms it, and
+an empty list is a finding that has to be explained rather than a default.
+
+Repeated failure is counted from **retest attempts** rather than exceptions —
+one exception retested four times is the signal, not four separate items — and
+escalates against both the system and the responsible party. A safety-critical
+conditional acceptance is deliberately harder than a closure: an exceptional
+authority by name, an operating restriction saying what may not happen while it
+stands, and a review date.
+
+**Still to build in the commissioning block:** CM-WF-05, CM-WF-06, CM-WF-08, the
+10.4 gate and the `COMMISSIONING_COMPLETE` event, and the stage workspace
+described in 10.2. CM-WF-07, CM-WF-08 and 10.4 arrived out of sequence while
+CM-WF-03 and CM-WF-04 were being built, and are recorded verbatim in
+`docs/WORKFLOWS.md` in the order they were sent.
 
 ---
 

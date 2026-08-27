@@ -59,6 +59,7 @@ import * as sitevisit from '../engines/sitevisit.ts';
 import * as award from '../domain/award.ts';
 import * as enquiry from '../domain/enquiry.ts';
 import * as constructability from '../domain/constructability.ts';
+import * as commissioningexception from '../domain/commissioningexception.ts';
 import * as completion from '../domain/completion.ts';
 import * as coordination from '../domain/coordination.ts';
 import * as designbaseline from '../domain/designbaseline.ts';
@@ -74,6 +75,7 @@ import * as submittals from '../domain/submittals.ts';
 import * as systemisation from '../domain/systemisation.ts';
 import * as testpack from '../domain/testpack.ts';
 import * as vendortest from '../domain/vendortest.ts';
+import * as prefunctional from '../domain/prefunctional.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
@@ -5530,6 +5532,245 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => systemisation.declareTemporaryOperation(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- CM-WF-04 pre-functional and static completion
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/pre-functional-checks',
+    description: 'Weighted readiness per system from accepted checks, safety-critical failures and rework invalidations',
+    handler: (platform, ctx) => prefunctional.preFunctionalPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/pre-functional-checks',
+    description: 'Start a pre-functional check against a subsystem or piece of equipment',
+    schema: {
+      type: 'object',
+      required: ['reference', 'systemTag', 'location', 'inspectedBy'],
+      properties: {
+        reference: stringField,
+        systemTag: stringField,
+        equipmentTag: stringField,
+        location: stringField,
+        inspectedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => prefunctional.startPreFunctionalCheck(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/pre-functional-checks/:checkId/items',
+    description: 'Record one checklist item. A failure needs a responsibility and a route back; N/A needs an approver',
+    schema: {
+      type: 'object',
+      required: ['key', 'result', 'note'],
+      properties: {
+        key: { type: 'string', enum: prefunctional.PRE_FUNCTIONAL_CHECK.map((item) => item.key) },
+        result: { type: 'string', enum: ['PASS', 'FAIL', 'OBSERVATION', 'NOT_APPLICABLE'] },
+        note: { type: 'string' },
+        evidenceRef: stringField,
+        responsibility: stringField,
+        route: { type: 'string', enum: ['RETURN_TO_CONSTRUCTION', 'COMMISSIONING_EXCEPTION'] },
+        notApplicableRationale: { type: 'string' },
+        notApplicableApprovedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      prefunctional.recordCheckItem(projectContext(platform, ctx), ctx.params.checkId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/pre-functional-checks/:checkId/static-complete',
+    description: 'Accept static completion — the statement that the system is safe to operate, not a percentage',
+    schema: {
+      type: 'object',
+      required: ['acceptedBy'],
+      properties: { acceptedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      prefunctional.acceptStaticCompletion(projectContext(platform, ctx), ctx.params.checkId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/pre-functional-checks/:checkId/functional-release',
+    description: 'Release the system for functional testing',
+    schema: {
+      type: 'object',
+      required: ['releasedBy'],
+      properties: { releasedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      prefunctional.releaseForFunctionalTesting(projectContext(platform, ctx), ctx.params.checkId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/pre-functional-checks/:checkId/rework',
+    description: 'Record construction rework, naming the checks it reaches — which invalidates their static completion',
+    schema: {
+      type: 'object',
+      required: ['reason', 'affectedChecks', 'recordedBy'],
+      properties: {
+        reason: { type: 'string' },
+        affectedChecks: {
+          type: 'array',
+          items: { type: 'string', enum: prefunctional.PRE_FUNCTIONAL_CHECK.map((item) => item.key) },
+        },
+        recordedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      prefunctional.recordRework(projectContext(platform, ctx), ctx.params.checkId as string, body(ctx)),
+  },
+
+  // ------------------------------------------------------- CM-WF-07 commissioning exception, punch and retest
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/commissioning-exceptions',
+    description: 'Open exceptions, what they invalidate, who is failing repeatedly and what is conditionally accepted',
+    handler: (platform, ctx) => commissioningexception.exceptionPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commissioning-exceptions',
+    description: 'Raise an exception from the failed item, carrying its raw result rather than retyping it',
+    schema: {
+      type: 'object',
+      required: ['reference', 'source', 'systemTag', 'location', 'severity', 'blocker', 'probableCause', 'responsibleParty'],
+      properties: {
+        reference: stringField,
+        source: {
+          type: 'object',
+          required: ['kind'],
+          properties: {
+            kind: { type: 'string', enum: ['VENDOR_TEST', 'PRE_FUNCTIONAL', 'FUNCTIONAL'] },
+            testId: stringField,
+            criterionRef: stringField,
+            checkId: stringField,
+            itemKey: stringField,
+          },
+          additionalProperties: false,
+        },
+        systemTag: stringField,
+        equipmentTag: stringField,
+        location: stringField,
+        severity: { type: 'string', enum: [...commissioningexception.EXCEPTION_SEVERITY] },
+        blocker: { type: 'boolean' },
+        probableCause: { type: 'string' },
+        responsibleParty: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => commissioningexception.raiseException(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commissioning-exceptions/:exceptionId/corrective-action',
+    description: 'Record containment and corrective action with the evidence behind them',
+    schema: {
+      type: 'object',
+      required: ['containment', 'corrective', 'evidenceHash', 'completedBy'],
+      properties: {
+        containment: { type: 'string' },
+        corrective: { type: 'string' },
+        evidenceHash: stringField,
+        changeLinkage: stringField,
+        completedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      commissioningexception.completeCorrectiveAction(
+        projectContext(platform, ctx),
+        ctx.params.exceptionId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commissioning-exceptions/:exceptionId/impact',
+    description: 'Confirm which tests this invalidates. The platform proposes nothing; a person confirms the scope',
+    schema: {
+      type: 'object',
+      required: ['invalidatedTests', 'rationale', 'confirmedBy'],
+      properties: {
+        invalidatedTests: { type: 'array', items: { type: 'string' } },
+        rationale: { type: 'string' },
+        confirmedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      commissioningexception.assessImpact(projectContext(platform, ctx), ctx.params.exceptionId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commissioning-exceptions/:exceptionId/retest',
+    description: 'Start a controlled retest against a released pack revision',
+    schema: {
+      type: 'object',
+      required: ['packId', 'startedBy'],
+      properties: { packId: stringField, startedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      commissioningexception.startRetest(projectContext(platform, ctx), ctx.params.exceptionId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commissioning-exceptions/:exceptionId/retest-result',
+    description: 'Record what the retest found. A failing retest is kept; the sequence is what repeated failure counts',
+    schema: {
+      type: 'object',
+      required: ['retestId', 'result', 'evidence'],
+      properties: {
+        retestId: stringField,
+        result: { type: 'string', enum: ['PASS', 'FAIL'] },
+        evidence: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      commissioningexception.recordRetestResult(
+        projectContext(platform, ctx),
+        ctx.params.exceptionId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commissioning-exceptions/:exceptionId/close',
+    description: 'Close by adding a verified succeeding result. The failed evidence stays exactly where it was',
+    schema: {
+      type: 'object',
+      required: ['verifiedBy', 'verification'],
+      properties: { verifiedBy: stringField, verification: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      commissioningexception.closeException(projectContext(platform, ctx), ctx.params.exceptionId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commissioning-exceptions/:exceptionId/conditional-acceptance',
+    description: 'Accept a safety-critical exception conditionally: exceptional authority, operating restriction, review date',
+    schema: {
+      type: 'object',
+      required: ['authority', 'operatingRestriction', 'reviewBy'],
+      properties: { authority: stringField, operatingRestriction: { type: 'string' }, reviewBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      commissioningexception.acceptConditionally(
+        projectContext(platform, ctx),
+        ctx.params.exceptionId as string,
+        body(ctx),
+      ),
   },
 
   // ------------------------------------------------------- CM-WF-03 FAT, SAT and vendor test control
