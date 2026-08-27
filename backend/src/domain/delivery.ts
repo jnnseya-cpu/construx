@@ -2,6 +2,7 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
+import { openVendorExceptionsFor } from './vendortest.ts';
 
 /**
  * CN-WF-05 — resource, material, delivery and procurement control.
@@ -782,6 +783,14 @@ export type ProcurementPosition = {
   reconciliations: Array<{ reference: string; kind: string; what: string; chasedBy: string }>;
   /** Serials in the works, with where they went and what proves it. */
   installed: Array<{ identifier: string; itemReference: string; location: string; testEvidence: string }>;
+  /**
+   * Factory and site test exceptions still open against equipment.
+   *
+   * AC-CM-WF-03-03 asks for these to be visible at delivery, and here is where
+   * somebody is standing next to the crate. The commonest way a factory
+   * exception is lost is that it is closed by the delivery note.
+   */
+  vendorExceptions: Array<{ equipmentTag: string; reference: string; description: string; owner: string; by: string }>;
   summary: string;
 };
 
@@ -857,5 +866,16 @@ export function procurementPosition(
   if (atRisk.length > 0) parts.push(`${atRisk.length} past the date they had to be ordered`);
   if (reconciliations.length > 0) parts.push(`${reconciliations.length} delivery discrepanc${reconciliations.length === 1 ? 'y' : 'ies'} open`);
 
-  return { items, atRisk, quarantined, reconciliations, installed, summary: parts.join(', ') + '.' };
+  const vendorExceptions = openVendorExceptionsFor(ctx).map((exception) => ({
+    equipmentTag: exception.equipmentTag,
+    reference: exception.reference,
+    description: exception.description,
+    owner: exception.owner,
+    by: exception.by,
+  }));
+  if (vendorExceptions.length > 0) {
+    parts.push(`${vendorExceptions.length} factory test exception still open against equipment`);
+  }
+
+  return { items, atRisk, quarantined, reconciliations, installed, vendorExceptions, summary: parts.join(', ') + '.' };
 }

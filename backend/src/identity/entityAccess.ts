@@ -324,6 +324,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   TestPackRequirement: { area: 'QUALITY_COMMISSIONING' },
   TemporaryOperation: { area: 'QUALITY_COMMISSIONING' },
   TestPack: { area: 'QUALITY_COMMISSIONING' },
+  VendorTest: { area: 'QUALITY_COMMISSIONING' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },

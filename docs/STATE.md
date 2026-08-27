@@ -5960,8 +5960,52 @@ rather than refused — it happens, and the contractual consequence is somebody
 else's to draw. A waiver is an authorised record naming the contract rule that
 permits it; the witness who did not turn up has not waived anything.
 
-**Still to build in the commissioning block:** CM-WF-03 to CM-WF-06, the
+---
+
+### A reading that is a measurement, and an exception that leaves the factory
+
+CM-WF-03. `backend/src/domain/vendortest.ts`, six routes, 20 tests, plus one
+field added to `delivery.procurementPosition`.
+
+Built **on** CM-WF-02 rather than beside it: a factory test runs against a
+released test pack, so its criteria, controlled sources, units and limits are
+the ones that workflow already refuses to accept without — and AC-CM-WF-02-01
+applies at the factory too, since a FAT against an unreleased procedure is
+refused here as anywhere else. Instrument calibration is
+`qualitycontrol.calibrationBlockedReason`, unchanged.
+
+**A reading is a measurement, not a number.** AC-CM-WF-03-01: value, unit, the
+instrument it came off, who took it and when. A reading from an instrument out
+of certificate is refused rather than flagged, and a reading whose unit differs
+from the criterion's is refused too — a unit converted in somebody's head is the
+commonest way a test passes when it should not.
+
+**The result is calculated and the decision is a separate field.**
+AC-CM-WF-03-02. The platform compares readings to limits and gets one answer
+every time; what a person does about it is recorded beside that, never in place
+of it. Recording a pass over a reading outside its limit is refused, naming the
+reading and its value: that is not a decision, it is an overwrite. The same
+readings accepted **conditionally** are a decision, and a conditional acceptance
+needs the operating restriction and the date it clears by — one with no date
+never clears.
+
+**A vendor PDF is not a result.** Completion requires a reading against every
+criterion, so a certificate asserting the equipment passed cannot complete
+anything. That is the exception control enforced by having no way round it.
+
+**An exception raised at the factory does not stay at the factory.**
+AC-CM-WF-03-03. Exceptions follow the equipment tag and are read by one exported
+function, so the delivery screen, the SAT and the position all show the same
+list rather than each keeping their own — the commonest way a factory exception
+is lost is that the delivery note closes it. Closure needs the verification, not
+the vendor's assurance. A serial mismatch between the unit ordered and the unit
+tested blocks shipping release: either the wrong unit was tested or the wrong
+unit is being shipped, and both are found on site months later.
+
+**Still to build in the commissioning block:** CM-WF-04 to CM-WF-07, the
 `COMMISSIONING_COMPLETE` gate, and the stage workspace described in 10.2.
+CM-WF-07 arrived out of sequence, while CM-WF-03 was being built, and is
+recorded verbatim in `docs/WORKFLOWS.md` in the order it was sent.
 
 ---
 

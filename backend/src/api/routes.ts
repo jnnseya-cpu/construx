@@ -73,6 +73,7 @@ import * as mobilisation from '../domain/mobilisation.ts';
 import * as submittals from '../domain/submittals.ts';
 import * as systemisation from '../domain/systemisation.ts';
 import * as testpack from '../domain/testpack.ts';
+import * as vendortest from '../domain/vendortest.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
@@ -5529,6 +5530,130 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => systemisation.declareTemporaryOperation(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- CM-WF-03 FAT, SAT and vendor test control
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/vendor-tests',
+    description: 'Factory and site tests, their calculated results, open exceptions and conditional acceptances',
+    handler: (platform, ctx) => vendortest.vendorTestPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/vendor-tests',
+    description: 'Start a FAT or SAT against a released pack, recording the serial ordered and the serial in the room',
+    schema: {
+      type: 'object',
+      required: ['kind', 'packId', 'equipmentTag', 'orderedSerial', 'observedSerial', 'purchaseOrder', 'attendance'],
+      properties: {
+        kind: { type: 'string', enum: [...vendortest.VENDOR_TEST_KIND] },
+        packId: stringField,
+        equipmentTag: stringField,
+        orderedSerial: stringField,
+        observedSerial: stringField,
+        purchaseOrder: stringField,
+        attendance: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['name', 'organisation', 'role', 'attended'],
+            properties: {
+              name: stringField,
+              organisation: stringField,
+              role: stringField,
+              attended: { type: 'boolean' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => vendortest.startVendorTest(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/vendor-tests/:testId/readings',
+    description: 'Record one reading with its instrument, unit, performer and time. Within-limits is computed here',
+    schema: {
+      type: 'object',
+      required: ['criterionRef', 'value', 'unit', 'instrumentId', 'performedBy'],
+      properties: {
+        criterionRef: stringField,
+        value: { type: 'number' },
+        unit: stringField,
+        instrumentId: stringField,
+        performedBy: stringField,
+        takenAt: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      vendortest.recordReading(projectContext(platform, ctx), ctx.params.testId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/vendor-tests/:testId/exceptions',
+    description: 'Raise an exception or punch item that travels with the equipment',
+    schema: {
+      type: 'object',
+      required: ['reference', 'description', 'blocking', 'owner', 'by'],
+      properties: {
+        reference: stringField,
+        description: { type: 'string' },
+        blocking: { type: 'boolean' },
+        owner: stringField,
+        by: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      vendortest.raiseVendorException(projectContext(platform, ctx), ctx.params.testId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/vendor-tests/:testId/exceptions/close',
+    description: 'Close an exception with what was verified, not with the vendor’s assurance that it was rectified',
+    schema: {
+      type: 'object',
+      required: ['reference', 'closedBy', 'verification'],
+      properties: { reference: stringField, closedBy: stringField, verification: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      vendortest.closeVendorException(projectContext(platform, ctx), ctx.params.testId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/vendor-tests/:testId/complete',
+    description: 'Complete the test. The result is calculated from the readings; the decision is recorded beside it',
+    schema: {
+      type: 'object',
+      required: ['decision', 'decidedBy'],
+      properties: {
+        decision: { type: 'string', enum: ['PASS', 'FAIL', 'CONDITIONAL'] },
+        decidedBy: stringField,
+        restrictions: { type: 'string' },
+        restrictionClearBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      vendortest.completeVendorTest(projectContext(platform, ctx), ctx.params.testId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/vendor-tests/:testId/shipping-release',
+    description: 'Release the equipment for shipping under a designated authority, with the serials matching',
+    schema: {
+      type: 'object',
+      required: ['releasedBy', 'authority'],
+      properties: { releasedBy: stringField, authority: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      vendortest.releaseForShipping(projectContext(platform, ctx), ctx.params.testId as string, body(ctx)),
   },
 
   // ------------------------------------------------------- CM-WF-02 test procedure, pack and readiness release

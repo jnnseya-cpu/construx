@@ -845,6 +845,24 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // that left no trace would make the same blocker look new every week.
   def('TEST_BLOCKED', 'TestPack', 'REJECT', 'COMMISSIONING'),
 
+  // --- CM-WF-03 FAT, SAT and vendor test control ---------------------------
+  // One entity for both, because a SAT is the same act at a different address
+  // and the exceptions have to travel between them. The kind is on the state and
+  // the start and completion events name it, so an audit reading the ledger sees
+  // which without loading the record.
+  def('FAT_STARTED', 'VendorTest', 'CREATE', 'COMMISSIONING', { creates: true }),
+  def('SAT_STARTED', 'VendorTest', 'CREATE', 'COMMISSIONING', { creates: true }),
+  // A reading carries its instrument, its unit, who took it and when. Without
+  // the instrument it cannot be defended when the equipment fails two years on.
+  def('TEST_READING_RECORDED', 'VendorTest', 'UPDATE', 'COMMISSIONING'),
+  def('VENDOR_EXCEPTION_RAISED', 'VendorTest', 'UPDATE', 'COMMISSIONING'),
+  // APPROVE, because closing an exception needs the verification rather than the
+  // vendor's assurance, and the authority to accept it.
+  def('VENDOR_EXCEPTION_CLOSED', 'VendorTest', 'APPROVE', 'COMMISSIONING'),
+  def('FAT_COMPLETED', 'VendorTest', 'APPROVE', 'COMMISSIONING'),
+  def('SAT_COMPLETED', 'VendorTest', 'APPROVE', 'COMMISSIONING'),
+  def('SHIPPING_RELEASED', 'VendorTest', 'APPROVE', 'COMMISSIONING'),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

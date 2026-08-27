@@ -1769,3 +1769,46 @@ Acceptance criteria
 •	AC-CM-WF-06-02: Reset/continue decision is authorised and auditable.
 •	AC-CM-WF-06-03: Deferred seasonal scope transfers to aftercare with accepted responsibility.
 ```
+
+## CM-WF-07
+
+*(Received after CM-WF-06. The specification stream is not strictly sequential:
+this one arrived while CM-WF-03 was being built, and is recorded here in the
+order it was sent rather than renumbered.)*
+
+```
+CM-WF-07 - Commissioning exception, punch, defect and retest
+Primary owner: Commissioning Manager / Responsible Contractor  |  Trigger: Failed/conditional check or test
+Required inputs
+•	Failed criterion, raw evidence and severity
+•	system/equipment/tag/location
+•	probable cause and affected tests/systems
+•	containment/corrective action and responsibility
+•	retest procedure and acceptance authority
+Deterministic flow
+1.	Create exception from failed item without re-entry.
+2.	Classify blocker, severity, safety/operation impact and responsibility.
+3.	Implement containment/corrective action with evidence and change linkage.
+4.	Assess which prior/downstream tests are invalidated.
+5.	Schedule and execute controlled retest against defined pack revision.
+6.	Close only after authorised verification; retain failure history.
+AI-agent duties and human guardrails
+•	Cluster recurring failure and propose root-cause avenues.
+•	Identify affected tests/assets/documents; human confirms scope.
+Outputs
+•	CommissioningException
+•	CorrectiveAction
+•	Retest Record
+•	ImpactAssessment
+•	ClosureDecision
+Exception controls
+•	Cannot delete/convert Fail to Pass; closure adds verified succeeding result.
+•	Safety-critical conditional acceptance requires exceptional authority and operating restriction.
+•	Repeated failure escalates supplier/system risk and handover readiness.
+Events: COMMISSIONING_EXCEPTION_RAISED | CORRECTIVE_ACTION_COMPLETED | RETEST_STARTED | EXCEPTION_CLOSED
+APIs:   POST /v1/tests/{id}/exceptions | POST /v1/commissioning-exceptions/{id}:retest | POST /v1/commissioning-exceptions/{id}:close
+Acceptance criteria
+•	AC-CM-WF-07-01: Exception traces criterion → raw result → action → retest → closure.
+•	AC-CM-WF-07-02: Affected-test invalidation is visible and actionable.
+•	AC-CM-WF-07-03: A closed exception retains all prior failed evidence.
+```
