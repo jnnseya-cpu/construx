@@ -7409,6 +7409,78 @@ alongside `NODE_ENV`, which is what "production" meant in that test all along.
 
 ---
 
+## Pictures nobody could put anywhere
+
+The landing page has had five picture slots since it was built, and the only way
+to fill one was to copy a file into `frontend/media/` and restart the process.
+On a laptop that is a copy and a restart. **On a deployed container it is a
+rebuild** — the directory is inside the image — so in practice the slots could
+not be filled at all by the person whose pictures they are. The feature was
+finished and unreachable, which is the same failure the command-catalogue work
+fixed for seventy-eight write routes.
+
+Three things had to change together, and none of them works alone.
+
+**Somewhere to write that survives a redeploy.** `SITE_MEDIA_PATH` points at the
+same kind of volume the ledger journal already uses. Unset, it falls back to the
+checkout, so a development machine behaves exactly as it did. The gateway serves
+`/media/` from that directory as its own mount — ahead of the frontend, so a
+file committed at `frontend/media/` cannot shadow the one the operator uploaded.
+
+**Presence that does not need a restart.** It was read once at module load,
+which was the right call for the reason given at the time: the landing page
+renders on every visit and a `stat` per slot per visit buys the reader nothing.
+That reason still holds, so the check is still not per-visit — it is a cache
+`site/media.ts` owns and invalidates on every write. A picture appears the moment
+it is uploaded.
+
+**A door.** `POST /v1/site/media/:slot`, `DELETE` beside it, and a panel on the
+operator's screen showing all five: where each lands, what it has to show, what
+size to export at, and whether anything is in it. An empty slot is stated as
+empty, because the page renders *nothing at all* for one — there is no broken
+frame on the site to notice it by.
+
+### A route that writes into a served directory
+
+This is the shape of a remote code execution, and it is worth writing down which
+two properties stop it being one, because both are load-bearing.
+
+**The caller never supplies the path.** The slot id is compared against five
+literals. It is not sanitised, escaped or normalised — `../../frontend/app` is
+refused because it is not one of the five, which is the same refusal an
+ordinary typo gets. There is no path arithmetic to get wrong.
+
+**The caller never supplies the type.** The stored extension comes from the
+file's own first bytes — PNG, JPEG or WebP signatures — and a file matching none
+of them is refused. The declared content type is not consulted for anything: it
+is a claim by the uploader about a file the platform is about to serve from its
+own origin. **An SVG is refused outright**, and that is not an oversight about a
+perfectly good image format: an SVG is a document that can carry script, so
+accepting one would be storing cross-site scripting on the marketing site.
+
+The route is operator-only in both directions, which mirrors a rule already in
+the codebase: the evidence upload refuses a `PLATFORM_ADMIN` because operators
+are barred from customer delivery data, and this refuses everybody else because
+customers have no business editing the platform's marketing page.
+
+Replacing a PNG with a JPEG deletes the PNG. Without that both would sit in the
+directory and the page would render whichever the signature order found first —
+which is the one that was replaced.
+
+**One defect of my own, caught by the browser rather than by a test.** The HTML
+comment I wrote inside the panel used backticks around a CSS property name. The
+panel is a template literal, so the first backtick closed it and the console
+stopped booting entirely — "Starting the operating system…" and nothing else.
+`node --check` on the page file finds it in a second, and that is now the first
+thing to reach for when the shell will not start.
+
+The slots, their alt text and their dimensions moved into `site/media.ts` as one
+registry. They were in `landing.ts` and would otherwise have been in three
+places — the page, the route and the screen — which is three chances to disagree
+about which picture belongs where.
+
+---
+
 ## Working notes
 
 - The seeded demo project sits in the **Operations** phase, so field-execution

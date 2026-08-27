@@ -116,28 +116,90 @@ function envGroups(vars) {
   return rest.length > 0 ? [...groups, { label: 'Everything else', vars: rest }] : groups;
 }
 
+/**
+ * The pictures on the landing page.
+ *
+ * Five slots have been on that page since it was built, and until now the only
+ * way to fill one was to copy a file into the checkout and restart the process
+ * — which on a deployed container is a rebuild. The pictures could not be put
+ * there by the person whose pictures they are.
+ *
+ * Each slot shows what it is for and what it has to show, because a picture
+ * chosen without knowing where it lands is a picture that has to be replaced.
+ * An empty slot is stated as empty: the page renders nothing at all for one, so
+ * there is no broken frame on the site to notice it by.
+ */
+function mediaPanel(media) {
+  return html`<div class="card" id="site-media" style="margin-bottom:14px">
+    <h2>Pictures on the landing page</h2>
+    <p class="metric-sub" style="margin:8px 0 14px">
+      Five slots. A slot with no picture renders nothing at all — no empty frame — so the page is never broken by one
+      being absent. Export at the size given and compress; the ceiling is ${Math.round(media.maxBytes / 1_048_576)}MB per
+      picture. PNG, JPEG or WebP, read from the file itself rather than from its name.
+    </p>
+
+    <div class="split-list">
+      ${media.slots.map(
+        (slot) => html`<div class="row" data-slot="${slot.id}" style="align-items:flex-start;gap:14px">
+          <!-- A zero flex-basis with min-width 0, so the description column
+               shrinks and every row's buttons land in the same place. On an
+               auto basis the longest description pushed its own buttons onto a
+               second line while the shorter rows kept theirs on one. -->
+          <span class="lbl" style="flex:1 1 0;min-width:0">
+            <b>${slot.where}</b><br>
+            <span class="metric-sub">${slot.alt}</span><br>
+            <span class="metric-sub">${slot.width}×${slot.height}px · ${
+              slot.held
+                ? `${slot.file} · ${Math.round((slot.bytes ?? 0) / 1024)}KB · replaced ${time(slot.updatedAt)}`
+                : 'nothing here yet'
+            }</span>
+          </span>
+          <span class="val" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            ${slot.held ? badge('filled', 'ok') : badge('empty', 'warn')}
+            <label class="btn quiet sm" style="cursor:pointer">
+              ${slot.held ? 'Replace' : 'Add picture'}
+              <input type="file" accept="image/png,image/jpeg,image/webp" data-put="${slot.id}" style="display:none">
+            </label>
+            ${slot.held ? html`<button class="btn quiet sm" data-clear="${slot.id}">Remove</button>` : ''}
+          </span>
+        </div>`,
+      )}
+    </div>
+
+    <div class="cmd-error" hidden style="margin-top:12px"></div>
+    <div class="metric-sub" style="margin-top:12px">
+      Held in <span class="mono">${media.directory}</span>. Point <span class="mono">SITE_MEDIA_PATH</span> at the volume
+      and an uploaded picture survives a redeploy; leave it unset and it lives in the checkout, where it does not.
+    </div>
+  </div>`;
+}
+
 export async function admin(root) {
   const roles = state.session.user.roles ?? [];
   const isOperator = roles.includes('PLATFORM_ADMIN');
   const operatorOnly = (path) => (isOperator ? api.get(path).catch(() => null) : Promise.resolve(null));
 
-  const [routes, plane, matrix, overview, estate, burn, payments, security, logs, ready, governance, vocab] = await Promise.all([
-    api.get('/v1/routes').catch(() => ({ routes: [] })),
-    api.get('/v1/ai/control-plane').catch(() => null),
-    api.get('/v1/permissions/matrix').catch(() => ({ matrix: {} })),
-    operatorOnly('/v1/admin/overview'),
-    operatorOnly('/v1/admin/tenants'),
-    operatorOnly('/v1/admin/burn'),
-    operatorOnly('/v1/admin/payments'),
-    operatorOnly('/v1/admin/security'),
-    operatorOnly('/v1/admin/logs'),
-    operatorOnly('/v1/admin/readiness'),
-    operatorOnly('/v1/admin/audit'),
-    // Jurisdictions and currencies for the onboarding form, published by the
-    // platform rather than listed here — so the console cannot offer a
-    // jurisdiction the tax engine does not know.
-    operatorOnly('/v1/signup/account-types'),
-  ]);
+  const [routes, plane, matrix, overview, estate, burn, payments, security, logs, ready, governance, vocab, media] =
+    await Promise.all([
+      api.get('/v1/routes').catch(() => ({ routes: [] })),
+      api.get('/v1/ai/control-plane').catch(() => null),
+      api.get('/v1/permissions/matrix').catch(() => ({ matrix: {} })),
+      operatorOnly('/v1/admin/overview'),
+      operatorOnly('/v1/admin/tenants'),
+      operatorOnly('/v1/admin/burn'),
+      operatorOnly('/v1/admin/payments'),
+      operatorOnly('/v1/admin/security'),
+      operatorOnly('/v1/admin/logs'),
+      operatorOnly('/v1/admin/readiness'),
+      operatorOnly('/v1/admin/audit'),
+      // Jurisdictions and currencies for the onboarding form, published by the
+      // platform rather than listed here — so the console cannot offer a
+      // jurisdiction the tax engine does not know.
+      operatorOnly('/v1/signup/account-types'),
+      // The landing page's own pictures. Operator-only in both directions: a
+      // customer has no business editing the marketing site.
+      operatorOnly('/v1/site/media'),
+    ]);
 
   const areas = new Set();
   for (const entry of Object.values(matrix.matrix)) {
@@ -433,6 +495,8 @@ export async function admin(root) {
             : ''
         }
       </div>
+
+      ${media ? mediaPanel(media) : ''}
 
       ${
         ready
@@ -785,6 +849,50 @@ export async function admin(root) {
   if (!isOperator) return;
 
   const again = () => admin(root);
+
+  // The landing page's pictures. A file input rather than a generated command
+  // form: the body is the image itself, not JSON, so this posts the bytes the
+  // way the evidence upload does.
+  const mediaPanelEl = document.getElementById('site-media');
+  const mediaError = (message) => {
+    const box = mediaPanelEl?.querySelector('.cmd-error');
+    if (!box) return;
+    box.textContent = message;
+    box.hidden = message === '';
+  };
+
+  for (const input of mediaPanelEl?.querySelectorAll('input[data-put]') ?? []) {
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      mediaError('');
+      try {
+        const result = await api.upload(`/v1/site/media/${encodeURIComponent(input.dataset.put)}`, file);
+        toast('Picture set', `${result.file} · ${Math.round(result.bytes / 1024)}KB — live on the landing page now`, 'ok');
+        await again();
+      } catch (error) {
+        // Named on the panel rather than only in a toast: the refusals here are
+        // specific ("that is not a PNG, JPEG or WebP") and worth reading twice.
+        mediaError(`${error.code ? `${error.code} — ` : ''}${error.message}`);
+        input.value = '';
+      }
+    });
+  }
+
+  for (const button of mediaPanelEl?.querySelectorAll('[data-clear]') ?? []) {
+    button.addEventListener('click', async () => {
+      mediaError('');
+      button.disabled = true;
+      try {
+        await api.delete(`/v1/site/media/${encodeURIComponent(button.dataset.clear)}`);
+        toast('Picture removed', 'The slot renders nothing at all now, which is how the page is designed', 'ok');
+        await again();
+      } catch (error) {
+        mediaError(`${error.code ? `${error.code} — ` : ''}${error.message}`);
+        button.disabled = false;
+      }
+    });
+  }
 
   // Every operator write route gets a door. A route only its author can reach is
   // not a feature; each of these existed and none of them was callable from the

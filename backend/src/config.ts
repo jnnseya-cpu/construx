@@ -606,6 +606,28 @@ export const config = {
     googleTagId: str('ANALYTICS_GOOGLE_TAG_ID', ''),
   },
 
+  /**
+   * The public site's own assets, as opposed to any customer's.
+   *
+   * The landing page has five picture slots. They used to be fillable only by
+   * putting a file inside the checkout, which on a deployed container means a
+   * rebuild — so in practice they could not be filled at all by the person
+   * whose pictures they are. Pointing this at the volume the ledger journal
+   * already uses makes an upload survive a redeploy.
+   *
+   * Empty means `frontend/media/` in the checkout, which is where the files
+   * were before and keeps a development machine behaving as it did.
+   */
+  site: {
+    mediaPath: str('SITE_MEDIA_PATH', ''),
+    /**
+     * Per-picture ceiling. The largest slot is a 2400px plate, which lands
+     * around 600KB–1.5MB compressed; 8MB is generous for that and small enough
+     * that the marketing page cannot fill the volume the ledger writes to.
+     */
+    mediaMaxBytes: num('SITE_MEDIA_MAX_BYTES', 8 * 1_048_576),
+  },
+
   newsletter: {
     /**
      * Off unless switched on. A marketing sender that arms itself at boot would

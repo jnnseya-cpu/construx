@@ -127,6 +127,7 @@ import { estateBurn } from '../billing/burn.ts';
 import { estateOverview } from '../billing/overview.ts';
 import { isPlatformGovernanceEvent } from '../goldenthread/eventTypes.ts';
 import * as evidence from '../evidence/registry.ts';
+import * as siteMedia from '../site/media.ts';
 import * as designreview from '../engines/designreview.ts';
 import * as perception from '../engines/perception.ts';
 import * as signing from '../signing/signature.ts';
@@ -13205,6 +13206,57 @@ export const ROUTES: Route[] = [
         throw new NotFoundError('The platform holds no bytes for this evidence');
       }
       return platform.evidence.signedUrl(actor.tenantId, hash);
+    },
+  },
+
+  // --- The landing page's own pictures ---------------------------------------
+  //
+  // Not customer data and not in any tenancy: these are the five photographs on
+  // the platform's own marketing page. They lived only in the checkout, so on a
+  // deployed container filling a slot meant a rebuild — the pictures could not
+  // be put there by the person whose pictures they are.
+  //
+  // Operator-only, in both directions. A customer has no business editing the
+  // marketing site, and the operator has no business in customer delivery data
+  // — the evidence upload above refuses a PLATFORM_ADMIN for exactly the
+  // mirror-image reason.
+  {
+    method: 'GET',
+    pattern: '/v1/site/media',
+    readOnly: true,
+    description: 'The landing page picture slots, what each is for, and which are filled',
+    handler: (_platform, ctx) => {
+      operatorOnly(ctx, 'see the landing page pictures');
+      return { directory: siteMedia.mediaDir(), maxBytes: config.site.mediaMaxBytes, slots: siteMedia.mediaState() };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/site/media/:slot',
+    upload: true,
+    // The per-picture ceiling, applied at the socket as well as in the module,
+    // so an oversized upload is refused before the process buffers it.
+    maxBytes: config.site.mediaMaxBytes,
+    description: 'Put a picture in one of the five landing page slots',
+    handler: (_platform, ctx) => {
+      operatorOnly(ctx, 'change the landing page pictures');
+      // The slot id is matched against five literals inside `putSlotImage`, and
+      // the stored extension comes from the file's own magic bytes. Neither the
+      // path nor the type is ever the caller's, which is what stops a route
+      // that writes into a served directory from being the obvious hole.
+      return siteMedia.putSlotImage(ctx.params.slot as string, ctx.rawBody ?? Buffer.alloc(0));
+    },
+  },
+  {
+    method: 'DELETE',
+    pattern: '/v1/site/media/:slot',
+    // Closed and empty: the slot is in the path and there is nothing else to
+    // say, so a stray body is refused rather than ignored.
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    description: 'Take the picture out of a landing page slot',
+    handler: (_platform, ctx) => {
+      operatorOnly(ctx, 'change the landing page pictures');
+      return siteMedia.removeSlotImage(ctx.params.slot as string);
     },
   },
 

@@ -1,11 +1,9 @@
-import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { esc } from '../messaging/render.ts';
 import { EVENT_TYPES } from '../goldenthread/eventTypes.ts';
 import { NOTIFICATION_EVENTS } from '../notifications/catalogue.ts';
 import { ROUTES } from '../api/routes.ts';
 import { page } from './layout.ts';
+import { MEDIA_SLOTS, slotFile } from './media.ts';
 
 /**
  * The landing page.
@@ -56,27 +54,27 @@ const ENGINES = [
  * that looks finished and is not, which is the failure this codebase spends
  * most of its effort avoiding.
  *
- * Presence is read once at module load. The landing page renders on every
- * visit and a stat per visit buys the reader nothing, so a newly added file
- * needs a restart to appear.
+ * The slot itself — where it goes, what it has to show, what size — is declared
+ * in `site/media.ts`, which is also what the upload route and the operator's
+ * screen read. Three lists of five filenames would be three chances to
+ * disagree about which picture belongs where.
+ *
+ * Presence is still not a filesystem call per visit; `media.ts` caches it and
+ * invalidates the cache when a picture is uploaded, so a new one appears
+ * without the restart this used to need.
  */
-const MEDIA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'frontend', 'media');
-
-function figure(
-  file: string,
-  alt: string,
-  dimensions: { width: number; height: number },
-  className: string,
-): string {
-  if (!existsSync(join(MEDIA_DIR, file))) return '';
+function figure(id: string): string {
+  const slot = MEDIA_SLOTS.find((candidate) => candidate.id === id);
+  const file = slot && slotFile(id);
+  if (!slot || !file) return '';
 
   // width and height reserve the space before the bytes arrive, so the page
   // does not reflow under the reader as each image lands. `loading="lazy"`
   // is deliberately absent on the first plate — it is above the fold on a
   // laptop, and lazily loading what is already visible delays it.
-  return `<figure class="${className}">
-      <img src="/media/${esc(file)}" alt="${esc(alt)}"
-           width="${dimensions.width}" height="${dimensions.height}"
+  return `<figure class="${slot.className}">
+      <img src="/media/${esc(file)}" alt="${esc(slot.alt)}"
+           width="${slot.width}" height="${slot.height}"
            decoding="async" loading="lazy">
     </figure>`;
 }
@@ -212,21 +210,11 @@ export function landing(): string {
   </div>
 </section>
 
-${figure(
-  'command-centre.png',
-  'The CONSTRUX project command centre: cost performance against budget, schedule performance against plan, forecast at completion, and open risk by severity, above a progress S-curve and a cost breakdown.',
-  { width: 2400, height: 1600 },
-  'plate wide',
-)}
+${figure('command-centre')}
 
 <section class="proof">
   <div class="wrap">
-    ${figure(
-      'broken-workflows.png',
-      'A construction manager on site. Three failures named: projects losing money silently, models that do not build, and claims treated as the problem rather than the symptom.',
-      { width: 2400, height: 1600 },
-      'band',
-    )}
+    ${figure('broken-workflows')}
     <h2 class="section-h">Not a document store with a search box</h2>
     <p class="section-lede">
       Three things separate a record that survives a dispute from a folder that does not.
@@ -271,12 +259,7 @@ ${figure(
       computed, deterministic, and the same answer twice.
     </p>
     <div class="engine-grid">
-      ${figure(
-        'visibility-control.png',
-        'One platform connecting people, process and data across every stage of construction.',
-        { width: 1120, height: 1400 },
-        'column',
-      )}
+      ${figure('visibility-control')}
       ${ENGINES.map(
         ([name, body], i) => `<article class="engine" style="--i:${i}">
         <h3>${esc(name!)}</h3><p>${esc(body!)}</p>
@@ -288,12 +271,7 @@ ${figure(
 
 <section class="statute">
   <div class="wrap narrow">
-    ${figure(
-      'control-every-variable.png',
-      'Control every variable, deliver every time: the outcomes CONSTRUX is measured against.',
-      { width: 1120, height: 1400 },
-      'column right',
-    )}
+    ${figure('control-every-variable')}
     <div class="statute-mark">HGCRA 1996 · s.108 · s.111 · s.116</div>
     <h2>The statute that decides who gets paid</h2>
     <p>
@@ -316,12 +294,7 @@ ${figure(
 
 <section class="cta-band big">
   <div class="wrap">
-    ${figure(
-      'founder.png',
-      'Justin Nseya MCIOB, construction and project management leader, on site.',
-      { width: 1120, height: 1400 },
-      'portrait-plate',
-    )}
+    ${figure('founder')}
     <h2>Start with a record you can defend</h2>
     <p>A trial governs, records and computes. No card, no call, no sales qualification step.</p>
     <div class="cta-row">

@@ -26,6 +26,7 @@ import { matchRoute, ROUTES } from './routes.ts';
 import { renderLanding } from '../site/index.ts';
 import { robots, sitemap } from '../site/discovery.ts';
 import { serveStatic } from './static.ts';
+import { mediaDir } from '../site/media.ts';
 import { buildId } from './buildid.ts';
 
 /**
@@ -50,6 +51,10 @@ const APP_SHELL = join(WEB_ROOT, 'index.html');
 // a copy is the thing this is meant to prevent.
 const SHARED_ROOT = join(REPO_ROOT, 'shared');
 const SHARED_PREFIX = '/shared/';
+// The landing page's pictures. The root is `mediaDir()` rather than a constant
+// because it reads `SITE_MEDIA_PATH` on each call, which is what lets a test
+// point it at a temporary directory without reloading this module.
+const MEDIA_PREFIX = '/media/';
 
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
 
@@ -221,6 +226,22 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
       res.end(worker);
       logRequest(ctx, 200);
       return;
+    }
+
+    // The landing page's pictures, from wherever they are configured to live.
+    //
+    // Served from their own root rather than from `frontend/` because the whole
+    // point of `SITE_MEDIA_PATH` is that an uploaded picture can sit on the
+    // volume and survive a redeploy, which a path inside the image cannot. Ahead
+    // of the frontend so a file committed at `frontend/media/` cannot shadow the
+    // one the operator uploaded; when the path is unset both resolve to the same
+    // directory and this is simply the shorter way there.
+    if (ctx.method === 'GET' && ctx.path.startsWith(MEDIA_PREFIX)) {
+      const result = await serveStatic(mediaDir(), ctx.path.slice(MEDIA_PREFIX.length - 1), res, traceId, req);
+      if (result.served) {
+        logRequest(ctx, 200);
+        return;
+      }
     }
 
     // The shared vocabulary, from its own root. Served ahead of the frontend so
