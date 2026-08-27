@@ -66,6 +66,12 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // and build it.
   DesignPackage: { area: 'DESIGN_INFORMATION' },
   MIDP: { area: 'DESIGN_INFORMATION' },
+  // D-WF-07. With design rather than with safety, deliberately: its findings
+  // are about the design and its output is a design change, an RFI or a
+  // constraint. The residual risks it carries reach the safety file through the
+  // pre-construction information, which is where SAFETY_RAMS picks them up.
+  // Classifying it as safety would bar the designers whose review it is.
+  ConstructabilityReview: { area: 'DESIGN_INFORMATION' },
   // With the clause it answers, not with quality. QUALITY_COMMISSIONING is
   // phase-gated to CONSTRUCTION onwards, and a long-lead submittal raised in
   // design — which is the only time a fourteen-week item can be raised usefully

@@ -4939,8 +4939,71 @@ move is the permission matrix's answer, given once.
 model revisions and the coordination issue lifecycle — `Model` and `Clash` exist,
 the immutable run and the issue states do not), D-WF-06 (design change before
 baseline, distinct from the construction change `ChangeRequest` already covers),
-D-WF-07 (constructability, temporary works and residual design risk), and
-D-WF-08 with the 7.4 gate. D-WF-02, D-WF-03 and D-WF-05 are built.
+and D-WF-08 with the 7.4 gate. D-WF-02, D-WF-03, D-WF-05 and D-WF-07 are built.
+
+---
+
+### The review the people who build it hold before anybody freezes it
+
+D-WF-07. `backend/src/domain/constructability.ts`, seven routes, 28 tests.
+
+The cheapest hour on a construction project and the first one cancelled. What
+makes it worth recording is not the meeting; it is what happens to the findings.
+
+**The occasion is the four voices.** Construction, design, HSE and operations.
+A buildability review attended only by designers is a design review with a
+different heading, and the whole value is that the people who will build it, the
+people who will maintain it and the people who drew it are reading the same
+drawing at the same time. A review missing any one of them is refused, and the
+refusal names which.
+
+**Every finding becomes one of five things.** A design change, a risk somebody
+owns, an RFI, a constraint on the method, or a thing the review deliberately
+accepted. Those are five different outcomes with five different owners, and the
+disposition is required *at the point the finding is recorded* — "we will work
+out what to do with it" is how a review's output becomes a list nobody owns. The
+rationale is required too: a disposition chosen without a reason is one that
+will be argued about.
+
+*Accepted* is closed, not open: the decision is the discharge, and leaving it
+outstanding would fill the register with things somebody already answered. And a
+**critical** finding cannot be accepted — accepting is a legitimate answer to
+something the review decided to live with, a critical finding is by definition
+not that, and recording it as accepted would turn the severity into a label
+rather than a decision.
+
+**Access and testability stop a freeze.** Named by the specification, and for
+the same reason in both cases: a thing that cannot be safely reached or cannot
+be proved to work is a defect that only becomes visible once it is buried.
+`freezeBlockersFor` is exported for D-WF-08 to call rather than re-derive — a
+gate that reimplemented the rule would be a second answer to the same question.
+
+**Eliminate, reduce, communicate — and it is always the third that fails.** A
+residual risk names who is exposed and the drawing it lives on, because a hazard
+that survives into the works has to be findable *from* the works. It is then
+carried as an obligation with two states, not as a note: it is outstanding until
+it has reached both the pre-construction information and a method statement, and
+each of those is recorded by document reference. "It is in the PCI" with no
+reference is the assertion this record exists to replace. An **eliminated**
+hazard needs no communication — there is nothing left to tell anybody — so it is
+discharged on the spot rather than filling the register with work nobody has to
+do.
+
+**A temporary works category is assigned by a person, never inferred.** The
+specification says outright that the category and the checking regime cannot be
+derived by an agent, so the platform records who assigned it and refuses one
+with nobody's name on it — guessing would produce a designer of record for a
+falsework scheme nobody appointed. Design and check by the same party is refused
+above category 0 and permitted at category 0, which is where BS 5975 permits it.
+And the interface itself is what the *permanent* works assumes about the
+temporary one — the load path, the sequence, the props that stay in. That
+assumption is the thing that gets lost when the two designers are different
+firms, so it is required.
+
+**One thing deliberately absent: a review cannot be closed.** Findings close;
+the review is the occasion they came from and is finished when it happened. A
+review with a closed state invites the register to be tidied rather than
+discharged, which is the exact failure the disposition exists to prevent.
 
 ---
 

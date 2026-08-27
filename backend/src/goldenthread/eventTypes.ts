@@ -185,6 +185,18 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // The master plan is what the team plans add up to, so it is approved rather
   // than authored. APPROVE with `creates` says exactly that.
   def('MIDP_APPROVED', 'MIDP', 'APPROVE', 'DESIGN', { creates: true }),
+  // D-WF-07. The review where the people who will build a thing read the
+  // drawings before anybody freezes them. Findings, residual risks and
+  // temporary works interfaces all live on the review that produced them: a
+  // finding outside its occasion is a note, and the occasion is what makes it
+  // answerable.
+  def('CONSTRUCTABILITY_REVIEWED', 'ConstructabilityReview', 'CREATE', 'DESIGN', { creates: true }),
+  def('DESIGN_RISK_UPDATED', 'ConstructabilityReview', 'UPDATE', 'DESIGN'),
+  // Its own event: a temporary works interface carries a BS 5975 category
+  // somebody competent assigned, and the ledger should show it was raised
+  // rather than leave it inside a general update.
+  def('TEMPORARY_WORKS_INTERFACE_RAISED', 'ConstructabilityReview', 'UPDATE', 'DESIGN'),
+  def('REVIEW_ACTION_CLOSED', 'ConstructabilityReview', 'UPDATE', 'DESIGN'),
   def('SPECIFICATION_INGESTED', 'Specification', 'IMPORT', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),
   def('SPEC_CLAUSE_EXTRACTED', 'SpecClause', 'CREATE', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),
   def('DESIGN_MATURITY_ASSESSED', 'DesignMaturityAssessment', 'CREATE', 'DESIGN', { aiAllowed: true, requiresEvidence: true }),

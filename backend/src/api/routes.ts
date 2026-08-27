@@ -54,6 +54,7 @@ import * as planning from '../engines/planning.ts';
 import * as sitevisit from '../engines/sitevisit.ts';
 import * as award from '../domain/award.ts';
 import * as enquiry from '../domain/enquiry.ts';
+import * as constructability from '../domain/constructability.ts';
 import * as designplan from '../domain/designplan.ts';
 import * as measurement from '../domain/measurement.ts';
 import * as meetings from '../domain/meetings.ts';
@@ -5384,6 +5385,133 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) =>
       designplan.advanceDeliverable(projectContext(platform, ctx), ctx.params.packageId as string, body(ctx)),
   },
+
+  // ------------------------------------------------------- D-WF-07 constructability and residual design risk
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/constructability',
+    description: 'Reviews held, findings still open, what blocks a package freeze and which residual risks nobody has passed on',
+    handler: (platform, ctx) => constructability.constructabilityPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/constructability',
+    description: 'Hold the review. Refused without construction, design, HSE and operations in the room',
+    schema: {
+      type: 'object',
+      required: ['packageReference', 'zone', 'heldAt', 'attendees'],
+      properties: {
+        packageReference: stringField,
+        zone: stringField,
+        heldAt: stringField,
+        attendees: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['name', 'organisation', 'discipline'],
+            properties: { name: stringField, organisation: stringField, discipline: stringField },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => constructability.holdReview(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/constructability/:reviewId/findings',
+    description: 'Record a finding with the disposition it becomes — a change, a risk, an RFI, a method constraint or an acceptance',
+    schema: {
+      type: 'object',
+      required: ['area', 'severity', 'what', 'location', 'raisedBy', 'disposition', 'rationale', 'owner', 'by'],
+      properties: {
+        area: { type: 'string', enum: [...constructability.FINDING_AREA] },
+        severity: { type: 'string', enum: [...constructability.SEVERITY] },
+        what: { type: 'string' },
+        location: stringField,
+        raisedBy: stringField,
+        disposition: { type: 'string', enum: [...constructability.DISPOSITION] },
+        rationale: { type: 'string' },
+        owner: stringField,
+        by: stringField,
+        linkedRef: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      constructability.recordFinding(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/constructability/:reviewId/findings/close',
+    description: 'Close a finding with what actually resolved it',
+    schema: {
+      type: 'object',
+      required: ['reference', 'what'],
+      properties: { reference: stringField, what: { type: 'string' }, linkedRef: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      constructability.closeFinding(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/constructability/:reviewId/residual-risks',
+    description: 'Record a residual design risk: eliminated, reduced or communicated, and who is exposed to it',
+    schema: {
+      type: 'object',
+      required: ['hazard', 'whoIsExposed', 'treatment', 'what', 'shownOn'],
+      properties: {
+        hazard: { type: 'string' },
+        whoIsExposed: stringField,
+        treatment: { type: 'string', enum: [...constructability.RISK_TREATMENT] },
+        what: { type: 'string' },
+        shownOn: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      constructability.recordResidualRisk(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/constructability/:reviewId/residual-risks/communicate',
+    description: 'Record that a residual risk has reached the pre-construction information or a method statement, by reference',
+    schema: {
+      type: 'object',
+      required: ['reference', 'reached', 'where'],
+      properties: {
+        reference: stringField,
+        reached: { type: 'string', enum: ['PRE_CONSTRUCTION_INFORMATION', 'METHOD_STATEMENT'] },
+        where: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      constructability.communicateRisk(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/constructability/:reviewId/temporary-works',
+    description: 'Raise a temporary works interface with the BS 5975 category a competent person assigned, and who assigned it',
+    schema: {
+      type: 'object',
+      required: ['description', 'category', 'assignedBy', 'designer', 'checker', 'permanentWorksAssumption'],
+      properties: {
+        description: { type: 'string' },
+        category: { type: 'string', enum: ['0', '1', '2', '3'] },
+        assignedBy: stringField,
+        designer: stringField,
+        checker: stringField,
+        permanentWorksAssumption: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      constructability.raiseTemporaryWorks(projectContext(platform, ctx), ctx.params.reviewId as string, body(ctx)),
+  },
+
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/midp',
