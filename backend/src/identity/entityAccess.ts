@@ -353,6 +353,12 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // H-WF-04. The validation and the exchange sit beside the register they judge.
   AssetValidation: { area: 'HANDOVER_OM' },
   AssetExchange: { area: 'HANDOVER_OM' },
+  // H-WF-05. The pack and its readiness sit with handover; the transfer of
+  // control over the record itself is an evidence act, which is the area the
+  // regulator already reads through.
+  CompletionReadiness: { area: 'HANDOVER_OM' },
+  RegulatoryPack: { area: 'HANDOVER_OM' },
+  GoldenThreadTransfer: { area: 'EVIDENCE_AUDIT' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },

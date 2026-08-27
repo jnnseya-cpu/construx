@@ -6367,10 +6367,56 @@ one that was never in the export — is refused. Exporting a register that still
 carries validation errors is refused too: it does not fix them, it copies them
 somewhere harder to correct.
 
-**Still to build in the handover block:** H-WF-05 to H-WF-10, the
+---
+
+### What the platform will not do, and the three things a recipient confirms
+
+H-WF-05. `backend/src/domain/regulatorycompletion.ts`, six routes, 22 tests.
+
+The most consequential workflow in the handover stage, and the one where the
+platform's limits are stated first, in the module's own doc comment and here.
+
+**What it does not do.** It does not decide what any jurisdiction requires. The
+checklist is the specification's own list of required inputs, and the
+`jurisdiction` recorded against a readiness check says which regime the pack was
+assembled *for* — it does not encode that regime's law. Nothing here makes a
+legal classification, signs a declaration or submits anything: submission
+happens outside the platform, and what is recorded is that it happened, by whom,
+and what came back. Pretending otherwise would be the most dangerous thing this
+codebase could do, so it is refused by construction — every event carries
+`aiAllowed: false` and the declaration is a required field somebody signs.
+
+**AC-H-WF-05-01: exact versions.** A completion pack referencing "the as-built
+drawings" references nothing. Every evidence item names its document *and its
+version*, because the question asked of a completion pack years later is which
+revision was in it.
+
+**A readiness check reports rather than refuses.** One that could only be run
+when it would pass would never be run at all. The pack *approval* is where the
+refusals live: a missing mandatory item, or an open completion blocker — which
+prevents the application, not merely the occupation.
+
+**AC-H-WF-05-02: the recipient confirms three separate things.** Transferring
+the golden thread is not sending a link. The accountable person confirms
+**access**, **completeness** and a **usable format**, and any one of them false
+means the duty has not moved — because they fail separately: a recipient can
+have access to something incomplete, or receive something complete in a format
+they cannot open. The transfer needs **two authorities**: `EVIDENCE_AUDIT`
+import/export, which nearly every delivery role holds and should, *and*
+`PROJECT_SETUP` approve, because transferring control of the duty is a
+governance act rather than an export.
+
+**AC-H-WF-05-03: conditions outlive the project.** A certificate granted subject
+to conditions is a certificate with work still to do. Each condition needs an
+owner and a date, and `regulatoryConditions` exports them for the handover
+obligations to inherit by their own reference. A refusal leaves the submitted
+pack untouched — it is the evidence of what was applied for — and a corrective
+version is a new pack that names it.
+
+**Still to build in the handover block:** H-WF-06 to H-WF-10, the
 `HANDOVER_ACCEPTED` gate, the 11.4 gate and the stage workspace described in
 11.2. The stage control, 11.1, 11.2, H-WF-01 to H-WF-10, 11.4 and the
-cross-stage sections 12 to 14.4 are recorded verbatim in `docs/WORKFLOWS.md`;
+cross-stage sections 12 to 15.3 are recorded verbatim in `docs/WORKFLOWS.md`;
 several arrived out of sequence during the build and are recorded there in the
 order they were sent.
 

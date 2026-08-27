@@ -1007,6 +1007,20 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // silently rejected four hundred rows. APPROVE, and the totals have to add up.
   def('ASSET_RECONCILED', 'AssetExchange', 'APPROVE', 'HANDOVER_OM'),
 
+  // --- H-WF-05 regulatory completion and Golden Thread transfer -------------
+  // Nothing here makes a legal classification, signs a declaration or submits
+  // anything: submission happens outside this platform and what is recorded is
+  // that it happened, by whom, and what came back.
+  def('COMPLETION_READINESS_CHECKED', 'CompletionReadiness', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('REGULATORY_PACK_APPROVED', 'RegulatoryPack', 'APPROVE', 'GOVERNANCE', { creates: true }),
+  def('REGULATORY_SUBMISSION_RECORDED', 'RegulatoryPack', 'UPDATE', 'GOVERNANCE'),
+  // Evidence-bearing on a grant: the certificate is the document occupation,
+  // insurance and half the operational obligations run from.
+  def('COMPLETION_CERTIFICATE_RECEIVED', 'RegulatoryPack', 'UPDATE', 'GOVERNANCE'),
+  // The recipient confirms access, completeness and a usable format, and any one
+  // of them false means the duty has not moved.
+  def('GOLDEN_THREAD_TRANSFERRED', 'GoldenThreadTransfer', 'ISSUE', 'EVIDENCE', { creates: true }),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

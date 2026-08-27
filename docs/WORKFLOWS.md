@@ -2476,3 +2476,40 @@ BIM/open standards	IFC including current supported schema, BCF, IDS, COBie/confi
 IoT/BMS	Point/tag mapping, units, sampling, quality flag, timestamp/time zone, retention and anomaly event
 Weather/GIS/cost data	Provider, licence, location, effective time/base date, unit/currency, provenance and cache policy
 ```
+
+## 15 — AI-agent control plane and automation rules
+
+```
+15.1 Three visible AI modes
+Mode	User experience	Permitted action
+Workflow AI	Named task button inside a deterministic workflow	Extract, compare, draft, forecast or validate into a reviewable candidate
+Copilot AI	Role- and module-scoped conversation	Query, explain, draft and create proposed records; no unapproved high-risk action
+Knowledge AI	Grounded search/Q&A across permitted project sources	Return answer with source anchors, confidence, gaps and no unsupported assertion
+```
+
+## 15.2
+
+```
+15.2 AI execution sequence
+1.	Authorise actor, role, phase, object state, sensitivity and allowed tools.
+2.	Resolve exact input entity/file/event versions and data scope; redact or exclude disallowed fields.
+3.	Estimate ACU and provider cost; show user balance, cap and approval requirement.
+4.	On confirmation, place ACU hold and create AIRequest with idempotency key.
+5.	Route provider/model by task, risk, privacy, latency, context and cost policy; record policy version.
+6.	Retrieve grounded context and execute only allow-listed tools with least-privilege service identity.
+7.	Validate output schema, citations/source anchors, safety rules and confidence threshold.
+8.	Persist AIExecution, raw/structured output, provenance and proposed entity changes.
+9.	Require human disposition Accept, Edit and Accept, Reject or Request Re-run for material output.
+10.	Commit accepted output to entity/event stream; settle actual ACU only after durable commit; release unused hold.
+```
+
+## 15.3
+
+```
+15.3 Risk tiers and approval
+Tier	Examples	Automation ceiling
+A - Assistive	Summarise, classify, OCR, suggest tags	May save draft candidate; user can correct
+B - Analytical	Compare bids, detect clashes, forecast delay/cost	Publish insight only after authorised review
+C - Controlled draft	RAMS, notice, valuation, claim, regulatory pack	Draft only; mandatory domain approval and evidence review
+D - Prohibited autonomy	Approve design, safety, baseline, payment, claim, completion, competence or regulatory submission	Human command required; AI cannot execute or impersonate signatory
+```

@@ -38,6 +38,7 @@ import * as progressverification from '../domain/progressverification.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
+import * as regulatorycompletion from '../domain/regulatorycompletion.ts';
 import * as reliability from '../domain/reliability.ts';
 import * as informationcontrol from '../domain/informationcontrol.ts';
 import * as handoverrequirements from '../domain/handoverrequirements.ts';
@@ -5539,6 +5540,151 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => systemisation.declareTemporaryOperation(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- H-WF-05 regulatory completion and Golden Thread transfer
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/regulatory-completion',
+    description: 'Readiness checks, packs, the decision and its conditions, and whether the thread has transferred',
+    handler: (platform, ctx) => regulatorycompletion.regulatoryPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/regulatory-completion/readiness',
+    description: 'Run the completion checklist. The jurisdiction is recorded; the platform does not encode its law',
+    schema: {
+      type: 'object',
+      required: ['reference', 'jurisdiction', 'evidence', 'checkedBy'],
+      properties: {
+        reference: stringField,
+        jurisdiction: stringField,
+        checkedBy: stringField,
+        blockers: { type: 'array', items: { type: 'string' } },
+        evidence: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['key', 'reference', 'version', 'evidenceRef'],
+            properties: {
+              key: { type: 'string', enum: regulatorycompletion.COMPLETION_EVIDENCE.map((entry) => entry.key) },
+              reference: stringField,
+              version: stringField,
+              evidenceRef: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => regulatorycompletion.checkCompletionReadiness(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/regulatory-completion/:readinessId/pack',
+    description: 'Approve the pack for submission, under a named declaration by a named role',
+    schema: {
+      type: 'object',
+      required: ['reference', 'approvedBy', 'approverRole', 'declaration'],
+      properties: {
+        reference: stringField,
+        approvedBy: stringField,
+        approverRole: stringField,
+        declaration: { type: 'string' },
+        supersedes: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      regulatorycompletion.approveRegulatoryPack(
+        projectContext(platform, ctx),
+        ctx.params.readinessId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/regulatory-packs/:packId/submission',
+    description: 'Record that the application was submitted, with the receipt that came back',
+    schema: {
+      type: 'object',
+      required: ['regulator', 'route', 'submissionReference', 'submittedBy', 'submittedAt', 'receipt'],
+      properties: {
+        regulator: stringField,
+        route: { type: 'string', enum: ['INTEGRATED', 'MANUAL'] },
+        submissionReference: stringField,
+        submittedBy: stringField,
+        submittedAt: stringField,
+        receipt: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      regulatorycompletion.recordSubmission(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/regulatory-packs/:packId/decision',
+    description: 'Record the regulator’s decision. A refusal preserves the pack that was submitted',
+    schema: {
+      type: 'object',
+      required: ['decision', 'decisionReference', 'decidedOn', 'recordedBy'],
+      properties: {
+        decision: { type: 'string', enum: ['GRANTED', 'REFUSED'] },
+        decisionReference: stringField,
+        decidedOn: stringField,
+        recordedBy: stringField,
+        certificateHash: stringField,
+        reasons: { type: 'array', items: { type: 'string' } },
+        conditions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['reference', 'condition', 'owner', 'by'],
+            properties: { reference: stringField, condition: { type: 'string' }, owner: stringField, by: stringField },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      regulatorycompletion.recordCompletionDecision(
+        projectContext(platform, ctx),
+        ctx.params.packId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/golden-thread/transfer',
+    description: 'Transfer control of the golden thread. The recipient confirms access, completeness and usable format',
+    schema: {
+      type: 'object',
+      required: ['toParty', 'toPerson', 'role', 'format', 'scope', 'transferredBy', 'recipientConfirmation'],
+      properties: {
+        toParty: stringField,
+        toPerson: stringField,
+        role: { type: 'string', enum: [...regulatorycompletion.RESPONSIBLE_ROLE] },
+        format: stringField,
+        scope: { type: 'string' },
+        transferredBy: stringField,
+        recipientConfirmation: {
+          type: 'object',
+          required: ['access', 'completeness', 'usableFormat', 'confirmedBy'],
+          properties: {
+            access: { type: 'boolean' },
+            completeness: { type: 'boolean' },
+            usableFormat: { type: 'boolean' },
+            confirmedBy: stringField,
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => regulatorycompletion.transferGoldenThread(projectContext(platform, ctx), body(ctx)),
   },
 
   // ------------------------------------------------------- H-WF-04 asset register validation and exchange
