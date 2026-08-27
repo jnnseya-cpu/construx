@@ -5315,10 +5315,71 @@ event as the authority — withdrawing is that authority saying something
 different, not a new kind of act, and the record of what was authorised and
 against which revisions stays exactly where it was.
 
-**Still to build in the construction block:** CN-WF-02 onwards, the stage
+---
+
+### The four things the programme was missing
+
+CN-WF-02. `backend/src/domain/programmecontrol.ts`, five routes, 27 tests.
+
+**Most of this workflow was already built and none of it was rebuilt.**
+`engines/planning.ts` holds the critical path, the programme baseline, the
+six-week lookahead, the Last Planner commitment rule, the constraint register,
+PPC and productivity. This module owns only the four things that were genuinely
+absent.
+
+**Logic nobody validated.** The baseline was approved by running the critical
+path over whatever logic happened to be in the ledger. A programme with forty
+open ends has a critical path; it is not the project's. `validateProgrammeLogic`
+reports open ends at both ends, dangling links, self-dependencies, duplicate
+logic, negative float, detached float, negative durations and out-of-sequence
+work — each **naming the activity**, with the four that make the arithmetic
+wrong rather than untidy marked critical. The critical path is still computed
+over the links that resolve, which is exactly why a dangling link is worth
+reporting: it silently drops out of the answer.
+
+**A forecast that overwrites the baseline.** The baseline is what delay is
+measured against, so a forecast that replaced it would destroy the only
+reference the measurement has, and every extension of time argument with it. A
+forecast is its own record, carrying the baseline it was taken from by name and
+its variance against it, and a **second baseline is refused unless a change
+request authorises it** — a baseline replaced quietly is a delay that measures
+itself against its own new position and always reports zero. The forecast also
+carries the hash of the logic it ran over, so the position can say the programme
+has moved under it without anybody having to remember to check.
+
+Building this found a real defect in the existing code: `recalculateProgramme`
+writes the live recalculation onto a `ProgrammeBaseline` record marked `LIVE`,
+so counting every record of that type as a baseline made the re-baseline refusal
+fire on the demo project and would have quoted every variance against a
+recalculation rather than against the contract programme. `approvedBaselines`
+filters on the type and status, and says why in the code.
+
+**A blocked task with nothing behind the word.** AC-CN-WF-02-02 asks for a
+reason, an owner, an impact and a next action, and all four are required —
+"blocked" with none of them is a way of not saying who has to do what. A task
+cannot be marked complete without the verification evidence the third exception
+control names.
+
+**Out-of-sequence progress with no decision behind it.** Retained logic and
+progress override give different completion dates from the same facts, so the
+status update carries which was chosen and why, per activity. A setting
+configured once at the start of a project is a decision nobody took. There is
+one definition of "started" — a percentage above zero *or* an in-progress or
+complete status — used by the validation and the status update alike, because
+two of them would let the same activity be out of sequence on the report and in
+sequence at the point it was recorded.
+
+Reproducibility, AC-CN-WF-02-01: every calculation hashes the logic it ran over
+— durations, dependencies, types and lags, sorted canonically — so two runs over
+the same stored programme give the same hash and the same critical path, and a
+different hash is evidence the programme moved rather than noise from record
+ordering.
+
+**Still to build in the construction block:** CN-WF-03 onwards, the stage
 control (entry and exit conditions, `CONSTRUCTION_COMPLETION_ACCEPTED`) and the
-stage workspace described in 9.2. The specifications received so far are
-recorded verbatim in `docs/WORKFLOWS.md`.
+stage workspace described in 9.2. The specifications received so far — the stage
+control, 9.1, 9.2 and CN-WF-01 to CN-WF-05 — are recorded verbatim in
+`docs/WORKFLOWS.md`.
 
 ---
 

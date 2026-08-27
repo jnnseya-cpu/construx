@@ -2,6 +2,7 @@ import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { startBlockedReason } from '../domain/mobilisation.ts';
+import { baselineChangeBlockedReason } from '../domain/programmecontrol.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
 import { isBusinessDay } from './maths/constructionAct.ts';
 import {
@@ -291,9 +292,23 @@ export function recalculateProgramme(
 /** Freeze a baseline. Everything afterwards is measured against this. */
 export function approveBaseline(
   ctx: EngineContext,
-  input: { version: string; reason: string; contractualCompletionDate: string },
+  input: {
+    version: string;
+    reason: string;
+    contractualCompletionDate: string;
+    /**
+     * CN-WF-02's first exception control: re-baselining is a change to the
+     * contract programme, so a second baseline needs the change request that
+     * authorised it. The first baseline needs nothing — there is no programme
+     * to change.
+     */
+    changeRequestRef?: string;
+  },
 ): { baselineId: string; durationDays: number } {
   authorise(ctx, 'PROGRAMME_BASELINES', 'A', { lifecyclePhase: currentPhase(ctx) });
+
+  const blocked = baselineChangeBlockedReason(ctx, input.changeRequestRef);
+  if (blocked) throw new DomainError('REBASELINE_UNAUTHORISED', blocked, 409);
 
   const { activities, dependencies } = loadNetwork(ctx);
   const cpm = calculateCPM(activities, dependencies);
@@ -329,6 +344,7 @@ export function approveBaseline(
       status: 'APPROVED',
       reason: input.reason,
       contractualCompletionDate: input.contractualCompletionDate,
+      ...(input.changeRequestRef ? { changeRequestRef: input.changeRequestRef } : {}),
       durationDays: cpm.projectDuration,
       criticalPathTaskIds: cpm.criticalPath,
       snapshot,

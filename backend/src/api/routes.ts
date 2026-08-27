@@ -32,6 +32,7 @@ import * as cdm from '../domain/cdm.ts';
 import * as portfolio from '../domain/portfolio.ts';
 import * as correspondence from '../domain/correspondence.ts';
 import * as procurement from '../domain/procurement.ts';
+import * as programmecontrol from '../domain/programmecontrol.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
@@ -3769,10 +3770,99 @@ export const ROUTES: Route[] = [
         version: stringField,
         reason: { type: 'string', minLength: 4 },
         contractualCompletionDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        changeRequestRef: stringField,
       },
       additionalProperties: false,
     },
     handler: (platform, ctx) => planning.approveBaseline(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ---------------------------- CN-WF-02 programme logic, forecast and weekly control
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/programme/logic',
+    description: 'Open ends, dangling logic, negative float and out-of-sequence work, each named rather than counted',
+    handler: (platform, ctx) => programmecontrol.validateProgrammeLogic(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/programme/control',
+    description: 'Baseline against forecast, what is blocked and why, and whether the programme has moved since the forecast',
+    handler: (platform, ctx) => programmecontrol.programmeControlPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/forecasts',
+    description: 'Approve a current forecast. A separate record from the baseline, because the baseline is what delay is measured against',
+    schema: {
+      type: 'object',
+      required: ['version', 'reason', 'forecastCompletionDate'],
+      properties: {
+        version: stringField,
+        reason: { type: 'string', minLength: 4 },
+        forecastCompletionDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => programmecontrol.approveForecast(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/lookaheads/:lookaheadId/freeze',
+    description: 'Freeze the weekly work plan. A week that can be reopened is one whose promises get edited to match the outcome',
+    schema: {
+      type: 'object',
+      required: ['weekEnding', 'note'],
+      properties: { weekEnding: stringField, note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      programmecontrol.freezeWeeklyPlan(projectContext(platform, ctx), ctx.params.lookaheadId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tasks/:taskId/status',
+    description: 'Daily status. Blocked needs a reason, an owner, an impact and a next action; complete needs its evidence',
+    schema: {
+      type: 'object',
+      required: ['status'],
+      properties: {
+        status: { type: 'string', enum: [...programmecontrol.TASK_STATUS] },
+        note: { type: 'string' },
+        blocked: {
+          type: 'object',
+          required: ['reason', 'owner', 'impact', 'nextAction'],
+          properties: {
+            reason: { type: 'string' },
+            owner: stringField,
+            impact: { type: 'string' },
+            nextAction: { type: 'string' },
+          },
+          additionalProperties: false,
+        },
+        verification: {
+          type: 'object',
+          required: ['description', 'hash'],
+          properties: { description: { type: 'string' }, hash: stringField },
+          additionalProperties: false,
+        },
+        sequence: {
+          type: 'object',
+          required: ['decision', 'rationale'],
+          properties: {
+            decision: { type: 'string', enum: [...programmecontrol.SEQUENCE_DECISION] },
+            rationale: { type: 'string' },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      programmecontrol.updateTaskStatus(projectContext(platform, ctx), {
+        ...body(ctx),
+        taskId: ctx.params.taskId as string,
+      }),
   },
   {
     method: 'POST',

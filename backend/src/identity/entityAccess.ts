@@ -130,6 +130,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   Task: { area: 'WORKPACKAGES_TASKS' },
   Dependency: { area: 'PROGRAMME_BASELINES' },
   ProgrammeBaseline: { area: 'PROGRAMME_BASELINES' },
+  // The same area as the baseline it is a forecast against — reading one
+  // without the other is how a variance gets quoted with no reference.
+  ProgrammeForecast: { area: 'PROGRAMME_BASELINES' },
   DelayRiskSnapshot: { area: 'PROGRAMME_BASELINES' },
   LookaheadPlan: { area: 'LOOKAHEAD_CONSTRAINTS' },
   Constraint: { area: 'LOOKAHEAD_CONSTRAINTS' },

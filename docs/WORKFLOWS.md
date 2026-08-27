@@ -1088,3 +1088,120 @@ Acceptance criteria
 •	AC-CN-WF-02-02: Each blocked task has reason, owner, impact and next action.
 •	AC-CN-WF-02-03: Baseline, current forecast and what-if scenarios are visually distinct.
 ```
+
+## CN-WF-03
+
+```
+CN-WF-03 - Offline daily diary and voice field capture
+Primary owner: Site Manager / Supervisor  |  Trigger: Shift start/during shift/shift close
+Required inputs
+•	Date, shift, supervisor and weather
+•	WBS activity, package, location/zone and workface
+•	labour role/count/hours; plant ID/hours/idle/fuel
+•	materials/deliveries/quantities/delivery-note evidence
+•	progress quantities, issues, delays, instructions, visitors, safety/quality events and photos
+Deterministic flow
+1.	Create local draft with device ID, local timestamp and stable client-generated UUID.
+2.	Capture voice in segments; transcribe and map statements to structured sections while retaining audio.
+3.	Attach photos with capture time, author, location and device metadata; user confirms tags.
+4.	Validate mandatory WBS/location/unit and anomalous totals before submission.
+5.	Supervisor reviews and submits once; edits after submission create amendment version with reason.
+6.	Sync queue uploads metadata then attachments; server applies idempotency and conflict rules.
+AI-agent duties and human guardrails
+•	Clean dictation, categorise events and suggest linked tasks/packages.
+•	Detect potential delay/change/safety/quality candidates but does not issue formal records automatically.
+Outputs
+•	DailyLog Revision
+•	Labour/Plant/Material Records
+•	ProgressCandidates
+•	Issue Candidates
+•	EvidenceItems
+Exception controls
+•	No network does not block capture.
+•	Conflicting concurrent edits preserve both versions and require resolution for material fields.
+•	Device time variance is stored; server receipt time never replaces original capture time.
+Events: DAILY_LOG_DRAFTED | DAILY_LOG_SUBMITTED | OFFLINE_SYNC_COMPLETED | DAILY_LOG_AMENDED
+APIs:   POST /v1/projects/{id}/daily-logs | POST /v1/sync/batches | POST /v1/daily-logs/{id}:amend
+Acceptance criteria
+•	AC-CN-WF-03-01: Airplane-mode capture survives app restart and later syncs exactly once.
+•	AC-CN-WF-03-02: Submitted log has author, shift, WBS, location and immutable evidence references.
+•	AC-CN-WF-03-03: Amendment displays before/after and reason without destroying original.
+```
+
+## CN-WF-04
+
+```
+CN-WF-04 - Progress measurement, verification and productivity
+Primary owner: Site Manager → Planner / QS verifier  |  Trigger: Daily/weekly progress submission or reality capture
+Required inputs
+•	Baseline activity quantity and measurement rule
+•	reported installed quantity/location/date
+•	photo/video/scan/survey/test evidence
+•	labour/plant hours and conditions
+•	prior cumulative progress and rework
+Deterministic flow
+1.	Create progress claim against WBS activity, cost code and location.
+2.	Validate unit, cumulative ceiling, duplicate time/location and required evidence.
+3.	Compare field claim with prior records, imagery/model/survey where available.
+4.	Authorised verifier Accepts, Adjusts with reason, or Rejects; preserve submitted value.
+5.	Update actual start/finish, remaining duration, productivity and earned value using accepted data.
+6.	Forecast downstream milestones and create variance/underperformance actions.
+AI-agent duties and human guardrails
+•	Estimate visual progress and detect anomalies as a comparison signal.
+•	Explain productivity variance using evidence; never certify payment or progress alone.
+Outputs
+•	ProgressSubmission
+•	VerifiedProgress
+•	ProductivitySnapshot
+•	Programme/EVM Update
+•	VarianceAction
+Exception controls
+•	Cumulative quantity above control total blocks acceptance until scope/change is resolved.
+•	Rework is recorded separately and must not inflate earned progress.
+•	Adjusted value requires verifier rationale and evidence.
+Events: PROGRESS_REPORTED | PROGRESS_VERIFIED | PROGRESS_ADJUSTED | PRODUCTIVITY_ANALYSED | FORECAST_UPDATED
+APIs:   POST /v1/tasks/{id}/progress | POST /v1/progress/{id}:verify | GET /v1/projects/{id}/productivity
+Acceptance criteria
+•	AC-CN-WF-04-01: Submitted and accepted quantities remain separately auditable.
+•	AC-CN-WF-04-02: Programme, earned value and valuation reference the same accepted progress version.
+•	AC-CN-WF-04-03: Duplicate imagery/reporting does not double-count progress.
+```
+
+## CN-WF-05
+
+```
+CN-WF-05 - Resource, material, delivery and procurement control
+Primary owner: Construction Manager / Procurement Manager  |  Trigger: Lookahead demand, order event or site delivery
+Required inputs
+•	Planned resource curve and activity demand
+•	labour/plant allocation and competence/inspection status
+•	purchase order/subcontract, manufacturing and logistics milestones
+•	delivery booking, delivery note, quantity, batch/heat/serial and condition
+•	required-on-site date, storage and preservation requirements
+Deterministic flow
+1.	Time-phase demand from programme and compare with committed supply.
+2.	Track requisition → RFQ → order → design approval → manufacture → FAT → shipment → customs → delivery → acceptance.
+3.	Book delivery against site access and lifting/storage capacity.
+4.	On arrival, reconcile order/dispatch/delivery quantities and inspect condition/documentation.
+5.	Quarantine rejected or unverified material; create shortage/damage/nonconformance records.
+6.	Update inventory, activity readiness, commitments, accrual and forecast impact.
+AI-agent duties and human guardrails
+•	Forecast shortages/late delivery and suggest expediting or resequencing.
+•	Extract delivery/serial data with human confirmation for safety-critical items.
+Outputs
+•	Demand/Supply Plan
+•	ProcurementStatus
+•	DeliveryRecord
+•	MaterialTraceability Record
+•	Inventory/Accrual Update
+Exception controls
+•	Safety-critical product without certificate/traceability remains quarantined.
+•	Partial/over/short delivery creates explicit reconciliation exception.
+•	Substitution routes through technical submittal/change control.
+Events: RESOURCE_DEMAND_UPDATED | ORDER_PLACED | MANUFACTURING_MILESTONE_UPDATED | DELIVERY_RECEIVED | MATERIAL_QUARANTINED
+APIs:   POST /v1/projects/{id}/procurement-items | POST /v1/deliveries | POST /v1/deliveries/{id}:accept
+Acceptance criteria
+•	AC-CN-WF-05-01: Long-lead status traces from programme need date to order/manufacture/logistics evidence.
+•	AC-CN-WF-05-02: Accepted quantity updates inventory once and financial accrual consistently.
+•	AC-CN-WF-05-03: Material/asset serials can be traced to installed location and test evidence.
+```

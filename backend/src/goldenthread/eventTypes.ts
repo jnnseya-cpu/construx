@@ -429,6 +429,19 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('TASK_UPDATED', 'Task', 'UPDATE', 'DELIVERY'),
   def('DEPENDENCY_CREATED', 'Dependency', 'CREATE', 'DELIVERY'),
   def('PROGRAMME_BASELINE_APPROVED', 'ProgrammeBaseline', 'APPROVE', 'DELIVERY', { requiresEvidence: true, creates: true }),
+  // CN-WF-02. A separate record from the baseline, and that is the whole point:
+  // the baseline is what delay is measured against, so a forecast that replaced
+  // it would destroy the only reference the measurement has — and every
+  // extension of time argument on the project with it.
+  def('PROGRAMME_FORECAST_APPROVED', 'ProgrammeForecast', 'APPROVE', 'DELIVERY', { creates: true }),
+  // The week stops moving. A frozen week that can be reopened is one whose
+  // promises get edited to match what happened, and PPC over an edited plan
+  // measures nothing.
+  def('WEEKLY_PLAN_FROZEN', 'LookaheadPlan', 'FREEZE', 'DELIVERY'),
+  // Distinct from PROGRESS_RECORDED, which is a measurement. This is a
+  // statement about the state of the work — including blocked, which a
+  // percentage cannot express at all.
+  def('PROGRESS_STATUS_UPDATED', 'Task', 'UPDATE', 'DELIVERY'),
   def('PROGRAMME_RECALCULATED', 'ProgrammeBaseline', 'EXECUTE', 'DELIVERY'),
   def('LOOKAHEAD_PUBLISHED', 'LookaheadPlan', 'CREATE', 'DELIVERY'),
   // The weekly review is what makes a lookahead Last Planner rather than a
