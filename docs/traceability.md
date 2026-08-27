@@ -335,6 +335,95 @@ pricing. The build still carries the earlier model.
 
 ---
 
+## Cross-stage sections 12 to 18, and the appendices
+
+These arrived as specification after the lifecycle workflows were built, and
+much of what they describe already existed — they are largely a written
+statement of the architecture rather than a list of new features. This table is
+the audit of which parts are actually met, taken against the code rather than
+against intent.
+
+### 12 — Cross-stage state machines and handoffs
+
+| Requirement | Status | Where |
+|---|---|---|
+| 12.1 Universal stage state machine | **Partial** | `domain/structure.transitionPhase` moves a project between lifecycle phases and records direction (`FORWARD`/`REGRESSION`) with a justification. There is no separate per-object state machine enumerating the 12.1 states as a shared type; each workflow carries its own status vocabulary |
+| 12.2 Handoff contract | **Partial** | Each stage gate's `DOWNSTREAM_CREATED` clause enforces that the next stage's obligations exist with owners before the gate passes — 9.4, 10.4 and 11.4 all do this. There is no single declarative handoff-contract object |
+| 12.3 The automatic handoffs (Concept→…→Operations) | **Partial** | The chain is proven end to end in `tests/lifecycle.test.ts`, and H-WF-09's `activateOperations` derives operations from accepted data without re-entry. The handoffs are implemented workflow by workflow, not as one table-driven mechanism |
+
+### 13 — Canonical domain and data model
+
+| Requirement | Status | Where |
+|---|---|---|
+| 13 Canonical domain model | **Built** | `identity/entityAccess.ts` is the single classification of every entity type to a capability area and sensitivity; `goldenthread/eventTypes.ts` is the closed event catalogue |
+| 13.1 Canonical submission envelope | **Partial** | Every write goes through one `write()` in `engines/context.ts` carrying actor, source, correlation id, entity, evidence and policy. It is not exposed as a named public submission-envelope schema |
+| 13.2 Data validation classes | **Built** | Route-level JSON Schema on every write route, plus domain-level refusals that carry an RFC 7807 problem type and a machine-readable code |
+
+### 14 — APIs and events
+
+| Requirement | Status | Where |
+|---|---|---|
+| 14.1 API conventions | **Built** | `api/middleware.ts` — RFC 7807 problem+json, `x-correlation-id` on every response, `buildTrace`/`logRequest` |
+| 14.1b Representative endpoints | **Built** | 642 routes registered in `api/routes.ts`, covered by real HTTP tests |
+| 14.2 Golden Thread event envelope | **Built** | `goldenthread/types.ts` — actor, source, entity, action, before/after hash, diff, evidence refs, AI block, policy block, correlation and causation ids, chain hash |
+| 14.3 Event processing guarantees | **Partial** | Append-only with a hash chain, a durable journal and replay verification are built. Operation-id idempotency exists for field sync. There is **no transactional outbox** — the ledger is in-process, which `STATE.md` records under "what is not built" |
+| 14.4 Integration adapters | **Design only** | Modelled as inputs the engines accept; no adapter is connected to a real external system |
+
+### 15 — AI control plane
+
+| Requirement | Status | Where |
+|---|---|---|
+| 15.1 Three visible AI modes | **Built** | Workflow AI (named task buttons), Copilot and the Knowledge/audit read are all in the console and named at the point of use |
+| 15.2 AI execution sequence | **Partial** | Authorisation, input resolution, ACU estimate and hold, provider routing with fallback, ledger write and human disposition are all built (`ai/orchestrator.ts`, `engines/context.runAI`). Steps that are **not** built: no prompt/template version is recorded, and no retrieval snapshot is stored |
+| 15.3 Risk tiers A–D and automation ceiling | **Partial** | The ceiling is enforced, but through a different mechanism than the specification's four tiers: `aiAllowed` on each event type in the closed catalogue, defaulting to false. Tier D — "AI cannot execute or impersonate signatory" — is met by construction, because every approval, completion, competence and regulatory event carries `aiAllowed: false`. The A/B/C gradations are not modelled as named tiers |
+| 15.4 Mandatory AI output schema | **Partial** | The AI event block carries provider, model class, ACU held and consumed, input refs, confidence, policy id and decision. It does **not** carry assumptions, known gaps, alternatives considered, or a prompt/template version — which is exactly why clause five of every stage gate reads `NOT_ASSESSABLE` rather than passing |
+| 15.5 Confidence and failure policy | **Partial** | Provider timeout and fallback are built and tested, cross-provider results are identified, and a wallet with no balance refuses the call rather than running it free. Configurable per-task confidence thresholds and a gold-set evaluation harness are not built |
+
+### 16 — Non-functional, security and offline
+
+| Requirement | Status | Where |
+|---|---|---|
+| Security | **Built** | TLS/HSTS headers, tenant isolation on every read, RBAC/ABAC, a tight CSP, secrets server-side only |
+| Integrity | **Built** | SHA-256 throughout, immutable append-only events, replay verification, hash-chained ledger |
+| Offline | **Built** | `field/sync.ts` — client-minted operation ids, device timestamps, base state hash, typed conflicts |
+| Observability | **Built** | Trace/correlation on every request, authz decisions logged, sensitive values redacted |
+| Accessibility | **Partial** | Audited and fixed against the automated WCAG 2.2 AA checks in this build — see `STATE.md`. Not a conformance statement; reflow, announcement order and the cognitive criteria are unaudited |
+| Availability, Scale, Business continuity | **Design only** | Single instance by design; the ledger is in-process. Multi-zone, failover and RPO/RTO need the Postgres design that is not implemented |
+| Privacy | **Partial** | Sensitivity classification and export redaction are built; H-WF-06 and H-WF-10 both take the structural approach of having no field a name could occupy. There is **no personal-data tier** in the sensitivity ladder and no retention/deletion engine |
+| 16.1 Offline conflict policy | **Partial** | Stable client id, idempotent duplicates, base state hash and typed conflict resolutions are built, and device time is preserved alongside server time. Not built: `expectedVersion` field-level merge of non-conflicting scalars, and a first-class `Conflict` record for human resolution — a conflict is currently resolved at push time and reported, not queued |
+
+### 17 — Quality assurance
+
+| Requirement | Status | Where |
+|---|---|---|
+| 17.1 Unit/property tests | **Built** | 3,231 tests covering formulas, date logic, state guards, hash canonicalisation and permission decisions |
+| 17.1 End-to-end role tests | **Built** | Every workflow tested from a permitted role and a denied role; maker-checker and party separation asserted where the domain requires them |
+| 17.1 Offline/device tests | **Partial** | Duplicate submit, conflict and clock handling are tested. Process kill, app upgrade and two-device interleaving are not |
+| 17.1 AI evaluations | **Design only** | No gold-set, no drift monitoring, no prompt-injection suite |
+| 17.1 Performance/resilience tests | **Partial** | Provider outage and fallback are tested. Peak ingest, queue backlog, failover and restore are not |
+| 17.2 E2E acceptance scenarios | **Partial** | The *behaviours* the twelve scenarios describe have test coverage — AI fallback on an empty wallet, a regulator refused a write and an AI run, a failed test whose prior data stays immutable, award converting to live commercial controls, and the eleven-stage chain end to end. What does **not** exist is the twelve scenarios written as twelve named acceptance tests, which is what 17.2 asks for; the coverage is spread across the suites that own each behaviour and has not been mapped scenario by scenario. E2E-02 additionally depends on the unbuilt C-WF concept workflows, and E2E-05 is tested at the sync layer rather than on a device |
+| 17.3 Global Definition of Done | **Partial** | The code, test, no-fake-data and state-documentation clauses are held to on every change. Migration/backfill and rollback runbooks exist for deployment; there is no data migration because there is no database |
+
+### 18 and the appendices
+
+| Requirement | Status | Where |
+|---|---|---|
+| 18 Build sequence phases 0–4 | **Built** | Delivered in the order the section prescribes: control foundation, input spine, tender/commercial, field delivery, then commissioning and handover |
+| 18 Phase 5 intelligence hardening | **Partial** | Specialist agents, scenario forecasting and organisation memory are built; the evaluation harness and scale work are not |
+| 18.1 Epic naming | **Not adopted** | The build is organised by lifecycle stage and workflow id rather than by the EPIC-* labels. No code change would follow from adopting them |
+| A.1 KPI calculation rules | **Partial** | Stage completeness, SPI, CPI, forecast final cost, unapproved change exposure, design readiness, commissioning readiness and handover readiness are all implemented as derivations. Milestone confidence carries a band. **Data freshness is not implemented** as a first-class per-domain measure |
+| A.2 Shared status enums | **Partial** | Each object carries a status vocabulary and the handover deliverable path matches A.2 exactly. They are not consolidated into one shared enum module, so a status added to one object is not automatically offered to another |
+| B.2 Industry references | **Built** | The standards are what the domain rules were written against — HGCRA payment and notice logic, CDM duty holders, RIBA stage structure, ISO 19650 information control, CIBSE Code M commissioning sequence |
+
+**The honest summary of this table:** most of sections 12–18 describe
+architecture that already exists, and the genuine gaps cluster in four places —
+the AI output schema's missing assumptions and prompt version (which the stage
+gates already report as unassessable), the transactional outbox, the offline
+`Conflict` record, and the AI evaluation harness. None of those is hidden
+behind a claim that it is done.
+
+---
+
 ## Deliberate omissions
 
 Three things are specified in the source documents and intentionally absent
