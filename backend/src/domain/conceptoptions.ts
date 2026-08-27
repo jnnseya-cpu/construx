@@ -303,15 +303,34 @@ export type Comparison = {
 export function compareOptions(ctx: EngineContext): Comparison {
   authorise(ctx, 'PROJECT_SETUP', 'R');
 
-  const live = optionsOf(ctx).filter((o) => o.status === 'ANALYSED' || o.status === 'SELECTED');
-  if (live.length === 0) {
-    return { comparable: false, incomparableReason: 'No option has been analysed.', rows: [] };
+  // Two sets, and the distinction matters.
+  //
+  // `scored` is every option that was compared, rejected ones included. They
+  // are the evidence that a comparison happened, and dropping them the moment
+  // one was chosen would leave a one-row table — useless at exactly the point
+  // somebody looks at it, which is after the decision.
+  //
+  // `contending` is what the comparability check runs over. An option ruled out
+  // cannot block a selection: rejecting one *because* its price base did not
+  // match, and then being permanently unable to select anything because of it,
+  // is a deadlock rather than a control.
+  const scored = optionsOf(ctx).filter((o) => o.scores.length > 0);
+  const contending = scored.filter((o) => o.status === 'ANALYSED' || o.status === 'SELECTED');
+  if (contending.length === 0) {
+    return {
+      comparable: false,
+      incomparableReason:
+        scored.length === 0
+          ? 'No option has been analysed.'
+          : 'Every scored option has been rejected, so there is nothing left in contention.',
+      rows: [],
+    };
   }
 
-  const baseDates = [...new Set(live.map((o) => o.baseDate))];
-  const currencies = [...new Set(live.map((o) => o.currency))];
+  const baseDates = [...new Set(contending.map((o) => o.baseDate))];
+  const currencies = [...new Set(contending.map((o) => o.currency))];
 
-  const rows = live
+  const rows = scored
     .map((o) => ({
       reference: o.reference,
       name: o.name,
@@ -346,7 +365,7 @@ export function compareOptions(ctx: EngineContext): Comparison {
 
   // Criteria sets must match too. Scoring option A on four criteria and option
   // B on three produces two numbers that are not the same measurement.
-  const criteriaSets = [...new Set(live.map((o) => o.scores.map((s) => s.criterion).sort().join('|')))];
+  const criteriaSets = [...new Set(contending.map((o) => o.scores.map((s) => s.criterion).sort().join('|')))];
   if (criteriaSets.length > 1) {
     return {
       comparable: false,
@@ -362,7 +381,10 @@ export function compareOptions(ctx: EngineContext): Comparison {
     baseDate: baseDates[0],
     currency: currencies[0],
     rows,
-    leader: rows[0]?.reference,
+    // The leader among the options still in contention. After a decision that
+    // is the selected one; before it, the option to beat. A leader taken from
+    // the whole table could name an option somebody has already ruled out.
+    leader: rows.find((row) => row.status === 'ANALYSED' || row.status === 'SELECTED')?.reference,
   };
 }
 
@@ -383,18 +405,22 @@ export function sensitivity(
 ): SensitivityResult {
   authorise(ctx, 'PROJECT_SETUP', 'R');
 
-  const live = optionsOf(ctx).filter((o) => o.status === 'ANALYSED' || o.status === 'SELECTED');
-  if (live.length === 0) {
+  // Every scored option, rejected ones included — for the same reason the
+  // comparison keeps them. "What would have happened if capital cost moved"
+  // is a question asked *after* the decision, and answering it over the winner
+  // alone answers nothing.
+  const scored = optionsOf(ctx).filter((o) => o.scores.length > 0);
+  if (scored.length === 0) {
     throw new DomainError('NOTHING_TO_TEST', 'No option has been analysed', 409);
   }
-  if (!live.some((o) => o.scores.some((s) => s.criterion === input.criterion))) {
+  if (!scored.some((o) => o.scores.some((s) => s.criterion === input.criterion))) {
     throw new DomainError('NO_SUCH_CRITERION', `No option is scored against "${input.criterion}"`, 404);
   }
 
-  const baseline = [...live].sort((a, b) => weightedScore(b) - weightedScore(a))[0]?.reference;
+  const baseline = [...scored].sort((a, b) => weightedScore(b) - weightedScore(a))[0]?.reference;
 
   const factor = 1 + input.changePercent / 100;
-  const varied = live.map((o) => ({
+  const varied = scored.map((o) => ({
     reference: o.reference,
     score: Number(
       o.scores

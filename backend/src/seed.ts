@@ -1,6 +1,14 @@
 import { config } from './config.ts';
 import { hashEvidence } from './core/canonical.ts';
 import * as business from './domain/business.ts';
+import * as conceptbrief from './domain/conceptbrief.ts';
+import * as conceptcompliance from './domain/conceptcompliance.ts';
+import * as conceptcontrols from './domain/conceptcontrols.ts';
+import * as conceptduediligence from './domain/conceptduediligence.ts';
+import * as conceptinitiation from './domain/conceptinitiation.ts';
+import * as conceptoptions from './domain/conceptoptions.ts';
+import * as conceptstrategy from './domain/conceptstrategy.ts';
+import * as stagegate from './domain/stagegate.ts';
 import * as control from './domain/control.ts';
 import * as procurement from './domain/procurement.ts';
 import * as radar from './domain/radar.ts';
@@ -490,7 +498,787 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   });
   step('Scope package defined — CONCEPT gate satisfied');
 
-  structure.transitionPhase(ownerCtx, { to: 'DESIGN', justification: 'Scope defined and funding approved at gate review' });
+  // --- CONCEPT, stage 6: C-WF-01 to C-WF-08 ---------------------------------
+  //
+  // The stage walked properly rather than skipped. Before this, the seed created
+  // a project, defined one scope package and moved straight to design — which
+  // satisfied the coarse lifecycle gate and left the whole of stage 6 empty, so
+  // the Concept screen showed seven blank panels and a failing 6.4 gate on a
+  // project that had reached operations.
+  //
+  // Every command below runs under a role that actually holds the authority for
+  // it, so the walk exercises the permission matrix rather than bypassing it.
+  // The party separation the gate checks is real: the brief is baselined by the
+  // enterprise admin, the option is selected by the client representative, and
+  // the controls are approved by the admin again — three acts, not one person
+  // signing their own homework.
+
+  const adminProjectCtx = contextFor(platform, adminAuth, projectId);
+  const designCtx = contextFor(platform, authOf(platform, designLead.id), projectId);
+
+  /** A date `days` from now, as an ISO day. Relative so a re-seed never goes stale. */
+  const relative = (days: number): string =>
+    new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+
+  /**
+   * The design freeze, named once.
+   *
+   * Two things depend on it: the milestone on the concept programme, and the
+   * date the gate's conditions fall due. They are the same date because the
+   * condition text says so — "before the design gate" — and a second literal
+   * would let them drift.
+   */
+  const designFreezeDate = relative(190);
+
+  // C-WF-01 — configuration and delegated authority.
+  conceptinitiation.versionConfiguration(adminProjectCtx, {
+    projectCode: 'AWT-P2',
+    jurisdiction: 'GB',
+    jurisdictionPack: 'GB-2026.1',
+    classificationPack: 'UNICLASS-2015',
+    contractCalendarPack: 'NEC4-2017',
+    calendar: {
+      timeZone: 'Europe/London',
+      workingDays: [1, 2, 3, 4, 5],
+      holidays: ['2026-12-25', '2026-12-26', '2027-01-01'],
+    },
+    reportingCurrency: 'GBP',
+    measurementSystem: 'METRIC',
+    sponsorId: owner.id,
+    projectDirectorId: pm.id,
+    dataResidency: 'UK',
+    retentionYears: 12,
+    defaultSensitivity: 'INTERNAL',
+    reason: 'Project set up under the client’s water-sector governance model',
+  });
+  conceptinitiation.approveAuthorityMatrix(ownerCtx, {
+    delegations: [
+      { decision: 'Approve the concept baseline and the stage gate', holderId: owner.id },
+      {
+        decision: 'Commit expenditure against the approved cost plan',
+        holderId: pm.id,
+        limitMinor: 25_000_000,
+        escalatesToId: owner.id,
+      },
+      {
+        decision: 'Accept a design deliverable',
+        holderId: designLead.id,
+        limitMinor: 5_000_000,
+        escalatesToId: pm.id,
+      },
+      { decision: 'Confirm statutory applicability', holderId: safetyLead.id },
+    ],
+  });
+  step('C-WF-01 — project configured (AWT-P2, Europe/London, GBP) and authority delegated');
+
+  // C-WF-02 — the brief. Six requirements, one of them superseded before the
+  // baseline because the client consolidated two of their own.
+  const briefRequirement = (input: {
+    reference: string;
+    category: Parameters<typeof conceptbrief.extractRequirement>[1]['category'];
+    statement: string;
+    sourceAnchor: string;
+    priority: Parameters<typeof conceptbrief.extractRequirement>[1]['priority'];
+    method: string;
+    stage: string;
+    acceptanceCriteria: string;
+    ownerId: string;
+    origin?: 'AI' | 'HUMAN';
+    confidence?: number;
+  }) =>
+    conceptbrief.extractRequirement(adminProjectCtx, {
+      reference: input.reference,
+      category: input.category,
+      statement: input.statement,
+      source: 'Northern Water Authority outline business case, rev C',
+      sourceAnchor: input.sourceAnchor,
+      ownerId: input.ownerId,
+      priority: input.priority,
+      verification: { method: input.method, stage: input.stage },
+      acceptanceCriteria: input.acceptanceCriteria,
+      origin: input.origin ?? 'HUMAN',
+      confidence: input.confidence,
+    });
+
+  const reqCapacity = briefRequirement({
+    reference: 'REQ-001',
+    category: 'CAPACITY',
+    statement: 'The works shall treat a peak flow of 1,150 l/s to the consented discharge standard.',
+    sourceAnchor: 'p12, §2.1',
+    priority: 'MANDATORY',
+    method: 'Witnessed 72-hour performance test at peak flow',
+    stage: 'COMMISSIONING',
+    acceptanceCriteria: 'Measured throughput at or above 1,150 l/s with consent parameters met throughout',
+    ownerId: pm.id,
+  });
+  const reqAvailability = briefRequirement({
+    reference: 'REQ-002',
+    category: 'RESILIENCE',
+    statement: 'The treatment stream shall remain available with any single clarifier out of service.',
+    sourceAnchor: 'p14, §2.6',
+    priority: 'MANDATORY',
+    method: 'Design review against N-1 loading, re-verified on the as-built hydraulic model',
+    stage: 'DESIGN',
+    acceptanceCriteria: 'Hydraulic model shows consent compliance at peak flow with one clarifier isolated',
+    ownerId: designLead.id,
+  });
+  const reqCarbon = briefRequirement({
+    reference: 'REQ-003',
+    category: 'CARBON',
+    statement: 'Capital carbon shall be at least 20% below the PAS 2080 baseline for a scheme of this type.',
+    sourceAnchor: 'p21, §4.3',
+    priority: 'HIGH',
+    method: 'PAS 2080 assessment at design freeze and again from as-built quantities',
+    stage: 'HANDOVER',
+    acceptanceCriteria: 'Assessed capital carbon at or below 80% of the stated baseline',
+    ownerId: designLead.id,
+  });
+  const reqMaintain = briefRequirement({
+    reference: 'REQ-004',
+    category: 'MAINTAINABILITY',
+    statement: 'Every item of rotating plant shall be removable without breaking into a process structure.',
+    sourceAnchor: 'p18, §3.4',
+    priority: 'HIGH',
+    method: 'Maintenance access review with the operator, walked on site before practical completion',
+    stage: 'HANDOVER',
+    acceptanceCriteria: 'Operator signs the access review with no unresolved item',
+    ownerId: fm.id,
+  });
+  // Extracted by the document agent from the business case, at high confidence,
+  // and still accepted by a person before it counts.
+  const reqAccess = briefRequirement({
+    reference: 'REQ-005',
+    category: 'ACCESSIBILITY',
+    statement: 'Operational walkways and control rooms shall meet Part M and the client’s own access standard.',
+    sourceAnchor: 'p26, §5.2',
+    priority: 'MANDATORY',
+    method: 'Access audit against Part M by a competent assessor',
+    stage: 'CONSTRUCTION',
+    acceptanceCriteria: 'Audit closed with no category A finding',
+    ownerId: designLead.id,
+    origin: 'AI',
+    confidence: 0.91,
+  });
+  const reqDuplicate = briefRequirement({
+    reference: 'REQ-006',
+    category: 'CAPACITY',
+    statement: 'The works shall handle peak storm flow without discharge to the watercourse.',
+    sourceAnchor: 'p13, §2.3',
+    priority: 'MANDATORY',
+    method: 'Witnessed performance test',
+    stage: 'COMMISSIONING',
+    acceptanceCriteria: 'No discharge recorded at peak storm flow',
+    ownerId: pm.id,
+  });
+
+  for (const created of [reqCapacity, reqAvailability, reqCarbon, reqMaintain, reqAccess]) {
+    conceptbrief.acceptRequirement(ownerCtx, { requirementId: created.requirementId });
+  }
+  // Superseded rather than deleted, and before the baseline so the frozen set is
+  // clean. The reason is the record that it was dropped on purpose.
+  conceptbrief.supersedeRequirement(ownerCtx, {
+    requirementId: reqDuplicate.requirementId,
+    reason:
+      'Consolidated into REQ-001 after the client confirmed the storm case is bounded by the same peak flow figure.',
+    replacedByRequirementId: reqCapacity.requirementId,
+  });
+  const brief = conceptbrief.baselineBrief(adminProjectCtx, { evidenceHash: hashEvidence('awt-p2-brief-rev-c') });
+  step(`C-WF-02 — brief baselined: ${brief.requirements} requirements frozen with their hashes`);
+
+  // C-WF-03 — due diligence. Coverage is measured over impact categories, so
+  // four surveys between them establish what is known; heritage is left
+  // deliberately open with an investigation against it, which is the honest
+  // state of a concept-stage site.
+  const giSurvey = conceptduediligence.registerSurvey(adminProjectCtx, {
+    reference: 'GI-2026-01',
+    discipline: 'Geotechnical',
+    author: 'Pennine Ground Engineering Ltd',
+    surveyedOn: relative(-120),
+    coverage: ['GROUND', 'CONTAMINATION', 'STRUCTURAL'],
+    coordinateSystem: 'EPSG:27700',
+    limitations:
+      'Twelve boreholes to 18m across the western two-thirds of the site. No access east of the existing filter gallery while it remained in service; no rotary coring below 18m.',
+    evidenceHash: hashEvidence('awt-p2-gi-2026-01'),
+  });
+  const topoSurvey = conceptduediligence.registerSurvey(adminProjectCtx, {
+    reference: 'TOPO-2026-01',
+    discipline: 'Topographic and utility',
+    author: 'Meridian Survey Services',
+    surveyedOn: relative(-95),
+    coverage: ['ACCESS', 'UTILITIES', 'OPERATIONAL'],
+    coordinateSystem: 'EPSG:27700',
+    limitations:
+      'Above-ground detail and PAS 128 quality level B for buried services. No excavation; QL-A verification not carried out.',
+    evidenceHash: hashEvidence('awt-p2-topo-2026-01'),
+  });
+  const ecoSurvey = conceptduediligence.registerSurvey(adminProjectCtx, {
+    reference: 'ECO-2026-01',
+    discipline: 'Ecology and flood risk',
+    author: 'Calder Environmental',
+    surveyedOn: relative(-70),
+    coverage: ['ECOLOGY', 'FLOOD', 'AIR_QUALITY'],
+    coordinateSystem: 'EPSG:27700',
+    limitations:
+      'Single-season walkover. Bat and great crested newt surveys are seasonally constrained and must be repeated before works start.',
+    // Ecology expires: a protected-species survey is a statement about a season.
+    validUntil: relative(300),
+    evidenceHash: hashEvidence('awt-p2-eco-2026-01'),
+  });
+  const planningSurvey = conceptduediligence.registerSurvey(adminProjectCtx, {
+    reference: 'PLAN-2026-01',
+    discipline: 'Planning and neighbour context',
+    author: 'Meridian Infrastructure Group',
+    surveyedOn: relative(-60),
+    coverage: ['PLANNING', 'NEIGHBOUR'],
+    coordinateSystem: 'NONE',
+    limitations: 'Desk study of the local plan and pre-application correspondence only. No formal consultation held.',
+    evidenceHash: hashEvidence('awt-p2-planning-2026-01'),
+  });
+
+  const conMadeGround = conceptduediligence.identifyConstraint(adminProjectCtx, {
+    reference: 'CON-001',
+    description:
+      'Made ground with obstructions to 4.5m across the northern half of the site, on the footprint of the two new clarifiers.',
+    constraintClass: 'HARD',
+    severity: 'CRITICAL',
+    impacts: ['GROUND', 'STRUCTURAL'],
+    spatialScope: 'Northern half, clarifier footprint',
+    geometryRef: 'AWT-P2/ZONE/NORTH',
+    surveyId: giSurvey.surveyId,
+    ownerId: designLead.id,
+  });
+  const conServices = conceptduediligence.identifyConstraint(adminProjectCtx, {
+    reference: 'CON-002',
+    description:
+      'A 33kV feed and the site’s only potable main cross the proposed access road on the alignment shown at PAS 128 QL-B.',
+    constraintClass: 'HARD',
+    severity: 'MAJOR',
+    impacts: ['UTILITIES', 'ACCESS'],
+    spatialScope: 'Proposed site access, chainage 0 to 120m',
+    geometryRef: 'AWT-P2/SERVICES/ACCESS',
+    surveyId: topoSurvey.surveyId,
+    ownerId: pm.id,
+  });
+  const conDeepGround = conceptduediligence.identifyConstraint(adminProjectCtx, {
+    reference: 'CON-003',
+    description:
+      'Ground below 18m is unproven. The boreholes stopped there and the clarifier piles are expected to bear at 22m.',
+    constraintClass: 'ASSUMPTION',
+    severity: 'MAJOR',
+    impacts: ['GROUND'],
+    spatialScope: 'Clarifier pile founding stratum',
+    surveyId: giSurvey.surveyId,
+    ownerId: designLead.id,
+  });
+  const conOutage = conceptduediligence.identifyConstraint(adminProjectCtx, {
+    reference: 'CON-004',
+    description:
+      'The existing works cannot be taken out of service. All tie-ins must be made within two 12-hour outages agreed a season in advance.',
+    constraintClass: 'HARD',
+    severity: 'CRITICAL',
+    impacts: ['OPERATIONAL', 'ACCESS'],
+    spatialScope: 'Existing inlet and filter gallery interfaces',
+    surveyId: topoSurvey.surveyId,
+    ownerId: fm.id,
+  });
+
+  conceptduediligence.assessConstraint(ownerCtx, {
+    constraintId: conMadeGround.constraintId,
+    assessment:
+      'Piled foundations assumed throughout the northern half; obstruction removal priced in the substructure line. The alternative — dig and replace — was rejected on programme.',
+  });
+  conceptduediligence.assessConstraint(ownerCtx, {
+    constraintId: conServices.constraintId,
+    assessment:
+      'Access road realigned 18m south to clear both services. Diversion avoided; a QL-A verification is required before the road is set out.',
+  });
+  conceptduediligence.assessConstraint(ownerCtx, {
+    constraintId: conDeepGround.constraintId,
+    assessment:
+      'Carried as a quantified allowance pending rotary coring to 30m in the design stage. If the founding stratum is deeper the pile lengths change, not the concept.',
+    allowanceMinor: 18_000_000,
+  });
+  conceptduediligence.assessConstraint(ownerCtx, {
+    constraintId: conOutage.constraintId,
+    assessment:
+      'Two outages secured in principle with the operator for weeks 61 and 78. Sequence built around them, and the milestone programme carries them as fixed dates.',
+  });
+
+  // Heritage is uncovered and the register says so, rather than the readiness
+  // figure quietly averaging it away.
+  const heritageAction = conceptduediligence.assignInvestigation(adminProjectCtx, {
+    reference: 'INV-001',
+    description:
+      'Commission an archaeological desk-based assessment. The site adjoins a scheduled monument buffer and no heritage evidence exists.',
+    coverageGap: 'HERITAGE',
+    ownerId: pm.id,
+    dueDate: relative(75),
+  });
+  conceptduediligence.assignInvestigation(adminProjectCtx, {
+    reference: 'INV-002',
+    description: 'Rotary coring to 30m at four clarifier pile positions to close CON-003.',
+    constraintId: conDeepGround.constraintId,
+    ownerId: designLead.id,
+    dueDate: relative(110),
+  });
+  conceptduediligence.reviewDueDiligence(ownerCtx, {
+    note:
+      'Coverage is sufficient to select an option. Heritage and the deep founding stratum are both carried as open investigations with named owners; neither changes the choice between the options assessed.',
+  });
+  step(
+    `C-WF-03 — 4 surveys, 4 constraints assessed, 2 investigations open; readiness ` +
+      `${conceptduediligence.dueDiligenceReadiness(adminProjectCtx).percent}% by evidence coverage`,
+  );
+
+  // C-WF-04 — three options on one evaluation template, one common base date.
+  const optionCriteria = (capital: number, operability: number, carbon: number, deliverability: number) => [
+    { criterion: 'CAPITAL_COST', rawValue: capital, weight: 0.35, basis: 'Benchmarked against three comparable AMP8 schemes, normalised to this base date' },
+    { criterion: 'OPERABILITY', rawValue: operability, weight: 0.25, basis: 'Written assessment by the client’s operations team' },
+    { criterion: 'CAPITAL_CARBON', rawValue: carbon, weight: 0.2, basis: 'PAS 2080 desktop estimate at concept quantities' },
+    { criterion: 'DELIVERABILITY', rawValue: deliverability, weight: 0.2, basis: 'Assessed against the outage constraint and the market’s capacity in the region' },
+  ];
+  const conceptBaseDate = relative(-30);
+
+  const optRefurb = conceptoptions.createOption(adminProjectCtx, {
+    reference: 'OPT-A',
+    name: 'Refurbish and extend in place',
+    description: 'Retain the existing inlet and filter gallery, add two clarifiers on the northern plot.',
+    scopeStatement:
+      'IN: two new clarifiers, inlet refurbishment, filter gallery refurbishment, process pipework, access road. OUT: permanent power upgrade, off-site network reinforcement.',
+    assumptions: [
+      'The existing filter gallery structure is serviceable for a further 30 years',
+      'Two 12-hour outages are obtainable in the programmed weeks',
+      'Piles bear at 22m',
+    ],
+    exclusions: ['Permanent power upgrade', 'Off-site network reinforcement', 'Land acquisition'],
+    dependencies: ['Outage agreement with the operator', 'Discharge consent variation'],
+    baseDate: conceptBaseDate,
+    currency: 'GBP',
+    orderOfCostMinor: 1_850_000_000,
+    costLowMinor: 1_620_000_000,
+    costHighMinor: 2_240_000_000,
+    durationDaysLow: 760,
+    durationDaysMostLikely: 880,
+    durationDaysHigh: 1_090,
+  });
+  const optNewBuild = conceptoptions.createOption(adminProjectCtx, {
+    reference: 'OPT-B',
+    name: 'New treatment stream on the eastern plot',
+    description: 'Build a complete new stream alongside, decommission the existing works on completion.',
+    scopeStatement:
+      'IN: complete new treatment stream, new inlet, new outfall, demolition of the existing works. OUT: land acquisition, off-site network reinforcement.',
+    assumptions: ['The eastern plot is available and developable', 'Planning consent obtainable within 9 months'],
+    exclusions: ['Land acquisition', 'Off-site network reinforcement'],
+    dependencies: ['Planning consent', 'Land availability'],
+    baseDate: conceptBaseDate,
+    currency: 'GBP',
+    orderOfCostMinor: 2_640_000_000,
+    costLowMinor: 2_310_000_000,
+    costHighMinor: 3_300_000_000,
+    durationDaysLow: 980,
+    durationDaysMostLikely: 1_150,
+    durationDaysHigh: 1_420,
+  });
+  const optModular = conceptoptions.createOption(adminProjectCtx, {
+    reference: 'OPT-C',
+    name: 'Modular package plant',
+    description: 'Proprietary packaged treatment units on a prepared slab, retaining the existing inlet.',
+    scopeStatement:
+      'IN: packaged treatment units, slab and containment, inlet refurbishment, connections. OUT: filter gallery refurbishment, permanent power upgrade.',
+    assumptions: ['A single supplier can meet the consent standard at this flow', 'The 30-year whole-life case holds'],
+    exclusions: ['Filter gallery refurbishment', 'Permanent power upgrade'],
+    dependencies: ['Supplier capacity', 'Consent authority acceptance of a proprietary process'],
+    baseDate: conceptBaseDate,
+    currency: 'GBP',
+    orderOfCostMinor: 1_540_000_000,
+    costLowMinor: 1_290_000_000,
+    costHighMinor: 2_100_000_000,
+    durationDaysLow: 620,
+    durationDaysMostLikely: 740,
+    durationDaysHigh: 980,
+  });
+
+  conceptoptions.analyseOption(pmCtx, { optionId: optRefurb.optionId, scores: optionCriteria(7, 8, 7, 8) });
+  conceptoptions.analyseOption(pmCtx, { optionId: optNewBuild.optionId, scores: optionCriteria(3, 9, 5, 5) });
+  conceptoptions.analyseOption(pmCtx, { optionId: optModular.optionId, scores: optionCriteria(9, 5, 6, 6) });
+
+  conceptoptions.selectOption(ownerCtx, {
+    optionId: optRefurb.optionId,
+    rationale:
+      'Highest weighted score and the only option that satisfies REQ-002 without a second consent variation. It is not the cheapest — OPT-C is — and that is the trade the sponsor accepted: the packaged plant scored two points lower on operability and the operations team would not carry it for thirty years.',
+    evidenceHash: hashEvidence('awt-p2-option-review-minutes'),
+  });
+  conceptoptions.rejectOption(ownerCtx, {
+    optionId: optNewBuild.optionId,
+    rationale:
+      'Lowest capital score by a wide margin and depends on land that is not secured. The operability advantage is real but does not pay for a 43% cost premium.',
+  });
+  conceptoptions.rejectOption(ownerCtx, {
+    optionId: optModular.optionId,
+    rationale:
+      'Cheapest and fastest, and rejected on operability: a proprietary process the operator cannot maintain with its own people, on a site it must run for thirty years. Recorded here so it is not proposed again without that answer.',
+  });
+  step('C-WF-04 — three options compared on one template; OPT-A selected, two rejected with reasons');
+
+  // C-WF-05 — cost, programme and cashflow, approved together under one cut-off.
+  conceptcontrols.createCostPlan(qsCtx, {
+    baseDate: conceptBaseDate,
+    rangeMethod: 'PERT',
+    budgetCapMinor: 1_900_000_000,
+    tolerancePercent: 5,
+  });
+  const costLines: Array<{
+    wbs: string;
+    category: Parameters<typeof conceptcontrols.addCostLine>[1]['category'];
+    description: string;
+    rate: number;
+    low: number;
+    high: number;
+    source?: string;
+  }> = [
+    { wbs: '1.1', category: 'SUBSTRUCTURE', description: 'Piled foundations, obstruction removal and clarifier bases', rate: 420_000_000, low: 380_000_000, high: 520_000_000, source: 'SPONS Civil 2026 + Ashworth Phase 1 outturn' },
+    { wbs: '2.1', category: 'SUPERSTRUCTURE', description: 'Clarifier structures, filter gallery refurbishment', rate: 510_000_000, low: 470_000_000, high: 610_000_000, source: 'Ashworth Phase 1 outturn, rebased' },
+    { wbs: '4.1', category: 'SERVICES', description: 'Process mechanical, electrical and ICA', rate: 390_000_000, low: 350_000_000, high: 470_000_000, source: 'Framework schedule of rates, 2026 review' },
+    { wbs: '5.1', category: 'EXTERNAL_WORKS', description: 'Access road realignment, hardstanding, reinstatement', rate: 120_000_000, low: 105_000_000, high: 150_000_000, source: 'SPONS External Works 2026' },
+    { wbs: '6.1', category: 'PRELIMINARIES', description: 'Site establishment, management, temporary works, outage working', rate: 185_000_000, low: 170_000_000, high: 215_000_000, source: '10% of works, benchmarked against two comparable outage schemes' },
+    { wbs: '7.1', category: 'DESIGN_FEES', description: 'Detailed design, CDM principal designer, surveys', rate: 95_000_000, low: 88_000_000, high: 112_000_000, source: 'Framework fee scale' },
+    // No source and no base date: provisional by derivation, and excluded from
+    // the high-confidence total rather than carried with a footnote.
+    { wbs: '8.1', category: 'CLIENT_COSTS', description: 'Client project management, legal and consent fees', rate: 92_000_000, low: 75_000_000, high: 130_000_000 },
+    { wbs: '9.1', category: 'RISK_ALLOWANCE', description: 'Quantified risk allowance, from the concept risk register', rate: 38_000_000, low: 20_000_000, high: 70_000_000, source: 'Expected value across the concept risk register' },
+  ];
+  for (const line of costLines) {
+    conceptcontrols.addCostLine(qsCtx, {
+      wbsCode: line.wbs,
+      category: line.category,
+      description: line.description,
+      quantity: 1,
+      unit: 'sum',
+      rateMinor: line.rate,
+      rateSource: line.source,
+      rateBaseDate: line.source ? conceptBaseDate : undefined,
+      lowMinor: line.low,
+      highMinor: line.high,
+    });
+  }
+
+  conceptcontrols.createMilestoneProgramme(plannerCtx, {
+    dataDate: relative(0),
+    milestones: [
+      {
+        reference: 'M-CONCEPT',
+        name: 'Concept gate approved',
+        plannedDate: relative(14),
+        openStartReason: 'The first milestone of the project. Nothing on this programme precedes it.',
+      },
+      {
+        reference: 'M-F10',
+        name: 'F10 notification to HSE',
+        plannedDate: relative(45),
+        predecessors: ['M-CONCEPT'],
+        statutory: true,
+      },
+      // Each applicable statutory regime gets its own milestone, marked
+      // statutory so a resequence cannot move past it. Pointing three regimes
+      // at the design freeze — which is what this seed did first — is exactly
+      // what C-WF-07's gateway check refuses, and it was right to: a permit
+      // determination and a planning determination are dates the regulator
+      // controls, not dates the design team can move.
+      { reference: 'M-PLANNING', name: 'Planning determination', plannedDate: relative(150), predecessors: ['M-CONCEPT'], statutory: true },
+      { reference: 'M-PERMIT', name: 'Environmental permit variation determined', plannedDate: relative(175), predecessors: ['M-CONCEPT'], statutory: true },
+      {
+        reference: 'M-DESIGN-FREEZE',
+        name: 'Design frozen for the civils package',
+        plannedDate: designFreezeDate,
+        predecessors: ['M-F10', 'M-PLANNING', 'M-PERMIT'],
+      },
+      { reference: 'M-CIVILS-AWARD', name: 'Civils package awarded', plannedDate: relative(230), predecessors: ['M-DESIGN-FREEZE'] },
+      { reference: 'M-MEP-AWARD', name: 'MEP package awarded', plannedDate: relative(275), predecessors: ['M-DESIGN-FREEZE'] },
+      { reference: 'M-CIVILS-SITE', name: 'Civils required on site', plannedDate: relative(360), predecessors: ['M-CIVILS-AWARD'] },
+      { reference: 'M-MEP-SITE', name: 'MEP plant required on site', plannedDate: relative(560), predecessors: ['M-MEP-AWARD', 'M-CIVILS-SITE'] },
+      { reference: 'M-OUTAGE-1', name: 'First tie-in outage', plannedDate: relative(620), predecessors: ['M-MEP-SITE'] },
+      {
+        reference: 'M-PC',
+        name: 'Practical completion',
+        plannedDate: relative(880),
+        predecessors: ['M-OUTAGE-1'],
+        openFinishReason: 'The end of the concept programme. What follows is the defects period, not a construction activity.',
+      },
+    ],
+  });
+
+  // Phased from the plan itself rather than a second set of figures, so the
+  // reconciliation the command enforces is satisfied by construction.
+  const conceptTotals = conceptcontrols.costTotals(conceptcontrols.currentCostPlan(qsCtx)!);
+  const spendCurve = [0.06, 0.14, 0.22, 0.24, 0.18, 0.1];
+  const phased = spendCurve.map((share) => Math.round(conceptTotals.totalMinor * share));
+  phased[phased.length - 1] =
+    conceptTotals.totalMinor - phased.slice(0, -1).reduce((sum, value) => sum + value, 0);
+  conceptcontrols.generateCashflow(qsCtx, {
+    periods: phased.map((spendMinor, index) => ({
+      period: `2026-Q${index + 1}`,
+      spendMinor,
+      // The client draws down half-yearly, so funding lands ahead of two
+      // quarters and behind the others. The peak exposure figure is the point.
+      fundingMinor: index % 2 === 0 ? Math.round(spendMinor * 1.9) : 0,
+    })),
+  });
+
+  const conceptControls = conceptcontrols.approveConceptControls(adminProjectCtx, {
+    cutOffDate: relative(0),
+    affordabilityActions: [
+      'Sponsor to seek an additional £0.5m of AMP8 contingency at the March board',
+      'Value engineering workshop on the filter gallery scope before design freeze',
+      'Convert the client-costs line from provisional to a benchmarked rate before the design gate',
+    ],
+    evidenceHash: hashEvidence('awt-p2-concept-controls-pack'),
+  });
+  step(
+    `C-WF-05 — cost, programme and cashflow approved under one cut-off: ` +
+      `P50 ${conceptControls.totalMinor}, P80 ${conceptControls.p80Minor}, gap ${conceptControls.affordabilityGapMinor}`,
+  );
+
+  // C-WF-06 — how it will be bought.
+  conceptstrategy.createProcurementStrategy(pmCtx, {
+    weights: { SCOPE_CERTAINTY: 0.25, TIME: 0.2, PRICE_CERTAINTY: 0.25, DESIGN_CONTROL: 0.15, MARKET_CAPACITY: 0.15 },
+    assessments: [
+      {
+        route: 'TRADITIONAL',
+        scores: { SCOPE_CERTAINTY: 8, TIME: 4, PRICE_CERTAINTY: 7, DESIGN_CONTROL: 9, MARKET_CAPACITY: 7 },
+        note: 'Full design before tender. Highest design control, and the programme cannot carry it against the outage dates.',
+      },
+      {
+        route: 'DESIGN_AND_BUILD',
+        scores: { SCOPE_CERTAINTY: 6, TIME: 8, PRICE_CERTAINTY: 8, DESIGN_CONTROL: 5, MARKET_CAPACITY: 8 },
+        note: 'Contractor completes the design to employer’s requirements. Faster and firmer, with less control over how REQ-004 is met.',
+      },
+      {
+        route: 'FRAMEWORK_CALL_OFF',
+        scores: { SCOPE_CERTAINTY: 7, TIME: 9, PRICE_CERTAINTY: 6, DESIGN_CONTROL: 6, MARKET_CAPACITY: 5 },
+        note: 'Fastest to contract. The regional framework has two members with the capacity for this value, which is thin.',
+      },
+    ],
+    selectedRoute: 'DESIGN_AND_BUILD',
+    rationale:
+      'The outage dates are fixed by the operator and bind the programme, so time and price certainty carry half the weight between them. Design control is given up deliberately and bought back through the employer’s requirements, which carry REQ-002 and REQ-004 verbatim.',
+    designResponsibility: 'Contractor, to employer’s requirements retaining client-side process design',
+    riskAppetite: 'Low on time and on the outage dates; moderate on cost within the approved allowance',
+    socialValueObligations: [
+      '20% of the workforce from within the combined authority area',
+      'Two apprenticeships for the duration of the works',
+      'Local supply-chain spend reported quarterly',
+    ],
+  });
+  conceptstrategy.approvePackageStrategy(pmCtx, {
+    worksScopeElements: ['CIVILS', 'PROCESS_MECHANICAL', 'ELECTRICAL_ICA', 'EXTERNAL_WORKS'],
+    packages: [
+      {
+        reference: 'PKG-CIV',
+        name: 'Civils and process structures',
+        scopeElements: ['CIVILS', 'EXTERNAL_WORKS'],
+        interfaces: [
+          'Hands over clarifier bases and pipe plinths to PKG-MEP at agreed setting-out',
+          'Takes the realigned access road alignment from the QL-A service verification',
+        ],
+        ownerId: pm.id,
+        requiredOnSiteMilestoneRef: 'M-CIVILS-SITE',
+        enquiryDate: relative(200),
+        awardDate: relative(230),
+        leadTimeWeeks: 16,
+        retainedRisks: ['Obstruction quantity beyond the allowance', 'Archaeology, pending INV-001'],
+      },
+      {
+        reference: 'PKG-MEP',
+        name: 'Process mechanical, electrical and ICA',
+        scopeElements: ['PROCESS_MECHANICAL', 'ELECTRICAL_ICA'],
+        interfaces: [
+          'Takes bases and plinths from PKG-CIV',
+          'Owns both tie-in outages and the commissioning interface with the existing works',
+        ],
+        ownerId: pm.id,
+        requiredOnSiteMilestoneRef: 'M-MEP-SITE',
+        enquiryDate: relative(200),
+        awardDate: relative(275),
+        leadTimeWeeks: 38,
+        retainedRisks: ['Switchgear lead time', 'Consent variation timing'],
+      },
+    ],
+  });
+  conceptstrategy.selectContractStrategy(ownerCtx, {
+    contractFamily: 'NEC4',
+    contractOption: 'Option C — target contract with activity schedule',
+    paymentTerms: 'Monthly assessment, payment 21 days from assessment date, Construction Act compliant',
+    insuranceRequirements: [
+      'Contract works, full reinstatement value',
+      'Public liability GBP 10m any one occurrence',
+      'Professional indemnity GBP 5m for the design portion',
+    ],
+    bondsAndGuarantees: ['Performance bond at 10% of the contract sum', 'Parent company guarantee'],
+    provisionalNotices: [
+      'Early warning (cl. 15)',
+      'Compensation event notification (cl. 61.3)',
+      'Programme submission and acceptance (cl. 31/32)',
+      'Defects notification (cl. 43)',
+    ],
+  });
+  step('C-WF-06 — Design and Build selected over three assessed routes; two packages, no scope gap or overlap');
+
+  // C-WF-07 — the risks identified at concept, with owners and responses, and
+  // the statutory position confirmed by a named competent person.
+  const conceptRisks = [
+    {
+      title: 'Obstructions in the made ground exceed the allowance',
+      category: 'GROUND_CONDITIONS' as const,
+      probability: 0.4,
+      costImpact: { optimistic: 6_000_000, mostLikely: 22_000_000, pessimistic: 58_000_000 },
+      scheduleImpactDays: { optimistic: 5, mostLikely: 20, pessimistic: 55 },
+      ownerPartyId: designLead.id,
+      mitigations: [
+        { description: 'Trial pits across the clarifier footprint before design freeze', costMinor: 2_800_000, probabilityReduction: 0.4, impactReduction: 0.3 },
+      ],
+    },
+    {
+      title: 'A tie-in outage is withdrawn or moved by the operator',
+      category: 'PROGRAMME' as const,
+      probability: 0.3,
+      costImpact: { optimistic: 4_000_000, mostLikely: 18_000_000, pessimistic: 70_000_000 },
+      scheduleImpactDays: { optimistic: 20, mostLikely: 60, pessimistic: 180 },
+      ownerPartyId: fm.id,
+      mitigations: [
+        { description: 'Outage dates written into the contract as key dates with a compensation mechanism', costMinor: 0, probabilityReduction: 0.35, impactReduction: 0.4 },
+      ],
+    },
+    {
+      title: 'Discharge consent variation is refused or conditioned',
+      category: 'REGULATORY' as const,
+      probability: 0.2,
+      costImpact: { optimistic: 10_000_000, mostLikely: 45_000_000, pessimistic: 160_000_000 },
+      scheduleImpactDays: { optimistic: 30, mostLikely: 90, pessimistic: 240 },
+      ownerPartyId: pm.id,
+      mitigations: [
+        { description: 'Pre-application engagement with the regulator before the design gate', costMinor: 1_500_000, probabilityReduction: 0.4, impactReduction: 0.2 },
+      ],
+    },
+    {
+      title: 'Long-lead switchgear cannot be delivered inside the 38-week window',
+      category: 'SUPPLY_CHAIN' as const,
+      probability: 0.35,
+      costImpact: { optimistic: 2_000_000, mostLikely: 9_000_000, pessimistic: 26_000_000 },
+      scheduleImpactDays: { optimistic: 10, mostLikely: 30, pessimistic: 90 },
+      ownerPartyId: pm.id,
+      mitigations: [
+        { description: 'Advance-order the switchgear under a pre-construction services agreement', costMinor: 4_000_000, probabilityReduction: 0.5, impactReduction: 0.5 },
+      ],
+    },
+  ];
+  for (const risk of conceptRisks) {
+    safety.registerRisk(safetyCtx, {
+      id: '',
+      title: risk.title,
+      category: risk.category,
+      probability: risk.probability,
+      costImpact: risk.costImpact,
+      scheduleImpactDays: risk.scheduleImpactDays,
+      ownerPartyId: risk.ownerPartyId,
+      projectValueMinor: 1_850_000_000,
+      projectDurationDays: 880,
+      mitigations: risk.mitigations,
+    });
+  }
+
+  conceptcompliance.confirmComplianceApplicability(safetyCtx, {
+    regimes: [
+      {
+        regime: 'CDM_2015',
+        applicable: true,
+        basis:
+          'Construction work in Great Britain lasting more than 30 working days with more than 20 workers simultaneously. Notifiable; F10 required before construction starts.',
+        milestoneRef: 'M-F10',
+      },
+      {
+        regime: 'ENVIRONMENTAL_PERMIT',
+        applicable: true,
+        basis: 'Discharge to a controlled water. The existing permit requires a variation for the revised consent standard.',
+        milestoneRef: 'M-PERMIT',
+      },
+      {
+        regime: 'PLANNING_CONSENT',
+        applicable: true,
+        basis: 'New above-ground structures exceeding permitted development for statutory undertakers on this site.',
+        milestoneRef: 'M-PLANNING',
+      },
+      {
+        regime: 'HIGHER_RISK_BUILDING',
+        applicable: false,
+        basis: 'Not a building containing dwellings, and below 18m. The Building Safety Act gateway regime does not apply.',
+      },
+      {
+        regime: 'BUILDING_SAFETY_ACT_GATEWAY_2',
+        applicable: false,
+        basis: 'Follows from the higher-risk-building screening above.',
+      },
+      {
+        regime: 'COMAH',
+        applicable: false,
+        basis:
+          'Sodium hypochlorite and ferric sulphate holdings are below the lower-tier threshold in Schedule 1. Re-screen if the dosing strategy changes.',
+      },
+      {
+        regime: 'LISTED_BUILDING_CONSENT',
+        applicable: false,
+        basis: 'No listed structure on or adjoining the site. The scheduled monument buffer is a planning matter, covered by INV-001.',
+      },
+    ],
+    confirmedByName: 'Helen Okafor',
+    confirmedByRole: 'HSE Manager, Meridian Infrastructure Group',
+    competenceBasis:
+      'CMIOSH, NEBOSH Construction Certificate, fifteen years on notifiable water infrastructure including two AMP7 treatment upgrades.',
+    evidenceHash: hashEvidence('awt-p2-statutory-screening'),
+  });
+
+  const conceptRiskReview = conceptcompliance.approveRiskReview(pmCtx, {
+    // Reconciles to the RISK_ALLOWANCE line in the cost plan, to the penny.
+    declaredAllowanceMinor: 38_000_000,
+    retainedExposureNote:
+      'The client retains ground and consent risk to the value of the allowance. The outage risk is transferred to the contractor through key dates, and the switchgear risk is bought down by advance ordering rather than carried.',
+    escalated: ['Discharge consent variation — escalated to the sponsor for regulator engagement before the design gate'],
+    evidenceHash: hashEvidence('awt-p2-concept-risk-review'),
+  });
+  step(
+    `C-WF-07 — statutory applicability confirmed by a named competent person; risk review approved, ` +
+      `residual exposure ${conceptRiskReview.residualExposureMinor}, reconciled to the cost plan`,
+  );
+
+  // C-WF-08 — the 6.4 gate, then the baseline it produces.
+  const conceptGate = stagegate.evaluateConceptGate(ownerCtx);
+  const conceptOutstanding = [...conceptGate.failed, ...conceptGate.unassessable];
+  stagegate.decideGate(ownerCtx, {
+    decision: conceptOutstanding.length === 0 ? 'PASS' : 'PASS_WITH_CONDITIONS',
+    rationale:
+      'Concept stage complete. The brief is baselined, the option is selected against it, cost and programme are approved under one cut-off, and the statutory position is confirmed. The clauses the platform cannot assess are platform gaps rather than project gaps and are carried as conditions into design.',
+    conditions: conceptOutstanding.map((clause) => ({
+      clause,
+      what:
+        clause === 'AI_ACCOUNTED'
+          ? 'Record assumptions, prompt version and human disposition against every AI output before the design gate'
+          : 'Produce the design mobilisation worklist from the package strategy at design stage start',
+      owner: pm.id,
+      // Due at the design freeze, which is the milestone the condition text
+      // actually names. An arbitrary date here would be exactly the "condition
+      // with no real date" the gate exists to prevent.
+      by: designFreezeDate,
+    })),
+  });
+  const conceptBaseline = stagegate.approveConceptBaseline(ownerCtx, {
+    evidenceHash: hashEvidence('awt-p2-concept-gate-pack'),
+    note: 'Frozen at the concept gate. Design cites these versions.',
+  });
+  step(
+    `C-WF-08 — 6.4 gate decided and concept baseline frozen: ${conceptBaseline.components} components, ` +
+      `each with the hash of its state`,
+  );
+
+  structure.transitionPhase(ownerCtx, { to: 'DESIGN', justification: 'Concept baseline approved at the 6.4 gate' });
 
   // --- DESIGN ----------------------------------------------------------------
   const drawing = await bim.registerDrawing(bimCtx, {

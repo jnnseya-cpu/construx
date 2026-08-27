@@ -7244,6 +7244,55 @@ the second one. And the gate's downstream clause required a concept baseline
 that `approveConceptBaseline` would only produce over a passing gate, so neither
 could ever happen. The baseline is the gate's output, not its input.
 
+**The demonstration project walks the stage.** The modules existed and passed
+their tests while the seeded project skipped stage 6 entirely — it created a
+project, defined one scope package and moved straight to design, which satisfied
+the coarse lifecycle gate and left the Concept screen showing seven blank panels
+on a project that had reached operations. A workflow nobody can see working is
+a workflow nobody can check.
+
+`seedDemoProject` now runs C-WF-01 to C-WF-08 in order, each command under a
+role that actually holds the authority for it: the enterprise admin configures
+and baselines, the client representative delegates and decides, the QS builds
+the cost plan, the planner the programme, the HSE manager confirms statutory
+applicability. The party separation the gate checks is real rather than
+arranged — three different people sign the brief, the option and the controls.
+
+The seeded stage carries a configuration on `Europe/London` and GBP, four
+delegations, six requirements of which one is superseded before the baseline,
+four surveys covering eleven of the twelve impact categories with heritage left
+open under a named investigation, four constraints all assessed, three options
+compared on one template with two rejected and their reasons kept, an eight-line
+cost plan of which one line is provisional by derivation, an eleven-milestone
+programme with three statutory gateways, a reconciled cashflow, a Design and
+Build route over three assessed alternatives, two packages with no scope gap or
+overlap, seven risks with owners and responses, and a frozen concept baseline of
+twelve components. The 6.4 gate reads **five clauses PASS and two
+`NOT_ASSESSABLE`** — the two the platform genuinely cannot see.
+
+**Seeding the stage found two more things.** The first was the statutory
+gateway check refusing the seed: three applicable regimes had been pointed at
+the design freeze, and only one of them was marked statutory. The rule was
+right and the data was wrong — a permit determination and a planning
+determination are dates a regulator controls, not dates the design team can
+move — so they now have their own statutory milestones.
+
+The second was in `compareOptions`, and only a decided project could show it:
+rejected options dropped out of the comparison the moment one was selected,
+leaving a one-row table at exactly the point somebody looks at it. The
+comparison now keeps every option that was **scored**, because the table is the
+record of the decision; the comparability check that gates a selection runs over
+the options still **in contention**, because an option already ruled out must
+not be able to block one. Without that split, rejecting an option for having the
+wrong price base would have deadlocked the project — the comparison would stay
+incomparable for ever and nothing could be selected.
+
+**One layout defect, fixed for every page.** `.view-head .actions` never
+wrapped. Six commands fit on a laptop; Concept carries seven and pushed the
+whole page sideways on a phone, and every other screen was one button away from
+the same. Swept afterwards: all 21 routes an enterprise admin can reach render
+at 393px with no horizontal overflow and no page error.
+
 ---
 
 ## Working notes

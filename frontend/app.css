@@ -351,7 +351,10 @@ button { font: inherit; }
 .view-head { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
 .view-head h1 { font-size: 21px; font-weight: 650; letter-spacing: -0.5px; text-wrap: balance; }
 .view-head p { color: var(--text-3); font-size: 12.5px; margin-top: 4px; max-width: 74ch; }
-.view-head .actions { margin-left: auto; display: flex; gap: 8px; }
+/* `flex-wrap` because the number of commands is a property of the screen, not
+   of the layout. Concept carries seven and pushed the page sideways on a phone;
+   every other page was one button away from the same. */
+.view-head .actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 
 /* --------------------------------------------------------------- widgets */
 .grid { display: grid; gap: 14px; }
@@ -783,7 +786,9 @@ input:focus, select:focus, textarea:focus {
   /* The command bar wraps rather than overflowing, and each button is a
      thumb-sized target. */
   .cmd-bar { gap: 7px; }
-  .view-head .actions { width: 100%; }
+  /* Left-aligned once it is on its own row: right-aligned buttons that have
+     wrapped read as a ragged column pinned to the wrong edge. */
+  .view-head .actions { width: 100%; margin-left: 0; justify-content: flex-start; }
 }
 
 @media (hover: none) and (pointer: coarse) {

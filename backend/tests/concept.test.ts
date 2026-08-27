@@ -1345,6 +1345,77 @@ describe('C-WF-04 — feasibility options and option selection', () => {
     throwsCode(() => conceptoptions.rejectOption(as('owner'), { optionId: a.optionId, rationale: '' }), 'RATIONALE_REQUIRED');
   });
 
+  it('keeps rejected options in the comparison, because the table is the record of the decision', () => {
+    options();
+    const comparison = conceptoptions.compareOptions(as('pm'));
+    assert.equal(comparison.comparable, true);
+    assert.deepEqual(
+      comparison.rows.map((r) => r.reference).sort(),
+      ['OPT-A', 'OPT-B'],
+      'a rejected option dropped out of the comparison, leaving a one-row table',
+    );
+    // The leader is still the option in contention, not merely the top row.
+    assert.equal(comparison.leader, 'OPT-A');
+  });
+
+  it('does not let a rejected option block a later selection', async () => {
+    // The deadlock the contending/scored split exists to prevent: reject an
+    // option because its price base did not match, and the comparison would
+    // stay permanently incomparable if rejections were still counted.
+    await freshProject();
+    configure();
+    brief();
+    diligence();
+
+    const shape = {
+      description: 'x',
+      assumptions: ['a'],
+      exclusions: [],
+      currency: 'GBP',
+      orderOfCostMinor: 180_000_000,
+      costLowMinor: 160_000_000,
+      costHighMinor: 220_000_000,
+      durationDaysLow: 500,
+      durationDaysMostLikely: 600,
+      durationDaysHigh: 780,
+    };
+    const stale = conceptoptions.createOption(as('admin'), {
+      ...shape,
+      reference: 'OPT-OLD',
+      name: 'Priced on an old base',
+      scopeStatement: 'Existing retained',
+      baseDate: '2024-01-01',
+    });
+    const current = conceptoptions.createOption(as('admin'), {
+      ...shape,
+      reference: 'OPT-NEW',
+      name: 'Priced on the current base',
+      scopeStatement: 'Existing retained',
+      baseDate: iso(0),
+    });
+    conceptoptions.analyseOption(as('pm'), { optionId: stale.optionId, scores: SCORES });
+    conceptoptions.analyseOption(as('pm'), { optionId: current.optionId, scores: SCORES });
+
+    // While both are in contention the comparison is withheld, correctly.
+    assert.equal(conceptoptions.compareOptions(as('pm')).comparable, false);
+
+    conceptoptions.rejectOption(as('owner'), {
+      optionId: stale.optionId,
+      rationale: 'Priced on a 2024 base and not worth restating; superseded by OPT-NEW.',
+    });
+
+    // Ruled out, so it no longer blocks — but it is still in the table.
+    const comparison = conceptoptions.compareOptions(as('pm'));
+    assert.equal(comparison.comparable, true, comparison.incomparableReason ?? '');
+    assert.equal(comparison.rows.length, 2);
+    conceptoptions.selectOption(as('owner'), {
+      optionId: current.optionId,
+      rationale: 'The only option on the current price base.',
+      evidenceHash: 'c'.repeat(64),
+    });
+    assert.equal(conceptoptions.selectedOption(as('pm'))?.reference, 'OPT-NEW');
+  });
+
   it('keeps every rejected option with its reason', () => {
     options();
     const position = conceptoptions.optionPosition(as('pm'));
