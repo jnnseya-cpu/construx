@@ -223,6 +223,12 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // letters where silence is acceptance the date is the whole point. Recording
   // it as another ISSUE would lose who answered and when.
   def('CORRESPONDENCE_ANSWERED', 'Correspondence', 'UPDATE', 'DESIGN', { requiresEvidence: true }),
+  // CN-WF-08. Superseding a drawing changes the register; it does not reach the
+  // person holding the old one in a site cabin. A transmittal is the controlled
+  // issue, and the acknowledgement is what makes "who is still holding
+  // superseded information" an answerable question.
+  def('INFORMATION_PUBLISHED', 'Transmittal', 'ISSUE', 'DESIGN', { creates: true }),
+  def('INFORMATION_ACKNOWLEDGED', 'Transmittal', 'UPDATE', 'DESIGN'),
   // D-WF-06. A change to *approved design*, which is not the same record as the
   // contractual `ChangeRequest` under CHANGE_VARIATION: most design changes are
   // the designer correcting their own work and never become a variation at all.
@@ -426,6 +432,16 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('CONTRACT_CLAUSE_EXTRACTED', 'ContractClause', 'CREATE', 'CONTRACTS_CLAIMS', { aiAllowed: true, requiresEvidence: true }),
   def('OBLIGATION_REGISTERED', 'Obligation', 'CREATE', 'CONTRACTS_CLAIMS', { aiAllowed: true }),
   def('NOTICE_ISSUED', 'Notice', 'ISSUE', 'CONTRACTS_CLAIMS', { requiresEvidence: true, creates: true }),
+  // CN-WF-08. Sequentially numbered, because a gap in an instruction sequence is
+  // a question somebody will ask and an unnumbered instruction is one nobody can
+  // prove was issued.
+  def('INSTRUCTION_ISSUED', 'Instruction', 'ISSUE', 'CONTRACTS_CLAIMS', { requiresEvidence: true, creates: true }),
+  def('INSTRUCTION_IMPLEMENTED', 'Instruction', 'UPDATE', 'CONTRACTS_CLAIMS', { requiresEvidence: true }),
+  // The thing that was said. Recording it does not make it an instruction — the
+  // platform never converts one — but it makes it visible exposure with a name,
+  // a date and what the site did about it.
+  def('UNCONFIRMED_DIRECTION_RECORDED', 'UnconfirmedDirection', 'CREATE', 'CONTRACTS_CLAIMS', { creates: true }),
+  def('DIRECTION_CONFIRMED', 'UnconfirmedDirection', 'UPDATE', 'CONTRACTS_CLAIMS'),
 
   // --- Programme & delivery -------------------------------------------------
   // CN-WF-01. Start is an authorisation rather than a date. The checklist is by

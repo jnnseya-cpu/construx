@@ -1653,3 +1653,119 @@ Acceptance criteria
 •	AC-CM-WF-03-02: Result calculation is deterministic from raw readings and limits.
 •	AC-CM-WF-03-03: Open FAT exception is visible at delivery, installation and SAT readiness.
 ```
+
+## CM-WF-04
+
+```
+CM-WF-04 - Pre-functional and static completion checks
+Primary owner: Commissioning Engineer  |  Trigger: System construction completion submitted
+Required inputs
+•	Construction completion and ITP evidence
+•	installation checks, cleanliness/flushing/pressure/electrical test results
+•	labels, access, guards, lubrication, alignment and settings
+•	as-installed markup and equipment records
+•	open defects and permits/isolations
+Deterministic flow
+1.	Inspect subsystem/equipment against pre-functional checklist.
+2.	Verify preceding quality tests, certificates and unresolved defects.
+3.	Record pass/fail/observation with tagged/location evidence.
+4.	Create commissioning exception or return to construction responsibility.
+5.	Confirm static completion and release for functional testing when all blockers close.
+6.	Update system readiness percentage by weighted mandatory checks.
+AI-agent duties and human guardrails
+•	Detect missing prerequisite evidence and inconsistent tag/serial/location.
+•	Image analysis may prompt inspection; it cannot establish technical pass.
+Outputs
+•	PreFunctionalChecklist
+•	StaticCompletion Record
+•	CommissioningExceptions
+•	FunctionalTest Release
+Exception controls
+•	Safety-critical guard/isolation/earthing or pressure integrity failure blocks release.
+•	Not Applicable requires rationale and approval.
+•	Construction rework automatically invalidates affected static completion.
+Events: PREFUNCTIONAL_CHECK_STARTED | COMMISSIONING_EXCEPTION_RAISED | STATIC_COMPLETION_ACCEPTED | FUNCTIONAL_TEST_RELEASED
+APIs:   POST /v1/subsystems/{id}/pre-functional-checks | POST /v1/commissioning-exceptions | POST /v1/subsystems/{id}:static-complete
+Acceptance criteria
+•	AC-CM-WF-04-01: Weighted readiness is based on accepted checks, not uploaded file count.
+•	AC-CM-WF-04-02: Each failure has responsibility and retest/reinspection route.
+•	AC-CM-WF-04-03: Functional test cannot start before release.
+```
+
+## CM-WF-05
+
+```
+CM-WF-05 - Functional performance and integrated systems testing
+Primary owner: Commissioning Manager  |  Trigger: Functional/integrated test release
+Required inputs
+•	Released procedure/test pack
+•	operating setpoints, sequences and cause/effect
+•	loads, scenarios, faults, alarms and emergency modes
+•	dependent system readiness and control network/trend access
+•	witnesses and operational/safety boundaries
+Deterministic flow
+1.	Execute functional tests by step and record actual response/readings.
+2.	Compare result to tolerance, sequence and response time; create exceptions immediately.
+3.	For integrated test, verify all dependent systems/boundaries and run approved scenarios.
+4.	Capture trend logs, event/alarm sequences, video and witness sign-off.
+5.	Calculate Pass/Fail/Conditional without overwriting raw data.
+6.	Route failures to root cause/corrective action and controlled retest.
+AI-agent duties and human guardrails
+•	Analyse time-series/trend data, sequence mismatches and cross-system anomalies.
+•	Recommend probable root cause; engineer confirms diagnosis and disposition.
+Outputs
+•	FunctionalTest Record
+•	IntegratedSystemsTest Record
+•	Trend/Alarm Dataset
+•	Exception/Corrective Action
+•	WitnessDecision
+Exception controls
+•	Aborted test records reason and partial data; it is not Fail unless decided.
+•	Test script deviation requires authorised annotation and may invalidate result.
+•	Integrated test cannot pass while critical dependent system result is conditional/failed.
+Events: FUNCTIONAL_TEST_STARTED | FUNCTIONAL_TEST_COMPLETED | INTEGRATED_TEST_STARTED | INTEGRATED_TEST_COMPLETED | RETEST_REQUIRED
+APIs:   POST /v1/systems/{id}/functional-tests | POST /v1/systems/{id}/integrated-tests | POST /v1/tests/{id}:decide
+Acceptance criteria
+•	AC-CM-WF-05-01: System response can be reconstructed from timestamped raw evidence.
+•	AC-CM-WF-05-02: Pass calculation and authorised decision are separate fields.
+•	AC-CM-WF-05-03: Retest links failed test and changed condition/corrective action.
+```
+
+## CM-WF-06
+
+```
+CM-WF-06 - Reliability, soak, continuous performance and seasonal plan
+Primary owner: Commissioning Manager / Operations Representative  |  Trigger: Functional performance accepted
+Required inputs
+•	Required continuous run duration and operating envelope
+•	availability/reliability/performance criteria
+•	trend points, alarms, interventions and downtime rules
+•	seasonal conditions not achievable before handover
+•	operations attendance and response plan
+Deterministic flow
+1.	Configure run window, permissible interruptions and reset rules.
+2.	Stream/import trend data and log interventions/downtime.
+3.	Calculate availability/performance metrics from immutable time series.
+4.	Investigate exception and determine continue/reset/retest.
+5.	For unavailable seasonal condition, create post-handover seasonal test with owner/date/criteria.
+6.	Approve performance result and residual plan.
+AI-agent duties and human guardrails
+•	Detect drift, anomaly and hidden manual intervention.
+•	Forecast failure risk; authorised engineer accepts test result.
+Outputs
+•	Reliability/Soak Test
+•	PerformanceMetrics
+•	Intervention Log
+•	SeasonalCommissioning Plan
+•	ResidualObligations
+Exception controls
+•	Data gap beyond configured tolerance invalidates/pauses run.
+•	Manual override is recorded and affects result according to rule.
+•	Seasonal test remains visible after handover until closed.
+Events: RELIABILITY_TEST_STARTED | PERFORMANCE_ANOMALY_DETECTED | RELIABILITY_TEST_ACCEPTED | SEASONAL_TEST_PLANNED
+APIs:   POST /v1/systems/{id}/reliability-tests | POST /v1/tests/{id}/interventions | POST /v1/systems/{id}/seasonal-tests
+Acceptance criteria
+•	AC-CM-WF-06-01: Metrics reproduce from raw trend data and configuration.
+•	AC-CM-WF-06-02: Reset/continue decision is authorised and auditable.
+•	AC-CM-WF-06-03: Deferred seasonal scope transfers to aftercare with accepted responsibility.
+```

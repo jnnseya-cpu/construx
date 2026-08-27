@@ -5646,10 +5646,59 @@ without one. What was already right stays: the platform *asks* whether an
 incident is RIDDOR reportable and refuses to proceed without an answer either
 way, and never decides it, which is the guardrail the specification names.
 
-**Still to build in the construction block:** CN-WF-08 to CN-WF-12, and the
+---
+
+### Who was sent what, and what was only ever said
+
+CN-WF-08. `backend/src/domain/informationcontrol.ts`, eight routes, 23 tests.
+
+The drawing register, its supersession, the markup that becomes an RFI and the
+answer recorded against a revision were built. Four things were not, and three
+of them are the same failure from different sides: **the site is working to a
+revision the office has already replaced.**
+
+**Nobody recorded who was sent what.** Superseding a drawing changes the
+register; it does not reach the person holding the old one in a site cabin. A
+transmittal is the controlled issue — named documents at named revisions to
+named recipients for a stated purpose — and each recipient acknowledges. Until
+they do, the platform names exactly who is still holding superseded information,
+which is the only useful form of that question. A document issued with no
+purpose on it is refused: a drawing issued for comment and built from is how a
+preliminary revision ends up in the ground.
+
+**"Which revision am I building to?"** `currentInformationFor` is
+AC-CN-WF-08-01 as one call: what is current, what it replaced, who has not
+acknowledged the replacement. Latest issue wins per reference, resolving a
+same-tick tie to the later ledger entry.
+
+**An instruction that was a conversation.** The expensive one. Somebody senior
+tells a foreman to move a wall, nobody writes it down, the wall moves, and six
+months later there is no instruction, no variation and a contractor who did the
+work. An **unconfirmed direction** records what was said, by whom, to whom, and
+what the site did about it — "nothing yet" being a complete answer and a
+different exposure from "started" — and stays visible until an instruction
+confirms it or somebody records what happened to it. **The platform never
+converts one into an instruction**: that is the guardrail the specification
+names, and issuing one is `CHANGE_VARIATION` approve.
+
+**An instruction with no authority on it.** AC-CN-WF-08-03: sequentially
+numbered, under a named clause, to named recipients, with the issued document as
+evidence and an implementation status somebody other than the issuer verified.
+
+AC-CN-WF-08-02 is answered by deriving rather than typing: an RFI's *due* date is
+contractual and its *required-by* comes off the programme through the activity
+the answer is holding up, so the position reports both and the float between
+them. A second typed date is a second date to be wrong.
+
+One honest limit is stated in the code and the test: the instruction-length rule
+is a **floor, not a judgement of clarity**. No rule distinguishes "proceed as
+discussed" from a real instruction; what it stops is the one-word instruction,
+which is common and always a dispute.
+
+**Still to build in the construction block:** CN-WF-09 to CN-WF-12, and the
 stage workspace described in 9.2. The specifications received so far — the
 construction stage control, 9.1, 9.2, CN-WF-01 to CN-WF-12, the 9.4 gate, the
-commissioning stage control with 10.1 and 10.2, and CM-WF-01 to CM-WF-03 — are
+commissioning stage control with 10.1 and 10.2, and CM-WF-01 to CM-WF-06 — are
 recorded verbatim in `docs/WORKFLOWS.md`.
 
 ---

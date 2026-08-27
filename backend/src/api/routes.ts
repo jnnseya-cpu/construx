@@ -38,6 +38,7 @@ import * as progressverification from '../domain/progressverification.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
+import * as informationcontrol from '../domain/informationcontrol.ts';
 import * as itt from '../domain/itt.ts';
 import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
@@ -4089,6 +4090,136 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => planning.recordSiteDiary(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------ CN-WF-08 who was sent what, and what was only ever said
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/information-control',
+    description: 'Who is still holding superseded information, what was only ever said verbally, and which RFIs have no float',
+    handler: (platform, ctx) => informationcontrol.informationPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/current-information',
+    description: 'What is current, what it replaced, and who has not acknowledged the replacement',
+    handler: (platform, ctx) =>
+      informationcontrol.currentInformationFor(
+        projectContext(platform, ctx),
+        ctx.query?.get('package') ?? undefined,
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/transmittals',
+    description: 'Issue named documents at named revisions to named recipients, for a stated purpose',
+    schema: {
+      type: 'object',
+      required: ['documents', 'recipients', 'note'],
+      properties: {
+        documents: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['reference', 'title', 'revision', 'purpose'],
+            properties: {
+              reference: stringField,
+              title: stringField,
+              revision: stringField,
+              purpose: stringField,
+              supersedes: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+        recipients: { type: 'array', items: stringField },
+        packageReference: stringField,
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => informationcontrol.issueTransmittal(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/transmittals/:transmittalId/acknowledge',
+    description: 'A recipient confirming they hold it. Until they do, they are holding the old one',
+    schema: {
+      type: 'object',
+      required: ['party', 'acknowledgedBy'],
+      properties: { party: stringField, acknowledgedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      informationcontrol.acknowledgeTransmittal(projectContext(platform, ctx), ctx.params.transmittalId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/instructions',
+    description: 'Issue a numbered instruction under a named clause, to named recipients, with the document that was issued',
+    schema: {
+      type: 'object',
+      required: ['subject', 'instruction', 'contractClause', 'recipients', 'evidenceHash'],
+      properties: {
+        subject: stringField,
+        instruction: { type: 'string' },
+        contractClause: stringField,
+        recipients: { type: 'array', items: stringField },
+        confirmsDirectionId: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => informationcontrol.issueInstruction(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/instructions/:instructionId/implemented',
+    description: 'What was actually done on site and who checked it',
+    schema: {
+      type: 'object',
+      required: ['what', 'verifiedBy', 'evidenceHash'],
+      properties: { what: { type: 'string' }, verifiedBy: stringField, evidenceHash: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      informationcontrol.recordInstructionImplementation(
+        projectContext(platform, ctx),
+        ctx.params.instructionId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/unconfirmed-directions',
+    description: 'Record what was said, by whom, to whom, and what the site did about it. Visible exposure, not an instruction',
+    schema: {
+      type: 'object',
+      required: ['givenBy', 'givenTo', 'givenAt', 'whatWasSaid', 'actionTaken'],
+      properties: {
+        givenBy: stringField,
+        givenTo: stringField,
+        givenAt: stringField,
+        whatWasSaid: { type: 'string' },
+        actionTaken: { type: 'string' },
+        estimatedCostMinor: { type: 'number', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => informationcontrol.recordUnconfirmedDirection(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/unconfirmed-directions/:directionId/withdraw',
+    description: 'Withdrawn, superseded, or never actually said — with what happened to the work done on the strength of it',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      informationcontrol.withdrawDirection(projectContext(platform, ctx), ctx.params.directionId as string, body(ctx)),
   },
 
   // ------------------------------------------ CN-WF-07 the second half of RAMS, permits and incidents

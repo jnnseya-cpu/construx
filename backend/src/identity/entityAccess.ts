@@ -104,6 +104,8 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // designer holding `DESIGN_INFORMATION` read could have listed them.
   Clarification: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Correspondence: { area: 'DESIGN_INFORMATION' },
+  // CN-WF-08. The controlled issue of information, with who acknowledged it.
+  Transmittal: { area: 'DESIGN_INFORMATION' },
   StorageEntitlement: { area: 'BILLING_ACU' },
   // A permit names who is authorised to do a high-risk activity and on whose
   // competence. Same area as the RAMS it depends on.
@@ -256,6 +258,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   ImpactAssessment: { area: 'CONTRACTS_CLAIMS' },
   Claim: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },
   Notice: { area: 'CONTRACTS_CLAIMS' },
+  // CN-WF-08. An instruction binds the contract, and a verbal direction is the
+  // exposure that exists until one confirms it. Both contractual rather than
+  // design: the question they answer is what the project is owed and owes.
+  Instruction: { area: 'CONTRACTS_CLAIMS' },
+  UnconfirmedDirection: { area: 'CONTRACTS_CLAIMS' },
   Dispute: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },
 
   // Risk and safety
