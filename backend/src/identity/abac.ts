@@ -40,6 +40,20 @@ const LEGAL_L4_ROLES = new Set<Role>(['OWNER', 'EPC', 'QS', 'PM', 'ENTERPRISE_AD
 const COMMERCIAL_L3_ROLES = new Set<Role>(['OWNER', 'EPC', 'QS', 'PM', 'ENTERPRISE_ADMIN']);
 
 /**
+ * Whether these roles are cleared for a classification.
+ *
+ * Exported so a projection that filters restricted records out of a list reads
+ * the same two sets the access decision below reads. A second list of cleared
+ * roles kept beside these is a second answer to the same question, and the two
+ * diverge the first time either is edited.
+ */
+export function clearedFor(roles: readonly Role[], sensitivity: DataSensitivity): boolean {
+  if (sensitivity === 'LEGAL_L4') return roles.some((role) => LEGAL_L4_ROLES.has(role));
+  if (sensitivity === 'COMMERCIAL_L3') return roles.some((role) => COMMERCIAL_L3_ROLES.has(role));
+  return true;
+}
+
+/**
  * Phases in which a capability area may be written. Writing a tender estimate
  * during O&M, or field progress before award, indicates a process error.
  */

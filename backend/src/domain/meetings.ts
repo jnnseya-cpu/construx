@@ -3,6 +3,7 @@ import { ulid } from '../core/ids.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
 import { rolesAllow } from '../identity/roles.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
+import { minutesIssueBlockedReason } from './decisioncontrol.ts';
 
 /**
  * Site meetings, and the minutes that come out of them.
@@ -341,6 +342,12 @@ export function issueMinutes(ctx: EngineContext, meetingId: string): { issuedAt:
   if (state.agenda.length === 0) {
     throw new DomainError('NOTHING_MINUTED', 'Nothing was recorded as discussed, so there is nothing to issue.');
   }
+
+  // CN-WF-11 step 3: the chair approves, then the minutes are issued. Binds only
+  // where the project approves minutes at all, so it cannot impose a step on a
+  // project that predates it.
+  const blocked = minutesIssueBlockedReason(ctx, meetingId);
+  if (blocked) throw new DomainError('MINUTES_NOT_APPROVED', blocked);
 
   const issuedAt = new Date().toISOString();
 

@@ -65,6 +65,7 @@ import * as dailylog from '../domain/dailylog.ts';
 import * as delivery from '../domain/delivery.ts';
 import * as designchange from '../domain/designchange.ts';
 import * as designplan from '../domain/designplan.ts';
+import * as decisioncontrol from '../domain/decisioncontrol.ts';
 import * as measurement from '../domain/measurement.ts';
 import * as meetings from '../domain/meetings.ts';
 import * as mobilisation from '../domain/mobilisation.ts';
@@ -5368,6 +5369,111 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       meetings.recordCorrection(projectContext(platform, ctx), ctx.params.meetingId as string, body(ctx)),
+  },
+
+  // ------------------------------------------------------- CN-WF-11 approved minutes, actions and decisions
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/meetings/:meetingId/approve-minutes',
+    description: 'The chair approves the minutes as they stand, hashing exactly what was approved',
+    schema: {
+      type: 'object',
+      required: ['approvedBy'],
+      properties: { approvedBy: stringField, note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      decisioncontrol.approveMinutes(projectContext(platform, ctx), ctx.params.meetingId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/meetings/:meetingId/approved-version',
+    description: 'The exact text that was approved, for anything that reproduces the minutes',
+    handler: (platform, ctx) =>
+      decisioncontrol.approvedVersionOf(projectContext(platform, ctx), ctx.params.meetingId as string) ?? null,
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/actions',
+    description: 'Every open commitment across meetings, NCRs, safety observations and stage gates — once each',
+    handler: (platform, ctx) => decisioncontrol.actionRegister(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/decisions',
+    description: 'The action register by owner, the escalations, and the decisions with what else was considered',
+    handler: (platform, ctx) => decisioncontrol.decisionControlPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/decisions',
+    description: 'Record a material decision: authority, rationale, alternatives not taken and impact per dimension',
+    schema: {
+      type: 'object',
+      required: ['subject', 'decision', 'rationale', 'authority', 'alternatives', 'impacts'],
+      properties: {
+        subject: stringField,
+        decision: { type: 'string' },
+        rationale: { type: 'string' },
+        authority: {
+          type: 'object',
+          required: ['name', 'role', 'basis'],
+          properties: { name: stringField, role: stringField, basis: { type: 'string' } },
+          additionalProperties: false,
+        },
+        // No `minItems` here either. "A decision with no alternative beside it is
+        // an instruction being minuted" is the sentence the caller needs.
+        alternatives: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['option', 'whyNot'],
+            properties: { option: stringField, whyNot: { type: 'string' } },
+            additionalProperties: false,
+          },
+        },
+        impacts: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['dimension', 'effect', 'detail'],
+            properties: {
+              dimension: { type: 'string', enum: [...decisioncontrol.IMPACT_DIMENSION] },
+              effect: { type: 'string', enum: ['NONE', 'ADVERSE', 'BENEFICIAL', 'UNQUANTIFIED'] },
+              detail: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+        references: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['register', 'reference'],
+            properties: { register: stringField, reference: stringField },
+            additionalProperties: false,
+          },
+        },
+        meetingId: stringField,
+        confidentiality: { type: 'string', enum: ['INTERNAL', 'COMMERCIAL_L3', 'LEGAL_L4'] },
+        requiresInstruction: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => decisioncontrol.recordDecision(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/decisions/:decisionId/instruction',
+    description: 'Record the instruction that gave effect to a decision — a person issues it, the platform never does',
+    schema: {
+      type: 'object',
+      required: ['instructionReference'],
+      properties: { instructionReference: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      decisioncontrol.linkInstruction(projectContext(platform, ctx), ctx.params.decisionId as string, body(ctx)),
   },
 
   {

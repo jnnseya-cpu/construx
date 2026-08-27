@@ -5739,7 +5739,67 @@ wrong and leaving it there is worse than the derivation. A correction keeps the
 derived date alongside the corrected one — the pattern of corrections is how a
 wrong rule gets found.
 
-**Still to build in the construction block:** CN-WF-11 and CN-WF-12, and the
+---
+
+### One action, one identity, and a decision with alternatives on it
+
+CN-WF-11. `backend/src/domain/decisioncontrol.ts`, six routes, 23 tests.
+
+`domain/meetings.ts` already held the meeting record, attendance with apologies,
+the agenda in the words used, actions with an owner and a date, carry-forward
+that never resets the original date, closure with a note rather than a tick,
+issue-once and a correction recorded beside issued minutes with both versions
+readable. None of that is rebuilt. Three things were absent.
+
+**The same action, counted twice.** AC-CN-WF-11-01. Actions are raised in a
+meeting, on a non-conformance, against a safety observation and at a stage gate,
+and every one of those registers reported its own — so a person reading two
+screens saw one commitment twice and could not tell. The register derives a
+**stable identity from the source record** and writes nothing: the source
+register stays the only writer of its own actions. Escalation climbs the role
+hierarchy the permission matrix already defines rather than a list of names
+somebody has to maintain, and nothing escalates on the day it falls due. A
+source the reader cannot see is **omitted rather than refused** — a register
+that threw on the first safety entry a planner could not read would be unusable
+for everyone, and a safety action still never reaches a role without safety
+read.
+
+**Minutes that changed after they were approved.** AC-CN-WF-11-02. Issue already
+froze the narrative, but closing an action is deliberately permitted afterwards
+— the register is live and freezing it would need a new meeting for every
+closure. That means the *state* of an issued meeting is not what the chair
+approved, and a minutes document regenerated in November would show October's
+actions closed. Approval now takes a hash-addressed snapshot of exactly what was
+approved, stored as its own `MinutesVersion` entity rather than on the record it
+snapshots, and issue is refused if the draft has moved since. Re-approving
+amended minutes records a second version beside the first. The guard binds only
+where the project approves minutes at all, so it imposes no step on a project
+that predates it.
+
+**A decision with no alternatives.** AC-CN-WF-11-03. A material decision that
+records only what was chosen is an instruction being minuted; what a reader six
+months later needs is what else was on the table and why it was not taken. A
+`DecisionRecord` carries the named authority and what gives them it, the
+rationale, the alternatives each with the reason it was not taken, and an impact
+**per dimension including where there is none** — an impact nobody assessed and
+an impact somebody assessed as nil are indistinguishable when the field is
+simply left out, and only one of them is safe. Legal and commercially sensitive
+discussion takes a restricted classification, read through the same clearance
+the access decision reads (`abac.clearedFor`, exported so there is one answer
+rather than two), and is withheld from a role without it while the rest of the
+position still answers.
+
+The specification's guardrail is kept exactly: **the platform never converts a
+decision into a contractual instruction.** A decision that needs one says so and
+stays on the outstanding list until a person calls
+`informationcontrol.issueInstruction` and the reference is recorded against it.
+
+Two of the specification's five event names are already in the catalogue under
+different names and are not duplicated: `MEETING_RECORDED` is `MEETING_HELD`,
+and `ACTION_ASSIGNED` is part of it, because attendance, agenda and actions are
+one act. The register derives rather than re-emitting them.
+
+**Still to build in the construction block:** CN-WF-12, and the
 stage workspace described in 9.2. The specifications received so far — the
 construction stage control, 9.1, 9.2, CN-WF-01 to CN-WF-12, the 9.4 gate, the
 commissioning stage control with 10.1 and 10.2, and CM-WF-01 to CM-WF-06 — are

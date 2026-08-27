@@ -304,6 +304,12 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // manager and project director hold A, so they issue. That is exactly how a
   // set of minutes is produced on site.
   SiteMeeting: { area: 'LOOKAHEAD_CONSTRAINTS' },
+  // CN-WF-11. Both follow the meeting they come out of: the chair who issues the
+  // minutes is the authority who approves the version and records the decision,
+  // and splitting them into a different area would mean the person running the
+  // meeting could not record what was decided at it.
+  MinutesVersion: { area: 'LOOKAHEAD_CONSTRAINTS' },
+  DecisionRecord: { area: 'LOOKAHEAD_CONSTRAINTS' },
   Snag: { area: 'QUALITY_COMMISSIONING' },
   Defect: { area: 'QUALITY_COMMISSIONING' },
   CommissioningTest: { area: 'QUALITY_COMMISSIONING' },

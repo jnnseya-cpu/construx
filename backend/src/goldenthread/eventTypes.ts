@@ -555,6 +555,23 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // Somebody disagreeing with what the minutes say is itself a fact about the
   // meeting; overwriting the text destroys the only thing minutes are for.
   def('MINUTES_CORRECTED', 'SiteMeeting', 'UPDATE', 'DELIVERY'),
+  // CN-WF-11. A separate entity rather than a status on the meeting, because the
+  // meeting keeps changing after approval — closing an action is deliberately
+  // permitted once the minutes are issued — and a version that lived on the
+  // record it snapshots would move with it. The hash is of what was approved,
+  // so issue can prove the text has not drifted since somebody stood behind it.
+  def('MINUTES_APPROVED', 'MinutesVersion', 'APPROVE', 'GOVERNANCE', { creates: true }),
+  // A material decision, with what else was considered and why it was not taken.
+  // GOVERNANCE rather than DELIVERY: this is the record that binds, and it is
+  // human by construction — no agent mandate reaches a decision, and the
+  // platform never converts one into a contractual instruction.
+  def('DECISION_RECORDED', 'DecisionRecord', 'CREATE', 'GOVERNANCE', { creates: true }),
+  // Recording that the instruction giving effect to a decision has been issued
+  // is a different act from taking the decision, and an audit reading the ledger
+  // can tell them apart without inspecting state. The platform never issues the
+  // instruction — a person calls `informationcontrol.issueInstruction` and this
+  // records the reference afterwards.
+  def('DECISION_INSTRUCTION_LINKED', 'DecisionRecord', 'UPDATE', 'GOVERNANCE'),
   // Quality assurance: the plan, the hold points, and the record against them.
   def('ITP_CREATED', 'InspectionPlan', 'CREATE', 'DELIVERY', { creates: true }),
   // CN-WF-06. The request carries the exact information revision the inspection
