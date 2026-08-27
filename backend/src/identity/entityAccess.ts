@@ -330,6 +330,12 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   FunctionalTest: { area: 'QUALITY_COMMISSIONING' },
   ReliabilityRun: { area: 'QUALITY_COMMISSIONING' },
   SeasonalTest: { area: 'QUALITY_COMMISSIONING' },
+  TrainingSession: { area: 'QUALITY_COMMISSIONING' },
+  CommissioningDossier: { area: 'QUALITY_COMMISSIONING' },
+  SystemAcceptance: { area: 'QUALITY_COMMISSIONING' },
+  // The stage exit belongs with whoever governs the project, as the
+  // construction one does.
+  CommissioningCompletion: { area: 'PROJECT_SETUP' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },

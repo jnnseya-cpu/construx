@@ -61,6 +61,7 @@ import * as sitevisit from '../engines/sitevisit.ts';
 import * as award from '../domain/award.ts';
 import * as enquiry from '../domain/enquiry.ts';
 import * as constructability from '../domain/constructability.ts';
+import * as commissioningclose from '../domain/commissioningclose.ts';
 import * as commissioningexception from '../domain/commissioningexception.ts';
 import * as completion from '../domain/completion.ts';
 import * as coordination from '../domain/coordination.ts';
@@ -5534,6 +5535,148 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => systemisation.declareTemporaryOperation(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- CM-WF-08 training, dossier, acceptance and the gate
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/commissioning-close',
+    description: 'Dossier completeness by system, training and what it rests on, acceptances, and what handover inherits',
+    handler: (platform, ctx) => commissioningclose.commissioningClosePosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/training-records',
+    description: 'Record a delivered session against the information it taught, at the revision taught',
+    schema: {
+      type: 'object',
+      required: ['reference', 'systemTag', 'role', 'deliveredAgainst', 'deliveredBy', 'deliveredAt', 'attendees'],
+      properties: {
+        reference: stringField,
+        systemTag: stringField,
+        role: stringField,
+        deliveredBy: stringField,
+        deliveredAt: stringField,
+        deliveredAgainst: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['reference', 'revision'],
+            properties: { reference: stringField, revision: stringField },
+            additionalProperties: false,
+          },
+        },
+        attendees: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['name', 'role', 'organisation', 'competent'],
+            properties: {
+              name: stringField,
+              role: stringField,
+              organisation: stringField,
+              competent: { type: 'boolean' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => commissioningclose.recordTraining(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/training-records/supersede',
+    description: 'Supersede a document, invalidating every session taught from the revision it replaces',
+    schema: {
+      type: 'object',
+      required: ['reference', 'supersededRevision', 'newRevision', 'recordedBy'],
+      properties: {
+        reference: stringField,
+        supersededRevision: stringField,
+        newRevision: stringField,
+        recordedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => commissioningclose.supersedeTrainingInformation(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commissioning-dossiers',
+    description: 'Compile the dossier for one system. Completeness is over the required records, not the file count',
+    schema: {
+      type: 'object',
+      required: ['systemTag', 'entries', 'compiledBy'],
+      properties: {
+        systemTag: stringField,
+        compiledBy: stringField,
+        entries: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['key', 'reference', 'revision', 'evidenceRef'],
+            properties: {
+              key: { type: 'string', enum: commissioningclose.DOSSIER_RECORD.map((record) => record.key) },
+              reference: stringField,
+              revision: stringField,
+              evidenceRef: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => commissioningclose.compileDossier(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/system-acceptances',
+    description: 'Accept a system into operation, acknowledged by the named party that will be running it',
+    schema: {
+      type: 'object',
+      required: ['systemTag', 'decision', 'acknowledgedBy', 'acknowledgedForOrganisation', 'note'],
+      properties: {
+        systemTag: stringField,
+        decision: { type: 'string', enum: ['ACCEPTED', 'CONDITIONAL', 'REJECTED'] },
+        acknowledgedBy: stringField,
+        acknowledgedForOrganisation: stringField,
+        note: { type: 'string' },
+        conditions: {
+          type: 'object',
+          required: ['operatingLimits', 'riskOwner', 'expiresOn', 'closurePlan'],
+          properties: {
+            operatingLimits: { type: 'string' },
+            riskOwner: stringField,
+            expiresOn: stringField,
+            closurePlan: { type: 'string' },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => commissioningclose.acceptSystem(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/handover-obligations',
+    description: 'Every obligation handover inherits, by the identifier it already has — read, never copied',
+    handler: (platform, ctx) => commissioningclose.handoverObligations(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commissioning-complete',
+    description: 'Close the commissioning stage once every system carries a decision and none was rejected',
+    schema: {
+      type: 'object',
+      required: ['acceptedBy', 'statement'],
+      properties: { acceptedBy: stringField, statement: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => commissioningclose.completeCommissioning(projectContext(platform, ctx), body(ctx)),
   },
 
   // ------------------------------------------------------- CM-WF-06 reliability, soak and the seasonal plan

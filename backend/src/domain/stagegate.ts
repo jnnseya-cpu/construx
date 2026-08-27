@@ -924,12 +924,29 @@ function constructionDownstreamCreated(ctx: EngineContext): ClauseResult {
     }
   }
 
+  // The stage's own exit condition: works complete by system or area with
+  // commissioning turnover released. Assessable since CN-WF-12; this clause
+  // reported NOT_ASSESSABLE while the turnover record did not exist.
+  const turnovers = list(ctx, 'SystemTurnover');
+  if (turnovers.length === 0) {
+    blocking.push('No system has been released to commissioning, so nothing has carried through to the next stage');
+  }
+  for (const turnover of turnovers) {
+    const retained = (turnover.retainedObligations as string[] | undefined) ?? [];
+    if (retained.length === 0) {
+      blocking.push(`${String(turnover.systemName)} was released with no retained construction obligation stated`);
+    }
+    if (!String(turnover.boundary ?? '').trim()) {
+      blocking.push(`${String(turnover.systemName)} was released with no boundary`);
+    }
+  }
+
   if (blocking.length > 0) {
     return {
       clause: 'DOWNSTREAM_CREATED',
       title: TITLES.DOWNSTREAM_CREATED,
       state: 'FAIL',
-      detail: `${blocking.length} thing${blocking.length === 1 ? '' : 's'} did not carry through to the as-built record.`,
+      detail: `${blocking.length} thing${blocking.length === 1 ? '' : 's'} did not carry through to the next stage.`,
       blocking,
     };
   }
@@ -937,17 +954,229 @@ function constructionDownstreamCreated(ctx: EngineContext): ClauseResult {
   return {
     clause: 'DOWNSTREAM_CREATED',
     title: TITLES.DOWNSTREAM_CREATED,
-    state: 'NOT_ASSESSABLE',
+    state: 'PASS',
     detail:
-      'Every accepted serial traces to an installed location and its test evidence, and the inventory and accrual come off ' +
-      'acceptance without re-entry. The commissioning turnover pack, the system boundaries it transfers and the retained ' +
-      'construction obligations are not built — CM-WF-01 onwards — so the clause is met in part and cannot be assessed in ' +
-      'full.',
-    blocking: [
-      'The commissioning turnover pack is not created from the construction record',
-      'System boundaries and retained construction obligations are not transferred to commissioning',
-    ],
+      `Every accepted serial traces to an installed location and its test evidence, and ${turnovers.length} system` +
+      `${turnovers.length === 1 ? '' : 's'} released to commissioning with a defined boundary, its isolations and the ` +
+      'obligations construction retains.',
+    blocking: [],
   };
+}
+
+// --- The commissioning gate — 10.4 -----------------------------------------
+
+function commissioningInputsComplete(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  const nodes = list(ctx, 'SystemNode');
+  if (nodes.length === 0) {
+    blocking.push('No system hierarchy has been defined, so no boundary is tied to any source version');
+  }
+  const unapproved = nodes.filter((node) => node.hierarchyApproved !== true).map((node) => String(node.tag));
+  if (unapproved.length > 0) {
+    blocking.push(`${unapproved.join(', ')} not covered by an approved systemisation`);
+  }
+
+  const plans = list(ctx, 'CommissioningPlan');
+  if (plans.length === 0) {
+    blocking.push('No commissioning plan has been drafted');
+  } else if (!plans.some((plan) => plan.status === 'APPROVED')) {
+    blocking.push('No commissioning plan has been approved');
+  }
+
+  // Every pack the approved plan requires, actually raised and released.
+  const released = new Set(
+    list(ctx, 'TestPack')
+      .filter((pack) => pack.status === 'RELEASED')
+      .map((pack) => String(pack.reference)),
+  );
+  const unreleased = list(ctx, 'TestPackRequirement')
+    .map((requirement) => String(requirement.reference))
+    .filter((reference) => !released.has(reference));
+  if (unreleased.length > 0) {
+    blocking.push(`${unreleased.join(', ')} required by the plan and never released for test`);
+  }
+
+  return {
+    clause: 'INPUTS_COMPLETE',
+    title: TITLES.INPUTS_COMPLETE,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? `${nodes.length} node hierarchy approved, the plan baselined, and every test pack it requires released.`
+        : `${blocking.length} mandatory input${blocking.length === 1 ? '' : 's'} missing or unversioned.`,
+    blocking,
+  };
+}
+
+function commissioningApprovalsGoverned(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  // Maker-checker on the thing that matters most here: a test result decided by
+  // whoever ran it.
+  for (const test of list(ctx, 'FunctionalTest')) {
+    if (test.status !== 'COMPLETE') continue;
+    if (String(test.startedBy ?? '') === String(test.decidedByActor ?? '')) {
+      blocking.push(`${String(test.reference)} was decided by the same actor who started it`);
+    }
+  }
+  for (const vendor of list(ctx, 'VendorTest')) {
+    if (vendor.status !== 'COMPLETE') continue;
+    if (String(vendor.startedBy ?? '') === String(vendor.decidedByActor ?? '')) {
+      blocking.push(`The ${String(vendor.kind)} on ${String(vendor.equipmentTag)} was decided by the actor who ran it`);
+    }
+  }
+  for (const acceptance of list(ctx, 'SystemAcceptance')) {
+    if (!String(acceptance.acknowledgedBy ?? '').trim()) {
+      blocking.push(`${String(acceptance.systemTag)} was accepted with no named operator acknowledgement`);
+    }
+  }
+
+  return {
+    clause: 'APPROVALS_GOVERNED',
+    title: TITLES.APPROVALS_GOVERNED,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? 'Every completed test was decided by somebody other than the actor who ran it, and every acceptance names the operator.'
+        : `${blocking.length} approval${blocking.length === 1 ? '' : 's'} outside the separation rules.`,
+    blocking,
+  };
+}
+
+function commissioningBlockersClosed(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  for (const exception of list(ctx, 'CommissioningException')) {
+    if (exception.status === 'CLOSED') continue;
+    if (exception.status === 'CONDITIONALLY_ACCEPTED') {
+      // A permitted, time-bound condition, exactly as the clause allows — until
+      // the date passes, at which point it is an open blocker again.
+      const conditional = exception.conditionalAcceptance as { reviewBy: string } | undefined;
+      if (conditional && String(conditional.reviewBy).slice(0, 10) < new Date().toISOString().slice(0, 10)) {
+        blocking.push(`${String(exception.reference)} is conditionally accepted past its review date`);
+      }
+      continue;
+    }
+    if (exception.severity === 'SAFETY_CRITICAL' || exception.blocker === true) {
+      blocking.push(`${String(exception.reference)} is open and ${exception.severity === 'SAFETY_CRITICAL' ? 'safety-critical' : 'blocking'}`);
+    }
+  }
+
+  for (const check of list(ctx, 'PreFunctionalCheck')) {
+    if (check.status === 'INVALIDATED') {
+      blocking.push(`${String(check.reference)} static completion was invalidated by rework and not reassessed`);
+    }
+  }
+
+  return {
+    clause: 'BLOCKERS_CLOSED',
+    title: TITLES.BLOCKERS_CLOSED,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? 'No critical or blocking commissioning exception is open outside a live time-bound condition.'
+        : `${blocking.length} blocker${blocking.length === 1 ? '' : 's'} open or past its condition.`,
+    blocking,
+  };
+}
+
+function commissioningOneCutOff(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  // A soak result whose trend has a hole in it is not reconciled to anything,
+  // and the dossier index is the cut-off of the information side.
+  for (const run of list(ctx, 'ReliabilityRun')) {
+    if (run.status !== 'ACCEPTED') continue;
+    const acceptance = run.acceptance as { metrics?: { gapWithinTolerance?: boolean } } | undefined;
+    if (acceptance?.metrics?.gapWithinTolerance === false) {
+      blocking.push(`${String(run.reference)} was accepted with more missing trend than its tolerance allows`);
+    }
+  }
+
+  for (const dossier of list(ctx, 'CommissioningDossier')) {
+    const missingCritical = (dossier.missingCritical as string[] | undefined) ?? [];
+    if (missingCritical.length > 0) {
+      blocking.push(`The dossier for ${String(dossier.systemTag)} is missing ${missingCritical.join(', ')}`);
+    }
+  }
+
+  return {
+    clause: 'ONE_CUT_OFF',
+    title: TITLES.ONE_CUT_OFF,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? 'Every accepted soak run is evidenced within its data-gap tolerance and every dossier carries its critical records.'
+        : `${blocking.length} thing${blocking.length === 1 ? '' : 's'} not reconciled at one cut-off.`,
+    blocking,
+  };
+}
+
+function commissioningDownstreamCreated(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  const systems = list(ctx, 'SystemNode').filter((node) => node.level === 'SYSTEM');
+  const decided = new Set(list(ctx, 'SystemAcceptance').map((acceptance) => String(acceptance.systemTag)));
+  const undecided = systems.map((node) => String(node.tag)).filter((tag) => !decided.has(tag));
+  if (undecided.length > 0) {
+    blocking.push(`${undecided.join(', ')} carries no acceptance decision`);
+  }
+
+  // AC-CM-WF-08-03 read at the gate: an obligation with no owner is one nobody
+  // discharges after handover.
+  for (const seasonal of list(ctx, 'SeasonalTest')) {
+    if (seasonal.status !== 'OUTSTANDING') continue;
+    if (!String(seasonal.responsibilityAcceptedBy ?? '').trim()) {
+      blocking.push(`${String(seasonal.reference)} transfers to aftercare with nobody accepting responsibility`);
+    }
+  }
+
+  // Training taught from information that has since moved is training the
+  // operator cannot rely on, and it does not carry into handover.
+  const invalidated = list(ctx, 'TrainingSession')
+    .filter((session) => session.status === 'INVALIDATED')
+    .map((session) => String(session.reference));
+  if (invalidated.length > 0) {
+    blocking.push(`${invalidated.join(', ')} was delivered against information since superseded and not reissued`);
+  }
+
+  return {
+    clause: 'DOWNSTREAM_CREATED',
+    title: TITLES.DOWNSTREAM_CREATED,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? 'Every system carries a decision, every deferred obligation names the party that accepted it, and no training rests on superseded information.'
+        : `${blocking.length} thing${blocking.length === 1 ? '' : 's'} did not carry through to handover.`,
+    blocking,
+  };
+}
+
+/**
+ * The commissioning stage gate — 10.4.
+ *
+ * Word for word identical to 6.4, 7.4, 8.4 and 9.4, so only the five
+ * stage-specific clauses are written here and the AI and replay clauses stay
+ * shared. The fifth clause has read `NOT_ASSESSABLE` at every gate since the
+ * first, for the same honest reason: the AI event block records no assumptions
+ * and no prompt version.
+ */
+export function evaluateCommissioningGate(ctx: EngineContext): GateReport {
+  authorise(ctx, 'PROJECT_SETUP', 'R');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  const clauses = [
+    commissioningInputsComplete(ctx),
+    commissioningApprovalsGoverned(ctx),
+    commissioningBlockersClosed(ctx),
+    commissioningOneCutOff(ctx),
+    aiAccounted(ctx, 'commissioning stage'),
+    replayable(ctx),
+    commissioningDownstreamCreated(ctx),
+  ];
+
+  return reportOf(ctx, String(project.state.phase), clauses);
 }
 
 /**
@@ -1050,6 +1279,7 @@ export function gateFor(ctx: EngineContext): GateReport {
   const phase = String(project.state.phase);
   if (phase === 'DESIGN') return evaluateDesignGate(ctx);
   if (phase === 'CONSTRUCTION') return evaluateConstructionGate(ctx);
+  if (phase === 'COMMISSIONING') return evaluateCommissioningGate(ctx);
   return evaluateTenderGate(ctx);
 }
 

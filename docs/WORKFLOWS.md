@@ -1904,3 +1904,195 @@ Aftercare	Soft Landings, seasonal tests, fine-tuning, performance review, defect
 •	Right rail: assigned decisions, overdue items, low-confidence extractions, stale evidence and downstream impacts.
 •	Gate button remains disabled until all deterministic blockers pass; permitted warning waivers display approver, reason and expiry.
 ```
+
+## 11.3 — H-WF-01
+
+```
+H-WF-01 - Handover strategy and requirements matrix
+Primary owner: Handover / Asset Manager  |  Trigger: Design/procurement stage and refreshed before handover
+Required inputs
+•	Contract and employer deliverable requirements
+•	AIR/EIR and asset data schema
+•	regulatory/Gateway/completion obligations
+•	sectional/phased handover boundaries
+•	operator acceptance roles, systems and target dates
+Deterministic flow
+1.	Extract each handover obligation as a requirement with source and acceptance criteria.
+2.	Map deliverable to system/area/asset, producer, checker, approver and required date.
+3.	Define planned status path Not Started → Draft → Submitted → Rejected/Accepted with Conditions/Accepted.
+4.	Configure dependency: physical completion, test, as-built, manual, asset data, warranty, training, statutory and transfer.
+5.	Baseline matrix and publish role-specific work queues.
+6.	Recalculate readiness using weighted mandatory requirements and blockers.
+AI-agent duties and human guardrails
+•	Extract obligation candidates and identify package/asset relevance.
+•	Predict late/missing deliverables; cannot waive or accept.
+Outputs
+•	HandoverRequirements Matrix
+•	DeliverableSchedule
+•	AcceptanceWorkflow
+•	ReadinessModel
+Exception controls
+•	Safety-critical/statutory requirements are non-waivable by ordinary project authority.
+•	Partial handover requires independent boundary and requirement subset.
+•	Changed contract/information requirement versions trigger delta review.
+Events: HANDOVER_REQUIREMENT_CREATED | HANDOVER_MATRIX_BASELINED | DELIVERABLE_ASSIGNED | READINESS_UPDATED
+APIs:   POST /v1/projects/{id}/handover-requirements:extract | POST /v1/projects/{id}/handover-matrices | GET /v1/projects/{id}/handover-readiness
+Acceptance criteria
+•	AC-H-WF-01-01: Every requirement has source, owner, due date, acceptance party and evidence rule.
+•	AC-H-WF-01-02: Readiness can be drilled to unmet requirement and source.
+•	AC-H-WF-01-03: No requirement is closed by file upload alone.
+```
+
+## H-WF-02
+
+```
+H-WF-02 - As-built drawing, model and specification verification
+Primary owner: Information Manager / Design Manager  |  Trigger: Installed condition available by package/system
+Required inputs
+•	Approved construction information and site markups
+•	surveys/scans/inspection and change records
+•	final equipment routing, setting-out and asset tags
+•	native/IFC/PDF deliverables and metadata
+•	designer/contractor verification and acceptance criteria
+Deterministic flow
+1.	Create as-built container revision linked to approved design and all implemented changes.
+2.	Compare installed evidence/model/drawing and identify unresolved variance.
+3.	Validate metadata, coordinates, units, object/tag completeness and publication status.
+4.	Route discipline check, design verification and information acceptance.
+5.	Publish as-built revision and supersede construction working information for operational use.
+6.	Link each maintainable asset to its model/drawing location.
+AI-agent duties and human guardrails
+•	Compare revisions/reality evidence and identify missing tags/attributes.
+•	Cannot certify as-built accuracy; authorised professionals verify.
+Outputs
+•	AsBuiltInformation Set
+•	InstalledVariance Register
+•	AsBuiltVerification
+•	AssetInformation Links
+Exception controls
+•	Unresolved material variance blocks affected handover.
+•	Model conversion loss is reported; native/IFC relationship retained.
+•	Accepted late correction creates a new as-built revision and downstream delta.
+Events: AS_BUILT_SUBMITTED | AS_BUILT_VARIANCE_IDENTIFIED | AS_BUILT_VERIFIED | AS_BUILT_PUBLISHED
+APIs:   POST /v1/systems/{id}/as-built-information | POST /v1/as-built-sets/{id}:compare | POST /v1/as-built-sets/{id}:accept
+Acceptance criteria
+•	AC-H-WF-02-01: As-built status is based on verification, not filename.
+•	AC-H-WF-02-02: Every implemented approved change is reflected or explicitly not applicable.
+•	AC-H-WF-02-03: Maintainable asset opens from drawing/model and vice versa.
+```
+
+## H-WF-03
+
+```
+H-WF-03 - O&M manuals and technical file assembly
+Primary owner: Handover Manager / Package Contractor  |  Trigger: System/asset information available
+Required inputs
+•	Approved template and section requirements
+•	system description, operation, controls and emergency procedures
+•	maintenance tasks/frequencies/skills/tools/consumables
+•	manufacturer manuals, datasheets, certificates and commissioning results
+•	asset-specific warranties, spares and contacts
+Deterministic flow
+1.	Create manual structure by facility/system/asset; prevent generic document dumping.
+2.	Ingest source files and map each section to actual installed tags/models/serials.
+3.	Validate completeness, contradictions, duplicates, legibility, hyperlinks and revision.
+4.	Route technical author, checker, operator/FM reviewer and acceptance.
+5.	Generate web-searchable manual plus controlled export; preserve source documents.
+6.	On asset/design change, flag impacted manual sections for revision.
+AI-agent duties and human guardrails
+•	Draft installed-system narrative and maintenance schedule from approved sources.
+•	Identify generic/irrelevant content and conflicting values; human authors accept.
+Outputs
+•	DigitalOM Manual
+•	TechnicalFile
+•	MaintenanceTask Templates
+•	ManualReview/Acceptance Records
+Exception controls
+•	Generic manufacturer catalogue cannot satisfy asset-specific section without mapping.
+•	Missing emergency/safety procedure is a blocker where required.
+•	AI-generated text must cite source and remains draft until accepted.
+Events: OM_MANUAL_DRAFTED | OM_SECTION_REVIEWED | OM_MANUAL_REJECTED | OM_MANUAL_ACCEPTED
+APIs:   POST /v1/systems/{id}/om-manuals | POST /v1/om-manuals/{id}:validate | POST /v1/om-manuals/{id}:accept
+Acceptance criteria
+•	AC-H-WF-03-01: Operator can search by asset tag, system, symptom and task.
+•	AC-H-WF-03-02: Every manual section shows source/version/approval.
+•	AC-H-WF-03-03: Changed asset data identifies affected manual section.
+```
+
+## H-WF-04
+
+```
+H-WF-04 - Asset register, COBie/exchange and warranty validation
+Primary owner: Asset Manager / Information Manager  |  Trigger: Equipment installed and tag/serial verified
+Required inputs
+•	Asset information requirements/IDS or schema
+•	facility/space/system/type/component hierarchy
+•	tag, classification, location, manufacturer/model/serial and criticality
+•	install/commission dates, warranty terms, spares and maintenance
+•	linked documents, tests, drawings/models and supplier contacts
+Deterministic flow
+1.	Create asset from verified installed item; prevent duplicate tag/serial.
+2.	Validate mandatory attributes, allowed values, relationships and referential integrity.
+3.	Run IDS/IFC/COBie or configured exchange validation and produce machine-readable errors.
+4.	Reconcile procurement/vendor data to installed and commissioned identity.
+5.	Route correction and acceptance per asset type/system.
+6.	Export/import to EAM/CAFM using stable external IDs and store reconciliation result.
+AI-agent duties and human guardrails
+•	Extract asset attributes and suggest mappings/classification.
+•	Flag anomaly or missing data; does not invent serial, warranty or maintenance requirement.
+Outputs
+•	ValidatedAssetRegister
+•	COBie/Exchange File
+•	ValidationReport
+•	Warranty Register
+•	EAM/CAFM Reconciliation
+Exception controls
+•	Unknown mandatory value is explicit Unknown with owner; blank is not pass.
+•	Duplicate asset identity blocks acceptance.
+•	Export success is not acceptance until target-system reconciliation completes.
+Events: ASSET_CREATED | ASSET_DATA_VALIDATED | ASSET_EXCHANGE_EXPORTED | ASSET_RECONCILED | WARRANTY_ACTIVATED
+APIs:   POST /v1/projects/{id}/assets | POST /v1/assets:validate-exchange | POST /v1/integrations/eam/reconcile
+Acceptance criteria
+•	AC-H-WF-04-01: Required attribute completeness reaches 100% or approved explicit exception.
+•	AC-H-WF-04-02: Asset links to location, system, documents, tests and warranty.
+•	AC-H-WF-04-03: Export/import totals and IDs reconcile with no silent rejected rows.
+```
+
+## H-WF-05
+
+```
+H-WF-05 - Regulatory completion and Golden Thread transfer
+Primary owner: Client / Principal Designer / Principal Contractor as configured  |  Trigger: Work complete and completion application/transfer required
+Required inputs
+•	Approved design/construction/change control evidence
+•	as-built, fire/structural/safety and commissioning information
+•	dutyholder competence/declarations and mandatory occurrence records
+•	completion certificate application requirements
+•	Accountable/Responsible Person identity and usable-format requirements
+Deterministic flow
+1.	Run jurisdiction-specific completion checklist and evidence mapping.
+2.	Verify changes since approval are classified, approved and reflected as built.
+3.	Compile regulator application/export under authorised review.
+4.	Submit outside CONSTRUX through integrated/manual evidence route and record receipt/status.
+5.	On completion decision, store certificate, conditions and appeal/correction actions.
+6.	Transfer Golden Thread access/control to designated responsible party and capture usable-format receipt.
+AI-agent duties and human guardrails
+•	Identify missing/conflicting/stale evidence and draft index/narrative.
+•	Cannot make legal classification, declaration or regulatory submission.
+Outputs
+•	CompletionApplication Pack
+•	GoldenThread EvidenceIndex
+•	RegulatorReceipt/Decision
+•	TransferAcknowledgement
+•	Conditions Register
+Exception controls
+•	Applicable Gateway/completion blocker prevents occupation/hand-over state according to jurisdiction pack.
+•	Regulator rejection preserves original pack and creates corrective version.
+•	Sensitive information access follows need-to-know and regulator scope.
+Events: COMPLETION_READINESS_CHECKED | REGULATORY_PACK_APPROVED | REGULATORY_SUBMISSION_RECORDED | COMPLETION_CERTIFICATE_RECEIVED | GOLDEN_THREAD_TRANSFERRED
+APIs:   POST /v1/projects/{id}/regulatory-completion:validate | POST /v1/projects/{id}/regulatory-packs | POST /v1/golden-thread/{id}:transfer
+Acceptance criteria
+•	AC-H-WF-05-01: Pack references exact approved/as-built/change versions.
+•	AC-H-WF-05-02: Transfer recipient confirms access, completeness and usable format.
+•	AC-H-WF-05-03: Conditions remain visible as operational obligations.
+```

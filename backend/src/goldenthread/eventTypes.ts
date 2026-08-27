@@ -926,6 +926,25 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // already in use are agreed under pressure.
   def('SEASONAL_TEST_PLANNED', 'SeasonalTest', 'APPROVE', 'COMMISSIONING', { creates: true }),
 
+  // --- CM-WF-08 training, documentation readiness and the gate --------------
+  def('TRAINING_DELIVERED', 'TrainingSession', 'CREATE', 'COMMISSIONING', { creates: true }),
+  // Operators are trained in the last fortnight before handover, which is
+  // exactly when as-builts and control descriptions are still moving. A session
+  // taught from a revision that has since been superseded taught people to
+  // operate a building that does not exist.
+  def('TRAINING_INVALIDATED', 'TrainingSession', 'UPDATE', 'COMMISSIONING'),
+  // The index is hashed so the dossier as handed over is identifiable: one that
+  // can be quietly topped up afterwards is not a dossier anybody accepted.
+  def('COMMISSIONING_DOSSIER_COMPILED', 'CommissioningDossier', 'CREATE', 'COMMISSIONING', {
+    creates: true,
+    requiresEvidence: true,
+  }),
+  def('SYSTEM_COMMISSIONING_ACCEPTED', 'SystemAcceptance', 'APPROVE', 'COMMISSIONING', { creates: true }),
+  // The stage 10 exit. The obligations it carries are stored as identifiers and
+  // their kind rather than copied text — a second copy of a seasonal test is the
+  // one that disagrees with the first within a month.
+  def('COMMISSIONING_COMPLETE', 'CommissioningCompletion', 'APPROVE', 'PROJECT_CONTROL', { creates: true }),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

@@ -6150,12 +6150,67 @@ the party that has to meet them is by then least able to argue. A named party
 accepts the obligation, and `outstandingSeasonalTests` is exported as one list
 for the handover stage to inherit by reference rather than copy.
 
-**Still to build in the commissioning block:** CM-WF-08, the 10.4 gate and the
-`COMMISSIONING_COMPLETE` event, and the stage workspace described in 10.2.
-**Stage 11 (Handover)** has begun arriving: the stage control with its
-`HANDOVER_ACCEPTED` gate event, 11.1 and 11.2 are recorded verbatim in
-`docs/WORKFLOWS.md`. CM-WF-07, CM-WF-08 and 10.4 arrived out of sequence during
-the build and are recorded there in the order they were sent.
+---
+
+### Completeness from required records, and obligations that transfer by reference
+
+CM-WF-08 and the 10.4 gate. `backend/src/domain/commissioningclose.ts`, six
+routes, 24 tests, plus `evaluateCommissioningGate` in `domain/stagegate.ts`.
+This completes the commissioning block: CM-WF-01 to CM-WF-08 and the stage gate
+are built.
+
+**A dossier is scored on required records, not files.** AC-CM-WF-08-01, the same
+principle CM-WF-04 applies to readiness. A dossier scored on uploads reaches
+100% when somebody attaches the wrong O&M twice, and 60% on a system whose six
+records happen to be in one combined PDF. Twelve required records per system,
+each present by controlled reference *and revision*, and a duplicate is refused
+rather than counted — it adds nothing and hides which is current. The index is
+hashed, so a dossier that can be quietly topped up afterwards is not the dossier
+anybody accepted. Six of the twelve are marked as records an operator cannot
+start without, and their absence blocks acceptance rather than merely lowering
+the percentage.
+
+**Training on superseded information is not training.** The exception control,
+and the one nobody expects. Operators are trained in the last fortnight before
+handover, which is exactly when as-builts and control descriptions are still
+moving. Every session records the documents it taught from **at the revision
+taught**, and superseding one invalidates every session that rested on it — the
+role then appears on a retraining list rather than a training record standing
+that taught people to operate a building that does not exist.
+
+**An acceptance is a named person's acknowledgement.** AC-CM-WF-08-02. The party
+accepting a system is the party running it at three in the morning, and
+"accepted" with nobody's name on it is the row nobody can be asked about. A
+conditional acceptance carries operating limits, risk owner, expiry and closure
+plan — all four, because a condition missing any of them becomes permanent. A
+system cannot be accepted over an open safety-critical exception, though it can
+always be *rejected*, which is what a rejection is for.
+
+**Obligations transfer by reference.** AC-CM-WF-08-03. `handoverObligations`
+reads the seasonal tests from CM-WF-06 and the residual items from CM-WF-07,
+each keeping the identifier it already has. The completion event stores
+identifiers and kinds, never copied text: a second copy of a seasonal test is
+the one that disagrees with the first within a month.
+
+**The 10.4 gate** is word-for-word 6.4, 7.4, 8.4 and 9.4, so only the five
+stage-specific clauses are written and the AI and replay clauses stay shared.
+Approvals are checked for maker-checker on the thing that matters most here — a
+test decided by the actor who ran it — and the blockers clause treats a
+conditional acceptance as the permitted time-bound condition the clause allows,
+until its review date passes. Clause 5 reports `NOT_ASSESSABLE` as it does at
+every other gate, for the same honest reason: the AI event block records no
+assumptions and no prompt version.
+
+One stale claim was corrected on the way: the **9.4 downstream clause** had read
+`NOT_ASSESSABLE` because the commissioning turnover pack did not exist. CN-WF-12
+built it, so the clause now assesses the boundaries and retained obligations
+properly instead of reporting a gap that had been closed.
+
+**Still to build:** the commissioning stage workspace described in 10.2.
+**Stage 11 (Handover)** is arriving: the stage control with its
+`HANDOVER_ACCEPTED` gate event, 11.1, 11.2, and H-WF-01 to H-WF-05 are recorded
+verbatim in `docs/WORKFLOWS.md`. Several specifications arrived out of sequence
+during the build and are recorded there in the order they were sent.
 
 ---
 
