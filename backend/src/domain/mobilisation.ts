@@ -3,6 +3,7 @@ import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, write, type EngineContext } from '../engines/context.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
 import { packageReadiness } from './designbaseline.ts';
+import { ramsCurrencyBlockedReason } from './safetycontrol.ts';
 
 /**
  * CN-WF-01 — mobilisation and start-work readiness.
@@ -250,7 +251,12 @@ export function verifyPrerequisites(
 
   // RAMS. Approved, and briefed out — an approved method statement nobody has
   // been briefed on is a document, and the briefing is the control.
-  const rams = rows(ctx, 'RAMS').filter((entry) => entry.workPackageId === input.workPackageId);
+  // Superseded revisions are excluded: the question is whether the *current*
+  // method is approved and briefed, and CN-WF-07's currency check below covers
+  // the case where a revision has left everybody on the old briefing.
+  const rams = rows(ctx, 'RAMS').filter(
+    (entry) => entry.workPackageId === input.workPackageId && entry.supersededBy === undefined,
+  );
   if (rams.length === 0) {
     results.push({
       kind: 'RAMS',
@@ -261,15 +267,21 @@ export function verifyPrerequisites(
   } else {
     const approved = rams.filter((entry) => entry.status === 'APPROVED');
     const briefed = approved.filter((entry) => ((entry.acknowledgements as unknown[]) ?? []).length > 0);
+    // CN-WF-07's first exception control, reused rather than re-derived: a
+    // revision nobody has been rebriefed on leaves the gang working to the
+    // superseded method, which this check could not otherwise see.
+    const stale = ramsCurrencyBlockedReason(ctx, input.workPackageId);
     results.push({
       kind: 'RAMS',
-      status: briefed.length > 0 ? 'MET' : 'NOT_MET',
+      status: briefed.length > 0 && stale === null ? 'MET' : 'NOT_MET',
       detail:
-        approved.length === 0
-          ? `${rams.length} method statement${rams.length === 1 ? '' : 's'} for this package, none approved.`
-          : briefed.length === 0
-            ? `${approved.length} approved, none briefed out. A method statement nobody has been briefed on is a document.`
-            : `${briefed.length} approved and briefed.`,
+        stale !== null
+          ? stale
+          : approved.length === 0
+            ? `${rams.length} method statement${rams.length === 1 ? '' : 's'} for this package, none approved.`
+            : briefed.length === 0
+              ? `${approved.length} approved, none briefed out. A method statement nobody has been briefed on is a document.`
+              : `${briefed.length} approved and briefed.`,
       source: 'VERIFIED',
     });
   }

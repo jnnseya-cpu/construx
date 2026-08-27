@@ -5607,11 +5607,50 @@ installed location, but the commissioning turnover pack, the system boundaries
 it transfers and the retained construction obligations are CM-WF-01 onwards and
 are not built.
 
-**Still to build in the construction block:** CN-WF-07 to CN-WF-12, and the
+---
+
+### The second half of RAMS, permits and incidents
+
+CN-WF-07. `backend/src/domain/safetycontrol.ts`, seven routes, 22 tests.
+
+`engines/safety.ts` could already draft a method statement from a hazard
+library, approve it, record the briefing, hold the competency register, issue a
+permit against checked tickets, log an observation and record an incident.
+Four things were missing, and each is the **second half** of something the
+platform could already start.
+
+**A method that was revised and nobody rebriefed.** A revision now supersedes
+rather than edits: the new one starts unapproved and unbriefed whatever the last
+one was, everybody who acknowledged the old revision is listed as owed the
+difference **by name**, and the superseded revision stays readable because
+somebody worked to it. `ramsCurrencyBlockedReason` is exported and called by
+CN-WF-01's readiness verification, which previously could not see this case at
+all — it checked that *a* method was approved and briefed, and a revision leaves
+that true while the gang is on Tuesday's briefing.
+
+**A permit that ran out and nobody handed back.** An extension cannot run past
+the competency of the people it authorises — a permit extended over a lapsed
+ticket authorises work by somebody nobody has checked — and cannot shorten a
+permit, because that is a revocation and a different act for the people under
+it. A handback records the state the area was left in, any outstanding hazard
+and who checked it: the commonest injury after a confined-space entry is to the
+person who goes in next, and that sentence is what they are relying on.
+
+**An observation nobody closed.** AC-CN-WF-07-02: an owner, what was done and
+the evidence that verifies it, all three or nothing.
+
+**An incident recorded and never investigated.** Immediate cause, underlying
+cause, root cause and the actions out of them — an investigation that stops at
+the first concludes that somebody was careless. An incident cannot be closed
+without one. What was already right stays: the platform *asks* whether an
+incident is RIDDOR reportable and refuses to proceed without an answer either
+way, and never decides it, which is the guardrail the specification names.
+
+**Still to build in the construction block:** CN-WF-08 to CN-WF-12, and the
 stage workspace described in 9.2. The specifications received so far — the
 construction stage control, 9.1, 9.2, CN-WF-01 to CN-WF-12, the 9.4 gate, the
-commissioning stage control with 10.1 and 10.2, and CM-WF-01 — are recorded
-verbatim in `docs/WORKFLOWS.md`.
+commissioning stage control with 10.1 and 10.2, and CM-WF-01 to CM-WF-03 — are
+recorded verbatim in `docs/WORKFLOWS.md`.
 
 ---
 

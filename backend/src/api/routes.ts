@@ -75,6 +75,7 @@ import * as stagegate from '../domain/stagegate.ts';
 import * as tenderintel from '../domain/tenderintel.ts';
 import * as tenderreview from '../domain/tenderreview.ts';
 import * as quality from '../engines/quality.ts';
+import * as safetycontrol from '../domain/safetycontrol.ts';
 import * as safety from '../engines/safety.ts';
 import * as tender from '../engines/tender.ts';
 import { lineage } from '../goldenthread/lineage.ts';
@@ -4088,6 +4089,116 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => planning.recordSiteDiary(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------ CN-WF-07 the second half of RAMS, permits and incidents
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/safety-control',
+    description: 'Revised methods nobody has been rebriefed on, permits past their expiry, and incidents never investigated',
+    handler: (platform, ctx) => safetycontrol.safetyControlPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/rams/:ramsId/revise',
+    description: 'Revise a method statement. The new one starts unapproved and unbriefed, and names who is owed the difference',
+    schema: {
+      type: 'object',
+      required: ['reason', 'whatChanged'],
+      properties: { reason: { type: 'string' }, whatChanged: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      safetycontrol.reviseRAMS(projectContext(platform, ctx), ctx.params.ramsId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/permits/:permitId/extend',
+    description: 'Extend a permit. Refused where a ticket would lapse inside the extension',
+    schema: {
+      type: 'object',
+      required: ['validTo', 'reason'],
+      properties: { validTo: stringField, reason: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      safetycontrol.extendPermit(projectContext(platform, ctx), ctx.params.permitId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/permits/:permitId/hand-back',
+    description: 'Hand the area back, with the state it was left in and who checked it',
+    schema: {
+      type: 'object',
+      required: ['areaCondition', 'checkedBy'],
+      properties: {
+        areaCondition: { type: 'string' },
+        checkedBy: stringField,
+        outstandingHazards: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      safetycontrol.handBackPermit(projectContext(platform, ctx), ctx.params.permitId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/safety-observations/:observationId/close',
+    description: 'Close an observation with an owner, what was done and the evidence that verifies it',
+    schema: {
+      type: 'object',
+      required: ['owner', 'actionTaken', 'verificationEvidence', 'evidenceHash'],
+      properties: {
+        owner: stringField,
+        actionTaken: { type: 'string' },
+        verificationEvidence: { type: 'string' },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      safetycontrol.closeSafetyAction(projectContext(platform, ctx), ctx.params.observationId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/incidents/:incidentId/investigate',
+    description: 'Immediate, underlying and root cause, with the actions out of them. An investigation stopping at the first blames somebody',
+    schema: {
+      type: 'object',
+      required: ['immediateCause', 'underlyingCause', 'rootCause', 'actions', 'investigatedBy', 'evidenceHash'],
+      properties: {
+        immediateCause: { type: 'string' },
+        underlyingCause: { type: 'string' },
+        rootCause: { type: 'string' },
+        actions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['what', 'owner', 'by'],
+            properties: { what: { type: 'string' }, owner: stringField, by: stringField },
+            additionalProperties: false,
+          },
+        },
+        investigatedBy: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      safetycontrol.investigateIncident(projectContext(platform, ctx), ctx.params.incidentId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/incidents/:incidentId/close',
+    description: 'Close an incident. Refused before it has been investigated',
+    schema: {
+      type: 'object',
+      required: ['note'],
+      properties: { note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      safetycontrol.closeIncident(projectContext(platform, ctx), ctx.params.incidentId as string, body(ctx)),
   },
 
   // ------------------------------------------ CN-WF-06 the hold point, the instrument and the concession

@@ -1575,3 +1575,81 @@ Acceptance criteria
 •	AC-CM-WF-01-02: Each required test has stage, owner, witness, criteria and prerequisite.
 •	AC-CM-WF-01-03: Commissioning programme logic traces to construction and handover milestones.
 ```
+
+## CM-WF-02
+
+```
+CM-WF-02 - Test procedure, pack and readiness release
+Primary owner: Commissioning Engineer / Manager  |  Trigger: Test due within configured lookahead
+Required inputs
+•	Approved design/specification/vendor requirements
+•	test type, objective, steps and acceptance criteria
+•	prerequisite construction/quality/permit/utility status
+•	instrument IDs and calibration certificates
+•	witnesses, notice period, safety controls and contingency
+Deterministic flow
+1.	Create controlled test procedure and pack with system/equipment/tag scope.
+2.	Map every acceptance criterion to source and required raw reading/evidence.
+3.	Run readiness checklist across completion, defects, cleaning, energisation, access, documents, vendor, instruments and permits.
+4.	Issue witness notification and capture attendance/waiver.
+5.	Commissioning Manager releases Ready to Test or rejects with blockers.
+6.	Freeze pack revision used for execution.
+AI-agent duties and human guardrails
+•	Draft procedure/checklist from accepted technical sources.
+•	Identify missing criteria or contradictory tolerances; cannot release test.
+Outputs
+•	TestProcedure Revision
+•	TestPack
+•	ReadinessCheck
+•	WitnessNotification
+•	ReadyToTest Release
+Exception controls
+•	Calibration expiry, open critical defect or missing safe isolation blocks release.
+•	Witness waiver requires authorised record and contract rule.
+•	Procedure change after release cancels/reissues readiness.
+Events: TEST_PROCEDURE_CREATED | TEST_READINESS_CHECKED | WITNESS_NOTIFIED | TEST_RELEASED | TEST_BLOCKED
+APIs:   POST /v1/systems/{id}/test-packs | POST /v1/test-packs/{id}:readiness-check | POST /v1/test-packs/{id}:release
+Acceptance criteria
+•	AC-CM-WF-02-01: No test can enter In Progress without released pack revision.
+•	AC-CM-WF-02-02: Criteria cite controlled design/spec/vendor source.
+•	AC-CM-WF-02-03: Witness notice and response are time-stamped and recipient-specific.
+```
+
+## CM-WF-03
+
+```
+CM-WF-03 - FAT, SAT and vendor test control
+Primary owner: Commissioning Manager / Vendor Representative  |  Trigger: Manufacturing or delivery milestone
+Required inputs
+•	Approved vendor documents and inspection/test plan
+•	equipment tag/serial and purchase order
+•	FAT/SAT procedure and acceptance criteria
+•	witness attendance, calibrated instruments and raw logs
+•	shipping release/delivery/installation prerequisites
+Deterministic flow
+1.	Schedule FAT/SAT with notice and attendance status.
+2.	Verify equipment identity, document revision and instrument calibration.
+3.	Execute each test step; record reading, unit, timestamp, instrument and performer.
+4.	Record Pass/Fail/Conditional and punch/exception per item.
+5.	Approve shipping release or site acceptance only under designated authority.
+6.	Carry FAT exceptions into SAT/system commissioning until verified closed.
+AI-agent duties and human guardrails
+•	Extract readings from forms/images and compare to limits, subject to confirmation.
+•	Summarise failure patterns and affected downstream tests.
+Outputs
+•	FAT/SAT Record
+•	RawTestDataset
+•	Exception/Punch Items
+•	Shipping/Site Release
+•	Equipment Traceability
+Exception controls
+•	Equipment serial mismatch blocks acceptance.
+•	Conditional pass has explicit restrictions and closure due date.
+•	Vendor PDF alone is insufficient where raw structured readings are required.
+Events: FAT_STARTED | TEST_READING_RECORDED | FAT_COMPLETED | SHIPPING_RELEASED | SAT_COMPLETED
+APIs:   POST /v1/equipment/{id}/fat-tests | POST /v1/tests/{id}/readings | POST /v1/tests/{id}:complete
+Acceptance criteria
+•	AC-CM-WF-03-01: Every reading retains instrument/calibration and performer identity.
+•	AC-CM-WF-03-02: Result calculation is deterministic from raw readings and limits.
+•	AC-CM-WF-03-03: Open FAT exception is visible at delivery, installation and SAT readiness.
+```

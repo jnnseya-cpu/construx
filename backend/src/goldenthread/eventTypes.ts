@@ -672,6 +672,20 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // model is not a competent person's signature, which is the same rule the
   // catalogue already applies to a method statement.
   def('PERMIT_ISSUED', 'Permit', 'ISSUE', 'RISK_SAFETY', { requiresEvidence: true, creates: true }),
+  // CN-WF-07. A permit extended over a lapsed ticket authorises work by somebody
+  // nobody has checked, and a permit nobody handed back leaves an area whose
+  // state the next person in is relying on and nobody recorded.
+  def('PERMIT_EXTENDED', 'Permit', 'APPROVE', 'RISK_SAFETY'),
+  def('PERMIT_HANDED_BACK', 'Permit', 'APPROVE', 'RISK_SAFETY'),
+  // A revision supersedes rather than edits: the new method starts unapproved
+  // and unbriefed, and everybody who worked to the old one is owed the
+  // difference by name.
+  def('RAMS_REVISED', 'RAMS', 'CREATE', 'RISK_SAFETY', { creates: true }),
+  def('RAMS_SUPERSEDED', 'RAMS', 'UPDATE', 'RISK_SAFETY'),
+  def('SAFETY_ACTION_CLOSED', 'SafetyObservation', 'UPDATE', 'RISK_SAFETY', { requiresEvidence: true }),
+  // Immediate cause, underlying cause, root cause and the actions out of them.
+  // An incident closed on its immediate action alone has taught nothing.
+  def('INCIDENT_INVESTIGATED', 'Incident', 'UPDATE', 'RISK_SAFETY'),
   def('TRAINING_COMPLETED', 'TrainingRecord', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),
 
   // --- BIM & digital twin ---------------------------------------------------
