@@ -1,4 +1,4 @@
-import { hashEvidence } from '../core/canonical.ts';
+import { hashEvidence, hashState } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
@@ -8,6 +8,7 @@ import { constructabilityPosition, freezeBlockersFor } from './constructability.
 import { designBaselinePosition } from './designbaseline.ts';
 import { validateProgrammeLogic } from './programmecontrol.ts';
 import { designChangePosition } from './designchange.ts';
+import { crossDomainValidation, residualObligations } from './handoveracceptance.ts';
 
 /**
  * The stage gate Definition of Done — 7.4, 8.4 and 9.4.
@@ -1153,6 +1154,219 @@ function commissioningDownstreamCreated(ctx: EngineContext): ClauseResult {
   };
 }
 
+// --- 11.4, the handover gate ------------------------------------------------
+
+function handoverInputsComplete(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  const requirements = list(ctx, 'HandoverRequirement');
+  if (requirements.length === 0) {
+    blocking.push('No handover requirements matrix exists, so there is nothing to be complete against');
+  }
+
+  // H-WF-01 counts ACCEPTED_WITH_CONDITIONS as unmet, which is the reading the
+  // gate needs: completeness is 100% or it is not.
+  for (const requirement of requirements) {
+    if (requirement.mandatory !== true) continue;
+    if (requirement.status === 'ACCEPTED') continue;
+    blocking.push(
+      `${String(requirement.reference)} is mandatory and stands at ${String(requirement.status ?? 'NOT_STARTED')}`,
+    );
+  }
+
+  // An as-built set that is not published is not tied to a source version
+  // anybody operates from.
+  for (const set of list(ctx, 'AsBuiltSet')) {
+    if (set.status === 'SUPERSEDED' || set.status === 'PUBLISHED') continue;
+    blocking.push(`${String(set.reference)} is ${String(set.status).toLowerCase()} and has not been published`);
+  }
+
+  return {
+    clause: 'INPUTS_COMPLETE',
+    title: TITLES.INPUTS_COMPLETE,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? 'Every mandatory handover requirement is accepted outright and every as-built set is published.'
+        : `${blocking.length} input${blocking.length === 1 ? '' : 's'} incomplete or not tied to a published version.`,
+    blocking,
+  };
+}
+
+function handoverApprovalsGoverned(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  // H-WF-03: a manual section needs both a checker and an operator review, and
+  // the gate reads the same rule rather than restating it as a threshold.
+  for (const manual of list(ctx, 'OMManual')) {
+    const sections = (manual.sections as Array<Record<string, unknown>> | undefined) ?? [];
+    for (const section of sections) {
+      const reviews = (section.reviews as Array<Record<string, unknown>> | undefined) ?? [];
+      const roles = new Set(reviews.map((review) => String(review.role)));
+      if (reviews.length > 0 && !(roles.has('CHECKER') && roles.has('OPERATOR'))) {
+        blocking.push(
+          `${String(manual.reference)} section ${String(section.key)} was reviewed by ${[...roles].join(' and ')} only`,
+        );
+      }
+    }
+  }
+
+  // H-WF-09: a conditional acceptance whose expiry has passed is no longer a
+  // governed condition, it is an ungoverned one.
+  const today = new Date().toISOString().slice(0, 10);
+  for (const pack of list(ctx, 'HandoverPack')) {
+    const conditions = (pack.acceptanceConditions as Array<Record<string, unknown>> | undefined) ?? [];
+    for (const condition of conditions) {
+      if (String(condition.expiresOn) < today) {
+        blocking.push(`An acceptance condition owned by ${String(condition.riskOwner)} expired on ${String(condition.expiresOn)}`);
+      }
+    }
+  }
+
+  return {
+    clause: 'APPROVALS_GOVERNED',
+    title: TITLES.APPROVALS_GOVERNED,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? 'Every reviewed manual section carries both a checker and an operator, and no acceptance condition has run past its expiry.'
+        : `${blocking.length} approval${blocking.length === 1 ? '' : 's'} outside policy.`,
+    blocking,
+  };
+}
+
+function handoverBlockersClosed(ctx: EngineContext): ClauseResult {
+  // The eight-domain validation is the blocker list. Restating it here as a
+  // second set of thresholds is exactly the duplication the whole file avoids.
+  const validation = crossDomainValidation(ctx);
+  const blocking = validation.blocking.map((domain) => `${domain.label}: ${domain.reason}`);
+
+  return {
+    clause: 'BLOCKERS_CLOSED',
+    title: TITLES.BLOCKERS_CLOSED,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? 'All eight handover domains report ready.'
+        : `${blocking.length} of 8 domains not ready.`,
+    blocking,
+  };
+}
+
+function handoverOneCutOff(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  // A pack accepted against a manifest that had already drifted was accepted
+  // against a description of the project rather than the project.
+  for (const pack of list(ctx, 'HandoverPack')) {
+    if (pack.decision === undefined) continue;
+    if (pack.manifestVerified === false && pack.decision !== 'REJECTED') {
+      blocking.push('A pack was accepted against a manifest that no longer matched the record');
+    }
+  }
+
+  const baselines = list(ctx, 'HandoverBaseline');
+  if (baselines.length === 0) {
+    blocking.push('No handover baseline has been frozen, so there is no declared cut-off');
+  }
+
+  // The baseline is the cut-off. If the record has moved since, the frozen set
+  // and the live set are two different things and the gate should say so.
+  for (const baseline of baselines) {
+    const entries = (baseline.entries as Array<Record<string, unknown>> | undefined) ?? [];
+    const drifted = entries.filter((entry) => {
+      const live = ctx.ledger.get({ refType: String(entry.refType), refId: String(entry.refId) });
+      return live !== undefined && hashState(live.state) !== String(entry.hash);
+    });
+    if (drifted.length > 0) {
+      blocking.push(
+        `${drifted.length} record${drifted.length === 1 ? '' : 's'} changed after the baseline was frozen: ` +
+          `${drifted.map((entry) => String(entry.reference)).join(', ')}`,
+      );
+    }
+  }
+
+  return {
+    clause: 'ONE_CUT_OFF',
+    title: TITLES.ONE_CUT_OFF,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? 'The handover baseline is frozen and every record in it still hashes to what was frozen.'
+        : `${blocking.length} thing${blocking.length === 1 ? '' : 's'} not reconciled at one cut-off.`,
+    blocking,
+  };
+}
+
+function handoverDownstreamCreated(ctx: EngineContext): ClauseResult {
+  const blocking: string[] = [];
+
+  const accepted = list(ctx, 'HandoverPack').some(
+    (pack) => pack.decision === 'ACCEPTED' || pack.decision === 'ACCEPTED_WITH_CONDITIONS',
+  );
+
+  if (accepted) {
+    if (list(ctx, 'OperationalActivation').length === 0) {
+      blocking.push('The handover was accepted and no operational records were activated from the accepted asset data');
+    }
+
+    // AC-H-WF-09-03 read at the gate. An obligation that exists and has not
+    // been handed to anybody is the one nobody discharges.
+    const outstanding = residualObligations(ctx);
+    if (outstanding.length > 0 && list(ctx, 'ResidualTransfer').length === 0) {
+      blocking.push(
+        `${outstanding.length} residual obligation${outstanding.length === 1 ? '' : 's'} have not been transferred to an ` +
+          'operations or aftercare owner',
+      );
+    }
+    for (const obligation of outstanding) {
+      if (!obligation.owner.trim()) blocking.push(`${obligation.reference} carries no owner into operations`);
+    }
+  }
+
+  return {
+    clause: 'DOWNSTREAM_CREATED',
+    title: TITLES.DOWNSTREAM_CREATED,
+    state: blocking.length === 0 ? 'PASS' : 'FAIL',
+    detail:
+      blocking.length === 0
+        ? accepted
+          ? 'Operations are activated from the accepted data and every residual obligation has an owner and has been transferred.'
+          : 'Nothing has been accepted yet, so no downstream obligation is due.'
+        : `${blocking.length} thing${blocking.length === 1 ? '' : 's'} did not carry through to operations.`,
+    blocking,
+  };
+}
+
+/**
+ * The handover stage gate — 11.4.
+ *
+ * Word for word identical to 6.4, 7.4, 8.4, 9.4 and 10.4, so only the five
+ * stage-specific clauses are written here. Two of them read H-WF-09 directly —
+ * the blocker clause *is* the eight-domain validation, and restating it as a
+ * second set of thresholds is the duplication this file exists to avoid.
+ *
+ * The fifth clause has read `NOT_ASSESSABLE` at every gate since the first, for
+ * the same honest reason: the AI event block records no assumptions and no
+ * prompt version.
+ */
+export function evaluateHandoverGate(ctx: EngineContext): GateReport {
+  authorise(ctx, 'PROJECT_SETUP', 'R');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  const clauses = [
+    handoverInputsComplete(ctx),
+    handoverApprovalsGoverned(ctx),
+    handoverBlockersClosed(ctx),
+    handoverOneCutOff(ctx),
+    aiAccounted(ctx, 'handover stage'),
+    replayable(ctx),
+    handoverDownstreamCreated(ctx),
+  ];
+
+  return reportOf(ctx, String(project.state.phase), clauses);
+}
+
 /**
  * The commissioning stage gate — 10.4.
  *
@@ -1280,6 +1494,7 @@ export function gateFor(ctx: EngineContext): GateReport {
   if (phase === 'DESIGN') return evaluateDesignGate(ctx);
   if (phase === 'CONSTRUCTION') return evaluateConstructionGate(ctx);
   if (phase === 'COMMISSIONING') return evaluateCommissioningGate(ctx);
+  if (phase === 'HANDOVER') return evaluateHandoverGate(ctx);
   return evaluateTenderGate(ctx);
 }
 

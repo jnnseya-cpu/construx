@@ -1,7 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { today as todayIso } from '../lib/enums.js';
-import { badge, date, drillable, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
+import { badge, date, drillable, esc, html, humanise, money, pct, raw, render, shortHash, statusTone, table, toast, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -13,6 +13,116 @@ import { blockedReason, can, draw, state } from '../app.js';
  * the asset was built to — which is what makes a defect in year twelve
  * answerable rather than argued.
  */
+
+/**
+ * 11.2 — the stage workspace band.
+ *
+ * The specification asks for a page that opens on a stage-specific **action
+ * queue, not a static summary**, under a header carrying the gate state,
+ * completeness, blockers, the accountable owner, the last cut-off and the
+ * permitted next command.
+ *
+ * Everything here is read from `/handover-acceptance` and `/stage-gate`.
+ * Nothing is scored in the browser: the eight-domain validation and the seven
+ * gate clauses are server-side, and duplicating either as a threshold in
+ * JavaScript is how a console ends up disagreeing with the platform it is a
+ * window onto.
+ *
+ * **The queue is the failing domains and the open residual obligations**, in
+ * that order, because those are the two lists a person on this page can
+ * actually act on. When both are empty the band says the stage is ready rather
+ * than showing an empty table — an action queue with nothing in it should read
+ * as finished, not as broken.
+ */
+function stageWorkspace(acceptance, gate) {
+  // Absent rather than zero. A project that has not reached the stage, or a
+  // reader without the handover read, gets no band at all — showing "0 of 8
+  // domains ready" to somebody who simply cannot see them would be a lie.
+  if (!acceptance) return '';
+
+  const domains = acceptance.domains ?? [];
+  const notReady = domains.filter((domain) => !domain.ready);
+  const blockingDomains = notReady.filter((domain) => domain.blocking);
+  const advisory = notReady.filter((domain) => !domain.blocking);
+  const residual = acceptance.residual ?? [];
+  const readiness = acceptance.readiness;
+  const baseline = acceptance.baseline;
+  const packs = acceptance.packs ?? [];
+
+  const gatePassed = gate?.passed === true;
+  const gateFailed = (gate?.failed ?? []).length;
+  const gateUnassessable = (gate?.unassessable ?? []).length;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const overdue = residual.filter((item) => item.dueDate && item.dueDate < today);
+
+  // The permitted next command, derived from where the stage actually is rather
+  // than from a wish. Each step names the one thing that unblocks the next.
+  const nextCommand = blockingDomains.length > 0
+    ? `Close ${blockingDomains[0].label.toLowerCase()}`
+    : packs.every((p) => !p.decision)
+      ? 'Compile a manifest and decide the pack'
+      : !acceptance.activation
+        ? 'Activate operations from the accepted register'
+        : !baseline
+          ? 'Freeze the handover baseline'
+          : !acceptance.transferred && residual.length > 0
+            ? 'Transfer the residual obligations'
+            : 'Nothing outstanding on this stage';
+
+  const queueRows = [
+    ...blockingDomains.map((domain) => [badge('BLOCKER', 'bad'), domain.label, domain.reason ?? '', '—']),
+    ...residual.map((item) => [
+      badge(humanise(item.kind), item.dueDate && item.dueDate < today ? 'bad' : 'warn'),
+      item.description,
+      item.owner,
+      item.dueDate ? date(item.dueDate) : '—',
+    ]),
+    ...advisory.map((domain) => [badge('ADVISORY', 'neutral'), domain.label, domain.reason ?? '', '—']),
+  ];
+
+  const gateCell = !gate
+    ? html`<span style="color:var(--text-3)">not visible to your role</span>`
+    : html`${badge(
+        gatePassed ? 'PASSED' : gateUnassessable > 0 && gateFailed === 0 ? 'NOT ASSESSABLE' : 'NOT MET',
+        gatePassed ? 'ok' : gateFailed > 0 ? 'bad' : 'warn',
+      )} <span style="color:var(--text-3);font-weight:400">${gate.summary ?? ''}</span>`;
+
+  // A requirements matrix that does not exist is not a matrix scoring zero, and
+  // showing 0% would read as a project that has done none of its handover
+  // rather than one that has not written the matrix yet.
+  const completenessCell = !readiness || (readiness.weightTotal ?? 0) === 0
+    ? html`<span style="color:var(--text-3)">no requirements matrix</span>`
+    : html`${pct(readiness.percent ?? 0, 0)}`;
+
+  const baselineCell = baseline
+    ? html`${shortHash(acceptance.manifests?.[0]?.manifestHash ?? '')} <span style="color:var(--text-3);font-weight:400">retained to ${baseline.retainUntil}${baseline.legalHold ? ' · legal hold' : ''}</span>`
+    : html`<span style="color:var(--text-3)">not frozen</span>`;
+
+  return html`
+    <section class="card pad0" style="margin-bottom:14px" aria-labelledby="stage-workspace-h">
+      <h3 id="stage-workspace-h" style="padding:16px 18px 0">Handover stage — action queue</h3>
+
+      <div class="split-list" style="padding:0 18px">
+        <div class="row"><span class="lbl">Gate</span><span class="val">${gateCell}</span></div>
+        <div class="row"><span class="lbl">Domains ready</span><span class="val">${domains.length - notReady.length} of ${domains.length}</span></div>
+        <div class="row"><span class="lbl">Requirement completeness</span><span class="val">${completenessCell}</span></div>
+        <div class="row"><span class="lbl">Blockers &middot; warnings</span><span class="val">${blockingDomains.length} &middot; ${advisory.length}</span></div>
+        <div class="row"><span class="lbl">Approved baseline</span><span class="val">${baselineCell}</span></div>
+        <div class="row"><span class="lbl">Overdue residual items</span><span class="val">${overdue.length}</span></div>
+        <div class="row"><span class="lbl">Permitted next command</span><span class="val" style="font-family:inherit">${nextCommand}</span></div>
+      </div>
+
+      <div style="padding:14px 18px 18px">
+        ${
+          queueRows.length === 0
+            ? html`<div class="empty"><b>Nothing in the queue.</b>All ${domains.length} domains report ready and no residual obligation is outstanding.</div>`
+            : table({ headers: ['', 'What', 'Owner or reason', 'Due'], rows: queueRows })
+        }
+      </div>
+    </section>
+  `;
+}
 
 export async function handover(root) {
   const projectId = state.session.projectId;
@@ -31,9 +141,16 @@ export async function handover(root) {
   // The operating position, which is what an FM opens this screen for. A list of
   // assets is not an operating position any more than a list of events is an
   // audit, and four of this centre's nine panels were partial for that reason.
-  const [position, queue] = await Promise.all([
+  // 11.2's stage workspace reads the eight-domain validation and the 11.4 gate
+  // rather than scoring the stage a second time here. Both are allowed to be
+  // absent: a reader without the handover read, or a project that has not
+  // reached the stage, gets the operating position without the workspace band
+  // instead of an error.
+  const [position, queue, acceptance, gate] = await Promise.all([
     api.get(`/v1/projects/${projectId}/om/position`).catch(() => null),
     api.get(`/v1/projects/${projectId}/om/queue`).catch(() => null),
+    api.get(`/v1/projects/${projectId}/handover-acceptance`).catch(() => null),
+    api.get(`/v1/projects/${projectId}/stage-gate`).catch(() => null),
   ]);
 
   const pack = b.HandoverPack.at(-1);
@@ -73,6 +190,8 @@ export async function handover(root) {
           ${can('HANDOVER_OM', 'X') ? html`<button class="btn ghost" id="maintenance">Forecast maintenance</button>` : ''}
         </div>
       </div>
+
+      ${stageWorkspace(acceptance, gate)}
 
       ${
         coveredDefects.length > 0

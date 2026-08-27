@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import * as handoveracceptance from '../src/domain/handoveracceptance.ts';
+import * as stagegate from '../src/domain/stagegate.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as transfer from '../src/domain/transfer.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
@@ -613,5 +614,149 @@ describe('H-WF-09 catalogue and classification', () => {
     assert.equal(classifyEntity('HandoverBaseline')?.area, 'EVIDENCE_AUDIT');
     assert.equal(classifyEntity('OperationalActivation')?.area, 'HANDOVER_OM');
     assert.equal(classifyEntity('ResidualTransfer')?.area, 'HANDOVER_OM');
+  });
+});
+
+describe('11.4 the handover stage gate', () => {
+  beforeEach(freshProject);
+
+  it('reports the same seven clauses as every other gate', () => {
+    const report = stagegate.evaluateHandoverGate(asOwner());
+    assert.deepEqual(
+      report.clauses.map((clause) => clause.clause),
+      [
+        'INPUTS_COMPLETE',
+        'APPROVALS_GOVERNED',
+        'BLOCKERS_CLOSED',
+        'ONE_CUT_OFF',
+        'AI_ACCOUNTED',
+        'REPLAYABLE',
+        'DOWNSTREAM_CREATED',
+      ],
+    );
+    assert.match(report.contentHash, /^[0-9a-f]{64}$|^sha256:[0-9a-f]{64}$/);
+  });
+
+  it('is the gate a project in HANDOVER is assessed against', () => {
+    const dispatched = stagegate.gateFor(asOwner());
+    const direct = stagegate.evaluateHandoverGate(asOwner());
+    assert.equal(dispatched.contentHash, direct.contentHash);
+  });
+
+  /**
+   * The blocker clause *is* H-WF-09's eight-domain validation. Restating it as
+   * a second set of thresholds is the duplication this file exists to avoid, so
+   * the test asserts they agree rather than that the gate has its own opinion.
+   */
+  it('takes its blockers from the eight-domain validation rather than a second list', () => {
+    const gate = stagegate
+      .evaluateHandoverGate(asOwner())
+      .clauses.find((clause) => clause.clause === 'BLOCKERS_CLOSED')!;
+    const validation = handoveracceptance.crossDomainValidation(asFM());
+
+    assert.equal(gate.blocking.length, validation.blocking.length);
+    assert.equal(gate.state, validation.blocking.length === 0 ? 'PASS' : 'FAIL');
+  });
+
+  it('fails the cut-off clause while no baseline has been frozen', () => {
+    const cutOff = stagegate
+      .evaluateHandoverGate(asOwner())
+      .clauses.find((clause) => clause.clause === 'ONE_CUT_OFF')!;
+    assert.equal(cutOff.state, 'FAIL');
+    assert.ok(cutOff.blocking.some((reason) => /no declared cut-off/.test(reason)));
+  });
+
+  it('notices a record that changed after the baseline was frozen', () => {
+    const itemId = transferItemThatWillDrift();
+    handoveracceptance.baselineHandover(asFM(), {
+      baselinedBy: 'Client estates director',
+      retentionPolicy: 'Retained for the life of the asset plus twelve years',
+      retainUntil: iso(365 * 30),
+      legalHold: false,
+    });
+    causeDrift(itemId);
+
+    const cutOff = stagegate
+      .evaluateHandoverGate(asOwner())
+      .clauses.find((clause) => clause.clause === 'ONE_CUT_OFF')!;
+    assert.equal(cutOff.state, 'FAIL');
+    assert.ok(cutOff.blocking.some((reason) => /changed after the baseline was frozen/.test(reason)));
+  });
+
+  it('raises no downstream obligation before anything is accepted', () => {
+    const downstream = stagegate
+      .evaluateHandoverGate(asOwner())
+      .clauses.find((clause) => clause.clause === 'DOWNSTREAM_CREATED')!;
+    assert.equal(downstream.state, 'PASS');
+    assert.match(downstream.detail, /no downstream obligation is due/);
+  });
+
+  it('requires operations to be activated once the handover is accepted', () => {
+    const packId = pack();
+    handoveracceptance.decideHandover(asFM(), packId, DECISION);
+
+    const downstream = stagegate
+      .evaluateHandoverGate(asOwner())
+      .clauses.find((clause) => clause.clause === 'DOWNSTREAM_CREATED')!;
+    assert.equal(downstream.state, 'FAIL');
+    assert.ok(downstream.blocking.some((reason) => /no operational records were activated/.test(reason)));
+  });
+
+  it('requires residual obligations to reach an owner once accepted', () => {
+    const packId = pack();
+    handoveracceptance.decideHandover(asFM(), packId, {
+      ...DECISION,
+      decision: 'ACCEPTED_WITH_CONDITIONS',
+      conditions: [CONDITION],
+    });
+    handoveracceptance.activateOperations(asFM(), packId, {
+      activatedBy: 'Client asset manager',
+      maintenanceStartsOn: iso(1),
+    });
+
+    const before = stagegate
+      .evaluateHandoverGate(asOwner())
+      .clauses.find((clause) => clause.clause === 'DOWNSTREAM_CREATED')!;
+    assert.ok(before.blocking.some((reason) => /have not been transferred/.test(reason)));
+
+    handoveracceptance.transferResidualObligations(asFM(), {
+      toOperations: 'Estates manager',
+      toAftercare: 'Main contractor aftercare lead',
+      note: 'Handing over the outstanding items',
+    });
+
+    const after = stagegate
+      .evaluateHandoverGate(asOwner())
+      .clauses.find((clause) => clause.clause === 'DOWNSTREAM_CREATED')!;
+    assert.equal(after.state, 'PASS');
+  });
+
+  it('fails approvals when an acceptance condition has run past its expiry', () => {
+    const packId = pack();
+    handoveracceptance.decideHandover(asFM(), packId, {
+      ...DECISION,
+      decision: 'ACCEPTED_WITH_CONDITIONS',
+      conditions: [{ ...CONDITION, dueDate: iso(-60), expiresOn: iso(-30) }],
+    });
+
+    const approvals = stagegate
+      .evaluateHandoverGate(asOwner())
+      .clauses.find((clause) => clause.clause === 'APPROVALS_GOVERNED')!;
+    assert.equal(approvals.state, 'FAIL');
+    assert.ok(approvals.blocking.some((reason) => /expired on/.test(reason)));
+  });
+
+  /**
+   * Stated rather than quietly passed. The AI event block records no
+   * assumptions and no prompt version, so the clause cannot be assessed — and a
+   * gate that counted that as a pass would be the one defect this file exists
+   * to prevent.
+   */
+  it('reports the AI clause as not assessable, as every other gate does', () => {
+    const ai = stagegate
+      .evaluateHandoverGate(asOwner())
+      .clauses.find((clause) => clause.clause === 'AI_ACCOUNTED')!;
+    assert.equal(ai.state, 'NOT_ASSESSABLE');
+    assert.equal(stagegate.evaluateHandoverGate(asOwner()).passed, false);
   });
 });

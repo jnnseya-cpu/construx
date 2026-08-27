@@ -6662,10 +6662,52 @@ an empty one — it is wrong with authority.
 comparison and no feedback means the document would be produced to close an
 action, which is why the exercise has the reputation it has.
 
-**Still to build in the handover block:** the 11.4 gate and the stage workspace
-described in 11.2. The cross-stage sections 12 to 18.1 and the appendices are
-recorded verbatim in `docs/WORKFLOWS.md`; several arrived out of sequence
-during the build and are recorded there in the order they were sent.
+---
+
+### The gate that reads the guards, and the queue that opens on them
+
+11.4 and 11.2. `backend/src/domain/stagegate.ts` and `frontend/pages/handover.js`.
+
+**The 11.4 gate is word for word identical to 6.4, 7.4, 8.4, 9.4 and 10.4**, so
+only the five stage-specific clauses are written; `reportOf`, `aiAccounted` and
+`replayable` stay shared, and `gateFor` dispatches to it in HANDOVER. Two
+clauses read H-WF-09 directly: the blocker clause **is** the eight-domain
+validation, and restating it as a second set of thresholds is the duplication
+this file exists to prevent — a test asserts the two agree rather than that the
+gate holds its own opinion.
+
+The cut-off clause is the one worth naming. It fails while no baseline has been
+frozen, and it re-hashes every record in a frozen baseline against the live
+ledger: a record that moved after the freeze means the frozen set and the live
+set are two different things, and the gate says so. The AI clause reads
+`NOT_ASSESSABLE` here as at every other gate, for the same honest reason.
+
+**11.2's stage workspace** is a band at the top of the handover screen that
+opens on the action queue rather than a static summary: the gate state, the
+domains ready, requirement completeness, blockers and warnings, the approved
+baseline, overdue residual items and the permitted next command — then the
+queue itself, which is the failing domains and the open residual obligations,
+because those are the two lists a person on that page can act on.
+
+Nothing is scored in the browser. Both figures come from `/handover-acceptance`
+and `/stage-gate`, because a console that computes its own thresholds is a
+console that will disagree with the platform it is a window onto. Two absences
+are shown as absences rather than as zero: a project with no requirements
+matrix reads "no requirements matrix" rather than 0% — which would say a
+project had done none of its handover instead of that nobody had written the
+matrix — and a reader whose role cannot see the gate is told that, not shown a
+failure.
+
+**What 11.2 does not have:** the nine-tab set (Overview, Inputs, Workflows,
+Deliverables, Decisions & Approvals, Risks & Changes, Evidence, AI Runs,
+History) and the right rail. The header, the action queue and the permitted
+next command are built; the tabbed navigation is not, and the 9.2 and 10.2
+workspaces for construction and commissioning remain unbuilt.
+
+**The handover block is now complete** — H-WF-01 to H-WF-10, the 11.4 gate and
+the 11.2 header and queue. The cross-stage sections 12 to 18.1 and the
+appendices are recorded verbatim in `docs/WORKFLOWS.md`; several arrived out of
+sequence during the build and are recorded there in the order they were sent.
 
 ---
 
