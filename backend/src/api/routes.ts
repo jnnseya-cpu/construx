@@ -56,6 +56,7 @@ import * as award from '../domain/award.ts';
 import * as enquiry from '../domain/enquiry.ts';
 import * as constructability from '../domain/constructability.ts';
 import * as coordination from '../domain/coordination.ts';
+import * as designchange from '../domain/designchange.ts';
 import * as designplan from '../domain/designplan.ts';
 import * as measurement from '../domain/measurement.ts';
 import * as meetings from '../domain/meetings.ts';
@@ -5653,6 +5654,138 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       coordination.acceptIssue(projectContext(platform, ctx), ctx.params.issueId as string, body(ctx)),
+  },
+
+  // ------------------------------------------------------------ D-WF-06 design change and impact control
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/design-changes',
+    description: 'The design change register: approval route, domains still unassessed, and what was implemented unapproved',
+    handler: (platform, ctx) => designchange.designChangePosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-changes',
+    description: 'Propose a change to approved design. The approval route is derived from its share of the project, not a figure',
+    schema: {
+      type: 'object',
+      required: [
+        'title',
+        'classification',
+        'origin',
+        'reason',
+        'currentRevision',
+        'proposedRevision',
+        'affects',
+        'touchesSafety',
+        'touchesStatutoryApproval',
+        'estimatedCostMinor',
+      ],
+      properties: {
+        title: stringField,
+        classification: { type: 'string', enum: [...designchange.CHANGE_CLASS] },
+        origin: stringField,
+        reason: { type: 'string' },
+        currentRevision: stringField,
+        proposedRevision: stringField,
+        affects: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['kind', 'reference'],
+            properties: { kind: stringField, reference: stringField },
+            additionalProperties: false,
+          },
+        },
+        touchesSafety: { type: 'boolean' },
+        touchesStatutoryApproval: { type: 'boolean' },
+        estimatedCostMinor: { type: 'number', minimum: 0 },
+        emergency: {
+          type: 'object',
+          required: ['why'],
+          properties: { why: { type: 'string' } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => designchange.proposeChange(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-changes/:changeId/impacts',
+    description: 'Assess one of the six domains, or record with a reason that it does not apply. Silence is not an assessment',
+    schema: {
+      type: 'object',
+      required: ['domain', 'applicable', 'assessment', 'assessedBy'],
+      properties: {
+        domain: { type: 'string', enum: [...designchange.IMPACT_DOMAIN] },
+        applicable: { type: 'boolean' },
+        assessment: { type: 'string' },
+        assessedBy: stringField,
+        costMinor: { type: 'number' },
+        days: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designchange.assessImpact(projectContext(platform, ctx), ctx.params.changeId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-changes/:changeId/decision',
+    description: 'Approve, reject, or ask for more. Approval is refused while any of the six domains is unassessed',
+    schema: {
+      type: 'object',
+      required: ['decision', 'rationale'],
+      properties: { decision: { type: 'string', enum: [...designchange.DECISION] }, rationale: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designchange.decideChange(projectContext(platform, ctx), ctx.params.changeId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-changes/:changeId/implemented',
+    description: 'Record the change made in the design. Refused before approval unless it was raised as an emergency',
+    schema: {
+      type: 'object',
+      required: ['note'],
+      properties: { note: { type: 'string' }, changeRequestRef: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designchange.recordImplemented(projectContext(platform, ctx), ctx.params.changeId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-changes/:changeId/affected',
+    description: 'Confirm one affected thing was revised, or that it turned out not to be affected — with the reason either way',
+    schema: {
+      type: 'object',
+      required: ['reference', 'outcome', 'note'],
+      properties: {
+        reference: stringField,
+        outcome: { type: 'string', enum: ['REVISED', 'UNAFFECTED'] },
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designchange.confirmAffected(projectContext(platform, ctx), ctx.params.changeId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/design-changes/:changeId/close',
+    description: 'Close the change. Refused while anything it named is unconfirmed or an emergency approval is still owed',
+    schema: {
+      type: 'object',
+      required: ['note'],
+      properties: { note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      designchange.closeChange(projectContext(platform, ctx), ctx.params.changeId as string, body(ctx)),
   },
 
   {

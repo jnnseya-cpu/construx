@@ -79,6 +79,14 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // correctly: the contractor and EPC hold C and U so they submit, the designer
   // and principal designer hold A so they decide.
   MaterialSubmittal: { area: 'DESIGN_INFORMATION' },
+  // Not `ChangeRequest`, which is contractual and sits under CHANGE_VARIATION
+  // with the quantity surveyor's authority on it. This is a change to approved
+  // *design*, most instances of which are a designer correcting their own work
+  // and never become a variation. Classifying it as CHANGE_VARIATION would put
+  // every drawing correction in front of the commercial team and bar the
+  // designers whose change it is; the link between the two registers is a
+  // reference on the record, not a shared area.
+  DesignChange: { area: 'DESIGN_INFORMATION' },
   Drawing: { area: 'DESIGN_INFORMATION' },
   DrawingMarkup: { area: 'DESIGN_INFORMATION' },
   RFI: { area: 'DESIGN_INFORMATION' },

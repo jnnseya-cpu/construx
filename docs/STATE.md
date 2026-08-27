@@ -4944,9 +4944,7 @@ with the one rule the specification actually names beneath it — nothing reache
 Shared without an author, a checker and its metadata — and who may make each
 move is the permission matrix's answer, given once.
 
-**Still to build in the design block:** D-WF-06 (design change before baseline,
-distinct from the construction change `ChangeRequest` already covers) and
-D-WF-08 with the 7.4 gate. D-WF-01, D-WF-02, D-WF-03, D-WF-04, D-WF-05 and
+**Still to build in the design block:** D-WF-08 with the 7.4 gate. D-WF-01 to
 D-WF-07 are built.
 
 ---
@@ -5138,6 +5136,60 @@ every event type has a command able to emit it, by reading the source for
 both branches read as dead events. The code is now two explicit writes, which is
 clearer anyway, and the detector reads the whole expression: it has to be at
 least as clever as the code it audits.
+
+---
+
+### The change register that decides what the project is building to
+
+D-WF-06. `backend/src/domain/designchange.ts`, seven routes, 47 tests.
+
+**It is not the variation register, and that is the point.** `ChangeRequest`
+under `CHANGE_VARIATION` is contractual: entitlement, a notice type, affected
+subcontracts, a claim for money or time. This is a change to *approved design*,
+and most instances of it are a designer correcting their own work and never
+become a variation at all. Collapsing the two would put every drawing correction
+in front of the commercial team and make the variation register useless, which
+is the commonest way a project loses track of what it is owed. Two registers,
+one link: a design change with contractual consequence carries the change
+request reference rather than becoming one.
+
+**Implementation does not start before approval.** A revision issued while the
+change is still being assessed is a decision taken by whoever drew it, and that
+is the whole reason the change was registered. There is an emergency path,
+because a safety correction cannot wait for a Tuesday meeting — and it is
+recorded *as* an emergency, with the retrospective approval still owed. The
+register keeps saying so until somebody goes back and gives it, and closure is
+refused while it is outstanding: the expedited route defers the approval, it
+does not remove it, and closing without it would turn a deferral into a bypass.
+
+**Six domains, each assessed or explicitly not applicable with a reason.**
+Design, commercial, planning, safety, procurement, information. Approval is
+refused while any of them is silent, because a change approved on cost alone is
+a change whose programme consequence somebody discovers on site. "We looked at
+it and it does not affect procurement" is a different statement from silence and
+only one of the two is a record. A rejection needs no complete assessment —
+forcing six assessments of a change everybody has agreed is not happening would
+teach people to write nothing in them.
+
+**Materiality is a proportion, never a figure.** `lifecycle/scale.ts`'s rule,
+applied: what decides whether a change is the design manager's, the project
+director's or the client's is its value as a **share** of the project's, plus
+whether it touches safety or a statutory approval — both material at any size,
+because a change to a fire strategy on a small job is not cheap enough to be
+somebody's alone. Where the project carries no value to size against, the higher
+route is taken: an unknown proportion is not a small one. A test reads the
+module's own source and fails if the configuration ever grows an amount.
+
+**Closure confirms every affected thing.** The list comes from what the change
+itself named at the start, so it cannot be quietly shortened at the end. Each
+entry is confirmed revised, or established as unaffected after all with the
+reason — a change that named four packages and closed with two of them untouched
+has left two packages built to superseded information, which surfaces at
+handover, where it is at its most expensive.
+
+**The proposer cannot be the decider**, on a correction as much as on a client
+change; and no event in the set is `aiAllowed`, because a change to approved
+design is a decision and no agent mandate exceeds propose.
 
 ---
 

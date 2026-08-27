@@ -223,6 +223,27 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // letters where silence is acceptance the date is the whole point. Recording
   // it as another ISSUE would lose who answered and when.
   def('CORRESPONDENCE_ANSWERED', 'Correspondence', 'UPDATE', 'DESIGN', { requiresEvidence: true }),
+  // D-WF-06. A change to *approved design*, which is not the same record as the
+  // contractual `ChangeRequest` under CHANGE_VARIATION: most design changes are
+  // the designer correcting their own work and never become a variation at all.
+  // Putting every drawing correction into the variation register is the
+  // commonest way a project loses track of what it is actually owed, so these
+  // are two registers with one link between them.
+  def('DESIGN_CHANGE_PROPOSED', 'DesignChange', 'CREATE', 'DESIGN', { creates: true }),
+  // Its own event because the six-domain assessment is the acceptance criterion:
+  // an audit reading the ledger can count how many domains were looked at
+  // without opening state.
+  def('CHANGE_IMPACT_ASSESSED', 'DesignChange', 'UPDATE', 'DESIGN'),
+  // APPROVE and UPDATE are deliberately split rather than one event with an
+  // answer inside it: approval is the act that unlocks implementation, and the
+  // ledger should show it as an approval. A rejection or a request for more
+  // information unlocks nothing.
+  def('DESIGN_CHANGE_APPROVED', 'DesignChange', 'APPROVE', 'DESIGN'),
+  def('DESIGN_CHANGE_DECIDED', 'DesignChange', 'UPDATE', 'DESIGN'),
+  def('CHANGE_IMPLEMENTED', 'DesignChange', 'UPDATE', 'DESIGN'),
+  // Confirming each affected thing was revised — or established as unaffected
+  // after all — and the closure that depends on all of them.
+  def('CHANGE_VERIFIED', 'DesignChange', 'UPDATE', 'DESIGN'),
 
   // --- Tender & procurement -------------------------------------------------
   def('TAKEOFF_COMPLETED', 'Takeoff', 'AI_EXECUTE', 'PROCUREMENT', { aiAllowed: true, requiresEvidence: true }),
