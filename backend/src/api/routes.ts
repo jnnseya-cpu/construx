@@ -75,6 +75,7 @@ import * as documents from '../documents/generate.ts';
 import * as stagegate from '../domain/stagegate.ts';
 import * as tenderintel from '../domain/tenderintel.ts';
 import * as tenderreview from '../domain/tenderreview.ts';
+import * as valuechain from '../domain/valuechain.ts';
 import * as quality from '../engines/quality.ts';
 import * as safetycontrol from '../domain/safetycontrol.ts';
 import * as safety from '../engines/safety.ts';
@@ -4090,6 +4091,83 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => planning.recordSiteDiary(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------ CN-WF-09 and CN-WF-10 five values, and a deadline somebody checked
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/commercial-control',
+    description: 'Submitted against assessed, certified against paid, and the time bars nobody has checked',
+    handler: (platform, ctx) => valuechain.commercialControlPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/values',
+    description: 'Record one of the five values. None of them replaces another, and nothing is paid above what was certified',
+    schema: {
+      type: 'object',
+      required: ['subjectType', 'subjectRef', 'title', 'stage', 'amountMinor', 'basis', 'by'],
+      properties: {
+        subjectType: stringField,
+        subjectRef: stringField,
+        title: stringField,
+        stage: { type: 'string', enum: [...valuechain.VALUE_STAGE] },
+        amountMinor: { type: 'number' },
+        timeDays: { type: 'number' },
+        basis: { type: 'string' },
+        by: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => valuechain.recordValue(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/notice-deadlines',
+    description: 'Derive a deadline with the rule that imposes it and the arithmetic it was computed from. Unvalidated until checked',
+    schema: {
+      type: 'object',
+      required: ['reference', 'category', 'description', 'ruleSource', 'inputs', 'dueDate', 'timeBarred'],
+      properties: {
+        reference: stringField,
+        category: stringField,
+        description: { type: 'string' },
+        ruleSource: stringField,
+        inputs: {
+          type: 'object',
+          required: ['triggerEvent', 'triggerDate', 'periodDays', 'calendar'],
+          properties: {
+            triggerEvent: stringField,
+            triggerDate: stringField,
+            periodDays: { type: 'number', exclusiveMinimum: 0 },
+            calendar: { type: 'string', enum: ['CALENDAR_DAYS', 'BUSINESS_DAYS'] },
+          },
+          additionalProperties: false,
+        },
+        dueDate: stringField,
+        timeBarred: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => valuechain.deriveDeadline(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/notice-deadlines/:deadlineId/validate',
+    description: 'A person agreeing the date, or correcting it. The derivation is kept either way',
+    schema: {
+      type: 'object',
+      required: ['agrees', 'note', 'validatedBy'],
+      properties: {
+        agrees: { type: 'boolean' },
+        correctedDueDate: stringField,
+        note: { type: 'string' },
+        validatedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      valuechain.validateDeadline(projectContext(platform, ctx), ctx.params.deadlineId as string, body(ctx)),
   },
 
   // ------------------------------------------ CN-WF-08 who was sent what, and what was only ever said

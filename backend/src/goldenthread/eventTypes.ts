@@ -657,6 +657,16 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('CHANGE_REQUEST_REJECTED', 'ChangeRequest', 'REJECT', 'CONTRACTS_CLAIMS', { requiresEvidence: true }),
   def('VARIATION_INSTRUCTED', 'Variation', 'ISSUE', 'CONTRACTS_CLAIMS', { requiresEvidence: true, creates: true }),
   def('VARIATION_VALUED', 'Variation', 'UPDATE', 'CONTRACTS_CLAIMS', { aiAllowed: true, requiresEvidence: true }),
+  // CN-WF-09 and CN-WF-10. Submitted, assessed, certified, agreed and paid stay
+  // separate: the gap between submitted and assessed is the negotiation,
+  // between certified and paid the cashflow, between agreed and paid a dispute.
+  // A register holding one number describes none of them.
+  def('VALUE_STAGE_RECORDED', 'ValueChain', 'UPDATE', 'CONTRACTS_CLAIMS', { creates: true }),
+  // A time bar is the one deadline where being wrong is unrecoverable, and
+  // "the system said the 14th" is not a defence. The derivation carries its
+  // inputs and stays unvalidated until a person agrees or corrects it.
+  def('NOTICE_DEADLINE_DERIVED', 'NoticeDeadline', 'CREATE', 'CONTRACTS_CLAIMS', { creates: true }),
+  def('NOTICE_DEADLINE_VALIDATED', 'NoticeDeadline', 'APPROVE', 'CONTRACTS_CLAIMS'),
   def('DOMESTIC_VARIATION_FLAGGED', 'Variation', 'CREATE', 'CONTRACTS_CLAIMS', { requiresEvidence: true }),
   def('CLAIM_OPENED', 'Claim', 'CREATE', 'CONTRACTS_CLAIMS', { requiresEvidence: true }),
   def('CLAIM_ASSESSED', 'Claim', 'AI_EXECUTE', 'CONTRACTS_CLAIMS', { aiAllowed: true, requiresEvidence: true }),

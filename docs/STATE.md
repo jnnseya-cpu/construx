@@ -5695,7 +5695,51 @@ is a **floor, not a judgement of clarity**. No rule distinguishes "proceed as
 discussed" from a real instruction; what it stops is the one-word instruction,
 which is common and always a dispute.
 
-**Still to build in the construction block:** CN-WF-09 to CN-WF-12, and the
+---
+
+### Five values that are not one value, and a deadline somebody checked
+
+CN-WF-09 and CN-WF-10 together. `backend/src/domain/valuechain.ts`, four routes,
+19 tests.
+
+Almost all of both workflows was already built and is reused rather than
+rebuilt: change requests and the variation control matrix, upstream/downstream
+reconciliation, delay events and their cost, the contract obligations calendar
+with its clause citations, the payment cycle with its over-certification and
+overpayment refusals, the Construction Act notices, the commitment ledger and
+the live CVR. Two things were genuinely absent.
+
+**One number where there are five.** AC-CN-WF-09-03 and AC-CN-WF-10-01: what was
+*submitted*, what was *assessed*, what was *certified*, what was *agreed* and
+what was *paid* are five separate facts, and collapsing them destroys the three
+questions the commercial team actually asks. Submitted against assessed is the
+**negotiating position**; certified against paid is **cashflow**; agreed against
+paid is the **dispute**. Each stage is written once and never overwritten — a
+submitted figure that gets edited down to the assessed figure is how a claim
+loses its own history — and the authority follows the stage rather than being
+one blanket permission for five different acts: `CHANGE_VARIATION` create for
+submitting and assessing, approve for certifying, agreeing and recording
+payment. The whole entity is `COMMERCIAL_L3`, for the same reason the variation
+register is: it is the negotiating position.
+
+No order is imposed between certified and agreed. Contracts differ on which
+comes first and a platform that insisted on one would be wrong on half of them.
+What is refused is paying above the certificate, and paying below it is recorded
+rather than refused — that is cashflow, not an error.
+
+**A deadline the platform derived and nobody checked.** AC-CN-WF-09-01 and
+AC-CN-WF-10-02. A time bar computed from a clause the platform has interpreted
+is a liability if it is wrong and nobody looked. Each derived deadline carries
+its **rule source**, its **calculation inputs** — trigger event, trigger date,
+period, calendar basis — and, until a person with `CONTRACTS_CLAIMS` approve
+signs it, `validated: false`. The position reports unvalidated time bars
+separately, because a time bar nobody has checked is the one that cannot be
+recovered. A validator who disagrees must say what the right date is; marking it
+wrong and leaving it there is worse than the derivation. A correction keeps the
+derived date alongside the corrected one — the pattern of corrections is how a
+wrong rule gets found.
+
+**Still to build in the construction block:** CN-WF-11 and CN-WF-12, and the
 stage workspace described in 9.2. The specifications received so far — the
 construction stage control, 9.1, 9.2, CN-WF-01 to CN-WF-12, the 9.4 gate, the
 commissioning stage control with 10.1 and 10.2, and CM-WF-01 to CM-WF-06 — are

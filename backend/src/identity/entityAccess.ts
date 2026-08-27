@@ -262,6 +262,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // exposure that exists until one confirms it. Both contractual rather than
   // design: the question they answer is what the project is owed and owes.
   Instruction: { area: 'CONTRACTS_CLAIMS' },
+  // The five values and the deadline that was checked. Commercial-in-confidence
+  // for the same reason the variation register is: what was claimed against
+  // what was assessed is the negotiating position.
+  ValueChain: { area: 'CONTRACTS_CLAIMS', sensitivity: 'COMMERCIAL_L3' },
+  NoticeDeadline: { area: 'CONTRACTS_CLAIMS' },
   UnconfirmedDirection: { area: 'CONTRACTS_CLAIMS' },
   Dispute: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },
 
