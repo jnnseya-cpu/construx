@@ -2096,3 +2096,120 @@ Acceptance criteria
 •	AC-H-WF-05-02: Transfer recipient confirms access, completeness and usable format.
 •	AC-H-WF-05-03: Conditions remain visible as operational obligations.
 ```
+
+## H-WF-06
+
+```
+H-WF-06 - Operator training, competence and operational readiness
+Primary owner: Asset/Facilities Manager / Commissioning Manager  |  Trigger: Training materials and system availability ready
+Required inputs
+•	Role/competence matrix and operating model
+•	accepted O&M/as-built and system configuration
+•	training modules, exercises and emergency scenarios
+•	attendee identity, employer, role and prior competence
+•	trainer/vendor, date/location and assessment criteria
+Deterministic flow
+1.	Create role-based training needs analysis and schedule.
+2.	Issue controlled materials tied to installed system/manual revision.
+3.	Record attendance, practical demonstration, assessment and evidence.
+4.	Identify failed/missed training and restrict operational permissions where configured.
+5.	Obtain operator readiness acceptance and outstanding support plan.
+6.	Reissue training when material system/manual change invalidates competence.
+AI-agent duties and human guardrails
+•	Generate grounded learning aids and quizzes from accepted content.
+•	Cannot certify competence; authorised assessor records result.
+Outputs
+•	TrainingNeeds Matrix
+•	TrainingSession/Attendance
+•	CompetenceAssessment
+•	OperatorReadiness
+•	Retraining Obligation
+Exception controls
+•	Attendance alone is not competence where assessment required.
+•	Training on wrong revision is invalid.
+•	Personal competence data has restricted access/retention.
+Events: TRAINING_SCHEDULED | TRAINING_COMPLETED | COMPETENCE_ASSESSED | OPERATOR_READY | RETRAINING_REQUIRED
+APIs:   POST /v1/systems/{id}/training-plans | POST /v1/training-sessions/{id}/assessments | POST /v1/projects/{id}:operator-readiness
+Acceptance criteria
+•	AC-H-WF-06-01: All required operational roles are covered by competent named persons or controlled gap plan.
+•	AC-H-WF-06-02: Training evidence references exact system/manual revision.
+•	AC-H-WF-06-03: Failed/missed assessment appears as handover blocker where configured.
+```
+
+## H-WF-07
+
+```
+H-WF-07 - Keys, access, credentials, spares, tools and service transfer
+Primary owner: Handover / Asset Manager  |  Trigger: Physical operational transfer window
+Required inputs
+•	Key/lock/access-card/credential register
+•	system accounts, licences and secure-secret transfer route
+•	spares, consumables, special tools and test equipment
+•	inventory quantity, storage location and condition
+•	service contracts, vendor contacts and escalation
+Deterministic flow
+1.	Inventory items and credentials with sensitivity and transfer owner.
+2.	Verify quantities/condition against contract and commissioning needs.
+3.	Transfer physical items with sender/recipient signatures and location.
+4.	Transfer credentials through approved secret mechanism; never place secrets in ordinary documents/events.
+5.	Activate service/warranty contacts and confirm escalation routes.
+6.	Reconcile shortages and create residual obligation.
+AI-agent duties and human guardrails
+•	Detect missing inventory and warranty/service link.
+•	No access to or reproduction of secret values; only status metadata.
+Outputs
+•	Access/Key Transfer
+•	Spares/Tools Inventory
+•	CredentialTransfer Status
+•	ServiceContact Register
+•	ShortageActions
+Exception controls
+•	Secrets are referenced by vault ID/status only.
+•	Missing critical spare/tool can block readiness based on requirement.
+•	Lost/unreturned key creates security incident route.
+Events: KEYS_TRANSFERRED | CREDENTIAL_TRANSFER_CONFIRMED | SPARES_ACCEPTED | TRANSFER_SHORTAGE_RECORDED
+APIs:   POST /v1/projects/{id}/transfer-items | POST /v1/transfer-items/{id}:accept | POST /v1/credentials/{id}:confirm-transfer
+Acceptance criteria
+•	AC-H-WF-07-01: Sender and recipient reconcile inventory and retain receipt.
+•	AC-H-WF-07-02: No secret value appears in audit log/export.
+•	AC-H-WF-07-03: Shortage remains linked to handover condition and owner.
+```
+
+## H-WF-08
+
+```
+H-WF-08 - Defects, practical/sectional completion and commercial closeout
+Primary owner: Contract Administrator / Project Director / Commercial Director  |  Trigger: Completion inspection or contract milestone
+Required inputs
+•	Completion criteria and contract rules
+•	defect/snag lists by area/system/package
+•	commissioning and statutory status
+•	outstanding work, conditions and access impacts
+•	final account, retention, bonds, warranties and certificates
+Deterministic flow
+1.	Perform completion inspection and classify item as blocker, minor defect, outstanding work or post-completion obligation.
+2.	Assign contractor, due date, access window and acceptance evidence.
+3.	Determine practical/sectional completion through authorised contract role; AI readiness score is advisory.
+4.	Issue certificate/decision and trigger configured possession, insurance, damages, defects-period, retention and warranty dates.
+5.	Track defect close/reinspection and maintain access/tenant impact.
+6.	Reconcile final account, claims, documents, securities and commercial archive without delaying safety-critical closure.
+AI-agent duties and human guardrails
+•	Cluster snags and forecast clearance; draft completion readiness summary.
+•	Cannot issue certificate, determine legal completion or agree final account.
+Outputs
+•	CompletionInspection
+•	Defect/Snag Register
+•	Practical/SectionalCompletion Record
+•	Triggered ContractDates
+•	CommercialCloseout Register
+Exception controls
+•	Certificate trigger dates derive from validated project-specific contract pack.
+•	Deferred defect has owner, risk, access and acceptance condition.
+•	Final account states submitted/assessed/agreed/paid separately.
+Events: COMPLETION_INSPECTION_COMPLETED | PRACTICAL_COMPLETION_RECORDED | DEFECTS_PERIOD_STARTED | DEFECT_CLOSED | FINAL_ACCOUNT_AGREED
+APIs:   POST /v1/projects/{id}/completion-inspections | POST /v1/contracts/{id}/completion-records | POST /v1/defects/{id}:close
+Acceptance criteria
+•	AC-H-WF-08-01: Certificate record shows authority, scope boundary, date and evidence.
+•	AC-H-WF-08-02: Triggered dates are recalculated once and protected from silent edit.
+•	AC-H-WF-08-03: Each closed defect has accepted rectification evidence.
+```

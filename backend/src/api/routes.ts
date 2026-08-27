@@ -40,6 +40,7 @@ import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
 import * as reliability from '../domain/reliability.ts';
 import * as informationcontrol from '../domain/informationcontrol.ts';
+import * as handoverrequirements from '../domain/handoverrequirements.ts';
 import * as itt from '../domain/itt.ts';
 import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
@@ -5535,6 +5536,180 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => systemisation.declareTemporaryOperation(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- H-WF-01 handover requirements matrix and readiness
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/handover-readiness',
+    description: 'Weighted readiness over the mandatory requirements, drilling straight to each unmet one and its source',
+    handler: (platform, ctx) => handoverrequirements.handoverReadiness(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/handover-requirements',
+    description: 'Record one handover obligation with its source, clause, acceptance party and evidence rule',
+    schema: {
+      type: 'object',
+      required: [
+        'reference',
+        'source',
+        'sourceVersion',
+        'sourceClause',
+        'description',
+        'acceptanceCriteria',
+        'evidenceRule',
+        'acceptanceParty',
+        'dependency',
+        'mandatory',
+        'statutory',
+        'weight',
+      ],
+      properties: {
+        reference: stringField,
+        source: stringField,
+        sourceVersion: stringField,
+        sourceClause: stringField,
+        description: { type: 'string' },
+        acceptanceCriteria: { type: 'string' },
+        evidenceRule: { type: 'string' },
+        acceptanceParty: stringField,
+        dependency: { type: 'string', enum: [...handoverrequirements.REQUIREMENT_DEPENDENCY] },
+        mandatory: { type: 'boolean' },
+        statutory: { type: 'boolean' },
+        weight: { type: 'number' },
+        systemTag: stringField,
+        area: stringField,
+        assetTag: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => handoverrequirements.createRequirement(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/handover-requirements/:requirementId/assign',
+    description: 'Map the deliverable to a producer, a checker, an approver and a required date',
+    schema: {
+      type: 'object',
+      required: ['producer', 'checker', 'approver', 'requiredBy'],
+      properties: {
+        producer: stringField,
+        checker: stringField,
+        approver: stringField,
+        requiredBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      handoverrequirements.assignDeliverable(
+        projectContext(platform, ctx),
+        ctx.params.requirementId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/handover-matrices',
+    description: 'Baseline the matrix. After this a requirement is added by delta rather than quietly',
+    schema: {
+      type: 'object',
+      required: ['baselinedBy'],
+      properties: { baselinedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => handoverrequirements.baselineMatrix(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/handover-requirements/:requirementId/submit',
+    description: 'Submit the deliverable against a requirement',
+    schema: {
+      type: 'object',
+      required: ['evidence', 'submittedBy'],
+      properties: { evidence: stringField, submittedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      handoverrequirements.submitRequirement(
+        projectContext(platform, ctx),
+        ctx.params.requirementId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/handover-requirements/:requirementId/decide',
+    description: 'Decide it — by the named acceptance party, against the evidence rule, never by a file being present',
+    schema: {
+      type: 'object',
+      required: ['decision', 'acceptedBy', 'forParty', 'reason'],
+      properties: {
+        decision: { type: 'string', enum: ['ACCEPTED', 'ACCEPTED_WITH_CONDITIONS', 'REJECTED'] },
+        acceptedBy: stringField,
+        forParty: stringField,
+        reason: { type: 'string' },
+        conditions: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      handoverrequirements.decideRequirement(
+        projectContext(platform, ctx),
+        ctx.params.requirementId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/handover-requirements/:requirementId/waive',
+    description: 'Waive a requirement with a reason and an expiry. A statutory one is never waivable here',
+    schema: {
+      type: 'object',
+      required: ['reason', 'approvedBy', 'expiresOn'],
+      properties: { reason: { type: 'string' }, approvedBy: stringField, expiresOn: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      handoverrequirements.waiveRequirement(
+        projectContext(platform, ctx),
+        ctx.params.requirementId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/handover-requirements/source-reissue',
+    description: 'Flag every requirement drawn from a version that has been reissued, for delta review',
+    schema: {
+      type: 'object',
+      required: ['source', 'fromVersion', 'toVersion', 'recordedBy'],
+      properties: {
+        source: stringField,
+        fromVersion: stringField,
+        toVersion: stringField,
+        recordedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => handoverrequirements.recordSourceReissue(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/handover-sections',
+    description: 'Define a sectional handover: an independent boundary and its own subset of requirements',
+    schema: {
+      type: 'object',
+      required: ['reference', 'boundary', 'requirementRefs', 'definedBy'],
+      properties: {
+        reference: stringField,
+        boundary: { type: 'string' },
+        requirementRefs: { type: 'array', items: { type: 'string' } },
+        definedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => handoverrequirements.defineHandoverSection(projectContext(platform, ctx), body(ctx)),
   },
 
   // ------------------------------------------------------- CM-WF-08 training, dossier, acceptance and the gate

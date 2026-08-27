@@ -945,6 +945,25 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // one that disagrees with the first within a month.
   def('COMMISSIONING_COMPLETE', 'CommissioningCompletion', 'APPROVE', 'PROJECT_CONTROL', { creates: true }),
 
+  // --- H-WF-01 the handover requirements matrix -----------------------------
+  // The spine of stage 11: every other handover workflow satisfies requirements
+  // that live here, and readiness is the arithmetic over them. There is no
+  // READINESS_UPDATED event, although the specification lists one, because a
+  // stored readiness figure is the number nobody updates after the requirement
+  // it was computed from moved.
+  def('HANDOVER_REQUIREMENT_CREATED', 'HandoverRequirement', 'CREATE', 'HANDOVER_OM', { creates: true }),
+  def('DELIVERABLE_ASSIGNED', 'HandoverRequirement', 'UPDATE', 'HANDOVER_OM'),
+  def('HANDOVER_MATRIX_BASELINED', 'HandoverRequirement', 'FREEZE', 'HANDOVER_OM'),
+  def('HANDOVER_REQUIREMENT_SUBMITTED', 'HandoverRequirement', 'UPDATE', 'HANDOVER_OM'),
+  // The decision is by the named acceptance party against the evidence rule. A
+  // submitted document is what a decision is made about, never what makes one.
+  def('HANDOVER_REQUIREMENT_DECIDED', 'HandoverRequirement', 'APPROVE', 'HANDOVER_OM'),
+  def('HANDOVER_REQUIREMENT_WAIVED', 'HandoverRequirement', 'APPROVE', 'HANDOVER_OM'),
+  // A source reissue flags the requirements drawn from the old version rather
+  // than re-pointing them: what actually changed is a question for a person.
+  def('HANDOVER_REQUIREMENT_DELTA_FLAGGED', 'HandoverRequirement', 'UPDATE', 'HANDOVER_OM'),
+  def('HANDOVER_SECTION_DEFINED', 'HandoverSection', 'APPROVE', 'HANDOVER_OM', { creates: true }),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

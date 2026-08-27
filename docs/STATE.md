@@ -6207,10 +6207,58 @@ built it, so the clause now assesses the boundaries and retained obligations
 properly instead of reporting a gap that had been closed.
 
 **Still to build:** the commissioning stage workspace described in 10.2.
-**Stage 11 (Handover)** is arriving: the stage control with its
-`HANDOVER_ACCEPTED` gate event, 11.1, 11.2, and H-WF-01 to H-WF-05 are recorded
-verbatim in `docs/WORKFLOWS.md`. Several specifications arrived out of sequence
-during the build and are recorded there in the order they were sent.
+
+---
+
+## The handover block (stage 11)
+
+### A matrix no file can close
+
+H-WF-01. `backend/src/domain/handoverrequirements.ts`, nine routes, 23 tests.
+
+The spine of stage 11. Every other handover workflow satisfies requirements that
+live here, and readiness is the arithmetic over them.
+
+**No requirement is closed by a file upload.** AC-H-WF-01-03, and the rule the
+whole workflow turns on. The commonest failure of a handover matrix is that it
+becomes a document-collection exercise: somebody attaches a PDF, the row goes
+green and nobody has read it. Every requirement carries an **evidence rule**
+saying what would actually satisfy it, and acceptance is an act by the **named
+acceptance party** — a decision recorded for anybody else is refused, and one
+with no reasoning is refused with the evidence rule quoted back. An acceptance
+*with conditions* counts as **unmet**: it is a requirement somebody agreed to
+close later, and counting it as done would show a project ready to hand over
+with its conditions still open.
+
+**Readiness is derived, never stored.** The specification lists a
+`READINESS_UPDATED` event and this platform registers none, for the reason it
+declines every stored derivation: a readiness percentage is the number nobody
+updates after the requirement it was computed from moved. It is recomputed on
+every read over the **weighted mandatory** requirements — an advisory one still
+appears as unmet but cannot inflate the figure — and AC-H-WF-01-02 falls out of
+computing it that way: each unmet row carries its source, its clause, its owner,
+its date and *why* it is unmet.
+
+**A statutory requirement is not waivable.** Absolutely, by any role in the
+matrix, because the authority that could waive it is not a project authority at
+all. An ordinary one can be waived by whoever governs the project, with a reason
+and an **expiry** — and readiness read past that date shows it unmet again, which
+is what stops a waiver becoming permanent by neglect.
+
+**A reissued source is a question, not a silent update.** Requirements drawn
+from the replaced version are flagged for delta review rather than re-pointed: a
+matrix that quietly followed a reissue would be satisfying obligations nobody
+has read.
+
+**A partial handover needs its own boundary and subset.** Accepting a floor
+against the whole project's matrix means accepting it against requirements that
+do not apply to it, and a section is scored against its own.
+
+**Still to build in the handover block:** H-WF-02 to H-WF-08, the
+`HANDOVER_ACCEPTED` gate and the stage workspace described in 11.2. The stage
+control, 11.1, 11.2 and H-WF-01 to H-WF-08 are recorded verbatim in
+`docs/WORKFLOWS.md`; several arrived out of sequence during the build and are
+recorded there in the order they were sent.
 
 ---
 

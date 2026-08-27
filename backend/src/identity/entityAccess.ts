@@ -336,6 +336,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // The stage exit belongs with whoever governs the project, as the
   // construction one does.
   CommissioningCompletion: { area: 'PROJECT_SETUP' },
+  // H-WF-01. The matrix belongs with whoever runs handover, which the matrix
+  // already places with the FM alongside the project director and the owner.
+  HandoverRequirement: { area: 'HANDOVER_OM' },
+  HandoverSection: { area: 'HANDOVER_OM' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },
