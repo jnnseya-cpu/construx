@@ -1442,3 +1442,95 @@ Acceptance criteria
 •	AC-CN-WF-11-02: Issued minutes preserve exact approved version.
 •	AC-CN-WF-11-03: Material decision has authority, rationale, alternatives and impacts.
 ```
+
+## CN-WF-12
+
+```
+CN-WF-12 - Reporting, recovery, physical completion and turnover
+Primary owner: Project / Construction Manager  |  Trigger: Daily/weekly/monthly cycle or package/system completion
+Required inputs
+•	Verified progress, forecast, cost/CVR, risks, safety/quality and procurement
+•	design/RFI/change/claim status
+•	commissioning turnover requirements
+•	completion evidence, defects and as-built updates
+•	reporting cut-off and audience template
+Deterministic flow
+1.	Create cut-off snapshot across all modules; disclose data freshness and missing owners.
+2.	Generate role/audience report with changes since prior cut-off and decision requests.
+3.	Run recovery scenarios with logic/resource/cost/risk effects; approve selected action plan.
+4.	For package/system completion, verify work, tests, quality records, as-built and residual defects.
+5.	Issue mechanical/construction completion certificate only by authorised party.
+6.	Transfer system boundary and evidence to Commissioning while retaining construction obligations.
+AI-agent duties and human guardrails
+•	Draft evidence-grounded report and recovery options.
+•	Forecast completion/readiness with confidence; cannot declare completion or select recovery.
+Outputs
+•	PeriodReport
+•	RecoveryPlan
+•	CompletionChecklist
+•	Construction/Mechanical Completion Record
+•	CommissioningTurnover Pack
+Exception controls
+•	Report does not hide stale/missing data.
+•	Partial/system turnover requires defined boundary, isolations and retained responsibilities.
+•	Defect acceptance/deferment requires classification, owner and completion condition.
+Events: REPORT_SNAPSHOT_CREATED | RECOVERY_PLAN_APPROVED | SYSTEM_READY_FOR_TURNOVER | CONSTRUCTION_COMPLETION_ACCEPTED
+APIs:   POST /v1/projects/{id}/reports:generate | POST /v1/programmes/{id}/recovery-scenarios | POST /v1/systems/{id}:construction-complete
+Acceptance criteria
+•	AC-CN-WF-12-01: Report numbers reconcile to source snapshots at cut-off.
+•	AC-CN-WF-12-02: Turnover pack completeness is rule-driven and evidence-linked.
+•	AC-CN-WF-12-03: Commissioning cannot start on a system without approved boundary/readiness or recorded authorised exception.
+```
+
+## 9.4
+
+```
+9.4 Stage gate Definition of Done
+•	All mandatory inputs are present, validated and tied to exact source versions; completeness is 100% and blocking issues equal zero.
+•	All approvals satisfy appointment, authority, maker-checker and party-separation policies.
+•	All critical/major safety, compliance, interface and information blockers are closed or governed by a permitted, time-bound condition.
+•	Cost, programme, risk, information and commercial snapshots share one declared cut-off and are cross-reconciled.
+•	AI outputs used in the decision have evidence, confidence, assumptions, model/prompt versions, ACU settlement and human disposition.
+•	Gate report, decision and locked baseline can be replayed from the event store and verified against evidence hashes.
+•	Downstream mobilisation tasks, owners, due dates and inherited residual obligations are automatically created without re-entry.
+```
+
+*(Word for word identical to 6.4, 7.4 and 8.4. What differs between the four is
+the evidence each is answered from, not the standard — which is why
+`backend/src/domain/stagegate.ts` shares the clause list, the titles, the
+`NOT_ASSESSABLE` rule, the AI clause, the replay clause and the report
+arithmetic across all of them.)*
+
+---
+
+## 10 — Commissioning stage control
+
+```
+10. Commissioning stage
+Stage outcome: Prove by controlled testing that systems are complete, safe, integrated and capable of meeting the approved design and operational intent.
+Control	Requirement
+Entry condition	Commissioning strategy and programme approved; system boundaries defined; relevant construction completion accepted.
+Exit condition	Systems accepted or conditionally accepted with controlled exceptions, operator training complete and handover evidence ready.
+Gate event	COMMISSIONING_COMPLETE
+Default state path	Draft → Validated → Submitted → Under Review → Approved / Approved with Conditions / Rejected → Locked / Superseded
+```
+
+```
+10.1 Mandatory input groups
+Input group	Required construction data
+Systemisation	Asset/system/subsystem hierarchy, boundaries, tags, locations, energisation and turnover sequence
+Plans and procedures	Commissioning plan/programme, method statements, test scripts, cause/effect, acceptance criteria, witness/hold points
+Readiness	Construction completion, punch status, clean/flush, utilities, isolations, permits, vendor attendance, instruments/calibration
+Testing	FAT/SAT, pre-functional, functional, integrated system, reliability/soak/continuous performance and seasonal test data
+Evidence	Raw readings, photos/video, trend logs, certificates, signatures, exceptions, retests and approvals
+Operations	O&M drafts, asset data, spares, maintenance tasks, operator training and emergency response
+```
+
+```
+10.2 Stage workspace
+•	Route: /projects/{projectId}/commissioning. The page opens on a stage-specific Action Queue, not a static summary.
+•	Header: gate state, completeness, blockers/warnings, approved baseline version, change since baseline, accountable owner, last data cut-off and permitted next command.
+•	Tabs: Overview; Inputs; Workflows; Deliverables; Decisions & Approvals; Risks & Changes; Evidence; AI Runs; History.
+•	Right rail: assigned decisions, overdue items, low-confidence extractions, stale evidence and downstream impacts.
+•	Gate button remains disabled until all deterministic blockers pass; permitted warning waivers display approver, reason and expiry.
+```

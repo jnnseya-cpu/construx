@@ -8,6 +8,7 @@ import * as cdm from '../src/domain/cdm.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as framework from '../src/domain/framework.ts';
 import * as supplychain from '../src/domain/supplychain.ts';
+import * as qualitycontrol from '../src/domain/qualitycontrol.ts';
 import * as quality from '../src/engines/quality.ts';
 import * as safety from '../src/engines/safety.ts';
 import { Platform } from '../src/platform.ts';
@@ -673,7 +674,11 @@ describe('10 · Quality is assurance, not a defect list', () => {
     assert.equal(quality.qualityPosition(ctxFor('qaqc')).ncrs.open, 1);
   });
 
-  it('releases the hold point once the stage passes', () => {
+  it('holds the successor until the hold point is released, not merely passed', () => {
+    // CN-WF-06 tightened this. A passed inspection is the inspector's finding;
+    // the release is the authority to build over it, and on a hold point those
+    // are two acts. Before, a pass released the point by itself, which made a
+    // hold point a witness point with a stronger word on it.
     const ctx = ctxFor('qaqc');
 
     quality.recordInspection(ctx, {
@@ -681,6 +686,24 @@ describe('10 · Quality is assurance, not a defect list', () => {
       inspectedBy: 'Site engineer', comments: 'Reset and re-surveyed, within tolerance',
       evidenceHash: hashEvidence('insp-pass-1'),
     });
+
+    throwsCode(
+      () =>
+        quality.recordInspection(ctx, {
+          planId, stageReference: 'S2', outcome: 'PASS',
+          inspectedBy: 'QA/QC', comments: 'Straight on to the next stage',
+          evidenceHash: hashEvidence('insp-early'),
+        }),
+      'HOLD_POINT_OPEN',
+    );
+
+    qualitycontrol.releaseHoldPoint(ctx, {
+      planId,
+      stageReference: 'S1',
+      basis: 'Dimensional check within tolerance on the re-survey; reinforcement may proceed.',
+      evidenceHash: hashEvidence('hold-release-1'),
+    });
+
     const second = quality.recordInspection(ctx, {
       planId, stageReference: 'S2', outcome: 'PASS_WITH_COMMENT',
       inspectedBy: 'QA/QC', comments: 'Two additional spacers requested and fitted',

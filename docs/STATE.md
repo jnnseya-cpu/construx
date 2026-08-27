@@ -5531,11 +5531,62 @@ damage" as damaged. Guessing a fact from prose is the wrong shape; a person now
 answers `damaged` explicitly, and the test fixture keeps that exact phrasing so
 the regression cannot come back.
 
-**Still to build in the construction block:** CN-WF-06 onwards, the stage
+---
+
+### The hold point nobody was enforcing
+
+CN-WF-06. `backend/src/domain/qualitycontrol.ts`, seven routes, 26 tests.
+
+`engines/quality.ts` already built the ITP, the inspection, the hold-point
+register and the NCR. This module owns the five things that were missing, and
+the first of them was **predicted by a comment in the existing code**:
+`assertHoldPointsClear` was written with a note saying "a hold point nobody
+enforces is a comment in a document", and nothing in the platform called it.
+
+**A hold point that is actually enforced.** AC-CN-WF-06-02. A stage cannot be
+inspected while an earlier hold point in the same plan is unreleased —
+precisely that, rather than blocking all work on the package, which would stop
+the job the moment an ITP was written.
+
+**A release that is not the inspection.** A passed inspection is the inspector's
+finding; the release is the authority to build over it, and on a hold point
+those are two acts by two people. This changed existing behaviour: previously a
+pass released the point by itself, which made a hold point a witness point with
+a stronger word on it. The chain test that encoded the old assumption was
+updated to prove the new one, and says why in its own comment.
+
+**An inspection against an exact revision.** AC-CN-WF-06-01. The request names
+the drawing or specification revision, the acceptance criteria off the stage,
+who has to attend and what was finished first. "Inspected and passed" against a
+drawing superseded on the Friday is invisible afterwards unless the revision was
+written down at the time.
+
+**A reading from an instrument out of calibration.** A torque wrench three
+months past its certificate did not measure anything: the readings are not wrong
+so much as unknown. The register makes that answerable, and an instrument nobody
+registered is reported as unanswerable rather than as fine.
+
+**A closure with something behind it.** AC-CN-WF-06-03. Rework and repair close
+on a corrective action naming containment, root cause, corrective and preventive
+action — and the preventive part is usually the only one with lasting value.
+**Use-as-is is not a quality decision at all**: accepting work that does not meet
+the specification is the designer accepting that the as-built differs from the
+design, so it needs a concession under `DESIGN_INFORMATION` approve, from a
+different person than the one closing the record. A concession states what it
+does *not* cover, because one with no limits on it is read later as approval of
+the method.
+
+And a closed defect **reopens** when the evidence it closed on is withdrawn —
+the survey sheet that turns out to be for the adjacent bay. The original closure
+is kept in full on the record, because somebody acted on it.
+
+**Still to build in the construction block:** CN-WF-07 onwards, the stage
 control (entry and exit conditions, `CONSTRUCTION_COMPLETION_ACCEPTED`) and the
-stage workspace described in 9.2. The specifications received so far — the stage
-control, 9.1, 9.2 and CN-WF-01 to CN-WF-11 — are recorded verbatim in
-`docs/WORKFLOWS.md`.
+stage workspace described in 9.2. The specifications received so far — the
+construction stage control, 9.1, 9.2, CN-WF-01 to CN-WF-12, the 9.4 gate, and
+the commissioning stage control with 10.1 and 10.2 — are recorded verbatim in
+`docs/WORKFLOWS.md`. **9.4 is word for word identical to 6.4, 7.4 and 8.4**,
+which is what the shared gate machinery in `domain/stagegate.ts` was built for.
 
 ---
 

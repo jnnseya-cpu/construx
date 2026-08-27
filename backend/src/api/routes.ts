@@ -33,6 +33,7 @@ import * as portfolio from '../domain/portfolio.ts';
 import * as correspondence from '../domain/correspondence.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as programmecontrol from '../domain/programmecontrol.ts';
+import * as qualitycontrol from '../domain/qualitycontrol.ts';
 import * as progressverification from '../domain/progressverification.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
@@ -4087,6 +4088,115 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => planning.recordSiteDiary(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------ CN-WF-06 the hold point, the instrument and the concession
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/quality-control',
+    description: 'Hold points passed and not released, instruments out of calibration, reopened NCRs and concessions in force',
+    handler: (platform, ctx) => qualitycontrol.qualityControlPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/inspection-requests',
+    description: 'Call an inspection against an exact information revision, with the prerequisites confirmed and who to tell',
+    schema: {
+      type: 'object',
+      required: ['planId', 'stageReference', 'informationRevision', 'notifyParties', 'requiredBy', 'prerequisitesConfirmed'],
+      properties: {
+        planId: stringField,
+        stageReference: stringField,
+        informationRevision: stringField,
+        notifyParties: { type: 'array', items: stringField },
+        requiredBy: stringField,
+        prerequisitesConfirmed: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => qualitycontrol.requestInspection(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/hold-point-releases',
+    description: 'Release a passed hold point. The authority to build over it, which is not the same act as the inspection',
+    schema: {
+      type: 'object',
+      required: ['planId', 'stageReference', 'basis', 'evidenceHash'],
+      properties: {
+        planId: stringField,
+        stageReference: stringField,
+        basis: { type: 'string' },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => qualitycontrol.releaseHoldPoint(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/instruments',
+    description: 'The calibration register. A reading from an instrument past its certificate is unknown, not merely wrong',
+    schema: {
+      type: 'object',
+      required: ['instrumentId', 'description', 'calibratedAt', 'calibrationExpiresAt', 'certificate'],
+      properties: {
+        instrumentId: stringField,
+        description: { type: 'string' },
+        calibratedAt: stringField,
+        calibrationExpiresAt: stringField,
+        certificate: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => qualitycontrol.registerInstrument(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/ncrs/:ncrId/corrective-action',
+    description: 'Containment, root cause, corrective and preventive action, with the evidence it was carried out',
+    schema: {
+      type: 'object',
+      required: ['containment', 'rootCause', 'corrective', 'preventive', 'owner', 'by', 'evidenceHash'],
+      properties: {
+        containment: { type: 'string' },
+        rootCause: { type: 'string' },
+        corrective: { type: 'string' },
+        preventive: { type: 'string' },
+        owner: stringField,
+        by: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      qualitycontrol.recordCorrectiveAction(projectContext(platform, ctx), ctx.params.ncrId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/ncrs/:ncrId/concession',
+    description: 'Design authority accepting that the as-built differs from the design, with what the concession does not cover',
+    schema: {
+      type: 'object',
+      required: ['rationale', 'limitations', 'evidenceHash'],
+      properties: { rationale: { type: 'string' }, limitations: { type: 'string' }, evidenceHash: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      qualitycontrol.approveConcession(projectContext(platform, ctx), ctx.params.ncrId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/ncrs/:ncrId/reopen',
+    description: 'Reopen a defect closed on evidence that was withdrawn or superseded. The original closure is kept in full',
+    schema: {
+      type: 'object',
+      required: ['reason', 'withdrawnEvidence'],
+      properties: { reason: { type: 'string' }, withdrawnEvidence: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      qualitycontrol.reopenNCR(projectContext(platform, ctx), ctx.params.ncrId as string, body(ctx)),
   },
 
   // ------------------------------------------ CN-WF-05 what was bought, what turned up, and where it went

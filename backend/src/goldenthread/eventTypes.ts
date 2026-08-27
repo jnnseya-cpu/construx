@@ -541,6 +541,22 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('MINUTES_CORRECTED', 'SiteMeeting', 'UPDATE', 'DELIVERY'),
   // Quality assurance: the plan, the hold points, and the record against them.
   def('ITP_CREATED', 'InspectionPlan', 'CREATE', 'DELIVERY', { creates: true }),
+  // CN-WF-06. The request carries the exact information revision the inspection
+  // is against — "inspected and passed" against a drawing superseded on the
+  // Friday is invisible afterwards unless it was written down at the time.
+  def('INSPECTION_REQUESTED', 'InspectionRequest', 'CREATE', 'DELIVERY', { creates: true }),
+  // A separate act from the inspection that passed. The inspector finds; the
+  // release is the authority to build over it, and without that distinction a
+  // hold point is a witness point with a stronger word on it.
+  def('HOLD_POINT_RELEASED', 'HoldPointRelease', 'APPROVE', 'DELIVERY', { creates: true, requiresEvidence: true }),
+  def('INSTRUMENT_CALIBRATED', 'Instrument', 'UPDATE', 'DELIVERY', { creates: true }),
+  def('NCR_ACTION_RECORDED', 'NCR', 'UPDATE', 'DELIVERY', { requiresEvidence: true }),
+  // Use-as-is is a design decision, not a quality one: the designer accepting
+  // that the as-built differs from the design.
+  def('CONCESSION_APPROVED', 'NCR', 'APPROVE', 'DELIVERY', { requiresEvidence: true }),
+  // A defect closed on evidence that was later withdrawn was never closed. The
+  // original closure is kept in full on the record.
+  def('NCR_REOPENED', 'NCR', 'UPDATE', 'DELIVERY'),
   def('ITP_STAGE_UPDATED', 'InspectionPlan', 'UPDATE', 'DELIVERY'),
   def('INSPECTION_COMPLETED', 'QualityInspection', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
   def('SNAG_RAISED', 'Snag', 'CREATE', 'DELIVERY', { requiresEvidence: true }),

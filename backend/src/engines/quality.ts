@@ -1,5 +1,6 @@
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
+import { holdPointBlockedReason, ncrClosureBlockedReason } from '../domain/qualitycontrol.ts';
 import { authorise, currentPhase, registerEvidence, write, type EngineContext } from './context.ts';
 
 /**
@@ -150,6 +151,12 @@ export function recordInspection(
   if (stage.status === 'PASSED') {
     throw new DomainError('ITP_STAGE_CLOSED', `Stage ${input.stageReference} has already passed`);
   }
+  // AC-CN-WF-06-02. An ITP's stages are in sequence, so an unreleased hold
+  // point earlier in the plan stops everything after it. `assertHoldPointsClear`
+  // was written for this and nothing called it; this is the call, made precise.
+  const held = holdPointBlockedReason(ctx, input.planId, input.stageReference);
+  if (held) throw new DomainError('HOLD_POINT_OPEN', held, 409);
+
   if (input.outcome === 'FAIL' && !input.nonConformance) {
     throw new DomainError(
       'NON_CONFORMANCE_REQUIRED',
@@ -362,6 +369,11 @@ export function closeNCR(
   if (!input.justification?.trim()) {
     throw new DomainError('JUSTIFICATION_REQUIRED', 'Closing a non-conformance requires a justification');
   }
+
+  // AC-CN-WF-06-03. Use-as-is needs a concession from design authority, and a
+  // corrective action that was started has to have something in it.
+  const blocked = ncrClosureBlockedReason(ctx, ncrId, input.disposition);
+  if (blocked) throw new DomainError('CLOSURE_BLOCKED', blocked, 409);
 
   const evidence = registerEvidence(ctx, {
     type: 'NCR_CLOSURE',

@@ -5,6 +5,7 @@ import { resolveSources } from '../src/documents/engine.ts';
 import * as measurement from '../src/domain/measurement.ts';
 import * as meetings from '../src/domain/meetings.ts';
 import * as structure from '../src/domain/structure.ts';
+import * as qualitycontrol from '../src/domain/qualitycontrol.ts';
 import * as quality from '../src/engines/quality.ts';
 import * as submittals from '../src/domain/submittals.ts';
 import { Platform } from '../src/platform.ts';
@@ -221,6 +222,17 @@ before(async () => {
     proposedAction: 'Assess durability against the DS-3 exposure class and either coat or cut out and recast.',
     evidenceHash: `sha256:${'e'.repeat(64)}`,
   }).ncrId;
+  // CN-WF-06: use-as-is is a design decision before it is a quality one, so the
+  // concession comes from design authority and the closure from somebody else.
+  qualitycontrol.approveConcession(asDesigner(), ncrId, {
+    rationale:
+      'Durability reassessed by Caldervale Engineering (CE-DUR-114): 28mm cover with the 50% GGBS mix gives a design life ' +
+      'of 62 years against the 60 required.',
+    limitations:
+      'Applies to pour CW-03 outer face only. The affected area is added to the O&M inspection regime at five-yearly ' +
+      'intervals and excluded from the standard 10-year cycle.',
+    evidenceHash: `sha256:${'c'.repeat(64)}`,
+  });
   quality.closeNCR(asPM(), ncrId, {
     disposition: 'USE_AS_IS',
     justification:

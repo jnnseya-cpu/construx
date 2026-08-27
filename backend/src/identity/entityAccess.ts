@@ -156,6 +156,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // already sits — and quarantine and release are gated on quality authority
   // inside the commands rather than by classifying the delivery as quality,
   // which would bar the buyer from their own register.
+  // CN-WF-06. The request, the release and the instrument register all sit with
+  // quality, which is where the ITP and the NCR already are.
+  InspectionRequest: { area: 'QUALITY_COMMISSIONING' },
+  HoldPointRelease: { area: 'QUALITY_COMMISSIONING' },
+  Instrument: { area: 'QUALITY_COMMISSIONING' },
   ProcurementItem: { area: 'PROCUREMENT_AWARD' },
   Delivery: { area: 'PROCUREMENT_AWARD' },
   MeasurementBasis: { area: 'WORKPACKAGES_TASKS' },
