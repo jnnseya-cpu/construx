@@ -161,13 +161,13 @@ export const PERMIT_TO_WORK: DocumentDefinition = {
     'under which method statement, and what has to be in place before it starts.',
   scope: 'RECORD',
   subject: 'Permit',
-  subjectRecordedBy: 'the All commands screen — there is no curated permit panel yet',
+  subjectRecordedBy: 'the Construction screen',
   audience: 'INTERNAL',
   sources: [
     {
       refType: 'RAMS',
       contributes: 'the method statement the permit is worked to',
-      recordedBy: 'the All commands screen',
+      recordedBy: 'the Construction screen',
       mandatory: true,
       predicate: approved,
       qualifier: 'approved',
@@ -175,7 +175,7 @@ export const PERMIT_TO_WORK: DocumentDefinition = {
     {
       refType: 'Competency',
       contributes: 'the qualification that authorises each operative, and its expiry',
-      recordedBy: 'the All commands screen',
+      recordedBy: 'the Construction screen',
       mandatory: true,
     },
   ],
@@ -427,13 +427,13 @@ export const CONSTRUCTION_PHASE_PLAN: DocumentDefinition = {
     {
       refType: 'CDMDocument',
       contributes: 'the plan’s own sections and the approval it needs',
-      recordedBy: 'the All commands screen',
+      recordedBy: 'the Construction screen',
       mandatory: true,
     },
     {
       refType: 'RAMS',
       contributes: 'the method statements the plan governs',
-      recordedBy: 'the All commands screen',
+      recordedBy: 'the Construction screen',
       mandatory: false,
     },
   ],
@@ -547,7 +547,7 @@ export const RAMS_DOCUMENT: DocumentDefinition = {
     'controls effective — together with what must be on site before the first step begins.',
   scope: 'RECORD',
   subject: 'RAMS',
-  subjectRecordedBy: 'the All commands screen — there is no curated method statement panel yet',
+  subjectRecordedBy: 'the Construction screen',
   audience: 'INTERNAL',
   sources: [],
   narrative: [
@@ -658,13 +658,13 @@ export const INDUCTION_REGISTER: DocumentDefinition = {
     {
       refType: 'Induction',
       contributes: 'the induction records themselves',
-      recordedBy: 'the All commands screen',
+      recordedBy: 'the Construction screen',
       mandatory: true,
     },
     {
       refType: 'Competency',
       contributes: 'the people known to this project, so those without an induction can be named',
-      recordedBy: 'the All commands screen',
+      recordedBy: 'the Construction screen',
       mandatory: false,
     },
   ],

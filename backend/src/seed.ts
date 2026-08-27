@@ -133,9 +133,21 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     roles: ['DESIGNER'],
   });
   const qaqc = platform.createUser({ tenantId: tenant.id, name: 'QA/QC Engineer', email: 'qaqc@meridian.example', roles: ['QAQC'] });
+  // The site manager. Absent until the Construction screen was built, and the
+  // absence mattered: SUPERVISOR is the role that holds C and U on SAFETY_RAMS,
+  // QUALITY_COMMISSIONING and FIELD_EXECUTION — it issues the permits, records
+  // the inductions, creates the inspection plans and raises the
+  // non-conformances. Every one of those paths existed in the matrix and could
+  // not be walked by anybody on the demonstration project.
+  const siteManager = platform.createUser({
+    tenantId: tenant.id,
+    name: 'Site Manager',
+    email: 'site@meridian.example',
+    roles: ['SUPERVISOR'],
+  });
   const fm = platform.createUser({ tenantId: tenant.id, name: 'Facilities Manager', email: 'fm@meridian.example', roles: ['FM'] });
   const regulator = platform.createUser({ tenantId: tenant.id, name: 'Building Safety Regulator', email: 'regulator@meridian.example', roles: ['REGULATOR'] });
-  step('Ten named identities assigned across the delivery team');
+  step('Eleven named identities assigned across the delivery team');
 
   const adminAuth = authOf(platform, admin.id);
   const governanceCtx = contextFor(platform, adminAuth, `${tenant.id}-governance`);
@@ -2003,6 +2015,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
       bim: { id: bimLead.id, auth: authOf(platform, bimLead.id) },
       designer: { id: designLead.id, auth: authOf(platform, designLead.id) },
       qaqc: { id: qaqc.id, auth: authOf(platform, qaqc.id) },
+      siteManager: { id: siteManager.id, auth: authOf(platform, siteManager.id) },
       fm: { id: fm.id, auth: authOf(platform, fm.id) },
       regulator: { id: regulator.id, auth: authOf(platform, regulator.id) },
     },

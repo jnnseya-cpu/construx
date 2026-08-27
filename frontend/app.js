@@ -42,6 +42,12 @@ export const NAV = [
     items: [
       { id: 'programme', label: 'Programme', area: 'PROGRAMME_BASELINES', icon: 'chart' },
       { id: 'field', label: 'Field Execution', area: 'FIELD_EXECUTION', icon: 'clipboard' },
+      // The five registers a site runs on: permits, method statements,
+      // inductions, inspection plans and non-conformances. Under SAFETY_RAMS
+      // read because that is the area the permit and the method statement live
+      // in and the one a site manager is judged on; the quality half of the
+      // screen authorises itself separately, panel by panel.
+      { id: 'construction', label: 'Construction', area: 'SAFETY_RAMS', icon: 'shield' },
       { id: 'design', label: 'Design & BIM', area: 'BIM_TWIN', icon: 'cube' },
     ],
   },

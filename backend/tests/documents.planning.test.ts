@@ -615,7 +615,8 @@ describe('documents · the ten new types refuse as loudly as the five original o
       'Project Command Centre', 'Copilot', 'Autopilot', 'Enterprise & Portfolio',
       'Programme', 'Field Execution', 'Design & BIM',
       'Pipeline & Bids', 'Cost & Value', 'Tender & Procurement', 'Change & Claims',
-      'Project Control', 'Risk & Safety', 'Handover & O&M', 'Golden Thread', 'Site Documents', 'All commands',
+      'Project Control', 'Risk & Safety', 'Construction', 'Handover & O&M', 'Golden Thread', 'Site Documents',
+      'All commands',
       'ACU & Billing', 'Platform Admin', 'Newsletter', 'Communications', 'Account',
     ]);
     const named = (where: string): string[] =>

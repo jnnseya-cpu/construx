@@ -175,19 +175,19 @@ const INSPECTION_TEST_PLAN: DocumentDefinition = {
     'release are named, because that is the one failure this document exists to prevent.',
   scope: 'RECORD',
   subject: 'InspectionPlan',
-  subjectRecordedBy: 'the All commands screen — there is no curated quality panel yet',
+  subjectRecordedBy: 'the Construction screen',
   audience: 'CLIENT',
   sources: [
     {
       refType: 'QualityInspection',
       contributes: 'the inspection actually carried out against each stage, and its outcome',
-      recordedBy: 'the All commands screen',
+      recordedBy: 'the Construction screen',
       mandatory: false,
     },
     {
       refType: 'NCR',
       contributes: 'the non-conformance raised by any inspection that failed',
-      recordedBy: 'the All commands screen',
+      recordedBy: 'the Construction screen',
       mandatory: false,
     },
   ],
@@ -557,13 +557,13 @@ const NON_CONFORMANCE_REPORT: DocumentDefinition = {
     'permanent works and names the person who accepted it.',
   scope: 'RECORD',
   subject: 'NCR',
-  subjectRecordedBy: 'a failed inspection raises one automatically; otherwise the All commands screen',
+  subjectRecordedBy: 'a failed inspection raises one automatically; otherwise the Construction screen',
   audience: 'CLIENT',
   sources: [
     {
       refType: 'QualityInspection',
       contributes: 'the inspection that found it and the acceptance criterion it failed against',
-      recordedBy: 'the All commands screen',
+      recordedBy: 'the Construction screen',
       mandatory: false,
     },
   ],

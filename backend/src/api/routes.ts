@@ -1973,6 +1973,30 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => safety.issuePermit(projectContext(platform, ctx), body(ctx)),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/safety/competencies',
+    description: 'Record an operative’s qualification and its expiry — what a permit is checked against',
+    // The register a permit is refused against had no door. `recordCompetency`
+    // was reachable from the engine and from a test, and from nowhere a person
+    // could get to: a site manager whose permit was refused for a missing
+    // ticket had no way to record the ticket.
+    schema: {
+      type: 'object',
+      required: ['operativeId', 'qualification', 'issuedAt', 'expiresAt', 'certificateHash'],
+      properties: {
+        operativeId: stringField,
+        qualification: stringField,
+        issuedAt: stringField,
+        expiresAt: stringField,
+        certificateHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => ({
+      competencyId: safety.recordCompetency(projectContext(platform, ctx), body(ctx)),
+    }),
+  },
+  {
     method: 'GET',
     pattern: '/v1/safety/permit-requirements',
     description: 'Which competency each permitted activity requires',

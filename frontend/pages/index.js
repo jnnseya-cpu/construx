@@ -7,6 +7,7 @@ import { commands } from './commands.js';
 import { commercial } from './commercial.js';
 import { communications } from './communications.js';
 import { contracts } from './contracts.js';
+import { construction } from './construction.js';
 import { control } from './control.js';
 import { copilot } from './copilot.js';
 import { design } from './design.js';
@@ -37,6 +38,7 @@ export const PAGES = {
   pipeline,
   programme,
   field,
+  construction,
   design,
   documents,
   commercial,

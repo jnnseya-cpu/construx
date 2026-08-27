@@ -5016,6 +5016,65 @@ discharged, which is the exact failure the disposition exists to prevent.
 
 ---
 
+### The Construction screen, and the five registers that had no door
+
+`frontend/pages/construction.js`, under Deliver. Permits to work, method
+statements, inductions, inspection and test plans and non-conformances were
+reachable from the API and from nowhere a person could get to — the generated
+command catalogue opened onto a text box called `ramsId`. They are the five
+records the platform's five site documents are composed from, so they belong on
+one screen held by the person accountable for them.
+
+**The authority split is the permission matrix's, not the screen's**, and the
+matrix already carried it exactly. The site manager raises: drafts a method
+statement, records an induction and a qualification, creates an inspection plan,
+records an inspection, raises a non-conformance. The safety lead approves the
+method statement and issues the permit; the construction manager or QA engineer
+dispositions the non-conformance. Nothing on the screen is a second copy of
+that — every button asks `can()`, which reads the matrix the API publishes.
+
+**Three things this exposed.**
+
+*The site manager did not exist.* `SUPERVISOR` is the role holding create and
+update on `SAFETY_RAMS`, `QUALITY_COMMISSIONING` and `FIELD_EXECUTION` — it
+issues nothing and raises everything — and no identity on the demonstration
+project held it. Every one of those paths was in the matrix and could not be
+walked by anybody. There is a Site Manager now.
+
+*The competency register had no door.* A permit is refused where an operative's
+ticket does not cover it, and `recordCompetency` was reachable from the engine
+and from a test only. A site manager whose permit was refused for a missing
+ticket had no way to record the ticket. `POST /v1/projects/{id}/safety/competencies`.
+
+*`Issue a permit` asked for the wrong authority.* Issuing looks like creating,
+so the button asked for `SAFETY_RAMS C`; `issuePermit` requires `A`, because
+issuing a permit is the act of allowing dangerous work to start. The site
+manager was offered a button the server refused — the dead end the screen exists
+to remove, reproduced. Found by pressing it in a browser, not by a test.
+
+The capability code beside each button is the one thing the screen restates
+rather than reads, so `backend/tests/construction.authority.test.ts` pins the
+whole table by driving each act through the real engine as each seeded role. A
+code that moves on either side fails there rather than in front of somebody on a
+wet Tuesday. It also pins the thing the phrase "construction manager" hides: the
+project manager dispositions a non-conformance and does **not** approve a method
+statement, which is the safety lead's.
+
+**The phase gate is said on the page, not left in a tooltip.** Quality records
+are writable from construction through to handover and the demonstration project
+finishes in operations, so three buttons grey out for a person who holds the
+permission. A notice says so — a person looking at a disabled button is entitled
+to know it is the project's phase and not their own permissions.
+
+**The loop closes.** A permit issued on this screen becomes a branded, hashed
+Permit to Work through the document catalogue, driven end to end in a browser:
+ticket recorded, permit issued against the approved method statement, operative
+competency checked, document generated at `MIGL-PTW-0001` revision A. The nine
+document source bindings that said "the All commands screen" now say "the
+Construction screen", because it exists.
+
+---
+
 ---
 
 ## What is partial
