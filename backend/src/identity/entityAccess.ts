@@ -340,6 +340,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // already places with the FM alongside the project director and the owner.
   HandoverRequirement: { area: 'HANDOVER_OM' },
   HandoverSection: { area: 'HANDOVER_OM' },
+  // H-WF-02. With design information rather than handover: the set is design
+  // information at its final revision, and the area already splits the parties
+  // the workflow needs — the contractor and EPC hold C and U so they submit,
+  // the designer and principal designer hold A so they verify, which is exactly
+  // the specification's "authorised professionals verify".
+  AsBuiltSet: { area: 'DESIGN_INFORMATION' },
+  AssetInformationLink: { area: 'DESIGN_INFORMATION' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },

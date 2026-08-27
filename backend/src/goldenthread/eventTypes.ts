@@ -964,6 +964,22 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('HANDOVER_REQUIREMENT_DELTA_FLAGGED', 'HandoverRequirement', 'UPDATE', 'HANDOVER_OM'),
   def('HANDOVER_SECTION_DEFINED', 'HandoverSection', 'APPROVE', 'HANDOVER_OM', { creates: true }),
 
+  // --- H-WF-02 as-built verification ----------------------------------------
+  // `AS_BUILT_GENERATED` above stays as it is: generating an as-built model from
+  // captured reality is a drafting act and legitimately an AI one. Certifying
+  // that it is accurate is not, which is what this set of events is for.
+  def('AS_BUILT_SUBMITTED', 'AsBuiltSet', 'CREATE', 'DESIGN', { creates: true, requiresEvidence: true }),
+  def('AS_BUILT_VARIANCE_IDENTIFIED', 'AsBuiltSet', 'UPDATE', 'DESIGN'),
+  def('AS_BUILT_VARIANCE_RESOLVED', 'AsBuiltSet', 'UPDATE', 'DESIGN'),
+  // The act that makes a set as-built, signed by a named professional with their
+  // registration on it. A set called "AS-BUILT-FINAL" is a set somebody named.
+  def('AS_BUILT_VERIFIED', 'AsBuiltSet', 'APPROVE', 'DESIGN'),
+  def('AS_BUILT_PUBLISHED', 'AsBuiltSet', 'ISSUE', 'DESIGN'),
+  def('AS_BUILT_SUPERSEDED', 'AsBuiltSet', 'UPDATE', 'DESIGN'),
+  // One record answering both directions, so the asset cannot open from the
+  // drawing while the drawing does not know the asset is on it.
+  def('ASSET_INFORMATION_LINKED', 'AssetInformationLink', 'CREATE', 'DESIGN', { creates: true }),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

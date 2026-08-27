@@ -59,6 +59,7 @@ import * as cost from '../engines/cost.ts';
 import * as handover from '../engines/handover.ts';
 import * as planning from '../engines/planning.ts';
 import * as sitevisit from '../engines/sitevisit.ts';
+import * as asbuilt from '../domain/asbuilt.ts';
 import * as award from '../domain/award.ts';
 import * as enquiry from '../domain/enquiry.ts';
 import * as constructability from '../domain/constructability.ts';
@@ -5536,6 +5537,175 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => systemisation.declareTemporaryOperation(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- H-WF-02 as-built verification
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/as-built',
+    description: 'As-built sets, who verified each, and the material variances blocking a handover',
+    handler: (platform, ctx) => asbuilt.asBuiltPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/as-built',
+    description: 'Submit an as-built set against the approved design and every change implemented since',
+    schema: {
+      type: 'object',
+      required: [
+        'reference',
+        'systemTag',
+        'discipline',
+        'approvedDesignRefs',
+        'implementedChanges',
+        'deliverables',
+        'metadata',
+        'submittedBy',
+      ],
+      properties: {
+        reference: stringField,
+        systemTag: stringField,
+        discipline: stringField,
+        submittedBy: stringField,
+        approvedDesignRefs: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['reference', 'revision'],
+            properties: { reference: stringField, revision: stringField },
+            additionalProperties: false,
+          },
+        },
+        implementedChanges: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['changeRef', 'reflected', 'note'],
+            properties: {
+              changeRef: stringField,
+              reflected: { type: 'string', enum: ['REFLECTED', 'NOT_APPLICABLE'] },
+              note: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+        deliverables: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['format', 'reference', 'fileHash'],
+            properties: {
+              format: { type: 'string', enum: [...asbuilt.DELIVERABLE_FORMAT] },
+              reference: stringField,
+              fileHash: stringField,
+              conversionNotes: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+        metadata: {
+          type: 'object',
+          required: ['coordinateSystem', 'units', 'taggedObjects', 'totalObjects'],
+          properties: {
+            coordinateSystem: stringField,
+            units: stringField,
+            taggedObjects: { type: 'number' },
+            totalObjects: { type: 'number' },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => asbuilt.submitAsBuiltSet(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/as-built/:setId/variances',
+    description: 'Record a difference between the as-built information and what is installed',
+    schema: {
+      type: 'object',
+      required: ['reference', 'description', 'material', 'location', 'raisedBy'],
+      properties: {
+        reference: stringField,
+        description: { type: 'string' },
+        material: { type: 'boolean' },
+        location: stringField,
+        raisedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      asbuilt.recordVariance(projectContext(platform, ctx), ctx.params.setId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/as-built/:setId/variances/resolve',
+    description: 'Resolve a variance: the drawing corrected, the installation changed, or the difference accepted',
+    schema: {
+      type: 'object',
+      required: ['reference', 'resolution', 'resolvedBy'],
+      properties: { reference: stringField, resolution: { type: 'string' }, resolvedBy: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      asbuilt.resolveVariance(projectContext(platform, ctx), ctx.params.setId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/as-built/:setId/verify',
+    description: 'Verify the set — the act that makes it as-built, signed by a named professional',
+    schema: {
+      type: 'object',
+      required: ['verifiedBy', 'discipline', 'registration', 'statement'],
+      properties: {
+        verifiedBy: stringField,
+        discipline: stringField,
+        registration: stringField,
+        statement: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      asbuilt.verifyAsBuiltSet(projectContext(platform, ctx), ctx.params.setId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/as-built/:setId/publish',
+    description: 'Publish the verified set for operational use, superseding the working information',
+    schema: {
+      type: 'object',
+      required: ['publishedBy', 'supersedes'],
+      properties: { publishedBy: stringField, supersedes: { type: 'array', items: { type: 'string' } } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      asbuilt.publishAsBuiltSet(projectContext(platform, ctx), ctx.params.setId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/asset-information-links',
+    description: 'Link a maintainable asset to where it is shown. One record answers both directions',
+    schema: {
+      type: 'object',
+      required: ['assetTag', 'setId', 'drawingReference', 'location'],
+      properties: {
+        assetTag: stringField,
+        setId: stringField,
+        drawingReference: stringField,
+        modelElementId: stringField,
+        location: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => asbuilt.linkAssetInformation(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/assets/:assetTag/information',
+    description: 'What information shows this asset — the tag-on-a-plate direction',
+    handler: (platform, ctx) =>
+      asbuilt.informationForAsset(projectContext(platform, ctx), ctx.params.assetTag as string),
   },
 
   // ------------------------------------------------------- H-WF-01 handover requirements matrix and readiness

@@ -2213,3 +2213,209 @@ Acceptance criteria
 •	AC-H-WF-08-02: Triggered dates are recalculated once and protected from silent edit.
 •	AC-H-WF-08-03: Each closed defect has accepted rectification evidence.
 ```
+
+## H-WF-09
+
+```
+H-WF-09 - EAM/CAFM activation, handover acceptance and archive
+Primary owner: Client / Asset Manager  |  Trigger: All mandatory handover streams submitted
+Required inputs
+•	Accepted handover matrix and component baselines
+•	asset/EAM/CAFM reconciliation
+•	regulatory/completion, training and transfer acknowledgements
+•	residual defects, seasonal tests and aftercare plan
+•	acceptance authority and archive/retention policy
+Deterministic flow
+1.	Run final cross-domain validation: physical, commissioning, information, asset, regulatory, competence, access and commercial conditions.
+2.	Compile human-readable and machine-readable handover pack with evidence manifest and hashes.
+3.	Obtain client/operator acceptance or rejection with reasons and conditions.
+4.	Activate operational asset records, planned maintenance and warranty tasks from accepted asset data.
+5.	Freeze project handover baseline and archive superseded/draft working sets per retention policy.
+6.	Transition residual obligations to aftercare/operations owners with notifications and dashboards.
+AI-agent duties and human guardrails
+•	Draft acceptance pack, gap analysis and maintenance mobilisation.
+•	Cannot accept asset or close obligations.
+Outputs
+•	HandoverPack
+•	AcceptanceDecision
+•	OperationalAssetActivation
+•	ArchiveManifest
+•	ResidualObligation Transfer
+Exception controls
+•	Acceptance with conditions has explicit risk owner, due date and expiry/escalation.
+•	Archive preserves legal hold and immutable evidence.
+•	Rejected pack remains frozen and corrective version is created.
+Events: HANDOVER_PACK_COMPILED | HANDOVER_ACCEPTED | ASSET_OPERATION_ACTIVATED | PROJECT_HANDOVER_BASELINED | RESIDUAL_OBLIGATIONS_TRANSFERRED
+APIs:   POST /v1/projects/{id}/handover-packs:compile | POST /v1/handover-packs/{id}:decide | POST /v1/projects/{id}:activate-operations
+Acceptance criteria
+•	AC-H-WF-09-01: Pack manifest verifies every file/entity hash and source version.
+•	AC-H-WF-09-02: Operational maintenance/warranty tasks derive from accepted data without re-entry.
+•	AC-H-WF-09-03: Every residual item appears to the receiving owner immediately after acceptance.
+```
+
+## H-WF-10
+
+```
+H-WF-10 - Soft Landings, aftercare, seasonal testing and feedback
+Primary owner: Asset Manager / Project Director  |  Trigger: Handover acceptance
+Required inputs
+•	Aftercare duration, contacts and service levels
+•	seasonal tests/fine-tuning/performance targets
+•	defects, user feedback and post-occupancy review plan
+•	energy/operational data and design-intent metrics
+•	lessons and organisation memory policy
+Deterministic flow
+1.	Create aftercare plan with helpdesk/escalation and regular review dates.
+2.	Track residual defects, seasonal commissioning and fine-tuning as operational obligations.
+3.	Compare in-use performance against design/commissioning targets with context.
+4.	Record user/operator feedback and prioritised corrective actions.
+5.	Complete post-project review and lessons with evidence and applicability tags.
+6.	Feed approved lessons, productivity, supplier and asset knowledge into organisation memory.
+AI-agent duties and human guardrails
+•	Detect performance drift and cluster feedback/defects.
+•	Recommend optimisation with evidence; operator authorises changes.
+Outputs
+•	AftercarePlan
+•	SeasonalTest Results
+•	PerformanceReview
+•	PostOccupancy Evaluation
+•	LessonsLearned
+Exception controls
+•	Operational change follows asset change control and safety review.
+•	Personal/user feedback is privacy-controlled.
+•	Lesson is not reused automatically until approved and context-tagged.
+Events: AFTERCARE_STARTED | SEASONAL_TEST_COMPLETED | PERFORMANCE_GAP_IDENTIFIED | POST_OCCUPANCY_REVIEWED | LESSON_APPROVED
+APIs:   POST /v1/assets/{id}/aftercare-plans | POST /v1/systems/{id}/seasonal-tests | POST /v1/projects/{id}/lessons
+Acceptance criteria
+•	AC-H-WF-10-01: Residual handover obligations remain traceable to original requirement.
+•	AC-H-WF-10-02: Performance comparison states data period, baseline and operating context.
+•	AC-H-WF-10-03: Approved lessons identify sectors/stages where reuse is valid.
+```
+
+## 11.4
+
+*(Word for word identical to 6.4, 7.4, 8.4, 9.4 and 10.4.)*
+
+```
+11.4 Stage gate Definition of Done
+•	All mandatory inputs are present, validated and tied to exact source versions; completeness is 100% and blocking issues equal zero.
+•	All approvals satisfy appointment, authority, maker-checker and party-separation policies.
+•	All critical/major safety, compliance, interface and information blockers are closed or governed by a permitted, time-bound condition.
+•	Cost, programme, risk, information and commercial snapshots share one declared cut-off and are cross-reconciled.
+•	AI outputs used in the decision have evidence, confidence, assumptions, model/prompt versions, ACU settlement and human disposition.
+•	Gate report, decision and locked baseline can be replayed from the event store and verified against evidence hashes.
+•	Downstream mobilisation tasks, owners, due dates and inherited residual obligations are automatically created without re-entry.
+```
+
+## 12 — Cross-stage state machines and handoffs
+
+*(A different kind of specification again: not a workflow but the state machine
+every stage's records are expected to follow. It is the "default state path" the
+stage-control blocks have referred to since section 6.)*
+
+```
+12. Cross-stage state machines and handoffs
+12.1 Universal stage state machine
+State	Permitted command	Mandatory guard	Result
+Draft	Save / Validate	Authorised editor; schema valid for save	Versioned draft event
+Validated	Submit	No schema errors; blockers evaluated	Submission frozen for review
+Submitted	Start review / Return	Reviewer assigned; conflict check	Review cycle or rework
+Under Review	Approve / Condition / Reject	Authority and maker-checker pass	DecisionRecord
+Approved	Set baseline / Publish	All required approvals and evidence	Immutable approved version
+Approved with Conditions	Set conditional baseline	Conditions permitted, owned, dated and risk-accepted	Locked conditional version plus actions
+Rejected	Create revised draft	Rejection reasons recorded	New revision; rejected version retained
+Locked	Supersede	Approved change/exception route	New version linked to prior baseline
+Superseded	Read / Compare / Replay	Read permission	Historic evidence only
+```
+
+## 12.2
+
+```
+12.2 Handoff contract
+•	A handoff is a domain event plus stable entity references, not a copied document bundle.
+•	Producer provides exact baseline IDs, source/evidence references, assumptions, known gaps, residual obligations, access classification and acceptance criteria.
+•	Consumer validates schema, permissions, required versions and dependencies; Accepted/Rejected/Accepted with Conditions is recorded.
+•	Rejected handoff does not mutate producer baseline. It creates corrective action and a later handoff version.
+Superseding producer information identifies impacted consumer objects and sets their assurance status to Revalidation Required where material.
+```
+
+## 12.3 — The automatic handoffs
+
+*(Continues 12.2. Sent as a table with a leading bullet, recorded as received.)*
+
+```
+•	
+From	To	Automatic handoff
+Concept	Design	Approved brief/requirements, selected option, constraints, cost/programme/risk, procurement and information requirements
+Design	Tender	Accepted/frozen information set, quantities, scope/responsibility, design risk, package readiness and unresolved conditions
+Tender	Construction	Awarded price/programme, contract, qualifications, budget, package buyout, procurement, commitments and mobilisation tasks
+Construction	Commissioning	System boundary, construction completion, ITP/test records, defects, as-built status, permits/isolations and turnover pack
+Commissioning	Handover	Accepted tests, exceptions, training, commissioning dossier, asset evidence and seasonal/residual obligations
+Handover	Operations	Accepted asset register, O&M/as-built, warranties, maintenance, access, competence, certificates and aftercare
+```
+
+## 13 — Canonical domain and data model
+
+*(Again not a workflow: the modelling rule and the entity inventory the whole
+specification assumes. Recorded as received.)*
+
+```
+13. Canonical domain and data model
+Modelling rule: Every material object has tenantId, projectId, stable ID, version, state, owner, sensitivity, created/updated metadata and event-stream reference. JSONB may hold source-specific extensions but never replaces queryable core fields.
+Domain	Core entities	Non-negotiable fields
+Identity & governance	Tenant, Enterprise, User, Membership, Role, Permission, Policy, Appointment, AuthorityMatrix, Delegation, Party	tenant_id; party_id; scope; effective dates; policy version
+Project hierarchy	Portfolio, Programme, Project, StageGate, WorkPackage, Location, Zone, System, Subsystem, Asset	parent IDs; classification; lifecycle state; accountable owner
+Requirements	Requirement, BriefBaseline, VerificationMethod, Assumption, Exclusion, Constraint, Option, DecisionRecord	source ref; priority; acceptance; status; supersedes
+Information/CDE	InformationContainer, File, Revision, Model, Drawing, SpecificationClause, Extraction, Transmittal, Acknowledgement, BCFIssue	hash; metadata; revision; status/suitability; source anchors
+Programme	WBS, Activity, Dependency, Calendar, Baseline, Forecast, Lookahead, Constraint, Commitment, ProgressSubmission	logic; dates; float; quantity; accepted progress version
+Cost/commercial	CBS, CostCode, BoQItem, RateBuildUp, Estimate, Budget, Commitment, ActualCost, Accrual, CVRSnapshot, Cashflow	currency/base date; value/cost states; source/version
+Tender/procurement	Tender, ComplianceItem, TenderPackage, Bidder, TenderReturn, Clarification, Addendum, Comparison, Adjudication, Order	deadline; issue/return version; raw/normalised/evaluated value
+Contract/change/claims	Contract, Clause, Obligation, NoticeRule, PaymentCycle, Instruction, ChangeEvent, Variation, DelayEvent, Claim, EvidencePack	clause anchor; deadline; submitted/assessed/agreed states
+Field/resources	DailyLog, LabourRecord, PlantRecord, MaterialDelivery, InventoryItem, PhotoEvidence, Meeting, Action	shift; WBS/location; capture/sync metadata; evidence
+Quality/HSE	ITP, Inspection, TestResult, HoldPoint, NCR, Defect, RAMS, Permit, Observation, Incident, Investigation	criteria; result; instrument; severity; approval/closure
+Commissioning	CommissioningPlan, TestPack, ReadinessCheck, FAT, SAT, FunctionalTest, IntegratedTest, Exception, Retest	system/tag; raw readings; witness; result; accepted decision
+Handover/asset	HandoverRequirement, AsBuiltSet, OMManual, AssetRecord, Warranty, Training, Competence, TransferItem, HandoverPack, Aftercare	acceptance; external system ID; operational owner; residual obligation
+AI/ACU/audit	AIRequest, AIExecution, PromptVersion, ModelRoute, ToolCall, OutputSnapshot, ACUHold, ACUTransaction, AuditEvent	input versions; provider/model; confidence; cost; hashes; policy
+```
+
+## 13.1
+
+```
+13.1 Canonical submission envelope
+{
+  "meta": {
+    "tenantId": "ulid", "enterpriseId": "ulid", "projectId": "ulid",
+    "stage": "concept|design|tender|construction|commissioning|handover",
+    "submissionType": "string", "schemaVersion": "semver",
+    "submittedBy": "ulid", "source": "web|android|ios|api|import|system|ai",
+    "occurredAt": "RFC3339", "projectTimeZone": "IANA",
+    "idempotencyKey": "string", "correlationId": "uuid", "expectedVersion": 12
+  },
+  "payload": {}, "evidenceRefs": ["evidenceId"], "clientSync": {"deviceId":"...","localId":"..."}
+}
+```
+
+## 13.2
+
+```
+13.2 Data validation classes
+Class	Behaviour	Examples
+Schema error	Reject command with 400 and field-level problem+json; do not emit domain mutation	Missing projectId; invalid enum; excessive length; malformed unit
+Blocking rule	Persist validation result; disable submit/approve	Missing contract; no current design; calibration expired; duplicate asset tag
+Warning	Allow authorised submit with explicit acknowledgement/waiver if policy permits	Low extraction confidence; stale non-critical survey; provisional rate
+Conflict	Preserve competing versions and require deterministic resolution	Offline edit versus server update; duplicate revision with different hash
+Policy deny	Return 403; security/audit event; no mutation	Wrong tenant; insufficient authority; self-approval; sensitive claim
+Downstream invalidation	Keep source approval but mark dependent output Revalidation Required	New design revision invalidates takeoff/test/manual
+```
+
+## 14 — API, event and integration contract
+
+```
+14.1 API conventions
+•	Versioned REST resources under /v1; commands use explicit verbs only where transition semantics matter, for example :submit, :approve, :freeze, :issue, :verify, :supersede.
+•	Writes require Idempotency-Key and expectedVersion/If-Match for material aggregates. Duplicate key returns original result; version conflict returns 409 with current version and safe resolution data.
+•	Queries are permission-filtered, paginated and stable-sort; bulk endpoints return an ordered per-item result.
+•	All errors use application/problem+json with type, title, status, detail, instance, traceId, correlationId and field errors.
+•	Large files use authorised pre-signed upload, completion callback, malware scan, hash, immutable storage and separate extraction status.
+Exports are asynchronous jobs with requester, data scope, branding, recipient class, hash, expiry and audit event.
+```
