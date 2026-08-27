@@ -65,22 +65,22 @@ export async function autopilot(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">
-          <h3>Awaiting a decision</h3>
+          <h2>Awaiting a decision</h2>
           <div class="metric ${raw(open.length > 0 ? 'orange' : 'good')}">${open.length}</div>
           <div class="metric-sub">${urgent.length} urgent · ${actionable.length} carry a command</div>
         </div>
         <div class="card">
-          <h3>Yours to decide</h3>
+          <h2>Yours to decide</h2>
           <div class="metric ${raw(mineToDecide.length > 0 ? 'warn' : '')}">${mineToDecide.length}</div>
           <div class="metric-sub">as ${myRoles.join(', ')}</div>
         </div>
         <div class="card">
-          <h3>Agents watching</h3>
+          <h2>Agents watching</h2>
           <div class="metric">${(fleet.agents ?? []).length}</div>
           <div class="metric-sub">one per engine, each inside a fixed mandate</div>
         </div>
         <div class="card">
-          <h3>Last pass</h3>
+          <h2>Last pass</h2>
           <div class="metric" style="font-size:19px">${lastRun ? time(lastRun.ranAt) : '—'}</div>
           <div class="metric-sub">${lastRun ? `${lastRun.proposalsRaised} raised · ${lastRun.suppressed} already open` : 'the fleet has not run'}</div>
         </div>
@@ -110,7 +110,7 @@ export async function autopilot(root) {
       }
 
       <div class="card pad0" style="margin-top:14px">
-        <h3 style="padding:15px 17px 0">The fleet and what each agent may do</h3>
+        <h2 style="padding:15px 17px 0">The fleet and what each agent may do</h2>
         ${table({
           headers: ['Agent', 'Watches for', 'Reads', 'May propose in', 'Decided by', 'Unattended'],
           rows: (fleet.agents ?? []).map((a) => [

@@ -6763,11 +6763,70 @@ values, and the launch colour is moved in all eight places that hardcode it
 (manifest, splash, both theme-colour tags, and the three renderers) so the PWA
 launch screen still matches the ground by construction.
 
-**Not claimed:** the screenshots under `frontend/shots/` predate this pass and
-show the previous look. Nothing has been audited against WCAG 2.2 AA, which
-section 16 asks for — the focus treatment is now uniform and every semantic
-colour keeps a non-colour partner, but that is not an audit and is not offered
-as one.
+---
+
+### The accessibility audit, actually run
+
+Section 16 asks for a WCAG 2.2 AA target. This was previously recorded as *not
+done*, which was accurate; it has now been run against the rendered console in
+a real browser rather than reasoned about, and what it found was fixed.
+
+**How it was measured.** A script walks the signed-in console and, for every
+element carrying text, composites each translucent layer down onto the opaque
+surface beneath it before computing the contrast ratio. That compositing step
+is the whole method: read as though they were opaque, the interface's tinted
+badges and washes appear to fail everywhere, and a first pass reported fifteen
+failures of which nine were the script's own arithmetic. Changing a token on
+the strength of a measurement that wrong would have made the product worse
+while appearing to make it accessible.
+
+**What was genuinely wrong, and is now fixed:**
+
+- **`--text-3` failed 1.4.3 everywhere it was used** — 4.26:1 on the page
+  ground, 4.00:1 on a card, 2.93:1 on a raised surface, against the 4.5:1 body
+  text needs. It carries breadcrumbs, metric captions, empty states, timestamps
+  and every card title. It now keeps the same hue lifted until the *lightest*
+  surface it is ever set on clears: 4.56:1 worst case, 6.21:1 on a card. Muted
+  is a design decision; unreadable is a defect.
+- **`--critical` failed on its own badge** — 4.39:1 for the critical text on the
+  13% red tint the badge paints, which is small text and needs 4.5:1. Lifted
+  until it clears on every surface, worst case 4.50:1.
+- **No landmark regions at all** (1.3.1). The shell was `div`s throughout, so
+  there was no way to skip the navigation or reach the content. It is now
+  `<aside aria-label="Primary">`, a labelled `<nav>` per group, `<header>` and
+  `<main>`.
+- **Nineteen decorative icons announced themselves** (1.1.1). Every navigation
+  glyph sits beside its own text label, so a reader announced each item twice.
+  They are `aria-hidden` and `focusable="false"`; the label does the work.
+- **The heading outline jumped h1 to h3** (1.3.1), implying a section that was
+  not there. 254 card titles across 22 pages are now `h2`. The *size* is
+  unchanged — the element is the outline and the CSS is the appearance, and
+  they are allowed to disagree.
+
+**What the audit reports clean:** language declared, one `h1` per view, no
+unnamed control, no unlabelled input, every data table with `th`, no target
+below 24×24 (2.5.8), and one uniform `:focus-visible` treatment so no control
+can forget to declare one.
+
+**One reported failure is the script's, not the page's.** `.btn` paints a
+gradient, which `getComputedStyle` reports as transparent, so the walk passes
+straight through it. Measured by hand the button label runs 6.82:1 to 8.07:1,
+and 4.72:1 in its pressed state — it passes.
+
+**What is still not claimed.** This is an automated audit of the signed-in
+console at one viewport, not a conformance statement. It does not cover the
+marketing pages, keyboard traps, screen-reader announcement order, reflow at
+320 CSS pixels (1.4.10), motion actuation, or any of 2.2 AA's cognitive
+criteria. Non-colour status indicators exist and are used — the strengths and
+weaknesses lists carry ✓ and ✗ marks, badges carry text — but no systematic
+1.4.1 review has been done. Calling this "WCAG 2.2 AA compliant" would be a
+claim the evidence does not support; what is true is that the failures an
+automated check can find have been found and fixed.
+
+**On the screenshots.** `frontend/shots/` is gitignored and was never a
+committed artefact, so the earlier note that it "predates this pass" described
+local working files rather than anything in the repository. The set has been
+regenerated against the redesigned console for local reference.
 
 ---
 

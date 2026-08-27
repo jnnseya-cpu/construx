@@ -94,22 +94,22 @@ export async function documents(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div>
-          <h3>Can be generated now</h3>
+          <h2>Can be generated now</h2>
           <div class="metric ${raw(generable.length === 0 ? 'warn' : 'good')}">${generable.length}</div>
           <div class="metric-sub">of ${all.length} document types</div>
         </div>
         <div>
-          <h3>Waiting on a record</h3>
+          <h2>Waiting on a record</h2>
           <div class="metric">${all.length - generable.length}</div>
           <div class="metric-sub">${waitingOn.size} distinct record${waitingOn.size === 1 ? '' : 's'} would unblock them</div>
         </div>
         <div>
-          <h3>Composed, not written</h3>
+          <h2>Composed, not written</h2>
           <div class="metric">100%</div>
           <div class="metric-sub">every figure traces to a record on this project</div>
         </div>
         <div>
-          <h3>Branding</h3>
+          <h2>Branding</h2>
           <div class="metric-sub" style="margin-top:8px">
             Every document carries the issuing entity, the client and a document control block. Generation refuses
             outright where branding is not configured — an unbranded document sent to a client is worse than none.

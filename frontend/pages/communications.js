@@ -68,17 +68,17 @@ export async function communications(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">
-          <h3>Catalogue events</h3>
+          <h2>Catalogue events</h2>
           <div class="metric orange">${catalogue.totals.events}</div>
           <div class="metric-sub">${catalogue.totals.categories} categories, closed catalogue</div>
         </div>
         <div class="card">
-          <h3>Mandatory notices</h3>
+          <h2>Mandatory notices</h2>
           <div class="metric">${catalogue.mandatory}</div>
           <div class="metric-sub">sent regardless of a recipient’s preferences</div>
         </div>
         <div class="card">
-          <h3>Messages delivered</h3>
+          <h2>Messages delivered</h2>
           <div class="metric ${raw(totals.failed > 0 ? 'bad' : 'good')}">${delivered}</div>
           <div class="metric-sub">
             of ${totals.attempted} attempted${totals.failed > 0 ? ` · ${totals.failed} failed` : ''}${
@@ -87,7 +87,7 @@ export async function communications(root) {
           </div>
         </div>
         <div class="card">
-          <h3>Channels wired</h3>
+          <h2>Channels wired</h2>
           <div class="metric">${wired.length}<span style="font-size:16px;opacity:.5"> / ${catalogue.channels.length}</span></div>
           <div class="metric-sub">${catalogue.channels.map((c) => CHANNEL_LABEL[c.channel]).join(' · ')}</div>
         </div>
@@ -95,7 +95,7 @@ export async function communications(root) {
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card">
-          <h3>Template QA</h3>
+          <h2>Template QA</h2>
           <p class="metric-sub" style="margin-bottom:12px">
             Preview the branded email — your organisation’s mark, colour and registered detail on every outbound message — or
             fire an event to yourself across its channels. A test is only ever sent to the signed-in account.
@@ -118,14 +118,14 @@ export async function communications(root) {
         </div>
 
         <div class="card">
-          <h3>Channel coverage</h3>
+          <h2>Channel coverage</h2>
           <p class="metric-sub" style="margin-bottom:10px">How many catalogue events fire on each channel by default.</p>
           <div class="split-list">${catalogue.channels.map(channelRow)}</div>
         </div>
       </div>
 
       <div class="card pad0" style="margin-bottom:14px">
-        <h3 style="padding:15px 17px 0">Recent deliveries</h3>
+        <h2 style="padding:15px 17px 0">Recent deliveries</h2>
         <p class="metric-sub" style="padding:0 17px">Every event × channel × recipient with its delivery status.</p>
         ${table({
           headers: ['Time', 'Channel', 'Event', 'Status', 'Transport', 'Detail'],
@@ -145,7 +145,7 @@ export async function communications(root) {
         const events = catalogue.events.filter((e) => e.category === category.code);
         return html`
           <div class="card pad0" style="margin-bottom:14px">
-            <h3 style="padding:15px 17px 0">${category.title} <span style="opacity:.55;font-weight:500">· ${category.events} events</span></h3>
+            <h2 style="padding:15px 17px 0">${category.title} <span style="opacity:.55;font-weight:500">· ${category.events} events</span></h2>
             ${table({
               headers: ['Event', 'Code', 'Subject', 'Severity', 'Channels'],
               rows: events.map((e) => [

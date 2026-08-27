@@ -143,7 +143,7 @@ export async function design(root) {
       ${
         exposure && exposure.overdueCount > 0
           ? html`<div class="card" style="margin-bottom:14px">
-              <h3>What the late design information is costing</h3>
+              <h2>What the late design information is costing</h2>
               <div class="grid g4" style="margin-top:10px">
                 <div>
                   <div class="metric-sub">Overdue</div>
@@ -219,22 +219,22 @@ export async function design(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div ${raw(drillable('Current drawings', drawingSources))}>
-          <h3>Current drawings</h3>
+          <h2>Current drawings</h2>
           <div class="metric orange">${current.length}</div>
           <div class="metric-sub">${superseded.length} superseded and locked from markup</div>
         </div>
         <div ${raw(drillable('Models ingested', modelSources))}>
-          <h3>Models ingested</h3>
+          <h2>Models ingested</h2>
           <div class="metric">${b.Model.length}</div>
           <div class="metric-sub">${asBuilt.length} as-built · ${b.Model.reduce((s, m) => s + Number(m.elementCount ?? 0), 0).toLocaleString()} elements</div>
         </div>
         <div ${raw(drillable('Open clashes', clashSources))}>
-          <h3>Open clashes</h3>
+          <h2>Open clashes</h2>
           <div class="metric ${raw(criticalClashes.length > 0 ? 'bad' : openClashes.length > 0 ? 'warn' : 'good')}">${openClashes.length}</div>
           <div class="metric-sub">${criticalClashes.length} critical</div>
         </div>
         <div ${raw(drillable('Site deviations', twinSources))}>
-          <h3>Site deviations</h3>
+          <h2>Site deviations</h2>
           <div class="metric ${raw(deviations > 0 ? 'warn' : 'good')}">${deviations}</div>
           <div class="metric-sub">observed against ${b.DigitalTwinState.length} capture(s)</div>
         </div>
@@ -243,7 +243,7 @@ export async function design(root) {
       ${
         reviews && reviews.cycles.length > 0
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Design review</h3>
+              <h2 style="padding:15px 17px 0">Design review</h2>
               <div style="padding:0 17px"><div class="metric-sub">${reviews.summary}</div></div>
               <div style="padding:11px 17px 15px">
                 ${table({
@@ -281,7 +281,7 @@ export async function design(root) {
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Drawing register</h3>
+          <h2 style="padding:15px 17px 0">Drawing register</h2>
           ${table({
             headers: ['Number', 'Title', 'Rev', 'Discipline', 'Status', 'Registered'],
             rows: b.Drawing.map((d) => [
@@ -298,7 +298,7 @@ export async function design(root) {
 
         <div>
           <div class="card" style="margin-bottom:14px">
-            <h3>Design maturity</h3>
+            <h2>Design maturity</h2>
             ${
               maturity
                 ? html`<div class="metric ${raw(maturity.score >= 80 ? 'good' : maturity.score >= 60 ? 'warn' : 'bad')}">${maturity.score}</div>
@@ -321,7 +321,7 @@ export async function design(root) {
           </div>
 
           <div class="card">
-            <h3>Latest site capture</h3>
+            <h2>Latest site capture</h2>
             ${
               twin
                 ? html`<div class="split-list">
@@ -339,7 +339,7 @@ export async function design(root) {
       ${
         spec && spec.specifications > 0
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Specification against the inspection plans</h3>
+              <h2 style="padding:15px 17px 0">Specification against the inspection plans</h2>
               <div style="padding:0 17px"><div class="metric-sub">
                 ${spec.clauses} clauses read, ${spec.requiringVerification} of which impose a test, a submittal or a hold point.
                 A clause requiring one with no inspection stage against it is work that gets built and then argued about —
@@ -368,7 +368,7 @@ export async function design(root) {
 
       <div class="grid g2">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Clash detection — triaged by rework cost</h3>
+          <h2 style="padding:15px 17px 0">Clash detection — triaged by rework cost</h2>
           ${table({
             headers: ['Location', 'Disciplines', 'Overlap', 'Severity', 'Status'],
             align: ['', '', 'num', '', ''],
@@ -412,7 +412,7 @@ export async function design(root) {
           readiness
             ? html`<div class="card pad0">
                 <div style="padding:15px 17px 0">
-                  <h3>What the next weeks are waiting on</h3>
+                  <h2>What the next weeks are waiting on</h2>
                   <p class="metric-sub" style="margin-bottom:12px">
                     Not "is the design finished", which no project can answer — of the work in the published lookahead, what is
                     waiting on a question nobody has answered. ${readiness.summary}
@@ -443,7 +443,7 @@ export async function design(root) {
           perception
             ? html`<div class="card pad0">
                 <div style="padding:15px 17px 0">
-                  <h3>Read a drawing</h3>
+                  <h2>Read a drawing</h2>
                   <p class="metric-sub" style="margin-bottom:12px">
                     The title block and the quantities, read off the sheet the platform holds rather than typed in from it.
                     Nothing read this way reaches the register on its own — an extraction is a draft until somebody confirms it,
@@ -477,7 +477,7 @@ export async function design(root) {
                 ${
                   openDrafts.length > 0
                     ? html`<div style="padding:0 17px 15px">
-                        <h3 style="margin-top:14px">Awaiting confirmation</h3>
+                        <h2 style="margin-top:14px">Awaiting confirmation</h2>
                         ${table({
                           headers: ['Read', 'What it says', 'Confidence', ''],
                           rows: openDrafts.map((draft) => [
@@ -500,7 +500,7 @@ export async function design(root) {
         }
 
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Material and technical submittals</h3>
+          <h2 style="padding:15px 17px 0">Material and technical submittals</h2>
           <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
             ${submittals.summary || 'Nothing submitted for approval on this project.'}
             Ordered by when the decision is needed — the date the material has to be on site less its procurement lead
@@ -544,7 +544,7 @@ export async function design(root) {
         </div>
 
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">RFIs raised from markups</h3>
+          <h2 style="padding:15px 17px 0">RFIs raised from markups</h2>
           ${table({
             headers: ['Ref', 'Question', 'Against rev', 'Due', 'Days open', 'Status'],
             rows: b.RFI.map((r) => [

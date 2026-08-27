@@ -68,24 +68,24 @@ export async function risk(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div ${raw(drillable('Expected risk cost', riskSources))}>
-          <h3>Expected risk cost</h3>
+          <h2>Expected risk cost</h2>
           <div class="metric warn">${contingency ? money(contingency.expectedMinor) : '—'}</div>
           <div class="metric-sub">probability-weighted across ${openRisks.length} open risks</div>
         </div>
         <div ${raw(drillable('P80 contingency', riskSources))}>
-          <h3>P80 contingency</h3>
+          <h2>P80 contingency</h2>
           <div class="metric orange">${contingency ? money(contingency.p80Minor) : '—'}</div>
           <div class="metric-sub">the figure to hold, not the average</div>
         </div>
         <div ${raw(drillable('Safety risk index', safetySources))}>
-          <h3>Safety risk index</h3>
+          <h2>Safety risk index</h2>
           <div class="metric ${raw(!forecast ? '' : forecast.severity === 'LOW' ? 'good' : forecast.severity === 'CRITICAL' ? 'bad' : 'warn')}">
             ${forecast ? forecast.riskIndex : '—'}
           </div>
           <div class="metric-sub">${forecast ? `${forecast.expectedIncidents30d} expected recordables in 30 days` : 'not forecast'}</div>
         </div>
         <div ${raw(drillable('RAMS briefed', ramsSources))}>
-          <h3>RAMS briefed</h3>
+          <h2>RAMS briefed</h2>
           <div class="metric ${raw(approvedRams.length > 0 && acknowledged.length === approvedRams.length ? 'good' : 'warn')}">
             ${acknowledged.length}<span style="font-size:16px;color:var(--text-3)"> / ${approvedRams.length}</span>
           </div>
@@ -97,7 +97,7 @@ export async function risk(root) {
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Risk register</h3>
+          <h2 style="padding:15px 17px 0">Risk register</h2>
           ${table({
             headers: ['Risk', 'Category', 'P', 'Expected cost', 'Days', 'Severity', 'Mitigation'],
             align: ['', '', 'num', 'num', 'num', '', ''],
@@ -118,7 +118,7 @@ export async function risk(root) {
 
         <div>
           <div class="card" style="margin-bottom:14px">
-            <h3>Contingency drivers</h3>
+            <h2>Contingency drivers</h2>
             ${
               contingency
                 ? html`<div class="split-list">
@@ -135,7 +135,7 @@ export async function risk(root) {
           </div>
 
           <div class="card">
-            <h3>Mitigation worth funding</h3>
+            <h2>Mitigation worth funding</h2>
             ${
               worthMitigating.length === 0
                 ? html`<div class="empty"><b>None recommended</b>No mitigation currently pays for itself.</div>`
@@ -156,7 +156,7 @@ export async function risk(root) {
       ${
         forecast
           ? html`<div class="card" style="margin-bottom:14px">
-              <h3>What is driving the safety forecast</h3>
+              <h2>What is driving the safety forecast</h2>
               ${table({
                 headers: ['Factor', 'Contribution', 'Detail'],
                 align: ['', 'num', ''],
@@ -168,7 +168,7 @@ export async function risk(root) {
 
       <div class="grid g2">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Method statements</h3>
+          <h2 style="padding:15px 17px 0">Method statements</h2>
           ${table({
             headers: ['Activity', 'Steps', 'Status', 'Briefed'],
             align: ['', 'num', '', 'num'],
@@ -183,7 +183,7 @@ export async function risk(root) {
         </div>
 
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Safety observations</h3>
+          <h2 style="padding:15px 17px 0">Safety observations</h2>
           ${table({
             headers: ['Observation', 'Type', 'Severity', 'Review'],
             rows: b.SafetyObservation.map((o) => [

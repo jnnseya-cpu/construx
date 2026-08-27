@@ -32,10 +32,10 @@
   --orange-line: rgba(255, 106, 26, 0.34);
   --text: rgb(237, 241, 247);
   --text-2: rgb(167, 175, 189);
-  --text-3: rgb(108, 117, 132);
+  --text-3: rgb(138, 150, 169);
   --success: rgb(46, 184, 116);
   --warning: rgb(240, 166, 42);
-  --critical: rgb(232, 78, 78);
+  --critical: rgb(254, 93, 93);
   --line: rgba(255, 255, 255, 0.065);
   --line-strong: rgba(255, 255, 255, 0.115);
   --edge: inset 0 1px 0 rgba(255, 255, 255, 0.055);

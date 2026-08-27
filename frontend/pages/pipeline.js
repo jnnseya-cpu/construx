@@ -104,7 +104,7 @@ export async function pipeline(root) {
       </div>
 
       <div class="card pad0" style="margin-bottom:14px">
-        <h3 style="padding:15px 17px 0">Invitations in hand</h3>
+        <h2 style="padding:15px 17px 0">Invitations in hand</h2>
         <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
           ${tenders.summary} The deadline is recorded in the zone it is read in and resolved to one instant — a portal
           that closes at noon in Dublin has closed an hour before noon here.
@@ -155,24 +155,24 @@ export async function pipeline(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">
-          <h3>Declined</h3>
+          <h2>Declined</h2>
           <div class="metric ${raw(discipline.noBid > 0 ? 'good' : 'warn')}">${pct(discipline.noBidRatePercent, 1)}</div>
           <div class="metric-sub">
             ${discipline.noBid} of ${discipline.decided} decided. Refusing bad work is the point of scoring it.
           </div>
         </div>
         <div class="card">
-          <h3>Bid effort released</h3>
+          <h2>Bid effort released</h2>
           <div class="metric">${money(discipline.declinedValueMinor)}</div>
           <div class="metric-sub">Value walked away from — pursuits the bid team did not spend a month on.</div>
         </div>
         <div class="card">
-          <h3>Overrides</h3>
+          <h2>Overrides</h2>
           <div class="metric ${raw(discipline.overrides.length === 0 ? 'good' : 'warn')}">${discipline.overrides.length}</div>
           <div class="metric-sub">Decisions taken against the algorithm. Permitted, recorded, never silent.</div>
         </div>
         <div class="card">
-          <h3>Live pipeline</h3>
+          <h2>Live pipeline</h2>
           <div class="metric orange">${money(summary.liveValueMinor)}</div>
           <div class="metric-sub">${money(summary.wonValueMinor)} converted to projects.</div>
         </div>
@@ -192,10 +192,10 @@ export async function pipeline(root) {
         run
           ? html`
             <div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">
+              <h2 style="padding:15px 17px 0">
                 Tender radar — ${run.ranOn}
                 ${badge(`${run.shortlisted} of ${run.screened} worth reading`, run.shortlisted > 0 ? 'ok' : '')}
-              </h3>
+              </h2>
               <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
                 Screened against the company's own recorded facts. It never claims a capability that is not on file — an
                 invented reference is what a bid gets disqualified for.
@@ -225,7 +225,7 @@ export async function pipeline(root) {
               .filter((r) => !r.eligible || r.mitigations.length > 0)
               .map(
                 (r) => html`<div class="card" style="margin-bottom:14px">
-                  <h3>${r.title} ${r.eligible ? '' : badge('ineligible', 'bad')}</h3>
+                  <h2>${r.title} ${r.eligible ? '' : badge('ineligible', 'bad')}</h2>
                   <div class="split-list">
                     ${r.eligibilityFailures.map(
                       (f) => html`<div class="row"><span class="lbl">✗ ${f.requirement}</span><span class="val">${f.reason}</span></div>`,
@@ -242,7 +242,7 @@ export async function pipeline(root) {
       }
 
       <div class="card pad0" style="margin-bottom:14px">
-        <h3 style="padding:15px 17px 0">Do the bands predict?</h3>
+        <h2 style="padding:15px 17px 0">Do the bands predict?</h2>
         <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
           If jobs above ${thresholds.bidAbove} do not convert better than jobs pushed through from the review band, the
           weights are wrong. An algorithm nobody checks against outcomes is an opinion with arithmetic on it.
@@ -267,7 +267,7 @@ export async function pipeline(root) {
       ${
         discipline.overrides.length > 0
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Decisions taken against the score</h3>
+              <h2 style="padding:15px 17px 0">Decisions taken against the score</h2>
               <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
                 The tool advises and the business decides. This is the list a post-mortem asks for and nobody writes down
                 at the time.
@@ -290,7 +290,7 @@ export async function pipeline(root) {
 
       <div class="grid g2" style="margin-bottom:14px">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">The algorithm</h3>
+          <h2 style="padding:15px 17px 0">The algorithm</h2>
           <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
             Five is always good for us — including on the two factors named as risks, where reading the heading the other
             way round inverts the result.
@@ -314,7 +314,7 @@ export async function pipeline(root) {
         </div>
 
         <div class="card">
-          <h3>Where we keep scoring badly</h3>
+          <h2>Where we keep scoring badly</h2>
           <p style="font-size:12.5px;color:var(--text-3);margin-bottom:11px">
             Factors scoring 2 or below across the pipeline. A recurring weakness is a business problem, not a run of bad
             opportunities.
@@ -332,7 +332,7 @@ export async function pipeline(root) {
       </div>
 
       <div class="card pad0">
-        <h3 style="padding:15px 17px 0">Opportunities</h3>
+        <h2 style="padding:15px 17px 0">Opportunities</h2>
         ${table({
           headers: ['Opportunity', 'Client', 'Value', 'Score', 'Recommended', 'Stage', 'Due'],
           align: ['', '', 'num', 'num', '', '', ''],

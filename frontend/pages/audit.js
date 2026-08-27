@@ -61,22 +61,22 @@ export async function audit(root) {
 
       <div class="grid g5" style="margin-bottom:14px">
         <div class="card">
-          <h3>Events recorded</h3>
+          <h2>Events recorded</h2>
           <div class="metric orange">${events.length}</div>
           <div class="metric-sub">append-only, none editable</div>
         </div>
         <div class="card">
-          <h3>AI-authored</h3>
+          <h2>AI-authored</h2>
           <div class="metric">${byActor.AI}</div>
           <div class="metric-sub">attributed to an AI actor, with provider and ACU cost</div>
         </div>
         <div class="card">
-          <h3>Evidenced</h3>
+          <h2>Evidenced</h2>
           <div class="metric good">${withEvidence}</div>
           <div class="metric-sub">events carrying at least one evidence reference</div>
         </div>
         <div class="card">
-          <h3>Files held</h3>
+          <h2>Files held</h2>
           <div class="metric ${raw(evidence && evidence.coverage.missing === 0 ? 'good' : 'warn')}">
             ${evidence ? `${evidence.coverage.held}/${evidence.coverage.total}` : '—'}
           </div>
@@ -93,7 +93,7 @@ export async function audit(root) {
           </div>
         </div>
         <div class="card">
-          <h3>Chain head</h3>
+          <h2>Chain head</h2>
           <div class="metric" style="font-size:15px;font-family:var(--mono);letter-spacing:0">${shortHash(data.chainHead)}</div>
           <div class="metric-sub">changes with every committed event</div>
         </div>
@@ -101,7 +101,7 @@ export async function audit(root) {
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Event log — most recent first</h3>
+          <h2 style="padding:15px 17px 0">Event log — most recent first</h2>
           ${table({
             headers: ['Time', 'Event', 'Entity', 'Actor', 'Evidence', 'Chain hash'],
             align: ['', '', '', '', 'num', 'mono'],
@@ -120,7 +120,7 @@ export async function audit(root) {
         </div>
 
         <div class="card">
-          <h3>Events by entity</h3>
+          <h2>Events by entity</h2>
           <div class="split-list">
             ${[...byGroup.entries()]
               .sort((a, b) => b[1] - a[1])
@@ -134,7 +134,7 @@ export async function audit(root) {
         evidence
           ? html`<div class="card pad0" style="margin-bottom:14px">
               <div style="padding:15px 17px 0">
-                <h3>Evidence register — what the platform actually holds</h3>
+                <h2>Evidence register — what the platform actually holds</h2>
                 <p class="metric-sub" style="margin-bottom:12px">
                   A hash proves a document has not been altered. It does not produce the document. Everything marked
                   <b>hash only</b> below is a record whose file lives somewhere else — on a phone, in an inbox, with somebody who
@@ -171,7 +171,7 @@ export async function audit(root) {
       }
 
       <div class="card" style="margin-bottom:14px">
-        <h3>Trace a record</h3>
+        <h2>Trace a record</h2>
         <p class="metric-sub" style="margin-bottom:12px">
           What caused this, and what was built on it. Walked over the ledger rather than held in a second index — links are
           labelled by how they were established, because a declared piece of evidence and a state field that happens to name
@@ -201,7 +201,7 @@ export async function audit(root) {
       </div>
 
       <div class="card">
-        <h3>How to verify this yourself</h3>
+        <h2>How to verify this yourself</h2>
         <div class="code">
 <span class="d">// Each event carries the hash before, the hash after, and a chain</span>
 <span class="d">// hash over its predecessor. Recompute the chain from the first</span>

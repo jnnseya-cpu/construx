@@ -41,7 +41,7 @@ export async function account(root) {
       ${
         outstanding
           ? html`<div class="card" style="margin-bottom:14px">
-              <h3>Erasure requested ${badge('PENDING', 'warn')}</h3>
+              <h2>Erasure requested ${badge('PENDING', 'warn')}</h2>
               ${notice(
                 `This account is scheduled to be erased on ${date(erasure.dueAt)}. ` +
                   'It has already been suspended. Until that date you can still stop it.',
@@ -55,7 +55,7 @@ export async function account(root) {
       }
 
       <div class="card" style="margin-bottom:14px">
-        <h3>Identity</h3>
+        <h2>Identity</h2>
         ${table({
           headers: ['Field', 'Value'],
           rows: [
@@ -68,7 +68,7 @@ export async function account(root) {
       </div>
 
       <div class="card">
-        <h3>Delete this account</h3>
+        <h2>Delete this account</h2>
         <p style="font-size:13px;color:var(--text-2);margin:2px 0 13px">
           Your account is suspended immediately and erased
           ${erasure.graceDays} days later. During those ${erasure.graceDays} days you can cancel it.

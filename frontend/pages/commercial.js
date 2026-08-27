@@ -179,7 +179,7 @@ export async function commercial(root) {
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Budget against actual</h3>
+          <h2 style="padding:15px 17px 0">Budget against actual</h2>
           ${table({
             headers: ['Cost code', 'Description', 'Budget', 'Actual', 'Used'],
             align: ['', '', 'num', 'num', ''],
@@ -200,7 +200,7 @@ export async function commercial(root) {
 
         <div>
           <div class="card" style="margin-bottom:14px">
-            <h3>Earned value</h3>
+            <h2>Earned value</h2>
             ${
               evm
                 ? html`<div class="split-list">
@@ -217,7 +217,7 @@ export async function commercial(root) {
           </div>
 
           <div class="card">
-            <h3>Commercial ledger</h3>
+            <h2>Commercial ledger</h2>
             ${
               ledger
                 ? html`<div class="split-list">
@@ -260,7 +260,7 @@ export async function commercial(root) {
 
       <div class="grid g2">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Payment cycle — statutory dates</h3>
+          <h2 style="padding:15px 17px 0">Payment cycle — statutory dates</h2>
           ${
             atRisk.length > 0
               ? html`<div style="padding:0 17px"><div class="notice err">${atRisk.length} cycle(s) carry an overdue or late notice. A missed pay-less notice cannot be recovered by argument.</div></div>`
@@ -300,7 +300,7 @@ export async function commercial(root) {
         </div>
 
         <div class="card">
-          <h3>Cashflow — net of retention</h3>
+          <h2>Cashflow — net of retention</h2>
           ${
             cashflow
               ? html`<div style="display:flex;align-items:flex-end;gap:2px;height:120px;margin-bottom:10px">
@@ -321,7 +321,7 @@ export async function commercial(root) {
       </div>
 
       <div class="card pad0" style="margin-top:14px">
-        <h3 style="padding:15px 17px 0">Forward cashflow — measured, not tendered</h3>
+        <h2 style="padding:15px 17px 0">Forward cashflow — measured, not tendered</h2>
         ${
           !forward
             ? html`<div style="padding:0 17px 15px"><div class="empty"><b>Not available</b>The forward position could not be read.</div></div>`
@@ -408,7 +408,7 @@ export async function commercial(root) {
       </div>
 
       <div class="card pad0" style="margin-top:14px">
-        <h3 style="padding:15px 17px 0">Applications and certificates</h3>
+        <h2 style="padding:15px 17px 0">Applications and certificates</h2>
         ${table({
           headers: ['Cycle', 'Applied', 'Certified', 'Withheld', 'Retention', 'Paid', 'Final date', 'Reason'],
           align: ['', 'num', 'num', 'num', 'num', 'num', '', ''],
@@ -437,7 +437,7 @@ export async function commercial(root) {
       ${
         statutory
           ? html`<div class="card pad0" style="margin-top:14px">
-              <h3 style="padding:15px 17px 0">Statutory position — Housing Grants Act</h3>
+              <h2 style="padding:15px 17px 0">Statutory position — Housing Grants Act</h2>
               <div style="padding:0 17px"><div class="metric-sub">
                 What is payable under the Act, which is a different question from what the work was worth. Where no
                 effective notice was given, the sum applied for becomes the notified sum however the valuation reads.

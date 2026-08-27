@@ -75,7 +75,7 @@ export async function programme(root) {
       ${
         sim
           ? html`<div class="card" style="margin-bottom:14px">
-              <h3>Simulated completion — ${sim.iterations.toLocaleString()} runs of the whole network</h3>
+              <h2>Simulated completion — ${sim.iterations.toLocaleString()} runs of the whole network</h2>
               <p class="metric-sub" style="margin-bottom:12px">
                 The published P80 sums the variance along the deterministic critical path. That path is only critical
                 for the durations it assumed, and where several paths are critical at once it adds up work that runs
@@ -124,7 +124,7 @@ export async function programme(root) {
       ${
         ppc
           ? html`<div class="card" style="margin-bottom:14px">
-              <h3>Percent Plan Complete</h3>
+              <h2>Percent Plan Complete</h2>
               <p class="metric-sub" style="margin-bottom:12px">
                 The critical path says what the programme needs. PPC says whether a week of it can be relied on —
                 promises kept over promises made, with no partial credit, because the reason planning fails is almost
@@ -161,7 +161,7 @@ export async function programme(root) {
       ${
         ppc && ppc.openConstraints.length > 0
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Constraints log</h3>
+              <h2 style="padding:15px 17px 0">Constraints log</h2>
               <div style="padding:0 17px"><div class="metric-sub">
                 Work that cannot be committed to until somebody clears it. An owner and a need-by date against every
                 line is what stops the log becoming wallpaper.
@@ -217,13 +217,13 @@ export async function programme(root) {
       ${
         delay
           ? html`<div class="card" style="margin-bottom:14px">
-              <h3>Delay forecast — ${delay.severity}</h3>
+              <h2>Delay forecast — ${delay.severity}</h2>
               <div class="grid g3" style="margin-bottom:14px">
                 <div><div class="metric bad">${days(delay.expectedDelayDays)}</div><div class="metric-sub">expected overrun</div></div>
                 <div><div class="metric warn">${days(delay.p80DelayDays)}</div><div class="metric-sub">P80 overrun</div></div>
                 <div><div class="metric">${pct((delay.confidence ?? 0) * 100, 0)}</div><div class="metric-sub">data completeness behind the forecast</div></div>
               </div>
-              <h3>Corrective measures, cheapest first</h3>
+              <h2>Corrective measures, cheapest first</h2>
               ${table({
                 headers: ['Measure', 'Recovers', 'Cost', 'Per day', 'Applicability'],
                 align: ['', 'num', 'num', 'num', ''],
@@ -237,7 +237,7 @@ export async function programme(root) {
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Activities</h3>
+          <h2 style="padding:15px 17px 0">Activities</h2>
           ${table({
             headers: ['Activity', 'Duration', 'Progress', 'Slippage', 'Path', 'Status'],
             align: ['', 'num', '', 'num', '', ''],
@@ -254,7 +254,7 @@ export async function programme(root) {
 
         <div>
           <div class="card" style="margin-bottom:14px">
-            <h3>Approved baseline</h3>
+            <h2>Approved baseline</h2>
             <div class="split-list">
               <div class="row"><span class="lbl">Version</span><span class="val">${baseline?.version ?? 'none'}</span></div>
               <div class="row"><span class="lbl">Duration</span><span class="val">${baseline ? days(baseline.durationDays) : '—'}</span></div>
@@ -269,7 +269,7 @@ export async function programme(root) {
           </div>
 
           <div class="card">
-            <h3>Slipping activities</h3>
+            <h2>Slipping activities</h2>
             ${
               slipping.length === 0
                 ? html`<div class="empty"><b>Nothing slipping</b>Every activity is tracking to plan.</div>`
@@ -287,7 +287,7 @@ export async function programme(root) {
       </div>
 
       <div class="card">
-        <h3>Near-critical — the path about to become critical</h3>
+        <h2>Near-critical — the path about to become critical</h2>
         ${table({
           headers: ['Activity', 'Total float'],
           align: ['', 'num'],

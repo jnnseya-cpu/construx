@@ -60,7 +60,7 @@ export async function newsletter(root) {
 
       <div class="grid g2" style="margin-bottom:14px">
         <div class="card">
-          <h3>Your subscription</h3>
+          <h2>Your subscription</h2>
           <div style="display:flex;align-items:center;gap:10px;margin:10px 0 12px 0">
             ${badge(me.subscribed ? 'Subscribed' : 'Not subscribed', me.subscribed ? 'ok' : 'neutral')}
             ${me.excludedByRole ? badge('Role excluded', 'warn') : ''}
@@ -86,7 +86,7 @@ export async function newsletter(root) {
         </div>
 
         <div class="card">
-          <h3>Next issue — ${me.preview.week}</h3>
+          <h2>Next issue — ${me.preview.week}</h2>
           <div style="font-size:14.5px;font-weight:650;margin:9px 0 4px 0">${me.preview.subject}</div>
           <div class="metric-sub" style="margin-bottom:11px">
             ${me.preview.features.length} ${me.preview.features.length === 1 ? 'item' : 'items'}, chosen for
@@ -104,7 +104,7 @@ export async function newsletter(root) {
       </div>
 
       <div class="card" style="margin-bottom:14px">
-        <h3>Exactly what would arrive</h3>
+        <h2>Exactly what would arrive</h2>
         <div class="metric-sub" style="margin-bottom:11px">
           Rendered by the same code that composes the message, so this is the email rather than an impression of it.
         </div>
@@ -211,12 +211,12 @@ function operatorSummary(audience) {
   return html`
     <div class="grid g4" style="margin-bottom:14px">
       <div class="card">
-        <h3>Next issue reaches</h3>
+        <h2>Next issue reaches</h2>
         <div class="metric">${audience.recipientCount}</div>
         <div class="metric-sub">${audience.excluded.length} excluded, with reasons</div>
       </div>
       <div class="card">
-        <h3>Schedule</h3>
+        <h2>Schedule</h2>
         <div class="metric" style="font-size:19px">
           ${audience.enabled ? `${dayName(audience.sendDayUtc)} ${String(audience.sendHourUtc).padStart(2, '0')}:00 UTC` : 'Disabled'}
         </div>
@@ -225,14 +225,14 @@ function operatorSummary(audience) {
         </div>
       </div>
       <div class="card">
-        <h3>Delivery channel</h3>
+        <h2>Delivery channel</h2>
         <div class="metric" style="font-size:19px">${audience.channel === 'SMTP' ? 'SMTP' : 'Record only'}</div>
         <div class="metric-sub">
           ${audience.channel === 'SMTP' ? 'messages are transmitted' : 'no SMTP host set — issues are composed and recorded, not sent'}
         </div>
       </div>
       <div class="card">
-        <h3>Default for new users</h3>
+        <h2>Default for new users</h2>
         <div class="metric" style="font-size:19px">${audience.defaultSubscribed ? 'Subscribed' : 'Opt-in first'}</div>
         <div class="metric-sub">never marketed to: ${audience.excludedRoles.join(', ') || 'no roles'}</div>
       </div>
@@ -252,7 +252,7 @@ function operatorSummary(audience) {
 
     <div class="grid g2" style="margin-bottom:14px">
       <div class="card pad0">
-        <h3 style="padding:15px 17px 0">Who receives it</h3>
+        <h2 style="padding:15px 17px 0">Who receives it</h2>
         ${table({
           headers: ['Role', 'Recipients'],
           rows: Object.entries(audience.byRole)
@@ -262,7 +262,7 @@ function operatorSummary(audience) {
         })}
       </div>
       <div class="card pad0">
-        <h3 style="padding:15px 17px 0">Who does not, and why</h3>
+        <h2 style="padding:15px 17px 0">Who does not, and why</h2>
         ${table({
           headers: ['Person', 'Reason'],
           rows: audience.excluded.map((entry) => [
@@ -278,7 +278,7 @@ function operatorSummary(audience) {
 
 function campaignHistory(campaigns) {
   return html`<div class="card pad0" id="campaigns">
-    <h3 style="padding:15px 17px 0">Issues sent</h3>
+    <h2 style="padding:15px 17px 0">Issues sent</h2>
     ${table({
       headers: ['Week', 'Subject', 'Sent', 'Recorded', 'Failed', 'Issued', ''],
       rows: campaigns.map((campaign) => [

@@ -112,7 +112,7 @@ export async function overview(root) {
         briefing
           ? html`
             <div class="card" style="margin-bottom:14px">
-              <h3>${briefing.greeting} ${badge(briefing.asAt, '')}</h3>
+              <h2>${briefing.greeting} ${badge(briefing.asAt, '')}</h2>
               <p style="font-size:13px;color:var(--text-2);margin:2px 0 13px">${briefing.headline}</p>
 
               <div class="grid g4" style="margin-bottom:13px">
@@ -175,7 +175,7 @@ export async function overview(root) {
       }
 
       <div class="card" style="margin-bottom:14px">
-        <h3>Lifecycle</h3>
+        <h2>Lifecycle</h2>
         <div class="rail">
           ${PHASES.map(
             (phase, i) =>
@@ -186,12 +186,12 @@ export async function overview(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div ${raw(drillable('Contract value', contractSources))}>
-          <h3>Contract value</h3>
+          <h2>Contract value</h2>
           <div class="metric orange">${money(project.contractValueMinor, project.currency)}</div>
           <div class="metric-sub">${date(project.plannedStart)} → ${date(project.plannedCompletion)}</div>
         </div>
         <div ${raw(drillable('Forecast margin', marginSources))}>
-          <h3>Forecast margin</h3>
+          <h2>Forecast margin</h2>
           <div class="metric ${raw(!cvr ? '' : cvr.forecastMarginPercent < 0 ? 'bad' : cvr.marginErosionPercent > 2 ? 'warn' : 'good')}">
             ${cvr ? pct(cvr.forecastMarginPercent, 2) : '—'}
           </div>
@@ -206,14 +206,14 @@ export async function overview(root) {
           </div>
         </div>
         <div ${raw(drillable('Delay exposure', delaySources))}>
-          <h3>Delay exposure</h3>
+          <h2>Delay exposure</h2>
           <div class="metric ${raw(!delay ? '' : delay.severity === 'CRITICAL' ? 'bad' : delay.severity === 'LOW' ? 'good' : 'warn')}">
             ${delay ? days(delay.expectedDelayDays) : '—'}
           </div>
           <div class="metric-sub">${delay ? `P80 ${days(delay.p80DelayDays)} · ${delay.severity}` : 'not forecast'}</div>
         </div>
         <div ${raw(drillable('Golden Thread', threadSources))}>
-          <h3>Golden Thread</h3>
+          <h2>Golden Thread</h2>
           <div class="metric">${events.events.length}</div>
           <div class="metric-sub">${aiEvents} AI-authored · none editable</div>
         </div>
@@ -223,7 +223,7 @@ export async function overview(root) {
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card">
-          <h3>Requires attention</h3>
+          <h2>Requires attention</h2>
           ${
             exceptions.length === 0
               ? html`<div class="empty">
@@ -246,7 +246,7 @@ export async function overview(root) {
         </div>
 
         <div class="card">
-          <h3>Phase gate — ${humanise(project.phase)}</h3>
+          <h2>Phase gate — ${humanise(project.phase)}</h2>
           ${
             (state.gate?.criteria ?? []).length === 0
               ? html`<div class="empty"><b>Final phase</b>No exit gate applies.</div>`
@@ -268,7 +268,7 @@ export async function overview(root) {
 
       <div class="grid g2" style="margin-bottom:14px">
         <div class="card">
-          <h3>Programme</h3>
+          <h2>Programme</h2>
           <div class="split-list">
             <div class="row"><span class="lbl">Approved baseline</span><span class="val">${baseline?.version ?? '—'}</span></div>
             <div class="row"><span class="lbl">Baseline duration</span><span class="val">${baseline ? days(baseline.durationDays) : '—'}</span></div>
@@ -277,7 +277,7 @@ export async function overview(root) {
           </div>
         </div>
         <div class="card">
-          <h3>Commercial position</h3>
+          <h2>Commercial position</h2>
           <div class="split-list">
             <div class="row"><span class="lbl">Forecast final value</span><span class="val">${cvr ? money(cvr.forecastFinalValueMinor) : '—'}</span></div>
             <div class="row"><span class="lbl">Forecast final cost</span><span class="val">${cvr ? money(cvr.forecastFinalCostMinor) : '—'}</span></div>
@@ -289,7 +289,7 @@ export async function overview(root) {
 
       <div class="grid g2">
         <div class="card">
-          <h3>Open risk register</h3>
+          <h2>Open risk register</h2>
           ${table({
             headers: ['Risk', 'Category', 'Severity', 'Expected'],
             align: ['', '', '', 'num'],
@@ -300,7 +300,7 @@ export async function overview(root) {
           })}
         </div>
         <div class="card">
-          <h3>Latest Golden Thread activity</h3>
+          <h2>Latest Golden Thread activity</h2>
           ${events.events
             .slice(-8)
             .reverse()

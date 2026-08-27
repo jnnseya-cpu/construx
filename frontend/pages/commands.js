@@ -41,22 +41,22 @@ export async function commands(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">
-          <h3>Commands</h3>
+          <h2>Commands</h2>
           <div class="metric orange">${catalogue.commands.length}</div>
           <div class="metric-sub">every write route, none hidden</div>
         </div>
         <div class="card">
-          <h3>Areas</h3>
+          <h2>Areas</h2>
           <div class="metric">${groups.length}</div>
           <div class="metric-sub">grouped as the platform groups them</div>
         </div>
         <div class="card">
-          <h3>Schema-checked</h3>
+          <h2>Schema-checked</h2>
           <div class="metric good">${catalogue.commands.length - catalogue.withoutSchema}</div>
           <div class="metric-sub">the body is validated before a handler sees it</div>
         </div>
         <div class="card">
-          <h3>Unchecked</h3>
+          <h2>Unchecked</h2>
           <div class="metric ${raw(catalogue.withoutSchema > 0 ? 'warn' : 'good')}">${catalogue.withoutSchema}</div>
           <div class="metric-sub">no published schema — the form can only offer free text</div>
         </div>
@@ -75,7 +75,7 @@ export async function commands(root) {
 
       ${groups.map(
         (group) => html`<div class="card pad0 cmd-group" data-area="${group.area}" style="margin-bottom:14px">
-          <h3 style="padding:15px 17px 0">${humanise(group.area)}</h3>
+          <h2 style="padding:15px 17px 0">${humanise(group.area)}</h2>
           ${table({
             headers: ['Command', 'Method', 'Body', ''],
             rows: group.commands.map((entry) => [

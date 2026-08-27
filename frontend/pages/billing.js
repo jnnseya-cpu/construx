@@ -68,7 +68,7 @@ export async function billing(root) {
       ${
         seats
           ? html`<div class="card" style="margin-bottom:14px">
-              <h3>Your package — ${seats.package.label}</h3>
+              <h2>Your package — ${seats.package.label}</h2>
               <p class="metric-sub" style="margin-bottom:12px">
                 The package is charged, not the sum of its seats. No package includes AI: ACUs are bought separately,
                 which is why a heavy AI user pays for what they consume rather than everybody absorbing it.
@@ -110,7 +110,7 @@ export async function billing(root) {
         !storage
           ? ''
           : html`<div class="card" style="margin-bottom:14px">
-              <h3>Storage</h3>
+              <h2>Storage</h2>
               <p class="metric-sub" style="margin-bottom:12px">${storage.summary}</p>
               ${raw(track(storage.percentUsed, storage.state === 'FULL' ? 'bad' : storage.state === 'WARNING' ? 'warn' : 'good'))}
               <div class="split-list" style="margin-top:12px">
@@ -144,22 +144,22 @@ export async function billing(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">
-          <h3>Available</h3>
+          <h2>Available</h2>
           <div class="metric ${raw(wallet.aiHalted ? 'bad' : 'good')}">${exact(wallet.availableMinor)}</div>
           <div class="metric-sub">of ${exact(wallet.balanceMinor)} balance</div>
         </div>
         <div class="card">
-          <h3>Held</h3>
+          <h2>Held</h2>
           <div class="metric warn">${exact(wallet.heldMinor)}</div>
           <div class="metric-sub">ring-fenced against running executions</div>
         </div>
         <div class="card">
-          <h3>Billed this month</h3>
+          <h2>Billed this month</h2>
           <div class="metric orange">${exact(wallet.monthBilledMinor)}</div>
           <div class="metric-sub">on ${exact(wallet.monthRawSpendMinor)} of provider cost</div>
         </div>
         <div class="card">
-          <h3>Effective multiplier</h3>
+          <h2>Effective multiplier</h2>
           <div class="metric">${effective ? `${effective.toFixed(2)}×` : '—'}</div>
           <div class="metric-sub">charged over underlying compute cost</div>
         </div>
@@ -167,7 +167,7 @@ export async function billing(root) {
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Cost attribution by engine</h3>
+          <h2 style="padding:15px 17px 0">Cost attribution by engine</h2>
           ${table({
             headers: ['Engine', 'Executions', 'Provider cost', 'Billed', 'Share'],
             align: ['', 'num', 'num', 'num', ''],
@@ -187,7 +187,7 @@ export async function billing(root) {
 
         <div>
           <div class="card" style="margin-bottom:14px">
-            <h3>Enforcement sequence</h3>
+            <h2>Enforcement sequence</h2>
             <div class="split-list">
               <div class="row"><span class="lbl">1 · Route</span><span class="val">by engine and capability</span></div>
               <div class="row"><span class="lbl">2 · Reserve</span><span class="val">or the call never happens</span></div>
@@ -201,7 +201,7 @@ export async function billing(root) {
           </div>
 
           <div class="card">
-            <h3>AI control plane</h3>
+            <h2>AI control plane</h2>
             ${
               plane
                 ? html`<div class="split-list">
@@ -223,7 +223,7 @@ export async function billing(root) {
       </div>
 
       <div class="card">
-        <h3>Budget caps</h3>
+        <h2>Budget caps</h2>
         ${
           Object.keys(wallet.caps ?? {}).length === 0
             ? html`<div class="empty"><b>No caps configured</b>Monthly, per-project and per-module caps can be set to make AI spend predictable.</div>`

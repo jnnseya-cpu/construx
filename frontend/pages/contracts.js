@@ -139,7 +139,7 @@ export async function contracts(root) {
         !letters || letters.total === 0
           ? ''
           : html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Correspondence — what is awaiting a reply</h3>
+              <h2 style="padding:15px 17px 0">Correspondence — what is awaiting a reply</h2>
               <div style="padding:8px 17px 0"><div class="metric-sub">${letters.summary}</div></div>
               ${
                 letters.deemedAccepted.length === 0
@@ -187,22 +187,22 @@ export async function contracts(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div ${raw(drillable('Variations', variationSources))}>
-          <h3>Variations</h3>
+          <h2>Variations</h2>
           <div class="metric orange">${b.Variation.length}</div>
           <div class="metric-sub">${approvedVariations.length} agreed · ${openVariations.length} open · ${domestic.length} domestic</div>
         </div>
         <div ${raw(drillable('Variation value', variationSources))}>
-          <h3>Variation value</h3>
+          <h2>Variation value</h2>
           <div class="metric">${money(variationValue)}</div>
           <div class="metric-sub">instructed and claimed, at valuation</div>
         </div>
         <div ${raw(drillable('Assessed entitlement', claimSources))}>
-          <h3>Assessed entitlement</h3>
+          <h2>Assessed entitlement</h2>
           <div class="metric warn">${claim ? days(claim.assessedDays) : '—'}</div>
           <div class="metric-sub">${claim ? `against ${days(claim.claimedDays)} claimed` : 'no claim opened'}</div>
         </div>
         <div ${raw(drillable('Entitlement score', claimSources))}>
-          <h3>Entitlement score</h3>
+          <h2>Entitlement score</h2>
           <div class="metric ${raw(!claim ? '' : claim.entitlementScore >= 0.7 ? 'good' : claim.entitlementScore >= 0.4 ? 'warn' : 'bad')}">
             ${claim ? claim.entitlementScore : '—'}
           </div>
@@ -215,13 +215,13 @@ export async function contracts(root) {
       ${
         claim
           ? html`<div class="card" style="margin-bottom:14px">
-              <h3>Claim assessment</h3>
+              <h2>Claim assessment</h2>
               <div class="notice ${raw(claim.entitlementScore >= 0.7 ? 'ok' : claim.entitlementScore >= 0.4 ? 'warn' : 'err')}" style="margin-bottom:14px">
                 ${claim.recommendation}
               </div>
               <div class="grid g2">
                 <div>
-                  <h3>Strengths</h3>
+                  <h2>Strengths</h2>
                   ${
                     (claim.strengths ?? []).length === 0
                       ? html`<div class="metric-sub">None recorded.</div>`
@@ -229,7 +229,7 @@ export async function contracts(root) {
                   }
                 </div>
                 <div>
-                  <h3>Weaknesses</h3>
+                  <h2>Weaknesses</h2>
                   ${
                     (claim.weaknesses ?? []).length === 0
                       ? html`<div class="metric-sub">None recorded.</div>`
@@ -244,7 +244,7 @@ export async function contracts(root) {
       ${
         attribution
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Delay attribution — ${days(attribution.totalCriticalDelayDays)} of critical delay</h3>
+              <h2 style="padding:15px 17px 0">Delay attribution — ${days(attribution.totalCriticalDelayDays)} of critical delay</h2>
               <div style="padding:0 17px 12px" class="grid g4">
                 <div><div class="metric bad" style="font-size:20px">${days(attribution.employerRiskDays)}</div><div class="metric-sub">employer risk</div></div>
                 <div><div class="metric" style="font-size:20px">${days(attribution.contractorRiskDays)}</div><div class="metric-sub">contractor risk</div></div>
@@ -282,7 +282,7 @@ export async function contracts(root) {
       ${
         calendar && (calendar.entries.length > 0 || calendar.running.length > 0)
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Obligations calendar</h3>
+              <h2 style="padding:15px 17px 0">Obligations calendar</h2>
               <div style="padding:0 17px"><div class="metric-sub">
                 A reactive obligation has no date until something happens, and is lost by not noticing. A dated one
                 exists from the day the contract is signed and is missed because nothing triggers it. They are kept
@@ -336,7 +336,7 @@ export async function contracts(root) {
       ${
         disputes && disputes.total > 0
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Adjudication — HGCRA 1996 s.108</h3>
+              <h2 style="padding:15px 17px 0">Adjudication — HGCRA 1996 s.108</h2>
               <div style="padding:0 17px"><div class="metric-sub">
                 A party may refer a dispute at any time. Seven days from the notice to secure an appointment and serve the
                 referral; twenty-eight from the referral to a decision. Miss the first and the appointment is a nullity;
@@ -389,7 +389,7 @@ export async function contracts(root) {
 
       <div class="grid g2" style="margin-bottom:14px">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Variation control matrix</h3>
+          <h2 style="padding:15px 17px 0">Variation control matrix</h2>
           <div style="padding:0 17px"><div class="metric-sub">
             One change, both sides of it. Change is where money leaves a contract quietly, and it leaves in
             two directions — cost the business will pay and never charged on, and a price agreed with the client
@@ -441,7 +441,7 @@ export async function contracts(root) {
         </div>
 
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Notices served</h3>
+          <h2 style="padding:15px 17px 0">Notices served</h2>
           ${table({
             headers: ['Ref', 'Type', 'Served on', 'Elapsed', 'Time bar'],
             align: ['', '', '', 'num', ''],
@@ -459,7 +459,7 @@ export async function contracts(root) {
 
       <div class="grid g2">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Obligation register — time-barred</h3>
+          <h2 style="padding:15px 17px 0">Obligation register — time-barred</h2>
           ${table({
             headers: ['Category', 'Time bar', 'Owner', 'Status'],
             align: ['', 'num', '', ''],
@@ -469,7 +469,7 @@ export async function contracts(root) {
         </div>
 
         <div class="card">
-          <h3>Contract terms</h3>
+          <h2>Contract terms</h2>
           ${
             contract
               ? html`${
@@ -525,7 +525,7 @@ export async function contracts(root) {
         signing
           ? html`<div class="card pad0" style="margin-top:14px">
               <div style="padding:15px 17px 0">
-                <h3>Signatures</h3>
+                <h2>Signatures</h2>
                 <p class="metric-sub" style="margin-bottom:12px">
                   <b>Witnessed by the platform, not by the signatory.</b> What a signature here proves is that an identity the
                   platform authenticated, with multi-factor satisfied, affirmed a named document by its content hash at a recorded
@@ -557,7 +557,7 @@ export async function contracts(root) {
               ${
                 signing.signatures.length > 0
                   ? html`<div style="padding:0 17px 15px">
-                      <h3 style="margin-top:14px">Signed</h3>
+                      <h2 style="margin-top:14px">Signed</h2>
                       ${table({
                         headers: ['Who', 'Capacity', 'What they agreed', 'When', 'Verifies'],
                         rows: signing.signatures.map((s) => [

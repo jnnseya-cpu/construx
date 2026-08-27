@@ -215,7 +215,7 @@ export async function procurement(root) {
       ${
         master
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Master pricing — the number that goes out</h3>
+              <h2 style="padding:15px 17px 0">Master pricing — the number that goes out</h2>
               <div style="padding:0 17px"><div class="metric-sub">
                 Each package is carried from its assigned route: bought packages at what a supplier agreed to do the work
                 for, kept packages at the estimate. Which figure counts is decided by the route, never by which number is
@@ -263,17 +263,17 @@ export async function procurement(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div ${raw(drillable('Design maturity', maturitySources))}>
-          <h3>Design maturity</h3>
+          <h2>Design maturity</h2>
           <div class="metric ${raw(!maturity ? '' : maturity.score >= 80 ? 'good' : maturity.score >= 60 ? 'warn' : 'bad')}">${maturity ? maturity.score : '—'}</div>
           <div class="metric-sub">${maturity ? `basis: ${humanise(maturity.recommendedPricingBasis)}` : 'not assessed'}</div>
         </div>
         <div ${raw(drillable('Tender estimate', estimateSources))}>
-          <h3>Tender estimate</h3>
+          <h2>Tender estimate</h2>
           <div class="metric orange">${estimate ? money(estimate.totalMinor) : '—'}</div>
           <div class="metric-sub">${estimate ? `${badgeText(estimate.status)} · margin ${pct(estimate.marginPercent, 1)}` : ''}</div>
         </div>
         <div ${raw(drillable('Returns received', returnSources))}>
-          <h3>Returns received</h3>
+          <h2>Returns received</h2>
           <div class="metric">${returnsCount ?? '—'}</div>
           <div class="metric-sub">${
             returnsCount === null
@@ -284,7 +284,7 @@ export async function procurement(root) {
           }</div>
         </div>
         <div ${raw(drillable('Buyout against target', buyoutSources))}>
-          <h3>Buyout against target</h3>
+          <h2>Buyout against target</h2>
           <div class="metric ${raw((subcontract?.buyoutDeltaMinor ?? 0) >= 0 ? 'good' : 'bad')}">
             ${subcontract ? money(subcontract.buyoutDeltaMinor) : '—'}
           </div>
@@ -298,7 +298,7 @@ export async function procurement(root) {
         !reconciliation || reconciliation.invited === 0
           ? ''
           : html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Who was asked, and who answered</h3>
+              <h2 style="padding:15px 17px 0">Who was asked, and who answered</h2>
               <div style="padding:8px 17px 0"><div class="metric-sub">${reconciliation.summary}</div></div>
               ${
                 reconciliation.unmatchable
@@ -354,7 +354,7 @@ export async function procurement(root) {
         routes.routes.length === 0
           ? ''
           : html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Buy it or do it — the route on every package</h3>
+              <h2 style="padding:15px 17px 0">Buy it or do it — the route on every package</h2>
               <div style="padding:8px 17px 0"><div class="metric-sub">
                 Raw is what the firm sent. Normalised is the same scope, differently priced — a correction. Evaluated adds what
                 choosing that route costs us in risk, interface, management and programme — an addition. Mixing the two produces a
@@ -407,7 +407,7 @@ export async function procurement(root) {
         enquiries.enquiries.length === 0
           ? ''
           : html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Enquiries — which pack each firm is holding</h3>
+              <h2 style="padding:15px 17px 0">Enquiries — which pack each firm is holding</h2>
               <div style="padding:8px 17px 0"><div class="metric-sub">
                 An addendum goes out on the Tuesday and two of five bidders price the Monday pack. Nothing in the returns says so,
                 and the comparison then ranks five prices for two different scopes. Every issue record names the exact revision and
@@ -466,7 +466,7 @@ export async function procurement(root) {
         bill.schedules.length === 0
           ? ''
           : html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Measurement — what the estimate is built on</h3>
+              <h2 style="padding:15px 17px 0">Measurement — what the estimate is built on</h2>
               <div style="padding:8px 17px 0"><div class="metric-sub">
                 Direct cost only: preliminaries, risk and overhead-and-profit are priced once at the estimate above, never spread
                 across item rates. Every quantity names the drawing and revision it came off, or the person who authorised the
@@ -519,7 +519,7 @@ export async function procurement(root) {
         intel.comparisons.length === 0
           ? ''
           : html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Return comparisons — and how much of each is settled</h3>
+              <h2 style="padding:15px 17px 0">Return comparisons — and how much of each is settled</h2>
               <div style="padding:8px 17px 0"><div class="metric-sub">
                 Raw is what the firm sent and is never edited. Adjustments sit beside it, each one citing the return line it
                 corrects or the clarification that authorises it. Where a firm has not returned, or a material query is still
@@ -561,7 +561,7 @@ export async function procurement(root) {
         intel.clarifications.length === 0
           ? ''
           : html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Clarification register</h3>
+              <h2 style="padding:15px 17px 0">Clarification register</h2>
               <div style="padding:8px 17px 0"><div class="metric-sub">
                 Every question against the document, clause, drawing or package it concerns, and who the answer went to.
                 A bidder who had the answer three days before the others is what makes an award challengeable, so the
@@ -606,9 +606,9 @@ export async function procurement(root) {
         estimate?.heads
           ? html`
             <div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">
+              <h2 style="padding:15px 17px 0">
                 Estimate build-up${estimate.durationWeeks ? ` — ${estimate.durationWeeks} weeks on site` : ''}
-              </h3>
+              </h2>
               <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
                 Each head is priced on the basis it actually has. Site staff, welfare, logistics, safety and quality are
                 weekly costs, so a programme that moves re-prices the tender instead of quietly eating the margin.
@@ -644,22 +644,22 @@ export async function procurement(root) {
 
             <div class="grid g4" style="margin-bottom:14px">
               <div class="card">
-                <h3>Prelims as % of works</h3>
+                <h2>Prelims as % of works</h2>
                 <div class="metric ${raw(estimate.benchmarks.prelimsPercentOfWorks > 25 ? 'warn' : 'good')}">${pct(estimate.benchmarks.prelimsPercentOfWorks, 1)}</div>
                 <div class="metric-sub">A benchmark, never an input — priced as a percentage, prelims do not move when the programme does.</div>
               </div>
               <div class="card">
-                <h3>Contingency as % of cost</h3>
+                <h2>Contingency as % of cost</h2>
                 <div class="metric">${pct(estimate.benchmarks.riskPercentOfCost, 1)}</div>
                 <div class="metric-sub">Drawn from the quantified register at P80, not from a round number.</div>
               </div>
               <div class="card">
-                <h3>Weekly burn</h3>
+                <h2>Weekly burn</h2>
                 <div class="metric">${money(estimate.benchmarks.weeklyBurnMinor)}</div>
                 <div class="metric-sub">${money(estimate.benchmarks.costPerWeekOfSiteOverheadMinor)} of it is site-wide cost that runs whatever the works do.</div>
               </div>
               <div class="card">
-                <h3>Margin</h3>
+                <h2>Margin</h2>
                 <div class="metric ${raw(estimate.marginPercent > 0 ? 'good' : 'bad')}">${pct(estimate.marginPercent, 2)}</div>
                 <div class="metric-sub">Profit over the tender total, which is always below the percentage applied.</div>
               </div>
@@ -684,10 +684,10 @@ export async function procurement(root) {
         funding
           ? html`
             <div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">
+              <h2 style="padding:15px 17px 0">
                 Cash flow — peak funding requirement
                 ${badge(humanise(funding.verdict), funding.verdict === 'FUNDABLE' ? 'ok' : funding.verdict === 'TIGHT' ? 'warn' : 'bad')}
-              </h3>
+              </h2>
               <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
                 The margin is a statement about cost. This is a statement about cash, and it is the one that closes
                 companies — a contract can cover its cost, carry a healthy margin, and still take more working capital
@@ -732,7 +732,7 @@ export async function procurement(root) {
       }
 
       <div class="card pad0" style="margin-bottom:14px">
-        <h3 style="padding:15px 17px 0">Bid evaluation${evaluation ? ` — ${evaluation.method.price} price / ${evaluation.method.programme} programme / ${humanise(evaluation.method.risk)} risk` : ''}</h3>
+        <h2 style="padding:15px 17px 0">Bid evaluation${evaluation ? ` — ${evaluation.method.price} price / ${evaluation.method.programme} programme / ${humanise(evaluation.method.risk)} risk` : ''}</h2>
         ${table({
           headers: ['Rank', 'Supplier', 'Price', 'Duration', 'Price', 'Prog', 'Risk', 'Total', 'Flags', 'Award'],
           align: ['', '', 'num', 'num', 'num', 'num', 'num', 'num', '', ''],
@@ -754,7 +754,7 @@ export async function procurement(root) {
 
       <div class="grid g2" style="margin-bottom:14px">
         <div class="card">
-          <h3>Award conditions</h3>
+          <h2>Award conditions</h2>
           ${
             winner
               ? html`<p style="font-size:13px;color:var(--text-2);margin-bottom:12px">${evaluation.recommendation}</p>
@@ -768,7 +768,7 @@ export async function procurement(root) {
         </div>
 
         <div class="card">
-          <h3>Adjudication</h3>
+          <h2>Adjudication</h2>
           ${
             adjudication
               ? html`<div class="split-list">
@@ -785,7 +785,7 @@ export async function procurement(root) {
 
       <div class="grid g2">
         <div class="card">
-          <h3>Tender package completeness</h3>
+          <h2>Tender package completeness</h2>
           ${
             pack
               ? html`<div class="metric ${raw(pack.completenessScore === 1 ? 'good' : 'warn')}">${pct(pack.completenessScore * 100, 0)}</div>
@@ -800,7 +800,7 @@ export async function procurement(root) {
         </div>
 
         <div class="card">
-          <h3>Subcontract — what carried forward</h3>
+          <h2>Subcontract — what carried forward</h2>
           ${
             subcontract
               ? html`<div class="split-list">

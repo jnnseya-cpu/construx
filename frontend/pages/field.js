@@ -125,7 +125,7 @@ export async function field(root) {
         carrying.length === 0
           ? ''
           : html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">On this device, not yet on the platform</h3>
+              <h2 style="padding:15px 17px 0">On this device, not yet on the platform</h2>
               <div style="padding:8px 17px 0"><div class="metric-sub">
                 ${carrying.length} file${carrying.length === 1 ? '' : 's'} captured here and still waiting.
                 The outbox retries whenever this device is online and the record that names a file has to land
@@ -150,7 +150,7 @@ export async function field(root) {
       }
 
       <div class="card" style="margin-bottom:14px">
-        <h3>Daily site record</h3>
+        <h2>Daily site record</h2>
         <p class="metric-sub" style="margin-bottom:12px">
           Labour, plant and weather for the shift. These are the numbers a delay claim is later argued from,
           so they are captured once, on the day, against the activity they relate to.
@@ -211,7 +211,7 @@ export async function field(root) {
       ${
         diary
           ? html`<div class="card" style="margin-bottom:14px">
-              <h3>The diary as evidence</h3>
+              <h2>The diary as evidence</h2>
               <p class="metric-sub" style="margin-bottom:12px">
                 A delay claim stands on an unbroken contemporaneous record. What decides whether it is one is
                 the days with no entry and the entries written long after the event — both invisible reading it a day at a time.
@@ -239,22 +239,22 @@ export async function field(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div ${raw(drillable('Activities complete', taskSources))}>
-          <h3>Activities complete</h3>
+          <h2>Activities complete</h2>
           <div class="metric good">${complete.length}<span style="font-size:16px;color:var(--text-3)"> / ${b.Task.length}</span></div>
           <div class="metric-sub">${pct(coverage, 0)} of activities carry a measurement</div>
         </div>
         <div ${raw(drillable('Progress records', progressSources))}>
-          <h3>Progress records</h3>
+          <h2>Progress records</h2>
           <div class="metric orange">${b.ProgressMeasurement.length}</div>
           <div class="metric-sub">each one evidenced before it was accepted</div>
         </div>
         <div ${raw(drillable('Open snags', snagSources))}>
-          <h3>Open snags</h3>
+          <h2>Open snags</h2>
           <div class="metric ${raw(openSnags.length > 0 ? 'warn' : 'good')}">${openSnags.length}</div>
           <div class="metric-sub">${dispatched.length} dispatched to trade</div>
         </div>
         <div ${raw(drillable('Evidence items', evidenceSources))}>
-          <h3>Evidence items</h3>
+          <h2>Evidence items</h2>
           <div class="metric">${b.EvidenceItem.length}</div>
           <div class="metric-sub">hashed and linked to the events that rely on them</div>
         </div>
@@ -283,7 +283,7 @@ export async function field(root) {
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Progress by activity</h3>
+          <h2 style="padding:15px 17px 0">Progress by activity</h2>
           ${table({
             headers: ['Activity', 'Planned', 'Elapsed', 'Complete', 'Slippage'],
             align: ['', 'num', 'num', '', 'num'],
@@ -300,7 +300,7 @@ export async function field(root) {
 
         <div>
           <div class="card" style="margin-bottom:14px">
-            <h3>Snag dispatch by cost code</h3>
+            <h2>Snag dispatch by cost code</h2>
             ${
               byTrade.size === 0
                 ? html`<div class="empty"><b>Nothing outstanding</b>No open snags to route.</div>`
@@ -314,7 +314,7 @@ export async function field(root) {
           </div>
 
           <div class="card">
-            <h3>Quality &amp; commissioning</h3>
+            <h2>Quality &amp; commissioning</h2>
             <div class="split-list">
               <div class="row"><span class="lbl">Inspections</span><span class="val">${b.QualityInspection.length}</span></div>
               <div class="row"><span class="lbl">Non-conformances</span><span class="val">${b.NCR.length}</span></div>
@@ -327,7 +327,7 @@ export async function field(root) {
 
       <div class="grid g2">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Snag register</h3>
+          <h2 style="padding:15px 17px 0">Snag register</h2>
           ${table({
             headers: ['Ref', 'Location', 'Description', 'Trade', 'Status'],
             rows: b.Snag.map((s) => [
@@ -342,7 +342,7 @@ export async function field(root) {
         </div>
 
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Site walk</h3>
+          <h2 style="padding:15px 17px 0">Site walk</h2>
           ${table({
             headers: ['Ref', 'Category', 'What was seen', 'Owner', 'By', 'Status'],
             rows: b.SiteObservation.map((o) => [
@@ -365,10 +365,10 @@ export async function field(root) {
         site
           ? html`
             <div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">
+              <h2 style="padding:15px 17px 0">
                 Site visit — what the walk still obliges
                 ${site.latePermits.length > 0 ? badge(`${site.latePermits.length} late`, 'bad') : ''}
-              </h3>
+              </h2>
               <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
                 ${site.summary} A finding is not closed when the visit ends — it is closed when the thing it obliged has
                 been done, and some of them are not done until handover.
@@ -406,7 +406,7 @@ export async function field(root) {
               ${
                 site.logistics
                   ? html`<div style="padding:0 17px 4px">
-                      <h3 style="margin-top:12px">Logistics plan, version ${site.logistics.version}</h3>
+                      <h2 style="margin-top:12px">Logistics plan, version ${site.logistics.version}</h2>
                       ${
                         site.logistics.warnings.length === 0
                           ? html`<div class="metric-sub">Every check the platform can settle by arithmetic passes.</div>`
@@ -446,7 +446,7 @@ export async function field(root) {
 
       <div class="grid g2">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Evidence register</h3>
+          <h2 style="padding:15px 17px 0">Evidence register</h2>
           ${table({
             headers: ['Type', 'Description', 'Captured', 'Hash'],
             align: ['', '', '', 'mono'],
@@ -462,7 +462,7 @@ export async function field(root) {
         productivity
           ? html`<div class="card pad0" style="margin-top:14px">
               <div style="padding:15px 17px 0">
-                <h3>Productivity against plan</h3>
+                <h2>Productivity against plan</h2>
                 <p class="metric-sub" style="margin-bottom:12px">
                   Days earned over days spent. Below 1.0 an activity is taking longer than the work done justifies —
                   which is a different fact from being behind, and the one that says whether it will catch up.

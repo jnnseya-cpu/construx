@@ -117,7 +117,10 @@ const ICONS = {
 
 export function icon(name) {
   return raw(
-    `<svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="${ICONS[name] ?? ICONS.grid}"/></svg>`,
+    // `aria-hidden` because every one of these sits beside its own text label.
+    // An icon that is announced as well as its label reads the item twice, and
+    // WCAG 1.1.1 is satisfied by the label rather than by naming the glyph.
+    `<svg class="ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="${ICONS[name] ?? ICONS.grid}"/></svg>`,
   );
 }
 
@@ -358,7 +361,7 @@ function sidebar(active) {
   // anchor is also what lets them middle-click it, copy the address, or see
   // where it goes before they press it. `/` leaves the shell for the public
   // site, so it is a document navigation rather than a client route.
-  return html`<aside class="sidebar">
+  return html`<aside class="sidebar" aria-label="Primary">
     <a class="sidebar-mark" href="/" aria-label="CONSTRUX home">
       <!-- The reduced mark. Geometry matches frontend/logo-glyph.svg; at 19px
            the full mark's crane and ground line become grey smudges, which read
@@ -376,8 +379,8 @@ function sidebar(active) {
     ${NAV.map((group) => {
       const visible = group.items.filter((item) => reachable(item));
       if (visible.length === 0) return '';
-      return html`<div class="nav-group">
-        <div class="nav-group-label">${group.group}</div>
+      return html`<nav class="nav-group" aria-labelledby="navgroup-${raw(group.group.toLowerCase().replace(/[^a-z]+/g, '-'))}">
+        <div class="nav-group-label" id="navgroup-${raw(group.group.toLowerCase().replace(/[^a-z]+/g, '-'))}">${group.group}</div>
         ${group.items.map((item) => {
           if (!reachable(item)) {
             return html`<button class="nav-item locked" title="${lockReason(item)}">
@@ -388,7 +391,7 @@ function sidebar(active) {
             ${icon(item.icon)}<span>${item.label}</span>
           </button>`;
         })}
-      </div>`;
+      </nav>`;
     })}
 
     <div class="sidebar-foot">
@@ -437,7 +440,7 @@ function walletPercent() {
 
 function topbar() {
   const user = state.session?.user;
-  return html`<div class="topbar">
+  return html`<header class="topbar">
     <div class="crumb">
       ${
         isOperator()
@@ -452,7 +455,7 @@ function topbar() {
       <span class="avatar">${initials(user?.name)}</span>
       <span><span class="nm">${user?.name}</span><br><span class="rl">${(user?.roles ?? []).join(', ')}</span></span>
     </button>
-  </div>`;
+  </header>`;
 }
 
 async function loadContext() {
@@ -501,12 +504,12 @@ async function draw() {
     root,
     html`<div class="shell">
       ${sidebar(page)}
-      <div class="main">
+      <main class="main">
         ${topbar()}
         <div class="view" id="view"><div class="grid g4">
           <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
         </div></div>
-      </div>
+      </main>
     </div>`,
   );
 
@@ -521,7 +524,7 @@ async function draw() {
       root,
       html`<div class="shell">
         ${sidebar(page)}
-        <div class="main">${topbar()}<div class="view" id="view"></div></div>
+        <main class="main">${topbar()}<div class="view" id="view"></div></main>
       </div>`,
     );
     document.getElementById('user-chip')?.addEventListener('click', () => {

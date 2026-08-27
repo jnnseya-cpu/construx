@@ -181,22 +181,22 @@ export async function construction(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div>
-          <h3>Permits live now</h3>
+          <h2>Permits live now</h2>
           <div class="metric ${raw(livePermits.length === 0 ? '' : 'good')}">${livePermits.length}</div>
           <div class="metric-sub">${b.Permit.length} issued on this project</div>
         </div>
         <div>
-          <h3>Hold points not released</h3>
+          <h2>Hold points not released</h2>
           <div class="metric ${raw((quality?.holdPointsOpen ?? 0) > 0 ? 'warn' : 'good')}">${quality?.holdPointsOpen ?? '—'}</div>
           <div class="metric-sub">work should not proceed past any of them</div>
         </div>
         <div>
-          <h3>Non-conformances open</h3>
+          <h2>Non-conformances open</h2>
           <div class="metric ${raw(openNcrs.length > 0 ? 'warn' : 'good')}">${openNcrs.length}</div>
           <div class="metric-sub">${b.NCR.length - openNcrs.length} dispositioned</div>
         </div>
         <div>
-          <h3>Tickets expiring within a month</h3>
+          <h2>Tickets expiring within a month</h2>
           <div class="metric ${raw(expiringTickets.length > 0 ? 'warn' : 'good')}">${expiringTickets.length}</div>
           <div class="metric-sub">${b.Competency.length} qualifications on the register</div>
         </div>
@@ -230,7 +230,7 @@ export async function construction(root) {
       }
 
       <div class="card pad0" style="margin-bottom:14px">
-        <h3 style="padding:15px 17px 0">Permits to work</h3>
+        <h2 style="padding:15px 17px 0">Permits to work</h2>
         <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
           One activity, one location, two times. Work outside any of the three is unauthorised work, so the register
           shows the window rather than a status.
@@ -257,7 +257,7 @@ export async function construction(root) {
 
       <div class="grid g2" style="margin-bottom:14px">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Method statements</h3>
+          <h2 style="padding:15px 17px 0">Method statements</h2>
           <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
             A permit cites one, and the platform refuses a permit that cites a draft. The approver is never the author.
           </p>
@@ -276,7 +276,7 @@ export async function construction(root) {
         </div>
 
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Inductions</h3>
+          <h2 style="padding:15px 17px 0">Inductions</h2>
           <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
             Recorded before first shift. The platform refuses one until the construction phase plan is approved, which is
             CDM enforced rather than a note.
@@ -299,7 +299,7 @@ export async function construction(root) {
       ${
         expiringTickets.length > 0
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Qualifications expiring, soonest first</h3>
+              <h2 style="padding:15px 17px 0">Qualifications expiring, soonest first</h2>
               <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
                 A ticket that lapses on the Wednesday does not cover a permit that runs to the Friday, and the permit
                 that needs it has usually not been written yet.
@@ -321,7 +321,7 @@ export async function construction(root) {
       }
 
       <div class="card pad0" style="margin-bottom:14px">
-        <h3 style="padding:15px 17px 0">Inspection and test plans</h3>
+        <h2 style="padding:15px 17px 0">Inspection and test plans</h2>
         <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
           A hold point stops the work. A witness point must be attended. A review point is checked afterwards. The
           difference decides whether a missed step is a defect or a paperwork gap.
@@ -346,7 +346,7 @@ export async function construction(root) {
       </div>
 
       <div class="card pad0" style="margin-bottom:14px">
-        <h3 style="padding:15px 17px 0">Non-conformances</h3>
+        <h2 style="padding:15px 17px 0">Non-conformances</h2>
         <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
           Work that does not meet the specification. Use-as-is is a legitimate disposition and the one that matters: it
           accepts a departure into the permanent works, so it carries a justification and a name.

@@ -73,14 +73,14 @@ export async function enterprise(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">
-          <h3>Estate</h3>
+          <h2>Estate</h2>
           <div class="metric orange">${estate.projects}</div>
           <div class="metric-sub">
             ${Object.entries(estate.byPhase).map(([p, c]) => `${c} ${humanise(p).toLowerCase()}`).join(' · ') || 'no projects'}
           </div>
         </div>
         <div class="card">
-          <h3>Contract value</h3>
+          <h2>Contract value</h2>
           <div class="metric">${mixed ? '—' : money(estate.totalContractValueMinor, currency)}</div>
           <div class="metric-sub">
             ${mixed
@@ -89,7 +89,7 @@ export async function enterprise(root) {
           </div>
         </div>
         <div class="card">
-          <h3>Forecast variance</h3>
+          <h2>Forecast variance</h2>
           <div class="metric ${raw(financial.varianceMinor < 0 ? 'bad' : 'good')}">
             ${financial.coverage.withCvr === 0 ? '—' : money(financial.varianceMinor, currency)}
           </div>
@@ -100,7 +100,7 @@ export async function enterprise(root) {
           </div>
         </div>
         <div class="card">
-          <h3>Delivery</h3>
+          <h2>Delivery</h2>
           <div class="metric ${raw(delivery.behind > 0 ? 'bad' : delivery.atRisk > 0 ? 'warn' : 'good')}">
             ${delivery.coverage.withBaseline === 0 ? '—' : `${delivery.onTrack}/${delivery.coverage.withBaseline}`}
           </div>
@@ -115,7 +115,7 @@ export async function enterprise(root) {
       ${
         risks.length > 0
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Largest exposures across the estate</h3>
+              <h2 style="padding:15px 17px 0">Largest exposures across the estate</h2>
               ${table({
                 headers: ['Risk', 'Project', 'Severity', 'Probability', 'Exposure'],
                 align: ['', '', '', 'num', 'num'],
@@ -136,7 +136,7 @@ export async function enterprise(root) {
       }
 
       <div class="card pad0" style="margin-bottom:14px">
-        <h3 style="padding:15px 17px 0">Portfolios</h3>
+        <h2 style="padding:15px 17px 0">Portfolios</h2>
         ${table({
           headers: ['Portfolio', 'Governance', 'Region', 'Budget target', 'Cadence', 'Risk appetite'],
           align: ['', '', '', 'num', '', ''],
@@ -153,7 +153,7 @@ export async function enterprise(root) {
       </div>
 
       <div class="card pad0" style="margin-bottom:14px">
-        <h3 style="padding:15px 17px 0">Project control</h3>
+        <h2 style="padding:15px 17px 0">Project control</h2>
         ${table({
           headers: ['Project', 'Sector', 'Phase', 'Progress', 'Cost', 'Schedule', 'Risk', 'Open', 'Value'],
           align: ['', '', '', 'num', '', '', 'num', 'num', 'num'],
@@ -182,7 +182,7 @@ export async function enterprise(root) {
       ${
         changes && changes.total > 0
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">What changed — last seven days</h3>
+              <h2 style="padding:15px 17px 0">What changed — last seven days</h2>
               ${table({
                 headers: ['Area', 'Movements', 'Most recent'],
                 align: ['', 'num', ''],
@@ -211,7 +211,7 @@ export async function enterprise(root) {
       ${
         forecast
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Completion confidence</h3>
+              <h2 style="padding:15px 17px 0">Completion confidence</h2>
               ${table({
                 headers: ['Project', 'P50 (wd)', 'P80 (wd)', 'Contract (wd)', 'Overrun at P80'],
                 align: ['', 'num', 'num', 'num', 'num'],
@@ -246,7 +246,7 @@ export async function enterprise(root) {
       }
 
       <div class="card pad0" style="margin-bottom:14px">
-        <h3 style="padding:15px 17px 0">Who owns the decision</h3>
+        <h2 style="padding:15px 17px 0">Who owns the decision</h2>
         ${table({
           headers: ['Capability', 'Approves', 'Escalates to', 'Creates'],
           rows: (ownership.areas ?? [])
@@ -281,7 +281,7 @@ export async function enterprise(root) {
       </div>
 
       <div class="card">
-        <h3>Lifecycle gates — what must be true to advance</h3>
+        <h2>Lifecycle gates — what must be true to advance</h2>
         ${table({
           headers: ['Phase', 'Purpose', 'Exit criteria'],
           rows: (gates.gates ?? []).map((g) => [

@@ -152,7 +152,7 @@ export async function control(root) {
         !gate
           ? ''
           : html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Stage gate — Definition of Done</h3>
+              <h2 style="padding:15px 17px 0">Stage gate — Definition of Done</h2>
               <div style="padding:8px 17px 0"><div class="metric-sub">
                 Seven clauses, each answered from the ledger rather than from a checklist somebody ticked. A clause the platform
                 cannot assess is reported as unassessable and never as passed — a gate that quietly passes what it did not check
@@ -191,7 +191,7 @@ export async function control(root) {
         gateDecisions.decisions.length === 0
           ? ''
           : html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Gate decisions and their conditions</h3>
+              <h2 style="padding:15px 17px 0">Gate decisions and their conditions</h2>
               ${table({
                 headers: ['Decided', 'Phase', 'Decision', 'Conditions', 'Past their date'],
                 align: ['', '', '', 'num', 'num'],
@@ -227,7 +227,7 @@ export async function control(root) {
       ${
         consistency
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Do the records agree?</h3>
+              <h2 style="padding:15px 17px 0">Do the records agree?</h2>
               <div style="padding:0 17px"><div class="metric-sub">
                 The programme computes a duration, the contract records a date, the estimate prices a scope and the
                 field record measures progress. Each is right about its own subject; none of them looks at the others.
@@ -298,14 +298,14 @@ export async function control(root) {
 
       <div class="grid g5" style="margin-bottom:14px">
         <div ${raw(drillable('This project', presentSources))}>
-          <h3>This project</h3>
+          <h2>This project</h2>
           <div class="metric ${raw(
             project.completenessPercent === null ? '' : project.completenessPercent >= 90 ? 'good' : project.completenessPercent >= 70 ? 'warn' : 'bad',
           )}">${project.completenessPercent === null ? '—' : pct(project.completenessPercent, 1)}</div>
           <div class="metric-sub">Of what is due and trackable in ${humanise(project.phase)}.</div>
         </div>
         <div class="card">
-          <h3>Gaps</h3>
+          <h2>Gaps</h2>
           <div class="metric ${raw(project.gaps.length === 0 ? 'good' : 'warn')}">${project.gaps.length}</div>
           <div class="metric-sub">
             ${project.blockingGaps.length > 0
@@ -314,7 +314,7 @@ export async function control(root) {
           </div>
         </div>
         <div class="card">
-          <h3>Not at this size</h3>
+          <h2>Not at this size</h2>
           <div class="metric">${project.stages.reduce((n, s) => n + s.notProportionate, 0)}</div>
           <div class="metric-sub">
             A ${project.projectScaleLabel} job does not need a programme baseline or a document control procedure. Demanding
@@ -322,12 +322,12 @@ export async function control(root) {
           </div>
         </div>
         <div class="card">
-          <h3>Not tracked here</h3>
+          <h2>Not tracked here</h2>
           <div class="metric">${project.notTracked.length}</div>
           <div class="metric-sub">Real control items with no home in the platform yet. Excluded from the score, not hidden.</div>
         </div>
         <div ${raw(drillable('Lessons captured', lessonSources))}>
-          <h3>Lessons captured</h3>
+          <h2>Lessons captured</h2>
           <div class="metric orange">${lessons ? lessons.lessons.length : '—'}</div>
           <div class="metric-sub">
             ${lessons ? `Across ${lessons.contributingProjects} project${lessons.contributingProjects === 1 ? '' : 's'}.` : 'Not visible to your role.'}
@@ -349,10 +349,10 @@ export async function control(root) {
       ${project.stages.map(
         (stage) => html`
           <div class="card pad0" style="margin-bottom:14px">
-            <h3 style="padding:15px 17px 0">
+            <h2 style="padding:15px 17px 0">
               ${stage.label}
               ${stage.completenessPercent === null ? badge('not yet due', '') : badge(pct(stage.completenessPercent, 0), stage.completenessPercent === 100 ? 'ok' : stage.completenessPercent >= 70 ? 'warn' : 'bad')}
-            </h3>
+            </h2>
             <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">${stage.purpose}</p>
             ${table({
               headers: ['Item', 'Status', 'Found', 'Why it is on the list'],
@@ -377,7 +377,7 @@ export async function control(root) {
         estate
           ? html`
             <div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Every project against the same standard</h3>
+              <h2 style="padding:15px 17px 0">Every project against the same standard</h2>
               <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
                 Worst first. A project manager can see their own gaps; only this view can see that the business keeps
                 missing the same thing.
@@ -399,7 +399,7 @@ export async function control(root) {
             ${
               estate.systemicGaps.length > 0
                 ? html`<div class="card pad0" style="margin-bottom:14px">
-                    <h3 style="padding:15px 17px 0">What the business is systematically missing</h3>
+                    <h2 style="padding:15px 17px 0">What the business is systematically missing</h2>
                     ${table({
                       headers: ['Item', 'Stage', 'Missing on', 'Why it matters'],
                       align: ['', '', 'num', ''],
@@ -422,7 +422,7 @@ export async function control(root) {
           ? html`
             <div class="grid g2" style="margin-bottom:14px">
               <div class="card">
-                <h3>What keeps costing money</h3>
+                <h2>What keeps costing money</h2>
                 <p style="font-size:12.5px;color:var(--text-3);margin-bottom:11px">
                   One project getting ground conditions wrong is bad luck. The same category recurring across projects is
                   a business problem no project team was in a position to see.
@@ -441,7 +441,7 @@ export async function control(root) {
                 }
               </div>
               <div class="card">
-                <h3>Where the library stands</h3>
+                <h2>Where the library stands</h2>
                 ${
                   lessons.observations.length === 0
                     ? html`<div class="empty"><b>Nothing to report</b></div>`
@@ -453,7 +453,7 @@ export async function control(root) {
             </div>
 
             <div class="card pad0">
-              <h3 style="padding:15px 17px 0">Lessons learned</h3>
+              <h2 style="padding:15px 17px 0">Lessons learned</h2>
               <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
                 Captured on the project that produced it and read from every other one, because a lesson only pays for
                 itself on a different job.
@@ -477,7 +477,7 @@ export async function control(root) {
       }
 
       <div class="card pad0" style="margin-top:14px">
-        <h3 style="padding:15px 17px 0">Meetings, and what came out of them</h3>
+        <h2 style="padding:15px 17px 0">Meetings, and what came out of them</h2>
         <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
           ${meetings.summary || 'No meeting has been minuted on this project.'}
           An action carried from an earlier meeting keeps the date it was originally given, so the overdue column below
@@ -506,7 +506,7 @@ export async function control(root) {
         (meetings.openActions ?? []).length === 0
           ? ''
           : html`<div class="card pad0" style="margin-top:14px">
-              <h3 style="padding:15px 17px 0">Every open action, worst first</h3>
+              <h2 style="padding:15px 17px 0">Every open action, worst first</h2>
               ${table({
                 headers: ['Ref', 'Action', 'Owner', 'Organisation', 'Due', 'Overdue by'],
                 align: ['', '', '', '', '', 'num'],

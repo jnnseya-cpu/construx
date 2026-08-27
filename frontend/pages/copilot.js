@@ -64,7 +64,7 @@ export async function copilot(root) {
       ${
         modes.length > 0
           ? html`<div class="card pad0" style="margin-bottom:20px">
-              <h3 style="padding:15px 17px 0">Who you are actually talking to</h3>
+              <h2 style="padding:15px 17px 0">Who you are actually talking to</h2>
               ${table({
                 headers: ['Mode', 'What it is for', 'What it reads', 'Engine runs here'],
                 rows: modes.map((m) => [

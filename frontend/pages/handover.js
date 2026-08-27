@@ -101,7 +101,7 @@ function stageWorkspace(acceptance, gate) {
 
   return html`
     <section class="card pad0" style="margin-bottom:14px" aria-labelledby="stage-workspace-h">
-      <h3 id="stage-workspace-h" style="padding:16px 18px 0">Handover stage — action queue</h3>
+      <h2 id="stage-workspace-h" style="padding:16px 18px 0">Handover stage — action queue</h2>
 
       <div class="split-list" style="padding:0 18px">
         <div class="row"><span class="lbl">Gate</span><span class="val">${gateCell}</span></div>
@@ -204,22 +204,22 @@ export async function handover(root) {
 
       <div class="grid g4" style="margin-bottom:14px">
         <div ${raw(drillable('Handover completeness', packSources))}>
-          <h3>Handover completeness</h3>
+          <h2>Handover completeness</h2>
           <div class="metric ${raw(!pack ? '' : pack.completeness === 1 ? 'good' : 'warn')}">${pack ? pct(pack.completeness * 100, 0) : '—'}</div>
           <div class="metric-sub">${pack ? `${(pack.gaps ?? []).length} gap(s) · ${humanise(pack.status)}` : 'no pack compiled'}</div>
         </div>
         <div ${raw(drillable('Registered assets', assetSources))}>
-          <h3>Registered assets</h3>
+          <h2>Registered assets</h2>
           <div class="metric orange">${b.AssetRegisterItem.length}</div>
           <div class="metric-sub">${activeWarranties.length} under active warranty</div>
         </div>
         <div ${raw(drillable('Open defects', defectSources))}>
-          <h3>Open defects</h3>
+          <h2>Open defects</h2>
           <div class="metric ${raw(openDefects.length > 0 ? 'warn' : 'good')}">${openDefects.length}</div>
           <div class="metric-sub">${coveredDefects.length} recharged to a manufacturer</div>
         </div>
         <div ${raw(drillable('5-year maintenance', forecastSources))}>
-          <h3>5-year maintenance</h3>
+          <h2>5-year maintenance</h2>
           <div class="metric">${forecast ? money(forecast.totalForecastMinor) : '—'}</div>
           <div class="metric-sub">${forecast ? `budget pressure ${forecast.budgetPressure}` : 'not forecast'}</div>
         </div>
@@ -229,7 +229,7 @@ export async function handover(root) {
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Asset register</h3>
+          <h2 style="padding:15px 17px 0">Asset register</h2>
           ${table({
             headers: ['Tag', 'Description', 'Manufacturer', 'Installed', 'Replacement due', 'Replacement cost'],
             align: ['', '', '', '', '', 'num'],
@@ -247,7 +247,7 @@ export async function handover(root) {
 
         <div>
           <div class="card" style="margin-bottom:14px">
-            <h3>Handover pack</h3>
+            <h2>Handover pack</h2>
             ${
               pack
                 ? html`<div class="split-list">
@@ -273,7 +273,7 @@ export async function handover(root) {
           </div>
 
           <div class="card">
-            <h3>Commissioning</h3>
+            <h2>Commissioning</h2>
             <div class="split-list">
               <div class="row"><span class="lbl">Tests recorded</span><span class="val">${b.CommissioningTest.length}</span></div>
               <div class="row"><span class="lbl">Accepted</span><span class="val">${accepted.length}</span></div>
@@ -286,7 +286,7 @@ export async function handover(root) {
 
       <div class="grid g2" style="margin-bottom:14px">
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Defects</h3>
+          <h2 style="padding:15px 17px 0">Defects</h2>
           ${table({
             headers: ['Ref', 'Description', 'Severity', 'Warranty', 'Target close'],
             rows: b.Defect.map((d) => [
@@ -301,7 +301,7 @@ export async function handover(root) {
         </div>
 
         <div class="card pad0">
-          <h3 style="padding:15px 17px 0">Work orders</h3>
+          <h2 style="padding:15px 17px 0">Work orders</h2>
           ${table({
             headers: ['Ref', 'Type', 'Priority', 'Estimated', 'Actual', 'Status'],
             align: ['', '', '', 'num', 'num', ''],
@@ -321,7 +321,7 @@ export async function handover(root) {
       ${
         forecast
           ? html`<div class="card pad0">
-              <h3 style="padding:15px 17px 0">Maintenance forecast — reliability-adjusted, ${forecast.horizonMonths} months</h3>
+              <h2 style="padding:15px 17px 0">Maintenance forecast — reliability-adjusted, ${forecast.horizonMonths} months</h2>
               ${table({
                 headers: ['Asset', 'Action', 'Due', 'Estimated cost', 'Priority'],
                 align: ['', '', '', 'num', ''],
@@ -345,7 +345,7 @@ export async function handover(root) {
         position
           ? html`<div class="card pad0" style="margin-top:14px">
               <div style="padding:15px 17px 0">
-                <h3>Operating position</h3>
+                <h2>Operating position</h2>
                 <p class="metric-sub" style="margin-bottom:12px">${position.summary}</p>
                 <div class="grid g4" style="margin-bottom:12px">
                   <div>
@@ -399,7 +399,7 @@ export async function handover(root) {
         queue && queue.items.length > 0
           ? html`<div class="card pad0" style="margin-top:14px">
               <div style="padding:15px 17px 0">
-                <h3>What needs doing</h3>
+                <h2>What needs doing</h2>
                 <p class="metric-sub" style="margin-bottom:12px">
                   ${queue.summary} Statutory inspections sort above emergencies — that looks wrong for a day and is right for
                   a year, because a missed statutory date is an offence and the emergency will still be an emergency in an hour.

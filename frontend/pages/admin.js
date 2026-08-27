@@ -188,12 +188,12 @@ export async function admin(root) {
           ? html`
               <div class="grid g4" style="margin-bottom:14px">
                 <div class="card">
-                  <h3>Revenue — today</h3>
+                  <h2>Revenue — today</h2>
                   <div class="metric">${money(overview.revenue.todayMinor)}</div>
                   <div class="metric-sub">${overview.revenue.receipts} receipt${overview.revenue.receipts === 1 ? '' : 's'} recorded in total</div>
                 </div>
                 <div class="card">
-                  <h3>Revenue — month to date</h3>
+                  <h2>Revenue — month to date</h2>
                   <div class="metric ${raw(mtdMovement === null ? '' : mtdMovement >= 0 ? 'good' : 'warn')}">${money(overview.revenue.monthToDateMinor)}</div>
                   <div class="metric-sub">${
                     mtdMovement === null
@@ -202,12 +202,12 @@ export async function admin(root) {
                   }</div>
                 </div>
                 <div class="card">
-                  <h3>Revenue — lifetime</h3>
+                  <h2>Revenue — lifetime</h2>
                   <div class="metric orange">${money(overview.revenue.lifetimeMinor)}</div>
                   <div class="metric-sub">every settled payment since launch</div>
                 </div>
                 <div class="card">
-                  <h3>Awaiting payment</h3>
+                  <h2>Awaiting payment</h2>
                   <div class="metric ${raw(overview.awaitingPayment.count > 0 ? 'info' : '')}">${money(overview.awaitingPayment.amountMinor)}</div>
                   <div class="metric-sub">${overview.awaitingPayment.count} top-up${overview.awaitingPayment.count === 1 ? '' : 's'} raised and unsettled</div>
                 </div>
@@ -215,7 +215,7 @@ export async function admin(root) {
 
               <div class="grid g4" style="margin-bottom:14px">
                 <div class="card">
-                  <h3>Tenancies</h3>
+                  <h2>Tenancies</h2>
                   <div class="metric ${raw(overview.tenancies.unreachable > 0 ? 'bad' : '')}">${overview.tenancies.total}</div>
                   <div class="metric-sub">
                     ${overview.tenancies.active} active · ${overview.tenancies.onTrial} on trial ·
@@ -228,12 +228,12 @@ export async function admin(root) {
                   </div>
                 </div>
                 <div class="card">
-                  <h3>New in 30 days</h3>
+                  <h2>New in 30 days</h2>
                   <div class="metric ${raw(overview.tenancies.newInWindow > 0 ? 'good' : '')}">${overview.tenancies.newInWindow}</div>
                   <div class="metric-sub">tenancies onboarded</div>
                 </div>
                 <div class="card">
-                  <h3>Seats assigned</h3>
+                  <h2>Seats assigned</h2>
                   <div class="metric">${overview.identities.seatsUsed}${overview.identities.seatsIncluded === null ? '' : ` / ${overview.identities.seatsIncluded}`}</div>
                   <div class="metric-sub">${
                     overview.identities.seatsIncluded === null
@@ -242,7 +242,7 @@ export async function admin(root) {
                   }</div>
                 </div>
                 <div class="card">
-                  <h3>Run-rate — this month</h3>
+                  <h2>Run-rate — this month</h2>
                   <div class="metric">${overview.revenue.runRateMinor === null ? '—' : money(overview.revenue.runRateMinor)}</div>
                   <div class="metric-sub">${
                     overview.revenue.runRateBasis
@@ -259,7 +259,7 @@ export async function admin(root) {
         burn
           ? html`<div class="grid g-2-1" style="margin-bottom:14px">
               <div class="card chart-card">
-                <h3>AI charged, provider cost and margin — last ${burn.windowDays} days</h3>
+                <h2>AI charged, provider cost and margin — last ${burn.windowDays} days</h2>
                 <div class="metric-sub" style="margin-bottom:12px">
                   What the estate was charged for AI against what the providers cost. Subscription revenue is not in
                   this line — it is in the tiles above.
@@ -276,7 +276,7 @@ export async function admin(root) {
                 })}
               </div>
               <div class="card">
-                <h3>Estate position</h3>
+                <h2>Estate position</h2>
                 <div class="split-list">
                   <div class="row"><span class="lbl">Charged</span><span class="val">${money(burn.billedMinor)}</span></div>
                   <div class="row"><span class="lbl">Provider cost</span><span class="val">${money(burn.rawCostMinor)}</span></div>
@@ -306,7 +306,7 @@ export async function admin(root) {
         burn
           ? html`<div class="grid g2" style="margin-bottom:14px">
               <div class="card">
-                <h3>Where the AI spend went</h3>
+                <h2>Where the AI spend went</h2>
                 <div class="metric-sub" style="margin-bottom:12px">
                   Realised routing split — computed from what was charged, not from the configured routing table. The
                   two differ every time a provider is unhealthy and traffic fails over.
@@ -322,7 +322,7 @@ export async function admin(root) {
                 })}
               </div>
               <div class="card">
-                <h3>Heaviest tenancies</h3>
+                <h2>Heaviest tenancies</h2>
                 <div class="metric-sub" style="margin-bottom:12px">By AI charged over the window, largest first.</div>
                 ${barChart({
                   bars: burn.tenants
@@ -352,7 +352,7 @@ export async function admin(root) {
 
       <div class="grid g3" style="margin-bottom:14px">
         <div class="card">
-          <h3>AI engines</h3>
+          <h2>AI engines</h2>
           <div class="metric ${raw(plane?.mode === 'local' ? 'info' : 'good')}">${
             plane ? `${(plane.available ?? []).filter((p) => p.healthy).length} of ${(plane.available ?? []).length} live` : '—'
           }</div>
@@ -377,7 +377,7 @@ export async function admin(root) {
         ${
           payments
             ? html`<div class="card">
-                <h3>Payment rails</h3>
+                <h2>Payment rails</h2>
                 <div class="metric ${raw(
                   payments.cardPayments.webhook.rejected > 0 && payments.cardPayments.webhook.accepted === 0 ? 'bad' : '',
                 )}">${[payments.cardPayments.configured, payments.mobileMoney.configured].filter(Boolean).length} of 2 keyed</div>
@@ -413,7 +413,7 @@ export async function admin(root) {
         ${
           estate?.estate
             ? html`<div class="card">
-                <h3>Storage across the estate</h3>
+                <h2>Storage across the estate</h2>
                 <div class="metric ${raw(estate.estate.atLimit > 0 ? 'bad' : estate.estate.atWarning > 0 ? 'warn' : '')}">${gb(estate.estate.heldBytes)}</div>
                 <div class="metric-sub" style="margin-bottom:12px">held against ${gb(estate.estate.committedBytes)} committed</div>
                 ${track(
@@ -437,7 +437,7 @@ export async function admin(root) {
       ${
         ready
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">
+              <h2 style="padding:15px 17px 0">
                 System control — what this deployment actually has configured
                 ${
                   ready.blocking.length > 0
@@ -446,7 +446,7 @@ export async function admin(root) {
                       ? badge(`${ready.degraded} half-configured`, 'warn')
                       : badge('production-ready', 'ok')
                 }
-              </h3>
+              </h2>
               <div class="metric-sub" style="padding:0 17px 10px">
                 ${ready.configured} of ${ready.capabilities.length} capabilities configured · environment
                 <b>${ready.variables}</b>. Read from this running process, not from a checklist. Every rail is set with
@@ -530,7 +530,7 @@ export async function admin(root) {
       ${
         estate
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">Tenant governance</h3>
+              <h2 style="padding:15px 17px 0">Tenant governance</h2>
               <div class="metric-sub" style="padding:0 17px 10px">
                 Commercial terms and credit only. An operator cannot open a project, a package or a daily log from
                 here — the account layer is enforced in ABAC, not in this page's markup.
@@ -567,10 +567,10 @@ export async function admin(root) {
       ${
         governance
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h3 style="padding:15px 17px 0">
+              <h2 style="padding:15px 17px 0">
                 Governance record — every act an operator is accountable for
                 ${governance.intact ? badge('chain intact', 'ok') : badge('CHAIN BROKEN', 'bad')}
-              </h3>
+              </h2>
               <div class="metric-sub" style="padding:0 17px 10px">
                 ${governance.total} event${governance.total === 1 ? '' : 's'} across
                 ${governance.chains.length} chain${governance.chains.length === 1 ? '' : 's'}.
@@ -619,7 +619,7 @@ export async function admin(root) {
         security
           ? html`<div class="grid g2" style="margin-bottom:14px">
               <div class="card">
-                <h3>Security stream</h3>
+                <h2>Security stream</h2>
                 <div class="metric ${raw(security.summary.repeatSources.length > 0 ? 'warn' : '')}">${security.summary.total}</div>
                 <div class="metric-sub" style="margin-bottom:12px">auth failures, denials, rate limits and admin access recorded at the gateway</div>
                 ${
@@ -642,7 +642,7 @@ export async function admin(root) {
                 }
               </div>
               <div class="card pad0">
-                <h3 style="padding:15px 17px 0">Most recent refusals</h3>
+                <h2 style="padding:15px 17px 0">Most recent refusals</h2>
                 ${table({
                   headers: ['Kind', 'Reason', 'Path', 'Source'],
                   rows: (security.events ?? [])
@@ -665,22 +665,22 @@ export async function admin(root) {
         logs
           ? html`<div class="grid g4" style="margin-bottom:14px">
               <div class="card">
-                <h3>Requests observed</h3>
+                <h2>Requests observed</h2>
                 <div class="metric">${logs.metrics?.totalRequests ?? '—'}</div>
                 <div class="metric-sub">since this process started</div>
               </div>
               <div class="card">
-                <h3>p95 latency</h3>
+                <h2>p95 latency</h2>
                 <div class="metric">${logs.metrics ? `${logs.metrics.p95DurationMs}ms` : '—'}</div>
                 <div class="metric-sub">measured at the gateway, not estimated</div>
               </div>
               <div class="card">
-                <h3>API surface</h3>
+                <h2>API surface</h2>
                 <div class="metric orange">${routes.routes.length}</div>
                 <div class="metric-sub">explicit routes, no backend discovery</div>
               </div>
               <div class="card">
-                <h3>Roles enforced</h3>
+                <h2>Roles enforced</h2>
                 <div class="metric">${orderedRoles.length}</div>
                 <div class="metric-sub">across ${orderedAreas.length} capability areas</div>
               </div>
@@ -692,7 +692,7 @@ export async function admin(root) {
         logs
           ? html`<div class="grid g-2-1" style="margin-bottom:14px">
               <div class="card pad0">
-                <h3 style="padding:15px 17px 0">Recent gateway activity</h3>
+                <h2 style="padding:15px 17px 0">Recent gateway activity</h2>
                 ${table({
                   headers: ['Method', 'Path', 'Status', 'Duration'],
                   align: ['', '', '', 'num'],
@@ -709,7 +709,7 @@ export async function admin(root) {
                 })}
               </div>
               <div class="card">
-                <h3>Denials by reason</h3>
+                <h2>Denials by reason</h2>
                 ${
                   Object.keys(logs.metrics?.denialsByReason ?? {}).length === 0
                     ? html`<div class="empty"><b>No denials</b>Every request so far was authorised.</div>`
