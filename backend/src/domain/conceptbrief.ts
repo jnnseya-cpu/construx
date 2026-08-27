@@ -1,3 +1,4 @@
+import { confidenceThresholdFor } from '../config.ts';
 import { DomainError } from '../core/errors.ts';
 import { hashState } from '../core/canonical.ts';
 import { ulid } from '../core/ids.ts';
@@ -134,8 +135,17 @@ export type BriefBaselineState = {
   supersedes?: string;
 };
 
-/** Extraction below this stays NEEDS_REVIEW. Configurable per the exception control. */
-export const DEFAULT_CONFIDENCE_THRESHOLD = 0.75;
+/**
+ * Extraction below this stays NEEDS_REVIEW.
+ *
+ * Read from configuration rather than fixed here. How much a deployment trusts
+ * extraction is a policy about its models and its source documents, not a fact
+ * about a brief — and a constant in one domain module is a policy nobody can
+ * find. `AI_CONFIDENCE_THRESHOLD` moves it; `AI_CONFIDENCE_THRESHOLDS` moves it
+ * per task, because reading a title block and reading a contract clause are not
+ * the same risk.
+ */
+export const DEFAULT_CONFIDENCE_THRESHOLD = confidenceThresholdFor('requirement_extraction');
 
 function requirementsOf(ctx: EngineContext): BriefRequirementState[] {
   return ctx.ledger

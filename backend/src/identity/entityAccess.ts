@@ -439,6 +439,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // A dispatch record names a person and what they were told. The delivery
   // record additionally names their address and whether it reached them, which
   // is why the two are classified apart rather than together.
+  AIEvaluation: { area: 'PLATFORM_ADMINISTRATION' },
   NotificationDispatch: { area: 'PLATFORM_ADMINISTRATION' },
   // The queue holds the rendered payload and the recipients' addresses until it
   // settles, so it is classified with the delivery record rather than with the

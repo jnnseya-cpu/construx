@@ -130,6 +130,7 @@ import * as evidence from '../evidence/registry.ts';
 import * as siteMedia from '../site/media.ts';
 import * as conflicts from '../field/conflicts.ts';
 import * as outbox from '../notifications/outbox.ts';
+import * as aievaluation from '../ai/evaluation.ts';
 import * as designreview from '../engines/designreview.ts';
 import * as perception from '../engines/perception.ts';
 import * as signing from '../signing/signature.ts';
@@ -1057,6 +1058,36 @@ export const ROUTES: Route[] = [
     handler: (_platform, ctx) => {
       if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Operator access required');
       return { logs: recentLogs(200), metrics: metrics(), gateway: gatewayMetrics() };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/ai/evaluation',
+    readOnly: true,
+    description: 'What the AI harness checks, when it last ran, and what has moved since',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read the AI evaluation');
+      return aievaluation.evaluationPosition(platform);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/ai/evaluation',
+    description: 'Run the AI evaluation harness and record the result',
+    schema: {
+      type: 'object',
+      properties: { against: { type: 'string', enum: ['local', 'configured'] } },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      operatorOnly(ctx, 'run the AI evaluation');
+      // `local` by default and deliberately: the harness builds a whole
+      // demonstration project and runs eight cases through it, and doing that
+      // against live providers on every press is a bill nobody asked for.
+      return aievaluation.runEvaluation(platform, {
+        actorId: auth(ctx).actorId,
+        against: body<{ against?: 'local' | 'configured' }>(ctx).against ?? 'local',
+      });
     },
   },
   {

@@ -425,7 +425,7 @@ against intent.
 | 15.2 AI execution sequence | **Partial** | Authorisation, input resolution, ACU estimate and hold, provider routing with fallback, ledger write, prompt version and human disposition are all built (`ai/orchestrator.ts`, `engines/context.runAI`, `domain/aidisposition.ts`). The step that is **not** built: no retrieval snapshot is stored |
 | 15.3 Risk tiers A–D and automation ceiling | **Partial** | The ceiling is enforced, but through a different mechanism than the specification's four tiers: `aiAllowed` on each event type in the closed catalogue, defaulting to false. Tier D — "AI cannot execute or impersonate signatory" — is met by construction, because every approval, completion, competence and regulatory event carries `aiAllowed: false`. The A/B/C gradations are not modelled as named tiers |
 | 15.4 Mandatory AI output schema | **Partial** | The AI event block carries provider, model class, ACU held and consumed, input refs, confidence, policy id, decision, **assumptions** and **prompt version**; the human disposition is a separate event because it is a later act by a different party. Clause five of every stage gate now assesses all three and passes. Still **not** carried: known gaps and alternatives considered |
-| 15.5 Confidence and failure policy | **Partial** | Provider timeout and fallback are built and tested, cross-provider results are identified, and a wallet with no balance refuses the call rather than running it free. Configurable per-task confidence thresholds and a gold-set evaluation harness are not built |
+| 15.5 Confidence and failure policy | **Built** | Provider timeout and fallback, cross-provider identification, and a wallet with no balance refusing the call. Confidence thresholds are configurable globally (`AI_CONFIDENCE_THRESHOLD`) and per task (`AI_CONFIDENCE_THRESHOLDS`). The evaluation harness is `ai/evaluation.ts` — see 17.1 for what it does and does not claim |
 
 ### 16 — Non-functional, security and offline
 
@@ -447,7 +447,7 @@ against intent.
 | 17.1 Unit/property tests | **Built** | 3,231 tests covering formulas, date logic, state guards, hash canonicalisation and permission decisions |
 | 17.1 End-to-end role tests | **Built** | Every workflow tested from a permitted role and a denied role; maker-checker and party separation asserted where the domain requires them |
 | 17.1 Offline/device tests | **Partial** | Duplicate submit, conflict and clock handling are tested. Process kill, app upgrade and two-device interleaving are not |
-| 17.1 AI evaluations | **Design only** | No gold-set, no drift monitoring, no prompt-injection suite |
+| 17.1 AI evaluations | **Partial** | `ai/evaluation.ts` runs nine cases on a throwaway instance of the demonstration project, records the result and reports drift against the previous run, case by case. Three are a prompt-injection suite. What it deliberately does **not** do is score model judgement: on the local engines the model is a hash of its inputs, so grading it would invent the one figure nobody could check. What it asserts instead is the properties the platform depends on — the accounting the stage gate reads, the engine's arithmetic surviving the model, the refusals, and that an instruction hidden in site text moves no governed outcome. A gold set of graded construction judgements needs a construction professional, not a fixture, and is not built |
 | 17.1 Performance/resilience tests | **Partial** | Provider outage and fallback are tested. Peak ingest, queue backlog, failover and restore are not |
 | 17.2 E2E acceptance scenarios | **Partial** | The *behaviours* the twelve scenarios describe have test coverage — AI fallback on an empty wallet, a regulator refused a write and an AI run, a failed test whose prior data stays immutable, award converting to live commercial controls, and the eleven-stage chain end to end. What does **not** exist is the twelve scenarios written as twelve named acceptance tests, which is what 17.2 asks for; the coverage is spread across the suites that own each behaviour and has not been mapped scenario by scenario. E2E-02 additionally depends on the unbuilt C-WF concept workflows, and E2E-05 is tested at the sync layer rather than on a device |
 | 17.3 Global Definition of Done | **Partial** | The code, test, no-fake-data and state-documentation clauses are held to on every change. Migration/backfill and rollback runbooks exist for deployment; there is no data migration because there is no database |
@@ -457,21 +457,23 @@ against intent.
 | Requirement | Status | Where |
 |---|---|---|
 | 18 Build sequence phases 0–4 | **Built** | Delivered in the order the section prescribes: control foundation, input spine, tender/commercial, field delivery, then commissioning and handover |
-| 18 Phase 5 intelligence hardening | **Partial** | Specialist agents, scenario forecasting and organisation memory are built; the evaluation harness and scale work are not |
+| 18 Phase 5 intelligence hardening | **Partial** | Specialist agents, scenario forecasting, organisation memory and the evaluation harness are built; the scale work is not |
 | 18.1 Epic naming | **Not adopted** | The build is organised by lifecycle stage and workflow id rather than by the EPIC-* labels. No code change would follow from adopting them |
 | A.1 KPI calculation rules | **Partial** | Stage completeness, SPI, CPI, forecast final cost, unapproved change exposure, design readiness, commissioning readiness and handover readiness are all implemented as derivations. Milestone confidence carries a band. **Data freshness is not implemented** as a first-class per-domain measure |
 | A.2 Shared status enums | **Partial** | Each object carries a status vocabulary and the handover deliverable path matches A.2 exactly. They are not consolidated into one shared enum module, so a status added to one object is not automatically offered to another |
 | B.2 Industry references | **Built** | The standards are what the domain rules were written against — HGCRA payment and notice logic, CDM duty holders, RIBA stage structure, ISO 19650 information control, CIBSE Code M commissioning sequence |
 
 **The honest summary of this table:** most of sections 12–18 describe
-architecture that already exists. What was listed here as the four genuine gaps
-is now two. The AI output schema records assumptions, prompt version and human
+architecture that already exists. What was listed here as four genuine gaps is
+now one. The AI output schema records assumptions, prompt version and human
 disposition, and every stage gate assesses them; the notification outbox makes
 delivery at-least-once with a durable queue; the offline `Conflict` record is
-built with a human resolution behind it. What remains is the AI evaluation
-harness, and the AI schema's *known gaps and alternatives considered* — the two
-fields of 15.4 that are still not carried. Neither is hidden behind a claim that
-it is done.
+built with a human resolution behind it; the evaluation harness runs, records
+and reports drift. What remains is the AI schema's *known gaps* and
+*alternatives considered* — two fields of 15.4 that are still not carried — and
+the part of 17.1 no fixture can supply: a gold set of graded construction
+judgements needs a construction professional, and the harness says so rather
+than printing a score it cannot justify.
 
 ---
 

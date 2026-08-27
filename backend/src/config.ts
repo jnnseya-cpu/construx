@@ -147,6 +147,25 @@ function parseClearance(raw: string): Record<string, DataSensitivity> {
   return out;
 }
 
+/**
+ * Per-task confidence thresholds, as `title_block_extraction:0.9,clause:0.85`.
+ *
+ * A value outside 0–1 is dropped rather than clamped. Clamping `1.5` to `1`
+ * would silently turn "I typed the wrong thing" into "hold every extraction for
+ * review", and the deployment would look broken with nothing to say why.
+ */
+function parseThresholds(raw: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const entry of raw.split(',')) {
+    const [task, value] = entry.split(':').map((part) => part.trim());
+    if (!task || !value) continue;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) continue;
+    out[task] = parsed;
+  }
+  return out;
+}
+
 export type AIMode = 'local' | 'staging' | 'production';
 
 export const config = {
@@ -432,6 +451,25 @@ export const config = {
      * vendor, that the contract permits it.
      */
     defaultClearance: clearanceLevel(str('AI_DEFAULT_CLEARANCE', 'INTERNAL')),
+    /**
+     * Below this confidence, a machine-read result is held for review rather
+     * than taken as read.
+     *
+     * 0.75 is where it has always been, and it was a constant in one domain
+     * module. It is a policy about how much a deployment trusts extraction, not
+     * a fact about the brief, and the deployments that need to move it are the
+     * ones with either a much better model or much worse source documents.
+     */
+    confidenceThresholdDefault: num('AI_CONFIDENCE_THRESHOLD', 0.75),
+    /**
+     * Per-task overrides, as `title_block_extraction:0.9,clause_extraction:0.85`.
+     *
+     * Reading a title block off a drawing and reading an obligation out of a
+     * contract are not the same risk, and one number for both is either too
+     * loose for the clause or too tight for the drawing. Anything not named
+     * here uses the default above.
+     */
+    confidenceThresholds: parseThresholds(str('AI_CONFIDENCE_THRESHOLDS', '')),
   },
 
   /**
@@ -733,6 +771,16 @@ export function isProduction(): boolean {
  * every route then refused to show — working, invisible, and very hard to
  * explain.
  */
+/**
+ * The confidence below which a machine-read result is held for review.
+ *
+ * One function, so the brief's extraction threshold and anything else that
+ * needs one cannot drift apart. Per-task first, then the default.
+ */
+export function confidenceThresholdFor(taskType: string): number {
+  return config.ai.confidenceThresholds[taskType] ?? config.ai.confidenceThresholdDefault;
+}
+
 export function demonstrationEnabled(): boolean {
   const raw = process.env.DEMO_TENANCY_ENABLED;
   // Unset means on, matching `config.demo.enabled`. The two must agree or a

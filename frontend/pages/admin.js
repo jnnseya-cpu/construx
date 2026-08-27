@@ -117,6 +117,75 @@ function envGroups(vars) {
 }
 
 /**
+ * What the AI harness checks, and what has moved since it last ran.
+ *
+ * Deliberately not a score. On the local engines the "model" is a hash of its
+ * inputs and grading that produces a number nobody could check; what the
+ * harness asserts is the properties the platform depends on — the accounting
+ * the stage gate reads, the engine's arithmetic surviving the model, the
+ * refusals, and that an instruction hidden in site text moves no governed
+ * outcome.
+ *
+ * **Drift is the number to read.** A case that used to pass and now does not
+ * means the platform changed under a check somebody was relying on.
+ */
+function evaluationPanel(position) {
+  const latest = position.latest;
+  const drifted = position.drift.changed;
+
+  return html`<div class="card" id="ai-evaluation" style="margin-bottom:14px">
+    <h2>AI evaluation</h2>
+    <p class="metric-sub" style="margin:8px 0 14px">
+      ${position.cases.length} checks on the properties the platform depends on — not a score for the model's judgement,
+      which on the local engines would be grading a hash. Includes a prompt-injection suite: the claim it makes is that
+      the defences are structural, so an instruction hidden in site text cannot move a governed outcome.
+    </p>
+
+    <div class="split-list">
+      <div class="row">
+        <span class="lbl">Last run</span>
+        <span class="val">${latest ? `${time(latest.ranAt)} · against ${latest.against}` : 'never'}</span>
+      </div>
+      <div class="row">
+        <span class="lbl">Passing</span>
+        <span class="val">${latest ? `${latest.passed} of ${latest.cases.length}` : '—'}</span>
+      </div>
+      <div class="row">
+        <span class="lbl">Changed since the run before</span>
+        <span class="val">${badge(String(drifted.length), drifted.length > 0 ? 'bad' : 'ok')}</span>
+      </div>
+    </div>
+
+    ${drifted.length > 0
+      ? html`<div class="notice bad" style="margin-top:14px"><div>
+          ${drifted.map((item) => html`<div><b>${item.id}</b> was ${item.was}, is now ${item.now}</div>`)}
+        </div></div>`
+      : ''}
+
+    ${latest
+      ? html`<div style="margin-top:14px">
+          ${table({
+            headers: ['Check', 'Kind', 'Result', 'What it observed'],
+            rows: latest.cases.map((item) => [
+              item.title,
+              humanise(item.kind),
+              badge(item.outcome, item.outcome === 'PASS' ? 'ok' : 'bad'),
+              item.detail,
+            ]),
+            empty: 'Nothing has been checked',
+          })}
+        </div>`
+      : html`<div class="metric-sub" style="margin-top:12px">
+          ${position.cases.map((item) => html`<div>${item.title}</div>`)}
+        </div>`}
+
+    <div class="actions" style="margin-top:14px">
+      <button class="btn quiet sm" id="run-evaluation">Run the harness</button>
+    </div>
+  </div>`;
+}
+
+/**
  * What the platform still owes in notifications.
  *
  * A notice is queued before anything is transmitted, so a process that dies
@@ -235,7 +304,7 @@ export async function admin(root) {
   const isOperator = roles.includes('PLATFORM_ADMIN');
   const operatorOnly = (path) => (isOperator ? api.get(path).catch(() => null) : Promise.resolve(null));
 
-  const [routes, plane, matrix, overview, estate, burn, payments, security, logs, ready, governance, vocab, media, outbox] =
+  const [routes, plane, matrix, overview, estate, burn, payments, security, logs, ready, governance, vocab, media, outbox, evaluation] =
     await Promise.all([
       api.get('/v1/routes').catch(() => ({ routes: [] })),
       api.get('/v1/ai/control-plane').catch(() => null),
@@ -259,6 +328,10 @@ export async function admin(root) {
       // is `abandoned`: those are notices somebody was entitled to and did not
       // get, and nothing will try them again.
       operatorOnly('/v1/admin/outbox'),
+      // What the AI harness checks, when it last ran, and what has moved. Read
+      // only: running it is a press, because it builds a whole demonstration
+      // project and would be wasteful on every page load.
+      operatorOnly('/v1/admin/ai/evaluation'),
     ]);
 
   const areas = new Set();
@@ -555,6 +628,8 @@ export async function admin(root) {
             : ''
         }
       </div>
+
+      ${evaluation ? evaluationPanel(evaluation) : ''}
 
       ${outbox ? outboxPanel(outbox) : ''}
 
@@ -911,6 +986,28 @@ export async function admin(root) {
   if (!isOperator) return;
 
   const again = () => admin(root);
+
+  document.getElementById('run-evaluation')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    // Said out loud: it builds a whole demonstration project so it never writes
+    // into a real one, and that is not instant.
+    button.textContent = 'Running on a fresh project…';
+    try {
+      const result = await api.post('/v1/admin/ai/evaluation', { against: 'local' });
+      toast(
+        'Evaluation complete',
+        `${result.run.passed} of ${result.run.cases.length} passing` +
+          (result.drift.changed.length > 0 ? ` — ${result.drift.changed.length} changed since the last run` : ''),
+        result.run.failed > 0 || result.drift.changed.length > 0 ? 'warn' : 'ok',
+      );
+      await again();
+    } catch (error) {
+      toast('Evaluation failed', error.message, 'err');
+      button.disabled = false;
+      button.textContent = 'Run the harness';
+    }
+  });
 
   document.getElementById('drain-outbox')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;

@@ -677,6 +677,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // the intent on the volume rather than nothing at all. A queued notice that
   // was never settled is redelivered on the next drain, which is what makes
   // delivery at-least-once instead of at-most-once.
+  // The evaluation harness's own record. Not an AI event: it is the platform
+  // checking itself, and it runs on a throwaway instance so nothing it does
+  // reaches a customer's project. Only the result lands here, which is what
+  // makes drift comparable between deployments of the same commit.
+  def('AI_EVALUATION_RECORDED', 'AIEvaluation', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('NOTIFICATION_QUEUED', 'NotificationOutbox', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('NOTIFICATION_QUEUE_SETTLED', 'NotificationOutbox', 'UPDATE', 'GOVERNANCE'),
   def('NOTIFICATION_DISPATCHED', 'NotificationDispatch', 'ISSUE', 'GOVERNANCE', { creates: true }),

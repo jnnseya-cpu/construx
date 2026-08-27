@@ -7641,6 +7641,82 @@ duplication rule 6 exists to prevent.
 
 ---
 
+## A harness that checks the platform, not the model
+
+The specification asks for AI evaluations: a gold set, drift monitoring and a
+prompt-injection suite. Two of those are straightforward here. The first is not,
+and the honest answer shaped the whole thing.
+
+**It does not score model judgement, and it says so.** On a deployment running
+the local engines the "model" is a hash of its inputs, so grading its judgement
+produces a number that means nothing. Against a live provider, grading a
+construction judgement takes a construction professional, not a fixture. A
+harness that printed 87% would have invented the one figure nobody could check,
+in a codebase whose entire argument is that its figures are checkable — so a
+gold set of graded judgements is recorded as **not built** rather than faked.
+
+**What it checks instead** are the properties the platform itself depends on,
+which hold or fail whichever provider answered. Nine cases, in four kinds:
+
+- **Accounting** — every AI event carries its assumptions, its prompt version
+  with a whole digest, and a settlement against the wallet it held from. These
+  are what the fifth stage gate clause reads before it passes.
+- **Boundary** — the engine's own arithmetic is what lands in the record. The
+  computed risk index is the one stored, not a plausible number a model
+  returned.
+- **Refusal** — a wallet capped at zero refuses before the provider is called,
+  because a call made and then found to be over the cap is a bill the platform
+  cannot pass on.
+- **Injection** — an instruction written as an attacker would write it, placed
+  where free text legitimately goes: the description of something observed on
+  site, typed by a person and read by a model afterwards.
+
+The injection cases are the reason the harness exists, and the platform can make
+the claim honestly **because its defences are structural rather than written
+into a prompt**. The closed event catalogue refuses an `aiAllowed: false` event
+from an AI actor whatever the model was persuaded to attempt; no agent mandate
+exceeds `PROPOSE`; no model may dispose of its own output. Those are assertions
+about the ledger, not about how well a prompt held.
+
+**Where it runs.** On its own instance of the demonstration project, built fresh
+each time. It never writes into a customer's project — an evaluation that left
+fixtures in a live record is a harness nobody could afford to run. Only the
+result is recorded, on the platform that asked, which is what makes drift
+comparable. Two independent platforms on the same commit produce the same
+outcome hash.
+
+**Drift is the number to read.** This run against the last one, case by case and
+named. Against the local engines a change means the *platform* moved: a refactor
+that quietly stopped recording assumptions shows up as a case that used to pass.
+Against a live provider it means the provider changed under you, which is
+otherwise the kind of thing a customer finds out first.
+
+### It caught two things on its first run
+
+Which is the only evidence worth having that a suite of checks can go red.
+
+**The planning engine is phase-gated out of Operations**, and the demonstration
+project sits there — so the case that ran a delay forecast failed with a refusal
+that was entirely correct. The case moved to the safety engine. A harness that
+had moved the project's phase to suit itself would have been testing a project
+it had altered.
+
+**The refusal case left the wallet capped**, and every case after it failed for
+a reason that had nothing to do with what it was checking. The cases share one
+fixture, so the one that changes it puts it back.
+
+### And the threshold that was a constant
+
+15.5 also asked for configurable per-task confidence thresholds. The review
+threshold below which a machine-read result is held rather than taken as read
+was `0.75`, fixed in one domain module. How much a deployment trusts extraction
+is a policy about its models and its documents, not a fact about a brief.
+`AI_CONFIDENCE_THRESHOLD` moves it, `AI_CONFIDENCE_THRESHOLDS` moves it per task
+— reading a title block and reading a contract clause are not the same risk —
+and the default is what it always was, so nothing changes by upgrading.
+
+---
+
 ## Working notes
 
 - The seeded demo project sits in the **Operations** phase, so field-execution
