@@ -4827,6 +4827,59 @@ minutes, caught only by the server refusing it.
 
 ---
 
+### What the machine wrote, and whether a machine wrote it
+
+The reasoning engine contributes the connective prose a good document has and a
+generated one usually lacks. Every fact on the page comes from a record; the
+model is given the records and asked to reason about them, and is never asked
+for a fact. Fifteen document types, twenty narrative briefs, and a test
+asserting every one of them opens with "Reason about" rather than "write" or
+"describe" — a model handed a blank page and a document title writes an
+excellent, entirely invented document.
+
+**The defect this closed was not a wrong figure.** The platform ships a local
+adapter that answers every request with the same sentence so it runs with no
+provider key configured. That sentence landed on the page under a heading,
+followed by *"Written by the platform's reasoning engine from the records set
+out above, at a stated confidence of 84%"* — an attribution to reasoning that
+never happened, on a document whose whole architecture is a refusal to do
+exactly that.
+
+Three changes fix it and one test file proves both directions:
+
+- **`ProviderResponse.synthetic`.** Declared by the adapter, not inferred from
+  `config.ai.mode` — a test injecting a real-shaped adapter runs with the mode
+  still set to local, and the honest answer is a property of who answered rather
+  than of how the platform was configured. `runAI` passes it through.
+- **A synthetic answer is dropped.** The heading stays and the section states
+  that it could not be produced, which is what actually occurred. The ACUs are
+  still reported: the run happened and was charged for, and hiding that would be
+  a second untruth in service of covering the first.
+- **A real answer is attributed by name.** "By stub-reasoning-v9 via ANTHROPIC,
+  at a stated confidence of 81%." *Machine-written* is not enough — a reader
+  weighing a paragraph is entitled to know which machine, and a page that said
+  only "the platform's reasoning engine" could not distinguish a frontier model
+  from a stand-in that reasons about nothing.
+
+The live path is verified against a stub adapter that writes prose, because that
+is the only way to verify it from here: **no call has been made to a real
+provider from this environment**, and nothing in this repository should be read
+as saying one has.
+
+**A wider gap, recorded rather than fixed.** Seven engines write a narrative
+from a provider's output into ledger state — `bim`, `claims`, `cost`,
+`handover`, `planning`, `safety`, `tender`, at eighteen call sites — and none of
+them records whether the text came from a model or from the local stand-in. By
+the time the text is state, `synthetic` is gone and the sentence is all that is
+left. `isLocalStandIn` in `ai/providers/mock.ts` recovers the answer from the
+sentence, and the O&M manual uses it to refuse to present a stand-in as a
+maintenance regime somebody extracted. That is a repair at the reading end. The
+correct fix is a field on each record, and it is not made here: it touches
+eighteen call sites in working engines, for a defect that is only visible where
+a stored narrative is shown to a person, which today is one document.
+
+---
+
 ---
 
 ## What is partial

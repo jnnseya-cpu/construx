@@ -46,6 +46,19 @@ export type ProviderResponse = {
   latencyMs: number;
   /** Model's own confidence, where the provider exposes one. */
   confidence?: number;
+  /**
+   * True where no model was called and the output is a deterministic stand-in.
+   *
+   * Declared by the adapter rather than inferred from `config.ai.mode`, because
+   * a test injecting a real-shaped adapter runs with the mode still set to
+   * local — and because the honest answer is a property of who answered, not of
+   * how the platform was configured.
+   *
+   * Callers that put an output in front of a person must not present a
+   * synthetic one as reasoning. `documents/generate.ts` drops it and the
+   * section states its own absence, which is what actually happened.
+   */
+  synthetic?: boolean;
 };
 
 export interface AIProviderAdapter {

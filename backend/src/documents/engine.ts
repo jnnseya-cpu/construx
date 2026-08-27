@@ -132,8 +132,15 @@ export type ComposeInput = {
   sources: ResolvedSources;
   /** The single record this document covers, for RECORD-scope types. */
   subject?: Row;
-  /** Narrative by heading. Absent where the model was not run or could not answer. */
-  narrative: Map<string, { text: string; confidence?: number }>;
+  /**
+   * Narrative by heading. Absent where the model was not run or could not
+   * answer — and absent, deliberately, on a local run: see `generate.ts`.
+   *
+   * Carries the provider and model that wrote it so the section can attribute
+   * itself. A reader deciding how much weight to give a paragraph is entitled to
+   * know not only that a machine wrote it but which one.
+   */
+  narrative: Map<string, { text: string; confidence?: number; provider?: string; modelClass?: string }>;
   today: string;
 };
 
@@ -250,7 +257,7 @@ export function gapBlock(what: string, why: string): DocumentBlock {
  */
 export function narrativeBlocks(
   heading: string,
-  written: { text: string; confidence?: number } | undefined,
+  written: { text: string; confidence?: number; provider?: string; modelClass?: string } | undefined,
 ): DocumentBlock[] {
   const blocks: DocumentBlock[] = [{ kind: 'HEADING', level: 2, text: heading }];
 
@@ -269,6 +276,7 @@ export function narrativeBlocks(
     kind: 'PARAGRAPH',
     text:
       'Written by the platform’s reasoning engine from the records set out above' +
+      (written.modelClass ? `, by ${written.modelClass} via ${shown(written.provider, 'the configured provider')}` : '') +
       (written.confidence !== undefined ? `, at a stated confidence of ${(written.confidence * 100).toFixed(0)}%` : '') +
       '. It contains no figure, date, name or reference that is not already on this document.',
   });

@@ -167,6 +167,23 @@ export type AITaskResult = {
   aiRequestId: string;
   executionId: string;
   provider: string;
+  /**
+   * The model the provider actually ran.
+   *
+   * Exposed because a caller putting the output in front of a person has to be
+   * able to attribute it. `provider` alone says OPENAI whether a live model
+   * answered or the local deterministic adapter did.
+   */
+  modelClass?: string;
+  /**
+   * True where no model was called and the output is a deterministic stand-in.
+   *
+   * A caller putting this in front of a person must not present it as
+   * reasoning: a document attributing a synthetic paragraph to "the platform's
+   * reasoning engine" claims a section was reasoned when nothing reasoned about
+   * anything.
+   */
+  synthetic?: boolean;
   acuConsumed: number;
   acuHeld: number;
   events: GoldenThreadEvent[];
@@ -322,6 +339,8 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
     aiRequestId: run.aiRequest.id,
     executionId: execution.id,
     provider: run.response.provider,
+    modelClass: run.response.modelClass,
+    synthetic: run.response.synthetic,
     acuConsumed: execution.acuConsumed,
     acuHeld: execution.acuHeld,
     events,

@@ -72,8 +72,27 @@ class MockAdapter implements AIProviderAdapter {
       rawCostMinor: Math.max(1, Math.round(this.estimateCostMinor(request) * (0.8 + seededUnit(seed, 1) * 0.4))),
       latencyMs: Date.now() - started,
       confidence: Number((0.72 + seededUnit(seed, 2) * 0.24).toFixed(3)),
+      // Said out loud. Nothing here reasoned about anything, and a caller
+      // putting this in front of a person needs to know that from the response
+      // rather than by inspecting the model name or the platform's config.
+      synthetic: true,
     };
   }
+}
+
+/**
+ * How the local stand-in narrative opens.
+ *
+ * Exported so that a consumer reading a narrative back off a *record* can tell
+ * it apart from prose a model wrote. `ProviderResponse.synthetic` answers the
+ * question at the moment of the call; by the time an engine has written the
+ * text into state, that flag is gone and the sentence is all that is left.
+ */
+export const LOCAL_STAND_IN = 'Deterministic local analysis';
+
+/** Whether a narrative stored on a record came from the local stand-in. */
+export function isLocalStandIn(narrative: unknown): boolean {
+  return typeof narrative === 'string' && narrative.trimStart().startsWith(LOCAL_STAND_IN);
 }
 
 /**
@@ -91,7 +110,7 @@ function synthesise(request: ProviderRequest, seed: number, capability: Provider
     /** Classification bucket, stable for identical inputs. */
     classification: ['LOW', 'MEDIUM', 'HIGH'][Math.floor(unit(4) * 3)] ?? 'MEDIUM',
     /** Narrative is advisory only — it is never hashed as state. */
-    narrative: `Deterministic local analysis for "${request.task}". No external provider was called; figures are computed by the engine.`,
+    narrative: `${LOCAL_STAND_IN} for "${request.task}". No external provider was called; figures are computed by the engine.`,
     signals: [
       { name: 'input_completeness', value: Number((0.6 + unit(5) * 0.4).toFixed(3)) },
       { name: 'evidence_density', value: Number((0.4 + unit(6) * 0.6).toFixed(3)) },

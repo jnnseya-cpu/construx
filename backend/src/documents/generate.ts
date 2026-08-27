@@ -187,14 +187,24 @@ export async function generateDocument(
   const today = new Date().toISOString().slice(0, 10);
 
   // The narrative, before composing, because the composer places it.
-  const narrative = new Map<string, { text: string; confidence?: number }>();
+  const narrative = new Map<string, { text: string; confidence?: number; provider?: string; modelClass?: string }>();
   let acuConsumed = 0;
 
   if (input.withNarrative !== false) {
     for (const section of definition.narrative) {
       const written = await reason(ctx, definition, section.heading, section.brief, sources, subject);
       if (written) {
-        narrative.set(section.heading, { text: written.text, confidence: written.confidence });
+        // An empty text is a local run: charged, recorded, and deliberately not
+        // placed on the page. The section states its own absence rather than
+        // carrying a placeholder dressed as reasoning.
+        if (written.text.length > 0) {
+          narrative.set(section.heading, {
+            text: written.text,
+            confidence: written.confidence,
+            provider: written.provider,
+            modelClass: written.modelClass,
+          });
+        }
         acuConsumed += written.acuConsumed;
       }
     }
@@ -264,7 +274,7 @@ async function reason(
   brief: string,
   sources: Map<string, Row[]>,
   subject: Row | undefined,
-): Promise<{ text: string; confidence?: number; acuConsumed: number } | undefined> {
+): Promise<{ text: string; confidence?: number; provider?: string; modelClass?: string; acuConsumed: number } | undefined> {
   try {
     const result = await runAI(ctx, {
       engine: ENGINE_FOR[definition.category] ?? 'EXECUTIVE',
@@ -295,11 +305,29 @@ async function reason(
       toWrites: () => [],
     });
 
+    // The local adapter answers every request with the same sentence: it is a
+    // deterministic stand-in so the platform runs with no provider configured,
+    // and it reasons about nothing. It says so on the response. Putting that on
+    // a permit to work under a heading saying the reasoning engine wrote it
+    // from the records would be a section attributed to reasoning that never
+    // happened — which is the one thing this whole module exists to refuse.
+    //
+    // So it is dropped, and the section says it could not be produced, which is
+    // exactly what happened. The ACUs are still reported: the run occurred and
+    // was charged for, and hiding that would be a second untruth.
+    if (result.synthetic) return { text: '', acuConsumed: result.acuConsumed };
+
     const text = String(result.output.narrative ?? result.output.text ?? '').trim();
     if (text.length === 0) return undefined;
 
     const confidence = typeof result.output.confidence === 'number' ? result.output.confidence : undefined;
-    return { text, confidence, acuConsumed: result.acuConsumed };
+    return {
+      text,
+      confidence,
+      provider: result.provider,
+      modelClass: result.modelClass,
+      acuConsumed: result.acuConsumed,
+    };
   } catch {
     // Deliberately swallowed. See the note above: a provider outage must not
     // stop a site issuing a permit.

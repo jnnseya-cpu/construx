@@ -1,3 +1,4 @@
+import { isLocalStandIn } from '../ai/providers/mock.ts';
 import { formatMoney } from '../domain/locale.ts';
 import type { DocumentBlock } from '../export/exporter.ts';
 import {
@@ -962,6 +963,12 @@ function omBlocks(input: ComposeInput): DocumentBlock[] {
   if (manuals.length > 0) {
     blocks.push({ kind: 'HEADING', level: 2, text: 'Maintenance regime, as extracted from the manufacturer documentation' });
     for (const manual of manuals) {
+      // Whether a model actually read the documentation, or the platform ran
+      // its local stand-in. The two produce a record of the same shape, and
+      // presenting the second as an extraction would tell a facilities manager
+      // that a maintenance regime was derived from the manufacturer's own
+      // manuals when nothing read them.
+      const stood_in = isLocalStandIn(manual.maintenanceNarrative);
       blocks.push({
         kind: 'KEY_VALUES',
         rows: [
@@ -969,15 +976,25 @@ function omBlocks(input: ComposeInput): DocumentBlock[] {
           { label: 'Source documents read', value: shown(manual.sourceDocumentCount) },
           {
             label: 'Extraction confidence',
-            value:
-              typeof manual.extractionConfidence === 'number'
+            value: stood_in
+              ? 'Not applicable — no model was called'
+              : typeof manual.extractionConfidence === 'number'
                 ? `${Math.round(manual.extractionConfidence * 100)}% — this regime was read from the supplied documentation by the platform, not transcribed by a person`
                 : 'Not stated',
           },
           { label: 'Published', value: shownTime(manual.publishedAt) },
         ],
       });
-      blocks.push({ kind: 'PARAGRAPH', text: shown(manual.maintenanceNarrative) });
+      blocks.push(
+        stood_in
+          ? gapBlock(
+              'the maintenance regime',
+              'This platform recorded the manual with no reasoning model configured, so nothing has read the manufacturer ' +
+                'documentation. The record above is real; the regime itself has still to be extracted, and the manufacturer’s ' +
+                'own manuals remain the only statement of it.',
+            )
+          : { kind: 'PARAGRAPH', text: shown(manual.maintenanceNarrative) },
+      );
     }
   }
 

@@ -573,8 +573,14 @@ describe('documents · the O&M manual crosses warranties against open defects', 
     assert.match(rendered, /Within tolerance/);
   });
 
-  it('marks the extracted maintenance regime as extracted, with its confidence', () => {
-    assert.match(rendered, /read from the supplied documentation by the platform, not transcribed by a person/);
+  it('refuses to present the local stand-in as a maintenance regime somebody extracted', () => {
+    // The seeded manual was written with no reasoning model configured, so
+    // nothing read the manufacturer documentation. Printing the stand-in
+    // sentence at "78% extraction confidence" would tell a facilities manager
+    // that a regime was derived from manuals nobody opened.
+    assert.match(rendered, /Not applicable — no model was called/);
+    assert.match(rendered, /the regime itself has still to be extracted/);
+    assert.equal(rendered.includes('Deterministic local analysis'), false);
   });
 
   it('states the replacement cost is a planning figure and not a quotation', () => {
