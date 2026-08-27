@@ -6503,7 +6503,65 @@ guardrail is "no access to or reproduction of secret values; only status
 metadata", and a credential's whereabouts is as useful to an attacker as its
 value.
 
-**Still to build in the handover block:** H-WF-08 to H-WF-10, the
+---
+
+### A date nobody checked is not a date to start a liability from
+
+H-WF-08. `backend/src/domain/practicalcompletion.ts`, nine routes, 51 tests.
+
+**What was already there and is reused.** `engines/handover.raiseDefect` raises
+a defect and finds the warranty covering it; `raiseSnag` and `dispatchSnags` run
+the snag list; `engines/quality.closeSnag` closes one. `domain/valuechain`
+already holds SUBMITTED, ASSESSED, CERTIFIED, AGREED and PAID separately —
+which *is* the exception control that says a final account states them
+separately — so `agreeFinalAccount` reads that chain and refuses agreement the
+commercial record does not show, rather than becoming a second place to type the
+number in.
+
+**The exception control the clause register exposed.** "Certificate trigger
+dates derive from a *validated* project-specific contract pack." Every clause
+the extraction engine writes carries `requiresLegalReview: true`, and **nothing
+in the platform could ever clear it** — the seeded demo project has ten
+extracted clauses and not one of them had been read by a person. So a
+certificate could have started a defects liability running from a machine
+reading of a contract nobody had checked. `validateContractClause` is the act
+that clears it; a rejection has to say what the clause actually is, and what the
+machine read is kept either way as part of the record of how the date was
+arrived at.
+
+**AC-H-WF-08-02, in two halves.** The dates are derived once at issue and frozen
+under a hash of the set. There is no path that edits one: a change is a revision
+that names the authority, states the reason, records which dates moved and keeps
+the hash of the set it replaced. The difference between "the defects period ends
+on the 14th" and "it ended on the 14th until somebody changed it" is the
+difference between a record and a draft.
+
+**Four classifications, not four severities.** Blocker, minor defect,
+outstanding work and post-completion obligation decide what happens next, not
+how bad it looks — calling all four "snags" is how outstanding work ends up
+being argued about a year later. A blocker cannot be deferred, because that is a
+decision about whether the building can be handed over rather than a scheduling
+change. A deferral carries all four of owner, risk, access constraint and
+acceptance condition; the last is the one people leave out, and without it
+nothing settles the argument about whether the item was ever put right.
+
+**AC-H-WF-08-03: closed against rectification somebody else accepted.** The
+person who did the work cannot be the one who re-inspects it, and "Rectified"
+is refused as a description — it records that somebody pressed a button.
+
+**Step 3 read literally.** Determining completion needs `CONTRACTS_CLAIMS 'A'`,
+which the project manager does not hold. An AI readiness score may be recorded
+alongside the decision and never in place of one, and a score submitted without
+its basis is refused because a bare number reads as a verdict.
+
+**Commercial closeout never blocks safety-critical closure, and that rule is
+enforced by omission.** `completionBlockedReason` reads defects and the contract
+pack. It does not read the final account, the retention position or any
+security, and a test asserts that a disputed retention leaves the blocked reason
+null. A blocked-reason function that mentioned retention would turn a commercial
+argument into a reason to leave a building uncertified.
+
+**Still to build in the handover block:** H-WF-09 and H-WF-10, the
 `HANDOVER_ACCEPTED` gate, the 11.4 gate and the stage workspace described in
 11.2. The stage control, 11.1, 11.2, H-WF-01 to H-WF-10, 11.4 and the
 cross-stage sections 12 to 18.1 and the appendices are recorded verbatim in

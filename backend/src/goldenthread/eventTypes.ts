@@ -1055,6 +1055,33 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('TRANSFER_ITEM_LOST', 'TransferItem', 'UPDATE', 'HANDOVER_OM'),
   def('SERVICE_CONTACT_REGISTERED', 'ServiceContact', 'CREATE', 'HANDOVER_OM', { creates: true }),
 
+  // H-WF-08. `DEFECT_RAISED` and `SNAG_CLOSED` already exist and are not
+  // duplicated; these are the completion acts none of them covered.
+  def('COMPLETION_INSPECTION_COMPLETED', 'CompletionInspection', 'CREATE', 'HANDOVER_OM', {
+    creates: true,
+    requiresEvidence: true,
+  }),
+  // AC-H-WF-08-03: a closed item shows the rectification somebody accepted.
+  def('DEFECT_CLOSED', 'CompletionInspection', 'APPROVE', 'HANDOVER_OM', { requiresEvidence: true }),
+  def('DEFECT_DEFERRED', 'CompletionInspection', 'UPDATE', 'HANDOVER_OM'),
+  // The act that clears `requiresLegalReview`. Nothing in the platform could
+  // before, so a certificate could have set a liability running from a clause
+  // only a model had read.
+  def('CONTRACT_CLAUSE_VALIDATED', 'ContractClause', 'APPROVE', 'CONTRACTS_CLAIMS'),
+  // Determining completion is a contractual act. No agent mandate reaches it —
+  // "cannot issue certificate, determine legal completion or agree final
+  // account" is three of this workflow's four writes.
+  def('PRACTICAL_COMPLETION_RECORDED', 'CompletionRecord', 'CREATE', 'CONTRACTS_CLAIMS', {
+    creates: true,
+    requiresEvidence: true,
+  }),
+  def('DEFECTS_PERIOD_STARTED', 'CompletionRecord', 'UPDATE', 'CONTRACTS_CLAIMS'),
+  // AC-H-WF-08-02: there is no path that edits a triggered date. A change is
+  // this, and it keeps the hash of the set it replaced.
+  def('CONTRACT_DATES_REVISED', 'CompletionRecord', 'UPDATE', 'CONTRACTS_CLAIMS'),
+  def('SECURITY_POSITION_RECORDED', 'CommercialSecurity', 'CREATE', 'CONTRACTS_CLAIMS', { creates: true }),
+  def('FINAL_ACCOUNT_AGREED', 'FinalAccount', 'APPROVE', 'CONTRACTS_CLAIMS', { creates: true }),
+
   // --- Commissioning, handover, O&M ----------------------------------------
   def('COMMISSIONING_TEST_RECORDED', 'CommissioningTest', 'CREATE', 'COMMISSIONING', { requiresEvidence: true }),
   def('SYSTEM_ACCEPTED', 'CommissioningTest', 'APPROVE', 'COMMISSIONING', { requiresEvidence: true }),

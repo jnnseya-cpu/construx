@@ -372,6 +372,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // are kept, so it is not a public part of the handover pack.
   TransferItem: { area: 'HANDOVER_OM', sensitivity: 'INTERNAL' },
   ServiceContact: { area: 'HANDOVER_OM' },
+  // H-WF-08. The inspection is a quality record; the certificate, the securities
+  // and the final account are contractual, and the last two carry the commercial
+  // classification the value chain already uses for the same figures.
+  CompletionInspection: { area: 'HANDOVER_OM' },
+  CompletionRecord: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },
+  CommercialSecurity: { area: 'CONTRACTS_CLAIMS', sensitivity: 'COMMERCIAL_L3' },
+  FinalAccount: { area: 'CONTRACTS_CLAIMS', sensitivity: 'COMMERCIAL_L3' },
   TurnoverException: { area: 'QUALITY_COMMISSIONING' },
   PeriodSnapshot: { area: 'PROJECT_SETUP' },
   RecoveryPlan: { area: 'PROGRAMME_BASELINES' },

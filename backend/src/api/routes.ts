@@ -86,6 +86,7 @@ import * as prefunctional from '../domain/prefunctional.ts';
 import * as ommanual from '../domain/ommanual.ts';
 import * as operatorreadiness from '../domain/operatorreadiness.ts';
 import * as transfer from '../domain/transfer.ts';
+import * as practicalcompletion from '../domain/practicalcompletion.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
@@ -5771,6 +5772,236 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => transfer.registerServiceContact(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------------------- H-WF-08 defects, completion and commercial closeout
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/practical-completion',
+    description: 'Inspection items by classification, the certificates and their triggered dates, securities and final accounts',
+    handler: (platform, ctx) => practicalcompletion.practicalCompletionPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/completion-inspections',
+    description: 'Record a completion inspection, classifying every item and naming who fixes it, by when and with what access',
+    schema: {
+      type: 'object',
+      required: ['reference', 'scope', 'inspectedBy', 'attendees', 'evidenceHash', 'items'],
+      properties: {
+        reference: stringField,
+        scope: { type: 'string' },
+        inspectedBy: stringField,
+        attendees: { type: 'array', items: { type: 'string' } },
+        evidenceHash: stringField,
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['location', 'description', 'classification', 'contractor', 'dueDate', 'accessWindow'],
+            properties: {
+              location: stringField,
+              description: { type: 'string' },
+              classification: {
+                type: 'string',
+                enum: ['BLOCKER', 'MINOR_DEFECT', 'OUTSTANDING_WORK', 'POST_COMPLETION_OBLIGATION'],
+              },
+              contractor: stringField,
+              dueDate: stringField,
+              accessWindow: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => practicalcompletion.recordCompletionInspection(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/completion-items/:itemId/close',
+    description: 'Close an item against rectification somebody other than the contractor re-inspected and accepted',
+    schema: {
+      type: 'object',
+      required: ['rectification', 'acceptedBy', 'reinspectedBy', 'evidenceHash'],
+      properties: {
+        rectification: { type: 'string' },
+        acceptedBy: stringField,
+        reinspectedBy: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      practicalcompletion.closeInspectionItem(projectContext(platform, ctx), ctx.params.itemId!, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/completion-items/:itemId/defer',
+    description: 'Defer an item with its owner, risk, access constraint and what will count as it being put right',
+    schema: {
+      type: 'object',
+      required: ['reason', 'owner', 'by', 'risk', 'accessConstraint', 'acceptanceCondition'],
+      properties: {
+        reason: { type: 'string' },
+        owner: stringField,
+        by: stringField,
+        risk: { type: 'string' },
+        accessConstraint: stringField,
+        acceptanceCondition: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      practicalcompletion.deferInspectionItem(projectContext(platform, ctx), ctx.params.itemId!, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contract-clauses/:clauseId/validate',
+    description: 'A person agrees or disagrees with what the extraction engine read. Until this, no date derives from it',
+    schema: {
+      type: 'object',
+      required: ['agrees', 'note', 'validatedBy'],
+      properties: {
+        agrees: { type: 'boolean' },
+        correctedClauseRef: stringField,
+        periodDays: { type: 'number' },
+        note: { type: 'string' },
+        validatedBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      practicalcompletion.validateContractClause(projectContext(platform, ctx), ctx.params.clauseId!, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/completion-records',
+    description: 'Issue practical or sectional completion under a named contractual authority and set its dates running once',
+    schema: {
+      type: 'object',
+      required: ['reference', 'kind', 'scopeBoundary', 'completionDate', 'authority', 'decidedBy', 'evidenceHash', 'periods'],
+      properties: {
+        reference: stringField,
+        kind: { type: 'string', enum: ['PRACTICAL', 'SECTIONAL'] },
+        sectionReference: stringField,
+        scopeBoundary: { type: 'string' },
+        completionDate: stringField,
+        authority: stringField,
+        decidedBy: stringField,
+        evidenceHash: stringField,
+        aiReadinessScore: {
+          type: 'object',
+          required: ['score', 'basis'],
+          properties: { score: { type: 'number' }, basis: { type: 'string' } },
+          additionalProperties: false,
+        },
+        periods: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['key', 'periodDays', 'ruleSource'],
+            properties: {
+              key: {
+                type: 'string',
+                enum: [
+                  'POSSESSION',
+                  'INSURANCE_TRANSFER',
+                  'LIQUIDATED_DAMAGES_END',
+                  'DEFECTS_PERIOD_END',
+                  'RETENTION_FIRST_RELEASE',
+                  'RETENTION_FINAL_RELEASE',
+                ],
+              },
+              periodDays: { type: 'number' },
+              ruleSource: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => practicalcompletion.issueCompletionCertificate(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/completion-records/:completionId/revise-dates',
+    description: 'Move a triggered date visibly, under a named authority, keeping the hash of the set it replaced',
+    schema: {
+      type: 'object',
+      required: ['authority', 'reason', 'periods'],
+      properties: {
+        authority: stringField,
+        reason: { type: 'string' },
+        periods: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['key', 'periodDays', 'ruleSource'],
+            properties: {
+              key: {
+                type: 'string',
+                enum: [
+                  'POSSESSION',
+                  'INSURANCE_TRANSFER',
+                  'LIQUIDATED_DAMAGES_END',
+                  'DEFECTS_PERIOD_END',
+                  'RETENTION_FIRST_RELEASE',
+                  'RETENTION_FINAL_RELEASE',
+                ],
+              },
+              periodDays: { type: 'number' },
+              ruleSource: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      practicalcompletion.reviseTriggeredDates(projectContext(platform, ctx), ctx.params.completionId!, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commercial-securities',
+    description: 'Record where a retention, bond, guarantee, collateral warranty or insurance certificate stands at closeout',
+    schema: {
+      type: 'object',
+      required: ['kind', 'reference', 'holder', 'status', 'note'],
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['RETENTION', 'PERFORMANCE_BOND', 'PARENT_COMPANY_GUARANTEE', 'COLLATERAL_WARRANTY', 'INSURANCE_CERTIFICATE'],
+        },
+        reference: stringField,
+        holder: stringField,
+        status: stringField,
+        expiresOn: stringField,
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => practicalcompletion.recordSecurityPosition(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/final-accounts',
+    description: 'Agree the final account against the figures the value chain already holds. The money is not re-entered here',
+    schema: {
+      type: 'object',
+      required: ['subjectRef', 'agreedBy', 'forContractor', 'note'],
+      properties: {
+        subjectRef: stringField,
+        agreedBy: stringField,
+        forContractor: stringField,
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => practicalcompletion.agreeFinalAccount(projectContext(platform, ctx), body(ctx)),
   },
 
   // ------------------------------------------------------- H-WF-05 regulatory completion and Golden Thread transfer
