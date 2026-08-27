@@ -273,6 +273,50 @@ export const config = {
     operatorName: str('PLATFORM_OPERATOR_NAME', 'Platform operator'),
   },
 
+  /**
+   * The demonstration tenancy.
+   *
+   * A production deployment shows a prospective customer nothing: the seed is
+   * off, so the platform serves a sign-in page onto an empty world. Turning
+   * this on seeds the same Meridian lifecycle production runs in development —
+   * one real project carried from concept to operations — as a genuine tenancy
+   * with genuine identities that sign in through the ordinary login and MFA
+   * path.
+   *
+   * **What it is not.** It is not an authentication bypass.
+   * `POST /v1/console/session`, which hands an anonymous caller an access token
+   * with no challenge at all, stays refused in production whatever this is set
+   * to. What this enables is narrower and deliberate: an identity created by
+   * the demonstration seed, and only such an identity, has its one-time code
+   * returned in the login response instead of emailed — because the address it
+   * would be emailed to is `@meridian.example` and belongs to nobody. The
+   * challenge, its five-minute expiry, its single use and the verification step
+   * are all the real ones. No account outside the demonstration tenancy is
+   * affected, and an operator account is refused the shortcut even if something
+   * ever flagged one.
+   *
+   * **What it costs.** The demonstration tenancy holds a real ACU wallet, and
+   * in a deployment with live AI providers a visitor can spend it. That is the
+   * point — a demonstration where the AI refuses is not a demonstration — but
+   * it is real money, so the opening credit is set here rather than fixed in
+   * the seed. When it runs out the platform refuses to call a provider, which
+   * is existing, tested behaviour and reads correctly on screen.
+   *
+   * Off unless deliberately switched on. A deployment carrying real customers
+   * should think before adding a tenancy anyone may write to.
+   */
+  demo: {
+    enabled: bool('DEMO_TENANCY_ENABLED', false),
+    /**
+     * Opening credit for the demonstration wallet, in minor units.
+     *
+     * The seed itself consumes some of this producing the lifecycle it shows,
+     * so a very low value leaves the demonstration seeded but unable to run AI.
+     * That is a legitimate choice and it fails cleanly; it is not a fault.
+     */
+    acuCreditMinor: num('DEMO_ACU_CREDIT_MINOR', 500_000),
+  },
+
   auth: {
     required: bool('GATEWAY_REQUIRE_AUTH', true),
     exposeMfa: bool('GATEWAY_AUTH_EXPOSE_MFA', true),
@@ -612,6 +656,28 @@ export const config = {
  */
 export function isProduction(): boolean {
   return process.env.NODE_ENV === 'production';
+}
+
+/**
+ * Whether the demonstration tenancy is switched on, read fresh.
+ *
+ * The same argument as `isProduction()`, and for the same reason: this decides
+ * whether an anonymous caller may be handed a one-time code, and a security
+ * gate nobody can test is a security gate nobody has checked. `config.demo`
+ * carries the value too — snapshotted at load, which is correct for the seed's
+ * opening credit — but the gate itself has to be reachable from a test that
+ * has not booted a second process.
+ *
+ * It reads the variable by exactly the rule `bool()` uses, not a stricter one
+ * of its own. A gate that accepted `true` where the loader also accepts `1`
+ * would leave a deployment set to `1` seeding a demonstration at boot that
+ * every route then refused to show — working, invisible, and very hard to
+ * explain.
+ */
+export function demonstrationEnabled(): boolean {
+  const raw = process.env.DEMO_TENANCY_ENABLED;
+  if (raw === undefined || raw === '') return false;
+  return raw === 'true' || raw === '1';
 }
 
 /**

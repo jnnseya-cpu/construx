@@ -1158,6 +1158,65 @@ an access token in production**, with the two that complete an authentication
 exempted by name, so a new public route handing out a token has to be added to
 that list deliberately.
 
+**A demonstration tenancy that is not a hole in that.** Closing the above left a
+production deployment showing a prospective customer nothing: the seed was off,
+so the platform served a sign-in page onto an empty world and refused the
+identity picker. `DEMO_TENANCY_ENABLED=true` seeds the Meridian lifecycle at
+boot as a real tenancy with twelve identities that sign in through the ordinary
+login and MFA path.
+
+What the switch does, precisely: an identity the seed created — and only such an
+identity — has its one-time code returned in the login response as `demoCode`
+instead of emailed, because the address it would be emailed to is
+`@meridian.example` and belongs to nobody. The challenge, its five-minute
+expiry, its single use and the verification step are all the real ones. Verified
+against a server started with `NODE_ENV=production`: a wrong code is refused, the
+real one is accepted once, and replaying it is refused.
+
+Four guards, each of which alone would refuse:
+
+- The switch must be on, read fresh by `demonstrationEnabled()` for the same
+  reason `isProduction()` exists — a gate nobody can test is a gate nobody has
+  checked. It reads the variable by exactly the rule `bool()` uses, so a
+  deployment set to `1` cannot seed a demonstration at boot that every route
+  then refuses to show.
+- The account must carry `demonstration: true`. It is set by `seedDemoProject`
+  and by nothing else in the platform — no route sets or clears it — so an
+  account cannot become public and a demonstration account cannot stop being
+  one. It is written into `USER_CREATED`, so it survives a replay; a flag held
+  only in the process would take the demonstration sign-in with it on the first
+  restart.
+- No operator, ever. `demonstrationUsers()` applies the tenancy and
+  `PLATFORM_ADMIN` filters in one place rather than at each call site, and in
+  production the identity list omits the operator layer entirely — a
+  cross-tenant administrator should not be a button on the front door, and the
+  button would not work anyway.
+- `POST /v1/console/session` is **not** on this switch and stays refused in
+  production whatever it is set to. Publishing an account that must still
+  authenticate and skipping the challenge outright are different things.
+
+Two consequences worth stating plainly rather than discovering:
+
+- The demonstration tenancy is a **sandbox in a real ledger**. Anyone signed in
+  can write to it, isolated from every other tenancy by the same tenant
+  isolation that separates two customers.
+- It **spends AI budget**. Seeding runs a full lifecycle's AI steps against
+  whichever providers `AI_MODE` selects, and visitors spend from the same wallet
+  afterwards. `DEMO_ACU_CREDIT_MINOR` caps it; when it empties the platform
+  refuses to call a provider, which is existing tested behaviour. The cost is
+  once per deployment, not per restart: the bootstrap **adopts** a tenancy
+  already on disk rather than seeding a second one. Without that, every restart
+  would have built another Meridian — another project, another wallet, another
+  twelve identities — until the sign-in page listed duplicate Project Managers
+  and nobody could tell which held the work. Harmless where the journal is
+  discarded between runs, which is why it was never seen. Verified by restarting
+  a production-mode server against its own journal: `12 identities, adopted from
+  the record`, one tenancy, one operator.
+
+The seed also stopped inventing an operator. It adopts one that already exists,
+so seeding a demonstration onto a deployment that has bootstrapped its real
+`PLATFORM_OPERATOR_EMAIL` no longer files `operator@construx.example` beside it.
+
 **Three deployables, one repository.** `backend/` is the service, `frontend/` is
 the browser application, `shared/` is the vocabulary both read. They were always
 separate — the frontend never imported a backend module and never could, because

@@ -1,3 +1,4 @@
+import { config } from './config.ts';
 import { hashEvidence } from './core/canonical.ts';
 import * as business from './domain/business.ts';
 import * as control from './domain/control.ts';
@@ -16,6 +17,7 @@ import * as safety from './engines/safety.ts';
 import { scoreRisk } from './engines/maths/risk.ts';
 import * as tender from './engines/tender.ts';
 import type { AuthContext } from './identity/auth.ts';
+import type { Role } from './identity/roles.ts';
 import { issueTokens } from './identity/auth.ts';
 import type { Platform } from './platform.ts';
 
@@ -26,6 +28,25 @@ import type { Platform } from './platform.ts';
  * concept to operations, with every state change written through the Golden
  * Thread. It is also the fixture the tests and the console run against.
  */
+
+/**
+ * The names the demonstration tenancy is known by.
+ *
+ * Here rather than as literals in the seed body because there is now a second
+ * reader: after a restart the demonstration tenancy is already on disk, and the
+ * console adopts it instead of seeding a second one. Adoption has to recognise
+ * what it is looking at, and a copy of these strings in `routes.ts` would be a
+ * second source of truth for the same four facts — which would drift the first
+ * time anyone renamed the project.
+ */
+export const DEMO_TENANCY = {
+  legalName: 'Meridian Infrastructure Group Ltd',
+  enterpriseName: 'Meridian Infrastructure Group',
+  portfolioName: 'National Water Resilience Programme',
+  projectName: 'Ashworth Water Treatment Works — Phase 2',
+  /** The identity the console signs in as when it bootstraps itself. */
+  primaryEmail: 'pm@meridian.example',
+} as const;
 
 export type SeedResult = {
   tenantId: string;
@@ -78,18 +99,27 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   };
 
   // --- Platform operator onboards the tenant --------------------------------
-  const operator = platform.createOperator({
-    name: 'Platform Operator',
-    email: 'operator@construx.example',
-  });
-  step(`Platform operator account created: ${operator.name}`);
+  //
+  // An existing operator is adopted rather than a second one invented. On a
+  // fresh platform — every test, and a developer's laptop — there is none and
+  // this creates the demonstration one exactly as before. On a deployment that
+  // has already bootstrapped its real operator from `PLATFORM_OPERATOR_EMAIL`,
+  // seeding the demonstration must not add `operator@construx.example` to the
+  // platform's governance records beside them.
+  const operator =
+    platform.operators()[0] ??
+    platform.createOperator({
+      name: 'Platform Operator',
+      email: 'operator@construx.example',
+    });
+  step(`Platform operator account: ${operator.name}`);
 
   const { tenant, subscription } = platform.createTenant({
-    legalName: 'Meridian Infrastructure Group Ltd',
+    legalName: DEMO_TENANCY.legalName,
     jurisdiction: 'GB',
     defaultCurrency: 'GBP',
     tier: 'ENTERPRISE',
-    enterpriseName: 'Meridian Infrastructure Group',
+    enterpriseName: DEMO_TENANCY.enterpriseName,
   });
   step(`Tenant onboarded: ${tenant.legalName} on the ${subscription.tier} tier`);
 
@@ -98,9 +128,12 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   // if it is not topped up.
   // Through the payment path, not a bare credit: the demonstration should show
   // the same route a real payment takes, and there is no longer any other.
+  // The amount is configuration, not a constant. On a live deployment this
+  // wallet is spendable by anyone who opens the demonstration, so the operator
+  // decides how much of their AI budget that is worth.
   platform.creditFromPayment({
     tenantId: tenant.id,
-    amountMinor: 500_000,
+    amountMinor: config.demo.acuCreditMinor,
     method: 'BANK_TRANSFER',
     reference: `SEED-${tenant.id}`,
     recordedBy: 'seed',
@@ -109,44 +142,50 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   step('ACU wallet topped up with prepaid credit');
 
   // --- Enterprise admin creates the delivery team ---------------------------
-  const admin = platform.createUser({
-    tenantId: tenant.id,
+  //
+  // Every identity below is created through `demoUser`, which marks it as a
+  // demonstration account. That mark is what the login route reads before it
+  // will return a one-time code in a response rather than emailing it, and it
+  // is the only thing separating an address anybody may sign in as from a
+  // customer's. It is set here, in the seed, and nowhere else in the platform.
+  const demoUser = (input: { name: string; email: string; roles: Role[] }) =>
+    platform.createUser({ ...input, tenantId: tenant.id, demonstration: true });
+
+  const admin = demoUser({
     name: 'Amara Osei',
     email: 'amara.osei@meridian.example',
     roles: ['ENTERPRISE_ADMIN'],
   });
-  const owner = platform.createUser({ tenantId: tenant.id, name: 'Client Representative', email: 'owner@meridian.example', roles: ['OWNER'] });
-  const pm = platform.createUser({ tenantId: tenant.id, name: 'Project Manager', email: 'pm@meridian.example', roles: ['PM'] });
-  const qs = platform.createUser({ tenantId: tenant.id, name: 'Quantity Surveyor', email: 'qs@meridian.example', roles: ['QS'] });
-  const planner = platform.createUser({ tenantId: tenant.id, name: 'Planning Manager', email: 'planner@meridian.example', roles: ['PLANNER'] });
-  const safetyLead = platform.createUser({ tenantId: tenant.id, name: 'HSE Manager', email: 'hse@meridian.example', roles: ['SAFETY'] });
-  const bimLead = platform.createUser({ tenantId: tenant.id, name: 'BIM Manager', email: 'bim@meridian.example', roles: ['BIM'] });
+  const owner = demoUser({ name: 'Client Representative', email: 'owner@meridian.example', roles: ['OWNER'] });
+  const pm = demoUser({ name: 'Project Manager', email: DEMO_TENANCY.primaryEmail, roles: ['PM'] });
+  const qs = demoUser({ name: 'Quantity Surveyor', email: 'qs@meridian.example', roles: ['QS'] });
+  const planner = demoUser({ name: 'Planning Manager', email: 'planner@meridian.example', roles: ['PLANNER'] });
+  const safetyLead = demoUser({ name: 'HSE Manager', email: 'hse@meridian.example', roles: ['SAFETY'] });
+  const bimLead = demoUser({ name: 'BIM Manager', email: 'bim@meridian.example', roles: ['BIM'] });
   // The demonstration had no design approver at all. `DESIGNER` and
   // `PRINCIPAL_DESIGNER` both hold approve on design information and neither was
   // on the project, so a design could be authored, marked up and questioned —
   // and never accepted by anybody. The review cycle made that visible; it was
   // true before it.
-  const designLead = platform.createUser({
-    tenantId: tenant.id,
+  const designLead = demoUser({
     name: 'Design Manager',
     email: 'design@meridian.example',
     roles: ['DESIGNER'],
   });
-  const qaqc = platform.createUser({ tenantId: tenant.id, name: 'QA/QC Engineer', email: 'qaqc@meridian.example', roles: ['QAQC'] });
+  const qaqc = demoUser({ name: 'QA/QC Engineer', email: 'qaqc@meridian.example', roles: ['QAQC'] });
   // The site manager. Absent until the Construction screen was built, and the
   // absence mattered: SUPERVISOR is the role that holds C and U on SAFETY_RAMS,
   // QUALITY_COMMISSIONING and FIELD_EXECUTION — it issues the permits, records
   // the inductions, creates the inspection plans and raises the
   // non-conformances. Every one of those paths existed in the matrix and could
   // not be walked by anybody on the demonstration project.
-  const siteManager = platform.createUser({
-    tenantId: tenant.id,
+  const siteManager = demoUser({
     name: 'Site Manager',
     email: 'site@meridian.example',
     roles: ['SUPERVISOR'],
   });
-  const fm = platform.createUser({ tenantId: tenant.id, name: 'Facilities Manager', email: 'fm@meridian.example', roles: ['FM'] });
-  const regulator = platform.createUser({ tenantId: tenant.id, name: 'Building Safety Regulator', email: 'regulator@meridian.example', roles: ['REGULATOR'] });
+  const fm = demoUser({ name: 'Facilities Manager', email: 'fm@meridian.example', roles: ['FM'] });
+  const regulator = demoUser({ name: 'Building Safety Regulator', email: 'regulator@meridian.example', roles: ['REGULATOR'] });
   step('Eleven named identities assigned across the delivery team');
 
   const adminAuth = authOf(platform, admin.id);
@@ -167,7 +206,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
     rationale: string;
   }> = [
     {
-      title: 'Ashworth Water Treatment Works — Phase 2',
+      title: DEMO_TENANCY.projectName,
       clientName: 'Northern Water Authority',
       sectorType: 'UTILITIES',
       valueMinor: 1_850_000_000,
@@ -398,7 +437,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
 
   // --- CONCEPT ---------------------------------------------------------------
   const { portfolioId } = structure.createPortfolio(governanceCtx, {
-    name: 'National Water Resilience Programme',
+    name: DEMO_TENANCY.portfolioName,
     enterpriseId: tenant.enterpriseId as string,
     governanceModel: 'DFI-funded, quarterly gate review',
     continentCode: 'EU',
@@ -418,7 +457,7 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   const { projectId } = structure.createProject(governanceCtx, {
     portfolioId,
     programmeId,
-    name: 'Ashworth Water Treatment Works — Phase 2',
+    name: DEMO_TENANCY.projectName,
     sectorType: 'UTILITIES',
     assetType: 'Water treatment facility',
     location: { continentCode: 'EU', countryCode: 'GB', city: 'Manchester' },
@@ -1998,9 +2037,9 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   return {
     tenantId: tenant.id,
     projectId,
-    enterpriseName: 'Meridian Infrastructure Group',
-    portfolioName: 'National Water Resilience Programme',
-    projectName: 'Ashworth Water Treatment Works — Phase 2',
+    enterpriseName: DEMO_TENANCY.enterpriseName,
+    portfolioName: DEMO_TENANCY.portfolioName,
+    projectName: DEMO_TENANCY.projectName,
     users: {
       // The operator is a different account layer, not a senior tenant user.
       // It was created but never returned, which is why nothing could test the

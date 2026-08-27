@@ -65,6 +65,19 @@ export type PlatformUser = {
   partyId?: string;
   status: 'ACTIVE' | 'SUSPENDED';
   /**
+   * Created by the demonstration seed.
+   *
+   * The one thing that distinguishes an identity anybody may sign in as from a
+   * real customer's. It is set only by `seedDemoProject`, it is written into
+   * the `USER_CREATED` event so it survives a replay, and no route sets or
+   * clears it — an account cannot become a demonstration account, and a
+   * demonstration account cannot stop being one, after it is created.
+   *
+   * Absent on every real identity rather than `false`, so the flag has to be
+   * put there on purpose for anything to treat an account as public.
+   */
+  demonstration?: true;
+  /**
    * Erasure. Absent on an identity nobody has asked to remove, which is almost
    * all of them, so the fields are optional rather than a nested object that
    * would exist empty on every user.
@@ -359,7 +372,33 @@ export class Platform {
     return [...this.#users.values()].filter((u) => u.tenantId === PLATFORM_TENANT_ID);
   }
 
-  createUser(input: { tenantId: string; name: string; email: string; roles: Role[]; partyId?: string }): PlatformUser {
+  /**
+   * Every identity the demonstration seed created.
+   *
+   * Asked by two callers with the same question in different words: the console
+   * bootstrap, to find out whether a demonstration tenancy already exists on
+   * this deployment rather than seeding a second one after a restart; and the
+   * login route, to decide whether an address is a published demonstration
+   * account or somebody's real one. Operators are excluded here rather than at
+   * each call site — nothing should ever be able to reach a `PLATFORM_ADMIN`
+   * through a demonstration affordance, and a filter each caller has to
+   * remember is a filter one of them will forget.
+   */
+  demonstrationUsers(): PlatformUser[] {
+    return [...this.#users.values()].filter(
+      (u) => u.demonstration === true && u.tenantId !== PLATFORM_TENANT_ID && !u.roles.includes('PLATFORM_ADMIN'),
+    );
+  }
+
+  createUser(input: {
+    tenantId: string;
+    name: string;
+    email: string;
+    roles: Role[];
+    partyId?: string;
+    /** Only `seedDemoProject` passes this. See `PlatformUser.demonstration`. */
+    demonstration?: true;
+  }): PlatformUser {
     const subscription = this.subscription(input.tenantId);
     const userId = ulid();
 
@@ -371,6 +410,7 @@ export class Platform {
       roles: input.roles,
       partyId: input.partyId,
       status: 'ACTIVE',
+      ...(input.demonstration ? { demonstration: true as const } : {}),
     };
 
     // Seat assignment can fail on a tier limit; the user is not created if so.
@@ -394,6 +434,10 @@ export class Platform {
         roles: input.roles,
         partyId: input.partyId,
         status: 'ACTIVE',
+        // In the event, not only in memory: `rehydrate` rebuilds every user
+        // from this state, and a flag that lived only in the process would be
+        // lost on the first restart — taking the demonstration sign-in with it.
+        ...(input.demonstration ? { demonstration: true as const } : {}),
       },
     });
 

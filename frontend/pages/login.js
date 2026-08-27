@@ -126,12 +126,18 @@ function wireCredentials() {
         emailInput.readOnly = true;
         submit.textContent = 'Sign in';
 
-        // Outside production the platform returns the code, because there is no
-        // mail server on a laptop. Filling it in is a convenience, never a
-        // bypass — it still has to be verified.
+        // The platform returns the code in two cases, and says which: outside
+        // production, where there is no mail server on a laptop; and for a
+        // seeded demonstration identity, whose address belongs to nobody.
+        // Filling it in is a convenience, never a bypass — it still has to be
+        // verified, and typing a real customer's address here gets no code
+        // back under either rule.
         if (challenge.devCode) {
           codeInput.value = challenge.devCode;
           codeHint.textContent = 'Development mode: the code is filled in for you.';
+        } else if (challenge.demoCode) {
+          codeInput.value = challenge.demoCode;
+          codeHint.textContent = 'Demonstration account: the code is filled in for you.';
         } else {
           codeHint.textContent = `Sent to ${email}. It expires in five minutes.`;
         }
@@ -207,9 +213,10 @@ async function offerDemonstrationIdentities() {
 
   render(
     host,
-    html`<div class="nav-group-label" style="margin:26px 0 10px">Or explore a seeded project</div>
+    html`<div class="nav-group-label" style="margin:26px 0 10px">Or explore a demonstration project</div>
     <p class="hint" style="margin:0 0 12px">
-      Each identity carries different permissions, and the platform enforces them.
+      Open accounts on a sandbox tenancy — anyone may sign in as any of them. Each carries different
+      permissions, and the platform enforces them exactly as it does for a customer.
     </p>
     ${customer.map(card)}
     ${

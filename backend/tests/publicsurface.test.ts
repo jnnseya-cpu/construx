@@ -211,6 +211,12 @@ describe('the demonstration surface in production', () => {
 
     const text = await response.text();
     assert.ok(!/"devCode"/.test(text), 'the MFA challenge code was returned in production');
+    // Its production-only sibling. `demoCode` is returned for an identity the
+    // demonstration seed created, on a deployment that has switched the
+    // demonstration on — and this platform has neither. If it appears here,
+    // the narrow rule has become a wide one. The switched-on case is covered
+    // in full by demotenancy.test.ts.
+    assert.ok(!/"demoCode"/.test(text), 'a demonstration code was returned with no demonstration tenancy seeded');
   });
 });
 

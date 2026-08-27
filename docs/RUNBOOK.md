@@ -251,7 +251,8 @@ record is affected.
 
 | Variable | Production value | What goes wrong otherwise |
 |---|---|---|
-| `NODE_ENV` | `production` | The demonstration routes stay open and the MFA challenge code is returned in the login response |
+| `NODE_ENV` | `production` | The demonstration routes stay open and the MFA challenge code is returned in the login response for **every** account, not only the seeded ones |
+| `DEMO_TENANCY_ENABLED` | your call — `false` unless you want a public demonstration | See below. It is the one setting here that is a product decision rather than a correctness one |
 | `LEDGER_JOURNAL_PATH` | a path on a mounted volume | **Every record is lost on restart** |
 | `LEDGER_JOURNAL_FSYNC` | `true` | Events can be acknowledged before reaching the disk |
 | `GATEWAY_JWT_SECRET` | a real secret | Every token is forgeable |
@@ -262,6 +263,35 @@ record is affected.
 to stderr. It warns rather than exits, deliberately: a platform that refuses to
 start on a misconfiguration converts a wrong flag into an outage. Read the boot
 log on every deploy.
+
+### The demonstration tenancy
+
+`DEMO_TENANCY_ENABLED=true` seeds the Meridian lifecycle at boot as a real
+tenancy with twelve identities. Know exactly what it does before setting it:
+
+- **Those twelve accounts become public.** Their addresses are
+  `@meridian.example` and belong to nobody, so their one-time code comes back
+  in the login response rather than by email — anybody may sign in as any of
+  them. That is what a demonstration is. It reaches those twelve accounts and
+  nothing else: a customer's account is unaffected, and no operator is
+  reachable this way under any setting.
+- **Anyone signed in as one of them can write to that tenancy.** It is a
+  sandbox in a real ledger, separated from every other tenancy by the same
+  isolation that separates two customers.
+- **It spends AI budget.** Seeding runs a full lifecycle's AI steps against
+  whichever providers `AI_MODE` selects — once per deployment, not per visitor,
+  because a restart adopts the tenancy already on disk rather than seeding a
+  second one. Visitors then spend from the same wallet.
+  `DEMO_ACU_CREDIT_MINOR` caps it. When it empties the platform refuses to call
+  a provider, which is normal behaviour and reads correctly on screen.
+- **It does not reopen `POST /v1/console/session`.** That route hands an
+  anonymous caller a working token with no challenge at all, and stays refused
+  in production whatever this is set to. The two are deliberately not on the
+  same switch.
+
+The boot banner's `Demo` line reports which tenancy is serving, whether it was
+seeded or adopted, and what is left in the wallet. Read it after switching this
+on.
 
 ---
 

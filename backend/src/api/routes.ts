@@ -22,7 +22,7 @@ import { fleetManifest } from '../agents/runtime.ts';
 import type { ACUCaps } from '../billing/acu.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
 import { seatEconomics, TIERS, type SubscriptionTier } from '../billing/subscription.ts';
-import { config, isProduction } from '../config.ts';
+import { config, demonstrationEnabled, isProduction } from '../config.ts';
 import * as consistency from '../domain/consistency.ts';
 import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
 import { AuthError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../core/errors.ts';
@@ -375,22 +375,85 @@ const AGENT_COMMANDS: Record<string, (ctx: ReturnType<typeof projectContext>, in
  */
 let consoleSession: Promise<{ projectId: string; email: string; enterpriseName: string; portfolioName: string }> | undefined;
 
-function getOrCreateConsoleSession(platform: Platform): Promise<{
+export function getOrCreateConsoleSession(platform: Platform): Promise<{
   projectId: string;
   email: string;
   enterpriseName: string;
   portfolioName: string;
 }> {
-  consoleSession ??= import('../seed.ts').then(async ({ seedDemoProject }) => {
+  consoleSession ??= import('../seed.ts').then(async ({ DEMO_TENANCY, seedDemoProject }) => {
+    // Adopt before seeding.
+    //
+    // The memo lives in this process, but the ledger lives on disk. A restart
+    // clears the memo and leaves the tenancy — so seeding unconditionally would
+    // build a second Meridian on every restart, each with its own project, its
+    // own wallet and its own thirteen identities, until the sign-in page listed
+    // dozens of Project Managers and nobody could tell which one held the work.
+    // Harmless where the journal is thrown away between runs, which is why it
+    // was never seen; a slow disaster on a deployment that keeps it.
+    const existing = platform.demonstrationUsers();
+    if (existing.length > 0) {
+      const tenantId = existing[0]?.tenantId as string;
+      const project = platform.ledger
+        .entitiesOfType('Project')
+        .find((record) => record.tenantId === tenantId && record.state.name === DEMO_TENANCY.projectName);
+      if (project) {
+        return {
+          projectId: project.refId,
+          email: DEMO_TENANCY.primaryEmail,
+          enterpriseName: DEMO_TENANCY.enterpriseName,
+          portfolioName: DEMO_TENANCY.portfolioName,
+        };
+      }
+      // Identities but no project: a seed that was interrupted part-way. Fall
+      // through and seed rather than serving a console with nothing in it.
+    }
+
     const seed = await seedDemoProject(platform);
     return {
       projectId: seed.projectId,
-      email: 'pm@meridian.example',
+      email: DEMO_TENANCY.primaryEmail,
       enterpriseName: seed.enterpriseName,
       portfolioName: seed.portfolioName,
     };
   });
   return consoleSession;
+}
+
+/**
+ * Whether the demonstration tenancy may be offered on this deployment.
+ *
+ * Outside production it always may — that is what a development environment is
+ * for. In production it may only when an operator has switched it on, and the
+ * switch is what makes an anonymous visitor's sign-in a considered decision
+ * rather than a default nobody chose.
+ *
+ * This gates the identity list and the code-in-response path.
+ * `POST /v1/console/session`, which mints a token with no challenge at all, is
+ * not covered by it and stays refused in production unconditionally: that one
+ * is an authentication bypass rather than a published account, and there is no
+ * setting that should turn it back on.
+ */
+function demonstrationOffered(): boolean {
+  return !isProduction() || demonstrationEnabled();
+}
+
+/**
+ * Whether this identity's one-time code may be returned rather than emailed.
+ *
+ * Four conditions, each of which alone would be enough to refuse:
+ * the demonstration must be offered on this deployment; the account must carry
+ * the seed's `demonstration` mark; it must not be a platform operator; and it
+ * must be the account the platform itself agrees is a demonstration identity —
+ * `demonstrationUsers()` applies the tenancy and operator filters in one place
+ * so no caller can forget them.
+ *
+ * A real customer's account fails the second condition and always will: nothing
+ * in the platform can set that mark except the seed.
+ */
+function isDemonstrationIdentity(platform: Platform, userId: string): boolean {
+  if (!demonstrationOffered()) return false;
+  return platform.demonstrationUsers().some((u) => u.id === userId);
 }
 
 /**
@@ -475,6 +538,18 @@ export const ROUTES: Route[] = [
 
       const challenge = createMfaChallenge(user.id);
 
+      // A published demonstration account, or somebody's real one?
+      //
+      // The distinction decides two things below: whether the code is emailed,
+      // and whether it is returned. For a demonstration identity the address is
+      // `@meridian.example` and belongs to nobody — mailing it would bounce and
+      // would put a live deployment's sending reputation behind a domain it
+      // does not own — so the code comes back in the response instead. That is
+      // the whole of the demonstration affordance: the challenge, its
+      // five-minute expiry, its single use and the verification step are all
+      // the real ones, and nothing here shortens the path.
+      const demonstration = isDemonstrationIdentity(platform, user.id);
+
       // In production the code has to reach the person, and until now it did
       // not: it was generated, held in memory, returned to nobody, and the
       // response deliberately withheld it. The effect was a deployment where
@@ -486,7 +561,7 @@ export const ROUTES: Route[] = [
       // caller. Sent through the same pipeline as every other notice, so it is
       // recorded, rendered and branded like one rather than being a second
       // private mail path.
-      if (isProduction()) {
+      if (isProduction() && !demonstration) {
         await notifyEngine.notify(platform, {
           code: 'mfa.otp_code',
           recipients: [{ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }],
@@ -512,9 +587,16 @@ export const ROUTES: Route[] = [
 
       return {
         ...shapeMfaResponse(challenge),
-        // Returned only outside production, so local development and the
-        // demonstration do not need a mail server to sign in.
+        // Returned only outside production, so local development does not need
+        // a mail server to sign in. Every account on the deployment, because
+        // outside production every account is a development fixture.
         ...(isProduction() ? {} : { devCode: challenge.code }),
+        // The production counterpart, and deliberately a different key: one is
+        // "this is not a real deployment", the other is "this is a real
+        // deployment and this one account is published". Conflating them would
+        // make the narrower rule invisible in every reader that handles the
+        // wider one.
+        ...(isProduction() && demonstration ? { demoCode: challenge.code } : {}),
         actorId: user.id,
       };
     },
@@ -2319,8 +2401,8 @@ export const ROUTES: Route[] = [
     public: true,
     description: 'List the seeded demonstration identities so any role can be signed into',
     handler: async (platform) => {
-      if (isProduction()) {
-        throw new ForbiddenError('Demonstration identities are not available in production', 'DEMO_DISABLED');
+      if (!demonstrationOffered()) {
+        throw new ForbiddenError('Demonstration identities are not available on this deployment', 'DEMO_DISABLED');
       }
       const session = await getOrCreateConsoleSession(platform);
       const users = platform.users(platform.ledger.require({ refType: 'Project', refId: session.projectId }).tenantId);
@@ -2334,13 +2416,26 @@ export const ROUTES: Route[] = [
         roles: u.roles,
         layer,
       });
+      // In production only the seeded demonstration identities are listed, and
+      // no operator is. Outside production the list is the deployment's whole
+      // population, because that is the fixture and there is nobody else on it.
+      //
+      // The operator omission is not cosmetic. In production a live deployment's
+      // real `PLATFORM_ADMIN` is on the platform, listing it would put a
+      // cross-tenant administrator on the front door as a button, and the button
+      // would not even work — an operator is never a demonstration identity, so
+      // login returns it no code. A control that cannot succeed should not be
+      // drawn.
+      const demonstrationOnly = isProduction();
+      const listed = demonstrationOnly ? users.filter((u) => u.demonstration === true) : users;
+      const operators = demonstrationOnly ? [] : platform.operators();
       return {
         projectId: session.projectId,
         enterprise: session.enterpriseName,
         portfolio: session.portfolioName,
         identities: [
-          ...users.map((u) => shape(u, u.roles.includes('ENTERPRISE_ADMIN') ? 'ENTERPRISE_ADMIN' : 'TENANT_USER')),
-          ...platform.operators().map((u) => shape(u, 'PLATFORM_ADMIN')),
+          ...listed.map((u) => shape(u, u.roles.includes('ENTERPRISE_ADMIN') ? 'ENTERPRISE_ADMIN' : 'TENANT_USER')),
+          ...operators.map((u) => shape(u, 'PLATFORM_ADMIN')),
         ],
       };
     },
@@ -2746,6 +2841,13 @@ export const ROUTES: Route[] = [
       // production — anyone who could reach the origin held a PM identity for
       // the asking, with no credential and no MFA. Its sibling
       // /v1/console/identities already carried this gate; this one did not.
+      //
+      // Note what this gate is *not* keyed on. `DEMO_TENANCY_ENABLED` opens the
+      // identity list and lets a seeded account's one-time code come back in
+      // the login response; it does not open this. A published account that
+      // still has to answer a challenge and a route that skips the challenge
+      // entirely are different things, and only the first of them belongs on
+      // the internet under any setting.
       if (isProduction()) {
         throw new ForbiddenError('Demonstration sessions are not available in production', 'DEMO_DISABLED');
       }

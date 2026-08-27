@@ -272,11 +272,16 @@ export async function signInWithCredentials({ actorId, challengeId, code }) {
 
 export async function signIn(identity) {
   const challenge = await api.post('/v1/auth/login', { email: identity.email }, { anonymous: true });
-  // Outside production the challenge code is returned so the demonstration does
-  // not depend on an SMS gateway. The MFA step itself is real.
+  // The code comes back in the response rather than by email, and the platform
+  // decides under which of two rules: `devCode` outside production, where every
+  // account is a fixture; `demoCode` in production, where only an identity the
+  // demonstration seed created qualifies and a customer's account never will.
+  // Neither shortens the flow — the challenge is real, expires in five minutes,
+  // is single-use, and the token is only minted once /mfa/verify accepts it.
+  const code = challenge.devCode ?? challenge.demoCode;
   const verified = await api.post(
     '/v1/auth/mfa/verify',
-    { actorId: challenge.actorId, challengeId: challenge.challengeId, code: challenge.devCode },
+    { actorId: challenge.actorId, challengeId: challenge.challengeId, code },
     { anonymous: true },
   );
 

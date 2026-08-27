@@ -119,6 +119,40 @@ if (config.rateLimit.redisUrl !== '') {
   limiterState = `shared via ${new URL(config.rateLimit.redisUrl).host}`;
 }
 
+/**
+ * The demonstration tenancy, when this deployment offers one.
+ *
+ * Primed at boot rather than on the first request. The seed carries a whole
+ * lifecycle and takes seconds; doing it lazily would mean the first visitor to
+ * open the sign-in page waits for it with nothing on screen, and in production
+ * that visitor is the one the demonstration exists for.
+ *
+ * It goes through the same call the console uses, so there is one bootstrap
+ * rather than two — including the part that adopts an already-seeded tenancy
+ * instead of building a second one after a restart.
+ *
+ * The consumption figure is printed because it is real money in any mode but
+ * `local`: seeding runs the AI steps of a full lifecycle against whichever
+ * providers are configured. An operator switching this on in production should
+ * see what it cost, not discover it on an invoice.
+ */
+let demonstration = 'off (set DEMO_TENANCY_ENABLED=true to seed one)';
+if (config.demo.enabled) {
+  const before = platform.demonstrationUsers().length;
+  const { getOrCreateConsoleSession } = await import('./api/routes.ts');
+  const session = await getOrCreateConsoleSession(platform);
+  const seeded = platform.demonstrationUsers();
+  const wallet = platform.wallet(seeded[0]?.tenantId ?? '');
+  demonstration =
+    `${session.portfolioName} — ${seeded.length} identities, ` +
+    `${before > 0 ? 'adopted from the record' : 'seeded now'}, ` +
+    // The balance, not "x of y". The wallet holds the configured opening credit
+    // *plus* the tier's trial grant, so reporting it against the credit alone
+    // prints a number larger than its own denominator.
+    `wallet ${(wallet.availableMinor() / 100).toFixed(2)} GBP available ` +
+    `(opening credit ${(config.demo.acuCreditMinor / 100).toFixed(2)} plus the tier grant, less what seeding spent)`;
+}
+
 const server = await startGateway(platform, config.port);
 
 const newsletter = startNewsletterSchedule(platform, (report) => {
@@ -149,6 +183,7 @@ process.stdout.write(
     }`,
     `  AI mode      ${config.ai.mode}${config.ai.mode === 'local' ? ' (deterministic engines, no provider spend)' : ''}`,
     `  Operator     ${bootstrap}
+  Demo         ${demonstration}
   Newsletter   ${
       config.newsletter.enabled
         ? `weekly, day ${config.newsletter.sendDayUtc} at ${config.newsletter.sendHourUtc}:00 UTC via ${config.smtp.host || 'no SMTP host — will record, not send'}`
