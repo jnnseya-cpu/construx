@@ -400,6 +400,25 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SUBCONTRACT_ASSEMBLED', 'Subcontract', 'CREATE', 'PROCUREMENT'),
   def('SUBCONTRACT_EXECUTED', 'Subcontract', 'APPROVE', 'PROCUREMENT', { requiresEvidence: true }),
   def('COMMITMENT_RAISED', 'Commitment', 'CREATE', 'PROCUREMENT'),
+  // CN-WF-05. The platform could buy but not receive. An item carries the date
+  // the programme needs it and the lead time it takes, so it can be reported as
+  // late on the day it is ordered — the only moment that is cheap to fix.
+  def('ORDER_PLACED', 'ProcurementItem', 'CREATE', 'PROCUREMENT', { creates: true }),
+  // Every step names the evidence it rests on. "In manufacture" from a supplier
+  // who has not started is the commonest overstatement on any project.
+  def('MANUFACTURING_MILESTONE_UPDATED', 'ProcurementItem', 'UPDATE', 'PROCUREMENT'),
+  def('DELIVERY_BOOKED', 'Delivery', 'CREATE', 'PROCUREMENT', { creates: true }),
+  def('DELIVERY_RECEIVED', 'Delivery', 'UPDATE', 'PROCUREMENT', { requiresEvidence: true }),
+  // Its own event because quarantine is a state material cannot leave without
+  // somebody with quality authority saying why, and an audit reading the ledger
+  // should see it without opening state. Release writes it too: the same
+  // control saying something different.
+  def('MATERIAL_QUARANTINED', 'Delivery', 'UPDATE', 'PROCUREMENT'),
+  // APPROVE, and once: this is what moves inventory and the accrual.
+  def('MATERIAL_ACCEPTED', 'Delivery', 'APPROVE', 'PROCUREMENT'),
+  // A serial, where it went and what proves it works there — the chain that
+  // turns a delivery note into an as-built record.
+  def('MATERIAL_INSTALLED', 'Delivery', 'UPDATE', 'PROCUREMENT'),
 
   // --- Contracts ------------------------------------------------------------
   def('CONTRACT_CREATED', 'Contract', 'CREATE', 'CONTRACTS_CLAIMS'),

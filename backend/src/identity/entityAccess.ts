@@ -151,6 +151,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // execution, where the area already splits the two parties — the site
   // manager holds create so the gang claims, and only the project or
   // construction manager holds approve, so somebody else certifies.
+  // CN-WF-05. The item is a procurement record and the delivery is what turned
+  // up against it. Both under PROCUREMENT_AWARD, which is where the buying
+  // already sits — and quarantine and release are gated on quality authority
+  // inside the commands rather than by classifying the delivery as quality,
+  // which would bar the buyer from their own register.
+  ProcurementItem: { area: 'PROCUREMENT_AWARD' },
+  Delivery: { area: 'PROCUREMENT_AWARD' },
   MeasurementBasis: { area: 'WORKPACKAGES_TASKS' },
   ProgressSubmission: { area: 'FIELD_EXECUTION' },
   MobilisationPlan: { area: 'FIELD_EXECUTION' },

@@ -5480,10 +5480,61 @@ they own the valuation it feeds. `acceptedProgressFor` is an unauthorised helper
 so the valuation path itself works, but this is a permission-matrix gap worth a
 product-owner decision rather than a silent edit.
 
-**Still to build in the construction block:** CN-WF-05 onwards, the stage
+---
+
+### The platform could buy, and could not receive
+
+CN-WF-05. `backend/src/domain/delivery.ts`, nine routes, 32 tests.
+
+`domain/procurement.ts` took an RFQ to an award, a subcontract and a commitment;
+`domain/supplychain.ts` decided who could be asked. Neither could receive
+anything. There was no delivery, no goods receipt, no batch or serial, and
+therefore no answer to the question every commissioning engineer asks: *which
+valve is this, and where is its certificate?*
+
+**A long lead nobody was tracking.** AC-CN-WF-05-01. Every item carries the date
+the programme needs it and the lead time it takes, so the order-by date is
+derived and a fourteen-week item with eleven weeks to run is reported as late
+**on the day it is registered** — the only moment that is cheap to fix. Its
+progress runs a fixed ladder from requisition to acceptance, and every step names
+the evidence it rests on, because "in manufacture" from a supplier who has not
+started is the commonest overstatement on any project and a document is the only
+defence. Skipped steps — nothing imported has a customs step — are recorded as
+skipped rather than passed over, and delivery and acceptance cannot be
+*declared* at all: they are recorded by receiving something.
+
+**A delivery nobody could take.** Bookings carry a slot, and two crane lifts in
+one slot on one day are refused rather than discovered on the morning.
+
+**A quantity nobody reconciled.** Ordered, dispatched and received are three
+different numbers. A mismatch is not refused — the material is on site whatever
+the paperwork says — but it cannot pass into stock without a reconciliation
+naming whether it is a shortage, an over-delivery or damage, and who is chasing
+it.
+
+**A safety-critical product with no certificate is quarantined**, on arrival,
+automatically. A traceable unit *and* a certificate against it: a batch number
+with no certificate proves nothing about the batch, and a certificate with
+nothing to attach it to proves nothing about what arrived. Quarantine is a state
+the material cannot leave without **quality approve authority** saying what
+resolved it, and a release that would leave the same gap is refused. Accepting
+and installing are both refused while it stands.
+
+Acceptance happens once, so inventory and the accrual move once
+(AC-CN-WF-05-02); and an accepted serial is installed against a location and its
+test evidence (AC-CN-WF-05-03), one serial in one place, which is the chain that
+turns a delivery note into an as-built record.
+
+**A defect this found in its own first draft:** the damage check read the
+free-text condition for the word "damage" and reported "Sound, no visible
+damage" as damaged. Guessing a fact from prose is the wrong shape; a person now
+answers `damaged` explicitly, and the test fixture keeps that exact phrasing so
+the regression cannot come back.
+
+**Still to build in the construction block:** CN-WF-06 onwards, the stage
 control (entry and exit conditions, `CONSTRUCTION_COMPLETION_ACCEPTED`) and the
 stage workspace described in 9.2. The specifications received so far — the stage
-control, 9.1, 9.2 and CN-WF-01 to CN-WF-08 — are recorded verbatim in
+control, 9.1, 9.2 and CN-WF-01 to CN-WF-11 — are recorded verbatim in
 `docs/WORKFLOWS.md`.
 
 ---

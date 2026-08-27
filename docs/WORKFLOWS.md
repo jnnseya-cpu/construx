@@ -1363,3 +1363,82 @@ Acceptance criteria
 •	AC-CN-WF-09-02: Raw records cannot be edited through claim workspace.
 •	AC-CN-WF-09-03: Submitted, assessed, certified, agreed and paid values remain separate.
 ```
+
+## CN-WF-10
+
+```
+CN-WF-10 - Applications, payments, commitments, ledger and live CVR
+Primary owner: Commercial Director / QS  |  Trigger: Payment cycle or commercial update
+Required inputs
+•	Contract sum/budget and approved baseline
+•	progress, variations, claims, retention and previous certificates
+•	subcontract applications, commitments, invoices, accruals and actual costs
+•	contract-specific due/notice/final dates and project business calendar
+•	forecast final value/cost and remaining risk
+Deterministic flow
+1.	Generate upstream/downstream payment calendars from validated contract rule pack.
+2.	Build valuation from verified progress and controlled commercial records.
+3.	Route application/certificate/payment/pay-less or equivalent notices under authority and deadline controls.
+4.	Reconcile certificate, invoice, payment and ledger; queue unmatched exceptions.
+5.	Update live CVR by cost code/package with value, cost, commitment, accrual and forecast.
+6.	Explain margin/cash movement and approve forecast snapshot.
+AI-agent duties and human guardrails
+•	Detect anomalies, under/overclaim, missing notice and forecast pressure.
+•	Cannot submit/certify payment, set forecast or interpret law without approval.
+Outputs
+•	PaymentCycle
+•	Application/Certificate Pack
+•	LedgerReconciliation
+•	CVR Snapshot
+•	CashflowForecast
+•	CommercialExceptions
+Exception controls
+•	Jurisdiction/contract rules are effective-dated and validated; no universal hard-coded calendar.
+•	Trial/free ACUs do not appear as billable project cost.
+•	Unmatched invoice/certificate never silently posts to CVR.
+Events: PAYMENT_CYCLE_GENERATED | APPLICATION_SUBMITTED | CERTIFICATE_RECORDED | PAYMENT_RECONCILED | CVR_SNAPSHOT_APPROVED
+APIs:   POST /v1/contracts/{id}/payment-cycles:generate | POST /v1/applications/{id}:submit | POST /v1/projects/{id}/cvr-snapshots
+Acceptance criteria
+•	AC-CN-WF-10-01: Every amount reconciles from source through value/cost/ledger/CVR.
+•	AC-CN-WF-10-02: Deadline calculation displays contract clause, calendar and manual validation.
+•	AC-CN-WF-10-03: Forecast change above threshold requires reason and approval.
+```
+
+## CN-WF-11
+
+```
+CN-WF-11 - Meeting, action, communication and decision control
+Primary owner: Project Manager  |  Trigger: Meeting, voice note, correspondence or decision need
+Required inputs
+•	Meeting type/date/attendees/agenda
+•	recording/notes and source documents
+•	decisions, actions, owners and dates
+•	RFI/change/risk/programme/package references
+•	distribution and confidentiality
+Deterministic flow
+1.	Create meeting record and attendance; obtain recording consent where applicable.
+2.	Transcribe/summarise into decisions, actions, issues and candidate formal communications.
+3.	Human chair reviews, edits and approves minutes.
+4.	Issue controlled minutes and capture comments/acceptance according to project protocol.
+5.	Sync actions into role dashboards and linked registers.
+6.	Convert material decisions into DecisionRecord and required instruction/change/notice.
+AI-agent duties and human guardrails
+•	Structure transcript, identify actions and contradictions.
+•	Cannot turn discussion into contractual instruction or accepted decision without chair/authority.
+Outputs
+•	MeetingMinutes
+•	Action Register
+•	DecisionRecords
+•	Communication Drafts
+•	IssueEvidence
+Exception controls
+•	Disputed minutes preserve issuer and respondent versions.
+•	Sensitive/legal discussion receives restricted ABAC classification.
+•	Overdue action escalation respects role hierarchy.
+Events: MEETING_RECORDED | MINUTES_APPROVED | MINUTES_ISSUED | ACTION_ASSIGNED | DECISION_RECORDED
+APIs:   POST /v1/projects/{id}/meetings | POST /v1/meetings/{id}:approve-minutes | POST /v1/actions/{id}:complete
+Acceptance criteria
+•	AC-CN-WF-11-01: Action appears once across meeting, register and dashboard by stable ID.
+•	AC-CN-WF-11-02: Issued minutes preserve exact approved version.
+•	AC-CN-WF-11-03: Material decision has authority, rationale, alternatives and impacts.
+```

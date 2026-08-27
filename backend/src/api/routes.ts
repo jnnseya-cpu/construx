@@ -60,6 +60,7 @@ import * as constructability from '../domain/constructability.ts';
 import * as coordination from '../domain/coordination.ts';
 import * as designbaseline from '../domain/designbaseline.ts';
 import * as dailylog from '../domain/dailylog.ts';
+import * as delivery from '../domain/delivery.ts';
 import * as designchange from '../domain/designchange.ts';
 import * as designplan from '../domain/designplan.ts';
 import * as measurement from '../domain/measurement.ts';
@@ -4086,6 +4087,170 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => planning.recordSiteDiary(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // ------------------------------------------ CN-WF-05 what was bought, what turned up, and where it went
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/procurement-items',
+    description: 'Long leads against their order-by dates, quarantined material, open discrepancies and installed serials',
+    handler: (platform, ctx) => delivery.procurementPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/procurement-items',
+    description: 'Register a purchased item with the date the programme needs it and the lead time it takes',
+    schema: {
+      type: 'object',
+      required: ['reference', 'description', 'quantity', 'unit', 'requiredOnSiteBy', 'leadTimeDays', 'safetyCritical'],
+      properties: {
+        reference: stringField,
+        description: { type: 'string' },
+        quantity: { type: 'number', exclusiveMinimum: 0 },
+        unit: stringField,
+        requiredOnSiteBy: stringField,
+        leadTimeDays: { type: 'number', minimum: 0 },
+        safetyCritical: { type: 'boolean' },
+        unitRateMinor: { type: 'number', minimum: 0 },
+        substitutionSubmittalRef: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => delivery.registerProcurementItem(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/procurement-items/:itemId/milestones',
+    description: 'Move an item along its ladder. Every step names the evidence it rests on; delivery is received, not declared',
+    schema: {
+      type: 'object',
+      required: ['step', 'evidence'],
+      properties: {
+        step: { type: 'string', enum: [...delivery.PROCUREMENT_STEP] },
+        evidence: { type: 'string' },
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      delivery.advanceProcurement(projectContext(platform, ctx), ctx.params.itemId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/procurement-items/:itemId/deliveries',
+    description: 'Book a delivery into a slot. Two lifts in one slot is refused rather than discovered on the day',
+    schema: {
+      type: 'object',
+      required: ['bookedFor', 'slot', 'craneRequired'],
+      properties: { bookedFor: stringField, slot: stringField, craneRequired: { type: 'boolean' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      delivery.bookDelivery(projectContext(platform, ctx), ctx.params.itemId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/deliveries/:deliveryId/receive',
+    description: 'Record what turned up. Safety-critical material with no certificate is quarantined on arrival',
+    schema: {
+      type: 'object',
+      required: ['deliveryNote', 'dispatchedQuantity', 'receivedQuantity', 'condition', 'evidenceHash'],
+      properties: {
+        deliveryNote: stringField,
+        dispatchedQuantity: { type: 'number', minimum: 0 },
+        receivedQuantity: { type: 'number', minimum: 0 },
+        condition: { type: 'string' },
+        damaged: { type: 'boolean' },
+        units: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['identifier'],
+            properties: { identifier: stringField, certificate: { type: 'string' } },
+            additionalProperties: false,
+          },
+        },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      delivery.receiveDelivery(projectContext(platform, ctx), ctx.params.deliveryId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/deliveries/:deliveryId/quarantine',
+    description: 'Hold material nobody may use, with what is wrong with it',
+    schema: {
+      type: 'object',
+      required: ['why'],
+      properties: { why: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      delivery.quarantineDelivery(projectContext(platform, ctx), ctx.params.deliveryId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/deliveries/:deliveryId/release',
+    description: 'Release from quarantine, on quality authority, naming what resolved it',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: {
+        reason: { type: 'string' },
+        units: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['identifier'],
+            properties: { identifier: stringField, certificate: { type: 'string' } },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      delivery.releaseFromQuarantine(projectContext(platform, ctx), ctx.params.deliveryId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/deliveries/:deliveryId/accept',
+    description: 'Take it into stock. Once, and never over an unreconciled difference or a quarantine',
+    schema: {
+      type: 'object',
+      required: ['note'],
+      properties: {
+        note: { type: 'string' },
+        reconciliation: {
+          type: 'object',
+          required: ['kind', 'what', 'chasedBy'],
+          properties: {
+            kind: { type: 'string', enum: ['SHORT', 'OVER', 'DAMAGED'] },
+            what: { type: 'string' },
+            chasedBy: stringField,
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      delivery.acceptDelivery(projectContext(platform, ctx), ctx.params.deliveryId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/deliveries/:deliveryId/install',
+    description: 'Record a serial into the works, with where it went and the test that proves it works there',
+    schema: {
+      type: 'object',
+      required: ['identifier', 'location', 'testEvidence'],
+      properties: { identifier: stringField, location: stringField, testEvidence: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      delivery.installUnit(projectContext(platform, ctx), ctx.params.deliveryId as string, body(ctx)),
   },
 
   // ------------------------------------------ CN-WF-04 progress claimed, then certified by somebody else
