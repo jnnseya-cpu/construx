@@ -270,6 +270,32 @@ export const config = {
     statementTimeoutMs: num('POSTGRES_STATEMENT_TIMEOUT_MS', 30_000),
   },
 
+  /**
+   * Where logs and metrics are shipped, if anywhere.
+   *
+   * Unset means the counters, the latency histogram and the security stream
+   * still exist and still answer the admin screens — they simply die with the
+   * container, which is what `docs/STATE.md` has said since they were built.
+   * Setting an endpoint is what makes post-incident analysis possible without
+   * having happened to keep the container.
+   */
+  otlp: {
+    /** Collector base URL. `/v1/metrics` and `/v1/logs` are appended. */
+    endpoint: str('OTEL_EXPORTER_OTLP_ENDPOINT', ''),
+    /** `key=value,key2=value2`. Where a collector's auth token arrives. */
+    headers: str('OTEL_EXPORTER_OTLP_HEADERS', ''),
+    serviceName: str('OTEL_SERVICE_NAME', 'construx'),
+    intervalSeconds: num('OTEL_EXPORT_INTERVAL_SECONDS', 30),
+    /**
+     * Bounded on purpose. A collector down for a week must fill this and then
+     * drop — counted and visible — rather than grow until the process is killed
+     * for memory, taking the platform down to protect its own telemetry.
+     */
+    queueSize: num('OTEL_QUEUE_SIZE', 2_048),
+    batchSize: num('OTEL_BATCH_SIZE', 256),
+    timeoutMs: num('OTEL_EXPORT_TIMEOUT_MS', 10_000),
+  },
+
   antivirus: {
     host: str('ANTIVIRUS_CLAMD_HOST', ''),
     port: num('ANTIVIRUS_CLAMD_PORT', 3310),

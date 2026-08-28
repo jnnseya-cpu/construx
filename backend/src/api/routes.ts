@@ -20,6 +20,7 @@ import type { ProviderCapability } from '../ai/providers/types.ts';
 import * as agents from '../agents/runtime.ts';
 import { fleetManifest } from '../agents/runtime.ts';
 import { AUTOMATABLE_COMMANDS, LADDER, envelopeRegister, grantEnvelope, revokeEnvelope } from '../agents/mandate.ts';
+import { egressPosition, flush as flushEgress } from '../ops/otlp.ts';
 import type { ACUCaps } from '../billing/acu.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
 import { seatEconomics, TIERS, type SubscriptionTier } from '../billing/subscription.ts';
@@ -1118,6 +1119,29 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => {
       operatorOnly(ctx, 'read the platform watch');
       return watch.watchPosition(platform);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/telemetry/egress',
+    readOnly: true,
+    description: 'Whether telemetry is reaching a collector, what is queued, and what has been dropped',
+    handler: (_platform, ctx) => {
+      operatorOnly(ctx, 'read the telemetry egress position');
+      // Reports the endpoint and never the collector's token. A screen that
+      // showed the header would put a credential on an operator's display and
+      // in whatever captured it.
+      return egressPosition();
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/telemetry/flush',
+    description: 'Ship the queued telemetry now rather than waiting for the interval',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async (_platform, ctx) => {
+      operatorOnly(ctx, 'flush telemetry');
+      return flushEgress();
     },
   },
   {

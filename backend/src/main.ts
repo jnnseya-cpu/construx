@@ -7,6 +7,7 @@ import { WriterLock } from './goldenthread/writerlock.ts';
 import type { ACUEntry } from './billing/acu.ts';
 import { startNewsletterSchedule } from './messaging/newsletter.ts';
 import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.ts';
+import { egressConfigured, startEgress } from './ops/otlp.ts';
 import { startWatch } from './ops/watch.ts';
 import { Platform } from './platform.ts';
 
@@ -204,6 +205,12 @@ const outboxTimer = startOutboxDrain(platform);
 // notices.
 const watchTimer = startWatch(platform);
 
+// Telemetry egress. Unset means the counters still answer the admin screens and
+// still die with the container, which is the state every deployment has been in
+// until now — said out loud on the banner rather than left to be discovered
+// after an incident nobody could reconstruct.
+const egressTimer = startEgress();
+
 const newsletter = startNewsletterSchedule(platform, (report) => {
   process.stdout.write(
     `[newsletter] ${report.campaign.week} issued — ${report.sent} sent, ${report.recorded} recorded, ${report.failed} failed\n`,
@@ -219,6 +226,11 @@ process.stdout.write(
     `  API routes   http://localhost:${config.port}/v1/routes`,
     `  Rate limits  ${limiterState}`,
     `  Health       http://localhost:${config.port}/readyz`,
+    `  Telemetry    ${
+      egressConfigured()
+        ? `shipping to ${config.otlp.endpoint} every ${config.otlp.intervalSeconds}s`
+        : 'local only — counters and the security stream die with this container'
+    }`,
     `  Ledger       ${durability}`,
     `  Evidence     ${
       config.evidence.storePath === ''

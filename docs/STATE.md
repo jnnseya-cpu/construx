@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 3,652 passing, 0 failing, 0 skipped, across 160 files · plus 18 against a live Postgres 16 |
+| Tests | 3,671 passing, 0 failing, 0 skipped, across 161 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
 | Backend | 190 TypeScript files, 117,084 lines |
 | Application | 43 ES modules, 19,333 lines (including a service worker) |
@@ -7097,13 +7097,13 @@ parsing work, not wiring.
   the repository. Until that lands the writer lock is still load-bearing, point-
   in-time recovery is still the backup interval, and there is no automatic
   failover
-- **Log shipping and a metrics store** — structured JSON still goes to stdout
-  and nothing collects it. **Alerting is built**: `ops/watch.ts` judges the
-  counters the gateway already keeps against a handful of rules every interval
-  and tells the operator through the outbox, so an alert survives a process
-  death like any other notice. What is absent is somewhere durable to ship the
-  logs and metrics *to* — which is infrastructure, and is what a metrics store
-  and a dashboard would be built on
+- **A metrics store and dashboards** — the *egress* is built. `ops/otlp.ts`
+  ships counters, the latency histogram and the security stream to any OTLP
+  collector over HTTP with the JSON encoding, on an interval, from a bounded
+  queue that drops the oldest and **exports its own drop count** so a lossy
+  pipeline cannot look like a quiet one. Unset means local-only, and the boot
+  banner says so in those words. What is absent is a collector and a dashboard
+  to point it at, which is infrastructure rather than code
 
 ---
 
@@ -8261,3 +8261,47 @@ Caching is how a pooled connection ends up holding a plan built for a different
 search path, and binary format would mean converting `numeric` client-side — a
 rounding error in a payment certificate is not a trade worth making for parsing
 speed.
+
+---
+
+## Telemetry that outlives the container
+
+The counters, the latency histogram, the security stream and a correlation id on
+every request have all existed since the gateway was built, and `docs/STATE.md`
+said the same thing about them throughout: *structured JSON still goes to stdout
+and nothing collects it*. Everything needed to reconstruct an incident existed
+and died with the process.
+
+`ops/otlp.ts` ships it. OTLP over HTTP with the JSON encoding — which every
+collector accepts and which needs no protobuf runtime, the same reasoning that
+produced an SMTP client and a clamd client rather than dependencies.
+
+Four properties, because a telemetry exporter that misbehaves is worse than none:
+
+- **It never blocks a request.** Nothing on the request path awaits anything in
+  this module, and `record()` neither throws nor returns a failure — the only
+  thing a request handler could usefully do with the knowledge that telemetry is
+  unwell is fail a request that otherwise worked.
+- **It never grows without bound.** The queue is capped. When it fills it drops
+  the *oldest* — in an incident the newest records are the ones describing it —
+  and `construx.telemetry.dropped_total` is exported alongside everything else,
+  so a lossy pipeline is impossible to mistake for a calm platform.
+- **Local telemetry survives egress failure.** The counters are the source and
+  this is a reader. A collector being down changes what anybody else can see, not
+  what the platform knows about itself. A failed batch is put back at the front,
+  oldest first, so ordering survives.
+- **It ships no secret and no personal data.** Route ids, status codes, counts,
+  durations, and security events whose addresses were already truncated to a
+  network upstream. The collector's own auth token is parsed from
+  `OTEL_EXPORTER_OTLP_HEADERS` and never appears in `egressPosition()`, so the
+  admin screen shows the endpoint and not the credential.
+
+Verified against a collector of the suite's own — a real HTTP server capturing
+what arrives — rather than a stub that answers 200 to anything, because the
+payload *shape* is the whole point: a collector rejects a malformed OTLP body and
+the symptom is silence, which looks exactly like a healthy quiet platform. The
+tests assert the things that are wrong in a plausible way: integers as strings
+rather than numbers, cumulative-and-monotonic rather than delta, and per-bucket
+histogram counts differenced from the cumulative source — sending the cumulative
+array as if it were per-bucket produces a total several times the real one and
+every percentile derived from it is wrong in a way that looks reasonable.
