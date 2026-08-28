@@ -723,6 +723,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // looks like or what a company's documents carry.
   def('USER_PICTURE_SET', 'User', 'UPDATE', 'GOVERNANCE'),
 
+  // The identity a tenancy's documents go out under — the client's name, mark,
+  // cover image, colour and the party that carries the duty. A governance act,
+  // and in the record for the same reason every other one is: it decides what a
+  // client-facing instrument says about who issued it. It was held in a map and
+  // lost on every restart, which is how a configured tenancy came back
+  // unbranded.
+  def('CLIENT_BRANDING_SET', 'ClientBrandingRecord', 'UPDATE', 'GOVERNANCE', { creates: true }),
+
   def('SITE_POST_DRAFTED', 'SitePost', 'CREATE', 'GOVERNANCE', { aiAllowed: true, creates: true }),
   def('SITE_POST_REVISED', 'SitePost', 'UPDATE', 'GOVERNANCE'),
   def('SITE_POST_PUBLISHED', 'SitePost', 'APPROVE', 'GOVERNANCE'),

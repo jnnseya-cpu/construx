@@ -221,3 +221,77 @@ describe('a logo that cannot be used is refused, not swallowed', () => {
     assert.deepEqual([...parsed.bytes], [0, 1, 2, 3]);
   });
 });
+
+/**
+ * The cover.
+ *
+ * A branded document that opens straight into a table reads as a printout
+ * rather than as something issued. The cover carries the four things somebody
+ * checks before reading a word — what it is, who it is for, who issued it, and
+ * which document this is — and it is always there, image or no image.
+ */
+describe('the cover page', () => {
+  const latin1 = (bytes: Uint8Array): string => Buffer.from(bytes).toString('latin1');
+
+  it('is drawn even when no cover image is set', () => {
+    const pdf = latin1(renderPdf(documentFor(branding())));
+    // Two pages where the content alone would fit on one: the cover, then the
+    // content. A cover that only appears when somebody supplies an image would
+    // make the document's shape depend on whether marketing had a photograph.
+    assert.ok([...pdf.matchAll(/\/Type \/Page /g)].length >= 2, 'a cover page exists');
+    assert.ok(pdf.includes('(Interim payment certificate) Tj'), 'the title is on it');
+    assert.ok(pdf.includes('(MERIDIAN INFRASTRUCTURE LTD) Tj'), 'the client is named on it');
+  });
+
+  it('names who issued it, when that is not who it was prepared for', () => {
+    const pdf = latin1(renderPdf(documentFor(branding({ issuingEntity: 'Ashworth Contracting Ltd' }))));
+    // The distinction the cover exists to preserve: a subcontractor reading a
+    // method statement needs to know which party carries the duty under it, and
+    // that is not always the party it was prepared for.
+    assert.ok(pdf.includes('(Ashworth Contracting Ltd) Tj'), 'the issuing entity is on the cover');
+    assert.ok(pdf.includes('(Meridian Infrastructure Ltd) Tj'), 'so is the client it was prepared for');
+  });
+
+  it('carries the content hash on the cover itself', () => {
+    const pdf = latin1(renderPdf(documentFor(branding())));
+    // The cover is the page that gets photographed, forwarded and printed on
+    // its own. The hash is what makes any of that checkable afterwards, so it
+    // is on the cover as well as in the running footer.
+    const firstPageEnd = pdf.indexOf('/Type /Page ');
+    assert.ok(firstPageEnd > 0);
+    assert.ok(pdf.includes('Content hash sha256:'), 'the hash is present');
+  });
+
+  it('places a cover image resolved out of the evidence store', () => {
+    const bytes = Buffer.from(png(8, 6, 2, [10, 20, 30]).split(',')[1]!, 'base64');
+    const document = documentFor(branding({ coverEvidenceHash: 'sha256:cover' }));
+    const pdf = latin1(renderPdf(document, (hash) => (hash === 'sha256:cover' ? { mime: 'image/png', bytes } : undefined)));
+    assert.ok(pdf.includes('/Cover'), 'the cover image is embedded and referenced');
+  });
+
+  it('falls back to type when the cover image cannot be decoded', () => {
+    const document = documentFor(branding({ coverEvidenceHash: 'sha256:cover' }));
+    // A cover in a format the renderer cannot place must not stop the document
+    // being produced. The page is drawn without it — the same rule the
+    // photographs and the logo follow, and for the same reason: a bundle
+    // somebody needs is worth more than a picture on its first page.
+    const pdf = latin1(
+      renderPdf(document, () => ({ mime: 'image/tiff', bytes: Buffer.from('not something this renderer can place') })),
+    );
+    assert.ok(!pdf.includes('/Cover'), 'nothing is embedded');
+    assert.ok(pdf.includes('(Interim payment certificate) Tj'), 'the cover is still drawn');
+  });
+
+  it('embeds a cover shown inside the document only once', () => {
+    const bytes = Buffer.from(png(8, 6, 2, [10, 20, 30]).split(',')[1]!, 'base64');
+    const base = documentFor(branding({ coverEvidenceHash: 'sha256:shared' }));
+    const document: ExportDocument = {
+      ...base,
+      blocks: [...base.blocks, { kind: 'PHOTOGRAPH', evidenceHash: 'sha256:shared', caption: 'The same image again' }],
+    };
+    const pdf = latin1(renderPdf(document, () => ({ mime: 'image/png', bytes })));
+    // One XObject, referenced twice. A document that used the same picture as
+    // its cover and as evidence must not carry two copies of it.
+    assert.equal([...pdf.matchAll(/\/Subtype \/Image/g)].length, 1);
+  });
+});

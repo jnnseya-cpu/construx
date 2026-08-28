@@ -466,6 +466,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // A reseller or influencer agreement. Operator-layer and commercial: it names
   // a person, the share they take and what has been sent to them.
   GrowthPartner: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'COMMERCIAL_L3' },
+  // The identity documents go out under. Under ENTERPRISE_STRUCTURE because it
+  // is the tenancy configuring itself, not a project record — and it is what
+  // every generated document for that tenancy will carry.
+  ClientBrandingRecord: { area: 'ENTERPRISE_STRUCTURE' },
   // A dispatch record names a person and what they were told. The delivery
   // record additionally names their address and whether it reached them, which
   // is why the two are classified apart rather than together.

@@ -212,7 +212,17 @@ async function collect(host, fields, files = []) {
  * dialog enforces, met inside a panel that was going to open anyway rather than
  * by stacking a second dialog in front of it.
  */
-export function command({ title, intent, path, fields, submitLabel = 'Submit', transform, aiCost = false }) {
+/**
+ * `method` exists because the platform has PUT routes and this door could only
+ * POST.
+ *
+ * A configuration route is a replacement rather than an append — setting a
+ * tenancy's branding is not creating a second one — and PUT is the honest verb
+ * for that. Without this, every such route was reachable only through the
+ * generated command catalogue or not at all, which is the doorless-capability
+ * problem in a smaller shape.
+ */
+export function command({ title, intent, path, fields, submitLabel = 'Submit', transform, aiCost = false, method = 'POST' }) {
   return new Promise((resolveCommand) => {
     const host = document.createElement('div');
     host.className = 'modal-host';
@@ -320,7 +330,8 @@ export function command({ title, intent, path, fields, submitLabel = 'Submit', t
       try {
         const collected = await collect(host, fields, files);
         const payload = transform ? transform(collected) : collected;
-        const response = await api.post(typeof path === 'function' ? path(collected) : path, payload);
+        const target = typeof path === 'function' ? path(collected) : path;
+        const response = method === 'PUT' ? await api.put(target, payload) : await api.post(target, payload);
         toast(title, 'Recorded in the Golden Thread', 'ok');
         // Afterwards, and never as a condition of the command. The record is
         // what the chain is made of; the file is what makes it useful in three

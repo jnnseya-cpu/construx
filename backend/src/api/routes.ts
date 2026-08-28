@@ -11,6 +11,8 @@ import * as site from '../site/index.ts';
 // file depend on a module that depends on this file.
 import { POST_PAGES } from '../site/posts.ts';
 import * as views from '../site/views.ts';
+import { SIGNATURES } from '../site/media.ts';
+import { createHash } from 'node:crypto';
 import * as notifications from '../notifications/catalogue.ts';
 import { CATEGORIES, CATEGORY_TITLES, NOTIFICATION_EVENTS } from '../notifications/catalogue.ts';
 import * as notifyEngine from '../notifications/notify.ts';
@@ -375,6 +377,51 @@ function storagePositionFor(platform: Platform, tenantId: string): storage.Stora
 }
 
 const stringField = { type: 'string', minLength: 1 } as const;
+
+/**
+ * Store an image that is part of a tenancy's identity rather than a project's
+ * evidence.
+ *
+ * The same shape as an account picture and a landing-page slot, and separate
+ * from the evidence upload route on purpose: that route requires an
+ * `EvidenceItem` record already naming the hash, because it exists to supply
+ * the file behind a record somebody committed. A cover image is configuration —
+ * nothing committed it as evidence of anything — so it takes this path, and the
+ * branding record is what names the hash.
+ *
+ * Type is decided by the bytes. The same magic-byte table the account pictures
+ * and the landing page use, so an SVG is refused everywhere for the same
+ * reason: it is a document that can carry script.
+ */
+async function storeBrandImage(
+  platform: Platform,
+  tenantId: string,
+  bytes: Buffer,
+): Promise<{ hash: string; bytes: number; contentType: string }> {
+  if (bytes.length === 0) throw new DomainError('EMPTY_UPLOAD', 'No bytes were received', 400);
+  if (bytes.length > config.site.mediaMaxBytes) {
+    throw new DomainError(
+      'IMAGE_TOO_LARGE',
+      `That image is ${Math.round(bytes.length / 1024)}KB. The ceiling is ` +
+        `${Math.round(config.site.mediaMaxBytes / 1024)}KB — export it at the size it will be printed and compress.`,
+      413,
+    );
+  }
+
+  const signature = SIGNATURES.find((candidate) => candidate.matches(bytes));
+  if (!signature) {
+    throw new DomainError(
+      'NOT_AN_IMAGE',
+      'That file is not a PNG, JPEG or WebP. It is read from the file itself rather than from what the upload ' +
+        'claimed, and an SVG is refused because it is a document that can carry script.',
+      415,
+    );
+  }
+
+  const hash = createHash('sha256').update(bytes).digest('hex');
+  await platform.evidence.store(tenantId, hash, bytes, signature.contentType);
+  return { hash, bytes: bytes.length, contentType: signature.contentType };
+}
 
 /**
  * Commands an approved proposal may run.
@@ -13028,6 +13075,15 @@ export const ROUTES: Route[] = [
         logoRef: { type: 'string' },
         /** The mark in the evidence store, so a document's hash commits to it. */
         logoEvidenceHash: { type: 'string' },
+        /**
+         * A cover image, in the evidence store, by its hash.
+         *
+         * Same path as the logo and for the same reason: the document's content
+         * hash commits to exactly which image was on its cover, so one swapped
+         * afterwards makes the document stop verifying. Optional — a document
+         * with no cover image gets a typographic cover rather than a blank page.
+         */
+        coverEvidenceHash: { type: 'string' },
         /** Who carries the duty, which is never automatically the client. */
         issuingEntity: { type: 'string' },
         primaryColour: stringField,
@@ -13037,8 +13093,72 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => {
-      platform.exports.setBranding(auth(ctx).tenantId, body(ctx));
-      return platform.exports.branding(auth(ctx).tenantId);
+      // Authorised, which it was not.
+      //
+      // This route enforced nothing: any authenticated identity in a tenancy
+      // could change the name, the mark and the registered legal detail that
+      // every document the tenancy produces goes out under — including
+      // instruments a client, an adjudicator or a regulator reads. The console
+      // was the only thing that had not offered the button, which is to say
+      // nothing was stopping it.
+      //
+      // ENTERPRISE_STRUCTURE update, which only the enterprise administrator
+      // holds: this is the tenancy configuring its own identity, which is that
+      // area's whole subject. The project-level route already took
+      // PROJECT_SETUP update for the same reason at its own scope.
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'U');
+      platform.exports.setBranding(actor.tenantId, body(ctx), undefined, actor.actorId);
+      return platform.exports.branding(actor.tenantId);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/branding/cover',
+    upload: true,
+    // A cover, not a drawing set. The evidence ceiling is sized for the latter
+    // and leaving it here would let anybody make this process buffer 50MB.
+    maxBytes: config.site.mediaMaxBytes,
+    description: "Set the cover image on this tenancy's documents. PNG, JPEG or WebP, read from the file itself",
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      // The same authority the tenancy-level identity itself takes.
+      authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'U');
+      // Never absent: `createTenant` establishes an identity at onboarding
+      // precisely so an export is never discovered to be unbrandable at the
+      // moment somebody needs one. The project route below guards the case that
+      // can actually happen — a project with no client identity of its own.
+      const existing = platform.exports.branding(actor.tenantId);
+      const stored = await storeBrandImage(platform, actor.tenantId, ctx.rawBody ?? Buffer.alloc(0));
+      platform.exports.setBranding(actor.tenantId, { ...existing, coverEvidenceHash: stored.hash }, undefined, actor.actorId);
+      return stored;
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/branding/cover',
+    upload: true,
+    maxBytes: config.site.mediaMaxBytes,
+    description: "Set the cover image on this project's client-facing documents",
+    handler: async (platform, ctx) => {
+      const engine = projectContext(platform, ctx);
+      // The same authority the identity itself takes. The image is part of the
+      // branding, not a separate thing with its own permission — a role that may
+      // set the client's name on every document may set the picture above it.
+      authorise(engine, 'PROJECT_SETUP', 'U');
+      // `branding` resolves the project's own identity where it has one and the
+      // tenancy's otherwise, and refuses when there is neither — which cannot
+      // happen, because `createTenant` establishes one at onboarding. A guard
+      // here for the unbranded case would be a refusal nobody can reach, and a
+      // refusal that cannot fire is worse than none: it reads as cover.
+      const existing = platform.exports.branding(engine.tenantId, engine.projectId);
+      const stored = await storeBrandImage(platform, engine.tenantId, ctx.rawBody ?? Buffer.alloc(0));
+      platform.exports.setBranding(
+        engine.tenantId,
+        { ...existing, coverEvidenceHash: stored.hash },
+        engine.projectId,
+        engine.auth.actorId,
+      );
+      return stored;
     },
   },
   {
@@ -13059,6 +13179,15 @@ export const ROUTES: Route[] = [
         logoRef: { type: 'string' },
         /** The mark in the evidence store, so a document's hash commits to it. */
         logoEvidenceHash: { type: 'string' },
+        /**
+         * A cover image, in the evidence store, by its hash.
+         *
+         * Same path as the logo and for the same reason: the document's content
+         * hash commits to exactly which image was on its cover, so one swapped
+         * afterwards makes the document stop verifying. Optional — a document
+         * with no cover image gets a typographic cover rather than a blank page.
+         */
+        coverEvidenceHash: { type: 'string' },
         /**
          * Who issues the document on this project.
          *
@@ -13082,7 +13211,7 @@ export const ROUTES: Route[] = [
       // verbatim, so a report for one client went out named for another.
       const engine = projectContext(platform, ctx);
       authorise(engine, 'PROJECT_SETUP', 'U');
-      platform.exports.setBranding(engine.tenantId, body(ctx), engine.projectId);
+      platform.exports.setBranding(engine.tenantId, body(ctx), engine.projectId, engine.auth.actorId);
       return platform.exports.branding(engine.tenantId, engine.projectId);
     },
   },

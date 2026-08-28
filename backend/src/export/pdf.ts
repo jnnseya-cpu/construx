@@ -278,6 +278,49 @@ class Sheet {
     const [r, g, b] = colour;
     this.#ops.push(`${r} ${g} ${b} rg`, `${x.toFixed(2)} ${y.toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re f`);
   }
+
+  /**
+   * Place an image at an absolute position, without touching the cursor.
+   *
+   * A third placement method rather than a flag on the other two, for the same
+   * reason those are separate: `image` is right-aligned decoration in a header
+   * band and `photo` is content that pushes the flow down. This is neither — it
+   * is a cover filling a region the caller has already decided on, and it is
+   * clipped to the page by the page itself.
+   */
+  cover(name: string, width: number, height: number, x: number, y: number): void {
+    this.#ops.push(
+      `q`,
+      `${width.toFixed(2)} 0 0 ${height.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} cm`,
+      `/${name} Do`,
+      `Q`,
+    );
+  }
+
+  /**
+   * Put the cursor at an absolute height.
+   *
+   * Only the cover uses it. Everything else flows, and a flow that could be
+   * repositioned mid-document would be a flow with no guarantee that one block
+   * lands below the last.
+   */
+  moveTo(y: number): void {
+    this.#y = y;
+  }
+
+  /**
+   * End this page and start the next, without running the header hook.
+   *
+   * `reserve` starts a page as a side effect of needing room and then draws the
+   * running header on it. The cover needs the opposite: a deliberate break, and
+   * the header drawn by the caller afterwards — the cover has no running header
+   * on it, and the first content page does.
+   */
+  endPage(): void {
+    this.#ops = [];
+    this.pages.push(this.#ops);
+    this.#y = A4.height - MARGIN.top;
+  }
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -561,6 +604,42 @@ export function renderPdf(document: ExportDocument, resolveImage?: ImageResolver
   const LOGO_HEIGHT = 22;
   const logoWidth = logo ? (logo.width / logo.height) * LOGO_HEIGHT : 0;
 
+  /**
+   * The cover image, resolved through the same content-addressed path a
+   * photograph takes.
+   *
+   * So the document's own content hash commits to exactly which image was on
+   * its cover: swap the image afterwards and the hash changes and the document
+   * stops verifying, which is the correct behaviour for an instrument somebody
+   * may have to stand behind.
+   *
+   * An image the renderer cannot decode is left out and the cover falls back to
+   * type. It never stops the document being produced — the same rule the
+   * photographs and the logo follow, for the same reason: a bundle somebody
+   * needs is worth more than a picture on its first page.
+   */
+  let cover: PlacedImage | undefined;
+  if (resolveImage && document.branding.coverEvidenceHash) {
+    const hash = document.branding.coverEvidenceHash;
+    // Keyed into the same map the photographs use, so a cover that is also
+    // shown as a photograph inside the document is embedded once rather than
+    // twice — and so the embedding loop below needs no second case.
+    const already = photos.get(hash);
+    if (already) {
+      cover = already;
+    } else {
+      const held = resolveImage(hash);
+      if (held) {
+        try {
+          cover = { name: 'Cover', image: decodeImage(held.mime, held.bytes, 'The cover image') };
+          photos.set(hash, cover);
+        } catch (error) {
+          if (!(error instanceof UnsupportedImageError)) throw error;
+        }
+      }
+    }
+  }
+
   const header = (sheet: Sheet): void => {
     if (logo) sheet.image('Logo', logoWidth, LOGO_HEIGHT);
     sheet.text(document.branding.clientName, { font: 'Helvetica-Bold', size: 9, colour: accent });
@@ -579,6 +658,92 @@ export function renderPdf(document: ExportDocument, resolveImage?: ImageResolver
   };
 
   const sheet = new Sheet(header);
+
+  /**
+   * The cover.
+   *
+   * Always present, image or no image. A branded document handed to a client
+   * that opens straight into a table reads as a printout rather than as an
+   * issued document, and the four things somebody checks before reading a word
+   * — what it is, who it is for, who issued it, and which document this is —
+   * are exactly what a cover is for.
+   *
+   * Drawn directly rather than through `renderBlock`, because it is not a
+   * block: it is a whole page with its own layout, it takes no part in the flow,
+   * and the running header does not appear on it. A `COVER` block kind would
+   * have made every document type able to put one anywhere, which is not a
+   * capability anybody asked for and is a way for a cover to end up on page
+   * eleven.
+   */
+  const drawCover = (): void => {
+    // A full-bleed band of the client's colour across the top, and the image
+    // inside it where there is one. The band is what makes the page read as
+    // branded when there is no image at all.
+    const BAND = 260;
+    sheet.fill(0, A4.height - BAND, A4.width, BAND, accent);
+
+    if (cover) {
+      // Cover the band without distorting: scale to whichever axis needs more,
+      // and let the overflow fall outside the band rather than squashing a
+      // photograph of somebody's building into a different shape.
+      const scale = Math.max(A4.width / cover.image.width, BAND / cover.image.height);
+      const width = cover.image.width * scale;
+      const height = cover.image.height * scale;
+      sheet.cover(cover.name, width, height, (A4.width - width) / 2, A4.height - BAND - (height - BAND) / 2);
+    }
+
+    sheet.moveTo(A4.height - BAND - 70);
+    sheet.text(document.branding.clientName.toUpperCase(), { font: 'Helvetica-Bold', size: 10, colour: accent });
+    sheet.advance(34);
+    sheet.text(document.title, { font: 'Helvetica-Bold', size: 24 });
+    if (document.subtitle) {
+      sheet.advance(20);
+      sheet.text(document.subtitle, { size: 12, colour: [0.35, 0.35, 0.38] });
+    }
+    sheet.advance(26);
+    sheet.rule(accent, 160);
+
+    sheet.advance(30);
+    const facts: Array<[string, string]> = [
+      ['Reference', document.reference],
+      ['Prepared for', document.branding.clientName],
+      // Who carries the duty under the document, which is not always who it was
+      // prepared for. Omitted rather than guessed when it is not set.
+      ...(document.branding.issuingEntity ? ([['Issued by', document.branding.issuingEntity]] as Array<[string, string]>) : []),
+      ['Audience', document.audience],
+      ['Generated', document.generatedAt.slice(0, 16).replace('T', ' ')],
+      ['Generated by', document.generatedBy],
+    ];
+    for (const [label, value] of facts) {
+      sheet.text(label, { size: 9, colour: [0.45, 0.45, 0.48] });
+      sheet.text(value, { font: 'Helvetica-Bold', size: 9, x: MARGIN.left + 110 });
+      sheet.advance(16);
+    }
+
+    // On the cover as well as in the footer. The cover is the page that gets
+    // photographed, forwarded and printed on its own, and the hash is what makes
+    // any of that checkable afterwards.
+    sheet.advance(14);
+    sheet.text(`Content hash ${document.contentHash}`, { font: 'Courier', size: 7, colour: [0.55, 0.55, 0.58] });
+
+    if (document.redactionNotice) {
+      sheet.advance(24);
+      sheet.text(document.redactionNotice, { size: 8, colour: [0.55, 0.35, 0.1] });
+    }
+
+    // The legal footer belongs on the cover too: it is the registered detail of
+    // the party issuing the document, and a reader deciding whether to act on
+    // one wants it before the content, not after it.
+    sheet.moveTo(MARGIN.bottom + 60);
+    sheet.rule([0.85, 0.85, 0.85]);
+    sheet.advance(14);
+    sheet.text(document.branding.legalFooter, { size: 8, colour: [0.42, 0.42, 0.45] });
+
+    sheet.endPage();
+  };
+
+  drawCover();
+
   header(sheet);
   void logoRefused;
 
@@ -616,7 +781,15 @@ export function renderPdf(document: ExportDocument, resolveImage?: ImageResolver
   };
 
   const pageCount = sheet.pages.length;
-  const streams = sheet.pages.map((ops, index) => [...ops, ...footerOps(index + 1, pageCount)].join('\n'));
+  // The cover carries no running footer.
+  //
+  // It has its own: the reference, the legal detail and the content hash are
+  // all on it already, laid out as part of the cover rather than in a band at
+  // the bottom. Adding "Page 1 of 5" and a rule across a cover competes with
+  // that layout, and it would put the content hash on the page twice.
+  const streams = sheet.pages.map((ops, index) =>
+    (index === 0 ? ops : [...ops, ...footerOps(index + 1, pageCount)]).join('\n'),
+  );
 
   return assemble(streams, document.title, document.branding.clientName, logo, photos);
 }

@@ -8948,3 +8948,80 @@ second: same surface, same wallet, same operator, refused to everybody else. Wha
 would not belong is a route spending a customer's ACUs with no project to quote
 against — which is the failure the check exists to prevent, and both files now
 say so.
+
+---
+
+## Document branding: covers, persistence, and a route that authorised nothing
+
+**Every generated document now opens on a cover.** A branded instrument that
+opens straight into a table reads as a printout rather than as something issued,
+and the four things somebody checks before reading a word — what it is, who it is
+for, who issued it, and which document this is — are exactly what a cover is for.
+It is always drawn, image or no image: a cover that appeared only when somebody
+had a photograph would make the document's shape depend on whether marketing had
+one. Without an image it is a band of the client's colour and type.
+
+`ClientBranding` gained `coverEvidenceHash`, resolved through the same
+content-addressed path a site photograph takes. That is the point of using the
+evidence store rather than a data URI: **the document's own content hash commits
+to exactly which image was on its cover.** Swap the image afterwards and the
+hash changes and the document stops verifying — correct for something somebody
+may have to stand behind. An image the renderer cannot decode is left out and
+the cover falls back to type; it never stops a bundle being produced, the same
+rule the photographs and the logo already follow.
+
+The cover carries **no running footer**. It has the reference, the legal detail
+and the content hash laid out as part of it, and "Page 1 of 5" across a cover
+competes with that and prints the hash twice. Content pages are numbered from
+two against the true total, so a page pulled out of a bundle still says how much
+of the bundle it is. `pdf.test.ts` states that rather than having been loosened
+to accommodate it.
+
+### Branding was held in a map and lost on every restart
+
+The same failure as the landing-page pictures, one layer up: configure a
+tenancy's identity, redeploy, and every document reverts to
+`BRANDING_NOT_CONFIGURED`. Setting branding is a governance act — it decides what
+a client-facing instrument says about who issued it — so it is now a
+`CLIENT_BRANDING_SET` event on the chain, and `rehydrateBranding()` rebuilds the
+read path at boot beside the other rehydrations. The boot banner counts what it
+restored.
+
+### `PUT /v1/branding` enforced nothing
+
+Any authenticated identity in a tenancy could change the name, the mark and the
+registered legal detail every document goes out under — including instruments a
+client, an adjudicator or a regulator reads and acts on. It survived because
+nothing had a door for it: the console never offered the button, so nobody
+pressed it, so nothing failed. **A capability with no door is not one nobody has;
+it is one nobody is watching.**
+
+It now takes `ENTERPRISE_STRUCTURE` update, which only the enterprise
+administrator holds, and `branding-authority.test.ts` pins both directions —
+the administrator may, the project manager may not. A rule that refuses
+everybody is not a permission model.
+
+### The door, and the upload path
+
+The documents screen could read whose identity a document carried and not change
+it, so the one thing somebody does after finding it wrong had no button anywhere.
+It now has both: a form for the identity and a file input for the cover.
+`command()` gained a `method` option, because the platform has PUT routes and
+this door could only POST — a configuration route is a replacement, not an
+append, and PUT is the honest verb.
+
+Cover images take their own upload route rather than the evidence one. That
+route requires an `EvidenceItem` record already naming the hash, because it
+exists to supply the file behind something somebody committed; a cover is
+configuration, and the branding record is what names it. Type is decided by the
+bytes through the same magic-byte table the account pictures and the landing page
+use, so an SVG is refused everywhere for the same reason.
+
+**A refusal that cannot fire was removed rather than left in.** The first version
+guarded "no identity configured yet" on both cover routes. `createTenant`
+establishes an identity at onboarding precisely so an export is never discovered
+to be unbrandable when somebody needs one — so neither guard could ever run. A
+refusal nobody can reach is worse than none: it reads as cover. What is asserted
+instead is what actually happens: with no object store, the upload is refused
+with that reason rather than succeeding into memory and vanishing on the next
+deploy.

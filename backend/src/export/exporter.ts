@@ -41,6 +41,22 @@ export type ClientBranding = {
    */
   logoEvidenceHash?: string;
   /**
+   * A cover image, in the evidence store, by its SHA-256.
+   *
+   * Alongside the logo rather than instead of it, and resolved through the same
+   * content-addressed path, so the document's own content hash commits to
+   * exactly which image was on its cover. A cover swapped afterwards changes the
+   * hash and the document stops verifying — which is right for an instrument
+   * somebody may have to stand behind.
+   *
+   * Optional, and its absence is not a fault: a document with no cover image
+   * gets a typographic cover rather than a blank page or a placeholder frame.
+   * The cover page itself is not optional, because a branded document handed to
+   * a client that opens straight into a table reads as a printout rather than
+   * an issued document.
+   */
+  coverEvidenceHash?: string;
+  /**
    * The organisation issuing the document, which is **not** the client.
    *
    * `clientName` is who a document is prepared for. This is who carries the
@@ -158,9 +174,63 @@ export class ExportService {
     this.#entitlement = entitlement ?? (() => ({ permitted: true }));
   }
 
-  setBranding(tenantId: string, branding: ClientBranding, projectId?: string): void {
+  /**
+   * Record the identity documents go out under.
+   *
+   * **Committed to the ledger, not held in a map.** It was a map, and that was
+   * a defect of exactly the shape the landing-page pictures had: configure a
+   * client's name, mark and colour, redeploy, and every document silently
+   * reverts to `BRANDING_NOT_CONFIGURED` — or worse, to whatever a different
+   * process still had. Branding decides what a client-facing instrument says
+   * about who issued it, which makes setting it a governance act, and a
+   * governance act belongs in the record with everybody else's.
+   *
+   * The maps below stay as the read path and are kept in step with the commit,
+   * so a running process answers from memory and a restarted one answers from
+   * the chain. `rehydrateBranding` is what closes that loop at boot.
+   *
+   * A tenancy-level identity is written to the governance chain; a project's
+   * own client identity is written to that project, where the rest of its
+   * record is.
+   */
+  setBranding(tenantId: string, branding: ClientBranding, projectId?: string, actorId?: string): void {
     if (projectId) this.#brandingByProject.set(`${tenantId}:${projectId}`, branding);
     else this.#brandingByTenant.set(tenantId, branding);
+
+    // Without an actor there is nobody to record as having done it, which is
+    // the case in a test or a tool constructing a service directly. The
+    // in-memory answer still stands; nothing is written under a name that does
+    // not exist.
+    if (!actorId) return;
+
+    this.#ledger.commit({
+      tenantId,
+      projectId: projectId ?? `${tenantId}-governance`,
+      actor: { refType: 'User', refId: actorId },
+      source: 'SYSTEM',
+      correlationId: `branding:${tenantId}:${projectId ?? 'tenant'}`,
+      eventType: 'CLIENT_BRANDING_SET',
+      entity: { refType: 'ClientBrandingRecord', refId: projectId ? `${tenantId}:${projectId}` : tenantId },
+      nextState: { tenantId, projectId, ...branding } as unknown as Record<string, unknown>,
+    });
+  }
+
+  /**
+   * Rebuild the branding maps from the chain.
+   *
+   * Called once at boot, beside the other rehydrations. Without it a restarted
+   * process holds a complete record and cannot brand a single document from it.
+   */
+  rehydrateBranding(): number {
+    let restored = 0;
+    for (const record of this.#ledger.entitiesOfType('ClientBrandingRecord')) {
+      const state = record.state as unknown as ClientBranding & { tenantId: string; projectId?: string };
+      const { tenantId, projectId, ...branding } = state;
+      if (projectId) this.#brandingByProject.set(`${tenantId}:${projectId}`, branding);
+      else this.#brandingByTenant.set(tenantId, branding);
+      restored += 1;
+    }
+    return restored;
   }
 
   /** Whether this project has its own client identity, distinct from the tenancy's. */

@@ -175,14 +175,23 @@ describe('running out of page', () => {
     assert.ok([...text.matchAll(/\(Entity\) Tj/g)].length > 1);
   });
 
-  it('numbers every page against the total, and repeats the reference', () => {
+  it('numbers every content page against the total, and repeats the reference on all of them', () => {
     const text = latin1(renderPdf(longDocument));
     const pages = [...text.matchAll(/\/Type \/Page /g)].length;
 
-    for (let page = 1; page <= pages; page++) {
+    // The cover is page 1 and carries no running footer: it has the reference,
+    // the legal detail and the content hash laid out as part of the cover, and
+    // "Page 1 of 5" across a cover competes with that. Content pages run from
+    // two, numbered against the true total including the cover — so a page
+    // pulled out of the bundle still says how much of the bundle it is.
+    assert.ok(!text.includes(`(Page 1 of ${pages}) Tj`), 'the cover carries no running footer');
+    for (let page = 2; page <= pages; page++) {
       assert.ok(text.includes(`(Page ${page} of ${pages}) Tj`), `page ${page} is numbered`);
     }
-    // A page separated from the bundle should still say what it belongs to.
+
+    // A page separated from the bundle should still say what it belongs to —
+    // every content page from its footer, and the cover from its own reference
+    // line, which is why this still equals the page count.
     assert.equal([...text.matchAll(/\(MIGL-00001\) Tj/g)].length, pages);
   });
 

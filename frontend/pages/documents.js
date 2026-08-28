@@ -349,8 +349,104 @@ export async function documents(root) {
           { key: 'branding', label: 'Identity applied', empty: 'No branding is configured, so the platform default applies.' },
         ],
       })}
+
+      <!--
+        The door. Reading whose identity a document carries was on this screen
+        and setting it was not, so the one thing somebody does after discovering
+        it is wrong — change it — had no button anywhere in the console. A
+        capability with no door is a feature only its author can use.
+      -->
+      <div class="card" id="branding-door" style="margin-top:14px">
+        <h2>Set the identity on this project's documents</h2>
+        <div class="metric-sub" style="margin:8px 0 14px">
+          Every generated document goes out under this name, this colour and this legal detail, and opens on a cover
+          carrying them. Set it on the project where the client differs from your own; leave it unset and the tenancy's
+          own identity carries through, which is right far more often than a client's name would be.
+        </div>
+        <div class="actions">
+          <button class="btn" id="set-branding">Set the client identity</button>
+          <label class="btn quiet" style="cursor:pointer">
+            Set the cover image
+            <input type="file" accept="image/png,image/jpeg,image/webp" id="cover-file" style="display:none" />
+          </label>
+        </div>
+        <div class="cmd-error" hidden style="margin-top:12px"></div>
+        <div class="metric-sub" style="margin-top:12px">
+          The cover image is held by its own hash, so the document's content hash commits to exactly which image was on
+          it: swap the image afterwards and the document stops verifying, which is correct for something somebody may
+          have to stand behind. A document with no cover image still gets a cover — typographic rather than blank.
+        </div>
+      </div>
     `,
   );
+
+  // --- the branding door -----------------------------------------------------
+  const brandingError = (message) => {
+    const box = document.getElementById('branding-door')?.querySelector('.cmd-error');
+    if (!box) return;
+    box.textContent = message;
+    box.hidden = message === '';
+  };
+
+  const held = branding?.error ? undefined : branding?.branding;
+
+  document.getElementById('set-branding')?.addEventListener('click', async () => {
+    const ok = await command({
+      title: "This project's client identity",
+      intent:
+        'What every generated document for this project says about who it is for and who issued it. It reaches the ' +
+        'client on the cover and in the header of every page, and a document that reaches them under the wrong ' +
+        'identity cannot be recalled.',
+      path: `/v1/projects/${projectId}/branding`,
+      method: 'PUT',
+      submitLabel: 'Apply',
+      fields: [
+        { name: 'clientName', label: 'Client name', value: held?.clientName, hint: 'Prepared for. Printed verbatim on the cover.' },
+        {
+          name: 'issuingEntity',
+          label: 'Issued by',
+          value: held?.issuingEntity,
+          required: false,
+          hint: 'Who carries the duty under the document, where that is not you. A joint venture, or a subsidiary contracting in its own name.',
+        },
+        { name: 'primaryColour', label: 'Colour', value: held?.primaryColour ?? '#e2571e', hint: 'Hex, as #rrggbb. The cover band and the rules take it.' },
+        {
+          name: 'legalFooter',
+          label: 'Legal detail',
+          value: held?.legalFooter,
+          hint: 'Registered office, company number and any regulated-entity detail. It goes on the cover and the foot of every page.',
+        },
+        {
+          name: 'documentReferencePrefix',
+          label: 'Reference prefix',
+          value: held?.documentReferencePrefix,
+          hint: 'Every document reference starts with this. It is what a page pulled out of a bundle is identified by.',
+        },
+        { name: 'logoRef', label: 'Logo, as a data URI', value: held?.logoRef, required: false, hint: 'Optional. A document with no logo is honest; one with somebody else\'s is not.' },
+      ],
+    });
+    if (ok) {
+      toast('Identity applied', `${ok.clientName} — every document from here carries it`, 'ok');
+      await draw();
+    }
+  });
+
+  document.getElementById('cover-file')?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    brandingError('');
+    try {
+      const stored = await api.upload(`/v1/projects/${projectId}/branding/cover`, file);
+      toast('Cover set', `${Math.round(stored.bytes / 1024)}KB · ${stored.contentType} — on every document from here`, 'ok');
+      await draw();
+    } catch (error) {
+      // Named on the panel rather than only in a toast: the refusals here are
+      // specific — configure the identity first, that is not a PNG — and worth
+      // reading twice.
+      brandingError(`${error.code ? `${error.code} — ` : ''}${error.message}`);
+      event.target.value = '';
+    }
+  });
 
   const specFor = (document) => ({
     title: `Generate: ${document.title}`,

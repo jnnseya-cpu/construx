@@ -114,6 +114,11 @@ if (config.ledger.journalPath !== '') {
     }
   }
 
+  // The identity every generated document goes out under. Held in a map and
+  // committed to the chain; without this a restarted process holds a complete
+  // record and cannot brand a single document from it.
+  const brandings = platform.exports.rehydrateBranding();
+
   // The ledger holds the projects; this restores the people who can reach them.
   // Without it a replay produces a full record and nobody able to sign in.
   const identity = platform.rehydrate(byTenant);
@@ -131,7 +136,8 @@ if (config.ledger.journalPath !== '') {
 
   durability =
     `${stats.path} — ${restored} event${restored === 1 ? '' : 's'} restored into ${entities} entities, ` +
-    `${identity.users} users across ${identity.tenants} tenancies, ${records.length} ACU entries`;
+    `${identity.users} users across ${identity.tenants} tenancies, ${records.length} ACU entries, ` +
+    `${brandings} branding${brandings === 1 ? '' : 's'}`;
   if (!config.ledger.fsync) durability += ' (fsync OFF)';
 }
 
