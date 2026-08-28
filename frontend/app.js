@@ -41,6 +41,11 @@ export const NAV = [
       { id: 'copilot', label: 'Copilot', area: 'PROJECT_SETUP', icon: 'chat' },
       { id: 'autopilot', label: 'Autopilot', area: 'AI_EXECUTION', icon: 'radar' },
       { id: 'enterprise', label: 'Enterprise & Portfolio', area: 'PROJECT_SETUP', icon: 'layers' },
+      // Under ENTERPRISE_STRUCTURE read, which is what the register needs.
+      // Issuing anything needs G on the same area, and the command bar reads
+      // that separately — so the screen is visible to somebody who can see what
+      // exists without being able to hand out a credential.
+      { id: 'developer', label: 'Developer', area: 'ENTERPRISE_STRUCTURE', icon: 'layers' },
     ],
   },
   {

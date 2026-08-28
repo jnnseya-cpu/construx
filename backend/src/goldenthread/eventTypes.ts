@@ -681,6 +681,26 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // revoke could also decline to.
   def('AGENT_ENVELOPE_REVOKED', 'AgentEnvelope', 'APPROVE', 'GOVERNANCE'),
 
+  // --- The developer surface ------------------------------------------------
+  // Issuing a credential that acts on this tenancy's record is a governance
+  // decision and no AI actor may author one: an agent that could mint a key
+  // could mint one wider than itself and act through it.
+  def('API_KEY_ISSUED', 'ApiKey', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('API_KEY_REVOKED', 'ApiKey', 'APPROVE', 'GOVERNANCE'),
+  // Where a customer's data is sent is equally governance. A subscription is an
+  // egress route out of the platform, chosen by somebody who can be asked why.
+  def('WEBHOOK_SUBSCRIBED', 'WebhookSubscription', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('WEBHOOK_DISABLED', 'WebhookSubscription', 'APPROVE', 'GOVERNANCE'),
+  // How an endpoint is behaving, which is machinery rather than a decision: the
+  // failure count and the last reason. Separate from WEBHOOK_SUBSCRIBED because
+  // that one creates, and reusing it to record a failure means the second
+  // failure is refused as a duplicate creation.
+  def('WEBHOOK_SUBSCRIPTION_HEALTH', 'WebhookSubscription', 'UPDATE', 'AI_BILLING', { aiAllowed: true }),
+  // Delivery is machinery rather than a decision, so the platform itself may
+  // author it — the same standing the notification outbox has.
+  def('WEBHOOK_DELIVERY_QUEUED', 'WebhookDelivery', 'CREATE', 'AI_BILLING', { aiAllowed: true, creates: true }),
+  def('WEBHOOK_DELIVERY_ATTEMPTED', 'WebhookDelivery', 'UPDATE', 'AI_BILLING', { aiAllowed: true }),
+
   // --- Platform-to-person messaging -----------------------------------------
   // Consent is a data-protection record: what a person decided, when, and
   // through which route. It is governance rather than marketing, which is why

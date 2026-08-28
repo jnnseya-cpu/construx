@@ -439,6 +439,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // must be readable by the people who govern the enterprise, and it must not
   // be reachable by holding the capability to run AI, which every role holds.
   AgentEnvelope: { area: 'ENTERPRISE_STRUCTURE' },
+  // The developer surface is enterprise governance, not project data: who holds
+  // a credential against this tenancy, and where its data is being sent.
+  ApiKey: { area: 'ENTERPRISE_STRUCTURE' },
+  WebhookSubscription: { area: 'ENTERPRISE_STRUCTURE' },
+  WebhookDelivery: { area: 'ENTERPRISE_STRUCTURE' },
 
   // Platform-to-person messaging. These records hold email addresses and the
   // consent decisions behind them, so they sit with the operator layer and are

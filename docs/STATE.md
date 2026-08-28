@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 3,708 passing, 0 failing, 0 skipped, across 164 files · plus 18 against a live Postgres 16 |
+| Tests | 3,758 passing, 0 failing, 0 skipped, across 165 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
 | Backend | 190 TypeScript files, 117,084 lines |
 | Application | 43 ES modules, 19,333 lines (including a service worker) |
@@ -8410,3 +8410,73 @@ built for exactly this and it worked.
 **Anyone still locked out of a deployment running the old code** signs in again
 after one reload once this is deployed; the stale token is cleared on the first
 refused refresh. Clearing site data for the origin also works and is not needed.
+
+---
+
+## The developer surface: a credential that is not a person
+
+An integration wants to post daily progress. Giving it a user's session gives it
+the ability to certify a payment. `developer/keys.ts` and `developer/webhooks.ts`
+close that.
+
+**A key is never wider than the person who issued it.** Requested scopes are
+intersected against the creator's live scopes and anything wider is refused *by
+name* — silently trimming produces a key that half works and a support call
+nobody can answer. `admin:*` is refused for everybody, including a caller who
+holds it: there is no integration whose correct answer is "everything", and a
+credential that can do anything is the one that ends up in a public repository.
+
+**Sandbox is a tenancy, not a flag.** A sandbox key acts on `<tenant>-sandbox`.
+A flag is a filter and every filter is one forgotten `if` away from a sandbox
+integration writing into a live payment cycle; a separate tenancy is enforced by
+the isolation the platform already applies to every read and write, with no new
+check anywhere.
+
+**The secret is shown once.** Stored as a SHA-256 digest, never in the ledger,
+withheld from every read — so a leaked database is not a leaked key, and a
+register cannot be brute-forced offline. Every key expires; 366 days is the
+ceiling.
+
+**Authentication reads an index, not the ledger.** A key is presented before the
+platform knows whose request it is, so a tenant-scoped read is impossible — and
+`entitiesOfType` says in its own doc-comment that nothing serving a request may
+use it. Keys are indexed at boot from the record, exactly as the people who can
+sign in already are, and maintained by issue and revoke. A revocation takes
+effect on the very next request rather than at the next reload.
+
+### Webhooks, and why they are not the notification outbox
+
+The outbox delivers to *people* through a closed catalogue of notification codes,
+with consent, branding, unsubscribe tokens and channel preference on every entry.
+A webhook delivers to a *URL*, carries a signature rather than a template, and
+its catalogue is the Golden Thread's. Folding one into the other would mean a
+notification code per event type — 494 of them — and a consent model for a
+machine. So webhooks are a separate queue following the same discipline, stated
+rather than inherited.
+
+- **The endpoint is constrained, because it is an outbound request to an address
+  a customer chose.** https only, no credentials in the URL, and nothing that
+  resolves inside the deployment — otherwise the feature is a server-side request
+  forgery primitive handed to whoever can create a subscription. The limit is
+  stated rather than hidden: a *name* that resolves to a private address at
+  delivery time is not caught, and closing that needs the check at connect time
+  in the egress layer.
+- **The signature is `t=<seconds>,v1=<hex>` over `"<t>.<body>"`**, and
+  `verifySignature` is exported and tested because an integrator has to implement
+  it — a scheme described only in prose gets implemented three ways, two of which
+  accept a forgery. The timestamp is inside the signed material, so a replay is
+  detectable and moving the timestamp invalidates the digest.
+- **At-least-once, with a stable delivery id**, so a receiver can make it
+  exactly-once. Promising exactly-once from a retrying sender would be promising
+  something no retrying sender can give.
+- **An abandoned delivery is reported, not hidden.** It is data an integrator
+  never received, and a screen carrying only successes lets a customer believe an
+  integration is complete when it has gaps. A subscription that fails ten times
+  consecutively is disabled: continuing to post to an endpoint that has been
+  refusing all day is a slow outbound flood against somebody else's server.
+
+One defect worth naming, found by the catalogue test: recording a delivery
+failure originally re-used `WEBHOOK_SUBSCRIBED`, which `creates`. The second
+failure against the same subscription would have been refused as a duplicate
+creation — so the drain would have failed on the endpoint that was already
+failing, which is exactly the wrong moment. Health is its own UPDATE event now.

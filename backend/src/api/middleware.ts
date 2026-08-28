@@ -5,6 +5,7 @@ import { AuthError, RateLimitError, ValidationError, toProblem, DomainError } fr
 import { assertValid, type Schema } from '../core/validate.ts';
 import { counters, latency, recordSecurityEvent, truncateAddress } from './telemetry.ts';
 import { verifyToken, type AuthContext } from '../identity/auth.ts';
+import { resolveKey } from '../developer/keys.ts';
 import { analyticsCspHosts } from '../site/analytics.ts';
 import type { SharedLimiter } from './sharedlimiter.ts';
 
@@ -260,6 +261,24 @@ export function authenticate(req: IncomingMessage, ctx: RequestContext, routeIsP
 
   const [scheme, token] = authorization!.split(' ');
   if (scheme !== 'Bearer' || !token) fail('MALFORMED_HEADER', 'Expected a Bearer token');
+
+  // An API key, for the integrator who is not a person. Recognised by its
+  // public prefix rather than by trying to parse it as a JWT and falling
+  // through — a credential that fails one scheme and is then tried against
+  // another produces error messages that describe the wrong thing.
+  //
+  // A key resolves to an identity whose scopes are narrower than the person who
+  // issued it, and whose tenancy is the sandbox one where the key is a sandbox
+  // key. Everything after this point treats it exactly like any other caller.
+  if (token!.startsWith('ck_live_') || token!.startsWith('ck_test_')) {
+    const identity = resolveKey(token!);
+    // One answer for an unknown key, a revoked one and an expired one. Three
+    // different answers would let somebody enumerate which keys exist.
+    if (!identity) fail('KEY_INVALID', 'That API key is not valid');
+    ctx.auth = identity;
+    ctx.authResult = { ok: true };
+    return;
+  }
 
   // Expiry, signature and revocation are all enforced before routing.
   try {

@@ -13,6 +13,7 @@ import { construction } from './construction.js';
 import { control } from './control.js';
 import { copilot } from './copilot.js';
 import { design } from './design.js';
+import { developer } from './developer.js';
 import { documents } from './documents.js';
 import { enterprise } from './enterprise.js';
 import { field } from './field.js';
@@ -30,6 +31,7 @@ import { signup } from './signup.js';
 export const PAGES = {
   login,
   centre,
+  developer,
   // Reached without a session, like login. The public site's pricing buttons
   // link straight here with the package in the query string.
   signup,

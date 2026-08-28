@@ -85,6 +85,19 @@ function control(field) {
     </select>`;
   }
 
+  if (field.type === 'multiselect') {
+    // A real multiple-select rather than a comma-separated text box.
+    // Scopes are the case this exists for: a person picking what an
+    // integration may do needs to see the whole list of what they could
+    // grant, and typing them means typos that fail server-side with a
+    // message about a scope nobody meant to ask for.
+    return `<select id="${id}" name="${esc(field.name)}" multiple size="${Math.min(10, Math.max(4, (field.options ?? []).length))}" ${required}>
+      ${(field.options ?? [])
+        .map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`)
+        .join('')}
+    </select>`;
+  }
+
   if (field.type === 'textarea') {
     return `<textarea id="${id}" name="${esc(field.name)}" rows="${field.rows ?? 3}" ${required}
       placeholder="${esc(field.placeholder ?? '')}">${esc(field.value ?? '')}</textarea>`;
@@ -153,6 +166,18 @@ async function collect(host, fields, files = []) {
 
     const el = host.querySelector(`[name="${CSS.escape(field.name)}"]`);
     if (!el) continue;
+
+    if (field.type === 'multiselect') {
+      const chosen = [...el.selectedOptions].map((option) => option.value);
+      // An empty required multiselect is a refusal, not an empty array: the
+      // endpoint would reject it anyway, and refusing here names the field.
+      if (chosen.length === 0) {
+        if (field.required === false) continue;
+        throw new ApiError({ title: 'FIELD_REQUIRED', detail: `${field.label} needs at least one choice` }, 400);
+      }
+      body[field.name] = chosen;
+      continue;
+    }
 
     let value = el.value;
     if (value === '' && field.required === false) continue;

@@ -7,6 +7,7 @@ import { WriterLock } from './goldenthread/writerlock.ts';
 import type { ACUEntry } from './billing/acu.ts';
 import { startNewsletterSchedule } from './messaging/newsletter.ts';
 import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.ts';
+import { rehydrateKeys } from './developer/keys.ts';
 import { egressConfigured, startEgress } from './ops/otlp.ts';
 import { startWatch } from './ops/watch.ts';
 import { Platform } from './platform.ts';
@@ -99,6 +100,12 @@ if (config.ledger.journalPath !== '') {
   // The ledger holds the projects; this restores the people who can reach them.
   // Without it a replay produces a full record and nobody able to sign in.
   const identity = platform.rehydrate(byTenant);
+
+  // And the credentials that can. Authentication happens before the platform
+  // knows whose request it is, so it cannot use a tenant-scoped read — the keys
+  // are indexed here, at boot, the same way the people are. Without this a
+  // restart silently invalidates every integration.
+  rehydrateKeys(platform.ledger);
 
   journal.open();
   wallets.open();

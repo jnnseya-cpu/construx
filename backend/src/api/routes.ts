@@ -22,6 +22,8 @@ import { fleetManifest } from '../agents/runtime.ts';
 import { AUTOMATABLE_COMMANDS, LADDER, envelopeRegister, grantEnvelope, revokeEnvelope } from '../agents/mandate.ts';
 import { egressPosition, flush as flushEgress } from '../ops/otlp.ts';
 import { centreCatalogue, commandCentre, type CentreFunctionId } from '../commandcentre/centre.ts';
+import { grantableScopes, issueKey, keyRegister, revokeKey } from '../developer/keys.ts';
+import { subscribe, subscriptionRegister, unsubscribe, webhookPosition } from '../developer/webhooks.ts';
 import type { ACUCaps } from '../billing/acu.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
 import { seatEconomics, TIERS, type SubscriptionTier } from '../billing/subscription.ts';
@@ -10880,6 +10882,103 @@ export const ROUTES: Route[] = [
     pattern: '/v1/agents',
     description: 'The agent fleet, each with the mandate it can never exceed',
     handler: () => ({ agents: fleetManifest() }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/developer/keys',
+    readOnly: true,
+    description: 'Every API key this tenancy has issued, with the secret nowhere in it',
+    handler: (platform, ctx) => ({
+      keys: keyRegister(projectContext(platform, ctx)),
+      grantableScopes: grantableScopes(projectContext(platform, ctx).auth.roles),
+    }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/developer/keys',
+    description: 'Issue an API key, scoped no wider than you, in sandbox or live',
+    schema: {
+      type: 'object',
+      required: ['name', 'mode', 'scopes'],
+      properties: {
+        name: { type: 'string' },
+        mode: { type: 'string', enum: ['SANDBOX', 'LIVE'] },
+        scopes: { type: 'array', items: { type: 'string' } },
+        expiresInDays: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const issued = issueKey(projectContext(platform, ctx), body(ctx));
+      const { secretHash: _held, ...key } = issued.key;
+      return {
+        key,
+        secret: issued.secret,
+        // Said at the point of issue, where somebody is looking, rather than in
+        // documentation they will read afterwards if at all.
+        notice: 'This is the only time the secret is shown. It is stored as a digest and cannot be recovered.',
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/developer/keys/:keyId/revoke',
+    description: 'Withdraw an API key. The next request made with it is refused',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string' } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const { secretHash: _held, ...key } = revokeKey(projectContext(platform, ctx), {
+        keyId: ctx.params.keyId as string,
+        reason: body<{ reason: string }>(ctx).reason,
+      });
+      return key;
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/developer/webhooks',
+    readOnly: true,
+    description: 'Webhook subscriptions and what the platform owes them',
+    handler: (platform, ctx) => {
+      const context = projectContext(platform, ctx);
+      return { subscriptions: subscriptionRegister(context), position: webhookPosition(context) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/developer/webhooks',
+    description: 'Subscribe an https endpoint to events, and receive its signing secret once',
+    schema: {
+      type: 'object',
+      required: ['name', 'url'],
+      properties: {
+        name: { type: 'string' },
+        url: { type: 'string' },
+        eventTypes: { type: 'array', items: { type: 'string' } },
+        mode: { type: 'string', enum: ['SANDBOX', 'LIVE'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const created = subscribe(projectContext(platform, ctx), body(ctx));
+      return {
+        ...created,
+        notice:
+          'This is the only time the signing secret is shown. Verify x-construx-signature as t=<seconds>,v1=HMAC-SHA256 over "<t>.<body>", and reject a timestamp older than 300 seconds.',
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/developer/webhooks/:subscriptionId/disable',
+    description: 'Stop delivering to an endpoint',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string' } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      unsubscribe(projectContext(platform, ctx), {
+        subscriptionId: ctx.params.subscriptionId as string,
+        reason: body<{ reason: string }>(ctx).reason,
+      });
+      return { disabled: true };
+    },
   },
   {
     method: 'GET',
