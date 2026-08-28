@@ -58,11 +58,30 @@ function mediaTokens(request: ProviderRequest): number {
   return Math.ceil(bytes / 750);
 }
 
+/**
+ * What one call to a vendor came back with, before anybody tries to read it.
+ *
+ * `stopReason` and `cutShort` are here because the three failures that matter
+ * are indistinguishable once the text is all you have. A reply cut off at the
+ * token ceiling, a reply suppressed by a content filter and a reply the model
+ * simply wrote badly all arrive as "this is not JSON", and only the first two
+ * are the operator's to fix.
+ */
+type ModelReply = {
+  text: string;
+  inputTokens: number;
+  outputTokens: number;
+  /** The vendor's own word for why generation stopped, where it gives one. */
+  stopReason?: string;
+  /** The generation hit a ceiling or a filter, so what arrived is not the whole answer. */
+  cutShort?: boolean;
+};
+
 type Endpoint = {
   url: string;
   headers: (key: string) => Record<string, string>;
   body: (request: ProviderRequest, modelClass: string) => unknown;
-  extract: (response: unknown) => { text: string; inputTokens: number; outputTokens: number };
+  extract: (response: unknown) => ModelReply;
 };
 
 const OPENAI_ENDPOINT: Endpoint = {
@@ -99,13 +118,21 @@ const OPENAI_ENDPOINT: Endpoint = {
     const body = response as {
       output_text?: string;
       output?: Array<{ content?: Array<{ text?: string }> }>;
+      status?: string;
+      incomplete_details?: { reason?: string };
       usage?: { input_tokens?: number; output_tokens?: number };
     };
     const text = body.output_text ?? body.output?.[0]?.content?.[0]?.text ?? '';
+    // This API says so at the top level rather than per-choice: `status:
+    // "incomplete"` with a reason. Reading the text without reading this is how
+    // a half-finished answer becomes a whole record.
+    const stopReason = body.status === 'incomplete' ? (body.incomplete_details?.reason ?? 'incomplete') : undefined;
     return {
       text,
       inputTokens: body.usage?.input_tokens ?? 0,
       outputTokens: body.usage?.output_tokens ?? 0,
+      stopReason,
+      cutShort: body.status === 'incomplete',
     };
   },
 };
@@ -134,13 +161,23 @@ const GEMINI_ENDPOINT: Endpoint = {
   }),
   extract: (response) => {
     const body = response as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>;
+      promptFeedback?: { blockReason?: string };
       usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
     };
+    const candidate = body.candidates?.[0];
+    const finish = candidate?.finishReason;
+    // STOP is the whole answer. Everything else means generation ended for a
+    // reason the caller has to be told: the ceiling, a safety filter, or a
+    // recitation block. A blocked *prompt* produces no candidate at all, so
+    // that reason is read from the feedback instead.
+    const stopReason = body.promptFeedback?.blockReason ?? (finish && finish !== 'STOP' ? finish : undefined);
     return {
-      text: body.candidates?.[0]?.content?.parts?.[0]?.text ?? '',
+      text: candidate?.content?.parts?.[0]?.text ?? '',
       inputTokens: body.usageMetadata?.promptTokenCount ?? 0,
       outputTokens: body.usageMetadata?.candidatesTokenCount ?? 0,
+      stopReason,
+      cutShort: stopReason !== undefined,
     };
   },
 };
@@ -176,7 +213,21 @@ const ANTHROPIC_ENDPOINT: Endpoint = {
       {
         role: 'user',
         content: [
-          { type: 'text', text: JSON.stringify({ task: request.task, payload: request.payload }) },
+          {
+            type: 'text',
+            // The schema travels in the message because this API has no field
+            // for one. It was being dropped entirely: the system prompt above
+            // said "matching the supplied schema" and no schema was supplied,
+            // so the only vendor of the three without structured-output
+            // enforcement was also the only one not told what shape to answer
+            // in. Every field name the engine will read is now in front of the
+            // model.
+            text: JSON.stringify({
+              task: request.task,
+              payload: request.payload,
+              ...(request.responseSchema ? { responseSchema: request.responseSchema } : {}),
+            }),
+          },
           // Native inline media, as with Gemini. Base64 in a text block would
           // be the same bytes charged at text rates and looked at by nothing.
           ...(request.media
@@ -198,17 +249,168 @@ const ANTHROPIC_ENDPOINT: Endpoint = {
   extract: (response) => {
     const body = response as {
       content?: Array<{ type?: string; text?: string }>;
+      stop_reason?: string;
       usage?: { input_tokens?: number; output_tokens?: number };
     };
+    // `end_turn` is the model finishing. `max_tokens` is the 8,192 ceiling
+    // above cutting it off mid-answer, which on a large take-off is the
+    // likeliest failure of the lot.
+    const stop = body.stop_reason;
+    const cutShort = stop !== undefined && stop !== 'end_turn' && stop !== 'stop_sequence';
     return {
       // The first text block. A response can carry more than one block, and
       // anything that is not text is not the engine's answer.
       text: body.content?.find((block) => block.type === 'text')?.text ?? '',
       inputTokens: body.usage?.input_tokens ?? 0,
       outputTokens: body.usage?.output_tokens ?? 0,
+      stopReason: cutShort ? stop : undefined,
+      cutShort,
     };
   },
 };
+
+/**
+ * Find the JSON object inside whatever the model actually sent.
+ *
+ * Scans for the first `{`, then walks to its matching `}` while respecting
+ * string literals and escapes — so a brace inside `"description": "bay {3}"`
+ * does not close the object early. Returns undefined when there is no balanced
+ * object to find, which includes the truncated case: a reply cut off mid-object
+ * never balances.
+ */
+function firstBalancedObject(text: string): string | undefined {
+  const start = text.indexOf('{');
+  if (start < 0) return undefined;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let at = start; at < text.length; at += 1) {
+    const char = text[at];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      if (inString) escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === '{') depth += 1;
+    else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, at + 1);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Turn one model reply into the structured output an engine may act on.
+ *
+ * Exported because this is the single most dangerous function in the AI path
+ * and no live provider call has ever been made from this repository. Everything
+ * downstream — a title block entering the drawing register, a take-off becoming
+ * BoQ items, an NCR raised against a photograph — depends on this reading the
+ * reply the way a real vendor actually sends it, and the only way to establish
+ * that without a key is to test this directly against the shapes vendors send.
+ *
+ * It was `JSON.parse(text)`, bare, with the result cast to an object. Three
+ * things were wrong with that, and all three fire on live traffic:
+ *
+ *   1. **Fenced and prefaced replies.** A model told in a system prompt to
+ *      answer in JSON very often answers "Here is the title block:" and then a
+ *      ```json block. Bare `JSON.parse` throws. The vendor has already billed
+ *      the tokens, the customer's hold is released, and the platform absorbs a
+ *      charge that reaches no ledger.
+ *   2. **Valid JSON that is not an object.** `null`, `[]`, `42` and a quoted
+ *      refusal all parse. The cast to `Record<string, unknown>` made them
+ *      objects to the type system only; `null` then reached the ledger as a
+ *      draft's extraction and crashed the legibility check afterwards — a 500,
+ *      with the null already committed.
+ *   3. **Truncation read as malformation.** An answer cut off at the token
+ *      ceiling is refused here even in the rare case it still parses, because a
+ *      take-off truncated at item 140 of 200 is a *plausible* partial answer,
+ *      and a plausible partial answer is worse than an unreadable one.
+ *
+ * Every refusal names the vendor and shows a bounded excerpt of what came back,
+ * because "the provider did not return valid JSON" is not something an operator
+ * can act on and "GEMINI returned: I cannot read this drawing…" is.
+ */
+export function parseModelOutput(reply: ModelReply, provider: AIProvider): Record<string, unknown> {
+  const text = reply.text.trim();
+
+  if (reply.cutShort) {
+    throw new DomainError(
+      'AI_OUTPUT_TRUNCATED',
+      `${provider} stopped before finishing its answer (${reply.stopReason ?? 'reason not given'}). ` +
+        'What arrived is part of an answer, and a partial answer is not a safe record. ' +
+        'Retry with a smaller input, or raise the output ceiling for this model.',
+      502,
+    );
+  }
+
+  if (text === '') {
+    // Distinct from unparseable on purpose: an empty completion is almost
+    // always a filter or a refusal, and telling the operator "not valid JSON"
+    // sends them to look at a schema when the answer is that the model declined.
+    throw new DomainError(
+      'AI_OUTPUT_EMPTY',
+      `${provider} returned no text at all. Nothing was read from this input.`,
+      502,
+    );
+  }
+
+  // Whole reply first — the common case for a vendor honouring a response
+  // schema, and the only one where nothing has to be guessed at.
+  const candidates: string[] = [text];
+
+  // ```json … ``` or a bare fence. Taking the fence contents rather than
+  // stripping the markers, so a trailing sentence after the block is discarded
+  // with the rest of the prose.
+  const fenced = /```(?:json)?\s*\n?([\s\S]*?)```/i.exec(text);
+  if (fenced?.[1]) candidates.push(fenced[1].trim());
+
+  const balanced = firstBalancedObject(text);
+  if (balanced) candidates.push(balanced);
+
+  for (const candidate of candidates) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+    // The check the cast was standing in for. An array, a number, a string and
+    // null are all valid JSON and none of them is an engine output.
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    throw new DomainError(
+      'AI_OUTPUT_NOT_AN_OBJECT',
+      `${provider} returned ${parsed === null ? 'null' : Array.isArray(parsed) ? 'an array' : typeof parsed} ` +
+        'where the engine requires a JSON object. Nothing has been recorded against this request.',
+      502,
+    );
+  }
+
+  throw new DomainError(
+    'AI_OUTPUT_UNPARSEABLE',
+    `${provider} did not return JSON the engine could read. It returned: ${excerpt(text)}`,
+    502,
+  );
+}
+
+/** Enough of a reply to diagnose it, never enough to fill a log with a drawing. */
+function excerpt(text: string): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  return oneLine.length > 300 ? `${oneLine.slice(0, 300)}…` : oneLine;
+}
 
 /**
  * Every provider, and the key each one authenticates with.
@@ -296,17 +498,26 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
         );
       }
 
-      const { text, inputTokens, outputTokens } = this.#endpoint.extract(await response.json());
-      this.#consecutiveFailures = 0;
+      const reply = this.#endpoint.extract(await response.json());
 
+      // Unreadable output is a failed execution, not a partial result: the
+      // engine would otherwise be free to write prose into the Golden Thread.
+      //
+      // Counted as a failure, which it previously was not. The reset used to
+      // happen here, before the parse, so a provider answering 200 OK with
+      // something unreadable on every single call stayed "healthy" for ever:
+      // never taken out of rotation, never failed over from, billing the vendor
+      // in full for every request while every caller got a 502. Health is now
+      // reset only once an answer has actually been read.
       let output: Record<string, unknown>;
       try {
-        output = JSON.parse(text) as Record<string, unknown>;
-      } catch {
-        // Unparseable output is a failed execution, not a partial result: the
-        // engine would otherwise be free to write prose into the Golden Thread.
-        throw new DomainError('AI_OUTPUT_UNPARSEABLE', `${this.name} did not return valid JSON`, 502);
+        output = parseModelOutput(reply, this.name);
+      } catch (error) {
+        this.#consecutiveFailures += 1;
+        throw error;
       }
+      this.#consecutiveFailures = 0;
+      const { inputTokens, outputTokens } = reply;
 
       return {
         provider: this.name,

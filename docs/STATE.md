@@ -7047,15 +7047,15 @@ named so it is not mistaken for finished.
 
 | Area | Built | Missing |
 |---|---|---|
-| Take-off | Governs, evidences and prices measured items, traced to sheet and revision. Quantities can be read off a held drawing by a multimodal provider and confirmed before they become BoQ items | No provider call has been made from this environment, so the extraction path is verified against a stub rather than against a live model |
-| Drawing register | Title-block reading from the held drawing itself or from supplied text, supersession, markup→RFI carrying the activity it blocks | Same: the reading path is exercised against a stub, not a live provider |
+| Take-off | Governs, evidences and prices measured items, traced to sheet and revision. Quantities can be read off a held drawing by a multimodal provider and confirmed before they become BoQ items | No provider call has been made from this environment. The **wire contract** is now proven against the response shapes the three configured vendors actually send (`tests/modeloutput.test.ts`); what remains unproven is the **reading** — whether a real model measures this drawing correctly |
+| Drawing register | Title-block reading from the held drawing itself or from supplied text, supersession, markup→RFI carrying the activity it blocks | Same: the wire contract is proven against real vendor response shapes; the quality of the reading is not |
 | Model ingestion | Records the model, hash, discipline, LOD, element count as a governed event | IFC parsing, geometry hash, model diffing |
 | Digital twin | Reconciles observed against expected element status | Observations are structured input, not derived from imagery |
 | Evidence capture | Real SHA-256 over the real file, recorded against the event, and the file itself held in a tenant-scoped content-addressed store | Retention and deletion policy; no antivirus scan on upload |
 | File ingestion | Structural inspection, rules classification with its signals, native text and table extraction, and a lexical index over what was read. A file that is not what it claims to be is quarantined with the finding on the record | A PDF or a photograph reports `NEEDS_OCR` rather than being read; the index is lexical, so it finds a near-duplicate and not a paraphrase |
 | Signature scanning | `evidence/scanner.ts` speaks clamd's INSTREAM protocol over a socket. Every ingested file is sent to it where one is configured, and the record names the daemon and its signature database. Unset means unscanned and every record and every read says so; configured-and-unreachable refuses the ingestion rather than recording an unscanned file as checked | The platform holds no signatures itself and never will. Verified against a daemon of the suite's own speaking the real protocol, not against ClamAV — no ClamAV exists in this environment |
-| Vision tasks | Progress, PPE, plant and defects read from a held photograph, each as a draft a person confirms into the ordinary domain command | Exercised against a stub, not a live provider — the same limit as the drawing and voice tasks |
-| Commitment extraction | Reads a held letter for what it promises and what it demands, drops anything not quoted verbatim from the letter, and registers a confirmed one in the obligation calendar that already exists | Needs a provider that reads prose; a local deployment is refused rather than given an invented undertaking. Exercised against a stub, not a live provider |
+| Vision tasks | Progress, PPE, plant and defects read from a held photograph, each as a draft a person confirms into the ordinary domain command | The wire contract is proven against real vendor response shapes, including fenced, prefaced, truncated, empty and non-object replies. What no test here can establish is whether a model reads a photograph correctly |
+| Commitment extraction | Reads a held letter for what it promises and what it demands, drops anything not quoted verbatim from the letter, and registers a confirmed one in the obligation calendar that already exists | Needs a provider that reads prose; a local deployment is refused rather than given an invented undertaking. The wire contract is proven against real vendor response shapes; the reading is not |
 | Clause extraction | From supplied text | OCR and table extraction from a PDF |
 | 4D scheduling | Twin states link to task ids | No visualisation |
 | Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded | No bounce processing or suppression list; DKIM belongs at the relay, where the key should live |
@@ -8080,3 +8080,50 @@ concepts is how a permission model goes wrong.
   by no test. What is verified is that the listener is attached and that nothing
   paints when the event does not arrive. The Android offer needs a real handset
   to confirm.
+
+---
+
+## What a real model sends back, and what used to happen to it
+
+Every perception row above carried the same caveat — *exercised against a stub,
+not a live provider* — and the stub was written by the same hand as the engine,
+so it answered in exactly the shape the engine asked for. Real vendors do not,
+and the path from a provider's `200 OK` to a record in the Golden Thread was
+`JSON.parse(text)` with the result cast to an object.
+
+Three live behaviours went straight through it, all found by reading the three
+configured vendors' documented response shapes rather than by calling them:
+
+- **A fenced or prefaced answer threw.** A model told in a *system prompt* to
+  reply in JSON very often replies "Here is the title block:" and then a
+  ` ```json ` block. Anthropic is the likeliest: it is configured with no
+  structured-output enforcement at all, only the instruction — and its body was
+  never sent `responseSchema` either, so the one vendor without enforcement was
+  also the one never told what shape to answer in. Both are fixed: the schema
+  travels in the message, and a fenced, prefaced or trailing-prose reply is read.
+- **Valid JSON that is not an object was accepted.** `null`, `[]`, `42` and a
+  quoted refusal all parse. The cast to `Record<string, unknown>` made them
+  objects to the type system only. `null` reached the ledger as a draft's
+  extraction, and the legibility check then dereferenced it — a `500`, with the
+  null already committed to an append-only record. The parse now requires a
+  JSON object and refuses everything else by name.
+- **A truncated answer was reported as malformed.** Anthropic's ceiling here is
+  8,192 output tokens, which a large take-off reaches. The operator was told
+  "did not return valid JSON" when the actionable truth was that the ceiling was
+  too low. Every vendor's own stop reason is now read — OpenAI's
+  `status: incomplete`, Gemini's `finishReason` and `promptFeedback.blockReason`,
+  Anthropic's `stop_reason` — and a cut-off answer is refused **even when it
+  still parses**, because a take-off truncated at item 140 of 200 is a plausible
+  partial quantity, and a plausible partial quantity becomes a BoQ item and then
+  a price.
+
+The worst of it was the accounting. `#consecutiveFailures` was reset on the line
+*before* the parse, so a provider answering `200 OK` with something unreadable on
+every single call stayed **healthy for ever**: never taken out of rotation, never
+failed over from, billing the vendor in full for every request while every caller
+received a `502`. Health is now reset only once an answer has actually been read.
+
+What this does **not** establish: no call has been made to any vendor from this
+environment, and none of it says a model reads a drawing correctly. It says the
+platform will understand the reply when one arrives, and will refuse safely when
+it cannot.
