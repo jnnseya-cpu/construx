@@ -365,6 +365,14 @@ const AI_REQUIREMENTS: Array<{ what: string; recorded: boolean; field?: string }
   { what: 'assumptions', recorded: true, field: 'assumptions' },
   { what: 'prompt version', recorded: true, field: 'promptVersion' },
   { what: 'human disposition', recorded: true, field: 'AI_OUTPUT_DISPOSED' },
+  // The last two of 15.4's mandatory schema. A known gap is not an assumption:
+  // an assumption is something taken as given and probably true, a gap is
+  // something the answer needed and did not have. The first is checkable, the
+  // second has to be closed — and a gate that could not tell them apart read a
+  // decision resting on missing ground investigation as a decision resting on
+  // a reasonable premise.
+  { what: 'known gaps', recorded: true, field: 'knownGaps' },
+  { what: 'alternatives considered', recorded: true, field: 'alternativesConsidered' },
 ];
 
 /**
@@ -411,6 +419,18 @@ function aiAccounted(ctx: EngineContext, stage = 'tender'): ClauseResult {
     if (event.ai.promptVersion === undefined) {
       blocking.push(`${event.eventType} at ${event.timestamp} does not say which prompt produced it`);
     }
+    // Same `undefined` versus `[]` rule as assumptions above, for the same
+    // reason: "it declared no gaps" and "nobody asked it about gaps" are
+    // different facts, and only the second is a hole in the record.
+    if (event.ai.knownGaps === undefined) {
+      blocking.push(`${event.eventType} at ${event.timestamp} records no known gaps, not even that there were none`);
+    }
+    if (event.ai.alternativesConsidered === undefined) {
+      blocking.push(
+        `${event.eventType} at ${event.timestamp} records no alternatives considered, so the decision reads as ` +
+          'though there was only ever one course of action',
+      );
+    }
     // The disposition, which is the one that needs a person rather than a
     // deployment. An execution nobody has decided about is a model writing
     // unopposed, and the gate names it by what produced it so somebody can
@@ -455,8 +475,8 @@ function aiAccounted(ctx: EngineContext, stage = 'tender'): ClauseResult {
     detail:
       absent.length === 0
         ? `All ${aiEvents} AI outputs used in this ${stage} carry their evidence, confidence, model class, ` +
-          'ACU settlement, assumptions and prompt version, and every one has been accepted or rejected by a ' +
-          'named person.'
+          'ACU settlement, assumptions, known gaps, alternatives considered and prompt version, and every one has ' +
+          'been accepted or rejected by a named person.'
         : `All ${aiEvents} AI outputs used in this ${stage} carry their evidence, confidence, model class and ACU settlement. ` +
           `The platform does not record ${absent.join(', ')} at all, so this clause cannot be assessed against the ` +
           'specification in full — and it is reported as unassessable rather than passed, because a gate that passes what it did ' +

@@ -346,6 +346,10 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
           // declared no assumptions; an absent field would say nobody
           // recorded whether it did, and those are different facts.
           assumptions: run.response.assumptions ?? [],
+          // Same rule as assumptions: `[]` is "none declared", and an absent
+          // field means the event predates it. The gate distinguishes the two.
+          knownGaps: run.response.knownGaps ?? [],
+          alternativesConsidered: run.response.alternativesConsidered ?? [],
         },
         // The human who pressed the button, and the phase the project was in.
         // The actor on an AI-authored event is the engine — liability follows

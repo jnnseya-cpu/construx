@@ -424,7 +424,7 @@ against intent.
 | 15.1 Three visible AI modes | **Built** | Workflow AI (named task buttons), Copilot and the Knowledge/audit read are all in the console and named at the point of use |
 | 15.2 AI execution sequence | **Partial** | Authorisation, input resolution, ACU estimate and hold, provider routing with fallback, ledger write, prompt version and human disposition are all built (`ai/orchestrator.ts`, `engines/context.runAI`, `domain/aidisposition.ts`). The step that is **not** built: no retrieval snapshot is stored |
 | 15.3 Risk tiers A–D and automation ceiling | **Partial** | The ceiling is enforced, but through a different mechanism than the specification's four tiers: `aiAllowed` on each event type in the closed catalogue, defaulting to false. Tier D — "AI cannot execute or impersonate signatory" — is met by construction, because every approval, completion, competence and regulatory event carries `aiAllowed: false`. The A/B/C gradations are not modelled as named tiers |
-| 15.4 Mandatory AI output schema | **Partial** | The AI event block carries provider, model class, ACU held and consumed, input refs, confidence, policy id, decision, **assumptions** and **prompt version**; the human disposition is a separate event because it is a later act by a different party. Clause five of every stage gate now assesses all three and passes. Still **not** carried: known gaps and alternatives considered |
+| 15.4 Mandatory AI output schema | **Built** | The AI event block carries provider, model class, ACU held and consumed, input refs, confidence, policy id, decision, **assumptions**, **known gaps**, **alternatives considered** and **prompt version**; the human disposition is a separate event because it is a later act by a different party. Clause five of every stage gate assesses all of them. `[]` and absent are distinguished throughout: "it declared none" and "nobody asked" are different facts |
 | 15.5 Confidence and failure policy | **Built** | Provider timeout and fallback, cross-provider identification, and a wallet with no balance refusing the call. Confidence thresholds are configurable globally (`AI_CONFIDENCE_THRESHOLD`) and per task (`AI_CONFIDENCE_THRESHOLDS`). The evaluation harness is `ai/evaluation.ts` — see 17.1 for what it does and does not claim |
 
 ### 16 — Non-functional, security and offline
@@ -447,7 +447,7 @@ against intent.
 | 17.1 Unit/property tests | **Built** | 3,231 tests covering formulas, date logic, state guards, hash canonicalisation and permission decisions |
 | 17.1 End-to-end role tests | **Built** | Every workflow tested from a permitted role and a denied role; maker-checker and party separation asserted where the domain requires them |
 | 17.1 Offline/device tests | **Partial** | Duplicate submit, conflict and clock handling are tested. Process kill, app upgrade and two-device interleaving are not |
-| 17.1 AI evaluations | **Partial** | `ai/evaluation.ts` runs nine cases on a throwaway instance of the demonstration project, records the result and reports drift against the previous run, case by case. Three are a prompt-injection suite. What it deliberately does **not** do is score model judgement: on the local engines the model is a hash of its inputs, so grading it would invent the one figure nobody could check. What it asserts instead is the properties the platform depends on — the accounting the stage gate reads, the engine's arithmetic surviving the model, the refusals, and that an instruction hidden in site text moves no governed outcome. A gold set of graded construction judgements needs a construction professional, not a fixture, and is not built |
+| 17.1 AI evaluations | **Built** | `ai/evaluation.ts` runs 23 cases on a throwaway instance of the demonstration project, records the result and reports drift against the previous run, case by case. Three are a prompt-injection suite. Fourteen are the **gold set** in `ai/goldset.ts`: cases whose right answer is fixed by statute, standard or arithmetic — the notified sum under HGCRA s.111, the adjudication timetable under s.108, PERT, critical path and float, EVM indices and the forecast final cost. Each states the authority its expected value comes from and derives it by hand, so a quantity surveyor or a planner can check the expectation without reading TypeScript. What is deliberately **not** graded is model *judgement* — whether a programme is good or an allowance prudent needs a professional, not a fixture, and a score for it would be the one figure nobody could check |
 | 17.1 Performance/resilience tests | **Partial** | Provider outage and fallback are tested. Peak ingest, queue backlog, failover and restore are not |
 | 17.2 E2E acceptance scenarios | **Partial** | The *behaviours* the twelve scenarios describe have test coverage — AI fallback on an empty wallet, a regulator refused a write and an AI run, a failed test whose prior data stays immutable, award converting to live commercial controls, and the eleven-stage chain end to end. What does **not** exist is the twelve scenarios written as twelve named acceptance tests, which is what 17.2 asks for; the coverage is spread across the suites that own each behaviour and has not been mapped scenario by scenario. E2E-02 additionally depends on the unbuilt C-WF concept workflows, and E2E-05 is tested at the sync layer rather than on a device |
 | 17.3 Global Definition of Done | **Partial** | The code, test, no-fake-data and state-documentation clauses are held to on every change. Migration/backfill and rollback runbooks exist for deployment; there is no data migration because there is no database |
@@ -464,16 +464,19 @@ against intent.
 | B.2 Industry references | **Built** | The standards are what the domain rules were written against — HGCRA payment and notice logic, CDM duty holders, RIBA stage structure, ISO 19650 information control, CIBSE Code M commissioning sequence |
 
 **The honest summary of this table:** most of sections 12–18 describe
-architecture that already exists. What was listed here as four genuine gaps is
-now one. The AI output schema records assumptions, prompt version and human
-disposition, and every stage gate assesses them; the notification outbox makes
-delivery at-least-once with a durable queue; the offline `Conflict` record is
-built with a human resolution behind it; the evaluation harness runs, records
-and reports drift. What remains is the AI schema's *known gaps* and
-*alternatives considered* — two fields of 15.4 that are still not carried — and
-the part of 17.1 no fixture can supply: a gold set of graded construction
-judgements needs a construction professional, and the harness says so rather
-than printing a score it cannot justify.
+architecture that already exists, and the four gaps listed here are closed. The
+AI output schema carries the whole of 15.4 and every stage gate assesses it; the
+notification outbox makes delivery at-least-once with a durable queue; the
+offline `Conflict` record is built with a human resolution behind it; the
+evaluation harness runs, records drift, and includes a gold set whose expected
+values come from statute, standard and arithmetic rather than from the code.
+
+One thing is deliberately still not done, and is not a gap being carried
+quietly: the harness does not score model **judgement**. Whether a programme is
+good or a risk allowance prudent is a professional's opinion, and a number
+printed for it would be the one figure on this platform nobody could check. The
+gold set grades what has a right answer; the rest is left to the person whose
+name goes on the decision.
 
 ---
 

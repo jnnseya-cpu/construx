@@ -7717,6 +7717,74 @@ and the default is what it always was, so nothing changes by upgrading.
 
 ---
 
+## The gold set, and the two fields that finished 15.4
+
+Two things were left open at the end of the last pass, and both are closed.
+
+### Known gaps and alternatives considered
+
+The AI output schema wanted six things. Four were recorded; assumptions and
+prompt version were added; **known gaps** and **alternatives considered** were
+the last two, and they are on the event now.
+
+A known gap is **not** an assumption, and the difference is what makes the field
+worth having. An assumption is something taken as given and probably true — a
+decision resting on one is a decision somebody can check. A gap is something the
+answer needed and did not have: a drawing not in the inputs, a rate with no base
+date, a ground investigation that stops above the founding level. A decision
+resting on a gap is one somebody has to **close**. A gate that could not tell
+them apart read the second as the first.
+
+Alternatives considered is there because an option nobody wrote down is one
+nobody can reopen. Three years into a dispute the question is rarely "was this
+reasonable" but "what else was on the table", and an output listing one course
+of action reads as though there was only ever one.
+
+Both follow the same `[]`-versus-absent rule as assumptions: "it declared none"
+and "nobody asked" are different facts, and the gate distinguishes them.
+
+### A gold set of things with right answers
+
+The last pass refused to build a gold set, and gave a reason: grading a
+construction judgement needs a construction professional, not a fixture. **That
+refusal stands.** Whether a programme is good or an allowance prudent is not
+something this platform will print a mark for.
+
+But it was the wrong conclusion to draw from it, and the instruction to decide
+rather than defer was the right correction. A great deal of what this platform
+computes has **no room for judgement in it at all**, because statute, standard
+or arithmetic already decided:
+
+- The notified sum under HGCRA s.111 when no pay-less notice was served is the
+  applied sum. Not a view — the Act.
+- A pay-less notice one day late does not bite. Neither does one in time that
+  states no basis.
+- An adjudicator's decision is due 28 days from referral, extendable by 14 on
+  the referring party's consent alone.
+- A PERT mean is `(o + 4m + p) / 6`. The critical path is the longest path.
+  Total float is late start minus early start.
+- CPI is earned over actual. EAC at current performance is budget over CPI.
+
+Fourteen cases, in `ai/goldset.ts`. Every one **states the authority its
+expected value comes from and derives it by hand in the comment**, so a quantity
+surveyor or a planner can read the case and say whether the expectation is right
+without reading a line of TypeScript — which is the review a gold set exists to
+be open to. A case citing "as implemented" would be a circle, and a test asserts
+that none does.
+
+They run through the same functions the engines call, so a model introduced into
+any of those paths cannot move an answer that was never the model's to move.
+Tolerance is stated per case and is **zero** on eleven of the fourteen: a
+statutory sum is exact. The three that carry one are the places the platform
+legitimately rounds — a duration at a confidence level through a normal
+approximation — and the tolerance is named in the case rather than assumed.
+
+The harness now reports five kinds: accounting, boundary, refusal, injection and
+**determined**. The first four ask whether the platform's defences hold; the
+fifth asks whether its answers are right.
+
+---
+
 ## Working notes
 
 - The seeded demo project sits in the **Operations** phase, so field-execution

@@ -6,6 +6,7 @@ import type { EngineContext } from '../engines/context.ts';
 import { promptVersionOf } from '../engines/context.ts';
 import * as aidisposition from '../domain/aidisposition.ts';
 import * as safety from '../engines/safety.ts';
+import { goldCases, runGoldSet } from './goldset.ts';
 import type { Platform } from '../platform.ts';
 
 /**
@@ -32,7 +33,15 @@ import type { Platform } from '../platform.ts';
  *      the one the engine computed.
  *   3. **Refusals.** A wallet with no balance refuses the call rather than
  *      running it free.
- *   4. **Injection.** A free-text input carrying an instruction aimed at the
+ *   4. **Determined.** The gold set: cases whose right answer is fixed by
+ *      statute, by standard or by arithmetic, so there is no judgement in them
+ *      to grade. The notified sum under s.111 with no pay-less notice served is
+ *      the applied sum; a PERT mean is `(o + 4m + p) / 6`; a decision is due 28
+ *      days from referral. Each states the authority its expected value comes
+ *      from and derives it by hand, so a quantity surveyor or a planner can
+ *      read the case and say whether the expectation is right — which is the
+ *      review a gold set exists to be open to. See `ai/goldset.ts`.
+ *   5. **Injection.** A free-text input carrying an instruction aimed at the
  *      model does not move a governed outcome. This is the case the harness
  *      exists for, and the platform can make the claim honestly because its
  *      defences are structural rather than written into a prompt: the closed
@@ -64,7 +73,7 @@ export type CaseResult = {
   title: string;
   /** What breaks if this case fails. Never a category — the actual consequence. */
   protects: string;
-  kind: 'ACCOUNTING' | 'BOUNDARY' | 'REFUSAL' | 'INJECTION';
+  kind: 'ACCOUNTING' | 'BOUNDARY' | 'REFUSAL' | 'INJECTION' | 'DETERMINED';
   outcome: EvaluationOutcome;
   /** Why it failed, or what it observed passing. Never blank. */
   detail: string;
@@ -377,7 +386,18 @@ const CASES: EvaluationCase[] = [
 export type EvaluationCaseSummary = Omit<EvaluationCase, 'run'>;
 
 export function evaluationCases(): EvaluationCaseSummary[] {
-  return CASES.map(({ run: _run, ...rest }) => rest);
+  return [
+    ...CASES.map(({ run: _run, ...rest }) => rest),
+    // Declared alongside the rest, so a screen can say what would be checked
+    // before anything has run — including the gold set, which is the half a
+    // reviewer is most likely to want to read.
+    ...goldCases().map((gold) => ({
+      id: gold.id,
+      title: gold.title,
+      protects: `${gold.authority}. ${gold.derivation}`,
+      kind: 'DETERMINED' as const,
+    })),
+  ];
 }
 
 /**
@@ -445,6 +465,27 @@ export async function runEvaluation(
   // change to a running deployment made by asking it a question.
   const cases =
     against === 'local' ? await scratch.orchestrator.withLocalProviders(execute) : await execute();
+
+  // The gold set runs after, and outside the provider swap: these are the cases
+  // with a right answer fixed by statute, standard or arithmetic, and they go
+  // through the same maths the engines call. No project state is touched, so
+  // there is nothing to isolate them from and nothing to clean up.
+  for (const gold of runGoldSet()) {
+    cases.push({
+      id: gold.id,
+      title: gold.title,
+      protects: `${gold.authority}. ${gold.derivation}`,
+      kind: 'DETERMINED',
+      outcome: gold.pass ? 'PASS' : 'FAIL',
+      // The authority already carries its own punctuation — several cite a
+      // subsection and then explain it — so the value and the authority are
+      // separated rather than joined into a sentence that reads as "…before
+      // the final date requires".
+      detail: gold.pass
+        ? `${gold.actualText} · ${gold.authority}`
+        : `expected ${gold.expectedText}, the platform answered ${gold.actualText} · ${gold.authority}`,
+    });
+  }
 
   const run: EvaluationRun = {
     evaluationId: ulid(),

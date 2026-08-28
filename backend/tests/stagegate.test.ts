@@ -117,7 +117,8 @@ describe('stage gate · a clause it cannot assess is not a clause it passed', ()
    * the three missing pieces were built: assumptions and prompt version, now
    * written onto the AI event by `runAI`, and human disposition, which could
    * never be a field because it is a later act by a different party and is
-   * `AI_OUTPUT_DISPOSED`.
+   * `AI_OUTPUT_DISPOSED`. Known gaps and alternatives considered — the last two
+   * of 15.4's mandatory schema — followed the same route as the first two.
    *
    * The tests below no longer assert the gap. They assert the two things that
    * replaced it: that a fully-accounted output passes, and — far more
@@ -126,7 +127,11 @@ describe('stage gate · a clause it cannot assess is not a clause it passed', ()
   it('passes the AI clause once every output is accounted for and disposed of', () => {
     const ai = stagegate.evaluateTenderGate(asPM()).clauses.find((c) => c.clause === 'AI_ACCOUNTED')!;
     assert.equal(ai.state, 'PASS', ai.blocking.join('; '));
-    assert.match(ai.detail, /assumptions and prompt version/);
+    // The whole 15.4 schema, named in the detail rather than counted: at a
+    // gate, "fully accounted for" has to say what "fully" covered.
+    for (const field of ['assumptions', 'known gaps', 'alternatives considered', 'prompt version']) {
+      assert.match(ai.detail, new RegExp(field), field);
+    }
     assert.match(ai.detail, /accepted or rejected by a named person/);
     assert.deepEqual(ai.blocking, []);
   });

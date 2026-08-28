@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { confidenceThresholdFor } from '../src/config.ts';
+import { goldCases, runGoldSet } from '../src/ai/goldset.ts';
 import {
   EVALUATION_PROJECT_ID,
   evaluationCases,
@@ -37,17 +38,61 @@ describe('what the harness checks', () => {
     assert.ok(cases.length >= 8, `only ${cases.length} cases`);
 
     for (const item of cases) {
-      assert.match(item.id, /^[a-z-]+\.[a-z-]+$/, `${item.id} is not a stable dotted id`);
+      assert.match(item.id, /^[a-z0-9-]+(\.[a-z0-9-]+)+$/, `${item.id} is not a stable dotted id`);
       // "What breaks if this fails" is the field that stops a case becoming a
       // check nobody can justify keeping.
       assert.ok(item.protects.length > 30, `${item.id} does not say what it protects`);
-      assert.ok(['ACCOUNTING', 'BOUNDARY', 'REFUSAL', 'INJECTION'].includes(item.kind));
+      assert.ok(['ACCOUNTING', 'BOUNDARY', 'REFUSAL', 'INJECTION', 'DETERMINED'].includes(item.kind));
     }
 
-    // The four kinds are all represented. A harness that was all accounting
-    // would be checking the bookkeeping and none of the defences.
+    // All five kinds are represented. A harness that was all accounting would
+    // be checking the bookkeeping and none of the defences; one with no gold
+    // set would be checking the defences and none of the answers.
     const kinds = new Set(cases.map((item) => item.kind));
-    assert.equal(kinds.size, 4, [...kinds].join(', '));
+    assert.equal(kinds.size, 5, [...kinds].join(', '));
+  });
+
+  it('carries a gold set whose expected values come from an authority, not from the code', () => {
+    const gold = goldCases();
+    assert.ok(gold.length >= 12, `${gold.length} gold cases`);
+
+    for (const item of gold) {
+      // The authority is what makes this a gold set rather than a snapshot of
+      // whatever the code happens to do. A case citing "as implemented" would
+      // be a circle.
+      assert.ok(item.authority.length > 10, `${item.id} cites no authority`);
+      assert.ok(!/as implemented|current behaviour/i.test(item.authority), `${item.id} cites the code as its authority`);
+      // And the derivation has to show the arithmetic, so a quantity surveyor
+      // or a planner can check the expectation without reading TypeScript.
+      assert.ok(item.derivation.length > 40, `${item.id} does not derive its expected value`);
+      assert.ok(item.tolerance >= 0);
+    }
+
+    // The Construction Act and the programme both represented: a gold set that
+    // was all one discipline would leave the other ungraded.
+    assert.ok(gold.some((item) => /HGCRA/.test(item.authority)));
+    assert.ok(gold.some((item) => /PERT|critical path/i.test(item.authority)));
+  });
+
+  it('gets every determined answer right, which is the claim it makes', () => {
+    // Run directly rather than through the harness: these touch no project
+    // state, so there is nothing to seed and no reason to wait for one.
+    const failures = runGoldSet().filter((item) => !item.pass);
+    assert.deepEqual(
+      failures.map((item) => `${item.id}: expected ${item.expected}, got ${item.actual}`),
+      [],
+    );
+  });
+
+  it('would notice a wrong answer, rather than passing whatever it is given', () => {
+    // The property that makes the set worth having. Every case is compared
+    // against a value written down independently, so a platform returning
+    // something else fails — demonstrated by comparing against a value that is
+    // deliberately not the right one.
+    const first = runGoldSet()[0]!;
+    const wrong = first.expected + first.tolerance + 1;
+    assert.notEqual(first.actual, wrong);
+    assert.ok(Math.abs(wrong - first.expected) > first.tolerance, 'the tolerance would have swallowed a wrong answer');
   });
 
   it('carries a prompt-injection suite, which is the case it exists for', () => {
@@ -67,6 +112,19 @@ describe('running it', () => {
     assert.equal(run.failed, 0, run.cases.filter((c) => c.outcome === 'FAIL').map((c) => `${c.id}: ${c.detail}`).join(' | '));
     assert.equal(run.passed, run.cases.length);
     assert.equal(run.against, 'local');
+
+    // The run carries everything the harness declares. Asserted because a run
+    // that quietly dropped a whole kind still reported every case it did run as
+    // passing — which is how the gold set went missing from a green run once.
+    assert.equal(
+      run.cases.length,
+      evaluationCases().length,
+      `declared ${evaluationCases().length} cases and ran ${run.cases.length}`,
+    );
+    assert.deepEqual(
+      [...new Set(run.cases.map((item) => item.kind))].sort(),
+      [...new Set(evaluationCases().map((item) => item.kind))].sort(),
+    );
     for (const item of run.cases) {
       // Never blank, on a pass as much as on a failure: "what it observed" is
       // what makes a green run worth reading.

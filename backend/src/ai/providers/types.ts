@@ -73,6 +73,24 @@ export type ProviderResponse = {
    * assumption that is always true of it: no model was called.
    */
   assumptions?: string[];
+  /**
+   * What the answer needed and did not have.
+   *
+   * The other half of an assumption, and the one that reads differently at a
+   * gate: a decision resting on assumptions is one somebody can check, and a
+   * decision resting on gaps is one somebody has to close. An empty array is
+   * an answer — "none declared" — on the same terms as `assumptions`.
+   */
+  knownGaps?: string[];
+  /**
+   * What else was on the table, and why it was not taken.
+   *
+   * An option nobody wrote down is one nobody can reopen. In a dispute the
+   * question is rarely "was this reasonable" but "what else was considered",
+   * and an output listing one course of action reads as though there was only
+   * ever one.
+   */
+  alternativesConsidered?: string[];
 };
 
 export interface AIProviderAdapter {

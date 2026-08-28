@@ -82,6 +82,21 @@ class MockAdapter implements AIProviderAdapter {
         'Only the inputs the engine assembled were considered. No document, drawing or record outside them was read.',
         'Figures are computed by the engine, not judged by a model. The narrative is advisory and is never hashed as state.',
       ],
+      // What this output did not have. True of the stand-in by construction,
+      // and the honest answer to "what would change this" — which is the
+      // question a gate is really asking when it reads a known gap.
+      knownGaps: [
+        'No market rate feed, weather record or ground investigation was available to this call.',
+        'Nothing outside the platform’s own ledger was consulted, so anything held only in a document or an inbox is absent.',
+      ],
+      // What else was on the table. Stated plainly rather than dressed up: the
+      // stand-in weighs nothing, so the alternative it names is the real one —
+      // asking a model — and the reason it was not taken is the configuration.
+      alternativesConsidered: [
+        'Calling a configured provider, which was not done because this deployment is running the local engines.',
+        'Returning no judgement at all and leaving the field blank, which was not done because the engine’s own ' +
+          'arithmetic still needs somewhere to be narrated.',
+      ],
       // Said out loud. Nothing here reasoned about anything, and a caller
       // putting this in front of a person needs to know that from the response
       // rather than by inspecting the model name or the platform's config.

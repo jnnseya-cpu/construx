@@ -69,6 +69,34 @@ export type AIEventBlock = {
    * what it assumed" are different facts.
    */
   assumptions?: string[];
+  /**
+   * What the model could not see, and knew it could not see.
+   *
+   * The other half of an assumption. An assumption is something taken as given
+   * and probably true; a known gap is something the answer needed and did not
+   * have — a drawing that was not in the inputs, a rate with no base date, a
+   * ground investigation that stops above the founding level. The distinction
+   * matters at a gate: a decision resting on assumptions is one somebody can
+   * check, and a decision resting on gaps is one somebody has to close.
+   *
+   * `[]` means the model declared none. Absent means the event predates the
+   * field, and the two are never conflated.
+   */
+  knownGaps?: string[];
+  /**
+   * What else the model considered and did not choose.
+   *
+   * Recorded because an option nobody wrote down is one nobody can reopen. In
+   * a dispute three years later the question is rarely "was this reasonable"
+   * but "what else was on the table", and an answer that lists one course of
+   * action reads as though there was only ever one.
+   *
+   * Each entry states the alternative and why it was not taken. An entry that
+   * names an alternative with no reason is worse than none, so the mock
+   * declares both and a provider that returns bare strings has them recorded
+   * as given rather than dressed up.
+   */
+  alternativesConsidered?: string[];
 };
 
 export type PolicyBlock = {
