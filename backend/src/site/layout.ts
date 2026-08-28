@@ -31,6 +31,7 @@ export const SITE_PAGES = [
   { path: '/developers', label: 'Developers', group: 'Product' },
   { path: '/contact', label: 'Contact', group: 'Company' },
   { path: '/get-started', label: 'Get started', group: 'Product' },
+  { path: '/demo', label: 'Try it', group: 'Product' },
   { path: '/growth', label: 'Growth & Influencers', group: 'Company' },
   { path: '/terms', label: 'Terms of Service', group: 'Legal' },
   { path: '/privacy', label: 'Privacy Policy', group: 'Legal' },
@@ -40,6 +41,9 @@ export const SITE_PAGES = [
 
 /** The primary nav — a subset, because twelve items in a header is not a header. */
 const PRIMARY: NavLink[] = [
+  // First, deliberately. The strongest thing this company owns is a programme
+  // somebody can walk through, and it was the one page with no way to reach it.
+  { href: '/demo', label: 'Try it' },
   { href: '/how-it-works', label: 'How it works' },
   { href: '/industries', label: 'Industries' },
   { href: '/developers', label: 'Developers' },

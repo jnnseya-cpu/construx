@@ -50,7 +50,10 @@ export async function enterprise(root) {
       <div class="view-head">
         <div>
           <h1>Enterprise &amp; Portfolio</h1>
-          <p>${state.session.enterprise} — governance, structure and portfolio performance. Execution happens inside a project.</p>
+          <p>
+            ${state.session.enterprise ?? 'Nothing has been created here yet'} — governance, structure and portfolio
+            performance. Execution happens inside a project.
+          </p>
         </div>
         <div class="actions cmd-bar">
           ${raw(commandBar([

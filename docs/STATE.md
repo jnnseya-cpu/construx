@@ -9025,3 +9025,138 @@ refusal nobody can reach is worse than none: it reads as cover. What is asserted
 instead is what actually happens: with no object store, the upload is refused
 with that reason rather than succeeding into memory and vanishing on the next
 deploy.
+
+---
+
+## `/demo` — the demonstration page, and booking
+
+### The demonstration was behind the login screen
+
+Everything worth showing — a seeded infrastructure programme carried from
+concept to thirty-year operations, twelve identities that each see a different
+part of it, a permission model that visibly refuses — sat at the **bottom of the
+sign-in panel**. It was wrong in both directions at once: nobody browsing the
+public site ever reaches `/app`, so the strongest thing the product has was
+behind a door; and every real customer signing in had to scroll past twelve
+fictional people to reach the form they came for.
+
+It is now a page, at `/demo`, first in the site navigation as *Try it*, and the
+landing page's two call-to-action rows lead with `Try it now` and
+`Book a 20-min demo` beside `Start free`. A page rather than a section, because
+it is a link somebody sends — into an email, a deck, a post. Not folded into
+`/get-started`, because that is the signup form: somebody who wants to look
+before signing up is a different person at a different moment, and merging them
+makes the demonstration compete with the conversion.
+
+### Two ways in, because there are two questions
+
+**① Start from nothing.** `backend/src/cleanroom.ts` — a second demonstration
+tenancy with no project in it and three seats: Workspace Administrator, Delivery
+Manager, Team Member. The seeded programme answers *what does a finished record
+look like*; it cannot answer *what is it like to put something in*, because
+every screen on it is already full. The page says to start as the administrator,
+because on an empty tenancy that is the only seat that can create the structure
+the other two need. It is credited through `creditFromPayment` like any other
+tenancy, so the reasoning engine runs here too — an empty workspace where the AI
+refused on an empty wallet would demonstrate the refusal and nothing else.
+
+**② Loaded with a real programme.** The twelve seeded identities, described by
+**what each one will put in front of you** rather than by its role code. A role
+code means nothing before you have seen the product: "are you the BIM Manager?"
+is unanswerable, "design coordination as a record rather than a meeting" is not.
+Keyed by role in `DEMO_ROLES`, so renaming a person in the seed does not silently
+drop them to the fallback.
+
+Both tracks say what is real and what is not, in four cards: the platform is
+real, the AI is on, the project is invented, and it is a shared sandbox — *what
+you write is visible to whoever looks next.*
+
+### `/app?as=<email>` — the cards had to actually sign somebody in
+
+Each card is an **anchor**, not a button, because an anchor works with scripting
+disabled. So the address arrives in the query string, and `login()` consumes it.
+It bypasses nothing: `/v1/auth/login` issues a real challenge and
+`/v1/auth/mfa/verify` mints the token, and whether a code comes back at all is
+the platform's decision under the rules already recorded above — `devCode`
+outside production, `demoCode` only for an account the seed marked. An address
+that gets no code lands on the ordinary form with that address filled in and the
+challenge kept, so the code already in their mailbox still works rather than
+being invalidated by a second attempt. The message says only that the address is
+not a demonstration account — never whether it has an account at all, which is
+the answer `/v1/auth/login` deliberately refuses to give.
+
+The query is cleared before the attempt, so a refresh, a back button or a link
+sitting in somebody's history cannot sign a second person in as the first.
+
+**Clicking a demonstration link while already signed in did nothing at all.**
+The shell saw a session, drew the console, and `login()` — the only thing that
+reads `as` — never ran; somebody walking the roles would sign in as the first and
+find every link after it inert, which is exactly the walk the page invites. The
+link now wins: `draw()` drops the session in hand first, including the outbox,
+for the same reason `signOut` drops it.
+
+### Booking, and the form that needs no JavaScript
+
+`backend/src/site/booking.ts` computes availability from `config.booking` rather
+than storing it — working days, an hour grid, a lead time, a horizon — so there
+is no calendar to drift. A taken slot is simply **absent** from the list, which
+is why `GET /v1/booking/availability` can be public: the response cannot be read
+as a diary of who the company is meeting. `book()` re-checks the slot at the
+moment of writing and refuses `SLOT_TAKEN`, so two people on the page at once
+cannot both take it.
+
+The form is plain markup posting to `POST /demo`, with slots as radio buttons.
+The public site's only script opens the mobile menu; a booking form that needed
+JavaScript would be the first thing on these pages that did. The fortnight of
+slots folds into a native `<details>` after the first three days — every slot is
+still in the markup, so nothing is hidden from a keyboard or a screen reader.
+
+Its schema checks the envelope only — no unknown field, nothing that is not a
+string, nothing unbounded — and deliberately carries no `required` or
+`minLength`. A schema failure is answered with problem+json, and the person on
+the other end of this route is looking at a page in a browser: a blank name has
+to come back as a sentence on the form, not as a JSON document filling the
+window. The domain refuses each field with a message written to be read.
+
+**Only the JSON route sent a confirmation.** `POST /v1/booking` notified;
+`POST /demo` — the route essentially everybody uses — recorded the booking in
+silence and left somebody expecting a call nobody knew to make. Both now go
+through one `takeBooking` helper that books and notifies through the outbox.
+
+`bookings.js` is the operator's diary, and it leads with **whether a
+confirmation can be sent at all**: with no SMTP host the record is still correct
+and the person has been told nothing, and that is stated on the screen rather
+than discovered by a no-show.
+
+### The page offered a demonstration that had not been built yet
+
+The seeded programme is created lazily, on the first call to
+`POST /v1/console/identities`. That was fine while the sign-in screen was the
+only thing listing identities — it *asked* for the list and got a seeded one.
+`/demo` is a page: it reads what is there. The first visitor to a fresh process
+would have been told the demonstration was switched off, on the page whose whole
+job is to offer it, and the second visitor would have seen it work. `GET /demo`
+and `POST /demo` now await `ensureDemonstrationSeeded` first, memoised per
+process by `getOrCreateConsoleSession`.
+
+The unavailable branch distinguishes the two cases, because they need different
+sentences: **switched off** names `DEMO_TENANCY_ENABLED` and says nothing is
+broken; **not seeded** says the opposite — it is on and it is not there, which is
+a fault. Telling somebody a setting is off when it is on wastes the time of
+whoever goes to check it.
+
+### The breadcrumb said "undefined › undefined"
+
+`signInWithCredentials` — the path every real customer takes, and now every
+demonstration link — never set the enterprise and portfolio names. Only the
+demonstration bootstrap did. Two ordinary tenant-scoped reads now supply them,
+and a tenancy that has neither yet reads *"no portfolio yet › no project yet"*
+rather than a word that means nothing.
+
+**Verified in a browser against a running server**, not only under test: the
+clean workspace signs in and lands on the enterprise screen with no project; a
+seeded identity lands on the overview with the full crumb; switching between
+them works; an address that is not a demonstration identity is refused on the
+form with the URL cleaned; a booking confirms with its reference on the page; the
+same slot booked twice is refused, and so is a blank name — each as a sentence on
+the form rather than as JSON.

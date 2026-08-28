@@ -29,6 +29,13 @@ import { signIn, signInWithCredentials } from '../app.js';
 const PHASES = ['Concept', 'Design', 'Tender', 'Construction', 'Commissioning', 'Handover', '30-yr O&M'];
 
 export async function login(root) {
+  // `/app?as=<email>` — the way in from the demonstration page, where every
+  // identity is a card and the card is a link. It is a shortcut through this
+  // screen and not around it: the same challenge is issued and the same code is
+  // verified, and an address the platform will not hand a code for lands back
+  // here with the form filled in rather than signed in.
+  const shortcut = new URLSearchParams(location.search).get('as');
+
   render(
     root,
     html`<div class="login-page">
@@ -81,12 +88,107 @@ export async function login(root) {
     </div>`,
   );
 
-  wireCredentials();
+  const resumeAtCode = wireCredentials();
+
+  if (shortcut) {
+    await signInFromLink(shortcut, resumeAtCode);
+    return;
+  }
+
   void offerDemonstrationIdentities();
+}
+
+// ------------------------------------------------------- the /app?as= link
+
+/**
+ * Sign in from a demonstration link.
+ *
+ * The demonstration page lists identities and each one is an anchor, because an
+ * anchor works with scripting disabled and a button does not. So the address
+ * arrives in the query string, and this consumes it.
+ *
+ * Three things it deliberately does not do.
+ *
+ * **It does not bypass anything.** `/v1/auth/login` issues a real challenge and
+ * `/v1/auth/mfa/verify` mints the token. The only difference from typing the
+ * address into the form is that the code is already in hand — and the platform
+ * decides that, not this page: `devCode` outside production, `demoCode` for an
+ * identity the demonstration seed marked, and nothing at all for anybody else.
+ *
+ * **It does not silently fail.** An address that gets no code back is a real
+ * account, and the honest outcome is the ordinary form with that address in it
+ * and a line saying the code has to come from the mailbox.
+ *
+ * **It does not stay in the URL.** The query is cleared before the attempt, so a
+ * refresh, a back button or a shared link that has been sitting in somebody's
+ * history does not sign a second person in as the first.
+ */
+async function signInFromLink(email, resumeAtCode) {
+  const form = document.getElementById('credentials');
+  const emailInput = document.getElementById('email');
+  const errorHost = document.getElementById('login-error');
+
+  emailInput.value = email;
+  history.replaceState({}, '', '/app');
+
+  const stopHere = (message, tone = 'err') => {
+    for (const field of form.elements) field.disabled = false;
+    render(errorHost, html`<div class="notice ${tone}" style="margin-top:12px">${message}</div>`);
+    void offerDemonstrationIdentities();
+  };
+
+  for (const field of form.elements) field.disabled = true;
+  render(errorHost, html`<div class="notice" style="margin-top:12px">Signing you in as ${email}…</div>`);
+
+  let challenge;
+  try {
+    challenge = await api.post('/v1/auth/login', { email }, { anonymous: true });
+  } catch (error) {
+    stopHere(`${error.message} — sign in with an address that has an account, or start a trial.`);
+    return;
+  }
+
+  const code = challenge.devCode ?? challenge.demoCode;
+  if (!code) {
+    // Not a demonstration identity. Worded so it says nothing about whether the
+    // address has an account at all — the login route answers the same way
+    // either way, on purpose, and a message here that distinguished them would
+    // hand back the account check the route refuses to give.
+    //
+    // The challenge that was just issued is live and any code it produced is in
+    // that mailbox, so the form picks up at the second step rather than throwing
+    // it away and making them ask for a second one.
+    stopHere(
+      `${email} is not a demonstration account, so nothing is filled in for you. ` +
+        'If it has an account here, the code has gone to that mailbox — enter it below.',
+      'warn',
+    );
+    resumeAtCode(challenge, email);
+    return;
+  }
+
+  try {
+    await signInWithCredentials({
+      actorId: challenge.actorId,
+      challengeId: challenge.challengeId,
+      code,
+    });
+  } catch (error) {
+    stopHere(`${error.message} — the demonstration sign-in did not complete.`);
+  }
 }
 
 // ------------------------------------------------------------ the real form
 
+/**
+ * Wire the two-step form, and hand back the step-two transition.
+ *
+ * The challenge is closure state on purpose — nothing outside this function has
+ * any business replacing a live sign-in attempt. The one caller that legitimately
+ * arrives holding a challenge is the `?as=` link, when the address turned out to
+ * belong to a real account: it has already issued the challenge and throwing it
+ * away would mean a second code in the mailbox and only one of them working.
+ */
 function wireCredentials() {
   const form = document.getElementById('credentials');
   const emailInput = document.getElementById('email');
@@ -106,6 +208,36 @@ function wireCredentials() {
   };
   const clearError = () => render(errorHost, html``);
 
+  /**
+   * Move to the code step against an issued challenge.
+   *
+   * The platform returns the code in two cases, and says which: outside
+   * production, where there is no mail server on a laptop; and for a seeded
+   * demonstration identity, whose address belongs to nobody. Filling it in is a
+   * convenience, never a bypass — it still has to be verified, and typing a real
+   * customer's address here gets no code back under either rule.
+   */
+  const askForCode = (issued, email) => {
+    challenge = issued;
+    challenge.email = email;
+
+    codeField.hidden = false;
+    emailInput.value = email;
+    emailInput.readOnly = true;
+    submit.textContent = 'Sign in';
+
+    if (challenge.devCode) {
+      codeInput.value = challenge.devCode;
+      codeHint.textContent = 'Development mode: the code is filled in for you.';
+    } else if (challenge.demoCode) {
+      codeInput.value = challenge.demoCode;
+      codeHint.textContent = 'Demonstration account: the code is filled in for you.';
+    } else {
+      codeHint.textContent = `Sent to ${email}. It expires in five minutes.`;
+    }
+    codeInput.focus();
+  };
+
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     clearError();
@@ -119,29 +251,7 @@ function wireCredentials() {
           return;
         }
 
-        challenge = await api.post('/v1/auth/login', { email }, { anonymous: true });
-        challenge.email = email;
-
-        codeField.hidden = false;
-        emailInput.readOnly = true;
-        submit.textContent = 'Sign in';
-
-        // The platform returns the code in two cases, and says which: outside
-        // production, where there is no mail server on a laptop; and for a
-        // seeded demonstration identity, whose address belongs to nobody.
-        // Filling it in is a convenience, never a bypass — it still has to be
-        // verified, and typing a real customer's address here gets no code
-        // back under either rule.
-        if (challenge.devCode) {
-          codeInput.value = challenge.devCode;
-          codeHint.textContent = 'Development mode: the code is filled in for you.';
-        } else if (challenge.demoCode) {
-          codeInput.value = challenge.demoCode;
-          codeHint.textContent = 'Demonstration account: the code is filled in for you.';
-        } else {
-          codeHint.textContent = `Sent to ${email}. It expires in five minutes.`;
-        }
-        codeInput.focus();
+        askForCode(await api.post('/v1/auth/login', { email }, { anonymous: true }), email);
         return;
       }
 
@@ -172,6 +282,8 @@ function wireCredentials() {
       submit.disabled = false;
     }
   });
+
+  return askForCode;
 }
 
 // ------------------------------------------------- the demonstration picker

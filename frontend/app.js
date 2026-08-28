@@ -387,7 +387,23 @@ export async function signInWithCredentials({ actorId, challengeId, code }) {
   }
 
   const first = projects[0];
-  session.set({ ...session.get(), projectId: first?.id ?? first?.projectId ?? null });
+
+  // The breadcrumb names the estate the project sits in, and the demonstration
+  // bootstrap used to be the only thing that supplied those two names — so every
+  // sign-in through this path printed "undefined › undefined" above the work.
+  // They are two ordinary tenant-scoped reads; a tenancy that has neither yet is
+  // a new tenancy, and the crumb below falls back rather than inventing one.
+  const [enterprise, portfolio] = await Promise.all([
+    api.get('/v1/enterprises').then((r) => r.enterprises?.[0]?.name ?? null).catch(() => null),
+    api.get('/v1/portfolios').then((r) => r.portfolios?.[0]?.name ?? null).catch(() => null),
+  ]);
+
+  session.set({
+    ...session.get(),
+    projectId: first?.id ?? first?.projectId ?? null,
+    enterprise,
+    portfolio,
+  });
   state.session = session.get();
   state.project = null;
   state.gate = null;
@@ -641,8 +657,10 @@ function topbar() {
       ${
         isOperator()
           ? html`CONSTRUX <span style="opacity:.4">›</span> <b>Platform operations</b>`
-          : html`${state.session?.enterprise} <span style="opacity:.4">›</span> ${state.session?.portfolio}
-              <span style="opacity:.4">›</span> <b>${state.project?.name ?? 'Loading…'}</b>`
+          : html`${state.session?.enterprise ?? 'Your enterprise'} <span style="opacity:.4">›</span>
+              ${state.session?.portfolio ?? 'no portfolio yet'}
+              <span style="opacity:.4">›</span>
+              <b>${state.project?.name ?? (state.session?.projectId ? 'Loading…' : 'no project yet')}</b>`
       }
     </div>
     <div class="spacer"></div>
@@ -690,6 +708,27 @@ async function loadContext() {
 async function draw() {
   state.session = session.get();
   const { page, params } = currentRoute();
+
+  // A demonstration link carries the identity in the query string, and clicking
+  // one while already signed in did nothing at all: the shell saw a session,
+  // drew the console, and `login()` — the only thing that reads `as` — never
+  // ran. Somebody exploring the roles would sign in as the first one and find
+  // every link after it inert, which is exactly the walk the page invites.
+  //
+  // The link wins. It is an explicit instruction to become somebody else, so
+  // the session in hand is dropped first — including the outbox, for the same
+  // reason `signOut` drops it: those operations were authorised for the
+  // identity leaving, and flushing them under the next one's token would put
+  // one person's name on another's record.
+  if (state.session && new URLSearchParams(location.search).has('as')) {
+    session.clear();
+    void outbox.clear();
+    state.session = null;
+    state.project = null;
+    state.gate = null;
+    state.wallet = null;
+    matrix = null;
+  }
 
   if (!state.session) {
     // Two views are reachable without one, and only two. Registration has to be,

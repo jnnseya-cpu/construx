@@ -444,6 +444,122 @@ img, svg { max-width: 100%; }
 .foot-base { display: flex; justify-content: space-between; margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--text-3); }
 .foot-links a { margin-left: 15px; }
 
+/* --------------------------------------------------- demonstration & forms
+
+   The first form on the public site, so the input styling below is new rather
+   than a variant of something. It is deliberately narrow: `.demo-book` scopes
+   every bare-element rule, because a global `input {}` on a marketing site is a
+   rule that will eventually collide with a form nobody remembered writing.
+
+   The console has its own field styling in app.css and the two cannot import
+   from each other — same argument as the token block at the top of this file. */
+
+.muted { color: var(--text-3); font-size: 13.5px; }
+.cards .card p.muted { color: var(--text-3); font-size: 13px; }
+
+/* A refusal has to look like one. `--critical` is already in the palette, so
+   this is a tone the design system holds rather than a new colour. */
+.callout.bad { background: rgba(254, 93, 93, .07); border-color: rgba(254, 93, 93, .28); }
+
+/* Identity cards: the button sits on the floor of the card whatever the length
+   of the description above it, so a row of three does not stagger. */
+.cards .card.demo-card { display: flex; flex-direction: column; gap: 9px; }
+.cards .card.demo-card p { flex: 0 0 auto; }
+.cards .card.demo-card p.muted { margin-top: auto; padding-top: 4px; }
+.cards .card.demo-card .btn { align-self: flex-start; margin-top: 4px; font-size: 13px; padding: 9px 15px; }
+
+.demo-book { margin-top: 18px; display: grid; gap: 22px; max-width: 760px; }
+
+.demo-book fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 20px 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .026), transparent);
+}
+.demo-book legend {
+  padding: 0 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .9px;
+  text-transform: uppercase;
+  color: var(--orange);
+}
+
+.demo-book label { display: block; margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--text-2); }
+.demo-book fieldset > label:first-of-type { margin-top: 4px; }
+
+.demo-book input[type="text"],
+.demo-book input[type="email"],
+.demo-book select,
+.demo-book textarea {
+  width: 100%;
+  padding: 10px 12px;
+  font: 14px/1.5 var(--sans);
+  color: var(--text);
+  background: var(--core-black);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  box-shadow: var(--edge);
+}
+.demo-book textarea { resize: vertical; min-height: 74px; }
+.demo-book input:focus-visible,
+.demo-book select:focus-visible,
+.demo-book textarea:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 1px;
+  border-color: var(--orange-line);
+}
+.demo-book .muted { margin-top: 6px; }
+
+.demo-day + .demo-day { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.demo-day h3 { font-size: 13px; color: var(--text-3); margin-bottom: 9px; font-weight: 700; letter-spacing: .3px; }
+.demo-slots { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* The radio itself is kept in the accessibility tree and visible — hiding it
+   would take the focus ring with it, and this form has to be operable from the
+   keyboard by somebody who never touches the mouse. */
+.demo-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: rgba(255, 255, 255, .02);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, color .16s ease;
+}
+.demo-slot:hover { border-color: var(--line-strong); background: rgba(255, 255, 255, .05); color: var(--text); }
+.demo-slot input { accent-color: var(--orange); margin: 0; }
+.demo-slot:has(input:checked) { border-color: var(--orange-line); background: var(--orange-wash); color: var(--text); }
+.demo-slot:has(input:focus-visible) { outline: 2px solid var(--orange); outline-offset: 1px; }
+
+.demo-book button[type="submit"] { justify-self: start; }
+
+/* Native disclosure, no script. The fortnight of slots is all in the markup;
+   this only decides how much of it is unrolled before somebody asks. */
+.demo-more { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.demo-more > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--orange);
+  list-style-position: inside;
+}
+.demo-more > summary:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; border-radius: 4px; }
+.demo-more[open] > summary { margin-bottom: 12px; }
+.demo-more .demo-day:first-of-type { margin-top: 0; padding-top: 0; border-top: 0; }
+
+@media (max-width: 720px) {
+  .demo-book fieldset { padding: 16px 15px 18px; }
+  .demo-slots { gap: 7px; }
+  .demo-slot { flex: 1 1 calc(50% - 4px); justify-content: center; }
+}
+
 /* ------------------------------------------------------------- responsive */
 
 @media (max-width: 960px) {

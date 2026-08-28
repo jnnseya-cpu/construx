@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { robots, sitemap } from '../src/site/discovery.ts';
 import { POST_PAGES, render, SITE_PAGES } from '../src/site/index.ts';
+import { Platform } from '../src/platform.ts';
 
 /**
  * What a search engine and a link preview actually read.
@@ -78,14 +79,20 @@ describe('the sitemap lists what exists and nothing else', () => {
 });
 
 /**
- * A platform stub, for the one page that reads live state.
+ * A real platform, for the pages that read live state.
  *
- * `/status` reports the running process rather than fixed copy, which is the
- * point of it — there is no stored uptime figure to present. It still has to
- * carry the same head tags as every other page, so it is rendered here against
- * the smallest thing that satisfies it.
+ * It was a two-property stub, which worked while `/status` was the only page
+ * reading anything: it reports the running process rather than fixed copy,
+ * which is the point of it. `/demo` reads the seeded identities and the free
+ * booking slots, and the stub answered neither — so the page threw and the
+ * assertion that every page carries its head tags could not reach it.
+ *
+ * An unseeded `Platform` is the right fixture rather than a shortcoming: it
+ * renders the demonstration page's unavailable branch, which has to carry the
+ * same canonical, preview image and card title as every other page and is
+ * exactly the state nothing else covers.
  */
-const PLATFORM = { health: () => ({ status: 'ok', checks: [] }) } as never;
+const PLATFORM = new Platform() as never;
 
 describe('a shared link renders as something', () => {
   it('gives every page an absolute canonical, preview image and card title', () => {

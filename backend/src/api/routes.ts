@@ -522,6 +522,76 @@ function demonstrationOffered(): boolean {
 }
 
 /**
+ * Both demonstration tenancies exist before the page offering them renders.
+ *
+ * The seeded programme is built lazily, on the first call to
+ * `POST /v1/console/identities`. That was fine while the sign-in screen was the
+ * only thing that listed identities — it asked for the list and got a seeded
+ * one. `/demo` is a *page*, rendered synchronously, and it reads the identities
+ * rather than asking for them: the first visitor to a fresh process would have
+ * been told the demonstration was switched off, on the one page whose entire
+ * job is to offer it, and the second visitor would have seen it work.
+ *
+ * Awaited on the demonstration routes only, and memoised by
+ * `getOrCreateConsoleSession` — it seeds once per process, not once per request.
+ * The empty workspace is created inside the render, which is cheap: it is three
+ * identities and a credit, with no lifecycle behind it.
+ */
+async function ensureDemonstrationSeeded(platform: Platform): Promise<void> {
+  if (!demonstrationOffered()) return;
+  try {
+    await getOrCreateConsoleSession(platform);
+  } catch {
+    // A seed that fails must not take the page down with it. `demoInput` reads
+    // what is actually there, so the page then says the demonstration is not
+    // available rather than showing cards that sign nobody in.
+  }
+}
+
+/**
+ * Take a booking, and tell the person who made it.
+ *
+ * One helper behind two doors: the JSON route an integration would call, and
+ * the form post from the public page. They were separate, and only the JSON one
+ * sent the confirmation — so the route almost nobody uses notified, and the one
+ * everybody uses recorded a booking in silence and left somebody expecting a
+ * call that nobody knew to make.
+ *
+ * Queued through the outbox, so a mail server that is down delays the
+ * confirmation rather than losing it.
+ */
+async function takeBooking(
+  platform: Platform,
+  input: Parameters<typeof booking.book>[1],
+  correlationId: string,
+): Promise<ReturnType<typeof booking.book>> {
+  const made = booking.book(platform, input);
+
+  await notifyEngine.notify(platform, {
+    code: 'account.demo_booking_confirmed',
+    recipients: [{ id: `booking:${made.id}`, name: made.name, email: made.email, tenantId: 'platform' }],
+    payload: {
+      detail:
+        `Your walkthrough is booked for ${made.startsAt.slice(0, 16).replace('T', ' ')} UTC — ` +
+        `${made.minutes} minutes, in ${made.language === 'FR' ? 'French' : 'English'}. ` +
+        'Joining details follow separately from the person taking it: this platform integrates with no calendar ' +
+        'and generates no meeting link, and one that went nowhere would be worse than none.',
+      reference: made.reference,
+      actionUrl: '/demo',
+      actionLabel: 'Explore in the meantime',
+    },
+    // A stranger has no tenancy and therefore no branding of their own. The
+    // platform's own mark is the honest one to send under — it is the platform
+    // they are meeting.
+    branding: PLATFORM_BRANDING,
+    actorId: 'booking',
+    correlationId,
+  });
+
+  return made;
+}
+
+/**
  * Whether this identity's one-time code may be returned rather than emailed.
  *
  * Four conditions, each of which alone would be enough to refuse:
@@ -1339,6 +1409,72 @@ export const ROUTES: Route[] = [
       return blueprintPosition(platform, ROUTES.length);
     },
   },
+  {
+    method: 'POST',
+    pattern: '/demo',
+    public: true,
+    html: true,
+    htmlPolicy: 'PUBLIC_SITE' as const,
+    description: 'Book a walkthrough from the public page, and render it back with the confirmation',
+    // Shape and size only, and deliberately no `required` or `minLength`.
+    //
+    // Every write route publishes a schema and this one is no exception — an
+    // unchecked body reaching a handler that writes to an append-only ledger is
+    // a permanent record of whatever arrived. What it checks is the envelope: no
+    // field the form does not have, nothing that is not a string, nothing
+    // unbounded.
+    //
+    // Missing and empty fields are left to the domain on purpose. A schema
+    // failure is answered with problem+json, and the person on the other end of
+    // this particular route is looking at a page in a browser with no
+    // JavaScript to catch it — so a blank name has to come back as a sentence on
+    // the form rather than as a JSON document filling the window. `book`
+    // refuses each field with a message written to be read.
+    schema: {
+      type: 'object',
+      properties: {
+        startsAt: { type: 'string', maxLength: 40 },
+        name: { type: 'string', maxLength: 120 },
+        email: { type: 'string', maxLength: 254 },
+        organisation: { type: 'string', maxLength: 200 },
+        language: { type: 'string', enum: ['EN', 'FR'] },
+        about: { type: 'string', maxLength: 2000 },
+      },
+      additionalProperties: false,
+    },
+    handler: async (platform: Platform, ctx: RequestContext) => {
+      // Same page, so the same seed: the confirmation renders above the two
+      // demonstration tracks and both have to be there to be offered.
+      await ensureDemonstrationSeeded(platform);
+      const form = (ctx.body ?? {}) as Record<string, string>;
+      try {
+        const made = await takeBooking(
+          platform,
+          {
+            startsAt: String(form.startsAt ?? ''),
+            name: String(form.name ?? ''),
+            email: String(form.email ?? ''),
+            organisation: String(form.organisation ?? ''),
+            language: form.language === 'FR' ? 'FR' : 'EN',
+            about: form.about ? String(form.about) : undefined,
+          },
+          ctx.correlationId,
+        );
+        // Rendered rather than redirected, so a browser with no JavaScript sees
+        // the confirmation on the page it submitted from — and the reference is
+        // on screen rather than only in an email that may not arrive.
+        return site.renderDemo(platform, { booked: made });
+      } catch (error) {
+        // The refusal goes back onto the form with the slots recomputed, so a
+        // slot taken while the page was open is simply gone from the list the
+        // person is now looking at.
+        return site.renderDemo(platform, {
+          bookingError: error instanceof Error ? error.message : 'That booking could not be made.',
+        });
+      }
+    },
+  },
+
   // ------------------------------------------------------------- book a demo
   //
   // Public, because the whole point is that somebody who has never signed in
@@ -1370,37 +1506,8 @@ export const ROUTES: Route[] = [
       },
       additionalProperties: false,
     },
-    handler: async (platform, ctx) => {
-      const input = body<Parameters<typeof booking.book>[1]>(ctx);
-      const made = booking.book(platform, input);
-
-      // Told, not just recorded. A booking nobody is notified about is somebody
-      // expecting a call that nobody knows to make — and the confirmation is
-      // queued through the outbox, so a mail server that is down delays it
-      // rather than losing it.
-      await notifyEngine.notify(platform, {
-        code: 'account.demo_booking_confirmed',
-        recipients: [{ id: `booking:${made.id}`, name: made.name, email: made.email, tenantId: 'platform' }],
-        payload: {
-          detail:
-            `Your walkthrough is booked for ${made.startsAt.slice(0, 16).replace('T', ' ')} UTC — ` +
-            `${made.minutes} minutes, in ${made.language === 'FR' ? 'French' : 'English'}. ` +
-            'Joining details follow separately from the person taking it: this platform integrates with no calendar ' +
-            'and generates no meeting link, and one that went nowhere would be worse than none.',
-          reference: made.reference,
-          actionUrl: '/demo',
-          actionLabel: 'Explore in the meantime',
-        },
-        // A stranger has no tenancy and therefore no branding of their own. The
-        // platform's own mark is the honest one to send under — it is the
-        // platform they are meeting.
-        branding: PLATFORM_BRANDING,
-        actorId: 'booking',
-        correlationId: ctx.correlationId,
-      });
-
-      return made;
-    },
+    handler: (platform, ctx) =>
+      takeBooking(platform, body<Parameters<typeof booking.book>[1]>(ctx), ctx.correlationId),
   },
   {
     method: 'GET',
@@ -3100,7 +3207,9 @@ export const ROUTES: Route[] = [
   // pages are read by people deciding whether to trust the product, by search
   // crawlers and by link previews — all of which see markup, not the script
   // that would have produced it.
-  ...site.SITE_PAGES.map((definition) => ({
+  // `/demo` is registered separately below, because it is the one page that has
+  // to seed before it renders rather than only read.
+  ...site.SITE_PAGES.filter((definition) => definition.path !== '/demo').map((definition) => ({
     method: 'GET' as const,
     pattern: definition.path,
     public: true,
@@ -3109,6 +3218,18 @@ export const ROUTES: Route[] = [
     description: `Public site — ${definition.label}`,
     handler: (platform: Platform, ctx: RequestContext) => site.render(definition.path, platform, ctx),
   })),
+  {
+    method: 'GET',
+    pattern: '/demo',
+    public: true,
+    html: true,
+    htmlPolicy: 'PUBLIC_SITE' as const,
+    description: 'Public site — Try it',
+    handler: async (platform: Platform, ctx: RequestContext) => {
+      await ensureDemonstrationSeeded(platform);
+      return site.render('/demo', platform, ctx);
+    },
+  },
 
   // Blog posts, each at its own address. Registered separately from
   // `SITE_PAGES` because that list also drives the navigation and the footer,

@@ -1029,3 +1029,375 @@ export function status(input: {
 
 /** Path → renderer, for the router and for the test that walks every page. */
 export const PAGE_PATHS = SITE_PAGES.map((p) => p.path);
+
+// ----------------------------------------------------------------------- Demo
+
+/**
+ * What each seeded identity will actually show somebody.
+ *
+ * Deliberately not the role code. `QAQC`, `SUPERVISOR` and `FM` mean something
+ * to the permission matrix and nothing to a stranger who has not seen the
+ * product yet — "are you the BIM Manager?" is unanswerable before you know what
+ * a BIM Manager sees here. Each line answers the question somebody actually
+ * has, which is *what will I be looking at*.
+ *
+ * Keyed by role rather than by address, so the seed can rename a person without
+ * silently dropping them to the fallback.
+ */
+const DEMO_ROLES: Record<string, { lead: string; shows: string }> = {
+  PM: {
+    lead: 'The widest view of a live job',
+    shows:
+      'Programme against baseline, the cost position, what is blocking site this week, and the stage gate that decides whether the next phase may open.',
+  },
+  QS: {
+    lead: 'The money, and what the contract says about it',
+    shows:
+      'Valuations, variations, the payment cycle under the Construction Act, and what the platform refuses to certify twice.',
+  },
+  PLANNER: {
+    lead: 'Time, and the probability of hitting it',
+    shows: 'The critical path, a Monte Carlo completion forecast, the lookahead, and PPC against what was promised.',
+  },
+  OWNER: {
+    lead: 'The client’s own view',
+    shows: 'What has been spent, what has been proved, and what the record says without asking the contractor for it.',
+  },
+  SAFETY: {
+    lead: 'The duties somebody is legally answerable for',
+    shows: 'Permits, method statements, inductions, incidents, and the CDM duty set with what is outstanding against each.',
+  },
+  BIM: {
+    lead: 'Design coordination as a record rather than a meeting',
+    shows: 'Federated model revisions, clash runs, and a clash closed out with the evidence attached to the closure.',
+  },
+  DESIGNER: {
+    lead: 'Design information under control',
+    shows: 'Packages, deliverables, RFIs raised off a drawing revision, and what freezing a package actually stops.',
+  },
+  SUPERVISOR: {
+    lead: 'The site, from the site',
+    shows: 'Daily diaries, progress against measure, observations, and what happens to a record captured with no signal.',
+  },
+  QAQC: {
+    lead: 'Whether it was built the way it was specified',
+    shows: 'Inspection and test plans, hold points witnessed rather than asserted, and non-conformances through to closure.',
+  },
+  FM: {
+    lead: 'The asset after everybody has left',
+    shows: 'The operations record assembled from what was already captured, and maintenance forecast against the asset it describes.',
+  },
+  ENTERPRISE_ADMIN: {
+    lead: 'Running the tenancy itself',
+    shows: 'People and seats, roles and policy, portfolio structure, AI budget, and the identity every document goes out under.',
+  },
+  REGULATOR: {
+    lead: 'What an outside party is shown',
+    shows: 'A read-only view with export redaction applied by audience. The interesting part is what is withheld, and that the page says so.',
+  },
+};
+
+const roleCopy = (role: string) => DEMO_ROLES[role];
+
+/** One identity, as a card somebody can press. */
+function identityCard(identity: { name: string; email: string; roles: readonly string[] }): string {
+  const role = identity.roles[0] ?? '';
+  const copy = roleCopy(role);
+  return `<article class="card demo-card">
+    <span class="tag">${esc(role.replace(/_/g, ' ').toLowerCase())}</span>
+    <h3>${esc(copy?.lead ?? identity.name)}</h3>
+    <p>${esc(copy?.shows ?? 'Signs in on the seeded programme.')}</p>
+    <p class="muted"><code>${esc(identity.email)}</code></p>
+    <a class="btn" href="/app?as=${encodeURIComponent(identity.email)}">Sign in as ${esc(identity.name)} <span aria-hidden="true">→</span></a>
+  </article>`;
+}
+
+export type DemoInput = {
+  available: boolean;
+  /**
+   * Why not, when not. Two different sentences: an operator switched the
+   * sandbox off, which is a decision and the right one beside real customer
+   * records; or it is switched on and the programme is not there, which is a
+   * fault. Telling somebody a setting is off when it is on wastes the time of
+   * whoever goes to check it.
+   */
+  unavailableBecause: 'SWITCHED_OFF' | 'NOT_SEEDED';
+  /** The seeded programme's identities, if the demonstration is offered. */
+  seeded: { name: string; email: string; roles: readonly string[] }[];
+  /** The empty workspace's three seats. */
+  clean: { name: string; email: string; roles: readonly string[]; purpose: string }[];
+  programme: string;
+  /** Slots, grouped by day, for the booking form. */
+  availability: {
+    minutes: number;
+    days: { date: string; label: string; slots: { startsAt: string; label: string }[] }[];
+    note: string;
+  };
+  /** Set after a successful booking, so the page can confirm it. */
+  booked?: { reference: string; startsAt: string; minutes: number; email: string };
+  /** Set when a booking was refused, so the reason is shown on the form. */
+  bookingError?: string;
+};
+
+/**
+ * The demonstration, and the booking.
+ *
+ * It lived at the bottom of the sign-in screen, which got it wrong in both
+ * directions: nobody browsing the site ever reaches `/app`, so the strongest
+ * thing here — a seeded programme carried concept to operations that anybody
+ * can walk through — was behind a login; and every real customer signing in had
+ * to scroll past twelve fictional people to reach the form.
+ *
+ * A page rather than a section of the landing page, because it is a link
+ * somebody sends: into an email, a deck, a post. Not folded into
+ * `/get-started`, because that is the signup form and somebody who wants to look
+ * before signing up is a different person at a different moment — merging them
+ * makes the demonstration compete with the conversion.
+ *
+ * **Two ways in, because there are two questions.** The seeded programme answers
+ * "what does a finished record look like". The empty workspace answers "what is
+ * it like to put something in", which a tenancy with eleven stages already done
+ * cannot: every screen on it is full.
+ *
+ * **The booking form works with scripting disabled.** Slots are rendered as
+ * radio buttons and the form posts to this same path — the site's one script
+ * opens the mobile menu and nothing else, and a booking form that needed
+ * JavaScript would be the first thing on it that did.
+ */
+/** Days shown open on the form. The rest fold into a disclosure below them. */
+const DAYS_SHOWN = 3;
+
+export function demo(input: DemoInput): string {
+  const f = facts();
+  const { availability } = input;
+
+  // Declared once and used in both halves of the slot list, so a day inside the
+  // disclosure and a day above it are the same markup. `checked` is decided by
+  // the slot's own time rather than by its index, because the second half is
+  // rendered from a sliced array and index 0 occurs twice in it.
+  const first = availability.days[0]?.slots[0]?.startsAt;
+  const dayBlock = (day: DemoInput['availability']['days'][number]) => `<div class="demo-day">
+          <h3>${esc(day.label)}</h3>
+          <div class="demo-slots">
+            ${day.slots
+              .map(
+                (slot) => `<label class="demo-slot">
+              <input type="radio" name="startsAt" value="${esc(slot.startsAt)}" ${slot.startsAt === first ? 'checked' : ''} required>
+              <span>${esc(slot.label)}</span>
+            </label>`,
+              )
+              .join('')}
+          </div>
+        </div>`;
+
+  const bookingSection = input.booked
+    ? `<section class="prose" id="book">
+  <div class="wrap">
+    <div class="callout">
+      <h2>Booked — ${esc(input.booked.reference)}</h2>
+      <p>
+        <b>${esc(input.booked.startsAt.slice(0, 16).replace('T', ' '))} UTC</b>, for ${input.booked.minutes} minutes.
+        A confirmation is on its way to <b>${esc(input.booked.email)}</b>.
+      </p>
+      <p class="muted">
+        Joining details follow separately from the person taking it. This platform integrates with no calendar and
+        generates no meeting link — one that went nowhere would be worse than none — so the invitation comes from a
+        human being rather than from here.
+      </p>
+    </div>
+    <p>In the meantime, the instant accounts above need nothing from you.</p>
+  </div>
+</section>`
+    : `<section class="prose" id="book">
+  <div class="wrap">
+    <h2>Book a live demo</h2>
+    <p>
+      The instant accounts above are usually all you need. If you would rather be walked through it,
+      book ${availability.minutes} minutes with somebody — an online call, in English or French.
+    </p>
+    ${input.bookingError ? `<div class="callout bad"><p><b>That booking was not made.</b><br>${esc(input.bookingError)}</p></div>` : ''}
+    ${
+      availability.days.length === 0
+        ? `<div class="callout"><p><b>Nothing is bookable at the moment.</b><br>
+             Every slot inside the booking window is taken or has passed. <a href="/contact">Send a message</a> and
+             somebody will find a time.</p></div>`
+        : `<form method="post" action="/demo#book" class="demo-book">
+      <fieldset>
+        <legend>Pick a time</legend>
+        <p class="muted">${esc(availability.note)}</p>
+        ${availability.days.slice(0, DAYS_SHOWN).map(dayBlock).join('')}
+        ${
+          // The booking window is a fortnight and each day carries seven slots,
+          // which is a hundred radio buttons on the page somebody is deciding
+          // from. The rest fold into a native `<details>` rather than a script:
+          // the whole form works with JavaScript switched off and this is the
+          // one control that would have needed it. Every slot is still in the
+          // markup, so nothing is hidden from a keyboard or a screen reader —
+          // the browser opens the disclosure when focus lands inside it.
+          availability.days.length > DAYS_SHOWN
+            ? `<details class="demo-more">
+          <summary>Later dates — ${availability.days.length - DAYS_SHOWN} more days</summary>
+          ${availability.days.slice(DAYS_SHOWN).map(dayBlock).join('')}
+        </details>`
+            : ''
+        }
+      </fieldset>
+
+      <fieldset>
+        <legend>And who you are</legend>
+        <label for="b-name">Your name</label>
+        <input id="b-name" name="name" type="text" required minlength="2" maxlength="120" autocomplete="name">
+
+        <label for="b-email">Email</label>
+        <input id="b-email" name="email" type="email" required maxlength="254" autocomplete="email">
+
+        <label for="b-org">Organisation</label>
+        <input id="b-org" name="organisation" type="text" required minlength="2" maxlength="200" autocomplete="organization">
+        <p class="muted">Twenty minutes goes further when whoever takes the call has looked you up first.</p>
+
+        <label for="b-lang">Language</label>
+        <select id="b-lang" name="language">
+          <option value="EN">English</option>
+          <option value="FR">Français</option>
+        </select>
+
+        <label for="b-about">What you want out of it <span class="muted">(optional, and the most useful box on this form)</span></label>
+        <textarea id="b-about" name="about" rows="3" maxlength="2000"></textarea>
+      </fieldset>
+
+      <button class="btn lg" type="submit">Book it <span aria-hidden="true">→</span></button>
+    </form>`
+    }
+  </div>
+</section>`;
+
+  return page(
+    {
+      title: 'Try CONSTRUX — instant demo accounts, or book 20 minutes',
+      description:
+        'Walk through a seeded infrastructure programme carried from concept to operations, start from an empty workspace, or book a twenty-minute guided session.',
+      path: '/demo',
+    },
+    `${pageHead({
+      eyebrow: 'Demonstration',
+      title: 'Try it now, or have somebody walk you through it',
+      standfirst:
+        'No signup and no card. Sign in as any role on a sandbox tenancy — the platform enforces what each of them may see, exactly as it does for a customer.',
+    })}
+
+${
+  input.available
+    ? `<section class="prose">
+  <div class="wrap">
+    <h2>① Start from nothing — build it yourself</h2>
+    <p>
+      A working, empty workspace. Create the enterprise, the portfolio, a project, a programme, a cost plan and a risk
+      register from scratch, and see what the platform asks of you at each step. This is the half a finished
+      demonstration cannot show, because every screen on one is already full.
+    </p>
+    <div class="cards g3">
+      ${input.clean
+        .map(
+          (seat) => `<article class="card demo-card">
+        <span class="tag">${esc((seat.roles[0] ?? '').replace(/_/g, ' ').toLowerCase())}</span>
+        <h3>${esc(seat.name)}</h3>
+        <p>${esc(seat.purpose)}</p>
+        <p class="muted"><code>${esc(seat.email)}</code></p>
+        <a class="btn" href="/app?as=${encodeURIComponent(seat.email)}">Sign in as ${esc(seat.name)} <span aria-hidden="true">→</span></a>
+      </article>`,
+        )
+        .join('')}
+    </div>
+    <p class="muted">
+      Start as the administrator: on an empty tenancy it is the only seat that can create the structure the others
+      need, and signing in as anybody else first means discovering that the hard way.
+    </p>
+  </div>
+</section>
+
+<section class="prose">
+  <div class="wrap">
+    <h2>② Loaded with a real programme — explore</h2>
+    <p>
+      <b>${esc(input.programme)}</b>, carried through every lifecycle stage: concept, design, tender, construction,
+      commissioning, handover, operations. Nothing in it is a mock-up — every figure on every screen is computed from
+      the same event chain a paying customer's would be, across ${f.ledgerEvents} event types and ${f.routes} routes.
+    </p>
+    <p>
+      Twelve identities on the same programme, described here by what each one will put in front of you rather than by
+      its role code, because a role code only means something once you have already seen the product.
+    </p>
+    <div class="cards g3">
+      ${input.seeded.map(identityCard).join('')}
+    </div>
+  </div>
+</section>
+
+<section class="prose">
+  <div class="wrap">
+    <h2>What is real about it, and what is not</h2>
+    ${cards(
+      [
+        {
+          title: 'The platform is real',
+          tag: 'Real',
+          body:
+            'Same code, same permission model, same event chain, same refusals. Nothing is stubbed and no screen is a screenshot. There are no passwords to hand out either — sign-in is a one-time code, and for these accounts the platform returns it rather than emailing an address nobody reads.',
+        },
+        {
+          title: 'The AI is on',
+          tag: 'Real',
+          body:
+            'Both workspaces carry prepaid credit, so the reasoning engine actually runs and the cost lands on a real meter you can watch. Where no provider is configured it says so and refuses to publish anything a model did not really write, rather than dressing up a stand-in.',
+        },
+        {
+          title: 'The project is invented',
+          tag: 'Seeded',
+          body:
+            'The programme, the people and the numbers are a fixture written to exercise every stage. They describe no real client and no real scheme.',
+        },
+        {
+          title: 'It is a shared sandbox',
+          tag: 'Shared',
+          body:
+            'Anybody may sign in, and what you write is visible to whoever looks next. Do not put anything into it you would not put on a postcard.',
+        },
+      ],
+      2,
+    )}
+  </div>
+</section>
+
+${bookingSection}`
+    : `<section class="prose">
+  <div class="wrap">
+    <div class="callout${input.unavailableBecause === 'NOT_SEEDED' ? ' bad' : ''}">
+      ${
+        input.unavailableBecause === 'SWITCHED_OFF'
+          ? `<p>
+        <b>The instant accounts are switched off on this deployment.</b><br>
+        Somebody has set <code>DEMO_TENANCY_ENABLED=false</code>, which is the right setting for a deployment holding
+        real customer records — a sandbox anybody can sign into does not belong beside them. Nothing is broken.
+      </p>`
+          : `<p>
+        <b>The instant accounts are switched on and are not there.</b><br>
+        The demonstration programme did not build on this deployment, so there is nothing to sign into. That is a
+        fault rather than a setting, and it has been recorded. Booking below still works.
+      </p>`
+      }
+    </div>
+    <p>A guided session shows the same platform, and a trial gives you your own record in it.</p>
+  </div>
+</section>
+
+${bookingSection}`
+}
+
+${cta({
+  title: 'Or start your own record',
+  body: 'A trial governs, records and computes from the first event. Nothing leaves the platform until you are on a paid package.',
+  primary: { href: '/get-started', label: 'Start free' },
+  secondary: { href: '/how-it-works', label: 'How verification works' },
+})}`,
+  );
+}

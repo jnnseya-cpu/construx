@@ -143,9 +143,19 @@ export function landing(): string {
         hash-chained event. Every figure is computed from the record rather than typed into it. Every claim on this
         page is checkable by replaying the log.
       </p>
+      <!--
+        Three, and the order is the argument.
+
+        "Try it" first because the strongest thing this company owns is a
+        programme somebody can walk through, and until now it was behind a login
+        screen that no prospect ever reaches. A landing page whose only offers
+        are a signup form and an essay is a page that describes the product and
+        never shows it.
+      -->
       <div class="cta-row">
-        <a class="btn lg" href="/get-started">Start free <span aria-hidden="true">→</span></a>
-        <a class="btn lg ghost" href="/how-it-works">How verification works</a>
+        <a class="btn lg" href="/demo">Try it now <span aria-hidden="true">→</span></a>
+        <a class="btn lg ghost" href="/demo#book">Book a 20-min demo</a>
+        <a class="btn lg ghost" href="/get-started">Start free</a>
       </div>
 
       <div class="rail" role="list" aria-label="Asset lifecycle">
@@ -298,7 +308,9 @@ ${figure('command-centre')}
     <h2>Start with a record you can defend</h2>
     <p>A trial governs, records and computes. No card, no call, no sales qualification step.</p>
     <div class="cta-row">
-      <a class="btn lg" href="/get-started">Get started <span aria-hidden="true">→</span></a>
+      <a class="btn lg" href="/demo">Try it now <span aria-hidden="true">→</span></a>
+      <a class="btn lg ghost" href="/demo#book">Book a 20-min demo</a>
+      <a class="btn lg ghost" href="/get-started">Start free</a>
       <a class="btn lg ghost" href="/developers">Read the API</a>
     </div>
   </div>

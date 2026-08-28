@@ -103,6 +103,14 @@ describe('what an anonymous caller can obtain', () => {
       // it provisions nothing on GET, so a mail scanner prefetching the link
       // cannot spend the single-use token before its owner clicks it.
       'GET /verify',
+      // The demonstration page re-rendered with a booking outcome on it. It is
+      // the same page `GET /demo` serves and it is public for the same reason,
+      // but it is a POST because the booking form has to work with scripting
+      // switched off — the site's one script opens the mobile menu, and a form
+      // that needed JavaScript would be the first thing here that did. It
+      // creates the same record `POST /v1/booking` creates, through the same
+      // code, and returns HTML rather than JSON.
+      'POST /demo',
       'POST /unsubscribe',
       'POST /v1/auth/login',
       'POST /v1/auth/mfa/verify',

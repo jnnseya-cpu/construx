@@ -135,6 +135,13 @@ describe('the routing table itself', () => {
       // person has no account yet, and inert on GET so a mail scanner cannot
       // spend the single-use token before its owner clicks.
       'GET /verify',
+      // The demonstration page, re-rendered with the outcome of a booking on
+      // it. A POST rather than a fetch because the booking form has to work
+      // with scripting switched off: the public site's only script opens the
+      // mobile menu, and a form that needed JavaScript would be the first thing
+      // on these pages that did. It goes through the same booking code as
+      // `POST /v1/booking` and returns HTML instead of JSON.
+      'POST /demo',
       'POST /unsubscribe',
       'POST /v1/auth/login',
       'POST /v1/auth/mfa/verify',
