@@ -8432,6 +8432,41 @@ renamed.
 nothing cleared and nothing to do: the first request 401s, the client exchanges
 the refresh token, the request is retried and succeeds.
 
+### The third thing that strands a device, and the way back
+
+The two fixes above cover a session the server refuses. They do not cover the
+other state a browser keeps across a deploy: **a service worker still serving the
+shell it installed months ago, and the caches behind it.**
+
+That worker is versioned by build id and evicts its own old caches on activate,
+so an ordinary deploy is picked up. What it cannot recover from is a device where
+the worker itself is the broken part, or where the substitution that versions it
+ever failed — and the symptom is identical to a dead session: *"it worked
+yesterday and now nothing loads."* Every published fix for that class of problem
+is a devtools instruction, which is useless advice for a handset in a site cabin.
+
+So **`/app?reset=1`** clears the stored session, unregisters every service worker,
+deletes every cache, and reloads. Three properties make it a recovery rather than
+a new failure mode:
+
+- it runs **before** `draw()`, because a shell that cannot start is the case it
+  exists for — running it after would make the recovery depend on the thing being
+  recovered;
+- the boot is gated on it, so nothing draws and the outbox does not drain behind
+  a navigation that is already leaving — a drain there would try to send queued
+  operations with no credential to send them under;
+- the `load` handler does not re-register the worker while a reset is in flight,
+  which would put back the worker the reset had just removed.
+
+It is deliberately **not a button in the interface**. It destroys queued offline
+work, and the address bar is a high enough bar that nobody reaches it by accident
+while meaning to sign out.
+
+Driven through a real Chromium rather than only asserted in the suite: a planted
+cache from a build that no longer exists (`construx-shell-FROM-AN-OLD-BUILD`) and
+a session the server would refuse were both gone after the reset, and the sign-in
+screen rendered.
+
 ---
 
 ## The developer surface: a credential that is not a person

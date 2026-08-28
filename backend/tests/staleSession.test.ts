@@ -209,6 +209,51 @@ describe('the client discards a session that can never work again', () => {
     assert.match(noRefresh, /session\.clear\(\)/, 'a session that cannot be renewed is kept anyway');
   });
 
+  it('offers a way back in from a device that has wedged itself', () => {
+    // The clears above handle a session the server refuses. They do not handle
+    // the other two things that survive a deploy on a browser: a service worker
+    // still serving the shell it installed months ago, and the caches behind
+    // it. A device holding those reports the same symptom — "it worked
+    // yesterday and now nothing loads" — and every fix for it is a devtools
+    // instruction, which is useless for a handset in a site cabin.
+    //
+    // `/app?reset=1` throws all three away and reloads. Asserted against the
+    // source because there is no browser here; the behaviour itself was driven
+    // through a real Chromium, which confirmed a planted cache from a build
+    // that no longer exists does not survive it.
+    const reset = /async function resetIfAsked\(\)[\s\S]*?\n}/.exec(APP)?.[0] ?? '';
+    assert.ok(reset.length > 0, 'there is no recovery path for a wedged device');
+
+    assert.match(reset, /reset'\) === '1'/, 'the recovery is not reachable from the address bar');
+    assert.match(reset, /localStorage\.clear\(\)/, 'the stored session survives a reset');
+    assert.match(reset, /unregister\(\)/, 'the service worker survives a reset');
+    assert.match(reset, /caches\.delete/, 'the caches survive a reset');
+    // `replace`, not `assign`: going back would re-run the reset and discard
+    // whatever the person had just done.
+    assert.match(reset, /location\.replace\('\/app'\)/, 'a reset leaves itself in the history');
+  });
+
+  it('does not re-register the worker it just removed', () => {
+    // The subtle way this recovery fails: the `load` handler fires during the
+    // navigation and puts a worker straight back, so the unregister above is
+    // undone before the reload happens and the device stays wedged.
+    const at = APP.indexOf("navigator.serviceWorker.register('/sw.js'");
+    assert.ok(at > 0, 'the service worker is not registered');
+    assert.match(APP.slice(Math.max(0, at - 400), at), /resetting/, 'registration is not held off during a reset');
+  });
+
+  it('draws nothing behind a reset that is navigating away', () => {
+    // Drawing a screen, or draining the outbox under a session that was just
+    // cleared, is work against a document about to be replaced — and the drain
+    // would try to send queued operations with no credential to send them
+    // under.
+    const at = APP.indexOf('void resetIfAsked()');
+    assert.ok(at > 0, 'the reset does not gate the boot');
+    const boot = APP.slice(at, at + 900);
+    assert.match(boot, /if \(reset\) return undefined;/, 'the shell boots behind a reset');
+    assert.ok(boot.indexOf('drainOutbox') > boot.indexOf('if (reset) return undefined;'), 'the outbox drains behind a reset');
+  });
+
   it('loads the permission matrix inside a guard, so a 401 there signs out rather than escaping', () => {
     // This is the half that made it permanent. `loadMatrix()` sat above the
     // try/catch, so its 401 left `draw()` without rendering anything and

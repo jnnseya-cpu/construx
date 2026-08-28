@@ -674,22 +674,89 @@ function splashFailed(message) {
   note.classList.add('failed');
 }
 
-void draw()
-  .then(dismissSplash)
-  // Once on load as well as on `online`: the event does not fire for an
-  // application launched with signal already present, which is the common case
-  // for a handset that queued work yesterday and is opened back at the office.
-  .then(() => drainOutbox())
-  .catch((error) => {
-    // draw() handles its own errors, so reaching here means the shell itself
-    // failed. Leaving the splash up with its progress bar sweeping would imply
-    // the application is still starting when it has already given up.
-    splashFailed(
-      error instanceof ApiError
-        ? `${error.code ?? 'Error'} — ${error.message}`
-        : 'The application could not start. Reload to try again.',
-    );
-  });
+/**
+ * The way back in from a device that has wedged itself.
+ *
+ * Three things on a browser survive a deploy and can each strand somebody with
+ * no way to say so: a stored session the server will never accept again, a
+ * service worker still serving the shell it installed months ago, and the
+ * caches behind it. Any one of them produces the same report — "it worked
+ * yesterday and now nothing loads" — and every fix for it is a devtools
+ * instruction, which is useless advice for a handset in a site cabin.
+ *
+ * So `/app?reset=1` throws all three away and reloads. It is deliberately not a
+ * button in the interface: it is destructive of queued offline work, and the
+ * address bar is a high enough bar that nobody reaches it by accident while
+ * meaning to sign out.
+ *
+ * It runs before `draw()` because a shell that cannot start is exactly the case
+ * this exists for — putting it after would make the recovery depend on the
+ * thing being recovered.
+ */
+async function resetIfAsked() {
+  const asked = new URLSearchParams(window.location.search).get('reset') === '1';
+  if (!asked) return false;
+
+  // Each in its own guard: a browser with storage blocked, or no service
+  // worker support, must still get the rest of the clean-up rather than
+  // stopping at the first thing it cannot do.
+  try {
+    localStorage.clear();
+  } catch {
+    /* storage disabled — nothing stored, nothing to clear */
+  }
+  try {
+    if ('serviceWorker' in navigator) {
+      const workers = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(workers.map((worker) => worker.unregister()));
+    }
+  } catch {
+    /* no worker to remove */
+  }
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+  } catch {
+    /* no cache storage */
+  }
+
+  // `replace`, not `assign`: going back to the reset URL would run it again and
+  // discard whatever the person had just done.
+  window.location.replace('/app');
+  return true;
+}
+
+/** True once a reset has begun, so nothing else starts behind the navigation. */
+let resetting = false;
+
+void resetIfAsked().then((reset) => {
+  resetting = reset;
+  // A reset is navigating away. Drawing a screen, or draining the outbox under
+  // a session that was just cleared, would be work against a document about to
+  // be replaced — and the drain in particular would try to send queued
+  // operations with no credential to send them under.
+  if (reset) return undefined;
+
+  return draw()
+    .then(dismissSplash)
+    // Once on load as well as on `online`: the event does not fire for an
+    // application launched with signal already present, which is the common
+    // case for a handset that queued work yesterday and is opened back at the
+    // office.
+    .then(() => drainOutbox())
+    .catch((error) => {
+      // draw() handles its own errors, so reaching here means the shell itself
+      // failed. Leaving the splash up with its progress bar sweeping would imply
+      // the application is still starting when it has already given up.
+      splashFailed(
+        error instanceof ApiError
+          ? `${error.code ?? 'Error'} — ${error.message}`
+          : 'The application could not start. Reload to try again.',
+      );
+    });
+});
 
 /**
  * Register the service worker.
@@ -703,6 +770,11 @@ void draw()
  */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
+    // Not while a reset is in flight: re-registering here would put a worker
+    // back before the navigation that follows the unregister, which is the one
+    // thing the recovery path exists to undo. The reload registers it again
+    // from a clean start.
+    if (resetting) return;
     navigator.serviceWorker.register('/sw.js', { scope: '/app' }).catch(() => {});
   });
 }
