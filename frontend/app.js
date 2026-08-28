@@ -6,10 +6,20 @@ import * as outbox from './lib/outbox.js';
 import { PAGES } from './pages/index.js';
 
 /**
- * Application shell: routing, session, and the role-aware navigation that makes
- * the permission model visible. A route the current role cannot reach is shown
- * locked with the reason, rather than hidden — people need to know a capability
- * exists and who to ask, not wonder whether the product has it.
+ * Application shell: routing, session, and the role-aware navigation.
+ *
+ * The menu shows what this identity can do, and one line at its foot counts
+ * what it cannot and links to the Permissions screen that explains it. That is
+ * a correction: routes the role could not reach used to be shown locked and
+ * in place, on the argument that somebody needs to know a capability exists and
+ * who to ask. The first half of that argument was right and the second was not
+ * being served — a padlock cannot name the colleague, cannot say which
+ * permission letters are short, and cannot mention the lifecycle phase gate,
+ * which is the commonest reason a command is refused to somebody who does hold
+ * it. Measured across the twelve demonstration identities it came to five
+ * padlocks each and eight for the planner. All of that information is on the
+ * Permissions screen now, for every capability area rather than only the ones
+ * with a menu entry.
  */
 
 const root = document.getElementById('root');
@@ -41,11 +51,6 @@ export const NAV = [
       { id: 'copilot', label: 'Copilot', area: 'PROJECT_SETUP', icon: 'chat' },
       { id: 'autopilot', label: 'Autopilot', area: 'AI_EXECUTION', icon: 'radar' },
       { id: 'enterprise', label: 'Enterprise & Portfolio', area: 'PROJECT_SETUP', icon: 'layers' },
-      // Under ENTERPRISE_STRUCTURE read, which is what the register needs.
-      // Issuing anything needs G on the same area, and the command bar reads
-      // that separately — so the screen is visible to somebody who can see what
-      // exists without being able to hand out a credential.
-      { id: 'developer', label: 'Developer', area: 'ENTERPRISE_STRUCTURE', icon: 'layers' },
     ],
   },
   {
@@ -100,6 +105,17 @@ export const NAV = [
     group: 'Platform',
     items: [
       { id: 'billing', label: 'ACU & Billing', area: 'BILLING_ACU', icon: 'meter' },
+      // Under ENTERPRISE_STRUCTURE read, which is what the key register needs.
+      // Issuing a credential needs G on the same area and the command bar reads
+      // that separately, so the screen is visible to somebody who can see what
+      // exists without being able to hand one out.
+      //
+      // Moved here from the Command group at the top. It is tenancy
+      // administration — API keys, webhooks, scoped tokens — and only the
+      // enterprise administrator holds it, so in the first group it was the
+      // most prominent thing on the screen for the eleven delivery roles who
+      // cannot open it. It belongs beside the other administration items.
+      { id: 'developer', label: 'Developer', area: 'ENTERPRISE_STRUCTURE', icon: 'layers' },
       { id: 'admin', label: 'Platform Admin', area: 'PLATFORM_ADMINISTRATION', icon: 'cog' },
       // The self-managing layer, the telemetry egress and the agent fleet. All
       // of it ran for weeks with no door: an operator saw five items, three of
@@ -110,7 +126,19 @@ export const NAV = [
       // The public blog. Beside the newsletter because both are the platform
       // talking outward under its own name, and neither is a customer's.
       { id: 'blog', label: 'Blog', area: 'PLATFORM_ADMINISTRATION', icon: 'clipboard' },
-      { id: 'communications', label: 'Communications', area: 'ENTERPRISE_STRUCTURE', icon: 'radar' },
+      // Under PROJECT_SETUP read — the narrowest thing every seat holds —
+      // because `GET /v1/notifications/catalogue` is readable by any
+      // authenticated identity and says so on the route: a person is entitled
+      // to know what the platform may send them before being asked to set
+      // preferences about it.
+      //
+      // It was bound to ENTERPRISE_STRUCTURE, which only the enterprise
+      // administrator holds, so eleven of the thirteen seeded identities saw a
+      // lock on a screen the server would have served them. The screen's own
+      // comment already described the intent this binding now matches. The
+      // delivery log inside it is the tenancy's outbound mail and stays refused
+      // by name rather than shown as zero.
+      { id: 'communications', label: 'Communications', area: 'PROJECT_SETUP', icon: 'radar' },
       // Outside the capability matrix — see `visible()`. Asking to be erased is
       // not a permission somebody else grants you, and the mobile stores
       // require the route to exist for every account.
@@ -257,6 +285,36 @@ let grantableRoles = [];
  */
 export function tenantGrantableRoles() {
   return grantableRoles;
+}
+
+/**
+ * The whole enforcement picture, for the screen that explains it.
+ *
+ * Getters for the same reason as above — these arrive with the matrix, and a
+ * page importing the bindings directly would capture the empty values this
+ * module starts with. Nothing here is a second copy of a rule: it is the
+ * server's own answer, handed on.
+ */
+export function permissionMatrix() {
+  return matrix;
+}
+
+export function phaseGates() {
+  return writePhaseGates;
+}
+
+/**
+ * Which roles in this customer's world can read an area, excluding the viewer's.
+ *
+ * This is the sentence a lock is actually for — not "you cannot", which the
+ * absence of the screen already says, but *who to ask*. Operator-only roles are
+ * excluded because a tenant administrator cannot grant them, so naming one would
+ * send somebody to a colleague who cannot exist in their organisation.
+ */
+export function rolesThatCanRead(area) {
+  if (!matrix) return [];
+  const mine = new Set(state.session?.user?.roles ?? []);
+  return grantableRoles.filter((role) => !mine.has(role) && (matrix[role]?.[area] ?? []).includes('R'));
 }
 
 async function loadMatrix() {
@@ -529,26 +587,38 @@ function sidebar(active) {
     </a>
 
     ${navigation().map((group) => {
-      // A group where the viewer can reach nothing is hidden outright — an
-      // entire section of locks teaches less than it costs. Within a group the
-      // viewer *can* use, the unreachable items stay visible and locked,
-      // because there a lock names a colleague to ask.
-      if (!group.items.some((item) => reachable(item))) return '';
-      const visible = group.items.filter((item) => worthShowing(item));
+      // The menu shows what you can do. Nothing else.
+      //
+      // It used to carry a padlock beside every capability the viewer did not
+      // hold, on the argument that a lock names a colleague to ask. Measured
+      // across the twelve demonstration identities, that was five locks per
+      // person and eight for the planner — a third of the menu was grey
+      // furniture, and it could not actually name the colleague, say which
+      // permission letters were short, or mention the phase gate that is the
+      // commonest reason a command is refused to somebody who *does* hold it.
+      //
+      // All of that is now on the Permissions screen, in full and for all
+      // twenty-five capability areas rather than only the ones with a menu
+      // entry. The count below is the one line the menu keeps, and it is a link
+      // to the answer rather than a statement of the problem.
+      const visible = group.items.filter((item) => reachable(item));
+      if (visible.length === 0) return '';
       return html`<nav class="nav-group" aria-labelledby="navgroup-${raw(group.group.toLowerCase().replace(/[^a-z]+/g, '-'))}">
         <div class="nav-group-label" id="navgroup-${raw(group.group.toLowerCase().replace(/[^a-z]+/g, '-'))}">${group.group}</div>
-        ${visible.map((item) => {
-          if (!reachable(item)) {
-            return html`<button class="nav-item locked" title="${lockReason(item)}">
-              ${icon(item.icon)}<span>${item.label}</span><span class="lock">🔒</span>
-            </button>`;
-          }
-          return html`<button class="nav-item ${raw(active === item.id ? 'active' : '')}" data-nav="${item.id}">
+        ${visible.map(
+          (item) => html`<button class="nav-item ${raw(active === item.id ? 'active' : '')}" data-nav="${item.id}">
             ${icon(item.icon)}<span>${item.label}</span>
-          </button>`;
-        })}
+          </button>`,
+        )}
       </nav>`;
     })}
+
+    ${closedAreaCount() > 0
+      ? html`<button class="nav-closed" data-nav="permissions">
+          <span>What your role can do</span>
+          <span class="n">${closedAreaCount()} areas closed</span>
+        </button>`
+      : ''}
 
     <div class="sidebar-foot">
       ${
@@ -596,42 +666,46 @@ function reachable(item) {
 }
 
 /**
- * Is this item worth showing at all, locked or not?
+ * Every capability area the platform enforces, taken from the matrix itself.
  *
- * The sidebar's rule is that a capability the viewer cannot reach is shown
- * locked with the reason, because somebody needs to know the capability exists
- * and who to ask for it. That is right for a capability a *colleague* holds —
- * an FM seeing Programme locked learns something true and actionable.
+ * Derived rather than listed, so an area added on the server appears here.
  *
- * It is wrong for a capability nobody in the customer's world can ever hold.
- * Platform Admin and Newsletter sit under an area only the platform operator
- * role holds, and that role is not one a tenant administrator can grant — so
- * for every customer account, on every screen, forever, those two were dead
- * items with a lock on them. There is no colleague to ask. That is not
- * information, it is furniture.
- *
- * Reachability-by-anybody is computed from the published matrix and the
- * published grantable-role list rather than from a hard-coded role name here,
- * so it cannot drift from the server's own answer.
+ * The **union** of every role's keys, not one role's. The matrix rows are
+ * sparse — a role carries only the areas it holds something on — so reading the
+ * first row asks "what can this one role touch" and answers with that. It
+ * reported the planner as shut out of two areas when the true number is seven,
+ * and the count was the whole point of the line.
  */
-function worthShowing(item) {
-  // The same rule, finally applied to operators as well.
-  //
-  // This used to return true for every item, which is how an operator came to
-  // see a Platform group of five with three permanent locks on it. The two
-  // locked items were customer capabilities — an operator cannot hold
-  // ENTERPRISE_STRUCTURE, and no colleague can grant it to them, because it is
-  // a different account layer rather than a senior role. So the lock named
-  // nobody to ask and could never come off: exactly the furniture the rule
-  // above exists to remove.
-  //
-  // Estate billing and audit are not lost by hiding them here. They are
-  // estate-wide figures and live on the Platform page, which is where an
-  // operator with no project can actually read them.
-  if (isOperator()) return reachable(item);
-  if (!matrix || grantableRoles.length === 0) return true;
-  if (reachable(item)) return true;
-  return grantableRoles.some((role) => (matrix[role]?.[item.area] ?? []).includes('R'));
+export function allCapabilityAreas() {
+  if (!matrix) return [];
+  const areas = new Set();
+  for (const row of Object.values(matrix)) for (const area of Object.keys(row)) areas.add(area);
+  return [...areas];
+}
+
+/**
+ * The areas this identity cannot read.
+ *
+ * One source of truth for two callers: the line at the foot of the navigation,
+ * and the Permissions screen it opens. They quoted different numbers when each
+ * counted for itself, which is worse than either number being wrong.
+ */
+export function closedAreas() {
+  if (!matrix) return [];
+  const roles = state.session?.user?.roles ?? [];
+  return allCapabilityAreas().filter((area) => !roles.some((role) => (matrix[role]?.[area] ?? []).includes('R')));
+}
+
+/**
+ * How many, for the navigation footer.
+ *
+ * Zero for an operator: their navigation is a different application with every
+ * item reachable, and counting the delivery areas they are barred from would
+ * offer a page about capabilities no colleague could ever grant them.
+ */
+function closedAreaCount() {
+  if (isOperator()) return 0;
+  return closedAreas().length;
 }
 
 function lockReason(item) {
