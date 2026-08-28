@@ -504,6 +504,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // acceptance: two people measured the same work and got different answers,
   // and that is what gets argued about later.
   def('PROGRESS_ADJUSTED', 'ProgressSubmission', 'APPROVE', 'DELIVERY', { requiresEvidence: true }),
+  // Beside PROGRESS_REPORTED, not instead of it. The submission says a quantity
+  // was claimed; this says the quantity was read off a photograph, by which
+  // provider, at what confidence, on what stated basis, with what the model said
+  // it could not see — and what the confirmer changed. Valuing the claim uses
+  // the first; defending it three years later uses this.
+  def('PROGRESS_EXTRACTED_FROM_IMAGES', 'ProgressSubmission', 'AI_EXECUTE', 'DELIVERY', {
+    aiAllowed: true,
+    requiresEvidence: true,
+  }),
   def('SITE_DIARY_RECORDED', 'SiteDiary', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
   // CN-WF-03. A shift is captured across a day on a device, often with no
   // signal, and submitted once at the end of it. The draft carries the id the
@@ -682,6 +691,16 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // reaches a customer's project. Only the result lands here, which is what
   // makes drift comparable between deployments of the same commit.
   def('AI_EVALUATION_RECORDED', 'AIEvaluation', 'CREATE', 'GOVERNANCE', { creates: true }),
+  // The file ingestion pipeline. Three events rather than one "processed" flag,
+  // because inspecting a file, reading it and refusing it are three different
+  // facts and a project argued over in year five needs to know which happened.
+  //
+  // `FILE_INGESTED` carries the structural inspection and the classification.
+  // `FILE_EXTRACTED` carries what came out of it — text, tables, the lexical
+  // index. `FILE_QUARANTINED` is the refusal, and it names what was found.
+  def('FILE_INGESTED', 'IngestedFile', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('FILE_EXTRACTED', 'IngestedFile', 'UPDATE', 'GOVERNANCE'),
+  def('FILE_QUARANTINED', 'IngestedFile', 'UPDATE', 'GOVERNANCE'),
   def('NOTIFICATION_QUEUED', 'NotificationOutbox', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('NOTIFICATION_QUEUE_SETTLED', 'NotificationOutbox', 'UPDATE', 'GOVERNANCE'),
   def('NOTIFICATION_DISPATCHED', 'NotificationDispatch', 'ISSUE', 'GOVERNANCE', { creates: true }),

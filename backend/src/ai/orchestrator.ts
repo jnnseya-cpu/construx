@@ -50,7 +50,7 @@ export const ROUTING_MATRIX: Record<Engine, { perception: string[]; reasoning: s
     reasoning: ['CPM logic', 'Delay attribution', 'Recovery scenarios'],
   },
   RESOURCE_COST: {
-    perception: ['Quantity and resource observation'],
+    perception: ['Quantity and resource observation', 'Plant and equipment recognition from site imagery'],
     reasoning: ['Earned value', 'Margin and cost-to-complete'],
   },
   RISK_SAFETY: {
@@ -58,7 +58,7 @@ export const ROUTING_MATRIX: Record<Engine, { perception: string[]; reasoning: s
     reasoning: ['Regulatory compliance reasoning', 'Control adequacy'],
   },
   BIM_TWIN: {
-    perception: ['IFC and model ingestion', 'Clash geometry'],
+    perception: ['IFC and model ingestion', 'Clash geometry', 'Workmanship defect detection in site imagery'],
     reasoning: ['Design decision impact', 'Resolution sequencing'],
   },
   CONTRACTS_CLAIMS: {

@@ -57,9 +57,20 @@ const CATEGORIES = [
 export async function documents(root) {
   const projectId = state.session.projectId;
 
-  const catalogue = await api.get(`/v1/projects/${projectId}/documents`).catch(() => ({ documents: [], summary: '' }));
+  const [catalogue, ingestion, evidence] = await Promise.all([
+    api.get(`/v1/projects/${projectId}/documents`).catch(() => ({ documents: [], summary: '' })),
+    api.get(`/v1/projects/${projectId}/ingestion`).catch(() => null),
+    api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
+  ]);
   const all = catalogue.documents ?? [];
   const generable = all.filter((document) => document.generable);
+
+  // Held, named in the ledger, and never looked at. The queue the ingestion
+  // pipeline exists to empty — and the only list on this screen that is about
+  // documents somebody else wrote rather than documents this platform composes.
+  const ingested = new Set((ingestion?.files ?? []).map((file) => file.hash));
+  const unread = (evidence?.entries ?? []).filter((entry) => entry.held && !ingested.has(entry.hash));
+  const quarantine = ingestion?.position?.quarantine ?? [];
 
   // Where a type cannot be generated, the records it is waiting on. Deduplicated
   // across types, because five documents blocked on the same missing register is
@@ -185,6 +196,106 @@ export async function documents(root) {
         </div>`;
       })}
 
+      ${
+        ingestion
+          ? html`<div class="card" style="margin-bottom:14px">
+              <h2>Files this project holds</h2>
+              <p class="metric-sub">
+                The documents somebody else wrote. The store already refused anything whose bytes did not match the hash
+                it was filed under; ingestion is the part that looks at the file — what kind of document it is, whether
+                its text can be read, and whether it is what it claims to be.
+              </p>
+
+              <div class="grid g4" style="margin:12px 0">
+                <div>
+                  <h2>Never looked at</h2>
+                  <div class="metric ${raw(ingestion.position.notIngested > 0 ? 'warn' : 'good')}">
+                    ${ingestion.position.notIngested}
+                  </div>
+                  <div class="metric-sub">held files nothing has read</div>
+                </div>
+                <div>
+                  <h2>Read</h2>
+                  <div class="metric">${ingestion.position.read}</div>
+                  <div class="metric-sub">
+                    text extracted and indexed${ingestion.position.awaitingOcr > 0
+                      ? ` · ${ingestion.position.awaitingOcr} need a model that can see`
+                      : ''}
+                  </div>
+                </div>
+                <div>
+                  <h2>Quarantined</h2>
+                  <div class="metric ${raw(ingestion.position.quarantined > 0 ? 'bad' : 'good')}">
+                    ${ingestion.position.quarantined}
+                  </div>
+                  <div class="metric-sub">refused, and kept — the bytes are still an address</div>
+                </div>
+                <div>
+                  <h2>Not a virus scan</h2>
+                  <div class="metric-sub" style="margin-top:8px">
+                    There is no signature engine on this deployment and this does not claim to be one. What is checked is
+                    whether a file <b>is what it says it is</b> — a renamed executable, active markup in a document, an
+                    archive carrying a program. A count of zero above means nothing was refused, not that nothing is
+                    infected.
+                  </div>
+                </div>
+              </div>
+
+              ${raw(table({
+                headers: ['Evidence', 'Type', 'Read as', 'Text', ''],
+                rows: [
+                  ...unread.slice(0, 15).map((entry) => [
+                    entry.description,
+                    entry.contentType ?? '—',
+                    badge('Not read', 'warn'),
+                    '—',
+                    html`<button class="btn sm" data-ingest="${entry.hash}">Read it</button>`,
+                  ]),
+                  ...(ingestion.files ?? []).slice(0, 15).map((file) => [
+                    file.filename ?? file.hash.slice(0, 18),
+                    file.inspection.actualType ?? file.inspection.declaredType,
+                    file.status === 'QUARANTINED'
+                      ? badge('Quarantined', 'bad')
+                      : html`${badge(humanise(file.classification.kind), 'ok')}
+                          <span class="metric-sub">
+                            ${Math.round(file.classification.confidence * 100)}% — ${file.classification.signals.join('; ')}
+                          </span>`,
+                    file.extraction.method === 'NATIVE'
+                      ? 'Read'
+                      : file.extraction.method === 'NEEDS_OCR'
+                        ? 'Needs a model that can see'
+                        : '—',
+                    file.lexicalVector
+                      ? html`<button class="btn quiet sm" data-similar="${file.ingestionId}">Find duplicates</button>`
+                      : '',
+                  ]),
+                ],
+                empty: evidence?.storeConfigured
+                  ? 'No files are held on this project yet. A hash on its own cannot be read.'
+                  : 'This deployment holds no evidence files, so there is nothing to read.',
+              }))}
+
+              ${
+                quarantine.length > 0
+                  ? html`<div style="margin-top:14px">
+                      <h2>Refused, and why</h2>
+                      ${raw(table({
+                        headers: ['File', 'What was found', 'Why it is refused'],
+                        rows: quarantine.flatMap((file) =>
+                          file.findings.map((finding) => [
+                            file.filename ?? file.hash.slice(0, 18),
+                            finding.what,
+                            finding.because,
+                          ]),
+                        ),
+                      }))}
+                    </div>`
+                  : ''
+              }
+            </div>`
+          : ''
+      }
+
       <div class="card">
         <h2>Why a document can refuse to exist</h2>
         <p>
@@ -293,6 +404,62 @@ export async function documents(root) {
   });
 
   root.addEventListener('click', async (event) => {
+    const ingest = event.target.closest('[data-ingest]');
+    if (ingest) {
+      const entry = unread.find((item) => item.hash === ingest.dataset.ingest);
+      const result = await command({
+        title: 'Read this file',
+        intent:
+          'Look at the bytes, say what kind of document it is, and read its text where the bytes are the text. ' +
+          'Nothing is decompressed and nothing is deleted — a file that should not have been accepted is quarantined ' +
+          'with the reason on the record.',
+        path: `/v1/projects/${projectId}/ingestion`,
+        submitLabel: 'Read it',
+        fields: [
+          { name: 'hash', type: 'hidden', value: ingest.dataset.ingest },
+          {
+            name: 'filename',
+            label: 'The name it was uploaded under',
+            type: 'text',
+            required: false,
+            value: entry?.description ?? '',
+            hint:
+              'The store keeps the hash, not the name. Supplying it lets the platform see a mismatch between what the ' +
+              'file is called and what it actually is.',
+          },
+        ],
+      });
+      if (!result) return;
+      toast(
+        result.status === 'QUARANTINED' ? 'File quarantined' : 'File read',
+        result.status === 'QUARANTINED'
+          ? `${result.findings} finding(s). The bytes are kept; nothing downstream should use them.`
+          : `Read as ${humanise(result.kind).toLowerCase()}.`,
+        result.status === 'QUARANTINED' ? 'bad' : 'ok',
+      );
+      await draw();
+      return;
+    }
+
+    const similar = event.target.closest('[data-similar]');
+    if (similar) {
+      const found = await api
+        .get(`/v1/projects/${projectId}/ingestion/${similar.dataset.similar}/similar`)
+        .catch(() => null);
+      const matches = found?.matches ?? [];
+      toast(
+        matches.length === 0 ? 'Nothing close enough' : `${matches.length} document(s) read like this one`,
+        matches.length === 0
+          ? 'The match is lexical — shared wording, not shared meaning. Nothing on this project overlaps enough to report.'
+          : matches
+              .slice(0, 4)
+              .map((match) => `${match.filename ?? match.hash.slice(0, 14)} — ${Math.round(match.similarity * 100)}%`)
+              .join(' · '),
+        matches.length === 0 ? 'warn' : 'ok',
+      );
+      return;
+    }
+
     const button = event.target.closest('[data-generate]');
     if (!button) return;
     const document_ = all.find((entry) => entry.code === button.dataset.generate);

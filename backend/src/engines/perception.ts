@@ -6,9 +6,12 @@ import type { EvidenceStore } from '../evidence/store.ts';
 import { findByHash } from '../evidence/registry.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
 import type { Engine } from '../ai/orchestrator.ts';
+import { submitProgress } from '../domain/progressverification.ts';
 import { authorise, currentPhase, runAI, write, type EngineContext } from './context.ts';
 import { registerDrawing } from './bim.ts';
 import { captureSiteObservation } from './planning.ts';
+import { raiseNCR } from './quality.ts';
+import { logSafetyObservation } from './safety.ts';
 import { runTakeoff } from './tender.ts';
 
 /**
@@ -54,9 +57,45 @@ import { runTakeoff } from './tender.ts';
  * both vendors' documented multimodal request shapes and are exercised in the
  * suite against a stub; no call to OpenAI or Gemini has been made from this
  * environment, and nothing here should be read as saying one has.
+ *
+ * ---
+ *
+ * ## The vision tasks
+ *
+ * `PROGRESS_FROM_IMAGES`, `PPE_COMPLIANCE`, `EQUIPMENT_RECOGNITION` and
+ * `DEFECT_DETECTION` are the same pipeline with four more prompts. They were
+ * specified as a separate "vision pipeline" and are not built as one, because
+ * every rule a vision pipeline needs is already here: refuse where no provider
+ * can see, send the file as media, write a draft, let a person confirm it into
+ * the ordinary domain command.
+ *
+ * A second pipeline would have been a second way into the progress register,
+ * the NCR register and the safety log — the one thing the draft/confirm
+ * discipline exists to prevent.
+ *
+ * **What the model may not decide.** It reads the photograph; it does not choose
+ * the activity being claimed against, the period being claimed for, or whether
+ * an NCR is raised. Those are the confirmer's, supplied at confirmation, because
+ * they are the fields a valuation is argued over and none of them is visible in
+ * an image. A model that returned `taskId` would be guessing at the one number
+ * that decides who gets paid.
+ *
+ * **`PROGRESS_EXTRACTED_FROM_IMAGES`** is written alongside the ordinary
+ * `PROGRESS_REPORTED`, against the same submission. It is not a duplicate: the
+ * submission event says a quantity was claimed, and this says the quantity was
+ * read off a photograph by a named provider at a stated confidence, with the
+ * confirmer's corrections beside it. Three years on, that is the difference
+ * between a claim somebody measured and a claim somebody accepted.
  */
 
-export type PerceptionTask = 'TITLE_BLOCK' | 'DRAWING_TAKEOFF' | 'VOICE_NOTE';
+export type PerceptionTask =
+  | 'TITLE_BLOCK'
+  | 'DRAWING_TAKEOFF'
+  | 'VOICE_NOTE'
+  | 'PROGRESS_FROM_IMAGES'
+  | 'PPE_COMPLIANCE'
+  | 'EQUIPMENT_RECOGNITION'
+  | 'DEFECT_DETECTION';
 
 type TaskDefinition = {
   engine: Engine;
@@ -97,6 +136,13 @@ type TaskDefinition = {
 };
 
 const IMAGE_OR_PDF = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
+
+/**
+ * Site photography. Deliberately not PDF: a drawing is a document about what is
+ * intended, and these four tasks report what is there. Letting a PDF through
+ * would let somebody read progress off the programme.
+ */
+const SITE_IMAGE = ['image/png', 'image/jpeg', 'image/webp'];
 
 export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
   TITLE_BLOCK: {
@@ -204,6 +250,183 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
     },
     usable: (extraction) => typeof extraction.transcript === 'string' && extraction.transcript.trim().length > 0,
   },
+
+  PROGRESS_FROM_IMAGES: {
+    engine: 'PLANNING',
+    taskType: 'progress_estimation_from_image',
+    area: 'FIELD_EXECUTION',
+    // What `submitProgress` requires.
+    code: 'C',
+    label: 'Estimate progress from a site photograph',
+    accepts: SITE_IMAGE,
+    acceptsLabel: 'a site photograph',
+    // The model is asked for a measurement and a basis, never a percentage on
+    // its own. A percentage with no quantity behind it cannot be checked against
+    // the control total, and the progress register refuses a claim it cannot
+    // reconcile — so asking for one would produce a draft nobody could confirm.
+    prompt:
+      'Report the permanent works visible in this photograph and how much of each has been built. For each ' +
+      'item give a description, the unit it is properly measured in, the quantity visibly complete, and the ' +
+      'basis on which you measured it — what you counted, and against what reference. State separately ' +
+      'anything obstructed, out of frame or too far away to measure, and do not estimate it. Do not report a ' +
+      'percentage complete unless the whole extent of the element is in the frame.',
+    responseSchema: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              description: { type: 'string' },
+              unit: { type: 'string' },
+              quantity: { type: 'number' },
+              basisOfMeasurement: { type: 'string' },
+            },
+            required: ['description', 'unit', 'quantity', 'basisOfMeasurement'],
+          },
+        },
+        location: { type: ['string', 'null'] },
+        obstructed: { type: 'array', items: { type: 'string' } },
+        viewpoint: { type: ['string', 'null'] },
+      },
+      required: ['items'],
+    },
+    usable: (extraction) =>
+      Array.isArray(extraction.items) &&
+      extraction.items.some((item) => Number((item as { quantity?: unknown }).quantity) > 0),
+  },
+
+  PPE_COMPLIANCE: {
+    engine: 'RISK_SAFETY',
+    taskType: 'ppe_compliance_from_image',
+    area: 'SAFETY_RAMS',
+    // What `logSafetyObservation` requires.
+    code: 'C',
+    label: 'Check PPE compliance in a site photograph',
+    accepts: SITE_IMAGE,
+    acceptsLabel: 'a site photograph',
+    // Nobody is named. A model identifying an operative from a photograph is a
+    // disciplinary allegation produced by a machine, and the platform's safety
+    // log is not the place for one. Counts and items only; who was in the frame
+    // is for the person who was there.
+    prompt:
+      'Report the personal protective equipment visible in this photograph. List the items being worn and, ' +
+      'separately, each item that appears to be missing or incorrectly worn, with how many people it affects ' +
+      'and what makes it visible. Do not identify or describe any individual. State whether the photograph ' +
+      'shows anything that would need stopping immediately. Where the view is too poor to judge an item, say ' +
+      'so rather than reporting it as compliant.',
+    responseSchema: {
+      type: 'object',
+      properties: {
+        compliant: { type: 'boolean' },
+        ppeObserved: { type: 'array', items: { type: 'string' } },
+        breaches: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              item: { type: 'string' },
+              description: { type: 'string' },
+              peopleAffected: { type: ['number', 'null'] },
+            },
+            required: ['item', 'description'],
+          },
+        },
+        notJudgeable: { type: 'array', items: { type: 'string' } },
+        immediateRisk: { type: 'boolean' },
+        location: { type: ['string', 'null'] },
+        narrative: { type: 'string' },
+      },
+      required: ['compliant', 'narrative'],
+    },
+    usable: (extraction) =>
+      typeof extraction.compliant === 'boolean' &&
+      typeof extraction.narrative === 'string' &&
+      extraction.narrative.trim().length > 0,
+  },
+
+  EQUIPMENT_RECOGNITION: {
+    engine: 'RESOURCE_COST',
+    taskType: 'equipment_recognition_from_image',
+    area: 'FIELD_EXECUTION',
+    // What `captureSiteObservation` requires.
+    code: 'C',
+    label: 'Identify plant and equipment in a site photograph',
+    accepts: SITE_IMAGE,
+    acceptsLabel: 'a site photograph',
+    prompt:
+      'Identify the plant and equipment visible in this photograph. For each, give what it is in plain terms, ' +
+      'the count, any plate, fleet or hire number legible in the image, and whether it appears to be working, ' +
+      'standing idle or laid up — with what in the photograph shows that. Do not report a make or model you ' +
+      'cannot read from the image, and do not infer ownership or hire status.',
+    responseSchema: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              description: { type: 'string' },
+              count: { type: 'number' },
+              identifier: { type: ['string', 'null'] },
+              state: { type: 'string', enum: ['WORKING', 'IDLE', 'LAID_UP', 'UNCLEAR'] },
+              basis: { type: ['string', 'null'] },
+            },
+            required: ['description', 'count', 'state'],
+          },
+        },
+        location: { type: ['string', 'null'] },
+        narrative: { type: 'string' },
+      },
+      required: ['items'],
+    },
+    usable: (extraction) => Array.isArray(extraction.items) && extraction.items.length > 0,
+  },
+
+  DEFECT_DETECTION: {
+    engine: 'BIM_TWIN',
+    taskType: 'defect_detection_from_image',
+    area: 'QUALITY_COMMISSIONING',
+    // What `raiseNCR` requires.
+    code: 'C',
+    label: 'Find workmanship defects in a site photograph',
+    accepts: SITE_IMAGE,
+    acceptsLabel: 'a site photograph',
+    // Severity is asked for in the register's own three words, because the
+    // confirmed draft becomes an NCR and `raiseNCR` accepts nothing else. A
+    // model returning "HIGH" would produce a draft that fails at confirmation.
+    prompt:
+      'Report defects in the completed work shown in this photograph. For each, describe what is wrong and ' +
+      'which element it is in, classify it as MINOR, MAJOR or CRITICAL, name the standard, specification or ' +
+      'tolerance it appears to breach, and propose the corrective action. Report only what is visible — do ' +
+      'not infer a defect from an incomplete element, and say where the photograph shows work still in ' +
+      'progress rather than finished.',
+    responseSchema: {
+      type: 'object',
+      properties: {
+        defects: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              description: { type: 'string' },
+              element: { type: ['string', 'null'] },
+              severity: { type: 'string', enum: ['MINOR', 'MAJOR', 'CRITICAL'] },
+              standardBreached: { type: ['string', 'null'] },
+              proposedAction: { type: 'string' },
+            },
+            required: ['description', 'severity', 'proposedAction'],
+          },
+        },
+        workInProgress: { type: 'array', items: { type: 'string' } },
+        location: { type: ['string', 'null'] },
+      },
+      required: ['defects'],
+    },
+    usable: (extraction) => Array.isArray(extraction.defects) && extraction.defects.length > 0,
+  },
 };
 
 export type PerceptionDraft = {
@@ -214,7 +437,23 @@ export type PerceptionDraft = {
   contentType: string;
   extraction: Record<string, unknown>;
   confidence: number | undefined;
-  provider: string;
+  /**
+   * Who read the file, stamped by `runAI` on every AI-written state.
+   *
+   * This was declared as `provider: string` and never written — the field was a
+   * type that no code populated, so anything reading a draft to find out which
+   * model produced it got `undefined`. `synthetic` is the one that matters to a
+   * reader: it says no model was called and the answer is a deterministic
+   * stand-in.
+   */
+  aiProvenance?: {
+    provider: string;
+    modelClass: string;
+    engine: string;
+    taskType: string;
+    synthetic: boolean;
+    at: string;
+  };
   status: 'DRAFT' | 'CONFIRMED' | 'DISCARDED';
   producedAt: string;
   producedFor: string;
@@ -361,9 +600,38 @@ function requireDraft(ctx: EngineContext, draftId: string): PerceptionDraft {
  * would run. It authorises again, gates on the phase again, and writes the same
  * events. Machine-read data gets no private door into the register.
  */
+export type ConfirmInput = {
+  draftId: string;
+  corrections?: Record<string, unknown>;
+  /** DRAWING_TAKEOFF. */
+  packageId?: string;
+  costCodePrefix?: string;
+  /** VOICE_NOTE, EQUIPMENT_RECOGNITION. */
+  observedBy?: string;
+  actionByDate?: string;
+  /** EQUIPMENT_RECOGNITION — which of the platform's observation categories. */
+  category?: string;
+  /**
+   * PROGRESS_FROM_IMAGES. None of these is visible in a photograph, so none is
+   * asked of the model: the activity the claim is against, the period it falls
+   * in, and which of the read items is being claimed.
+   */
+  taskId?: string;
+  periodFrom?: string;
+  periodTo?: string;
+  costCode?: string;
+  itemIndex?: number;
+  rework?: boolean;
+  /** PPE_COMPLIANCE — overrides the mapping from the model's own reading. */
+  observationType?: 'UNSAFE_ACT' | 'UNSAFE_CONDITION' | 'NEAR_MISS' | 'GOOD_PRACTICE';
+  /** DEFECT_DETECTION. */
+  workPackageId?: string;
+  inspectionId?: string;
+};
+
 export async function confirm(
   ctx: EngineContext,
-  input: { draftId: string; corrections?: Record<string, unknown>; packageId?: string; costCodePrefix?: string; observedBy?: string },
+  input: ConfirmInput,
 ): Promise<{ draftId: string; task: PerceptionTask; result: Record<string, unknown> }> {
   const draft = requireDraft(ctx, input.draftId);
   const definition = PERCEPTION_TASKS[draft.task];
@@ -411,7 +679,7 @@ export async function confirm(
       costCodePrefix: input.costCodePrefix,
     });
     result = { takeoffId: takeoff.takeoffId, boqItemIds: takeoff.boqItemIds };
-  } else {
+  } else if (draft.task === 'VOICE_NOTE') {
     // The model's category is checked against the platform's own list before it
     // reaches a command that would refuse it. A person confirming a transcript
     // should be told which value to correct, not shown a schema error.
@@ -432,9 +700,188 @@ export async function confirm(
       observedBy: input.observedBy ?? ctx.auth.actorId,
       requiresAction: extraction.requiresAction === true,
       actionOwner: extraction.actionOwner ? String(extraction.actionOwner) : undefined,
+      // The register requires a date on anything that requires action, and it
+      // was never passed: a voice note the model read as actionable could not be
+      // confirmed at all without first correcting `requiresAction` to false —
+      // which is the confirmer overwriting what the speaker said in order to
+      // file it. The date is the confirmer's, because a deadline is not audible.
+      actionByDate: input.actionByDate,
       evidenceHash: draft.evidenceHash,
     });
     result = { observationId: observation.observationId, reference: observation.reference };
+  } else if (draft.task === 'PROGRESS_FROM_IMAGES') {
+    if (!input.taskId || !input.periodFrom || !input.periodTo) {
+      throw new DomainError(
+        'PERCEPTION_TARGET_REQUIRED',
+        'A progress claim read from a photograph still has to name the activity it is against and the period it ' +
+          'falls in. Neither is visible in an image, and a claim without them cannot be valued.',
+      );
+    }
+
+    const items = (extraction.items as Array<Record<string, unknown>> | undefined) ?? [];
+    const index = input.itemIndex ?? 0;
+    const item = items[index];
+    if (!item) {
+      throw new DomainError(
+        'PERCEPTION_ITEM_UNKNOWN',
+        `The draft read ${items.length} measurable item${items.length === 1 ? '' : 's'} from this photograph; there is ` +
+          `no item ${index}. One claim is made against one activity, so say which item is being claimed.`,
+      );
+    }
+
+    // The unit and the control total are the progress register's own rules and
+    // they run unchanged here — a quantity a model read is checked against the
+    // measurement basis exactly as a quantity somebody typed would be.
+    const submitted = submitProgress(ctx, {
+      taskId: input.taskId,
+      quantity: Number(item.quantity ?? 0),
+      unit: String(item.unit ?? ''),
+      location: String(extraction.location ?? item.description ?? ''),
+      periodFrom: input.periodFrom,
+      periodTo: input.periodTo,
+      costCode: input.costCode,
+      rework: input.rework,
+      evidenceDescription: `Progress read from site photography: ${String(item.description ?? '')}`.slice(0, 200),
+      evidenceHash: draft.evidenceHash,
+    });
+
+    // Written against the submission, beside `PROGRESS_REPORTED`. The claim and
+    // the provenance of the claim are two facts, and only one of them is in the
+    // submission.
+    //
+    // The submission's own state is carried forward rather than replaced. An
+    // event names an entity and the ledger holds one state per entity, so
+    // writing the provenance alone here would have overwritten the claim with a
+    // record of where the claim came from — deleting the quantity a valuation
+    // is built on.
+    const submission = ctx.ledger.require({ refType: 'ProgressSubmission', refId: submitted.submissionId });
+    write(ctx, {
+      eventType: 'PROGRESS_EXTRACTED_FROM_IMAGES',
+      entity: { refType: 'ProgressSubmission', refId: submitted.submissionId },
+      nextState: {
+        ...submission.state,
+        extractedFromImages: {
+          draftId: draft.id,
+          evidenceHash: draft.evidenceHash,
+          provider: draft.aiProvenance?.provider,
+          // Said out loud rather than inferred from a provider name: a claim
+          // whose quantity came from the local stand-in is not a claim anybody
+          // should value.
+          synthetic: draft.aiProvenance?.synthetic === true,
+          confidence: draft.confidence,
+          readQuantity: Number(item.quantity ?? 0),
+          readUnit: String(item.unit ?? ''),
+          basisOfMeasurement: String(item.basisOfMeasurement ?? ''),
+          // What the model said it could not see. A claim argued over later is
+          // answered as much by this as by the quantity.
+          obstructed: Array.isArray(extraction.obstructed) ? extraction.obstructed : [],
+          corrections: input.corrections ?? {},
+          confirmedBy: ctx.auth.actorId,
+          confirmedAt: new Date().toISOString(),
+        },
+      },
+      evidenceRefs: [{ refType: 'EvidenceItem', refId: draft.evidenceId }],
+    });
+
+    result = {
+      submissionId: submitted.submissionId,
+      reference: submitted.reference,
+      cumulativeIfAccepted: submitted.cumulativeIfAccepted,
+      exceedsControlTotal: submitted.exceedsControlTotal,
+    };
+  } else if (draft.task === 'PPE_COMPLIANCE') {
+    const breaches = (extraction.breaches as Array<Record<string, unknown>> | undefined) ?? [];
+    const compliant = extraction.compliant === true && breaches.length === 0;
+
+    const observation = await logSafetyObservation(ctx, {
+      description: String(extraction.narrative ?? ''),
+      location: String(extraction.location ?? 'Not stated'),
+      mediaHash: draft.evidenceHash,
+      // Somebody not wearing what the method statement requires is an act, not a
+      // condition — the distinction the safety log is analysed on. The confirmer
+      // may say otherwise; they were there.
+      observationType: input.observationType ?? (compliant ? 'GOOD_PRACTICE' : 'UNSAFE_ACT'),
+      // The person confirming. Nobody in the photograph is named by anything
+      // here, including this field.
+      reportedBy: input.observedBy ?? ctx.auth.actorId,
+    });
+
+    result = {
+      observationId: observation.observationId,
+      severity: observation.severity,
+      compliant,
+      breaches: breaches.length,
+      acuConsumed: observation.acuConsumed,
+    };
+  } else if (draft.task === 'EQUIPMENT_RECOGNITION') {
+    const items = (extraction.items as Array<Record<string, unknown>> | undefined) ?? [];
+    // There is no plant register on this platform, so this does not pretend to
+    // update one. What plant was on site, working or standing, is a site
+    // observation — the same record a walker makes by hand.
+    const category = input.category ?? 'PROGRESS';
+    if (!values(SITE_OBSERVATION_CATEGORY).includes(category)) {
+      throw new DomainError(
+        'PERCEPTION_CATEGORY_INVALID',
+        `"${category}" is not an observation category. Use one of ${values(SITE_OBSERVATION_CATEGORY).join(', ')}.`,
+      );
+    }
+
+    const lines = items.map((item) => {
+      const identifier = item.identifier ? ` (${String(item.identifier)})` : '';
+      return `${Number(item.count ?? 1)} × ${String(item.description ?? 'unidentified plant')}${identifier} — ${String(item.state ?? 'UNCLEAR')}`;
+    });
+
+    const observation = captureSiteObservation(ctx, {
+      category: category as Parameters<typeof captureSiteObservation>[1]['category'],
+      description: `Plant and equipment read from site photography: ${lines.join('; ')}`,
+      location: String(extraction.location ?? 'Not stated'),
+      observedBy: input.observedBy ?? ctx.auth.actorId,
+      // Standing plant costs money whether or not anybody logs it, but a
+      // photograph is not an instruction. Whether it needs acting on is the
+      // confirmer's judgement, expressed by supplying an owner and a date.
+      requiresAction: Boolean(input.actionByDate),
+      actionOwner: input.actionByDate ? (input.observedBy ?? ctx.auth.actorId) : undefined,
+      actionByDate: input.actionByDate,
+      evidenceHash: draft.evidenceHash,
+    });
+
+    result = {
+      observationId: observation.observationId,
+      reference: observation.reference,
+      itemsRecorded: items.length,
+      idle: items.filter((item) => item.state === 'IDLE' || item.state === 'LAID_UP').length,
+    };
+  } else {
+    const defects = (extraction.defects as Array<Record<string, unknown>> | undefined) ?? [];
+    if (defects.length === 0) {
+      throw new DomainError('PERCEPTION_NOTHING_TO_RAISE', 'The corrected draft records no defect, so there is nothing to raise.');
+    }
+
+    // One NCR per defect, not one per photograph. Each is closed out separately,
+    // against its own corrective action, and a single record covering three
+    // faults cannot be closed when two of them are fixed.
+    const raised = defects.map((defect, position) => {
+      const severity = String(defect.severity ?? '');
+      if (severity !== 'MINOR' && severity !== 'MAJOR' && severity !== 'CRITICAL') {
+        throw new DomainError(
+          'PERCEPTION_SEVERITY_INVALID',
+          `Defect ${position + 1} is classified "${severity}". The register records MINOR, MAJOR or CRITICAL — correct it before confirming.`,
+        );
+      }
+      const element = defect.element ? `${String(defect.element)}: ` : '';
+      const standard = defect.standardBreached ? ` Against ${String(defect.standardBreached)}.` : '';
+      const ncr = raiseNCR(ctx, {
+        description: `${element}${String(defect.description ?? '')}${standard}`,
+        severity,
+        proposedAction: String(defect.proposedAction ?? ''),
+        inspectionId: input.inspectionId,
+        workPackageId: input.workPackageId,
+        evidenceHash: draft.evidenceHash,
+      });
+      return { ncrId: ncr.ncrId, reference: ncr.reference, severity };
+    });
+
+    result = { ncrs: raised, raised: raised.length };
   }
 
   write(ctx, {

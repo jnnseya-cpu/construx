@@ -7034,7 +7034,9 @@ named so it is not mistaken for finished.
 | Model ingestion | Records the model, hash, discipline, LOD, element count as a governed event | IFC parsing, geometry hash, model diffing |
 | Digital twin | Reconciles observed against expected element status | Observations are structured input, not derived from imagery |
 | Evidence capture | Real SHA-256 over the real file, recorded against the event, and the file itself held in a tenant-scoped content-addressed store | Retention and deletion policy; no antivirus scan on upload |
-| Clause extraction | From supplied text | OCR and table extraction |
+| File ingestion | Structural inspection, rules classification with its signals, native text and table extraction, and a lexical index over what was read. A file that is not what it claims to be is quarantined with the finding on the record | No signature scan; a PDF or a photograph reports `NEEDS_OCR` rather than being read; the index is lexical, so it finds a near-duplicate and not a paraphrase |
+| Vision tasks | Progress, PPE, plant and defects read from a held photograph, each as a draft a person confirms into the ordinary domain command | Exercised against a stub, not a live provider — the same limit as the drawing and voice tasks |
+| Clause extraction | From supplied text | OCR and table extraction from a PDF |
 | 4D scheduling | Twin states link to task ids | No visualisation |
 | Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded | No bounce processing or suppression list; DKIM belongs at the relay, where the key should live |
 
@@ -7046,13 +7048,20 @@ Specified in the source documents, deliberately absent, and **not to be claimed
 as present**. Most of it is perception and ingestion infrastructure — real ML and
 parsing work, not wiring.
 
-- **File ingestion pipeline** — virus scan, ML file classifier with confidence,
-  OCR, table extraction, vector embedding, `FILE_EXTRACTED`. Upload and storage
-  themselves are built: `backend/src/evidence/store.ts` holds the bytes, and the
-  content type is recorded as the label it is rather than validated, because the
-  address is the hash and the store never trusts the declaration
-- **Vision pipeline** — progress estimation, PPE compliance, equipment
-  recognition, defect detection, `PROGRESS_EXTRACTED_FROM_IMAGES`
+- **Antivirus scanning** — there is no signature engine in this process and
+  there is not going to be one under the zero-dependency decision. The ingestion
+  pipeline below carries `antivirusScanned: false` on every record and
+  `antivirusConfigured: false` on every read, so a count of zero quarantined is
+  never readable as "nothing infected". Scanning belongs at the storage boundary
+  in a deployment that has one
+- **OCR, and any semantic embedding** — the ingestion pipeline reports
+  `NEEDS_OCR` for a PDF or a photograph and routes to the perception pipeline,
+  which refuses where no multimodal provider is configured. The document index is
+  feature hashing over words and word pairs, and the field is named
+  `lexicalVector` because it finds a near-duplicate revision, not a paraphrase
+- **A plant register** — plant recognised in a photograph is filed as a site
+  observation naming what was seen and whether it was standing. There is no
+  register of plant on hire, and utilisation is not derived
 - **Audio and communication intelligence** — commitment and deadline extraction,
   `COMMITMENT_REGISTERED`, `DEADLINE_TRACKED`. Transcription of a site voice note
   into a confirmed observation is built, through the perception pipeline; what is
@@ -7782,6 +7791,108 @@ approximation — and the tolerance is named in the case rather than assumed.
 The harness now reports five kinds: accounting, boundary, refusal, injection and
 **determined**. The first four ask whether the platform's defences hold; the
 fifth asks whether its answers are right.
+
+---
+
+## The file nobody had looked at
+
+The evidence store already held the bytes, refused anything whose hash did not
+match, and reported what the register named and did not hold. What it never did
+was **look at the file**. A Windows executable renamed `site-photo.png` hashed
+correctly, stored correctly, and sat in the register looking exactly like a
+photograph.
+
+`backend/src/evidence/ingest.ts` is five stages as pure functions — inspect,
+classify, extract, index, available — and `pipeline.ts` is the governed half:
+who may run it, what it writes, what it refuses. Each stage is a separate fact
+on the record rather than one "processed" flag.
+
+**It is not an antivirus and the record says so.** Zero runtime dependencies is
+settled, so there is no signature engine and there is not going to be one.
+`antivirusScanned: false` is on every inspection and `antivirusConfigured: false`
+on every read, because a deployment reading `0 quarantined` as "nothing infected"
+would be believing something nobody checked. What is checked is **structure**:
+the declared type against the first bytes, executable magic (PE, ELF, both Mach-O
+byte orders, Java class), the EICAR test string, active markup in a text-shaped
+file, an archive carrying an `.exe`, and a compression bomb read from the ratio
+the archive itself declares so nothing has to be expanded to find out.
+
+**A quarantined file is not deleted.** The record is append-only and the bytes
+are already an address something else may reference; deleting the object would
+leave a hash in the chain pointing at nothing, which is the failure the evidence
+register exists to report. Quarantine is a state saying nothing downstream should
+read this, and why.
+
+**The classifier is rules and is named that way.** `method: 'RULES'`, a
+confidence that is the count of agreeing signals rather than a self-report, and
+the signals listed so somebody can disagree with the answer. Each signal is a
+sentence — it published the regex itself at first, so a project manager was shown
+`the filename matches /(spec|specification|nbs)/i`.
+
+**The index is lexical and is named that way.** Feature hashing over words and
+word pairs, L2-normalised, compared by cosine. It finds the second copy of a
+specification and revision C beside revision B; it does not find a document that
+means the same thing in other words, and a test asserts the paraphrase it *fails*
+to match, because the overclaim is the defect rather than the miss.
+
+Two defects were found by building the tests rather than in production. Three
+lines of a letter carrying the same number of commas were read as a
+three-column table — the delimited parser now needs three rows and a header row
+with no sentence in it. And the second and third events wrote the same state as
+the first, which the ledger refuses: `FILE_INGESTED` now carries what the file is
+and what came of trying to read it, `FILE_EXTRACTED` adds what actually came out,
+and `FILE_QUARANTINED` is the change of status.
+
+Ingestion takes `EVIDENCE_AUDIT` **`I`**, not `R`. Every role in the platform can
+read the evidence register; producing a governed statement that a file is a
+specification, or that it is a renamed executable, is an act on the store.
+
+---
+
+## Four more prompts, not a second pipeline
+
+Progress estimation, PPE compliance, equipment recognition and defect detection
+were specified as a separate vision pipeline. They are four more tasks in
+`backend/src/engines/perception.ts`, because every rule a vision pipeline needs
+was already there: refuse where no provider can see, send the file as media
+rather than stringified into the prompt, write a draft, let a person confirm it
+into the ordinary domain command.
+
+A second pipeline would have been a second way into the progress register, the
+NCR register and the safety log — the one thing the draft-and-confirm discipline
+exists to prevent. So a confirmed progress reading runs `submitProgress` and is
+refused by the measurement basis if the model measured in the wrong unit; a
+confirmed defect reading runs `raiseNCR` once per defect, so each closes on its
+own evidence; PPE runs `logSafetyObservation`; plant runs
+`captureSiteObservation`.
+
+**What the model is not asked.** No task's schema contains an activity id or a
+claim period, and a test asserts it: those decide who gets paid and neither is in
+the frame. The PPE prompt says *do not identify or describe any individual* —
+a model naming an operative from a photograph is a disciplinary allegation
+produced by a machine. None of the four accepts a PDF: a drawing is a document
+about what is intended and these report what is there.
+
+`PROGRESS_EXTRACTED_FROM_IMAGES` is written against the submission beside
+`PROGRESS_REPORTED`. It carries the provider, whether the answer was synthetic,
+the stated basis of measurement, what the model said it could not see, and what
+the confirmer changed. The submission's own state is carried forward rather than
+replaced — one entity holds one state, and writing the provenance alone would
+have deleted the quantity a valuation is built on.
+
+Two things were found on the way. `PerceptionDraft` declared `provider: string`
+and nothing ever wrote it; the provider was on the event's `ai` block and on
+`aiProvenance`, so the type was a lie to anybody reading a draft. And the voice
+note's confirm branch never passed `actionByDate`, so a note the model read as
+actionable could not be confirmed at all without first correcting
+`requiresAction` to false — the confirmer overwriting what the speaker said in
+order to file it.
+
+**Verified against a stub, not a live provider**, the same limit the drawing and
+voice tasks already carry. In the console the refusal branch is what a local
+deployment shows, and it was checked in a browser: the panel states that no
+provider here can read a file, and offers only the tasks the reader's own
+authority covers.
 
 ---
 

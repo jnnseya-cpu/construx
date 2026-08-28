@@ -173,8 +173,14 @@ describe('a provider that cannot see a file is refused, not asked anyway', () =>
     assert.equal(capability.available, false);
     assert.match(capability.reason ?? '', /cannot be shown a file/);
     // The task list is still published — what this deployment *would* do is a
-    // different question from what it can do today.
-    assert.equal(capability.tasks.length, 3);
+    // different question from what it can do today. Counted against the
+    // registry rather than a number written here, so adding a task cannot leave
+    // the console offering one the endpoint never publishes.
+    assert.equal(capability.tasks.length, Object.keys(perception.PERCEPTION_TASKS).length);
+    assert.deepEqual(
+      capability.tasks.map((task) => task.task).sort(),
+      Object.keys(perception.PERCEPTION_TASKS).sort(),
+    );
   });
 
   it('no longer writes an invented title block into the drawing register', async () => {

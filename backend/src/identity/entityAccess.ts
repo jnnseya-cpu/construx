@@ -440,6 +440,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // record additionally names their address and whether it reached them, which
   // is why the two are classified apart rather than together.
   AIEvaluation: { area: 'PLATFORM_ADMINISTRATION' },
+  // The ingestion record holds the extracted text of whatever was uploaded, so
+  // it is classified with the evidence it describes rather than more loosely.
+  // A specification and a without-prejudice letter go through the same pipeline.
+  IngestedFile: { area: 'EVIDENCE_AUDIT', sensitivity: 'LEGAL_L4' },
   NotificationDispatch: { area: 'PLATFORM_ADMINISTRATION' },
   // The queue holds the rendered payload and the recipients' addresses until it
   // settles, so it is classified with the delivery record rather than with the

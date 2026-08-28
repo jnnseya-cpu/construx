@@ -29,6 +29,135 @@ import { blockedReason, can, draw, state } from '../app.js';
  * refused for regression is work that was done and is not in the platform.
  * A merge is here to be confirmed, not rescued.
  */
+/**
+ * The four tasks that read a site photograph, and where each one lands.
+ *
+ * The label is the console's; the authority is not. The
+ * capability endpoint publishes the area and code each task requires — which is
+ * exactly what the domain command it feeds requires — so a control nobody can
+ * use is not offered rather than offered and refused.
+ */
+const VISION_TASKS = [
+  {
+    task: 'PROGRESS_FROM_IMAGES',
+    label: 'Progress',
+    lands: 'a progress claim against an activity, for a period, which somebody else certifies',
+  },
+  { task: 'PPE_COMPLIANCE', label: 'PPE', lands: 'a safety observation, for a person to close out' },
+  {
+    task: 'EQUIPMENT_RECOGNITION',
+    label: 'Plant',
+    lands: 'a site observation naming the plant and whether it was standing',
+  },
+  { task: 'DEFECT_DETECTION', label: 'Defects', lands: 'one NCR per defect, each closed on its own' },
+];
+
+/**
+ * Reading a site photograph.
+ *
+ * Progress estimation, PPE compliance, plant recognition and defect detection
+ * were specified as a separate vision pipeline; they are four more tasks on the
+ * pipeline that already reads drawings and voice notes, because everything a
+ * vision pipeline needs was already in it.
+ *
+ * The panel exists to make two things visible at the point of use. First, that
+ * nothing read here is filed: an extraction is a draft, and confirming it runs
+ * the ordinary command with the ordinary rules — the unit checked against the
+ * measurement basis, the severity checked against the NCR register's own three
+ * words. Second, that where no provider on this deployment can see a file,
+ * nothing is read at all rather than read badly.
+ */
+function visionPanel(perception, photographs, storeConfigured) {
+  if (!perception) return '';
+
+  const available = perception.capability?.available === true;
+  const published = new Map((perception.capability?.tasks ?? []).map((entry) => [entry.task, entry]));
+  const usable = VISION_TASKS.filter((entry) => {
+    const declared = published.get(entry.task);
+    return declared && can(declared.area, declared.code);
+  });
+  const drafts = (perception.drafts ?? []).filter(
+    (draft) => draft.status === 'DRAFT' && VISION_TASKS.some((entry) => entry.task === draft.task),
+  );
+
+  if (usable.length === 0 && drafts.length === 0) return '';
+
+  return html`<div class="card pad0" style="margin-bottom:14px">
+    <div style="padding:15px 17px 0">
+      <h2>Read a site photograph</h2>
+      <p class="metric-sub" style="margin-bottom:12px">
+        ${usable.map((entry) => `${entry.label} — ${entry.lands}`).join('. ')}.
+        Nothing read this way is filed on its own: an extraction is a draft until somebody confirms it, and confirming
+        runs the same command as typing it in, with the same rules.
+      </p>
+      ${available
+        ? ''
+        : html`<div class="notice warn" style="margin-bottom:12px">
+            <div>
+              <b>Not available on this deployment.</b><br />${perception.capability?.reason ?? ''} A photograph is not
+              read here at all, rather than read badly and claimed against.
+            </div>
+          </div>`}
+    </div>
+    ${available && usable.length > 0
+      ? table({
+          headers: ['Photograph', 'Taken', 'Read for'],
+          rows: photographs.slice(0, 10).map((entry) => [
+            entry.description,
+            date(entry.capturedAt),
+            html`${usable.map(
+              (task) =>
+                html`<button class="btn quiet sm" data-vision="${task.task}" data-hash="${entry.hash}">
+                  ${task.label}
+                </button> `,
+            )}`,
+          ]),
+          empty: storeConfigured
+            ? 'No photographs are held on this project yet. A hash on its own cannot be read.'
+            : 'This deployment holds no evidence files, so there is nothing to read.',
+        })
+      : ''}
+    ${drafts.length > 0
+      ? html`<div style="padding:0 17px 15px">
+          <h2 style="margin-top:14px">Awaiting confirmation</h2>
+          ${table({
+            headers: ['Read', 'What it says', 'Confidence', ''],
+            rows: drafts.map((draft) => [
+              humanise(draft.task),
+              visionSummary(draft),
+              draft.confidence !== undefined && draft.confidence !== null ? pct(draft.confidence * 100, 0) : '—',
+              html`<button class="btn sm" data-vision-confirm="${draft.id}">Review</button>
+                <button class="btn quiet sm" data-vision-discard="${draft.id}">Reject</button>`,
+            ]),
+          })}
+        </div>`
+      : ''}
+  </div>`;
+}
+
+/** One line saying what a draft found, in the terms of the register it feeds. */
+function visionSummary(draft) {
+  const extraction = draft.extraction ?? {};
+  if (draft.task === 'PROGRESS_FROM_IMAGES') {
+    const items = extraction.items ?? [];
+    return items.length === 0
+      ? 'nothing measurable'
+      : `${items[0].quantity} ${items[0].unit} — ${items[0].description}${items.length > 1 ? ` (+${items.length - 1} more)` : ''}`;
+  }
+  if (draft.task === 'PPE_COMPLIANCE') {
+    const breaches = extraction.breaches ?? [];
+    return breaches.length === 0
+      ? 'compliant — no breach reported'
+      : `${breaches.length} breach(es): ${breaches.map((breach) => breach.item).join(', ')}`;
+  }
+  if (draft.task === 'EQUIPMENT_RECOGNITION') {
+    const items = extraction.items ?? [];
+    return items.map((item) => `${item.count} × ${item.description} (${humanise(item.state)})`).join('; ');
+  }
+  const defects = extraction.defects ?? [];
+  return defects.map((defect) => `${defect.severity}: ${defect.description}`).join(' · ');
+}
+
 function conflictPanel(position) {
   if (!position || position.conflicts.length === 0) return '';
 
@@ -139,6 +268,15 @@ export async function field(root) {
   // one.
   const perception = await api.get(`/v1/projects/${projectId}/perception`).catch(() => null);
 
+  // The photographs this project already holds. A vision task reads a file the
+  // platform has, so the register is the list of what can be read — the same
+  // approach the design screen takes with drawings, rather than a second upload
+  // path into the evidence store.
+  const evidence = await api.get(`/v1/projects/${projectId}/evidence`).catch(() => null);
+  const photographs = (evidence?.entries ?? []).filter(
+    (entry) => entry.held && String(entry.contentType ?? '').startsWith('image/'),
+  );
+
   // Days earned against days spent. The arithmetic already existed inside the
   // delay forecast, where nothing could read it on its own.
   const productivity = await api.get(`/v1/projects/${projectId}/productivity`).catch(() => null);
@@ -246,6 +384,8 @@ export async function field(root) {
       }
 
       ${conflictPanel(conflicts)}
+
+      ${visionPanel(perception, photographs, evidence?.storeConfigured === true)}
 
       <div class="card" style="margin-bottom:14px">
         <h2>Daily site record</h2>
@@ -1196,6 +1336,281 @@ export async function field(root) {
       await draw();
     }
   }
+
+  /**
+   * A vision draft, shown before anything is filed.
+   *
+   * Every task ends in a different register, so every task asks for the fields
+   * that register needs and no others. The pattern the forms enforce is the one
+   * the engine enforces: what a photograph can show is offered as a correction,
+   * and what it cannot — the activity a claim is against, the period it falls
+   * in, the date an action is needed by — is asked of the person, because those
+   * are the fields somebody is later held to.
+   */
+  async function reviewVision(draft) {
+    const extraction = draft.extraction ?? {};
+    const read = `Read${
+      draft.confidence !== undefined && draft.confidence !== null ? ` at ${pct(draft.confidence * 100, 0)} confidence` : ''
+    }.`;
+    const path = `/v1/projects/${projectId}/perception/${draft.id}/confirm`;
+
+    if (draft.task === 'PROGRESS_FROM_IMAGES') {
+      const items = extraction.items ?? [];
+      const confirmed = await command({
+        title: 'Progress read from a photograph',
+        intent:
+          `${read} One claim is made against one activity, so say which item is being claimed and what it is claimed ` +
+          `against.${
+            (extraction.obstructed ?? []).length > 0
+              ? ` Not measured: ${extraction.obstructed.join('; ')}.`
+              : ''
+          }`,
+        path,
+        submitLabel: 'Submit the claim',
+        fields: [
+          {
+            name: 'itemIndex',
+            label: 'What is being claimed',
+            type: 'select',
+            options: items.map((item, index) => ({
+              value: String(index),
+              label: `${item.quantity} ${item.unit} — ${item.description}`,
+            })),
+          },
+          {
+            name: 'quantity',
+            label: 'Quantity',
+            type: 'number',
+            required: false,
+            placeholder: 'As read',
+            hint: 'Leave blank to claim what was read. What you change is recorded separately from what the model returned.',
+          },
+          {
+            name: 'taskId',
+            label: 'Against which activity',
+            type: 'select',
+            options: b.Task.map((task) => ({ value: task._refId, label: `${task.activityCode} · ${task.name}` })),
+            hint: 'Not visible in a photograph. The unit is checked against this activity’s measurement basis.',
+          },
+          { name: 'periodFrom', label: 'Period from', type: 'date', value: today() },
+          { name: 'periodTo', label: 'Period to', type: 'date', value: today() },
+          { name: 'costCode', label: 'Cost code', type: 'text', required: false },
+          {
+            name: 'rework',
+            label: 'Is this rework?',
+            type: 'select',
+            options: [
+              { value: 'NO', label: 'No — new work' },
+              { value: 'YES', label: 'Yes — redone work, recorded and earning nothing' },
+            ],
+          },
+        ],
+        transform: (values) => {
+          const index = Number(values.itemIndex ?? 0);
+          return {
+            itemIndex: index,
+            taskId: values.taskId,
+            periodFrom: values.periodFrom,
+            periodTo: values.periodTo,
+            ...(values.costCode ? { costCode: values.costCode } : {}),
+            rework: values.rework === 'YES',
+            ...(values.quantity
+              ? {
+                  corrections: {
+                    items: items.map((item, at) => (at === index ? { ...item, quantity: Number(values.quantity) } : item)),
+                  },
+                }
+              : {}),
+          };
+        },
+      });
+      if (confirmed) {
+        toast(
+          'Claim submitted',
+          `${confirmed.reference ?? ''} — ${confirmed.cumulativeIfAccepted} cumulative if accepted.` +
+            (confirmed.exceedsControlTotal ? ' This would exceed the control total.' : ''),
+          confirmed.exceedsControlTotal ? 'warn' : 'ok',
+        );
+        await draw();
+      }
+      return;
+    }
+
+    if (draft.task === 'PPE_COMPLIANCE') {
+      const breaches = extraction.breaches ?? [];
+      const confirmed = await command({
+        title: 'PPE read from a photograph',
+        intent:
+          `${read} ${
+            breaches.length === 0
+              ? 'No breach was reported.'
+              : `${breaches.map((breach) => `${breach.item}: ${breach.description}`).join('; ')}.`
+          }${
+            (extraction.notJudgeable ?? []).length > 0 ? ` Could not be judged: ${extraction.notJudgeable.join('; ')}.` : ''
+          } Nobody in the photograph is named by any of this.`,
+        path,
+        submitLabel: 'File the observation',
+        fields: [
+          {
+            name: 'observationType',
+            label: 'What this is',
+            type: 'select',
+            value: extraction.compliant === true && breaches.length === 0 ? 'GOOD_PRACTICE' : 'UNSAFE_ACT',
+            options: OBSERVATION_TYPE,
+          },
+          { name: 'location', label: 'Where on site', type: 'text', value: String(extraction.location ?? '') },
+          {
+            name: 'narrative',
+            label: 'What was seen',
+            type: 'textarea',
+            rows: 4,
+            value: String(extraction.narrative ?? ''),
+          },
+        ],
+        transform: (values) => ({
+          observationType: values.observationType,
+          corrections: { narrative: values.narrative, location: values.location },
+        }),
+      });
+      if (confirmed) {
+        toast('Filed', `Safety observation recorded at ${confirmed.severity ?? 'unclassified'} severity.`, 'ok');
+        await draw();
+      }
+      return;
+    }
+
+    if (draft.task === 'EQUIPMENT_RECOGNITION') {
+      const items = extraction.items ?? [];
+      const confirmed = await command({
+        title: 'Plant read from a photograph',
+        intent:
+          `${read} ${items.map((item) => `${item.count} × ${item.description} (${humanise(item.state)})`).join('; ')}. ` +
+          'There is no plant register on this platform, so this is filed as a site observation naming what was seen.',
+        path,
+        submitLabel: 'File the observation',
+        fields: [
+          { name: 'category', label: 'Category', type: 'select', value: 'PROGRESS', options: SITE_OBSERVATION_CATEGORY },
+          { name: 'location', label: 'Where on site', type: 'text', value: String(extraction.location ?? '') },
+          {
+            name: 'actionByDate',
+            label: 'Needed by',
+            type: 'date',
+            required: false,
+            hint: 'Left blank this is recorded for the file. A date makes it an action, and you own it.',
+          },
+        ],
+        transform: (values) => ({
+          category: values.category,
+          ...(values.actionByDate ? { actionByDate: values.actionByDate } : {}),
+          corrections: { location: values.location },
+        }),
+      });
+      if (confirmed) {
+        toast(
+          'Filed',
+          `Observation ${confirmed.reference ?? ''} — ${confirmed.itemsRecorded} item(s), ${confirmed.idle} standing.`,
+          'ok',
+        );
+        await draw();
+      }
+      return;
+    }
+
+    const defects = extraction.defects ?? [];
+    const confirmed = await command({
+      title: 'Defects read from a photograph',
+      intent:
+        `${read} One NCR is raised per defect, so each can be closed on its own evidence.${
+          (extraction.workInProgress ?? []).length > 0
+            ? ` Reported as still in progress rather than defective: ${extraction.workInProgress.join('; ')}.`
+            : ''
+        }`,
+      path,
+      submitLabel: `Raise ${defects.length} NCR${defects.length === 1 ? '' : 's'}`,
+      fields: [
+        ...defects.flatMap((defect, index) => [
+          {
+            name: `severity${index}`,
+            label: `${index + 1}. ${defect.description}`,
+            type: 'select',
+            value: ['MINOR', 'MAJOR', 'CRITICAL'].includes(defect.severity) ? defect.severity : 'MINOR',
+            options: [
+              { value: 'MINOR', label: 'Minor' },
+              { value: 'MAJOR', label: 'Major' },
+              { value: 'CRITICAL', label: 'Critical' },
+            ],
+            hint: defect.standardBreached ? `Against ${defect.standardBreached}.` : undefined,
+          },
+          {
+            name: `action${index}`,
+            label: `${index + 1}. Corrective action`,
+            type: 'text',
+            value: String(defect.proposedAction ?? ''),
+          },
+        ]),
+      ],
+      transform: (values) => ({
+        corrections: {
+          defects: defects.map((defect, index) => ({
+            ...defect,
+            severity: values[`severity${index}`],
+            proposedAction: values[`action${index}`],
+          })),
+        },
+      }),
+    });
+    if (confirmed) {
+      toast('Raised', (confirmed.ncrs ?? []).map((ncr) => `${ncr.reference} (${ncr.severity})`).join(' · '), 'ok');
+      await draw();
+    }
+  }
+
+  root.addEventListener('click', async (event) => {
+    const start = event.target.closest('[data-vision]');
+    if (start) {
+      const hash = start.dataset.hash;
+      // One entry per task, each with its endpoint written out. The path could
+      // be interpolated from the task name in one line; written out, every one
+      // of the four is a literal the console-forms test can resolve against the
+      // route table, and a renamed route fails the suite rather than the site.
+      const endpoints = {
+        PROGRESS_FROM_IMAGES: () => api.post(`/v1/projects/${projectId}/perception/progress`, { hash }),
+        PPE_COMPLIANCE: () => api.post(`/v1/projects/${projectId}/perception/ppe`, { hash }),
+        EQUIPMENT_RECOGNITION: () => api.post(`/v1/projects/${projectId}/perception/equipment`, { hash }),
+        DEFECT_DETECTION: () => api.post(`/v1/projects/${projectId}/perception/defects`, { hash }),
+      };
+      let draft;
+      try {
+        draft = await endpoints[start.dataset.vision]();
+      } catch (error) {
+        toast('Nothing was read', error.detail ?? error.message ?? 'The read failed.', 'warn');
+        return;
+      }
+      // The response is the extraction; the draft the review form needs carries
+      // the same fields under the names the register uses.
+      await reviewVision({ id: draft.draftId, task: draft.task, extraction: draft.extraction, confidence: draft.confidence });
+      return;
+    }
+
+    const review = event.target.closest('[data-vision-confirm]');
+    if (review) {
+      const draft = (perception?.drafts ?? []).find((entry) => entry.id === review.dataset.visionConfirm);
+      if (draft) await reviewVision(draft);
+      return;
+    }
+
+    const reject = event.target.closest('[data-vision-discard]');
+    if (reject) {
+      const result = await command({
+        title: 'Reject this reading',
+        intent: 'The record of what the model read is kept. Say why it is not being used.',
+        path: `/v1/projects/${projectId}/perception/${reject.dataset.visionDiscard}/discard`,
+        submitLabel: 'Reject',
+        fields: [{ name: 'reason', label: 'Why', type: 'text' }],
+      });
+      if (result) await draw();
+    }
+  });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

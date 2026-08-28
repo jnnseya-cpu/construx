@@ -127,6 +127,7 @@ import { estateBurn } from '../billing/burn.ts';
 import { estateOverview } from '../billing/overview.ts';
 import { isPlatformGovernanceEvent } from '../goldenthread/eventTypes.ts';
 import * as evidence from '../evidence/registry.ts';
+import * as ingestion from '../evidence/pipeline.ts';
 import * as siteMedia from '../site/media.ts';
 import * as conflicts from '../field/conflicts.ts';
 import * as outbox from '../notifications/outbox.ts';
@@ -332,6 +333,10 @@ const PERCEPTION_PATHS: Record<perception.PerceptionTask, string> = {
   TITLE_BLOCK: 'title-block',
   DRAWING_TAKEOFF: 'take-off',
   VOICE_NOTE: 'voice-note',
+  PROGRESS_FROM_IMAGES: 'progress',
+  PPE_COMPLIANCE: 'ppe',
+  EQUIPMENT_RECOGNITION: 'equipment',
+  DEFECT_DETECTION: 'defects',
 };
 
 /**
@@ -13065,6 +13070,66 @@ export const ROUTES: Route[] = [
       };
     },
   },
+
+  // --- Ingestion -------------------------------------------------------------
+  //
+  // Knowing what a held file actually is. The register above says a hash was
+  // named as evidence and whether the bytes are here; this says the bytes are a
+  // specification rather than a photograph, that its text is readable, and — the
+  // reason it exists — that one of them is a Windows executable renamed to .pdf.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/ingestion',
+    readOnly: true,
+    description: 'What has been read from the project’s files, what was quarantined, and what has never been looked at',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      return {
+        position: ingestion.ingestionPosition(engineCtx, platform.evidence),
+        files: ingestion.ingestedFiles(engineCtx),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/ingestion',
+    description: 'Inspect, classify and read a stored file, and quarantine it if it should not have been accepted',
+    schema: {
+      type: 'object',
+      required: ['hash'],
+      properties: {
+        hash: stringField,
+        // The name it was uploaded under, which the store does not keep: the
+        // address is the hash. It is a signal to the classifier and it is what
+        // the mismatch check compares against, so a `.pdf` holding a PE header
+        // is visible as the lie it is.
+        filename: { type: 'string', minLength: 1, maxLength: 255 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      ingestion.ingestFile(
+        projectContext(platform, ctx),
+        platform.evidence,
+        body<{ hash: string; filename?: string }>(ctx),
+      ),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/ingestion/:ingestionId/similar',
+    readOnly: true,
+    description: 'Other files on the project whose text overlaps this one — lexical, so near-duplicates, not meaning',
+    handler: (platform, ctx) => {
+      const threshold = Number(ctx.query.get('threshold') ?? '');
+      return {
+        matches: ingestion.similarFiles(
+          projectContext(platform, ctx),
+          ctx.params.ingestionId as string,
+          Number.isFinite(threshold) && threshold > 0 && threshold <= 1 ? threshold : undefined,
+        ),
+      };
+    },
+  },
   // Retention, which here is mostly a policy about not deleting. Tenant-scoped
   // rather than project-scoped because the store is: the same file legitimately
   // evidences things in more than one project of the same tenancy.
@@ -13398,20 +13463,33 @@ export const ROUTES: Route[] = [
         // differs per task — a title block, an array of measured items, a
         // transcript — so this is checked by the engine against the draft's own
         // task rather than pinned here. What the schema does enforce is that
-        // nothing else arrives: the three fields below name where a confirmed
+        // nothing else arrives: the fields below name where a confirmed
         // extraction is filed, and a stray property in this body would be a
         // caller trying to redirect it.
         corrections: { type: 'object' },
         packageId: stringField,
         costCodePrefix: stringField,
         observedBy: stringField,
+        actionByDate: stringField,
+        category: stringField,
+        // The four fields a photograph cannot show. A progress claim is against
+        // one activity for one period, and neither is in the image.
+        taskId: stringField,
+        periodFrom: stringField,
+        periodTo: stringField,
+        costCode: stringField,
+        itemIndex: { type: 'integer', minimum: 0 },
+        rework: { type: 'boolean' },
+        observationType: { type: 'string', enum: ['UNSAFE_ACT', 'UNSAFE_CONDITION', 'NEAR_MISS', 'GOOD_PRACTICE'] },
+        workPackageId: stringField,
+        inspectionId: stringField,
       },
       additionalProperties: false,
     },
     handler: (platform, ctx) =>
       perception.confirm(projectContext(platform, ctx), {
         draftId: ctx.params.draftId as string,
-        ...body<{ corrections?: Record<string, unknown> }>(ctx),
+        ...body<Omit<perception.ConfirmInput, 'draftId'>>(ctx),
       }),
   },
   // --- The command catalogue -------------------------------------------------

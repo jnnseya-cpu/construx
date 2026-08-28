@@ -76,7 +76,7 @@ not pretend to have done.
 | Engine | Status | Where |
 |---|---|---|
 | A — Tender & Commercial Intelligence | Built | `backend/src/engines/tender.ts` |
-| Vision-based 2D and BIM take-off | Partial | `runTakeoff()` governs, evidences and prices measured items and traces each to a sheet and revision; the quantities are supplied by the caller, not extracted from a drawing |
+| Vision-based 2D and BIM take-off | Partial | `runTakeoff()` governs, evidences and prices measured items and traces each to a sheet and revision. Quantities can be read off a held drawing by the `DRAWING_TAKEOFF` perception task and confirmed before they become BoQ items; that path is exercised against a stub, not a live provider, and is refused outright where no configured provider can be shown a file |
 | Auto-generated BoQ with confidence per item | Built | `BOQITEM_CREATED_FROM_TAKEOFF` carries `confidenceScore` |
 | Bottom-up estimating (labour, plant, material, prelims, O&P) | Built | `buildEstimate()` |
 | Explicit risk pricing, not buried in a percentage | Built | `riskAllowanceMinor` is a distinct line |
@@ -110,12 +110,12 @@ not pretend to have done.
 | Weather-driven hazard forecasting | Partial | Adverse weather days are an input; no weather feed connected |
 | Competency and training register | Built | `recordCompetency()` |
 | E — BIM & Digital Twin | Built | `backend/src/engines/bim.ts` |
-| Drawing register with title-block structuring | Partial | `registerDrawing()` structures a title block from raw text; the OCR that produces that text is not implemented |
+| Drawing register with title-block structuring | Partial | `registerDrawing()` structures a title block from raw text, and the `TITLE_BLOCK` perception task reads one from the held drawing itself for a person to confirm. Verified against a stub, not a live provider; a deployment with no multimodal provider is refused rather than given an invented title block |
 | Revision supersession engine | Built | Automatic; marking up a superseded drawing is refused |
 | Markup → RFI / instruction conversion | Built | `addMarkup({ convertTo })` with auto-numbering |
 | Model ingestion (IFC and others) | Partial | `ingestModel()` records the model, its hash, discipline, LOD and element count as a governed event; no IFC schema parser, no geometry hash, no model diffing |
 | Clash detection with cost-aware triage | Built | `detectClashes()` weighted by discipline rework cost |
-| Live twin fed by drones, IoT, site capture | Partial | `updateTwinFromSite()` and `ingestSensorReading()` reconcile observed against expected element status; the observations are supplied as structured input, not derived from imagery |
+| Live twin fed by drones, IoT, site capture | Partial | `updateTwinFromSite()` and `ingestSensorReading()` reconcile observed against expected element status from structured input. Progress, PPE, plant and defects can be read from a site photograph through the perception pipeline and confirmed into their own registers; nothing feeds the twin from imagery directly |
 | Automated as-built generation | Built | `generateAsBuilt()` reconciling captures against the model |
 | ISO 19650 CDE | Partial | Revision control, status and supersession built; full CDE state model not |
 | F — Contracts, Change & Claims | Built | `backend/src/engines/claims.ts` |
@@ -347,24 +347,28 @@ not pretend to have done.
 
 ## 13. Ingestion and perception pipeline
 
-The specification describes a full intake stack in front of the engines. The
-platform is built to receive its output — every command takes structured input,
-carries an evidence hash and writes a governed event — but the stack itself is
-not implemented. This is the largest gap in the build and it is stated plainly
-rather than implied by a "Built" row elsewhere.
+The specification describes a full intake stack in front of the engines. Most of
+it is now built — upload and storage, structural inspection, classification,
+native extraction, a lexical index, and seven perception tasks that read a held
+file and produce a draft a person confirms. What remains absent is the part that
+needs a model or a library this platform does not have: signature scanning, OCR,
+semantic embedding and IFC parsing. Those rows say so rather than being implied
+by a "Built" row elsewhere.
 
 | Requirement | Status | Where |
 |---|---|---|
-| Presigned upload, SHA-256, virus scan, MIME validation | Design only | Evidence is referenced by hash and URI; no upload service |
-| ML file classifier (contract, ITT, spec, drawing, BoQ, invoice, claim, method statement, risk register, QA/QC, safety report) with confidence | Design only | Not implemented |
-| OCR, table extraction, clause extraction, entity extraction | Partial | Clause extraction from supplied text is built (`extractContractIntelligence()`); OCR and table extraction are not |
-| Vector embedding and semantic retrieval | Design only | Not implemented |
-| `FILE_EXTRACTED` event | Design only | Not in the catalogue |
+| Presigned upload, SHA-256, MIME validation | Built | `evidence/store.ts` stores bytes only against a hash the ledger already names and refuses any whose content does not hash to it; `evidence/ingest.ts` checks the declared type against the leading bytes and quarantines a mismatch |
+| Virus scan | Not built, and not claimed | There is no signature engine under the zero-dependency decision. `antivirusScanned: false` is on every inspection and `antivirusConfigured: false` on every read, so zero quarantined is never readable as nothing infected. What is refused is structural: executable magic, EICAR, active markup, an archive carrying a program, a declared compression ratio above 200:1 |
+| File classifier (drawing, specification, programme, contract, certificate, photograph, model, schedule, correspondence) with confidence | Partial | `classify()` in `evidence/ingest.ts`, with `method: 'RULES'` on the record and a confidence that counts agreeing signals. It is filename convention, magic number and content markers — not machine learning, and the record does not call it that |
+| OCR, table extraction, clause extraction, entity extraction | Partial | Native text and delimited tables are extracted (`extractText()`); clause extraction from supplied text is built (`extractContractIntelligence()`). A PDF or a photograph reports `NEEDS_OCR` and routes to the perception pipeline, which refuses where no multimodal provider is configured |
+| Vector embedding and semantic retrieval | Partial | `lexicalVector()` and `similarFiles()` — feature hashing over words and word pairs, cosine compared. Named lexical because it is: it finds the near-duplicate revision and the second copy of a specification, not a document that means the same thing in other words. A semantic embedding is not built |
+| `FILE_EXTRACTED` event | Built | With `FILE_INGESTED` and `FILE_QUARANTINED`, written by `ingestFile()` |
 | IFC schema parsing, quantity computation, element→WBS mapping | Design only | `ingestModel()` records the model as an event; it does not parse it |
 | Geometry hash, model version diffing, change detection | Design only | Not implemented |
-| Vision: progress estimation, PPE compliance, equipment recognition, defect detection | Design only | `updateTwinFromSite()` consumes structured observations; no vision model |
-| `PROGRESS_EXTRACTED_FROM_IMAGES` event | Design only | Not in the catalogue |
-| Audio: transcription, commitment and deadline extraction | Design only | Not implemented |
+| Vision: progress estimation, PPE compliance, equipment recognition, defect detection | Built | Four tasks in `engines/perception.ts`, each a draft a person confirms into the ordinary domain command — `submitProgress`, `logSafetyObservation`, `captureSiteObservation`, `raiseNCR`. Refused outright where no configured provider can be shown a file. Exercised against a stub, not a live provider |
+| `PROGRESS_EXTRACTED_FROM_IMAGES` event | Built | Written against the submission beside `PROGRESS_REPORTED`, carrying the provider, whether the answer was synthetic, the stated basis, what the model could not see and what the confirmer changed |
+| Audio: transcription | Built | The `VOICE_NOTE` perception task, confirmed into `captureSiteObservation` |
+| Audio: commitment and deadline extraction | Design only | Not implemented |
 | `COMMITMENT_REGISTERED`, `DEADLINE_TRACKED` events | Design only | Not in the catalogue |
 | Knowledge graph with typed edges and traversal | Partial | Entities cross-reference by id and the ledger reconstructs the lineage; there is no graph store or traversal API |
 
