@@ -26,6 +26,16 @@ export type ProviderRequest = {
    * bytes charged at text rates, read by nothing.
    */
   media?: ProviderMedia;
+  /**
+   * Records the answer may cite, where the task is held to the AI Output
+   * Standard.
+   *
+   * Read only by the local stand-in adapter, which has no model to ask and has
+   * to answer in the standard's shape without inventing anything. The three
+   * remote adapters send a vendor `task`, `payload`, `responseSchema` and
+   * `media` and nothing else, so this never leaves the platform.
+   */
+  standardSources?: Array<{ refType: string; refId: string }>;
 };
 
 /** Bytes for a multimodal call, addressed by the hash they are stored under. */

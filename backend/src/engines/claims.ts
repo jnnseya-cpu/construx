@@ -392,6 +392,12 @@ export async function assessImpact(
     taskType: 'impact_assessment',
     capability: 'REASONING',
     inputRefs: [{ refType: 'ChangeRequest', refId: input.changeRequestId }],
+    // An entitlement assessment is advice somebody prices a variation off, so
+    // it is held to the AI Output Standard. Before this it was stored as
+    // `output.narrative` — one unchecked paragraph from a provider, with no
+    // way to tell a real assessment of the contractual position from a model
+    // writing agreeably around one.
+    outputStandard: true,
     request: {
       task: 'Assess entitlement basis, knock-on effects and the notice obligations this change triggers',
       payload: {
@@ -408,12 +414,19 @@ export async function assessImpact(
         nextState: {
           id: assessmentId,
           changeRequestId: input.changeRequestId,
+          // The figures the assessor gave. These are the record; the AI
+          // assessment below sits beside them and does not overwrite them.
           costImpactMinor: input.costImpactMinor,
           timeImpactDays: input.timeImpactDays,
           affectedTaskIds: input.affectedTaskIds,
           qualityImpact: input.qualityImpact,
           safetyImpact: input.safetyImpact,
-          entitlementNarrative: String(output.narrative ?? ''),
+          entitlementNarrative: String(output.summary ?? ''),
+          // The whole validated answer, kept whole. Splitting it across
+          // columns would lose the thing that makes it usable: that these ten
+          // fields were established together, on one answer, and every source
+          // in it resolves to a record on this project.
+          aiAssessment: output,
           assessedAt: new Date().toISOString(),
           assessedBy: ctx.auth.actorId,
         },

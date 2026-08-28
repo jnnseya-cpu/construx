@@ -1,5 +1,13 @@
 import type { ACUWallet } from '../billing/acu.ts';
 import { ENGINE_CONTRACTS, engineActiveIn, type AIOrchestrator, type Engine } from '../ai/orchestrator.ts';
+import {
+  correctionFor,
+  outputStandardInstruction,
+  outputStandardSchema,
+  validateAiOutput,
+  type AiOutput,
+  type FieldError,
+} from '../ai/outputstandard.ts';
 import type { ProviderCapability, ProviderRequest } from '../ai/providers/types.ts';
 import { config } from '../config.ts';
 import { DomainError } from '../core/errors.ts';
@@ -162,6 +170,24 @@ export type AITaskInput = {
    * judgement — the model never writes state on its own.
    */
   toWrites: (output: Record<string, unknown>, confidence: number | undefined) => AIWriteSpec[];
+  /**
+   * Hold this task's answer to the AI Output Standard.
+   *
+   * Declared per task rather than applied to everything, and the distinction is
+   * real. The standard's ten fields describe a *judgement* — a finding with a
+   * commercial, programme and contractual consequence and a recommended action.
+   * A drawing title block has none of those, and requiring them would make a
+   * model invent an impact for a revision letter, which is precisely the
+   * failure the standard exists to prevent.
+   *
+   * So extraction tasks stay as they are, governed by the draft-then-confirm
+   * discipline they already have, and every task that produces advice a person
+   * will act on sets this. What it buys: the answer is checked, a failing
+   * answer is rejected and retried once with the specific fields named, and a
+   * second failure refuses rather than writing unvalidated model prose into an
+   * append-only ledger.
+   */
+  outputStandard?: true;
 };
 
 /**
@@ -215,6 +241,24 @@ export type AITaskResult = {
   acuHeld: number;
   events: GoldenThreadEvent[];
   output: Record<string, unknown>;
+  /**
+   * The answer, checked against the AI Output Standard.
+   *
+   * Present only where the task declared `outputStandard`. A caller putting AI
+   * advice in front of a person should read this rather than `output`: it is
+   * the same answer with every field established — an impact statement that
+   * says something, a confidence inside 0–1, and source references that
+   * resolve to records on this project.
+   */
+  standard?: AiOutput;
+  /**
+   * What was wrong with the first answer, where a correction was needed.
+   *
+   * Kept rather than discarded because a model that has to be corrected on the
+   * same field across many runs is a prompt defect, and the only place that
+   * shows up is here.
+   */
+  standardRejected?: FieldError[];
 };
 
 /**
@@ -260,20 +304,84 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
 
   const aiPermitted = !ctx.auth.roles.includes('REGULATOR') || ctx.auth.regulatorAiEnabled;
 
-  const run = await ctx.orchestrator.execute(
-    {
-      tenantId: ctx.tenantId,
-      projectId: ctx.projectId,
-      engine: task.engine,
-      taskType: task.taskType,
-      capability: task.capability,
-      userId: ctx.auth.actorId,
-      inputRefs: task.inputRefs,
-      request: task.request,
-      aiPermitted,
-    },
-    ctx.wallet,
-  );
+  const execute = (request: ProviderRequest) =>
+    ctx.orchestrator.execute(
+      {
+        tenantId: ctx.tenantId,
+        projectId: ctx.projectId,
+        engine: task.engine,
+        taskType: task.taskType,
+        capability: task.capability,
+        userId: ctx.auth.actorId,
+        inputRefs: task.inputRefs,
+        request,
+        aiPermitted,
+      },
+      ctx.wallet,
+    );
+
+  // A task held to the standard asks for the standard. The instruction and the
+  // schema are derived from the same field list the validator reads, so a
+  // prompt asking for nine fields against a validator requiring ten — a retry
+  // loop that can never terminate — is not expressible.
+  const firstRequest: ProviderRequest = task.outputStandard
+    ? {
+        ...task.request,
+        task: `${task.request.task}\n\n${outputStandardInstruction()}`,
+        responseSchema: outputStandardSchema(),
+        standardSources: task.inputRefs.map((reference) => ({ refType: reference.refType, refId: reference.refId })),
+      }
+    : task.request;
+
+  let run = await execute(firstRequest);
+
+  // --- the AI Output Standard ---------------------------------------------
+  //
+  // "Responses failing schema validation are rejected and retried; never shown
+  // raw to the user." Enforced here, at the choke point every AI write already
+  // passes through, for the same reason provenance is stamped here: there is
+  // one place for it to be right, and the next engine gets it without being
+  // told.
+  let standard: AiOutput | undefined;
+  let rejectedFirst: FieldError[] | undefined;
+
+  if (task.outputStandard) {
+    // A source reference is only traceable if it resolves. The resolver is
+    // scoped to this project's ledger, so a citation of a record on another
+    // job — or one that does not exist at all — is a rejection rather than a
+    // link somebody follows to nothing.
+    const resolve = (reference: { refType: string; refId: string }) => {
+      const record = ctx.ledger.get(reference);
+      return record !== undefined && record.tenantId === ctx.tenantId;
+    };
+
+    let checked = validateAiOutput(run.response.output, { resolve });
+    if (!checked.ok) {
+      rejectedFirst = checked.problems;
+      // Released without charge. The customer did not get an answer they can
+      // use, and the retry below is what they are paying for.
+      run.abandon('AI_OUTPUT_STANDARD_REJECTED');
+
+      run = await execute({
+        ...firstRequest,
+        task: `${firstRequest.task}\n\n${correctionFor(rejectedFirst)}`,
+      });
+      checked = validateAiOutput(run.response.output, { resolve });
+
+      if (!checked.ok) {
+        run.abandon('AI_OUTPUT_STANDARD_FAILED');
+        // The field problems, never the model's text. Leaking the raw answer
+        // inside the refusal would be the same failure through another door.
+        throw new DomainError(
+          'AI_OUTPUT_STANDARD_FAILED',
+          'The model did not answer in the required form twice, so nothing was recorded and nothing was charged.',
+          502,
+          checked.problems,
+        );
+      }
+    }
+    standard = checked.output;
+  }
 
   const events: GoldenThreadEvent[] = [];
   const outputRefs: EntityRef[] = [];
@@ -292,10 +400,23 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
     taskType: task.taskType,
     synthetic: run.response.synthetic === true,
     at: new Date().toISOString(),
+    // Recorded on the record itself, not only in the request log. A reader
+    // holding a materialised state needs to be able to tell an answer that was
+    // held to the standard from one that was never checked against it, and
+    // whether it took a correction to get there.
+    ...(task.outputStandard
+      ? { outputStandard: true as const, standardAttempts: rejectedFirst ? 2 : 1 }
+      : {}),
   };
 
   try {
-    for (const spec of task.toWrites(run.response.output, run.response.confidence)) {
+    // Where the task was held to the standard, the engine is handed the
+    // *validated* answer rather than the raw one: same content, every field
+    // established, quantities normalised to a number or an explicit null. An
+    // engine reading `output.confidence` should not have to re-check whether
+    // it is a number.
+    const answer = standard ? { ...standard } : run.response.output;
+    for (const spec of task.toWrites(answer, run.response.confidence)) {
       const { event } = ctx.ledger.commit({
         tenantId: ctx.tenantId,
         projectId: ctx.projectId,
@@ -415,6 +536,8 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
     acuHeld: execution.acuHeld,
     events,
     output: run.response.output,
+    ...(standard ? { standard } : {}),
+    ...(rejectedFirst ? { standardRejected: rejectedFirst } : {}),
   };
 }
 

@@ -9437,3 +9437,64 @@ declarations were wrong, not the gate:
   the remaining money and the remaining risk are. All five now reach OPERATIONS.
 - **HSEQ** and **supply chain** likewise: an operating asset still carries a
   health and safety file and still needs spares.
+
+### The AI Output Standard
+
+The specification states it as a hard requirement and states its enforcement in
+the same sentence: *"Responses failing schema validation are rejected and
+retried; never shown raw to the user."* Ten fields — summary, evidence, risk
+level, commercial impact, programme impact, contract impact, recommended action,
+confidence, source references and whether approval is required.
+
+`backend/src/ai/outputstandard.ts` holds all of it, and `runAI` enforces it —
+the same choke point that already stamps provenance and refuses AI in the wrong
+lifecycle phase. A task declaring `outputStandard: true` gets the instruction
+and the response schema built from the field list the validator reads, so a
+prompt asking for nine fields against a validator requiring ten is not
+expressible.
+
+Three decisions in it are load-bearing:
+
+- **Every impact is a quantity or an explicit null, and always a statement.** "No
+  commercial impact: the work falls inside the existing provisional sum" is a
+  real finding. A null with no statement is refused, because *"there is no
+  commercial impact"* and *"I did not consider the commercial impact"* are
+  different answers that become the same record the moment the statement is
+  missing. This is the field a model most reliably fills with confident-sounding
+  nothing.
+- **Source references are records, not prose,** and the resolver is scoped to the
+  project's own ledger. "As per the contract" is refused; so is a well-formed
+  citation of a record that does not exist. A link that resolves to nothing is
+  worse than no link, because it looks checked.
+- **Nothing raw escapes.** A first failure is rejected — the hold released
+  without charge — and retried once with the failing fields named. A second
+  failure raises `AI_OUTPUT_STANDARD_FAILED` carrying the field problems and
+  never the model's text; leaking it inside the error would be the same failure
+  through another door. One retry, not a loop: each attempt is a charge against
+  a customer's wallet.
+
+**Bound to a real command, not left as a library.** `assessImpact` — the
+entitlement assessment behind every variation — stored its AI answer as
+`String(output.narrative ?? '')`: one unchecked paragraph, on a record somebody
+prices a variation off, displayed nowhere. It now runs to the standard and
+stores the whole validated answer as `aiAssessment` beside the assessor's own
+figures, which are untouched. The provenance stamp records that it was held to
+the standard and whether a correction was needed.
+
+**The local stand-in answers honestly rather than refusing.** A deployment with
+no reasoning provider configured would otherwise find every advisory task
+unreachable. The stand-in answers in the standard's shape with every quantity
+null, zero confidence, statements saying plainly that no model was called, and
+source references taken from the records the engine declared it was reading — it
+will not invent a source. Marked `synthetic` all the way to the screen.
+
+Twenty-two tests in `outputstandard.test.ts`, written against *plausible* bad
+answers rather than broken ones: the impact with a figure and no statement, the
+amount with no currency, `approvalRequired: "Y"`, the source reference that is a
+sentence, the citation that does not resolve, the confidence of 100.
+
+**What is not done.** Only `assessImpact` is held to the standard so far. Every
+other advisory task still writes its narrative unchecked, and moving each one
+across is a per-task decision — an extraction must not be forced into these ten
+fields, or a model will invent a commercial impact for a drawing revision, which
+is the failure the standard exists to prevent.

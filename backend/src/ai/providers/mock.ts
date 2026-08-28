@@ -124,6 +124,8 @@ export const LOCAL_STAND_IN = 'Deterministic local analysis';
 function synthesise(request: ProviderRequest, seed: number, capability: ProviderCapability): Record<string, unknown> {
   const unit = (i: number): number => seededUnit(seed, i);
 
+  if (request.standardSources) return standardStandIn(request);
+
   return {
     task: request.task,
     capability,
@@ -137,6 +139,46 @@ function synthesise(request: ProviderRequest, seed: number, capability: Provider
       { name: 'input_completeness', value: Number((0.6 + unit(5) * 0.4).toFixed(3)) },
       { name: 'evidence_density', value: Number((0.4 + unit(6) * 0.6).toFixed(3)) },
     ],
+  };
+}
+
+
+/**
+ * The stand-in's answer where the task is held to the AI Output Standard.
+ *
+ * The standard's ten fields describe a judgement, and this adapter makes none:
+ * it has no model, and its other fields are a hash of the inputs. So the one
+ * honest answer in this shape is the one that says so — every quantity null,
+ * every statement stating plainly that nothing was assessed, and the lowest
+ * confidence the scale has.
+ *
+ * That is deliberately not a refusal. A refusal would make every advisory task
+ * unreachable on a deployment with no provider configured, which is every
+ * deployment before somebody enters a key. This answer is usable, correct, and
+ * marked `synthetic` all the way to the screen — `wasSynthetic` and the
+ * `aiProvenance` stamp are what stop it being presented as reasoning.
+ *
+ * What it will not do is invent a source. The references are the records the
+ * engine declared it was reading; if the engine declared none, the answer
+ * fails validation, which is the right outcome — a finding nobody can trace is
+ * one the platform should not store.
+ */
+function standardStandIn(request: ProviderRequest): Record<string, unknown> {
+  const notAssessed = 'No model was called. This was produced by the platform\u2019s deterministic stand-in, which does not assess impact.';
+  return {
+    summary: `No AI assessment was made of "${request.task}".`,
+    evidence: `${LOCAL_STAND_IN}: the platform has no reasoning provider configured, so the records below were read and not interpreted.`,
+    riskLevel: 'LOW',
+    commercialImpact: { amountMinor: null, statement: notAssessed },
+    programmeImpact: { days: null, statement: notAssessed },
+    contractImpact: { clause: null, statement: notAssessed },
+    recommendedAction: 'Configure a reasoning provider, or make this assessment yourself against the records cited.',
+    confidence: 0,
+    sourceReferences: (request.standardSources ?? []).map((reference) => ({
+      ...reference,
+      note: 'Declared as an input to this task.',
+    })),
+    approvalRequired: false,
   };
 }
 
