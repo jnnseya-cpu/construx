@@ -1,7 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { today } from '../lib/enums.js';
-import { badge, date, exact, html, humanise, metric, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
+import { badge, date, exact, html, humanise, metric, money, pct, positionReport, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, refreshContext, state } from '../app.js';
 
@@ -23,7 +23,7 @@ const SOURCE_LABEL = {
 export async function commercial(root) {
   const projectId = state.session.projectId;
 
-  const [bundle, ledger, forward] = await Promise.all([
+  const [bundle, ledger, forward, commercialControl, settlements] = await Promise.all([
     entityBundle(projectId, [
       'CVR',
       'EarnedValueSnapshot',
@@ -45,6 +45,11 @@ export async function commercial(root) {
     // Cash as the record now says it will be, rather than as the tender assumed.
     // The S-curve above is a bid document and stays one; this is measured.
     api.get(`/v1/projects/${projectId}/cost/forward-cashflow`).catch(() => null),
+    // Submitted against assessed, certified against paid, and the time bars
+    // nobody has checked. A time bar that passes unnoticed does not become a
+    // dispute later; it becomes money that was never recoverable.
+    api.get(`/v1/projects/${projectId}/commercial-control`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/settlements`).catch((error) => ({ error })),
   ]);
 
   const cvr = bundle.CVR.at(-1);
@@ -475,6 +480,32 @@ export async function commercial(root) {
             </div>`
           : ''
       }
+
+      ${positionReport({
+        title: 'Commercial control',
+        intent:
+          'Submitted against assessed, certified against paid, and the time bars nobody has checked. A time bar ' +
+          'that passes unnoticed is not a dispute later — it is money that stopped being recoverable.',
+        data: commercialControl,
+        error: commercialControl?.error,
+        sections: [
+          { key: 'unpaid', label: 'Certified and unpaid', empty: 'Everything certified has been paid.' },
+          { key: 'unvalidatedTimeBars', label: 'Time bars nobody has checked', empty: 'Every time bar has been checked.' },
+          { key: 'deadlines', label: 'Deadlines', empty: 'No contractual deadline is approaching.' },
+          { key: 'largestNegotiations', label: 'Largest gaps between submitted and assessed', empty: 'Nothing is in negotiation.' },
+          { key: 'chains', label: 'Payment chains', empty: 'No payment chain is running.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Settlements',
+        intent:
+          'The adjustment bridge, the actions out of it, and whether the price and the programme share a cut-off. ' +
+          'A settlement agreed to one cut-off and a programme to another is two settlements.',
+        data: settlements,
+        error: settlements?.error,
+        sections: [{ key: 'settlements', label: 'Settlements', empty: 'Nothing has been settled.' }],
+      })}
     `,
   );
 

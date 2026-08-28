@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
-import { badge, html, humanise, money, pct, raw, render, table, toast } from '../lib/ui.js';
+import { badge, html, humanise, money, pct, positionReport, raw, render, table, toast } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -41,8 +41,14 @@ export async function concept(root) {
 
   // Every panel is independent: a project part-way through concept has most of
   // these empty, and one failing must not blank the screen.
-  const [initiation, brief, diligence, options, controls, strategy, compliance, gate] = await Promise.all([
+  const [initiation, drift, sensitivity, brief, diligence, options, controls, strategy, compliance, gate] = await Promise.all([
     api.get(`/v1/projects/${projectId}/concept/initiation`).catch(() => null),
+    // Whether the leading option survives a change of weighting, and what has
+    // moved since the baseline froze. An option that leads on only one
+    // weighting is a decision waiting to be reopened, and until now nobody
+    // could see which kind they had.
+    api.get(`/v1/projects/${projectId}/concept/baseline/drift`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/concept/options/sensitivity`).catch((error) => ({ error })),
     api.get(`/v1/projects/${projectId}/concept/brief`).catch(() => null),
     api.get(`/v1/projects/${projectId}/concept/due-diligence`).catch(() => null),
     api.get(`/v1/projects/${projectId}/concept/options`).catch(() => null),
@@ -170,6 +176,26 @@ export async function concept(root) {
       ${controlsPanel(controls)}
       ${strategyPanel(strategy)}
       ${compliancePanel(compliance)}
+
+      ${positionReport({
+        title: 'Baseline drift',
+        intent: 'Components that have moved since the concept baseline froze them.',
+        data: drift,
+        error: drift?.error,
+        sections: [{ key: 'drift', label: 'Moved since the freeze', empty: 'Nothing has moved since the baseline froze.' }],
+      })}
+
+      ${positionReport({
+        title: 'Option sensitivity',
+        intent:
+          'Vary one criterion and see whether the leading option still leads. A refusal here is meaningful: it says ' +
+          'no option is scored against that criterion, which is different from the ranking being stable.',
+        data: sensitivity,
+        error: sensitivity?.error,
+        sections: [
+          { key: 'results', label: 'Under a varied weighting', empty: 'Nothing is scored, so there is nothing to vary.' },
+        ],
+      })}
     </div>`,
   );
 

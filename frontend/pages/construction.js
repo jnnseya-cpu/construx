@@ -1,7 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { today as todayIso } from '../lib/enums.js';
-import { badge, date, html, humanise, raw, render, statusTone, table, toast } from '../lib/ui.js';
+import { badge, date, html, humanise, positionReport, raw, render, statusTone, table, toast } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -84,11 +84,24 @@ export async function construction(root) {
 
   const b = await entityBundle(projectId, ['Permit', 'RAMS', 'Induction', 'Competency', 'NCR', 'InspectionPlan', 'QualityInspection']);
 
-  const [quality, cdm, requirements] = await Promise.all([
-    api.get(`/v1/projects/${projectId}/quality`).catch(() => null),
-    api.get(`/v1/projects/${projectId}/cdm`).catch(() => null),
-    api.get('/v1/safety/permit-requirements').catch(() => ({ requirements: [] })),
-  ]);
+  const [quality, cdm, requirements, safetyControl, qualityControl, holdPoints, safetyPosition, procurementItems, verification, dailyLogs, mobilisation] =
+    await Promise.all([
+      api.get(`/v1/projects/${projectId}/quality`).catch(() => null),
+      api.get(`/v1/projects/${projectId}/cdm`).catch(() => null),
+      api.get('/v1/safety/permit-requirements').catch(() => ({ requirements: [] })),
+      // The control positions a site actually runs on. Every one had an engine
+      // and no screen, which is why a permit could expire, a method could be
+      // revised without anybody being rebriefed, and an instrument could fall
+      // out of calibration with nothing on any screen saying so.
+      api.get(`/v1/projects/${projectId}/safety-control`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/quality-control`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/quality/hold-points`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/safety/position`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/procurement-items`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/progress-verification`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/daily-logs`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/mobilisation`).catch((error) => ({ error })),
+    ]);
 
   const now = new Date().toISOString();
   const today = now.slice(0, 10);
@@ -381,6 +394,111 @@ export async function construction(root) {
           ${requirements.requirements?.length ? ` ${requirements.requirements.length} permitted activities each require a named competency.` : ''}
         </p>
       </div>
+
+      ${positionReport({
+        title: 'Safety control',
+        intent:
+          'Revised methods nobody has been rebriefed on, permits past their expiry, and incidents never investigated. ' +
+          'A permit that has expired is not a paperwork problem; it is work proceeding without the control that allowed it.',
+        data: safetyControl,
+        error: safetyControl?.error,
+        sections: [
+          { key: 'awaitingRebriefing', label: 'Method revised, nobody rebriefed', empty: 'Everybody is briefed on the current method.' },
+          { key: 'expiredPermits', label: 'Permits past expiry', empty: 'No permit has expired.' },
+          { key: 'uninvestigated', label: 'Incidents never investigated', empty: 'Every incident has been investigated.' },
+          { key: 'openObservations', label: 'Open observations', empty: 'No site observation is open.' },
+          { key: 'outstandingActions', label: 'Outstanding actions', empty: 'No safety action is outstanding.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Safety position',
+        intent: 'Incidents, escalations, lost time and whether training is still current.',
+        data: safetyPosition,
+        error: safetyPosition?.error,
+        sections: [
+          { key: 'incidents', label: 'Incidents', empty: 'No incident has been recorded.' },
+          { key: 'training', label: 'Training', empty: 'No training record exists.' },
+          { key: 'ramsApproved', label: 'Approved method statements' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Quality control',
+        intent:
+          'Hold points passed without release, instruments out of calibration, reopened non-conformances and ' +
+          'concessions in force. An inspection signed with an out-of-calibration instrument proves nothing.',
+        data: qualityControl,
+        error: qualityControl?.error,
+        sections: [
+          { key: 'awaitingRelease', label: 'Passed, not released', empty: 'No hold point is waiting on a release.' },
+          { key: 'calibration', label: 'Instruments out of calibration', empty: 'Every instrument is in calibration.' },
+          { key: 'reopened', label: 'Reopened non-conformances', empty: 'No NCR has been reopened.' },
+          { key: 'concessions', label: 'Concessions in force', empty: 'Nothing is being accepted by concession.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Hold points not yet released',
+        intent: 'Work that cannot proceed until somebody with the authority releases it.',
+        data: holdPoints,
+        error: holdPoints?.error,
+        sections: [{ key: 'holdPoints', label: 'Awaiting release', empty: 'No hold point is holding work up.' }],
+      })}
+
+      ${positionReport({
+        title: 'Materials and long leads',
+        intent: 'Long leads against their order-by dates, quarantined material, open discrepancies and installed serials.',
+        data: procurementItems,
+        error: procurementItems?.error,
+        sections: [
+          { key: 'atRisk', label: 'Past or near the order-by date', empty: 'No long lead is at risk.' },
+          { key: 'quarantined', label: 'Quarantined', empty: 'Nothing is quarantined.' },
+          { key: 'reconciliations', label: 'Open discrepancies', empty: 'Every delivery reconciles.' },
+          { key: 'installed', label: 'Installed serials', empty: 'No serial-tracked item is recorded as installed.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Progress verification',
+        intent:
+          'What was claimed against what was accepted, and the rework that earns nothing. Progress nobody verified ' +
+          'is an assertion, and it is the assertion payment applications are built on.',
+        data: verification,
+        error: verification?.error,
+        sections: [
+          { key: 'awaiting', label: 'Awaiting a verifier', empty: 'Nothing is waiting to be verified.' },
+          { key: 'adjustments', label: 'Claimed against accepted', empty: 'No claim has been adjusted.' },
+          { key: 'rework', label: 'Rework, which earns nothing', empty: 'No rework has been recorded.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Daily logs',
+        intent:
+          'Drafts still sitting on a device, amendments with their before and after, and any device clock drift. ' +
+          'A contemporaneous record written late is worth less, and the platform records which is which.',
+        data: dailyLogs,
+        error: dailyLogs?.error,
+        sections: [
+          { key: 'drafts', label: 'Still on a device', empty: 'No draft is unsubmitted.' },
+          { key: 'submitted', label: 'Submitted', empty: 'No day has been recorded.' },
+          { key: 'amendments', label: 'Amendments', empty: 'No log has been amended.' },
+          { key: 'clockDrift', label: 'Device clock drift', empty: 'No device clock disagreed with the platform.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Mobilisation',
+        intent: 'Readiness by package, and which start authorities the information has since overtaken.',
+        data: mobilisation,
+        error: mobilisation?.error,
+        sections: [
+          { key: 'checks', label: 'Readiness checks', empty: 'No mobilisation check has been recorded.' },
+          { key: 'authorisations', label: 'Start authorities', empty: 'Nothing has been authorised to start.' },
+          { key: 'overdueConditions', label: 'Conditions now overdue', empty: 'No start condition is overdue.' },
+        ],
+      })}
     `,
   );
 

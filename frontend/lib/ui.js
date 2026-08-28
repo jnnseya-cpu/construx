@@ -313,6 +313,127 @@ export function notice(text, tone = 'info') {
   return html`<div class="notice ${raw(tone)}">${text}</div>`;
 }
 
+/**
+ * A control position: a lead sentence, then the registers behind it.
+ *
+ * Seventy-eight of the platform's read routes had no screen. They share one
+ * shape, because the engines behind them were written to one idea — a `summary`
+ * a person can act on, and named registers holding the things that summary is
+ * about: `blocked`, `overdue`, `unmet`, `invalidated`, `awaitingRelease`.
+ *
+ * Hand-writing seventy-eight near-identical panels would have produced
+ * seventy-eight things to keep in step, and they would not have stayed in step.
+ * So this is a component in the same sense `table` and `metric` are, and the
+ * meaning stays with the caller: **a page declares which registers matter and
+ * what an empty one means**, which is the part a generic renderer cannot know
+ * and must not invent.
+ *
+ * Two rules it keeps:
+ *
+ *   - **An empty register is not the same as a missing one.** A section whose
+ *     key is absent from the response says so; a section that is present and
+ *     empty shows the caller's own sentence explaining what empty means here.
+ *     Collapsing those two is how a screen comes to report "nothing wrong" for
+ *     a capability that never ran.
+ *   - **A failed read is never an empty panel.** `error` renders as a refusal
+ *     naming what could not be read.
+ *
+ * @param {object}   opts
+ * @param {string}   opts.title
+ * @param {string}  [opts.intent]   One line on what this answers.
+ * @param {object}   opts.data      The response body.
+ * @param {Error}   [opts.error]    Set when the read failed.
+ * @param {Array}    opts.sections  `{ key, label, empty, columns?, tone? }`
+ */
+export function positionReport({ title, intent, data, error, sections = [] }) {
+  if (error) {
+    return html`<div class="card">
+      <h2>${title}</h2>
+      <div class="notice err">
+        <div><b>This could not be read</b><br />${error.message ?? String(error)}</div>
+      </div>
+    </div>`;
+  }
+
+  const body = data ?? {};
+
+  return html`<div class="card">
+    <h2>${title}</h2>
+    ${intent ? html`<div class="metric-sub" style="margin-bottom:10px">${intent}</div>` : ''}
+    ${body.summary ? html`<p><b>${body.summary}</b></p>` : ''}
+    ${sections.map((section) => {
+      const value = body[section.key];
+
+      if (value === undefined) {
+        // Absent, not empty. Said out loud, because a panel that renders
+        // nothing for a key the platform never sent is indistinguishable from
+        // one reporting good news.
+        return html`<div class="metric-sub" style="margin:8px 0">
+          <b>${section.label}</b> — not reported by this version of the platform.
+        </div>`;
+      }
+
+      if (typeof value === 'number' || typeof value === 'boolean') {
+        return html`<div class="metric-sub" style="margin:8px 0">
+          <b>${section.label}</b>: ${typeof value === 'boolean' ? (value ? 'yes' : 'no') : String(value)}
+        </div>`;
+      }
+
+      const rows = Array.isArray(value) ? value : [value];
+      const columns = section.columns ?? columnsOf(rows);
+
+      return html`<div style="margin:10px 0">
+        <h4 style="margin:0 0 6px">${section.label}${rows.length > 0 ? ` (${rows.length})` : ''}</h4>
+        ${rows.length === 0
+          ? // Rendered here rather than through `table`, whose empty state ends
+            // "this becomes populated as the project progresses". That is right
+            // for a register waiting to fill and wrong for one of these, where
+            // empty is usually the good outcome — "nothing prevents this being
+            // baselined" does not become populated, and saying it will invites
+            // somebody to wait for something that should never arrive.
+            html`<div class="empty"><b>${section.empty}</b></div>`
+          : table({
+              headers: columns.map((c) => humanise(c)),
+              rows: rows.slice(0, 50).map((row) => columns.map((c) => cell(row?.[c]))),
+              empty: section.empty,
+            })}
+        ${rows.length > 50
+          ? html`<div class="metric-sub">Showing the first 50 of ${rows.length}. The rest are in the export.</div>`
+          : ''}
+      </div>`;
+    })}
+  </div>`;
+}
+
+/**
+ * Column names for a register, from the rows themselves.
+ *
+ * The union of the first few rows rather than only the first: these come from
+ * engines that omit an absent optional, so keying off row zero alone silently
+ * drops a column that every other row has.
+ */
+function columnsOf(rows) {
+  const keys = [];
+  for (const row of rows.slice(0, 5)) {
+    if (!row || typeof row !== 'object') continue;
+    for (const key of Object.keys(row)) if (!keys.includes(key)) keys.push(key);
+  }
+  return keys.slice(0, 8);
+}
+
+/** One cell, without pretending a nested structure is a scalar. */
+function cell(value) {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'boolean') return badge(value ? 'yes' : 'no', value ? 'ok' : 'muted');
+  if (Array.isArray(value)) return value.length === 0 ? '—' : `${value.length}`;
+  if (typeof value === 'object') return Object.keys(value).length === 0 ? '—' : `${Object.keys(value).length} fields`;
+  const text = String(value);
+  // A status-looking token gets the platform's own tone rather than plain text,
+  // so a register reads at a glance instead of being scanned word by word.
+  if (/^[A-Z][A-Z_]{2,}$/.test(text)) return badge(humanise(text), statusTone(text));
+  return text.length > 120 ? `${text.slice(0, 120)}…` : text;
+}
+
 let toastHost;
 
 export function toast(title, detail, tone = '') {

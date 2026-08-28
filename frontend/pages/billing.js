@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command } from '../lib/command.js';
-import { badge, exact, html, humanise, money, pct, raw, render, table, toast, track } from '../lib/ui.js';
+import { badge, exact, html, humanise, money, pct, positionReport, raw, render, table, toast, track } from '../lib/ui.js';
 import { can, refreshContext, state } from '../app.js';
 
 /**
@@ -13,13 +13,17 @@ import { can, refreshContext, state } from '../app.js';
  */
 
 export async function billing(root) {
-  const [wallet, attribution, plane, seats, storage] = await Promise.all([
+  const [wallet, attribution, plane, seats, catalogue, storage] = await Promise.all([
     api.get('/v1/billing/wallet'),
     api.get('/v1/billing/attribution'),
     api.get('/v1/ai/control-plane').catch(() => null),
     // What the package actually includes. A platform that refuses an export on
     // plan grounds and has no screen saying what the plan covers is a dead end.
     api.get('/v1/billing/seats').catch(() => null),
+    // Seat prices, packages and bundles as the platform publishes them. A
+    // screen that refuses something on plan grounds and cannot say what the
+    // plan costs to change is a dead end.
+    api.get('/v1/billing/catalogue').catch((error) => ({ error })),
     // What is actually held against what the plan allows. Fetched rather than
     // computed from the package, because a tenancy that has bought capacity has
     // an allowance the package alone does not describe.
@@ -235,6 +239,18 @@ export async function billing(root) {
           Total lifetime: ${exact(wallet.lifetimeBilledMinor)} billed on ${exact(wallet.lifetimeRawCostMinor)} of provider cost across ${totalCalls} executions.
         </div>
       </div>
+
+      ${positionReport({
+        title: 'What the platform charges',
+        intent: 'Seat prices, packages and bundles, published by the platform rather than restated here.',
+        data: catalogue,
+        error: catalogue?.error,
+        sections: [
+          { key: 'seats', label: 'Seats', empty: 'No seat type is published.' },
+          { key: 'packages', label: 'Packages', empty: 'No package is published.' },
+          { key: 'bundles', label: 'ACU bundles', empty: 'No bundle is published.' },
+        ],
+      })}
     `,
   );
 

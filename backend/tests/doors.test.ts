@@ -123,10 +123,17 @@ describe('every command has a door', () => {
     // written and the number is stated rather than hidden, because the whole
     // reason this went unnoticed for so long is that nothing counted it.
     //
+    // 84 → 33. What closed was every standing position report: the commissioning
+    // and handover set, the site control positions, the design plan and its
+    // baselines, the procurement intelligence, the corporate control standard.
+    // What remains is mostly parameterised — a route that needs a chosen
+    // manifest, schedule or bidder before it can answer, and therefore needs a
+    // drill-in from a row rather than a panel of its own.
+    //
     // Zero is the target and this assertion becomes `equal(0)` when it is
     // reached. It is a ratchet today only because failing the suite outright
     // would say the platform is broken, when what is true is narrower and worth
-    // stating precisely: seventy-eight capabilities work, are authorised, and
+    // stating precisely: thirty-three capabilities work, are authorised, and
     // have no screen.
     //
     // Named, not merely counted. A failure here has to say which capability
@@ -136,8 +143,8 @@ describe('every command has a door', () => {
     const unreachable = readRoutes.filter((route) => !pathPattern(route.pattern).test(source));
 
     assert.ok(
-      unreachable.length <= 78,
-      `${unreachable.length} read routes have no console door, up from 78. Each is a capability the ` +
+      unreachable.length <= 33,
+      `${unreachable.length} read routes have no console door, up from 33. Each is a capability the ` +
         `platform authorises and nobody can reach:\n  ${unreachable.map((r) => r.pattern).join('\n  ')}`,
     );
   });

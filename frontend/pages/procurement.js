@@ -1,7 +1,7 @@
 import { api, entityBundle, isWithheld } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { CONTRACT_FORM, PRICING_BASIS, today } from '../lib/enums.js';
-import { badge, date, days, drillable, exact, html, humanise, money, pct, raw, render, statusTone, table } from '../lib/ui.js';
+import { badge, date, days, drillable, exact, html, humanise, money, pct, positionReport, raw, render, statusTone, table } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -22,6 +22,21 @@ export async function procurement(root) {
   // person could not have predicted.
   // Only the eligible ones, which is what this endpoint returns by default.
   const suppliers = await api.get('/v1/supply-chain').catch(() => ({ suppliers: [] }));
+
+  // The tenancy-level procurement intelligence, and the project's own tender
+  // position. Seven engines with no screen: the twenty cost heads a tender is
+  // built on, the price history to check it against, the trade catalogue, where
+  // coverage is too thin to compete, the frameworks already held, what a tender
+  // review found, and what has actually converted.
+  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards] = await Promise.all([
+    api.get('/v1/tender/cost-heads').catch((error) => ({ error })),
+    api.get('/v1/cost-intelligence').catch((error) => ({ error })),
+    api.get('/v1/supply-chain/trades').catch((error) => ({ error })),
+    api.get('/v1/supply-chain/coverage').catch((error) => ({ error })),
+    api.get('/v1/frameworks').catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/tender-reviews`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/awards`).catch((error) => ({ error })),
+  ]);
 
   const b = await entityBundle(projectId, [
     'RFQ',
@@ -816,6 +831,75 @@ export async function procurement(root) {
           }
         </div>
       </div>
+
+      ${positionReport({
+        title: 'The twenty cost heads',
+        intent:
+          'What a tender is built from and the basis each head is priced on, published by the platform so an ' +
+          'estimate cannot quietly omit one.',
+        data: costHeads,
+        error: costHeads?.error,
+        sections: [{ key: 'heads', label: 'Cost heads', empty: 'No cost head is defined.' }],
+      })}
+
+      ${positionReport({
+        title: 'Cost intelligence',
+        intent:
+          'Unit rates and package outturns from this business\u2019s own committed records — not a bought index. ' +
+          'Confidence is stated, because a median of two observations is not a rate.',
+        data: costIntel,
+        error: costIntel?.error,
+        sections: [
+          { key: 'rates', label: 'Unit rates', empty: 'No rate has enough observations to publish.' },
+          { key: 'outturns', label: 'Package outturns', empty: 'No package has reached outturn.' },
+          { key: 'estimatingAccuracy', label: 'Estimating accuracy' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Trade catalogue',
+        intent: 'Every trade, and which require third-party accreditation before anybody may be engaged.',
+        data: trades,
+        error: trades?.error,
+        sections: [{ key: 'trades', label: 'Trades', empty: 'No trade catalogue is published.' }],
+      })}
+
+      ${positionReport({
+        title: 'Supply-chain coverage',
+        intent:
+          'Where the chain is too thin to compete. A trade with one eligible supplier is not a market, and pricing ' +
+          'it as though it were is how a tender loses money before it is submitted.',
+        data: coverage,
+        error: coverage?.error,
+        sections: [
+          { key: 'totals', label: 'Totals' },
+          { key: 'gaps', label: 'Trades with no eligible supplier', empty: 'Every trade has an eligible supplier.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Framework agreements',
+        intent: 'Frameworks this tenancy holds, with membership balance, thin lots, concentration and expiry.',
+        data: frameworks,
+        error: frameworks?.error,
+        sections: [{ key: 'frameworks', label: 'Frameworks', empty: 'This tenancy holds no framework agreement.' }],
+      })}
+
+      ${positionReport({
+        title: 'Tender reviews',
+        intent: 'What is missing, what nobody owns, what two people own, and what the contract actually says.',
+        data: reviews,
+        error: reviews?.error,
+        sections: [{ key: 'reviews', label: 'Reviews', empty: 'No tender review has been held.' }],
+      })}
+
+      ${positionReport({
+        title: 'Submissions and awards',
+        intent: 'Submission packs and their receipts, the award departures, and what has converted.',
+        data: awards,
+        error: awards?.error,
+        sections: [{ key: 'packs', label: 'Submission packs', empty: 'Nothing has been submitted.' }],
+      })}
     `,
   );
 

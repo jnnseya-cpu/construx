@@ -1,7 +1,7 @@
 import { api, entities, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { DISCIPLINE, today } from '../lib/enums.js';
-import { badge, date, drillable, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
+import { badge, date, drillable, html, humanise, money, pct, positionReport, raw, render, statusTone, table, toast } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -93,14 +93,39 @@ export async function design(root) {
   // RFI now names the activity it holds up.
   const readiness = await api.get(`/v1/projects/${projectId}/design/readiness`).catch(() => null);
 
-  const [perception, evidence] = await Promise.all([
-    api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
-    api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
-  ]);
+  const [perception, evidence, packages, constructability, coordination, changes, baselines, gate, infoControl, currentInfo] =
+    await Promise.all([
+      api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
+      api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
+      // The design plan and the control positions over it. Every one of these
+      // had an engine, a route and tests, and no screen — so the MIDP could
+      // disagree with itself, a package could be frozen against a revision a
+      // later one invalidated, and nobody could see either.
+      api.get(`/v1/projects/${projectId}/design-packages`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/constructability`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/coordination`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/design-changes`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/design-baselines`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/stages/design/validate`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/information-control`).catch((error) => ({ error })),
+      api.get(`/v1/projects/${projectId}/current-information`).catch((error) => ({ error })),
+    ]);
   const readable = (evidence?.entries ?? []).filter(
     (entry) => entry.held && ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'].includes(entry.contentType ?? ''),
   );
   const openDrafts = (perception?.drafts ?? []).filter((d) => d.status === 'DRAFT');
+
+  // Declared here rather than below the render call, which is where they used
+  // to sit.
+  //
+  // The command bar reads `underReview.length` inside the template, and a
+  // template literal is evaluated where it is written — so for any role holding
+  // `A` on DESIGN_INFORMATION the whole screen died with "Cannot access
+  // 'underReview' before initialization". Every other role was spared only
+  // because `can(...)` short-circuits ahead of it, which is why a latent
+  // reference error survived in a page that looked fine to most people.
+  const openReviews = (reviews?.cycles ?? []).filter((cycle) => cycle.status === 'IN_REVIEW');
+  const underReview = (submittals.submittals ?? []).filter((sub) => sub.status === 'UNDER_REVIEW');
 
   render(
     root,
@@ -581,11 +606,126 @@ export async function design(root) {
           }
         </div>
       </div>
+
+      ${positionReport({
+        title: 'Design packages and the MIDP',
+        intent: 'The plan the design is being produced against, and whether it reconciles to itself.',
+        data: packages,
+        error: packages?.error,
+        sections: [
+          { key: 'packages', label: 'Packages', empty: 'No design package has been planned.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Design baselines and freezes',
+        intent: 'What is frozen, what is approved, and which freezes a later revision has quietly invalidated.',
+        data: baselines,
+        error: baselines?.error,
+        sections: [
+          { key: 'freezes', label: 'Freezes', empty: 'Nothing is frozen.' },
+          { key: 'baselines', label: 'Approved baselines', empty: 'No design baseline has been approved.' },
+          {
+            key: 'invalidated',
+            label: 'Freezes a later revision invalidated',
+            empty: 'No freeze has been overtaken by a later revision.',
+          },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'The design stage gate',
+        intent: 'What may freeze, what is late for its need date, and what tender is waiting for.',
+        data: gate,
+        error: gate?.error,
+        sections: [
+          { key: 'tenderReadinessWorklist', label: 'Tender is waiting for', empty: 'Tender is not held up by design.' },
+          { key: 'packages', label: 'Packages at the gate', empty: 'No package is at the gate.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Constructability',
+        intent: 'Reviews held, findings still open, and residual risks nobody has passed on to the people who inherit them.',
+        data: constructability,
+        error: constructability?.error,
+        sections: [
+          { key: 'reviews', label: 'Reviews', empty: 'No constructability review has been held.' },
+          { key: 'freezeBlockers', label: 'Blocking a package freeze', empty: 'No finding blocks a freeze.' },
+          {
+            key: 'uncommunicated',
+            label: 'Residual risks nobody has been told about',
+            empty: 'Every residual risk has been passed on.',
+          },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Model coordination',
+        intent: 'Federation runs, the issues grouped out of them, and which critical ones are still unresolved.',
+        data: coordination,
+        error: coordination?.error,
+        sections: [
+          { key: 'federations', label: 'Federation sets', empty: 'No federation has been run.' },
+          { key: 'blockers', label: 'Critical and unresolved', empty: 'No critical coordination issue is open.' },
+          { key: 'acceptedNotResolved', label: 'Accepted but not resolved' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Design change register',
+        intent: 'The approval route each change took, domains nobody assessed, and anything implemented unapproved.',
+        data: changes,
+        error: changes?.error,
+        sections: [
+          { key: 'changes', label: 'Changes', empty: 'No design change has been raised.' },
+          { key: 'approvalOwed', label: 'Awaiting approval', empty: 'No change is waiting on an approval.' },
+          {
+            key: 'unconfirmed',
+            label: 'Implemented without approval',
+            empty: 'Nothing has been implemented ahead of its approval.',
+          },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Information control',
+        intent:
+          'Who is still holding superseded information, what was only ever said verbally, and which RFIs have no float left.',
+        data: infoControl,
+        error: infoControl?.error,
+        sections: [
+          {
+            key: 'holdingSuperseded',
+            label: 'Holding superseded information',
+            empty: 'Nobody is recorded as holding a superseded revision.',
+          },
+          {
+            key: 'unconfirmedDirections',
+            label: 'Said verbally, never confirmed',
+            empty: 'Every direction given has been confirmed in writing.',
+          },
+          { key: 'rfiPressure', label: 'RFIs with no float', empty: 'No RFI is holding up work that cannot wait.' },
+          { key: 'transmittals', label: 'Transmittals', empty: 'Nothing has been transmitted.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'What is current',
+        intent: 'The live revision of each document, what it replaced, and who has not acknowledged the replacement.',
+        data: currentInfo,
+        error: currentInfo?.error,
+        sections: [
+          { key: 'current', label: 'Current revisions', empty: 'No document has been issued.' },
+          {
+            key: 'holdingSuperseded',
+            label: 'Not acknowledged the replacement',
+            empty: 'Everybody is working to the current revision.',
+          },
+        ],
+      })}
     `,
   );
-
-  const openReviews = (reviews?.cycles ?? []).filter((cycle) => cycle.status === 'IN_REVIEW');
-  const underReview = (submittals.submittals ?? []).filter((sub) => sub.status === 'UNDER_REVIEW');
 
   const COMMANDS = {
     submittal: {

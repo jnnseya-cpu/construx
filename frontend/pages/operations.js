@@ -84,13 +84,17 @@ export async function operations(root) {
   // collector configured still has chains to prove. A failed panel says so
   // rather than rendering as an empty one, because "nothing to report" and
   // "this is broken" must never look the same.
-  const [assurance, watch, repair, egress, fleet, ladder] = await Promise.all([
+  const [assurance, watch, repair, egress, fleet, ladder, retention] = await Promise.all([
     api.get('/v1/admin/assurance').catch((error) => ({ error })),
     api.get('/v1/admin/watch').catch((error) => ({ error })),
     api.get('/v1/admin/repair').catch((error) => ({ error })),
     api.get('/v1/admin/telemetry/egress').catch((error) => ({ error })),
     api.get('/v1/agents/fleet').catch((error) => ({ error })),
     api.get('/v1/agents/ladder').catch((error) => ({ error })),
+    // What the object store actually holds, what no record names, and the
+    // policy on removing any of it. An orphan is a file the platform is storing
+    // for nobody, which is both a cost and a data-protection question.
+    api.get('/v1/evidence/retention').catch((error) => ({ error })),
   ]);
 
   const failed = (panel) => (panel && panel.error ? panel.error.message ?? 'This could not be read' : null);
@@ -310,6 +314,21 @@ export async function operations(root) {
               )}
             `}
       </section>
+
+      ${positionReport({
+        title: 'Evidence retention',
+        intent:
+          'What the object store holds, what no record names, and the policy on removing any of it. An orphan is a ' +
+          'file being kept for nobody — a cost and a data-protection question at once.',
+        data: retention,
+        error: retention?.error,
+        sections: [
+          { key: 'configured', label: 'Object store configured' },
+          { key: 'heldObjects', label: 'Objects held' },
+          { key: 'recordedNotHeld', label: 'Named in the record, not held' },
+          { key: 'orphans', label: 'Held but named by nothing', empty: 'Every stored object is named by a record.' },
+        ],
+      })}
     `,
   );
 

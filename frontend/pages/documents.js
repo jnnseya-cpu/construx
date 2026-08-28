@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command } from '../lib/command.js';
-import { badge, html, humanise, notice, raw, render, table, toast } from '../lib/ui.js';
+import { badge, html, humanise, notice, positionReport, raw, render, table, toast } from '../lib/ui.js';
 // No `can` gate on the row buttons: the navigation already reaches this screen
 // only for a role holding EVIDENCE_AUDIT read, which is the same authority
 // generation checks. A second copy of that rule here would be a second place
@@ -57,10 +57,15 @@ const CATEGORIES = [
 export async function documents(root) {
   const projectId = state.session.projectId;
 
-  const [catalogue, ingestion, evidence] = await Promise.all([
+  const [catalogue, ingestion, evidence, cdmDocuments, branding] = await Promise.all([
     api.get(`/v1/projects/${projectId}/documents`).catch(() => ({ documents: [], summary: '' })),
     api.get(`/v1/projects/${projectId}/ingestion`).catch(() => null),
     api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
+    // What CDM demands and what identity these documents will carry. Both had
+    // engines with no screen — a generated document goes to a client under
+    // somebody's brand, and nobody could see whose until it arrived.
+    api.get('/v1/cdm/documents').catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/branding`).catch((error) => ({ error })),
   ]);
   const all = catalogue.documents ?? [];
   const generable = all.filter((document) => document.generable);
@@ -323,6 +328,27 @@ export async function documents(root) {
           the model’s own stated confidence beside it.
         </p>
       </div>
+
+      ${positionReport({
+        title: 'The CDM document set',
+        intent: 'Each duty document, who approves it, whether it gates construction, and the sections it must contain.',
+        data: cdmDocuments,
+        error: cdmDocuments?.error,
+        sections: [{ key: 'documents', label: 'CDM documents', empty: 'No CDM document type is published.' }],
+      })}
+
+      ${positionReport({
+        title: 'Whose identity these documents carry',
+        intent:
+          'Every generated document leaves under a name and a mark. Shown here with where it came from, because a ' +
+          'document that reaches a client under the wrong identity cannot be recalled.',
+        data: branding,
+        error: branding?.error,
+        sections: [
+          { key: 'source', label: 'Where the identity came from' },
+          { key: 'branding', label: 'Identity applied', empty: 'No branding is configured, so the platform default applies.' },
+        ],
+      })}
     `,
   );
 

@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { badge, html, raw, render } from '../lib/ui.js';
+import { badge, html, positionReport, raw, render } from '../lib/ui.js';
 import { state } from '../app.js';
 
 /**
@@ -57,6 +57,12 @@ function card(entry) {
 
 export async function centre(root) {
   const projectId = state.session.projectId;
+
+  // The catalogue the platform publishes, so a client never hardcodes the
+  // seven. Fetched alongside the report rather than derived from it: the report
+  // carries what this viewer may see, and the catalogue carries what exists —
+  // and the difference between those two is the point of the refusal list below.
+  const catalogue = await api.get('/v1/command-centre/functions').catch((error) => ({ error }));
 
   const report = await api.get(`/v1/projects/${projectId}/command-centre`).catch((error) => ({
     error: error?.detail ?? error?.message ?? 'The command centre could not be assembled.',
@@ -141,6 +147,16 @@ export async function centre(root) {
             </p>`
           : ''}
       </section>
+
+      ${positionReport({
+        title: 'The seven functions',
+        intent:
+          'Published by the platform, so a client never hardcodes them. What you can reach is above; this is what ' +
+          'exists.',
+        data: catalogue,
+        error: catalogue?.error,
+        sections: [{ key: 'functions', label: 'Functions', empty: 'No function is published.' }],
+      })}
     `,
   );
 }

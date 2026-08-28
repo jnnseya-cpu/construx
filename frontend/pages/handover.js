@@ -1,7 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { today as todayIso } from '../lib/enums.js';
-import { badge, date, drillable, esc, html, humanise, money, pct, raw, render, shortHash, statusTone, table, toast, track } from '../lib/ui.js';
+import { badge, date, drillable, esc, html, humanise, money, pct, positionReport, raw, render, shortHash, statusTone, table, toast, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -146,11 +146,33 @@ export async function handover(root) {
   // absent: a reader without the handover read, or a project that has not
   // reached the stage, gets the operating position without the workspace band
   // instead of an error.
+  const fetch_ = (path) => api.get(`/v1/projects/${projectId}${path}`).catch((error) => ({ error }));
+
   const [position, queue, acceptance, gate] = await Promise.all([
     api.get(`/v1/projects/${projectId}/om/position`).catch(() => null),
     api.get(`/v1/projects/${projectId}/om/queue`).catch(() => null),
     api.get(`/v1/projects/${projectId}/handover-acceptance`).catch(() => null),
     api.get(`/v1/projects/${projectId}/stage-gate`).catch(() => null),
+  ]);
+
+  // Commissioning and handover: twenty-two control positions that each had an
+  // engine, an authorised route and passing tests, and no screen. A building
+  // cannot be handed over on the strength of engines nobody can look at — the
+  // whole point of a handover is that somebody reads the evidence and accepts
+  // it, and until now there was nowhere to read it.
+  const [
+    readiness, obligations, assetRegister, assetErrors, manuals, asBuilt, operatorReadiness,
+    transfer, practicalCompletion, aftercare, regulatory, systemisation, integrity,
+    commissioningClose, reliability, functional, preFunctional, exceptions, vendorTests,
+    testPacks, completion,
+  ] = await Promise.all([
+    fetch_('/handover-readiness'), fetch_('/handover-obligations'), fetch_('/asset-register'),
+    fetch_('/asset-register/validate'), fetch_('/om-manuals'), fetch_('/as-built'),
+    fetch_('/operator-readiness'), fetch_('/transfer'), fetch_('/practical-completion'),
+    fetch_('/aftercare'), fetch_('/regulatory-completion'), fetch_('/systemisation'),
+    fetch_('/systems/integrity'), fetch_('/commissioning-close'), fetch_('/reliability'),
+    fetch_('/functional-tests'), fetch_('/pre-functional-checks'), fetch_('/commissioning-exceptions'),
+    fetch_('/vendor-tests'), fetch_('/test-packs'), fetch_('/completion'),
   ]);
 
   const pack = b.HandoverPack.at(-1);
@@ -423,6 +445,262 @@ export async function handover(root) {
             </div>`
           : ''
       }
+
+      ${positionReport({
+        title: 'Handover readiness',
+        intent:
+          'Weighted readiness over the mandatory requirements, drilling to each unmet one. A percentage that does ' +
+          'not say which requirement is unmet cannot be worked on.',
+        data: readiness,
+        error: readiness?.error,
+        sections: [
+          { key: 'percent', label: 'Readiness percent' },
+          { key: 'unmet', label: 'Unmet requirements', empty: 'Every mandatory requirement is met.' },
+          { key: 'blockers', label: 'Blocking handover', empty: 'Nothing blocks handover.' },
+          { key: 'overdue', label: 'Overdue', empty: 'Nothing is overdue.' },
+          { key: 'liveWaivers', label: 'Live waivers', empty: 'Nothing has been waived.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Obligations handover inherits',
+        intent: 'Read by the identifier each obligation already has, never copied — a copy is a second source of truth.',
+        // This route answers with a bare array rather than a named position, so
+        // it is given the name the panel needs rather than the panel being
+        // taught to guess at unnamed data.
+        data: { inherited: Array.isArray(obligations) ? obligations : [] },
+        error: obligations?.error,
+        sections: [{ key: 'inherited', label: 'Inherited obligations', empty: 'Handover inherits no open obligation.' }],
+      })}
+
+      ${positionReport({
+        title: 'Asset register',
+        intent: 'Attribute completeness, duplicate identities, and declared Unknowns — which are honest, unlike a blank.',
+        data: assetRegister,
+        error: assetRegister?.error,
+        sections: [
+          { key: 'assets', label: 'Assets' },
+          { key: 'completePercent', label: 'Attribute completeness (percent)' },
+          { key: 'errors', label: 'Validation errors', empty: 'The register validates clean.' },
+          { key: 'declaredUnknowns', label: 'Declared Unknown', empty: 'Nothing is declared Unknown.' },
+          { key: 'exchanges', label: 'Unreconciled exports', empty: 'Every export reconciles.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Asset register validation',
+        intent: 'Computed on request rather than stored, so it cannot go stale against the register it describes.',
+        data: assetErrors,
+        error: assetErrors?.error,
+        sections: [
+          { key: 'errors', label: 'Errors', empty: 'No validation error.' },
+          { key: 'declaredUnknowns', label: 'Declared Unknown', empty: 'Nothing is declared Unknown.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'O&M manuals',
+        intent: 'Completeness by section, AI drafts nobody accepted, and sections the asset data has overtaken.',
+        data: manuals,
+        error: manuals?.error,
+        sections: [{ key: 'manuals', label: 'Manuals', empty: 'No O&M manual has been started.' }],
+      })}
+
+      ${positionReport({
+        title: 'As-built records',
+        intent: 'Who verified each set, and the material variances blocking a handover.',
+        data: asBuilt,
+        error: asBuilt?.error,
+        sections: [
+          { key: 'sets', label: 'As-built sets', empty: 'No as-built set has been issued.' },
+          { key: 'blocking', label: 'Material variances blocking handover', empty: 'No variance blocks handover.' },
+          { key: 'links', label: 'Linked records' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Operator readiness',
+        intent: 'Who can actually run the building, role by role. A handover to people who cannot operate it is a date, not a transfer.',
+        data: operatorReadiness,
+        error: operatorReadiness?.error,
+        sections: [
+          { key: 'coverage', label: 'Coverage by role', empty: 'No operator role has been assessed.' },
+          { key: 'retraining', label: 'Retraining owed', empty: 'Nobody is owed retraining.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Transfer inventory',
+        intent: 'Shortages and their owners, lost items, and the service contacts the operator inherits.',
+        data: transfer,
+        error: transfer?.error,
+        sections: [
+          { key: 'shortages', label: 'Shortages, and whose', empty: 'Nothing is short.' },
+          { key: 'lost', label: 'Lost', empty: 'Nothing is recorded lost.' },
+          { key: 'serviceContacts', label: 'Service contacts', empty: 'No service contact has been recorded.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Practical completion',
+        intent: 'Inspection items by classification, the certificates and their triggered dates, securities and final accounts.',
+        data: practicalCompletion,
+        error: practicalCompletion?.error,
+        sections: [
+          { key: 'openByClassification', label: 'Open items by classification' },
+          { key: 'certificates', label: 'Certificates', empty: 'No certificate has been issued.' },
+          { key: 'deferred', label: 'Deferred', empty: 'Nothing is deferred.' },
+          { key: 'securities', label: 'Securities', empty: 'No security is held.' },
+          { key: 'finalAccounts', label: 'Final accounts', empty: 'No final account is open.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Aftercare',
+        intent: 'Seasonal tests owed and done, performance gaps between design and measured, and residual items.',
+        data: aftercare,
+        error: aftercare?.error,
+        sections: [
+          { key: 'seasonal', label: 'Seasonal tests owed', empty: 'No seasonal test is owed.' },
+          { key: 'comparisons', label: 'Design against measured', empty: 'No performance comparison has been made.' },
+          { key: 'feedback', label: 'Occupant feedback', empty: 'No feedback has been recorded.' },
+          { key: 'residual', label: 'Residual items', empty: 'Nothing residual is outstanding.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Regulatory completion',
+        intent: 'Readiness checks, the packs, the decision and its conditions, and whether the thread has transferred.',
+        data: regulatory,
+        error: regulatory?.error,
+        sections: [
+          { key: 'readinessChecks', label: 'Readiness checks', empty: 'No regulatory readiness check has been run.' },
+          { key: 'packs', label: 'Packs', empty: 'No regulatory pack has been assembled.' },
+          { key: 'conditions', label: 'Conditions', empty: 'The decision carries no conditions.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Systemisation',
+        intent: 'The system hierarchy, whether it holds together, and what is running temporarily.',
+        data: systemisation,
+        error: systemisation?.error,
+        sections: [
+          { key: 'hierarchy', label: 'System hierarchy', empty: 'No system hierarchy has been defined.' },
+          { key: 'plans', label: 'Plans', empty: 'No commissioning plan exists.' },
+          { key: 'temporaryOperation', label: 'Running temporarily', empty: 'Nothing is running on temporary supplies.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'System boundary integrity',
+        intent: 'Assets in two boundaries, assets in none, and boundaries around nothing. Each is a different mistake.',
+        data: integrity,
+        error: integrity?.error,
+        sections: [
+          { key: 'sound', label: 'Boundaries hold together' },
+          { key: 'overlaps', label: 'In two boundaries', empty: 'No asset sits in two systems.' },
+          { key: 'emptyBoundaries', label: 'Boundaries around nothing', empty: 'Every system contains something.' },
+          { key: 'unclaimedEquipment', label: 'In no boundary', empty: 'Every asset belongs to a system.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Commissioning close-out',
+        intent: 'Dossier completeness by system, training and what it rests on, and what handover inherits.',
+        data: commissioningClose,
+        error: commissioningClose?.error,
+        sections: [
+          { key: 'complete', label: 'Close-out complete' },
+          { key: 'dossiers', label: 'Dossiers', empty: 'No commissioning dossier has been assembled.' },
+          { key: 'retrainingOwed', label: 'Retraining owed', empty: 'Nobody is owed retraining.' },
+          { key: 'obligations', label: 'Obligations passed on', empty: 'Nothing is passed to handover.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Reliability',
+        intent: 'Runs with their metrics recomputed from the trend rather than restated, and the seasonal tests still owed.',
+        data: reliability,
+        error: reliability?.error,
+        sections: [
+          { key: 'runs', label: 'Reliability runs', empty: 'No reliability run has been held.' },
+          { key: 'seasonal', label: 'Seasonal tests owed', empty: 'No seasonal test is owed.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Functional and integrated tests',
+        intent: 'Which systems are proven, what was aborted, and what awaits retest.',
+        data: functional,
+        error: functional?.error,
+        sections: [
+          { key: 'proven', label: 'Proven', empty: 'No system is proven yet.' },
+          { key: 'aborted', label: 'Aborted', empty: 'No test was aborted.' },
+          { key: 'awaitingRetest', label: 'Awaiting retest', empty: 'Nothing awaits a retest.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Pre-functional checks',
+        intent: 'Weighted readiness per system from accepted checks, safety-critical failures, and rework invalidations.',
+        data: preFunctional,
+        error: preFunctional?.error,
+        sections: [
+          { key: 'systemReadiness', label: 'Readiness per system', empty: 'No system has been checked.' },
+          { key: 'invalidated', label: 'Invalidated by rework', empty: 'No check has been invalidated.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Commissioning exceptions',
+        intent: 'What each exception invalidates, who is failing repeatedly, and what is only conditionally accepted.',
+        data: exceptions,
+        error: exceptions?.error,
+        sections: [
+          { key: 'blocking', label: 'Blocking', empty: 'No exception blocks progress.' },
+          { key: 'invalidated', label: 'Invalidated by an exception', empty: 'Nothing has been invalidated.' },
+          { key: 'repeatedFailure', label: 'Failing repeatedly', empty: 'Nothing is failing repeatedly.' },
+          { key: 'conditionallyAccepted', label: 'Conditionally accepted', empty: 'Nothing is conditionally accepted.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Vendor tests',
+        intent: 'Factory and site tests, their calculated results, and anything accepted with conditions attached.',
+        data: vendorTests,
+        error: vendorTests?.error,
+        sections: [
+          { key: 'tests', label: 'Tests', empty: 'No vendor test has been recorded.' },
+          { key: 'openExceptions', label: 'Open exceptions', empty: 'No vendor exception is open.' },
+          { key: 'conditional', label: 'Conditionally accepted', empty: 'Nothing is conditionally accepted.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Test packs',
+        intent: 'Each pack and its revision, what blocks it, and what the plan requires that nobody has raised.',
+        data: testPacks,
+        error: testPacks?.error,
+        sections: [
+          { key: 'packs', label: 'Packs', empty: 'No test pack has been raised.' },
+          { key: 'blocked', label: 'Blocked', empty: 'No pack is blocked.' },
+          { key: 'packsNotRaised', label: 'Required but never raised', empty: 'Every pack the plan requires exists.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Completion',
+        intent: 'Period snapshots, recovery plans, systems released to commissioning, and whether completion is accepted.',
+        data: completion,
+        error: completion?.error,
+        sections: [
+          { key: 'snapshots', label: 'Snapshots', empty: 'No completion snapshot has been taken.' },
+          { key: 'recoveryPlans', label: 'Recovery plans', empty: 'No recovery plan is in force.' },
+          { key: 'turnovers', label: 'Released to commissioning', empty: 'Nothing has been turned over.' },
+          { key: 'exceptions', label: 'Exceptions', empty: 'No completion exception is open.' },
+        ],
+      })}
     `,
   );
 

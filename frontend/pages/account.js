@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command } from '../lib/command.js';
-import { badge, date, html, notice, raw, render, table, toast } from '../lib/ui.js';
+import { badge, date, html, notice, positionReport, raw, render, table, toast } from '../lib/ui.js';
 
 /**
  * Account — and the one control on it that cannot be undone.
@@ -23,6 +23,13 @@ import { badge, date, html, notice, raw, render, table, toast } from '../lib/ui.
 
 export async function account(root) {
   const erasure = await api.get('/v1/me/erasure');
+  // Your own notifications, and which of them you may switch off. Both had
+  // engines and no screen — a platform that sends notices nobody can read back
+  // or turn off is one people learn to ignore.
+  const [inbox, preferences] = await Promise.all([
+    api.get('/v1/notifications/inbox').catch((error) => ({ error })),
+    api.get('/v1/notifications/preferences').catch((error) => ({ error })),
+  ]);
   // From the endpoint, not the session: the session payload carries no address,
   // and a confirmation screen for an irreversible act has to name the account.
   const user = erasure.identity;
@@ -100,6 +107,24 @@ export async function account(root) {
           </button>
         </div>
       </div>
+
+      ${positionReport({
+        title: 'Your notifications',
+        intent: 'What the platform has sent you, readable back rather than only arriving.',
+        data: inbox,
+        error: inbox?.error,
+        sections: [{ key: 'messages', label: 'Messages', empty: 'Nothing has been sent to you.' }],
+      })}
+
+      ${positionReport({
+        title: 'What you may switch off',
+        intent:
+          'Some notices are switchable and some are not. A notice about your own account being changed is not ' +
+          'somebody else\u2019s to silence, and the matrix says which is which rather than leaving you to find out.',
+        data: preferences,
+        error: preferences?.error,
+        sections: [{ key: 'matrix', label: 'By category', empty: 'No notification category is published.' }],
+      })}
     `,
   );
 

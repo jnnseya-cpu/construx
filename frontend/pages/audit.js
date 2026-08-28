@@ -1,5 +1,5 @@
 import { api, hashFile } from '../lib/api.js';
-import { badge, html, raw, render, shortHash, table, time, toast } from '../lib/ui.js';
+import { badge, html, positionReport, raw, render, shortHash, table, time, toast } from '../lib/ui.js';
 import { can, state } from '../app.js';
 
 /**
@@ -13,8 +13,14 @@ import { can, state } from '../app.js';
 
 export async function audit(root) {
   const projectId = state.session.projectId;
-  const [data, evidence] = await Promise.all([
+  const [data, timeline, sync, evidence] = await Promise.all([
     api.get(`/v1/projects/${projectId}/audit/events`),
+    // The same events told as a narrative rather than as rows, and the sync
+    // cursor a device pulls from. Both had engines and no screen — the timeline
+    // is what somebody reads when they are asked what happened, and rows are
+    // not that.
+    api.get(`/v1/projects/${projectId}/audit/timeline`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/sync/pull`).catch((error) => ({ error })),
     // The other half of the same claim. A chain of hashes proves nothing has
     // been altered; it does not prove anybody still has the documents those
     // hashes describe, and until this screen showed both, that difference was
@@ -214,6 +220,33 @@ export async function audit(root) {
   <span class="k">"rootHash"</span>: <span class="s">"${raw(shortHash(data.chainHead))}"</span>
         </div>
       </div>
+
+      ${positionReport({
+        title: 'What happened, in order',
+        intent:
+          'The same chain told as narrative. Each entry carries the hash it was recorded under, so a printed ' +
+          'timeline can still be checked against the ledger it came from.',
+        data: timeline,
+        error: timeline?.error,
+        sections: [
+          {
+            key: 'timeline',
+            label: 'Timeline',
+            columns: ['timestamp', 'eventType', 'entity', 'actor', 'narrative'],
+            empty: 'Nothing has been recorded against this project.',
+          },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'The offline sync cursor',
+        intent:
+          'What a device would receive if it pulled now. Shown because a field device that has not synced is a ' +
+          'record that exists on a handset and nowhere else.',
+        data: sync,
+        error: sync?.error,
+        sections: [{ key: 'events', label: 'Since the cursor', empty: 'A device pulling now would receive nothing new.' }],
+      })}
     `,
   );
 

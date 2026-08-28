@@ -9,7 +9,7 @@ function localNow() {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 import { command, commandBar } from '../lib/command.js';
-import { badge, drillable, html, humanise, money, pct, raw, render, table, toast } from '../lib/ui.js';
+import { badge, drillable, html, humanise, money, pct, positionReport, raw, render, table, toast } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
 import { insightPanel } from '../lib/insight.js';
 
@@ -56,7 +56,7 @@ const CHAIN_CHECKS = new Set([
 export async function control(root) {
   const projectId = state.session.projectId;
 
-  const [project, estate, lessons, gate, gateDecisions] = await Promise.all([
+  const [project, estate, lessons, gate, gateDecisions, standard, stages, decisions, actions, reusable] = await Promise.all([
     api.get(`/v1/projects/${projectId}/control`),
     api.get('/v1/control/estate').catch(() => null),
     api.get('/v1/lessons').catch(() => null),
@@ -65,6 +65,14 @@ export async function control(root) {
     // browser assembled would be a second answer to the same question.
     api.get(`/v1/projects/${projectId}/stage-gate`).catch(() => null),
     api.get(`/v1/projects/${projectId}/stage-gate/decisions`).catch(() => ({ decisions: [], summary: '' })),
+    // The corporate standard the project is being run against, the stages it
+    // has occupied, every open commitment in one place, and the lessons other
+    // projects have already paid for. All four had engines and no screen.
+    api.get('/v1/control/standard').catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/stages`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/decisions`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/actions`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/lessons/reusable`).catch((error) => ({ error })),
   ]);
 
   // Meetings and the actions out of them. On this screen rather than its own,
@@ -521,6 +529,67 @@ export async function control(root) {
               })}
             </div>`
       }
+
+      ${positionReport({
+        title: 'The corporate control standard',
+        intent:
+          'The four stages every project in this business is run against, and each item in them. Published by the ' +
+          'platform rather than kept in a document nobody opens.',
+        data: standard,
+        error: standard?.error,
+        sections: [
+          { key: 'stages', label: 'Stages', empty: 'No control standard is defined.' },
+          { key: 'items', label: 'Items', empty: 'The standard contains no items.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Stages this project has occupied',
+        intent: 'What was frozen at each, and what is still open now. A stage nobody closed is a stage still accruing.',
+        data: stages,
+        error: stages?.error,
+        sections: [
+          { key: 'history', label: 'History', empty: 'This project has occupied no recorded stage.' },
+          { key: 'openActions', label: 'Open at this stage', empty: 'Nothing is open at the current stage.' },
+          { key: 'gateReviews', label: 'Gate reviews', empty: 'No gate review has been held.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Every open commitment, once each',
+        intent:
+          'Across meetings, non-conformances, safety observations and stage gates. Once each, because the same ' +
+          'commitment counted three times is how a register stops being believed.',
+        data: { actions: Array.isArray(actions) ? actions : [] },
+        error: actions?.error,
+        sections: [{ key: 'actions', label: 'Open commitments', empty: 'Nothing is open against anybody.' }],
+      })}
+
+      ${positionReport({
+        title: 'Decisions and escalations',
+        intent: 'The action register by owner, what has escalated, and the decisions with what else was considered.',
+        data: decisions,
+        error: decisions?.error,
+        sections: [
+          { key: 'byOwner', label: 'By owner', empty: 'Nothing is owned by anybody.' },
+          { key: 'escalations', label: 'Escalated', empty: 'Nothing has escalated.' },
+          { key: 'decisions', label: 'Decisions, and what else was considered', empty: 'No decision has been recorded.' },
+          { key: 'awaitingInstruction', label: 'Awaiting instruction', empty: 'Nothing is waiting on an instruction.' },
+          { key: 'unapprovedMinutes', label: 'Minutes nobody approved', empty: 'Every set of minutes has been approved.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Lessons this project can reuse',
+        intent:
+          'Approved lessons only, filtered to the sector and stage their own tags say they apply to. An unfiltered ' +
+          'library is one nobody reads.',
+        data: { lessons: Array.isArray(reusable) ? reusable : [] },
+        error: reusable?.error,
+        sections: [
+          { key: 'lessons', label: 'Applicable lessons', empty: 'No approved lesson applies to this sector and stage.' },
+        ],
+      })}
     `,
   );
 

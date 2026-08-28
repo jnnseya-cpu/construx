@@ -1,6 +1,6 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
-import { badge, date, days, html, humanise, metric, modal, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
+import { badge, date, days, html, humanise, metric, modal, pct, positionReport, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -15,13 +15,19 @@ import { blockedReason, can, draw, state } from '../app.js';
 export async function programme(root) {
   const projectId = state.session.projectId;
 
-  const [calc, bundle, ppc] = await Promise.all([
+  const [calc, bundle, ppc, logic, control] = await Promise.all([
     api.get(`/v1/projects/${projectId}/programme?contractualDurationDays=400`).catch((error) => ({ error })),
     entityBundle(projectId, ['Task', 'ProgrammeBaseline', 'DelayRiskSnapshot', 'Dependency', 'Constraint', 'LookaheadPlan', 'WorkPackage', 'ScopePackage']),
     // Percent Plan Complete and the constraints log. The critical path says
     // what the programme needs; PPC says whether the team can be relied on to
     // deliver a week of it, which is a different and more useful question.
     api.get(`/v1/projects/${projectId}/lookahead/ppc`).catch(() => null),
+    // Whether the network holds together at all, and whether the programme has
+    // moved since the forecast was taken. Both existed as engines with no
+    // screen: a critical path computed from open ends is arithmetic on a
+    // network nobody has checked.
+    api.get(`/v1/projects/${projectId}/programme/logic`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/programme/control`).catch((error) => ({ error })),
   ]);
 
   // The simulated distribution, alongside the analytic figure rather than
@@ -295,6 +301,34 @@ export async function programme(root) {
           empty: 'No activity is within five days of critical',
         })}
       </div>
+
+      ${positionReport({
+        title: 'Programme logic — is the network sound',
+        intent:
+          'A critical path computed over open ends and dangling logic is arithmetic on a network nobody has ' +
+          'checked. Each finding is named rather than counted, because "6 issues" cannot be fixed.',
+        data: logic,
+        error: logic?.error,
+        sections: [
+          { key: 'findings', label: 'Findings', empty: 'The network has no open ends, dangling logic, negative float or out-of-sequence work.' },
+          { key: 'blocking', label: 'Blocking a baseline', empty: 'Nothing in the logic prevents this programme being baselined.' },
+          { key: 'activities', label: 'Activities' },
+          { key: 'dependencies', label: 'Dependencies' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Programme control — baseline against forecast',
+        intent: 'Whether the forecast is still current, what is blocked and why, and what has moved since it was taken.',
+        data: control,
+        error: control?.error,
+        sections: [
+          { key: 'forecastCurrent', label: 'Forecast still current' },
+          { key: 'blocked', label: 'Blocked, and why', empty: 'Nothing is recorded as blocked.' },
+          { key: 'outOfSequence', label: 'Working out of sequence', empty: 'No activity has started before its predecessor finished.' },
+          { key: 'frozenWeeks', label: 'Frozen weeks', empty: 'No week is frozen.' },
+        ],
+      })}
     `,
   );
 

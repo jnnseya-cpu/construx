@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
-import { badge, date, html, humanise, money, pct, raw, render, table } from '../lib/ui.js';
+import { badge, date, html, humanise, money, pct, positionReport, raw, render, table } from '../lib/ui.js';
 import { blockedReason, can, draw } from '../app.js';
 
 /**
@@ -51,10 +51,14 @@ const SEVERITY_TONE = { CRITICAL: 'bad', MAJOR: 'warn', MINOR: '' };
 const TENANT = { tenantScoped: true };
 
 export async function pipeline(root) {
-  const [criteria, summary, discipline, radar, tenders, permissions] = await Promise.all([
+  const [criteria, summary, discipline, profile, radar, tenders, permissions] = await Promise.all([
     api.get('/v1/pipeline/criteria'),
     api.get('/v1/pipeline'),
     api.get('/v1/pipeline/discipline'),
+    // The company's own verified facts — everything the radar is allowed to
+    // assert on a bid. Held here rather than on a settings page because this is
+    // where somebody discovers the radar filtered them out of a job.
+    api.get('/v1/company/profile').catch((error) => ({ error })),
     api.get('/v1/radar/latest').catch(() => ({ run: null })),
     api.get('/v1/pipeline/tenders'),
     api.get('/v1/permissions/matrix'),
@@ -355,6 +359,24 @@ export async function pipeline(root) {
           empty: 'No opportunities registered',
         })}
       </div>
+
+      ${positionReport({
+        title: 'What this company can claim',
+        intent:
+          'Turnover, insurances, accreditations, references and capacity. The radar may assert none of it unless it ' +
+          'is here, which is why an opportunity is sometimes filtered out for a fact nobody has recorded yet.',
+        data: profile,
+        error: profile?.error,
+        sections: [
+          { key: 'accreditations', label: 'Accreditations', empty: 'No accreditation is recorded.' },
+          { key: 'insurances', label: 'Insurances', empty: 'No insurance is recorded.' },
+          { key: 'references', label: 'References', empty: 'No reference is recorded.' },
+          { key: 'sectors', label: 'Sectors', empty: 'No sector is claimed.' },
+          { key: 'regions', label: 'Regions', empty: 'No region is claimed.' },
+          { key: 'selfDeliveredTrades', label: 'Self-delivered trades', empty: 'Nothing is self-delivered.' },
+          { key: 'capacity', label: 'Capacity' },
+        ],
+      })}
     `,
   );
 

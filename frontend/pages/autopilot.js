@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { badge, html, humanise, raw, render, table, time, toast } from '../lib/ui.js';
+import { badge, html, humanise, positionReport, raw, render, table, time, toast } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -21,10 +21,15 @@ const TONE = { URGENT: 'bad', ATTENTION: 'warn', INFO: 'info' };
 export async function autopilot(root) {
   const projectId = state.session.projectId;
 
-  const [proposals, fleet, runs, ai] = await Promise.all([
+  const [proposals, fleet, runs, ladder, envelopes, ai] = await Promise.all([
     api.get(`/v1/projects/${projectId}/proposals`).catch(() => ({ proposals: [] })),
     api.get('/v1/agents').catch(() => ({ agents: [] })),
     api.get(`/v1/projects/${projectId}/entities/AgentRun`).catch(() => ({ entities: [] })),
+    // The rungs themselves, and every grant of unattended authority ever made.
+    // The ladder is the safety property this whole screen rests on, and it was
+    // published by the platform with nowhere to read it.
+    api.get('/v1/agents/ladder').catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/agents/envelopes`).catch((error) => ({ error })),
     api
       .get(`/v1/projects/${projectId}/ai/dispositions`)
       .catch(() => ({ executions: 0, disposed: 0, accepted: 0, acceptedWithChange: 0, rejected: 0, outstanding: [] })),
@@ -133,6 +138,31 @@ export async function autopilot(root) {
           named approvers could approve — so an agent cannot quietly widen its own remit or fill the queue with things nobody can act on.
         </div></div>
       </div>
+
+      ${positionReport({
+        title: 'The mandate ladder',
+        intent:
+          'Four rungs, and who is in the loop at each. No agent approves its own proposal, and none acts ' +
+          'unattended without a granted envelope.',
+        data: ladder,
+        error: ladder?.error,
+        sections: [
+          { key: 'ladder', label: 'Rungs', empty: 'No ladder is published, which would mean nothing constrains an agent.' },
+          { key: 'automatableCommands', label: 'Commands an envelope may cover', empty: 'No command may be run unattended.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Grants of unattended authority',
+        intent:
+          'Every envelope ever granted, live or withdrawn. Kept whole rather than pruned: an expired grant is the ' +
+          'record of what an agent was allowed to do at the time it did it.',
+        data: envelopes,
+        error: envelopes?.error,
+        sections: [
+          { key: 'envelopes', label: 'Envelopes', empty: 'Nothing has been granted authority to act unattended.' },
+        ],
+      })}
     `,
   );
 
