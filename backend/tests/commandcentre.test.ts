@@ -161,7 +161,7 @@ describe('ordered by consequence, not by recency', () => {
     assert.ok(report.headline.length > 20);
     // Either it names what needs deciding, or it says plainly that nothing
     // does. A headline that hedges is one nobody trusts.
-    assert.ok(/needs deciding|Nothing urgent|Nothing needs you/.test(report.headline), report.headline);
+    assert.ok(/need(s)? deciding|Nothing urgent|Nothing needs you/.test(report.headline), report.headline);
   });
 });
 

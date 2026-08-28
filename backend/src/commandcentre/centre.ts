@@ -629,7 +629,7 @@ export function commandCentre(
     attention,
     headline:
       urgent > 0
-        ? `${urgent} thing${urgent === 1 ? '' : 's'} needs deciding today — ${attention[0]?.headline ?? ''}`
+        ? `${urgent} thing${urgent === 1 ? ' needs' : 's need'} deciding today — ${attention[0]?.headline ?? ''}`
         : attention.length > 0
           ? `Nothing urgent. ${attention.length} item${attention.length === 1 ? '' : 's'} worth a look.`
           : `Nothing needs you. ${reachable} of ${functions.length} functions are within your authority.`,

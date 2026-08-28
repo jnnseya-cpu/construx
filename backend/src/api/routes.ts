@@ -10932,8 +10932,8 @@ export const ROUTES: Route[] = [
     readOnly: true,
     description: 'Every API key this tenancy has issued, with the secret nowhere in it',
     handler: (platform, ctx) => ({
-      keys: keyRegister(projectContext(platform, ctx)),
-      grantableScopes: grantableScopes(projectContext(platform, ctx).auth.roles),
+      keys: keyRegister(tenantContext(platform, ctx)),
+      grantableScopes: grantableScopes(tenantContext(platform, ctx).auth.roles),
     }),
   },
   {
@@ -10952,7 +10952,7 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => {
-      const issued = issueKey(projectContext(platform, ctx), body(ctx));
+      const issued = issueKey(tenantContext(platform, ctx), body(ctx));
       const { secretHash: _held, ...key } = issued.key;
       return {
         key,
@@ -10969,7 +10969,7 @@ export const ROUTES: Route[] = [
     description: 'Withdraw an API key. The next request made with it is refused',
     schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string' } }, additionalProperties: false },
     handler: (platform, ctx) => {
-      const { secretHash: _held, ...key } = revokeKey(projectContext(platform, ctx), {
+      const { secretHash: _held, ...key } = revokeKey(tenantContext(platform, ctx), {
         keyId: ctx.params.keyId as string,
         reason: body<{ reason: string }>(ctx).reason,
       });
@@ -10982,7 +10982,7 @@ export const ROUTES: Route[] = [
     readOnly: true,
     description: 'Webhook subscriptions and what the platform owes them',
     handler: (platform, ctx) => {
-      const context = projectContext(platform, ctx);
+      const context = tenantContext(platform, ctx);
       return { subscriptions: subscriptionRegister(context), position: webhookPosition(context) };
     },
   },
@@ -11002,7 +11002,7 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => {
-      const created = subscribe(projectContext(platform, ctx), body(ctx));
+      const created = subscribe(tenantContext(platform, ctx), body(ctx));
       return {
         ...created,
         notice:
@@ -11016,7 +11016,7 @@ export const ROUTES: Route[] = [
     description: 'Stop delivering to an endpoint',
     schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string' } }, additionalProperties: false },
     handler: (platform, ctx) => {
-      unsubscribe(projectContext(platform, ctx), {
+      unsubscribe(tenantContext(platform, ctx), {
         subscriptionId: ctx.params.subscriptionId as string,
         reason: body<{ reason: string }>(ctx).reason,
       });
