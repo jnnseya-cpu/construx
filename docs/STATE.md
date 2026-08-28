@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 3,776 passing, 0 failing, 0 skipped, across 166 files · plus 18 against a live Postgres 16 |
+| Tests | 3,778 passing, 0 failing, 0 skipped, across 166 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
 | Backend | 190 TypeScript files, 117,084 lines |
 | Application | 43 ES modules, 19,333 lines (including a service worker) |
@@ -8407,9 +8407,30 @@ every servable file, so changing `app.js` and `lib/api.js` rolls the version,
 installs the new worker and evicts the old cache on activate. That mechanism was
 built for exactly this and it worked.
 
-**Anyone still locked out of a deployment running the old code** signs in again
-after one reload once this is deployed; the stale token is cleared on the first
-refused refresh. Clearing site data for the origin also works and is not needed.
+### The server-side half, which is what actually unblocks somebody
+
+Clearing the session client-side sends a person back to sign-in, which is a
+recovery rather than a fix — they still lost their session for a rename they had
+nothing to do with. So the server now accepts a **legacy issuer at
+`/v1/auth/refresh`, and nowhere else**.
+
+That is the standard way an issuer rename is migrated, and the bound is what
+makes it safe rather than a weakened check:
+
+- the signature must still verify, so the token is genuinely this platform's;
+- it is refused on every ordinary route, so nothing is ever *used* under a legacy
+  issuer — it can only be traded in;
+- the presented token is revoked as the new pair is minted, so the exchange works
+  exactly once;
+- the window closes on its own with the refresh token's expiry.
+
+The issuer check exists to stop token confusion between *different* systems that
+share a secret. These are not different systems; they are this one, before it was
+renamed.
+
+**Anyone holding a stale session is back in on one transparent round trip**, with
+nothing cleared and nothing to do: the first request 401s, the client exchanges
+the refresh token, the request is retried and succeeds.
 
 ---
 

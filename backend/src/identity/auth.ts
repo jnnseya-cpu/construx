@@ -49,6 +49,32 @@ type TokenClaims = {
 const ISSUER = 'https://construxvg.com';
 const AUDIENCE = 'construx-gateway';
 
+/**
+ * Issuers this platform used to mint under.
+ *
+ * The product was renamed and the issuer moved from `construx.ai` to
+ * `construxvg.com`. Both builds sign with the same secret, so a token from
+ * before the rename passes the signature check — proving this platform minted
+ * it — and then fails the issuer check. Every browser holding one was refused on
+ * every request, permanently, with no way out but clearing site data by hand.
+ *
+ * A legacy issuer is accepted **only when exchanging a refresh token for a
+ * current pair**, and nowhere else. That is the standard way an issuer rename is
+ * migrated, and the bound is what makes it safe rather than a weakened check:
+ *
+ *   - the signature must still verify, so the token is genuinely ours;
+ *   - it is refused on every ordinary request, so nothing is *used* under a
+ *     legacy issuer — it can only be traded in;
+ *   - the presented token is revoked as the new pair is minted, so the exchange
+ *     works exactly once per token;
+ *   - it expires with the refresh token itself, so the window closes on its own.
+ *
+ * The issuer check exists to stop token confusion between *different* systems
+ * that happen to share a secret. These are not different systems; they are this
+ * one, before it was renamed.
+ */
+const LEGACY_ISSUERS = new Set(['https://construx.ai']);
+
 function base64url(input: Buffer | string): string {
   return Buffer.from(input).toString('base64url');
 }
@@ -129,7 +155,12 @@ export function revokeToken(tokenId: string): void {
   revoked.add(tokenId);
 }
 
-export function verifyToken(token: string, expectedType: 'access' | 'refresh' = 'access', now = Date.now()): AuthContext {
+export function verifyToken(
+  token: string,
+  expectedType: 'access' | 'refresh' = 'access',
+  now = Date.now(),
+  options: { allowLegacyIssuer?: boolean } = {},
+): AuthContext {
   const parts = token.split('.');
   if (parts.length !== 3) throw new AuthError('Malformed token');
   const [header, body, signature] = parts as [string, string, string];
@@ -143,7 +174,9 @@ export function verifyToken(token: string, expectedType: 'access' | 'refresh' = 
     throw new AuthError('Unreadable token payload');
   }
 
-  if (claims.iss !== ISSUER || claims.aud !== AUDIENCE) throw new AuthError('Token issuer or audience mismatch');
+  const issuerAccepted =
+    claims.iss === ISSUER || (options.allowLegacyIssuer === true && LEGACY_ISSUERS.has(claims.iss));
+  if (!issuerAccepted || claims.aud !== AUDIENCE) throw new AuthError('Token issuer or audience mismatch');
   if (claims.typ !== expectedType) throw new AuthError(`Expected a ${expectedType} token`);
   // No grace window: an expired token is rejected before routing.
   if (claims.exp * 1000 <= now) throw new AuthError('Token has expired');
@@ -163,9 +196,16 @@ export function verifyToken(token: string, expectedType: 'access' | 'refresh' = 
   };
 }
 
-/** Rotate a refresh token: the presented one is revoked as the new pair is minted. */
+/**
+ * Rotate a refresh token: the presented one is revoked as the new pair is minted.
+ *
+ * This is the one place a legacy issuer is accepted — see `LEGACY_ISSUERS`. A
+ * session minted before the rename can be traded for a current one here and
+ * nowhere else, which is what turns a permanent lockout into a single
+ * transparent round trip the person never sees.
+ */
 export function refreshTokens(refreshToken: string, now = Date.now()): TokenPair {
-  const context = verifyToken(refreshToken, 'refresh', now);
+  const context = verifyToken(refreshToken, 'refresh', now, { allowLegacyIssuer: true });
   revokeToken(context.tokenId);
   return issueTokens(
     {

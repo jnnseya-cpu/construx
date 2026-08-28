@@ -34,10 +34,20 @@ import { seedDemoProject, type SeedResult } from '../src/seed.ts';
  * and the only way out was clearing browser storage by hand. Nobody discovers
  * that, and on a field device nobody can reach it to do it.
  *
- * These tests hold the two halves. The server must refuse a token from another
- * issuer — including on the refresh route, because "refused" rather than
- * "unreachable" is what tells the client the session is finished — and the
- * client must clear it rather than keep presenting it.
+ * Fixed in two places, because the two failures are different.
+ *
+ * **Server-side**, a token minted under the platform's *previous* issuer can be
+ * traded for a current one at `/v1/auth/refresh` and nowhere else. That is the
+ * standard migration for an issuer rename, and the bound is what makes it safe:
+ * the signature must still verify, it is refused on every ordinary route, the
+ * presented token is revoked as the new pair is minted, and the window closes
+ * with the refresh token's own expiry. So anybody holding a stale session gets
+ * back in on one transparent round trip, having cleared nothing.
+ *
+ * **Client-side**, a refresh that is genuinely *refused* — an expired refresh
+ * token, a revoked one, a rotated secret — clears the stored session, because a
+ * refusal is final. A network failure does not, because the session may be
+ * perfectly good and the browser simply offline.
  */
 
 const ROOT = resolve(import.meta.dirname, '../..');
@@ -110,18 +120,50 @@ describe('a token from another issuer is refused, and says which check failed', 
     assert.match(reply.body, /Invalid token signature/);
   });
 
-  it('refuses it on the refresh route too, which is what makes recovery possible', async () => {
-    // The client distinguishes "refused" from "unreachable". A refusal here is
-    // final and the session must be discarded; a network failure is not, and
-    // discarding on that would sign a site operative out for driving through a
-    // tunnel.
+  it('trades a legacy refresh token for a current pair, rather than stranding it', async () => {
+    // The migration path, and the reason this stops being a permanent lockout.
+    // A session minted before the rename can be exchanged exactly here — the
+    // signature still verifies, so the token is genuinely ours; it is refused
+    // everywhere else, so nothing is *used* under a legacy issuer; and the
+    // presented token is revoked as the new pair is minted, so the exchange
+    // works once.
     const reply = await call('/v1/auth/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken: mintStale({ typ: 'refresh' }) }),
     });
+    assert.equal(reply.status, 201, reply.body);
+
+    const { accessToken } = JSON.parse(reply.body) as { accessToken: string };
+    // And what comes back is a current token, usable on an ordinary route.
+    const claims = JSON.parse(Buffer.from(accessToken.split('.')[1]!, 'base64url').toString('utf8')) as {
+      iss: string;
+    };
+    assert.equal(claims.iss, 'https://construxvg.com');
+  });
+
+  it('accepts a legacy issuer only when trading it in, never for ordinary use', async () => {
+    // The bound that makes the migration safe rather than a weakened check. A
+    // legacy access token is worthless on every route; only the exchange works.
+    const legacy = mintStale();
+    const reply = await call('/v1/permissions/matrix', { headers: { Authorization: `Bearer ${legacy}` } });
     assert.equal(reply.status, 401);
     assert.match(reply.body, /Token issuer or audience mismatch/);
+  });
+
+  it('lets the exchange happen once, because the presented token is revoked as the new pair is minted', async () => {
+    const legacy = mintStale({ typ: 'refresh' });
+    const exchange = () =>
+      call('/v1/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: legacy }),
+      });
+
+    assert.equal((await exchange()).status, 201);
+    // Replaying it is refused: rotation revokes as it mints.
+    const second = await exchange();
+    assert.equal(second.status, 401, second.body);
   });
 
   it('still lets a current token in, so this is about the token and not the route', async () => {
