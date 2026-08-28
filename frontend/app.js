@@ -555,7 +555,11 @@ function topbar() {
     <div class="spacer"></div>
     ${isOperator() ? html`<span class="phase-tag">OPERATOR</span>` : state.project ? html`<span class="phase-tag">${state.project.phase}</span>` : ''}
     <button class="user-chip" id="user-chip">
-      <span class="avatar">${initials(user?.name)}</span>
+      <span class="avatar">${
+        user?.pictureHash
+          ? html`<img src="/v1/users/${user.id}/picture" alt="" width="26" height="26" />`
+          : initials(user?.name)
+      }</span>
       <span><span class="nm">${user?.name}</span><br><span class="rl">${(user?.roles ?? []).join(', ')}</span></span>
     </button>
   </header>`;

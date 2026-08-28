@@ -117,7 +117,12 @@ export const MEDIA_SLOTS: readonly MediaSlot[] = [
  * script, and this directory is served from the platform's own origin, so
  * accepting one would be storing cross-site scripting on the marketing site.
  */
-const SIGNATURES: ReadonlyArray<{ extension: string; contentType: string; matches: (bytes: Buffer) => boolean }> = [
+/**
+ * Exported so an account picture is typed the same way a landing picture is.
+ * Two magic-byte tables would be two answers to "is this really a PNG", and the
+ * one that drifts is the one an upload gets past.
+ */
+export const SIGNATURES: ReadonlyArray<{ extension: string; contentType: string; matches: (bytes: Buffer) => boolean }> = [
   {
     extension: '.png',
     contentType: 'image/png',

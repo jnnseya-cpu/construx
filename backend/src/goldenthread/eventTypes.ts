@@ -716,6 +716,13 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // internet. Publication is a human act against the company's own face, and it
   // sits outside the agent mandate ladder entirely — the ladder governs acting
   // on a project's record, and this is not that.
+  // A person's own picture, and an organisation's. Both are governance records
+  // rather than settings: a face on a signed permit and a mark on an issued
+  // document are part of what the document says, so the change is recorded with
+  // who made it. `aiAllowed: false` on both — no agent decides what a person
+  // looks like or what a company's documents carry.
+  def('USER_PICTURE_SET', 'User', 'UPDATE', 'GOVERNANCE'),
+
   def('SITE_POST_DRAFTED', 'SitePost', 'CREATE', 'GOVERNANCE', { aiAllowed: true, creates: true }),
   def('SITE_POST_REVISED', 'SitePost', 'UPDATE', 'GOVERNANCE'),
   def('SITE_POST_PUBLISHED', 'SitePost', 'APPROVE', 'GOVERNANCE'),

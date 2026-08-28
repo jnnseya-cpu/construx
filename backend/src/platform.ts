@@ -22,7 +22,9 @@ import {
 } from './billing/payments.ts';
 import { PACKAGES, UNCHARGED_ROLES, type PackageTier } from './billing/seats.ts';
 import * as storage from './billing/storage.ts';
+import { createHash } from 'node:crypto';
 import { config } from './config.ts';
+import { SIGNATURES } from './site/media.ts';
 import { DomainError, ForbiddenError, NotFoundError } from './core/errors.ts';
 import { hashEvidence } from './core/canonical.ts';
 import { ulid } from './core/ids.ts';
@@ -64,6 +66,15 @@ export type PlatformUser = {
   roles: Role[];
   partyId?: string;
   status: 'ACTIVE' | 'SUSPENDED';
+  /**
+   * The account picture, in the evidence store, by its SHA-256.
+   *
+   * A hash rather than the bytes, for the same reason a client's mark is: the
+   * store is content-addressed, so this names exactly one image and swapping it
+   * is a new hash and a new event rather than a silent substitution behind a
+   * name that did not change.
+   */
+  pictureHash?: string;
   /**
    * Created by the demonstration seed.
    *
@@ -430,6 +441,92 @@ export class Platform {
     // article on a deployment nobody has funded is refused for want of credit,
     // and says so.
     this.#wallets.set(PLATFORM_TENANT_ID, wallet);
+  }
+
+  /**
+   * Set a person's own account picture.
+   *
+   * Stored in the evidence store rather than in a second image store, because
+   * the platform already has one that is content-addressed, tenant-scoped and
+   * size-capped — and a face is exactly the class of thing it holds. It is not
+   * registered as *evidence*: nothing in the record is being evidenced by it,
+   * and putting an avatar in the evidence register would make the one place
+   * that answers "what does this project rest on" answer partly about
+   * profile pictures.
+   *
+   * The type is read from the file's own magic bytes, never from what the
+   * upload claimed. An SVG is refused outright: it is served from the
+   * platform's own origin, and an SVG is a document that can carry script.
+   */
+  async setUserPicture(input: {
+    actorId: string;
+    userId: string;
+    bytes: Buffer;
+    contentType?: string;
+  }): Promise<PlatformUser> {
+    const user = this.#users.get(input.userId);
+    if (!user) throw new NotFoundError(`No user ${input.userId}`);
+
+    if (input.bytes.length === 0) throw new DomainError('EMPTY_UPLOAD', 'No bytes were received', 400);
+    if (input.bytes.length > config.site.mediaMaxBytes) {
+      throw new DomainError(
+        'IMAGE_TOO_LARGE',
+        `That picture is ${Math.round(input.bytes.length / 1024)}KB. The ceiling is ` +
+          `${Math.round(config.site.mediaMaxBytes / 1024)}KB — crop it square and compress.`,
+        413,
+      );
+    }
+
+    const signature = SIGNATURES.find((candidate) => candidate.matches(input.bytes));
+    if (!signature) {
+      throw new DomainError(
+        'NOT_AN_IMAGE',
+        'That file is not a PNG, JPEG or WebP. It is read from the file itself rather than from what the upload ' +
+          'claimed, and an SVG is refused because it is a document that can carry script.',
+        415,
+      );
+    }
+
+    const hash = createHash('sha256').update(input.bytes).digest('hex');
+    await this.evidence.store(user.tenantId, hash, input.bytes, signature.contentType);
+
+    const updated: PlatformUser = { ...user, pictureHash: hash };
+    this.#users.set(user.id, updated);
+
+    this.ledger.commit({
+      tenantId: user.tenantId,
+      projectId: `${user.tenantId}-governance`,
+      actor: { refType: 'User', refId: input.actorId },
+      source: 'WEB',
+      correlationId: hash,
+      eventType: 'USER_PICTURE_SET',
+      entity: { refType: 'User', refId: user.id },
+      nextState: {
+        id: user.id,
+        tenantId: user.tenantId,
+        name: user.name,
+        email: user.email,
+        roles: user.roles,
+        status: user.status,
+        pictureHash: hash,
+      },
+    });
+
+    return updated;
+  }
+
+  /**
+   * The bytes behind an account picture, for whoever may see the person.
+   *
+   * Scoped to one tenancy by the caller, which is what stops this becoming a
+   * way to read any hash in the store by guessing: the hash has to be the one
+   * recorded against a user in the caller's own tenancy.
+   */
+  async userPicture(tenantId: string, userId: string): Promise<{ bytes: Buffer; contentType: string } | undefined> {
+    const user = this.#users.get(userId);
+    if (!user || user.tenantId !== tenantId || !user.pictureHash) return undefined;
+    if (!(await this.evidence.holds(tenantId, user.pictureHash))) return undefined;
+    return this.evidence.fetch(tenantId, user.pictureHash);
   }
 
   /** Every operator account on the platform. */

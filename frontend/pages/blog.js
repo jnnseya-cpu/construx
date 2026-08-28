@@ -182,8 +182,8 @@ export async function blog(root) {
 
       ${posts.length === 0
         ? html`<div class="empty">
-            <b>Nothing has been drafted yet.</b>The six posts in the build are still on the site; this is where the
-            seventh gets written.
+            <b>Nothing has been drafted yet.</b>The ${position.fixed ?? 0} posts in the build are still on the site;
+            this is where the next one gets written.
           </div>`
         : ''}
     `,

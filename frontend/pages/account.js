@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command } from '../lib/command.js';
-import { badge, date, html, notice, positionReport, raw, render, table, toast } from '../lib/ui.js';
+import { badge, date, html, initials, notice, positionReport, raw, render, table, toast } from '../lib/ui.js';
 
 /**
  * Account — and the one control on it that cannot be undone.
@@ -108,6 +108,31 @@ export async function account(root) {
         </div>
       </div>
 
+      <div class="card">
+        <h2>Your account picture</h2>
+        <div class="metric-sub" style="margin-bottom:10px">
+          It appears beside your name wherever the platform names you — on a permit you issued, on an induction
+          you ran. Yours to set and nobody else's: an administrator cannot put a face on a record somebody else made.
+        </div>
+        <div class="row" style="display:flex;gap:14px;align-items:center">
+          <span class="avatar lg">${
+            user?.pictureHash
+              ? html`<img src="/v1/users/${user.id}/picture" alt="" width="56" height="56" />`
+              : initials(user?.name)
+          }</span>
+          <div>
+            <input type="file" accept="image/png,image/jpeg,image/webp" data-picture style="display:none" />
+            <button class="btn quiet" data-choose-picture>
+              ${user?.pictureHash ? 'Replace it' : 'Choose a picture'}
+            </button>
+            <div class="metric-sub" style="margin-top:6px">
+              PNG, JPEG or WebP. The type is read from the file itself rather than from what it claims, and an SVG
+              is refused — it is a document that can carry script, and this is served from the platform's own origin.
+            </div>
+          </div>
+        </div>
+      </div>
+
       ${positionReport({
         title: 'Your notifications',
         intent: 'What the platform has sent you, readable back rather than only arriving.',
@@ -127,6 +152,26 @@ export async function account(root) {
       })}
     `,
   );
+
+  root.querySelector('[data-choose-picture]')?.addEventListener('click', () => {
+    root.querySelector('[data-picture]')?.click();
+  });
+
+  root.querySelector('[data-picture]')?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      // `api.upload` posts the bytes themselves rather than a multipart form —
+      // the same path the landing pictures take. The platform reads the type
+      // from the file's own magic bytes, so a declared content type is
+      // something it deliberately ignores.
+      await api.upload('/v1/me/picture', file);
+      toast('Picture set', 'It appears beside your name from now on.', 'ok');
+      await account(root);
+    } catch (error) {
+      toast('That picture was refused', error.message, 'err');
+    }
+  });
 
   root.querySelector('[data-request-erasure]')?.addEventListener('click', async () => {
     const result = await command({

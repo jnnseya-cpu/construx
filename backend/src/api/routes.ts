@@ -2388,6 +2388,60 @@ export const ROUTES: Route[] = [
       safety.setRiskMitigation(projectContext(platform, ctx), ctx.params.riskId as string, body(ctx)),
   },
 
+  // --- Account pictures -------------------------------------------------------
+  //
+  // A picture on an account is not decoration here. A permit to work names the
+  // person who issued it and an induction names who was inducted, and a face
+  // beside a name is how somebody on site tells one J. Murphy from the other.
+  //
+  // Your own, and nobody else's. An administrator cannot set a colleague's
+  // picture: there is no operational reason to, and the one thing it would
+  // enable is putting somebody's face on a record they did not make.
+  {
+    method: 'POST',
+    pattern: '/v1/me/picture',
+    upload: true,
+    // A face, not a drawing set. The evidence ceiling is sized for the latter
+    // and leaving it here would let anybody make this process buffer 50MB.
+    maxBytes: config.site.mediaMaxBytes,
+    description: 'Set your own account picture. PNG, JPEG or WebP, read from the file rather than what it claims',
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      const user = await platform.setUserPicture({
+        actorId: actor.actorId,
+        userId: actor.actorId,
+        bytes: ctx.rawBody ?? Buffer.alloc(0),
+      });
+      return { pictureHash: user.pictureHash };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/users/:userId/picture',
+    readOnly: true,
+    binary: true,
+    description: "An account picture, for anybody in the same tenancy as the person",
+    handler: async (platform, ctx) => {
+      // Scoped to the caller's own tenancy, which is what stops this being a
+      // way to read arbitrary bytes out of the store: the hash is never
+      // supplied by the caller, it is the one recorded against a user who is
+      // already in their tenancy.
+      const actor = auth(ctx);
+      const held = await platform.userPicture(actor.tenantId, ctx.params.userId as string);
+      if (!held) throw new NotFoundError('That account has no picture');
+      // Inline, because this is rendered in an <img> rather than downloaded.
+      // The gateway sends `nosniff` and a policy denying the document every
+      // capability with it, which is what makes serving somebody's upload from
+      // this origin safe.
+      return {
+        bytes: held.bytes,
+        contentType: held.contentType,
+        filename: `${ctx.params.userId}.img`,
+        disposition: 'inline' as const,
+      };
+    },
+  },
+
   // ------------------------------------------------------------------ people
   {
     method: 'GET',

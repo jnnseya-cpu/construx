@@ -8701,3 +8701,38 @@ the platform" needs a much better reason than convenience.
 **A repair that keeps firing is reported as a finding rather than a fix.** Once
 is a blip. Five times means something is re-breaking and the thing meant to
 paper over a blip is hiding a defect instead.
+
+---
+
+## Account pictures
+
+Every account type can carry a picture. The mechanism is deliberately the one
+the landing page already had rather than a second one beside it: the bytes go to
+the content-addressed evidence store, the magic-byte table in `site/media.ts` is
+exported and shared, and the user record holds only a `pictureHash`. So a
+picture is an object the ledger commits to by hash, not a blob in a user row,
+and `USER_PICTURE_SET` records who set it and when.
+
+**A person sets their own picture and nobody else's.** `POST /v1/me/picture`
+takes the actor from the session; there is no route that names a target user, so
+an administrator cannot set a colleague's picture. Reading is open within the
+tenancy — `GET /v1/users/:userId/picture` — because a face in a sidebar is the
+whole point of having one.
+
+**Type is decided by the bytes, not the filename.** `SIGNATURES` matches PNG,
+JPEG, WebP and GIF headers; an SVG is refused, by name, because an SVG is a
+document that executes. The refusal says so rather than saying "invalid file".
+
+**It requires an object store.** With `EVIDENCE_STORE_PATH` unset the upload is
+refused with "No object store is configured" — an honest refusal, not a silent
+in-memory success that vanishes on the next deploy. Compose sets it to
+`/data/evidence` on the ledger volume.
+
+## What is not built: document cover branding
+
+`ClientBranding` carries `logoEvidenceHash`, and the PDF renderer places that
+logo in the header of every page. It does **not** carry a cover image, and the
+renderer has no cover page. The design is settled — `coverEvidenceHash`
+alongside the logo, resolved through the same `ImageResolver` a site photograph
+takes, so the document's content hash commits to exactly which image was on it —
+but none of it is written. Printed documents today are branded by logo only.
