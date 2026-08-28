@@ -101,6 +101,11 @@ export const NAV = [
     items: [
       { id: 'billing', label: 'ACU & Billing', area: 'BILLING_ACU', icon: 'meter' },
       { id: 'admin', label: 'Platform Admin', area: 'PLATFORM_ADMINISTRATION', icon: 'cog' },
+      // The self-managing layer, the telemetry egress and the agent fleet. All
+      // of it ran for weeks with no door: an operator saw five items, three of
+      // them locked, and two screens. Operator-only because every read behind
+      // it is `operatorOnly` on the server.
+      { id: 'operations', label: 'Platform Operations', area: 'PLATFORM_ADMINISTRATION', icon: 'shield' },
       { id: 'newsletter', label: 'Newsletter', area: 'PLATFORM_ADMINISTRATION', icon: 'mail' },
       { id: 'communications', label: 'Communications', area: 'ENTERPRISE_STRUCTURE', icon: 'radar' },
       // Outside the capability matrix — see `visible()`. Asking to be erased is
@@ -446,9 +451,16 @@ function reachable(item) {
   // An operator holds billing and audit rights at the platform level, but every
   // billing and audit *screen* in this product is scoped to a tenant's project —
   // and an operator has none. So the Platform page is the whole operator app.
+  // Your own account is never somebody else's to grant. Asking to be erased, or
+  // to see what is held about you, is not a capability in the matrix — and this
+  // branch used to sit below the operator return, so the one identity that
+  // administers the platform was the one identity that could not reach its own
+  // account page. The mobile stores also require the route to exist for every
+  // account, which it did not.
+  if (item.id === 'account') return true;
   if (isOperator()) return item.area === 'PLATFORM_ADMINISTRATION';
   if (item.area === 'PLATFORM_ADMINISTRATION') return false;
-  return can(item.area, 'R') || item.id === 'overview' || item.id === 'copilot' || item.id === 'account';
+  return can(item.area, 'R') || item.id === 'overview' || item.id === 'copilot';
 }
 
 /**
@@ -471,7 +483,20 @@ function reachable(item) {
  * so it cannot drift from the server's own answer.
  */
 function worthShowing(item) {
-  if (isOperator()) return true;
+  // The same rule, finally applied to operators as well.
+  //
+  // This used to return true for every item, which is how an operator came to
+  // see a Platform group of five with three permanent locks on it. The two
+  // locked items were customer capabilities — an operator cannot hold
+  // ENTERPRISE_STRUCTURE, and no colleague can grant it to them, because it is
+  // a different account layer rather than a senior role. So the lock named
+  // nobody to ask and could never come off: exactly the furniture the rule
+  // above exists to remove.
+  //
+  // Estate billing and audit are not lost by hiding them here. They are
+  // estate-wide figures and live on the Platform page, which is where an
+  // operator with no project can actually read them.
+  if (isOperator()) return reachable(item);
   if (!matrix || grantableRoles.length === 0) return true;
   if (reachable(item)) return true;
   return grantableRoles.some((role) => (matrix[role]?.[item.area] ?? []).includes('R'));

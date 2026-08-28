@@ -153,7 +153,7 @@ export async function developer(root) {
         <h3>API keys</h3>
         ${raw(
           table({
-            columns: ['Name', 'Mode', 'Prefix', 'Scopes', 'Expires', 'State'],
+            headers: ['Name', 'Mode', 'Prefix', 'Scopes', 'Expires', 'State'],
             rows: (keys.keys ?? []).map((key) => [
               key.name,
               badge(key.mode === 'LIVE' ? 'live' : 'sandbox', key.mode === 'LIVE' ? 'warn' : 'info'),
@@ -181,7 +181,7 @@ export async function developer(root) {
         </p>
         ${raw(
           table({
-            columns: ['Name', 'URL', 'Events', 'Failures', 'State'],
+            headers: ['Name', 'URL', 'Events', 'Failures', 'State'],
             rows: (hooks.subscriptions ?? []).map((entry) => [
               entry.name,
               `<code>${entry.url}</code>`,

@@ -43,6 +43,38 @@ function consoleSource(): string {
 
 const writeRoutes = ROUTES.filter((route) => route.method !== 'GET' && route.public !== true);
 
+/**
+ * Reads need doors too, and this is the half that was missing.
+ *
+ * The filter above stops at `method !== 'GET'`, so for as long as this file has
+ * existed a *read* capability could be built, routed, tested, documented and
+ * reported complete with no way for anybody to reach it — and nothing failed.
+ *
+ * Twenty had accumulated by the time somebody signed in and asked why the
+ * console looked the same as it had before the work. Among them the chain
+ * assurance sweep, the watch rules, the auto-repair register, the telemetry
+ * egress, the thirty-two agent fleet, the mandate ladder and the command centre
+ * catalogue — every one of which had an engine, an authorised route and passing
+ * tests, and none of which had a screen.
+ *
+ * A write that nothing curates still has a door, because `GET /v1/commands`
+ * publishes its schema and the console generates a form from it. **There is no
+ * such fallback for a read.** A read is a screen or it is nothing, so the only
+ * honest assertion is zero, with no exemption list — an exemption here would
+ * become the same quiet drawer this test was written to empty.
+ */
+const readRoutes = ROUTES.filter((route) => route.method === 'GET' && route.public !== true);
+
+/** A regex matching how the console would name this path, parameters and all. */
+function pathPattern(pattern: string): RegExp {
+  const literal = pattern
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => (segment.startsWith(':') ? '[^/`\'"]+' : segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    .join('/');
+  return new RegExp(`/${literal}(?![A-Za-z0-9-])`);
+}
+
 describe('every command has a door', () => {
   it('publishes every write route in the catalogue, and hides none of them', () => {
     // The catalogue is a filter over ROUTES rather than a list somebody keeps,
@@ -82,6 +114,21 @@ describe('every command has a door', () => {
       `${unreachable.length} write routes are reachable only through the catalogue:\n  ${unreachable
         .map((r) => `${r.method} ${r.pattern}`)
         .join('\n  ')}`,
+    );
+  });
+
+  it('leaves no read route unreachable from the console', () => {
+    // The assertion that would have caught it. Named, not counted: a failure
+    // here has to say which capability lost its door, because "20" tells
+    // whoever reads it nothing about what to build.
+    const source = consoleSource();
+    const unreachable = readRoutes.filter((route) => !pathPattern(route.pattern).test(source));
+
+    assert.equal(
+      unreachable.length,
+      0,
+      `${unreachable.length} read routes have no console door. Each is a capability the platform ` +
+        `authorises and nobody can reach:\n  ${unreachable.map((r) => r.pattern).join('\n  ')}`,
     );
   });
 
