@@ -361,9 +361,20 @@ describe('every AI route can be quoted, and only those', () => {
       // lands on the platform's own metered wallet, and the operator pressing
       // the button owns that wallet.
       //
-      // Named as a single exception rather than the check being softened. A
-      // second entry here should be argued for, not appended.
-      const platformOwn = route.pattern === '/v1/site/posts/draft';
+      // Named as an exception rather than the check being softened. A second
+      // entry here should be argued for, not appended.
+      //
+      // The second entry, argued. `/v1/site/posts/audit` reads the company's
+      // own published posts and returns what is wrong with them and what to
+      // write next. Same surface as the draft, same wallet, same operator,
+      // refused to everybody else — so it belongs to the same exception rather
+      // than to a widened rule.
+      //
+      // What would *not* belong here is a route that spends a customer's ACUs
+      // with no project to quote against. That is the failure this check exists
+      // to prevent and no entry may be added for it.
+      const PLATFORM_OWN = ['/v1/site/posts/draft', '/v1/site/posts/audit'];
+      const platformOwn = PLATFORM_OWN.includes(route.pattern);
       assert.ok(
         route.pattern.includes(':projectId') || platformOwn,
         `${route.pattern} must be project-scoped to be quoted, or spend the platform's own wallet`,

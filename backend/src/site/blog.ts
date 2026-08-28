@@ -180,6 +180,87 @@ export function seoReport(
 }
 
 /** Every post in the ledger, newest first. Drafts included. */
+/**
+ * A score out of a hundred, and the reason it is published beside the failures
+ * rather than instead of them.
+ *
+ * The checks above are a **gate**: a post that fails one is refused publication,
+ * with the failure named, because "SEO score 62" is not something anybody can
+ * act on. That has not changed and is not weakened by this.
+ *
+ * What a score adds is a thing the gate cannot express — **how far off** a post
+ * is, and whether the blog as a whole is getting better or worse. A gate is
+ * binary and gives no gradient; you cannot tell a post that fails one check by
+ * two characters from one that fails four checks badly, and you cannot say
+ * whether last month's posts were stronger than this month's.
+ *
+ * So: weighted, derived from the same checks, and never the thing that decides
+ * whether something may be published.
+ *
+ * The weights say what actually costs traffic. Depth and the meta description
+ * are the two that decide whether a page ranks and whether the result is
+ * clicked; a standfirst matters to a reader who is already on the index.
+ */
+const SEO_WEIGHTS: Record<string, number> = {
+  Depth: 25,
+  'Meta description': 20,
+  'Title length': 15,
+  'Keyword in the title': 15,
+  'Keyword in the opening': 10,
+  Slug: 10,
+  Standfirst: 5,
+};
+
+export type SeoScore = {
+  /** Out of 100. */
+  score: number;
+  /** How many checks pass, which is the number the gate actually reads. */
+  passing: number;
+  total: number;
+  /** Failures ranked by what they cost, so the first one is the one to fix. */
+  worst: { check: string; weight: number; detail: string }[];
+  band: 'STRONG' | 'WORKABLE' | 'WEAK';
+  /** Said in a sentence, because a number alone is what this file exists to avoid. */
+  summary: string;
+};
+
+export function seoScore(findings: readonly SeoFinding[]): SeoScore {
+  const total = findings.length;
+  const passing = findings.filter((finding) => finding.ok).length;
+
+  // Weights that sum to 100 across the checks that exist. A check with no
+  // declared weight is scored evenly rather than silently ignored — a new check
+  // added above must still move the score.
+  const declared = findings.reduce((sum, finding) => sum + (SEO_WEIGHTS[finding.check] ?? 0), 0);
+  const undeclared = findings.filter((finding) => SEO_WEIGHTS[finding.check] === undefined);
+  const share = undeclared.length === 0 ? 0 : Math.max(0, 100 - declared) / undeclared.length;
+  const weightOf = (check: string): number => SEO_WEIGHTS[check] ?? share;
+
+  const earned = findings.filter((finding) => finding.ok).reduce((sum, finding) => sum + weightOf(finding.check), 0);
+  const available = findings.reduce((sum, finding) => sum + weightOf(finding.check), 0);
+  const score = available === 0 ? 0 : Math.round((earned / available) * 100);
+
+  const worst = findings
+    .filter((finding) => !finding.ok)
+    .map((finding) => ({ check: finding.check, weight: Math.round(weightOf(finding.check)), detail: finding.detail }))
+    .sort((a, b) => b.weight - a.weight);
+
+  const band = score >= 90 ? 'STRONG' : score >= 65 ? 'WORKABLE' : 'WEAK';
+
+  return {
+    score,
+    passing,
+    total,
+    worst,
+    band,
+    summary:
+      worst.length === 0
+        ? 'Every check passes. This post can be published.'
+        : `${worst.length} check${worst.length === 1 ? '' : 's'} failing, worst first: ${worst[0]?.check}. ` +
+          'A post is refused publication while any check fails — the score says how far off it is, not whether it may go out.',
+  };
+}
+
 export function posts(platform: Platform): BlogPost[] {
   return platform.ledger
     .list(BLOG_PROJECT_ID, 'SitePost')
@@ -351,6 +432,159 @@ export async function draftPost(
   return { post, seo: seoReport(post), acuConsumed: result.acuConsumed };
 }
 
+/**
+ * The SEO agent.
+ *
+ * Not a member of the agent fleet, and that is a deliberate placement rather
+ * than an oversight. Every agent in `agents/registry.ts` evaluates an
+ * `EngineContext` over a *customer project* — that is what the mandate ladder,
+ * the proposal queue and the autonomy rules are built around. The blog is the
+ * company's own marketing site. An agent that read a customer's project to
+ * decide what CONSTRUX should blog about would be the account boundary
+ * collapsing in the one direction nobody would think to check.
+ *
+ * So it is a command an operator presses, on the platform's own tenancy,
+ * reasoning over the platform's own published posts. It reads the blog and
+ * answers two questions a person otherwise answers by guessing:
+ *
+ * 1. **What is wrong with what is already published**, ranked by what it costs.
+ * 2. **What should be written next**, given what is already covered.
+ *
+ * It proposes and never acts. Nothing it returns is written, published or
+ * scheduled — the operator reads it and decides, which is the same rule the
+ * drafting command follows and the reason a model may draft while only a person
+ * may publish.
+ *
+ * It refuses on the stand-in for the same reason `draftPost` does: an audit
+ * produced by an adapter that reasons about nothing, presented as an audit,
+ * is a fabricated professional opinion.
+ */
+export type SeoAudit = {
+  ranAt: string;
+  provider: string;
+  /** Absent where the provider does not name one. Never invented. */
+  modelClass?: string;
+  acuConsumed: number;
+  /** What the model was actually shown, so its answer can be judged against it. */
+  reviewed: { slug: string; title: string; keyword: string; words: number; score: number; views: number }[];
+  /** Problems with the blog as a whole, ranked. */
+  findings: { title: string; severity: 'HIGH' | 'MEDIUM' | 'LOW'; detail: string }[];
+  /** What to write next, each with the phrase it should be found by. */
+  proposals: { title: string; keyword: string; why: string }[];
+  /** What the audit is not. */
+  limits: string[];
+};
+
+export async function auditBlog(
+  ctx: EngineContext,
+  platform: Platform,
+  viewsFor: (slug: string) => number,
+): Promise<SeoAudit> {
+  // Only the published records are scored.
+  //
+  // The posts written into the build predate these checks, carry no keyword and
+  // no meta description, and are deliberately not migrated — they are the
+  // engineering notes this project actually produced. Scoring them against a
+  // standard they were never written to would produce a page of failures nobody
+  // intends to act on, and would drag the blog's average down with noise. They
+  // are handed to the model as titles instead, so it does not propose an
+  // article that already exists.
+  const reviewed = publishedPosts(platform).map((post) => ({
+    slug: post.slug,
+    title: post.title,
+    keyword: post.keyword,
+    words: wordCount(post.body),
+    score: seoScore(seoReport(post)).score,
+    views: viewsFor(post.slug),
+  }));
+
+  const alreadyCovered = POSTS.map((post) => post.title);
+
+  if (reviewed.length === 0) {
+    throw new DomainError(
+      'NOTHING_TO_AUDIT',
+      'Nothing has been published from the console yet, so there is nothing here to audit. The posts written into the ' +
+        'build are not scored — they predate these checks and carry no keyword. Publish something first: an audit of ' +
+        'an empty set would be a list of opinions about nothing.',
+      422,
+    );
+  }
+
+  const result = await runAI(ctx, {
+    engine: 'EXECUTIVE',
+    taskType: 'site_blog_audit',
+    capability: 'REASONING',
+    inputRefs: [{ refType: 'Project', refId: BLOG_PROJECT_ID }],
+    request: {
+      task:
+        'You are reviewing the blog of a construction operating system company for search performance and editorial ' +
+        'coherence. Return JSON with: findings, an array of {title, severity, detail} where severity is HIGH, MEDIUM ' +
+        'or LOW; and proposals, an array of {title, keyword, why} naming articles that should be written next.',
+      payload: {
+        posts: reviewed,
+        alreadyCovered,
+        audience: 'Construction directors, commercial managers and project directors at contractors and clients.',
+        constraint:
+          'Judge only what you have been given: the titles, the phrases each post targets, its length, its check ' +
+          'score and how many requests its page has served. You have no ranking data, no competitor data and no ' +
+          'search volume — do not state or imply any. Where a claim would need one of those, say what the gap is ' +
+          'instead. A proposed article must be about the industry problem, not about the product. Each proposed ' +
+          'keyword must be a phrase somebody would actually type. Do not propose anything already covered by a title ' +
+          'in alreadyCovered.',
+      },
+    },
+    toWrites: () => [],
+  });
+
+  if (result.synthetic) {
+    throw new DomainError(
+      'NO_REASONING_PROVIDER',
+      'No reasoning provider is configured, so the local stand-in answered — and it reasons about nothing. An audit ' +
+        'from it would be a fabricated professional opinion about the company’s own website. Set a provider key.',
+      503,
+    );
+  }
+
+  const output = result.output as { findings?: unknown; proposals?: unknown };
+  const findings = (Array.isArray(output.findings) ? output.findings : []).map((entry) => {
+    const item = entry as { title?: unknown; severity?: unknown; detail?: unknown };
+    const severity = String(item.severity ?? '').toUpperCase();
+    return {
+      title: String(item.title ?? '').trim(),
+      severity: (severity === 'HIGH' || severity === 'MEDIUM' ? severity : 'LOW') as 'HIGH' | 'MEDIUM' | 'LOW',
+      detail: String(item.detail ?? '').trim(),
+    };
+  }).filter((finding) => finding.title.length > 0);
+
+  const proposals = (Array.isArray(output.proposals) ? output.proposals : []).map((entry) => {
+    const item = entry as { title?: unknown; keyword?: unknown; why?: unknown };
+    return {
+      title: String(item.title ?? '').trim(),
+      keyword: String(item.keyword ?? '').trim(),
+      why: String(item.why ?? '').trim(),
+    };
+  }).filter((proposal) => proposal.title.length > 0 && proposal.keyword.length > 0);
+
+  return {
+    ranAt: new Date().toISOString(),
+    provider: result.provider,
+    modelClass: result.modelClass,
+    acuConsumed: result.acuConsumed,
+    reviewed,
+    findings,
+    proposals,
+    // Published on the audit rather than assumed, because an audit that looks
+    // authoritative and is not is worse than no audit.
+    limits: [
+      'No ranking data. The platform does not query a search engine, so nothing here knows where any page actually ranks.',
+      'No search volume and no competitor data. A proposed keyword is a judgement about the audience, not a measured opportunity.',
+      'Views are server-rendered requests, not readers — a crawler counts, and one person reading twice counts twice.',
+      'The posts written into the build are not scored. They predate these checks and carry no keyword; they are shown to the model as titles so it does not propose one twice.',
+      'Nothing here is written, published or scheduled. It is read and decided by a person, the same rule that lets a model draft and only a person publish.',
+    ],
+  };
+}
+
 /** Write a post by hand, with no model involved. */
 export function writePost(
   ctx: EngineContext,
@@ -484,19 +718,34 @@ export function withdrawPost(
 }
 
 /** The operator's view: every post, its state, and what is stopping it. */
-export function blogPosition(platform: Platform): {
-  posts: Array<BlogPost & { seo: SeoFinding[]; publishable: boolean }>;
+export function blogPosition(
+  platform: Platform,
+  viewsFor: (slug: string) => number = () => 0,
+): {
+  posts: Array<BlogPost & { seo: SeoFinding[]; publishable: boolean; score: SeoScore; views: number }>;
   published: number;
   drafts: number;
   fixed: number;
+  /** Mean score across everything published from the console. */
+  averageScore: number | null;
+  totalViews: number;
   summary: string;
 } {
   const all = posts(platform).map((post) => {
     const seo = seoReport(post);
-    return { ...post, seo, publishable: seo.every((finding) => finding.ok) };
+    return {
+      ...post,
+      seo,
+      publishable: seo.every((finding) => finding.ok),
+      score: seoScore(seo),
+      // A draft has no public URL, so it can never have been requested. Reported
+      // as zero rather than omitted: zero is the true count for a draft.
+      views: post.status === 'PUBLISHED' ? viewsFor(post.slug) : 0,
+    };
   });
 
-  const published = all.filter((post) => post.status === 'PUBLISHED').length;
+  const live = all.filter((post) => post.status === 'PUBLISHED');
+  const published = live.length;
   const drafts = all.filter((post) => post.status === 'DRAFT').length;
   const blocked = all.filter((post) => post.status === 'DRAFT' && !post.publishable).length;
 
@@ -504,6 +753,11 @@ export function blogPosition(platform: Platform): {
     posts: all,
     published,
     drafts,
+    // Averaged over what is published, not over drafts: a draft half-written is
+    // supposed to score badly, and letting it drag the number down would make
+    // the blog look worse the moment somebody starts writing.
+    averageScore: live.length === 0 ? null : Math.round(live.reduce((sum, post) => sum + post.score.score, 0) / live.length),
+    totalViews: live.reduce((sum, post) => sum + post.views, 0),
     // The six that ship in the source. Named so the totals here are not mistaken
     // for the whole blog.
     fixed: POSTS.length,

@@ -8874,3 +8874,77 @@ usages are read from the code.
   people quoted. "Record built" is labelled as a count of events and not a
   measure of engagement: a tenancy between projects is quiet and perfectly
   healthy.
+
+---
+
+## The blog: a score, a count, and an SEO agent
+
+Three things were asked for and each turned out to be a different kind of claim,
+so each is built differently.
+
+**The score is not the gate.** A post is refused publication while any check
+fails, with each failure named — that has not changed and is not weakened. What
+a score adds is the one thing a gate cannot express: **how far off** a post is.
+A gate is binary and gives no gradient, so it cannot tell a post failing one
+check by two characters from one failing four badly, and cannot say whether the
+blog is getting better. `seoScore` is weighted from the same checks — depth and
+the meta description carry most, because those are what decide whether a page
+ranks and whether the result is clicked — and it is always rendered beside the
+failing checks, never instead of them. The estate average excludes drafts, so
+starting to write does not make the blog look worse.
+
+**The view count is a count of requests, and says so everywhere.** `site/views.ts`
+records one line per server-rendered request for a published post's page. It is
+not a reader count and is never labelled as one: a crawler counts, one person
+reading twice counts twice, and nobody is identified — no cookie, no address, no
+fingerprint, just a slug and a day. A number that is honest about what it
+measures is worth more than a bigger one nobody can defend, and a page for which
+no slug resolves records nothing, so a crawler probing for pages cannot
+manufacture traffic for articles that were never written.
+
+Views are **deliberately not Golden Thread events**. A page view is not a
+governed act, and one line per view on the hash chain would bury the record of
+what the company actually did under a stream of traffic. It uses `RecordJournal`
+— the same mechanism the ACU wallet uses, for the same reason — as a third file
+beside the chain and the wallet. With no journal path set, counts are in-memory
+and lost on restart, and the screen reports that rather than letting somebody
+discover it when the numbers reset. `recordView` never throws: a post that
+failed to render because its counter could not be written would be the analytics
+tail wagging the publishing dog.
+
+**The SEO agent is not in the agent fleet, and that is a placement rather than
+an omission.** Every agent in `agents/registry.ts` evaluates an `EngineContext`
+over a *customer project* — that is what the mandate ladder, the proposal queue
+and the autonomy rules are built around. An agent reading a customer's project
+to decide what CONSTRUX should blog about would be the account boundary
+collapsing in the one direction nobody would think to check. So `auditBlog` is a
+command an operator presses, on the platform's own tenancy, reasoning over the
+platform's own published posts. It answers two questions: what is wrong with what
+is published, and what to write next. It **proposes and never acts** — nothing it
+returns is written, published or scheduled — and a proposal can be taken straight
+into a draft, which a person still edits and still publishes.
+
+It refuses on the local stand-in, like `draftPost`: an audit produced by an
+adapter that reasons about nothing, presented as an audit, is a fabricated
+professional opinion about the company's own website. And it publishes its own
+limits on its face — no ranking data, no search volume, no competitor data, views
+that are requests — because an audit that looks authoritative and is not is worse
+than no audit.
+
+**The posts written into the build are not scored.** They predate these checks,
+carry no keyword and no meta description, and are deliberately not migrated —
+they are the engineering notes this project actually produced. Scoring them
+against a standard they were never written to would produce a page of failures
+nobody intends to act on and drag the average down with noise. They are handed to
+the model as titles instead, so it does not propose an article that already
+exists.
+
+### A second exception, argued rather than appended
+
+`doors.test.ts` and `quote.test.ts` both required every AI route to be
+project-scoped, with `/v1/site/posts/draft` named as the single exception and a
+comment saying a second should be argued for. `/v1/site/posts/audit` is that
+second: same surface, same wallet, same operator, refused to everybody else. What
+would not belong is a route spending a customer's ACUs with no project to quote
+against — which is the failure the check exists to prevent, and both files now
+say so.

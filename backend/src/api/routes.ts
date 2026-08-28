@@ -10,6 +10,7 @@ import * as site from '../site/index.ts';
 // reads this route table, so importing the posts through it would make this
 // file depend on a module that depends on this file.
 import { POST_PAGES } from '../site/posts.ts';
+import * as views from '../site/views.ts';
 import * as notifications from '../notifications/catalogue.ts';
 import { CATEGORIES, CATEGORY_TITLES, NOTIFICATION_EVENTS } from '../notifications/catalogue.ts';
 import * as notifyEngine from '../notifications/notify.ts';
@@ -2999,7 +3000,15 @@ export const ROUTES: Route[] = [
     html: true,
     htmlPolicy: 'PUBLIC_SITE' as const,
     description: 'A blog post published from the console',
-    handler: (platform: Platform, ctx: RequestContext) => site.render(`/blog/${ctx.params.slug as string}`, platform, ctx),
+    handler: (platform: Platform, ctx: RequestContext) => {
+      const slug = ctx.params.slug as string;
+      const page = site.render(`/blog/${slug}`, platform, ctx);
+      // Counted after the page has been produced, so a slug that does not
+      // resolve records nothing — otherwise a crawler probing for pages would
+      // manufacture traffic for articles that were never written.
+      views.recordView(slug);
+      return page;
+    },
   },
 
   ...POST_PAGES.map((post) => ({
@@ -3009,7 +3018,11 @@ export const ROUTES: Route[] = [
     html: true,
     htmlPolicy: 'PUBLIC_SITE' as const,
     description: `Blog — ${post.title}`,
-    handler: (platform: Platform, ctx: RequestContext) => site.render(post.path, platform, ctx),
+    handler: (platform: Platform, ctx: RequestContext) => {
+      const page = site.render(post.path, platform, ctx);
+      views.recordView(post.slug);
+      return page;
+    },
   })),
 
   // ------------------------------------------------------------------ signup
@@ -14063,7 +14076,28 @@ export const ROUTES: Route[] = [
     description: 'Every blog post, its state, and what is stopping it being published',
     handler: (platform, ctx) => {
       operatorOnly(ctx, 'read the blog');
-      return blog.blogPosition(platform);
+      // Views are passed in rather than imported inside the blog module: the
+      // blog is about posts and the view log is about traffic, and a module
+      // that reached for the other would make one untestable without the other.
+      return { ...blog.blogPosition(platform, views.viewsFor), views: views.viewsPosition() };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/site/posts/audit',
+    readOnly: true,
+    description: 'Ask the reasoning engine to audit the blog and propose what to write next',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    ai: { engine: 'EXECUTIVE', taskType: 'site_blog_audit', capability: 'REASONING' },
+    handler: async (platform, ctx) => {
+      operatorOnly(ctx, 'audit the blog');
+      // POST because it spends ACUs and reaches a provider, `readOnly` because
+      // it creates nothing — the same shape the quote route already understands.
+      const engine = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, {
+        correlationId: ctx.correlationId,
+        source: sourceOf(ctx),
+      });
+      return blog.auditBlog(engine, platform, views.viewsFor);
     },
   },
   {

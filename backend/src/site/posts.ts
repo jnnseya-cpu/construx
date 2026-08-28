@@ -125,7 +125,9 @@ export const POSTS: Post[] = [
  * the footer, and five engineering notes in the footer is not a footer. Posts
  * are reached from the blog index and from links people share.
  */
-export const POST_PAGES = POSTS.map((post) => ({ path: `/blog/${post.slug}`, title: post.title }));
+// The slug travels with the path, so a caller counting a view against a page
+// does not have to parse one back out of the other and get it subtly wrong.
+export const POST_PAGES = POSTS.map((post) => ({ path: `/blog/${post.slug}`, slug: post.slug, title: post.title }));
 
 /** The one date format the blog uses, in one place. */
 export function longDate(date: string): string {

@@ -8,6 +8,7 @@ import type { ACUEntry } from './billing/acu.ts';
 import { startNewsletterSchedule } from './messaging/newsletter.ts';
 import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.ts';
 import { rehydrateKeys } from './developer/keys.ts';
+import { attachViewJournal, viewJournalPath } from './site/views.ts';
 import { startAssurance } from './ops/assurance.ts';
 import { armRepair, startRepair } from './ops/repair.ts';
 import { egressConfigured, startEgress } from './ops/otlp.ts';
@@ -97,6 +98,20 @@ if (config.ledger.journalPath !== '') {
     const list = byTenant.get(entry.tenantId) ?? [];
     list.push(entry);
     byTenant.set(entry.tenantId, list);
+  }
+
+  // Blog page views. A third file beside the chain and the wallet, for the same
+  // reason the wallet is separate: a page view is not a governed act, and one
+  // line per view on the hash chain would bury the record of what the company
+  // did under a stream of traffic. With no journal path configured, views are
+  // counted in memory and lost on restart — which the console reports rather
+  // than leaving somebody to discover when the numbers reset.
+  const viewPath = viewJournalPath();
+  if (viewPath !== '') {
+    const { truncated: viewsTorn } = attachViewJournal(viewPath, { fsync: config.ledger.fsync });
+    if (viewsTorn) {
+      process.stderr.write(`[journal] the final line of ${viewPath} was incomplete and has been dropped.\n`);
+    }
   }
 
   // The ledger holds the projects; this restores the people who can reach them.

@@ -181,7 +181,18 @@ describe('every command has a door', () => {
       //
       // Named as an exception rather than the check being loosened to "most
       // routes". A second entry here should be argued for, not appended.
-      const platformOwn = route.pattern === '/v1/site/posts/draft';
+      //
+      // The second entry, argued. `/v1/site/posts/audit` reads the company's
+      // own published posts and returns what is wrong with them and what to
+      // write next. It is the same surface as the draft, the same wallet, the
+      // same operator, and it is refused to anybody else — so it belongs to the
+      // same exception and not to a widened rule.
+      //
+      // What would *not* belong here is a route that spends a customer's ACUs
+      // with no project to quote against. That is the failure this check exists
+      // to prevent and no entry may be added for it.
+      const PLATFORM_OWN = ['/v1/site/posts/draft', '/v1/site/posts/audit'];
+      const platformOwn = PLATFORM_OWN.includes(route.pattern);
       assert.ok(
         route.pattern.includes(':projectId') || platformOwn,
         `${route.pattern} is quotable only if it is project-scoped, or spends the platform's own wallet`,
