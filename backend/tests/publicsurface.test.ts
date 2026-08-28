@@ -91,6 +91,11 @@ describe('what an anonymous caller can obtain', () => {
       // without a session — that is the whole of what it is for — so the
       // handler, not the router, decides: a valid HMAC over tenant, hash and
       // expiry, or an authorised identity, or nothing is served.
+      // Slots for a guided walkthrough. Public because the entire point is that
+      // somebody who has never signed in can book one, and it discloses nothing
+      // about anybody: a taken slot is simply absent from the list, so the
+      // response cannot be read as a diary of who the company is meeting.
+      'GET /v1/booking/availability',
       'GET /v1/evidence/:hash',
       'GET /v1/signup/account-types',
       // The landing page for the confirmation link in a signup email. Public by
@@ -102,6 +107,10 @@ describe('what an anonymous caller can obtain', () => {
       'POST /v1/auth/login',
       'POST /v1/auth/mfa/verify',
       'POST /v1/auth/refresh',
+      // Booking one. Public for the same reason, and it creates a record rather
+      // than an account — a stranger's name and address, not an identity that
+      // can sign in. Rate limited by the gateway like every other public route.
+      'POST /v1/booking',
       'POST /v1/console/identities',
       'POST /v1/console/session',
       'POST /v1/signup',

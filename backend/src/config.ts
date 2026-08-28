@@ -863,6 +863,28 @@ export const config = {
     mediaMaxBytes: num('SITE_MEDIA_MAX_BYTES', 8 * 1_048_576),
   },
 
+  /**
+   * When a guided walkthrough can be booked.
+   *
+   * Overridable because hard-coding one company's office hours into a platform
+   * is the kind of assumption that stays invisible until somebody in another
+   * timezone is offered three in the morning. Everything is UTC — a single
+   * reference frame that both sides can convert from beats a timezone guessed
+   * from a browser.
+   */
+  booking: {
+    minutes: num('BOOKING_MINUTES', 20),
+    /** UTC hours a session may start at. Nine to four, London working hours. */
+    hoursUtc: (process.env.BOOKING_HOURS_UTC ?? '9,10,11,13,14,15,16')
+      .split(',')
+      .map((hour) => Number(hour.trim()))
+      .filter((hour) => Number.isInteger(hour) && hour >= 0 && hour <= 23),
+    /** Working days offered ahead. Two working weeks is a choice, not a wait. */
+    horizonDays: num('BOOKING_HORIZON_DAYS', 10),
+    /** Nobody prepares for a call in ten minutes, so nothing sooner is offered. */
+    leadHours: num('BOOKING_LEAD_HOURS', 4),
+  },
+
   newsletter: {
     /**
      * Off unless switched on. A marketing sender that arms itself at boot would

@@ -60,8 +60,8 @@ before(async () => {
 });
 
 describe('the catalogue', () => {
-  it('holds 181 events across 15 categories', () => {
-    assert.equal(NOTIFICATION_EVENTS.length, 181);
+  it('holds 182 events across 15 categories', () => {
+    assert.equal(NOTIFICATION_EVENTS.length, 182);
     assert.equal(CATEGORIES.length, 15);
     assert.equal(new Set(CATEGORIES.map((c) => CATEGORY_TITLES[c])).size, 15, 'two categories share a title');
   });
@@ -93,8 +93,26 @@ describe('the catalogue', () => {
 
   it('reports the channel coverage the architecture claims', () => {
     const coverage = channelCoverage();
-    assert.equal(coverage.INAPP, 181, 'in-app is meant to carry every event');
-    assert.equal(coverage.EMAIL, 134);
+
+    // In-app carries every event whose recipient has somewhere to read it.
+    //
+    // That used to be every event, and the assertion said so. It is no longer
+    // true, and the exception is a real category rather than an oversight:
+    // `account.demo_booking_confirmed` goes to somebody who booked a
+    // walkthrough from the public site and has no account at all — which is the
+    // entire reason they booked one. An in-app copy would be a notice written
+    // to a recipient who can never open it, and a delivery record for something
+    // nobody received is worse than no record.
+    //
+    // Named one at a time rather than the count being loosened to "most". A
+    // second entry here is another event addressed to a stranger, and should be
+    // argued for on that basis.
+    const NO_INAPP_RECIPIENT = ['account.demo_booking_confirmed'];
+    const unreachable = NOTIFICATION_EVENTS.filter((event) => !event.channels.includes('INAPP')).map((event) => event.code);
+    assert.deepEqual(unreachable, NO_INAPP_RECIPIENT, 'an event skips in-app without being named here');
+
+    assert.equal(coverage.INAPP, NOTIFICATION_EVENTS.length - NO_INAPP_RECIPIENT.length);
+    assert.equal(coverage.EMAIL, 135);
     assert.equal(coverage.SMS, 18);
     assert.equal(coverage.PUSH, 28);
   });

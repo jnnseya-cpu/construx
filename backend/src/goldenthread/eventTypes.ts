@@ -757,6 +757,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('GROWTH_PARTNER_STATUS_SET', 'GrowthPartner', 'UPDATE', 'GOVERNANCE'),
   def('GROWTH_PARTNER_PAID', 'GrowthPartner', 'UPDATE', 'GOVERNANCE'),
 
+  // A booked walkthrough. On the platform's own chain because it is the
+  // company's commitment to be somewhere at a time — exactly the kind of thing
+  // this platform argues should be evidence rather than a row somebody can
+  // quietly edit. It also means a booking survives a restart, which a map in
+  // memory would not.
+  def('DEMO_BOOKING_MADE', 'DemoBooking', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('DEMO_BOOKING_CANCELLED', 'DemoBooking', 'UPDATE', 'GOVERNANCE'),
+
   // Transactional communication. Separate from the newsletter because the
   // obligation is different: a marketing send is subject to consent, and a
   // notice that an account was locked is subject to nothing — the recipient is

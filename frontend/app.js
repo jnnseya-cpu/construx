@@ -157,6 +157,10 @@ export const OPERATOR_NAV = [
       // to the tenancy that raised it, and the customer has to be able to read
       // back what they were told. The screen serves both sides.
       { id: 'support', label: 'Support Queue', area: 'ENTERPRISE_STRUCTURE', icon: 'chat' },
+      // Booked from the public site by people with no account at all, which is
+      // why it belongs beside the support queue rather than under Content: it
+      // is somebody waiting for an answer.
+      { id: 'bookings', label: 'Demo Bookings', area: 'PLATFORM_ADMINISTRATION', icon: 'checklist' },
       { id: 'communications', label: 'Communications', area: 'ENTERPRISE_STRUCTURE', icon: 'mail' },
     ],
   },

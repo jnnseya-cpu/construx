@@ -11,6 +11,7 @@ import * as site from '../site/index.ts';
 // file depend on a module that depends on this file.
 import { POST_PAGES } from '../site/posts.ts';
 import * as views from '../site/views.ts';
+import * as booking from '../site/booking.ts';
 import { SIGNATURES } from '../site/media.ts';
 import { createHash } from 'node:crypto';
 import * as notifications from '../notifications/catalogue.ts';
@@ -1338,6 +1339,85 @@ export const ROUTES: Route[] = [
       return blueprintPosition(platform, ROUTES.length);
     },
   },
+  // ------------------------------------------------------------- book a demo
+  //
+  // Public, because the whole point is that somebody who has never signed in
+  // can take twenty minutes. Rate limiting is the gateway's, the same as every
+  // other public route.
+  {
+    method: 'GET',
+    pattern: '/v1/booking/availability',
+    public: true,
+    readOnly: true,
+    description: 'Slots that can still be booked for a guided walkthrough',
+    handler: (platform) => booking.availability(platform),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/booking',
+    public: true,
+    description: 'Book a guided walkthrough at one of the offered times',
+    schema: {
+      type: 'object',
+      required: ['startsAt', 'name', 'email', 'organisation'],
+      properties: {
+        startsAt: stringField,
+        name: { type: 'string', minLength: 2, maxLength: 120 },
+        email: { type: 'string', minLength: 3, maxLength: 254 },
+        organisation: { type: 'string', minLength: 2, maxLength: 200 },
+        language: { type: 'string', enum: ['EN', 'FR'] },
+        about: { type: 'string', maxLength: 2000 },
+      },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const input = body<Parameters<typeof booking.book>[1]>(ctx);
+      const made = booking.book(platform, input);
+
+      // Told, not just recorded. A booking nobody is notified about is somebody
+      // expecting a call that nobody knows to make — and the confirmation is
+      // queued through the outbox, so a mail server that is down delays it
+      // rather than losing it.
+      await notifyEngine.notify(platform, {
+        code: 'account.demo_booking_confirmed',
+        recipients: [{ id: `booking:${made.id}`, name: made.name, email: made.email, tenantId: 'platform' }],
+        payload: {
+          detail:
+            `Your walkthrough is booked for ${made.startsAt.slice(0, 16).replace('T', ' ')} UTC — ` +
+            `${made.minutes} minutes, in ${made.language === 'FR' ? 'French' : 'English'}. ` +
+            'Joining details follow separately from the person taking it: this platform integrates with no calendar ' +
+            'and generates no meeting link, and one that went nowhere would be worse than none.',
+          reference: made.reference,
+          actionUrl: '/demo',
+          actionLabel: 'Explore in the meantime',
+        },
+        // A stranger has no tenancy and therefore no branding of their own. The
+        // platform's own mark is the honest one to send under — it is the
+        // platform they are meeting.
+        branding: PLATFORM_BRANDING,
+        actorId: 'booking',
+        correlationId: ctx.correlationId,
+      });
+
+      return made;
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/bookings',
+    readOnly: true,
+    description: 'The walkthrough diary — who booked what, and what is still to come',
+    handler: (platform, ctx) => booking.bookingPosition(platform, auth(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/bookings/:bookingId/cancel',
+    description: 'Cancel a booked walkthrough, stating why',
+    schema: { type: 'object', required: ['reason'], properties: { reason: stringField }, additionalProperties: false },
+    handler: (platform, ctx) =>
+      booking.cancel(platform, auth(ctx), ctx.params.bookingId ?? '', body<{ reason: string }>(ctx).reason),
+  },
+
   // ------------------------------------------------------- growth programme
   {
     method: 'GET',

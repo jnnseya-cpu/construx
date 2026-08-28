@@ -470,6 +470,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // is the tenancy configuring itself, not a project record — and it is what
   // every generated document for that tenancy will carry.
   ClientBrandingRecord: { area: 'ENTERPRISE_STRUCTURE' },
+  // Somebody who asked for twenty minutes. Operator-layer, and personal: a
+  // stranger's name, address, employer and what they want to talk about.
+  DemoBooking: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
   // A dispatch record names a person and what they were told. The delivery
   // record additionally names their address and whether it reached them, which
   // is why the two are classified apart rather than together.

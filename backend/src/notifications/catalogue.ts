@@ -139,6 +139,9 @@ def('account.verification.successful', 'Verification successful', 'Your account 
 def('account.verification.failed', 'Verification failed', 'Verification could not be completed', 'WARNING', [E, I]);
 def('account.verification.expired', 'Verification expired', 'Your verification link expired', 'WARNING', [E, I]);
 def('account.registration.abandoned', 'Registration abandoned', 'Finish setting up your CONSTRUX account', 'INFO', [E, I]);
+// A booked walkthrough. Email only, and no in-app: the person who booked it has
+// no account to see an in-app notice in, which is the whole reason they booked.
+def('account.demo_booking_confirmed', 'Walkthrough booked', 'Your CONSTRUX walkthrough is booked', 'SUCCESS', [E]);
 def('enterprise.request.received', 'Enterprise request received', 'Your enterprise application was received', 'INFO', [E, I]);
 def('enterprise.verification.started', 'Enterprise verification started', 'Verification of {{enterprise}} has started', 'INFO', [E, I]);
 def('enterprise.documents.requested', 'Documents requested', 'Documents needed to verify {{enterprise}}', 'WARNING', [E, I]);

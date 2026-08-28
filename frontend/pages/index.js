@@ -6,6 +6,7 @@ import { audit } from './audit.js';
 import { auditlogs } from './auditlogs.js';
 import { autopilot } from './autopilot.js';
 import { billing } from './billing.js';
+import { bookings } from './bookings.js';
 import { blog } from './blog.js';
 import { blueprint } from './blueprint.js';
 import { centre } from './centre.js';
@@ -95,6 +96,8 @@ export const PAGES = {
   // request belongs to the tenancy that raised it, and the customer has to be
   // able to read back what they were told.
   support,
+  // Somebody who wanted twenty minutes and a person rather than a sandbox.
+  bookings,
   aiengine,
   economy,
   invoices,
