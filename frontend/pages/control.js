@@ -9,7 +9,7 @@ function localNow() {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 import { command, commandBar } from '../lib/command.js';
-import { badge, drillable, html, humanise, money, pct, positionReport, raw, render, resolveHtml, table, toast } from '../lib/ui.js';
+import { badge, days, drillable, html, humanise, money, pct, positionReport, raw, render, resolveHtml, table, toast } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, state } from '../app.js';
 import { insightPanel } from '../lib/insight.js';

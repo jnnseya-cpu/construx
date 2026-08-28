@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { badge, html, raw, render, table, time } from '../lib/ui.js';
+import { badge, html, positionReport, raw, render, table, time } from '../lib/ui.js';
 import { command, commandBar } from '../lib/command.js';
 import { draw } from '../app.js';
 

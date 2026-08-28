@@ -1,7 +1,7 @@
 import { api, entities, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { DISCIPLINE, today } from '../lib/enums.js';
-import { badge, date, drillable, html, humanise, money, pct, positionReport, raw, render, statusTone, table, toast } from '../lib/ui.js';
+import { badge, date, drillable, html, humanise, money, pct, positionReport, raw, render, statusTone, table, time, toast } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
