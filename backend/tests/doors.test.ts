@@ -117,35 +117,35 @@ describe('every command has a door', () => {
     );
   });
 
-  it('lets no further read route lose its door', () => {
-    // A register, in the same spirit as the validation debt below: allowed to
-    // fall, never to rise silently. Eighty-four were doorless when this was
-    // written and the number is stated rather than hidden, because the whole
-    // reason this went unnoticed for so long is that nothing counted it.
+  it('leaves no read route unreachable from the console', () => {
+    // Zero, with no exemption list.
     //
-    // 84 → 33. What closed was every standing position report: the commissioning
-    // and handover set, the site control positions, the design plan and its
-    // baselines, the procurement intelligence, the corporate control standard.
-    // What remains is mostly parameterised — a route that needs a chosen
-    // manifest, schedule or bidder before it can answer, and therefore needs a
-    // drill-in from a row rather than a panel of its own.
+    // Eighty-four were doorless when this assertion was first written — every
+    // one an engine with an authorised route, passing tests and no screen. It
+    // ran as a ratchet while they were closed (84 → 33 → 0) and is now the
+    // plain assertion it was always meant to be.
     //
-    // Zero is the target and this assertion becomes `equal(0)` when it is
-    // reached. It is a ratchet today only because failing the suite outright
-    // would say the platform is broken, when what is true is narrower and worth
-    // stating precisely: thirty-three capabilities work, are authorised, and
-    // have no screen.
+    // Two kinds of read had to be built to get here. A **position** answers on
+    // load and became a panel. A **lookup** cannot answer until somebody
+    // chooses what to ask about — one manifest, two schedules, an asset tag —
+    // and became a chooser whose options come from records the page already
+    // holds, so it can never offer an id the platform does not have.
     //
-    // Named, not merely counted. A failure here has to say which capability
-    // lost its door, because a number tells whoever reads it nothing about what
-    // to build.
+    // No exemption list, deliberately. A write with no curated panel still has
+    // a generated door from `GET /v1/commands`; a read has no such fallback, so
+    // an exemption here would be a permanent hiding place for exactly the thing
+    // this test exists to prevent.
+    //
+    // Named, not merely counted. A failure has to say which capability lost its
+    // door, because a number tells whoever reads it nothing about what to build.
     const source = consoleSource();
     const unreachable = readRoutes.filter((route) => !pathPattern(route.pattern).test(source));
 
-    assert.ok(
-      unreachable.length <= 33,
-      `${unreachable.length} read routes have no console door, up from 33. Each is a capability the ` +
-        `platform authorises and nobody can reach:\n  ${unreachable.map((r) => r.pattern).join('\n  ')}`,
+    assert.equal(
+      unreachable.length,
+      0,
+      `${unreachable.length} read routes have no console door. Each is a capability the platform ` +
+        `authorises and nobody can reach:\n  ${unreachable.map((r) => r.pattern).join('\n  ')}`,
     );
   });
 

@@ -1,5 +1,6 @@
 import { api } from '../lib/api.js';
-import { badge, html, humanise, positionReport, raw, render, table, time, toast } from '../lib/ui.js';
+import { badge, html, humanise, positionReport, raw, render, resolveHtml, table, time, toast } from '../lib/ui.js';
+import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -36,6 +37,33 @@ export async function autopilot(root) {
   ]);
 
   const open = proposals.proposals ?? [];
+
+  const LOOKUPS = [
+    {
+      id: 'proposalowners',
+      title: 'Who could decide this',
+      intent:
+        'Most specialised first, which is what the assign action offers. A proposal in a queue nobody named can ' +
+        'decide is a proposal that sits there — and the queue looks busy while nothing moves.',
+      empty: 'No proposal is waiting on a decision.',
+      inputs: [
+        {
+          name: 'proposalId',
+          label: 'Proposal',
+          options: open.map((proposal) => ({
+            value: proposal.id,
+            // The finding's own words, not the id. A chooser listing eleven
+            // ULIDs is a chooser nobody can use.
+            label: `${proposal.agent} \u00b7 ${String(proposal.finding?.summary ?? proposal.id).slice(0, 70)}`,
+          })),
+        },
+      ],
+      path: (v) => `/v1/projects/${projectId}/proposals/${v.proposalId}/owners`,
+      sections: [
+        { key: 'owners', label: 'Could decide it', empty: 'Nobody in this tenancy holds the authority to decide it.' },
+      ],
+    },
+  ];
   // The API already sorts mine-first; these are only for the count in the
   // header, so the reader knows how much of the queue is theirs before they
   // start scrolling it.
@@ -139,6 +167,8 @@ export async function autopilot(root) {
         </div></div>
       </div>
 
+      ${raw(LOOKUPS.map((spec) => resolveHtml(lookupPanel(spec))).join(''))}
+
       ${positionReport({
         title: 'The mandate ladder',
         intent:
@@ -167,6 +197,8 @@ export async function autopilot(root) {
   );
 
   // --- decisions --------------------------------------------------------------
+
+  wireLookups(root, LOOKUPS);
 
   root.querySelector('#run')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;

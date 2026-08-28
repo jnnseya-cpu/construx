@@ -1,7 +1,8 @@
 import { api, entityBundle, isWithheld } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { CONTRACT_FORM, PRICING_BASIS, today } from '../lib/enums.js';
-import { badge, date, days, drillable, exact, html, humanise, money, pct, positionReport, raw, render, statusTone, table } from '../lib/ui.js';
+import { badge, date, days, drillable, exact, html, humanise, money, pct, positionReport, raw, render, resolveHtml, statusTone, table } from '../lib/ui.js';
+import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -91,6 +92,122 @@ export async function procurement(root) {
     .catch(() => ({ routes: [], summary: '' }));
   const openRoutes = routes.routes.filter((r) => r.status === 'OPEN');
   const unanswered = intel.clarifications.filter((c) => c.status === 'OPEN');
+
+  // Five reads that cannot answer until somebody chooses what to ask about.
+  // Every option comes from a record this page already holds, so the chooser
+  // can never offer an id the platform does not have.
+  const LOOKUPS = [
+    {
+      id: 'framework',
+      title: 'Framework position',
+      intent: 'Membership balance, thin lots, concentration and expiry, for one framework.',
+      empty: 'This tenancy holds no framework agreement to look into.',
+      inputs: [
+        {
+          name: 'frameworkId',
+          label: 'Framework',
+          options: ((frameworks?.frameworks) ?? []).map((f) => ({
+            value: f.frameworkId ?? f.id,
+            label: f.name ?? f.reference ?? f.frameworkId ?? f.id,
+          })),
+        },
+      ],
+      path: (v) => `/v1/frameworks/${v.frameworkId}`,
+      sections: [
+        { key: 'lots', label: 'Lots', empty: 'This framework has no lots.' },
+        { key: 'thin', label: 'Thin lots', empty: 'No lot is too thin to call off from.' },
+        { key: 'concentration', label: 'Concentration', empty: 'No supplier is over-represented.' },
+        { key: 'expiring', label: 'Expiring', empty: 'Nothing is close to expiry.' },
+      ],
+    },
+    {
+      id: 'benchmark',
+      title: 'Benchmark an estimate',
+      intent:
+        'Compare one estimate against the business\u2019s own committed price history. A benchmark against a bought ' +
+        'index tells you about the market; this tells you about you.',
+      empty: 'No estimate has been produced on this project yet.',
+      inputs: [
+        {
+          name: 'estimateId',
+          label: 'Estimate',
+          options: b.Estimate.map((e) => ({
+            value: e._refId,
+            label: `${e.reference ?? e._refId} ${e.revision ? `rev ${e.revision}` : ''}`.trim(),
+          })),
+        },
+      ],
+      path: (v) => `/v1/projects/${projectId}/tender/estimate/${v.estimateId}/benchmark`,
+      sections: [
+        { key: 'comparisons', label: 'Against our own history', empty: 'No line has enough history to compare against.' },
+        { key: 'outliers', label: 'Outliers', empty: 'No line sits outside the expected range.' },
+      ],
+    },
+    {
+      id: 'uncertainty',
+      title: 'How firm is the quantity',
+      intent:
+        'How much of the direct cost sits on a quantity that is not firm, and which lines. A price built on ' +
+        'provisional quantities is a price with a range, and the range is the thing worth knowing.',
+      empty: 'No measurement schedule exists to assess.',
+      inputs: [
+        {
+          name: 'scheduleId',
+          label: 'Schedule',
+          options: (bill.schedules ?? []).map((sch) => ({
+            value: sch.scheduleId,
+            label: `${sch.reference} \u00b7 ${sch.title}`,
+          })),
+        },
+      ],
+      path: (v) => `/v1/projects/${projectId}/measurement/${v.scheduleId}/uncertainty`,
+      sections: [
+        { key: 'lines', label: 'Lines on an unfirm quantity', empty: 'Every quantity on this schedule is firm.' },
+      ],
+    },
+    {
+      id: 'reconciliation',
+      title: 'Where the money went between two schedules',
+      intent: 'Item by item, so a movement in a total can be attributed rather than argued about.',
+      empty: 'Two schedules are needed to reconcile, and this project does not have them.',
+      inputs: [
+        {
+          name: 'scheduleId',
+          label: 'Schedule',
+          options: (bill.schedules ?? []).map((sch) => ({ value: sch.scheduleId, label: `${sch.reference} \u00b7 ${sch.title}` })),
+        },
+        {
+          name: 'againstId',
+          label: 'Against',
+          options: (bill.schedules ?? []).map((sch) => ({ value: sch.scheduleId, label: `${sch.reference} \u00b7 ${sch.title}` })),
+        },
+      ],
+      path: (v) => `/v1/projects/${projectId}/measurement/${v.scheduleId}/reconciliation/${v.againstId}`,
+      sections: [{ key: 'items', label: 'Movements', empty: 'Nothing moved between these two schedules.' }],
+    },
+    {
+      id: 'bidderview',
+      title: 'What one firm can see',
+      intent:
+        'Its own pack revision and nothing about the field. Worth checking before an enquiry goes out, because a ' +
+        'bidder who can see the field is a tender that cannot be defended.',
+      empty: 'No enquiry is live, so there is no bidder view to check.',
+      inputs: [
+        {
+          name: 'enquiryId',
+          label: 'Enquiry',
+          options: liveEnquiries.map((e) => ({ value: e.enquiryId, label: `${e.reference} \u00b7 ${e.title}` })),
+        },
+        { name: 'partyId', label: 'Firm', type: 'text', placeholder: 'The party id of one bidder' },
+      ],
+      path: (v) => `/v1/projects/${projectId}/enquiries/${v.enquiryId}/bidder/${v.partyId}`,
+      sections: [
+        { key: 'pack', label: 'The pack this firm holds', empty: 'This firm has been issued nothing.' },
+        { key: 'clarifications', label: 'Clarifications it can see', empty: 'Nothing has been clarified to this firm.' },
+      ],
+    },
+  ];
+
   const NO_OPEN_COMPARISON = 'No comparison is open — open one, or the last was closed for adjudication';
   const NO_OPEN_SCHEDULE = 'No measurement schedule is open — open one, or the last was frozen';
   const NO_LIVE_ENQUIRY = 'No enquiry is live — open one, or the last closed for returns';
@@ -892,6 +1009,8 @@ export async function procurement(root) {
         error: reviews?.error,
         sections: [{ key: 'reviews', label: 'Reviews', empty: 'No tender review has been held.' }],
       })}
+
+      ${raw(LOOKUPS.map((spec) => resolveHtml(lookupPanel(spec))).join(''))}
 
       ${positionReport({
         title: 'Submissions and awards',
@@ -1696,6 +1815,10 @@ export async function procurement(root) {
     subject: 'tender and procurement',
     onChange: draw,
   });
+
+  // Each chooser fetches on demand and renders its own answer, so a page that
+  // already makes a dozen calls does not make five more nobody asked for.
+  wireLookups(root, LOOKUPS);
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

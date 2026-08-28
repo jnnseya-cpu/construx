@@ -472,7 +472,13 @@ function reachable(item) {
   // account page. The mobile stores also require the route to exist for every
   // account, which it did not.
   if (item.id === 'account') return true;
-  if (isOperator()) return item.area === 'PLATFORM_ADMINISTRATION';
+  // Communications is the platform's own event architecture — 177 events and
+  // which channels actually carry them — and its catalogue is readable by any
+  // authenticated identity. Hiding it from the operator was wrong: whether a
+  // channel is wired to a provider is a platform operations question, and the
+  // operator is the person who answers it. The delivery log inside it stays
+  // the tenancy's own and is refused by name rather than shown empty.
+  if (isOperator()) return item.area === 'PLATFORM_ADMINISTRATION' || item.id === 'communications';
   if (item.area === 'PLATFORM_ADMINISTRATION') return false;
   return can(item.area, 'R') || item.id === 'overview' || item.id === 'copilot';
 }

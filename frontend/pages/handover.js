@@ -1,7 +1,8 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { today as todayIso } from '../lib/enums.js';
-import { badge, date, drillable, esc, html, humanise, money, pct, positionReport, raw, render, shortHash, statusTone, table, toast, track } from '../lib/ui.js';
+import { badge, date, drillable, esc, html, humanise, money, pct, positionReport, raw, render, resolveHtml, shortHash, statusTone, table, toast, track } from '../lib/ui.js';
+import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -146,8 +147,6 @@ export async function handover(root) {
   // absent: a reader without the handover read, or a project that has not
   // reached the stage, gets the operating position without the workspace band
   // instead of an error.
-  const fetch_ = (path) => api.get(`/v1/projects/${projectId}${path}`).catch((error) => ({ error }));
-
   const [position, queue, acceptance, gate] = await Promise.all([
     api.get(`/v1/projects/${projectId}/om/position`).catch(() => null),
     api.get(`/v1/projects/${projectId}/om/queue`).catch(() => null),
@@ -155,7 +154,15 @@ export async function handover(root) {
     api.get(`/v1/projects/${projectId}/stage-gate`).catch(() => null),
   ]);
 
-  // Commissioning and handover: twenty-two control positions that each had an
+  // Written out in full rather than through a helper, and deliberately.
+  //
+  // A helper that assembled `/v1/projects/${projectId}` + a fragment made every
+  // one of these invisible to the doors invariant, which looks for the path a
+  // route actually serves. The capability was reachable and the register still
+  // counted it as doorless — and a register that cannot see a door is worth
+  // less than the repetition it saves.
+  //
+  // Commissioning and handover: twenty-one control positions that each had an
   // engine, an authorised route and passing tests, and no screen. A building
   // cannot be handed over on the strength of engines nobody can look at — the
   // whole point of a handover is that somebody reads the evidence and accepts
@@ -166,14 +173,113 @@ export async function handover(root) {
     commissioningClose, reliability, functional, preFunctional, exceptions, vendorTests,
     testPacks, completion,
   ] = await Promise.all([
-    fetch_('/handover-readiness'), fetch_('/handover-obligations'), fetch_('/asset-register'),
-    fetch_('/asset-register/validate'), fetch_('/om-manuals'), fetch_('/as-built'),
-    fetch_('/operator-readiness'), fetch_('/transfer'), fetch_('/practical-completion'),
-    fetch_('/aftercare'), fetch_('/regulatory-completion'), fetch_('/systemisation'),
-    fetch_('/systems/integrity'), fetch_('/commissioning-close'), fetch_('/reliability'),
-    fetch_('/functional-tests'), fetch_('/pre-functional-checks'), fetch_('/commissioning-exceptions'),
-    fetch_('/vendor-tests'), fetch_('/test-packs'), fetch_('/completion'),
+    api.get(`/v1/projects/${projectId}/handover-readiness`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/handover-obligations`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/asset-register`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/asset-register/validate`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/om-manuals`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/as-built`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/operator-readiness`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/transfer`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/practical-completion`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/aftercare`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/regulatory-completion`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/systemisation`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/systems/integrity`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/commissioning-close`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/reliability`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/functional-tests`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/pre-functional-checks`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/commissioning-exceptions`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/vendor-tests`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/test-packs`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/completion`).catch((error) => ({ error })),
   ]);
+
+
+  // Four reads that need a chosen manifest, manual or asset before they can
+  // answer. Options come from the registers already on this page.
+  const LOOKUPS = [
+    {
+      id: 'manifestverify',
+      title: 'Verify a handover manifest',
+      intent:
+        'Re-hash every entry against the live record and report what drifted, by name. A manifest that still ' +
+        'verifies is the difference between a handover pack and a claim about one.',
+      empty: 'No manifest has been compiled, so there is nothing to verify against.',
+      inputs: [
+        {
+          name: 'manifestId',
+          label: 'Manifest',
+          options: ((acceptance?.manifests) ?? []).map((m) => ({
+            value: m.manifestId,
+            label: `${m.manifestId} \u00b7 ${shortHash(m.manifestHash ?? '')}`,
+          })),
+        },
+      ],
+      path: (v) => `/v1/projects/${projectId}/handover-manifests/${v.manifestId}/verify`,
+      sections: [
+        { key: 'drifted', label: 'Drifted since the manifest', empty: 'Every entry still hashes to what the manifest recorded.' },
+        { key: 'entries', label: 'Entries checked', empty: 'The manifest names nothing.' },
+      ],
+    },
+    {
+      id: 'manualvalidate',
+      title: 'Validate an O&M manual',
+      intent:
+        'What is missing, unaccepted, contradictory or overtaken — computed on request rather than stored, so it ' +
+        'cannot go stale against the asset data it describes.',
+      empty: 'No O&M manual has been started.',
+      inputs: [
+        {
+          name: 'manualId',
+          label: 'Manual',
+          options: ((manuals?.manuals) ?? []).map((m) => ({
+            value: m.manualId ?? m.id,
+            label: m.title ?? m.system ?? m.manualId ?? m.id,
+          })),
+        },
+      ],
+      path: (v) => `/v1/projects/${projectId}/om-manuals/${v.manualId}/validate`,
+      sections: [
+        { key: 'missing', label: 'Missing', empty: 'Nothing is missing.' },
+        { key: 'unaccepted', label: 'Drafted, never accepted', empty: 'Every section has been accepted.' },
+        { key: 'contradictory', label: 'Contradicted by the asset data', empty: 'Nothing contradicts the register.' },
+        { key: 'overtaken', label: 'Overtaken', empty: 'Nothing has been overtaken.' },
+      ],
+    },
+    {
+      id: 'manualsearch',
+      title: 'Search the O&M manuals',
+      intent:
+        'By asset tag, system, symptom or task. Symptom is the one that matters: an operator at two in the morning ' +
+        'starts from what is wrong, not from what the manual is called.',
+      empty: 'No O&M manual has been started, so there is nothing to search.',
+      inputs: [
+        { name: 'q', label: 'Asset tag, system, symptom or task', type: 'text', placeholder: 'no hot water' },
+      ],
+      path: (v) => `/v1/projects/${projectId}/om-manuals/search?q=${encodeURIComponent(v.q)}`,
+      sections: [{ key: 'results', label: 'Results', empty: 'Nothing in the manuals matches that.' }],
+    },
+    {
+      id: 'assetinfo',
+      title: 'What information shows this asset',
+      intent:
+        'The tag-on-a-plate direction: start from the label in front of you and find every record that describes ' +
+        'it. This is the question an operator actually asks, and the register alone cannot answer it.',
+      empty: 'The asset register is empty.',
+      inputs: [
+        { name: 'assetTag', label: 'Asset tag', type: 'text', placeholder: 'AHU-01' },
+      ],
+      path: (v) => `/v1/projects/${projectId}/assets/${encodeURIComponent(v.assetTag)}/information`,
+      sections: [
+        { key: 'documents', label: 'Documents', empty: 'No document names this asset.' },
+        { key: 'manuals', label: 'Manuals', empty: 'No manual covers this asset.' },
+        { key: 'tests', label: 'Tests', empty: 'This asset has not been tested.' },
+        { key: 'defects', label: 'Defects', empty: 'No defect is recorded against this asset.' },
+      ],
+    },
+  ];
 
   const pack = b.HandoverPack.at(-1);
   const forecast = b.MaintenanceForecast.at(-1);
@@ -445,6 +551,8 @@ export async function handover(root) {
             </div>`
           : ''
       }
+
+      ${raw(LOOKUPS.map((spec) => resolveHtml(lookupPanel(spec))).join(''))}
 
       ${positionReport({
         title: 'Handover readiness',
@@ -776,6 +884,8 @@ export async function handover(root) {
     subject: 'handover and operations',
     onChange: draw,
   });
+
+  wireLookups(root, LOOKUPS);
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

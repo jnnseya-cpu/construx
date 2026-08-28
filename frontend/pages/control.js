@@ -1,4 +1,4 @@
-import { api } from '../lib/api.js';
+import { api, entities } from '../lib/api.js';
 /**
  * Now, in the shape a `datetime-local` input wants and in the viewer's own
  * timezone. `toISOString` would give UTC and set the field an hour out for
@@ -9,7 +9,8 @@ function localNow() {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 import { command, commandBar } from '../lib/command.js';
-import { badge, drillable, html, humanise, money, pct, positionReport, raw, render, table, toast } from '../lib/ui.js';
+import { badge, drillable, html, humanise, money, pct, positionReport, raw, render, resolveHtml, table, toast } from '../lib/ui.js';
+import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, state } from '../app.js';
 import { insightPanel } from '../lib/insight.js';
 
@@ -85,6 +86,64 @@ export async function control(root) {
   // Only a draft meeting can still be minuted into. Issued minutes are not
   // amended, so offering them in the dropdown would offer a refusal.
   const draftMeetings = (meetings.meetings ?? []).filter((m) => m.status === 'DRAFT');
+
+  // The snapshots themselves, for the reconcile chooser. Read as entities
+  // rather than from `/completion`, because the completion position publishes a
+  // snapshot's reference and not the identifier the reconcile route needs — and
+  // offering a reference where an id is required produces a 404 with a
+  // plausible-looking cause.
+  const snapshots = await entities(projectId, 'PeriodSnapshot').catch(() => []);
+
+  const LOOKUPS = [
+    {
+      id: 'reconcile',
+      title: 'Does this report still hold',
+      intent:
+        'Re-run the cut-off and compare it with the hash the report was built on. A report whose figures have ' +
+        'moved since it was issued is the one somebody is about to quote in a meeting.',
+      empty: 'No period report has been taken on this project.',
+      inputs: [
+        {
+          name: 'snapshotId',
+          label: 'Report',
+          options: snapshots.map((snap) => ({
+            value: snap._refId,
+            label: `${snap.reference ?? snap._refId} \u00b7 cut-off ${String(snap.cutOff ?? '').slice(0, 10)}`,
+          })),
+        },
+      ],
+      path: (v) => `/v1/projects/${projectId}/reports/${v.snapshotId}/reconcile`,
+      sections: [
+        { key: 'reconciles', label: 'Still reconciles' },
+        { key: 'reference', label: 'Report' },
+        { key: 'contentHash', label: 'Hash it was built on' },
+        { key: 'recomputedHash', label: 'Hash now' },
+      ],
+    },
+    {
+      id: 'approvedminutes',
+      title: 'The exact text that was approved',
+      intent:
+        'For anything that reproduces the minutes. What was approved and what the record says now are not always ' +
+        'the same sentence, and only one of them is evidence.',
+      empty: 'No meeting has been minuted on this project.',
+      inputs: [
+        {
+          name: 'meetingId',
+          label: 'Meeting',
+          options: (meetings.meetings ?? []).map((m) => ({
+            value: m.meetingId,
+            label: `${m.reference ?? m.meetingId} \u00b7 ${m.title}`,
+          })),
+        },
+      ],
+      path: (v) => `/v1/projects/${projectId}/meetings/${v.meetingId}/approved-version`,
+      sections: [
+        { key: 'approvedAt', label: 'Approved' },
+        { key: 'items', label: 'As approved', empty: 'These minutes carry no items.' },
+      ],
+    },
+  ];
   const draftReason = (code) =>
     !can('LOOKAHEAD_CONSTRAINTS', code)
       ? blockedReason('LOOKAHEAD_CONSTRAINTS', code)
@@ -530,6 +589,8 @@ export async function control(root) {
             </div>`
       }
 
+      ${raw(LOOKUPS.map((spec) => resolveHtml(lookupPanel(spec))).join(''))}
+
       ${positionReport({
         title: 'The corporate control standard',
         intent:
@@ -759,6 +820,8 @@ export async function control(root) {
       }),
     },
   };
+
+  wireLookups(root, LOOKUPS);
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

@@ -35,8 +35,18 @@ const STATUS_LABEL = { SENT: 'sent', RECORDED: 'logged', FAILED: 'failed', SUPPR
 export async function communications(root) {
   const [catalogue, feed] = await Promise.all([
     api.get('/v1/notifications/catalogue'),
-    api.get('/v1/notifications/deliveries').catch(() => ({ deliveries: [], totals: null })),
+    // The refusal is kept rather than flattened to an empty feed.
+    //
+    // The catalogue is readable by anybody — a person is entitled to know what
+    // the platform may send them. The delivery log is the tenant's own
+    // outbound mail, so a platform operator is refused it, correctly. Swallowing
+    // that into `deliveries: []` showed an operator an empty table, which reads
+    // as "this tenancy has sent nothing" when the truth is "you may not see
+    // this". Those are different facts and the screen now says which one it has.
+    api.get('/v1/notifications/deliveries').catch((error) => ({ deliveries: [], totals: null, error })),
   ]);
+
+  const feedRefused = Boolean(feed.error);
 
   const wired = catalogue.channels.filter((c) => c.wired);
   const totals = feed.totals ?? { attempted: 0, sent: 0, recorded: 0, failed: 0, suppressed: 0 };
@@ -126,6 +136,16 @@ export async function communications(root) {
 
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Recent deliveries</h2>
+        ${feedRefused
+          ? html`<div style="padding:0 17px 14px"><div class="notice warn">
+              <div>
+                <b>Not yours to read.</b><br />
+                A delivery log is a tenancy's own outbound mail to its own people, and a platform operator is
+                outside that tenancy. The catalogue above is the platform's; this is not. Shown as a refusal
+                rather than an empty table, because an empty table here would say this tenancy had sent nothing.
+              </div>
+            </div></div>`
+          : ''}
         <p class="metric-sub" style="padding:0 17px">Every event × channel × recipient with its delivery status.</p>
         ${table({
           headers: ['Time', 'Channel', 'Event', 'Status', 'Transport', 'Detail'],
