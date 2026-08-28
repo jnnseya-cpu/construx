@@ -1,5 +1,11 @@
 # CONSTRUX AI Operating System — Production Blueprint
 
+> **Superseded in scope, not withdrawn.** `docs/AI-OS.html` is the current and
+> larger version of this blueprint — twenty sections, with the platform inventory
+> measured from the repository at the time of writing rather than estimated. This
+> file is kept for its section-by-section reasoning; nothing in it is removed.
+> Where the two disagree on a *count*, take the figure from `docs/STATE.md`.
+
 **Status legend used throughout.** `[BUILT]` exists in this repository and is
 tested. `[EXTEND]` builds on something that exists. `[NEW]` is specified here
 and not yet implemented. Nothing already built is removed by this document.

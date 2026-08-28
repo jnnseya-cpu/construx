@@ -15,17 +15,35 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 2,127 passing, 0 failing, 0 skipped, across 104 files |
+| Tests | 3,560 passing, 0 failing, 0 skipped, across 157 files |
 | Typecheck | clean |
-| Backend | 129 TypeScript files, 68,870 lines |
-| Application | 39 ES modules, 15,396 lines (including a service worker) |
-| API routes | 394 (34 of them public) |
-| Event types | 250 Golden Thread (closed) · 178 communication events (closed) |
-| Entity types | 137, all classified for access |
+| Backend | 190 TypeScript files, 117,084 lines |
+| Application | 43 ES modules, 19,333 lines (including a service worker) |
+| API routes | 705 — 489 writes, 216 reads (34 of them public) |
+| Event types | 490 Golden Thread (closed) · 180 communication events (closed) |
+| Entity types | 240, all classified for access |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
 Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`).
+
+### The AI-OS blueprint
+
+`docs/AI-OS.html` is the current, expanded blueprint for the platform as an AI
+operating system: forensic review of what is measured above, the agent workforce
+and its mandate ladder, the self-managing platform layer, the security command
+centre, the data intelligence layer, the BitriPay payment gateway, the connector
+ecosystem, the commercial model, schema, API surface and a phased roadmap.
+
+Every claim in it carries a status — **Built** (runs and is tested), **Partial**
+(the core runs and the gap is named), **Spec** (designed there, not implemented).
+It adds; it removes nothing. Where it and this file disagree about what exists,
+**this file wins** — it is the source of truth for state, the blueprint is the
+source of intent.
+
+`docs/ai-os-blueprint.md` is the earlier markdown draft of the same argument,
+kept for its section-by-section reasoning. Its counts predate the work recorded
+below; take figures from this file.
 
 ---
 

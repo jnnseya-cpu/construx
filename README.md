@@ -227,3 +227,9 @@ rather than answering from general construction knowledge.
 See [`docs/traceability.md`](docs/traceability.md) for how each documented
 requirement maps to the build, including what is specified but not yet
 implemented.
+
+See [`docs/AI-OS.html`](docs/AI-OS.html) for the AI operating system blueprint —
+the agent workforce and its mandate ladder, the self-managing platform layer, the
+security command centre, the data intelligence layer, the BitriPay gateway, the
+connector ecosystem and the commercial model. Every claim in it is marked Built,
+Partial or Spec, so the design is readable without mistaking it for the state.

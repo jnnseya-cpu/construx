@@ -1,0 +1,2090 @@
+<title>CONSTRUX AI-OS Blueprint</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap"
+/>
+
+<style>
+  :root {
+    --paper: #f7f6f3;
+    --surface: #ffffff;
+    --sunk: #f1efea;
+    --ink: #16181a;
+    --muted: #5e6266;
+    --faint: #8a8d90;
+    --rule: #ddd9d2;
+    --rule-strong: #c6c1b7;
+    --accent: #ff6600;
+    --accent-ink: #c2450a;
+    --accent-wash: #fff1e6;
+    --built: #2f6f4e;
+    --built-wash: #e7f2eb;
+    --partial: #9a6b06;
+    --partial-wash: #fbf1dc;
+    --spec: #4a5b74;
+    --spec-wash: #eaeef4;
+    --danger: #a52a1a;
+    --danger-wash: #fbeae7;
+
+    --measure: 68ch;
+    --step--1: 0.8125rem;
+    --step-0: 1rem;
+    --step-1: 1.1875rem;
+    --step-2: 1.4375rem;
+    --step-3: 1.875rem;
+    --step-4: 2.5rem;
+    --step-5: 3.25rem;
+  }
+
+  :root:not([data-theme='light']) {
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --paper: #131417;
+      --surface: #191b1f;
+      --sunk: #101114;
+      --ink: #e9e6e1;
+      --muted: #a3a49f;
+      --faint: #76787c;
+      --rule: #2b2e33;
+      --rule-strong: #3d4149;
+      --accent: #ff7a1f;
+      --accent-ink: #ff934a;
+      --accent-wash: #2a1a0d;
+      --built: #63b389;
+      --built-wash: #14241c;
+      --partial: #d3a445;
+      --partial-wash: #251d0e;
+      --spec: #93a8c6;
+      --spec-wash: #161b23;
+      --danger: #e08072;
+      --danger-wash: #26140f;
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme='dark'] {
+    --paper: #131417;
+    --surface: #191b1f;
+    --sunk: #101114;
+    --ink: #e9e6e1;
+    --muted: #a3a49f;
+    --faint: #76787c;
+    --rule: #2b2e33;
+    --rule-strong: #3d4149;
+    --accent: #ff7a1f;
+    --accent-ink: #ff934a;
+    --accent-wash: #2a1a0d;
+    --built: #63b389;
+    --built-wash: #14241c;
+    --partial: #d3a445;
+    --partial-wash: #251d0e;
+    --spec: #93a8c6;
+    --spec-wash: #161b23;
+    --danger: #e08072;
+    --danger-wash: #26140f;
+    color-scheme: dark;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+    font-size: var(--step-0);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  .label,
+  .chip,
+  nav,
+  th {
+    font-family: Archivo, 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  code,
+  kbd,
+  .mono {
+    font-family: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 0.88em;
+  }
+
+  code {
+    background: var(--sunk);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.08em 0.34em;
+    white-space: nowrap;
+  }
+
+  a {
+    color: var(--accent-ink);
+    text-underline-offset: 2px;
+  }
+
+  /* ---------------------------------------------------------------- shell */
+
+  .shell {
+    display: grid;
+    grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+    gap: 0;
+    max-width: 100rem;
+    margin: 0 auto;
+  }
+
+  .rail {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: 100vh;
+    overflow-y: auto;
+    padding: 2.25rem 1.25rem 3rem 1.75rem;
+    border-right: 1px solid var(--rule);
+    background: var(--paper);
+  }
+
+  .rail-mark {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .rail-mark b {
+    font-family: Archivo, sans-serif;
+    font-size: var(--step-1);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .rail-mark span {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem;
+    color: var(--faint);
+    letter-spacing: 0.06em;
+  }
+
+  .rail ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    counter-reset: nav;
+  }
+
+  .rail a {
+    display: grid;
+    grid-template-columns: 1.75rem 1fr;
+    gap: 0.35rem;
+    padding: 0.3rem 0.4rem;
+    font-size: 0.8125rem;
+    line-height: 1.35;
+    color: var(--muted);
+    text-decoration: none;
+    border-radius: 3px;
+  }
+
+  .rail a::before {
+    counter-increment: nav;
+    content: counter(nav, decimal-leading-zero);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem;
+    color: var(--faint);
+    padding-top: 0.15em;
+  }
+
+  .rail a:hover {
+    background: var(--sunk);
+    color: var(--ink);
+  }
+
+  .rail a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  main {
+    padding: 2.25rem clamp(1.25rem, 4vw, 4rem) 6rem;
+    min-width: 0;
+  }
+
+  .col {
+    max-width: var(--measure);
+  }
+
+  /* ----------------------------------------------------------- masthead */
+
+  .masthead {
+    border-bottom: 3px solid var(--ink);
+    padding-bottom: 1.75rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .eyebrow {
+    font-family: Archivo, sans-serif;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    margin: 0 0 0.9rem;
+  }
+
+  h1 {
+    font-size: var(--step-5);
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+    font-weight: 700;
+    margin: 0 0 0.9rem;
+    text-wrap: balance;
+    max-width: 22ch;
+  }
+
+  .standfirst {
+    font-size: var(--step-1);
+    line-height: 1.5;
+    color: var(--muted);
+    margin: 0;
+    max-width: 60ch;
+  }
+
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.75rem;
+    margin-top: 1.75rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--faint);
+  }
+
+  .meta b {
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  /* ------------------------------------------------------------ sections */
+
+  section {
+    margin-bottom: 4rem;
+    scroll-margin-top: 1.5rem;
+  }
+
+  .sec-head {
+    display: grid;
+    grid-template-columns: 3rem 1fr;
+    gap: 0.75rem;
+    align-items: start;
+    border-top: 1px solid var(--rule-strong);
+    padding-top: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .sec-num {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8125rem;
+    color: var(--accent-ink);
+    padding-top: 0.55rem;
+    letter-spacing: 0.02em;
+  }
+
+  h2 {
+    font-size: var(--step-3);
+    line-height: 1.12;
+    letter-spacing: -0.025em;
+    font-weight: 600;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .sec-head p {
+    grid-column: 2;
+    margin: 0.5rem 0 0;
+    color: var(--muted);
+    max-width: var(--measure);
+  }
+
+  h3 {
+    font-size: var(--step-2);
+    line-height: 1.2;
+    letter-spacing: -0.018em;
+    font-weight: 600;
+    margin: 2.25rem 0 0.75rem;
+    text-wrap: balance;
+  }
+
+  h4 {
+    font-size: var(--step-0);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    margin: 1.5rem 0 0.5rem;
+  }
+
+  p,
+  ul,
+  ol {
+    max-width: var(--measure);
+  }
+
+  p {
+    margin: 0 0 1rem;
+  }
+
+  ul,
+  ol {
+    margin: 0 0 1rem;
+    padding-left: 1.15rem;
+  }
+
+  li {
+    margin-bottom: 0.4rem;
+  }
+
+  li::marker {
+    color: var(--faint);
+  }
+
+  strong {
+    font-weight: 600;
+  }
+
+  /* --------------------------------------------------------------- chips */
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.16rem 0.44rem;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+    vertical-align: 0.1em;
+  }
+
+  .chip.built {
+    color: var(--built);
+    background: var(--built-wash);
+    border-color: color-mix(in srgb, var(--built) 30%, transparent);
+  }
+
+  .chip.partial {
+    color: var(--partial);
+    background: var(--partial-wash);
+    border-color: color-mix(in srgb, var(--partial) 32%, transparent);
+  }
+
+  .chip.spec {
+    color: var(--spec);
+    background: var(--spec-wash);
+    border-color: color-mix(in srgb, var(--spec) 32%, transparent);
+  }
+
+  .chip.never {
+    color: var(--danger);
+    background: var(--danger-wash);
+    border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+  }
+
+  /* -------------------------------------------------------------- tables */
+
+  .scroller {
+    overflow-x: auto;
+    margin: 1.25rem 0 1.5rem;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 34rem;
+    font-size: var(--step--1);
+  }
+
+  th {
+    text-align: left;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.6rem 0.85rem;
+    border-bottom: 1px solid var(--rule-strong);
+    background: var(--sunk);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.6rem 0.85rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  td.num {
+    font-variant-numeric: tabular-nums;
+    font-family: 'IBM Plex Mono', monospace;
+    white-space: nowrap;
+  }
+
+  td.tight {
+    white-space: nowrap;
+  }
+
+  /* --------------------------------------------------------------- notes */
+
+  .note {
+    border-left: 3px solid var(--rule-strong);
+    background: var(--surface);
+    padding: 1rem 1.15rem;
+    margin: 1.5rem 0;
+    max-width: var(--measure);
+    border-radius: 0 4px 4px 0;
+  }
+
+  .note > :last-child {
+    margin-bottom: 0;
+  }
+
+  .note.flag {
+    border-left-color: var(--accent);
+    background: var(--accent-wash);
+  }
+
+  .note.hard {
+    border-left-color: var(--danger);
+    background: var(--danger-wash);
+  }
+
+  .note .label {
+    display: block;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.4rem;
+  }
+
+  .note.flag .label {
+    color: var(--accent-ink);
+  }
+
+  .note.hard .label {
+    color: var(--danger);
+  }
+
+  /* --------------------------------------------------------------- stats */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 1.75rem 0;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 0.85rem 1rem;
+  }
+
+  .stat b {
+    display: block;
+    font-family: Archivo, sans-serif;
+    font-size: var(--step-2);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+
+  .stat span {
+    display: block;
+    font-family: Archivo, sans-serif;
+    font-size: 0.6875rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-top: 0.25rem;
+  }
+
+  /* ---------------------------------------------------------------- code */
+
+  pre {
+    background: var(--sunk);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    margin: 1.25rem 0;
+    font-size: 0.8125rem;
+    line-height: 1.55;
+  }
+
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    white-space: pre;
+  }
+
+  /* --------------------------------------------------------------- misc */
+
+  .ladder {
+    display: grid;
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 1.5rem 0;
+  }
+
+  .rung {
+    background: var(--surface);
+    padding: 0.85rem 1.1rem;
+    display: grid;
+    grid-template-columns: 6.5rem 1fr;
+    gap: 1rem;
+    align-items: baseline;
+  }
+
+  .rung b {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  .rung p {
+    margin: 0;
+    font-size: var(--step--1);
+    line-height: 1.5;
+    max-width: none;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.25rem;
+    padding: 0.9rem 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    margin: 1.5rem 0 0;
+    font-size: var(--step--1);
+    max-width: var(--measure);
+  }
+
+  .legend div {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+
+  footer {
+    border-top: 3px solid var(--ink);
+    padding-top: 1.5rem;
+    margin-top: 4rem;
+    color: var(--muted);
+    font-size: var(--step--1);
+    max-width: var(--measure);
+  }
+
+  @media (max-width: 60rem) {
+    .shell {
+      grid-template-columns: 1fr;
+    }
+    .rail {
+      position: static;
+      max-height: none;
+      border-right: none;
+      border-bottom: 1px solid var(--rule);
+      padding: 1.5rem 1.25rem;
+    }
+    .rail ol {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+    }
+    h1 {
+      font-size: var(--step-4);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      animation: none !important;
+      transition: none !important;
+      scroll-behavior: auto !important;
+    }
+  }
+</style>
+
+<div class="shell">
+  <nav class="rail" aria-label="Sections">
+    <div class="rail-mark"><b>CONSTRUX</b><span>AI-OS</span></div>
+    <ol>
+      <li><a href="#read">How to read this</a></li>
+      <li><a href="#vision">Product vision</a></li>
+      <li><a href="#forensic">Forensic review</a></li>
+      <li><a href="#gaps">Market gap analysis</a></li>
+      <li><a href="#users">User ecosystem</a></li>
+      <li><a href="#centres">AI command centres</a></li>
+      <li><a href="#agents">The agent workforce</a></li>
+      <li><a href="#selfmanaging">Self-managing layer</a></li>
+      <li><a href="#security">Security command centre</a></li>
+      <li><a href="#data">Data intelligence layer</a></li>
+      <li><a href="#bitripay">BitriPay gateway</a></li>
+      <li><a href="#connectors">Connector ecosystem</a></li>
+      <li><a href="#commercial">Commercial model</a></li>
+      <li><a href="#architecture">System architecture</a></li>
+      <li><a href="#schema">Database schema</a></li>
+      <li><a href="#api">API specification</a></li>
+      <li><a href="#admin">Admin control centre</a></li>
+      <li><a href="#roadmap">Build roadmap</a></li>
+      <li><a href="#advantage">Competitive advantage</a></li>
+      <li><a href="#readiness">Production readiness</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="masthead">
+      <p class="eyebrow">Architecture blueprint · construx.ai</p>
+      <h1>The construction AI operating system</h1>
+      <p class="standfirst">
+        A forensic review of what CONSTRUX is today, and the specification for what it becomes: an
+        agentic infrastructure platform where every figure traces to a governed event, every AI
+        output is attributed, and every autonomous act has a named human who owns it.
+      </p>
+      <div class="meta">
+        <span><b>Scope</b> additive only — nothing existing is removed</span>
+        <span><b>Audience</b> senior engineering organisation</span>
+        <span><b>Baseline</b> the running platform, measured</span>
+      </div>
+    </header>
+
+    <section id="read">
+      <div class="sec-head">
+        <div class="sec-num">01</div>
+        <h2>How to read this</h2>
+        <p>
+          Every claim in this document carries a status. A specification that does not distinguish
+          what runs from what is intended is a document that gets a team to build the wrong half.
+        </p>
+      </div>
+      <div class="col">
+        <div class="legend">
+          <div><span class="chip built">Built</span> in the repository now, covered by tests</div>
+          <div><span class="chip partial">Partial</span> core built, the gap named</div>
+          <div><span class="chip spec">Spec</span> designed here, not implemented</div>
+          <div><span class="chip never">Bounded</span> deliberately constrained — see below</div>
+        </div>
+
+        <p style="margin-top: 1.5rem">
+          The figures throughout are measured from the codebase, not estimated. Where this document
+          specifies something new it says so, and where the platform already answers a requirement
+          it names the module that answers it.
+        </p>
+
+        <div class="note flag">
+          <span class="label">One deviation, stated once</span>
+          <p>
+            The brief calls for a platform that operates <em>“without requiring human
+            intervention”</em>, including agents that patch code and redeploy services on their own.
+            CONSTRUX will not do that, and the constraint is load-bearing rather than timid.
+          </p>
+          <p>
+            This platform exists to produce a record that survives adjudication. Its event catalogue
+            marks governance decisions <code>aiAllowed: false</code>, and a commit by an AI actor
+            against one of those types is a hard failure in the ledger — not a policy, a refusal.
+            An agent that could approve a payment certificate, sign off a permit or redeploy the
+            service that holds the evidence would destroy the one property the product is bought
+            for.
+          </p>
+          <p>
+            So autonomy here is <strong>bounded and graded</strong>, not absent. The mandate ladder
+            in §07 gives agents real operating latitude — continuous observation, drafting,
+            proposing, and unattended execution inside an explicitly granted envelope — while
+            keeping the acts that create legal or financial liability attached to a named person.
+            That is the same posture Palantir takes with analyst-in-the-loop workflows and the same
+            one every regulated trading system takes with pre-trade limits: the system is
+            autonomous inside a boundary somebody signed.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="vision">
+      <div class="sec-head">
+        <div class="sec-num">02</div>
+        <h2>Executive product vision</h2>
+        <p>
+          What it is, what it replaces, and why the record is the moat.
+        </p>
+      </div>
+      <div class="col">
+        <p>
+          <strong>CONSTRUX is the operating system for the delivery of physical assets.</strong> One
+          data model and one operating logic carry a project from the first feasibility option
+          through tender, design, construction, commissioning, handover and thirty years of
+          operation — without a migration, an export, or a second system of record.
+        </p>
+
+        <h3>The problem it solves</h3>
+        <p>
+          Construction loses money in the gaps between systems. The estimate lives in a
+          spreadsheet, the programme in scheduling software, the correspondence in an inbox, the
+          quality records in a folder, and the evidence on somebody's phone. When a claim is
+          argued three years later, the cost of proving what happened exceeds the value of the
+          claim — so it is settled rather than defended. The industry calls this a documentation
+          problem. It is a <em>provenance</em> problem, and it is worth billions a year.
+        </p>
+
+        <h3>What makes it different</h3>
+        <p>
+          Every state change in CONSTRUX is an event in an append-only, hash-chained ledger. The
+          chain detects deletion and reordering, not merely alteration. Replay reconstructs the
+          project at any moment and reports, per event, whether it verifies. That is not an audit
+          feature bolted to a CRUD application; it is the storage layer, and every module is built
+          on it.
+        </p>
+        <p>
+          The commercial consequence is the moat. A competitor can copy a screen in a quarter. They
+          cannot retrospectively produce a verifiable chain for a project that has already been
+          built, and a customer three years into a chain cannot leave without abandoning the thing
+          that defends their claims. Switching cost compounds with tenure.
+        </p>
+
+        <h3>Why the market needs it now</h3>
+        <ul>
+          <li>
+            <strong>Regulation moved.</strong> The UK Building Safety Act made the golden thread a
+            statutory duty for higher-risk buildings, with personal liability attached. Comparable
+            regimes are arriving across the EU and Gulf. Compliance is no longer a differentiator;
+            it is a licence to operate.
+          </li>
+          <li>
+            <strong>AI made extraction cheap and trust expensive.</strong> Anybody can now read a
+            drawing with a model. Almost nobody can prove which model read it, against which
+            revision, at what confidence, and who accepted the answer. CONSTRUX records all four on
+            every AI write.
+          </li>
+          <li>
+            <strong>The buyer changed.</strong> Margin pressure moved procurement authority from
+            IT to the commercial director, who buys instruments that defend money, not platforms
+            that store documents.
+          </li>
+        </ul>
+
+        <h3>The AI-OS thesis</h3>
+        <p>
+          The platform is not a product with AI features. It is an operating system in the literal
+          sense: it schedules work across a fleet of specialist agents, arbitrates their access to
+          resources through a capability model, meters and bills their consumption, isolates their
+          tenancies, and refuses their unsafe instructions. The agents are processes; the ledger is
+          the filesystem; the permission matrix is the kernel's access control; the ACU wallet is
+          the scheduler's quota.
+        </p>
+      </div>
+    </section>
+
+    <section id="forensic">
+      <div class="sec-head">
+        <div class="sec-num">03</div>
+        <h2>Forensic review of the current platform</h2>
+        <p>
+          Measured from the repository. This is the baseline every upgrade in this document is
+          additive to.
+        </p>
+      </div>
+      <div class="col">
+        <div class="stats">
+          <div class="stat"><b>490</b><span>Governed event types</span></div>
+          <div class="stat"><b>705</b><span>API routes</span></div>
+          <div class="stat"><b>489</b><span>Write routes</span></div>
+          <div class="stat"><b>240</b><span>Classified entities</span></div>
+          <div class="stat"><b>20 × 25</b><span>Roles × capability areas</span></div>
+          <div class="stat"><b>12</b><span>Domain agents</span></div>
+          <div class="stat"><b>8</b><span>AI engines</span></div>
+          <div class="stat"><b>180</b><span>Notification events</span></div>
+          <div class="stat"><b>3,560</b><span>Passing tests</span></div>
+          <div class="stat"><b>0</b><span>Runtime dependencies</span></div>
+        </div>
+
+        <h3>What is genuinely built</h3>
+        <div class="scroller">
+          <table>
+            <thead>
+              <tr><th>Layer</th><th>Status</th><th>What exists</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Golden Thread ledger</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+                <td>Append-only, canonical JSON hashing, JSON Patch diffs, per-entity before/after hashes and a chain hash over the whole project log. Replay verifies every event and reports per-event status. Tamper is detected, not assumed away.</td>
+              </tr>
+              <tr>
+                <td>Durability</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+                <td>Write-ahead journal with <code>fsync</code> per event, torn-tail repair on restore, and a heartbeat writer lock so a second process on the same volume refuses to start rather than interleaving appends.</td>
+              </tr>
+              <tr>
+                <td>Identity &amp; authorisation</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+                <td>RBAC across 20 roles and 25 capability areas, ABAC on data sensitivity, OAuth-style scopes, lifecycle phase gates, and tenant isolation applied on every read including the generic entity route.</td>
+              </tr>
+              <tr>
+                <td>AI orchestration</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+                <td>Dual-brain routing (perception / reasoning), per-engine phase contracts, provider health and fallback, cost estimation before spend, and a hard refusal on an empty wallet. No charge without a ledger write.</td>
+              </tr>
+              <tr>
+                <td>Agent fleet</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+                <td>12 agents across 4 divisions, each with a declared mandate: what it reads, what it may propose in, who approves, and its unattended ceiling. A test fails if an agent grants itself more.</td>
+              </tr>
+              <tr>
+                <td>Lifecycle domain</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+                <td>Eleven stages, concept to operations, with stage gates that refuse a transition on unmet exit criteria. 69 domain modules covering estimate, programme, EVM, payment cycle under the Construction Act, variations, claims, adjudication, quality, HSEQ, handover and O&amp;M.</td>
+              </tr>
+              <tr>
+                <td>Evidence &amp; ingestion</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+                <td>Tenant-scoped content-addressed store, structural inspection, rules classification with stated signals, native text and table extraction, lexical near-duplicate index, and a clamd client so a deployment with a scanner actually scans.</td>
+              </tr>
+              <tr>
+                <td>Perception</td>
+                <td class="tight"><span class="chip partial">Partial</span></td>
+                <td>Seven multimodal tasks — title block, take-off, voice note, progress, PPE, plant, defects — each producing a draft a person confirms into the ordinary domain command. Verified against a stub; no live provider call has been made from this environment.</td>
+              </tr>
+              <tr>
+                <td>Billing &amp; metering</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+                <td>ACU wallet as a separate double-entry ledger, minor units throughout, provider cost at a configured markup with a derived profit floor, seat and package pricing, storage blocks charged monthly.</td>
+              </tr>
+              <tr>
+                <td>Notifications</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+                <td>180-event catalogue across 15 categories, preference model with mandatory overrides, transactional outbox with retry and abandonment, dependency-free SMTP client.</td>
+              </tr>
+              <tr>
+                <td>Self-monitoring</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+                <td>Six rules over the gateway counters, evaluated on an interval as rates rather than totals, alerting the operator through the outbox and reporting recovery.</td>
+              </tr>
+              <tr>
+                <td>Console</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+                <td>Zero-build ES modules, permission matrix and phase gates fetched rather than duplicated, generated command doors from published schemas, installable PWA with offline field capture and conflict resolution.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Technical weaknesses found</h3>
+        <div class="scroller">
+          <table>
+            <thead>
+              <tr><th>Weakness</th><th>Consequence</th><th>Remedy</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Single-process ledger</td>
+                <td>No horizontal scale. Availability is bounded by one container; a restart is a cold start with a full replay.</td>
+                <td>§14 — the verified Postgres schema plus a wire-protocol client. The schema enforces append-only, RLS and chain integrity under concurrency and is proven against a live server; the driver is the missing piece.</td>
+              </tr>
+              <tr>
+                <td>Replay is O(n) from genesis</td>
+                <td>Restore time grows without bound. A ten-year project becomes a multi-minute boot.</td>
+                <td>§14 — periodic signed snapshots, replay from the last verified snapshot forward, snapshot hash chained into the log so it cannot be forged.</td>
+              </tr>
+              <tr>
+                <td>No semantic retrieval</td>
+                <td>The document index is lexical. It finds revision C beside revision B; it cannot find the clause expressed in other words.</td>
+                <td>§10 — an embedding capability routed through the existing orchestrator, with the same refusal discipline as perception.</td>
+              </tr>
+              <tr>
+                <td>No log or metric egress</td>
+                <td>Structured JSON goes to stdout and nothing collects it. Post-incident analysis depends on container retention.</td>
+                <td>§14 — OTLP exporter behind the existing telemetry interface. The counters and the audit stream already exist; only the shipper is missing.</td>
+              </tr>
+              <tr>
+                <td>Rate limiting is per-instance without Redis</td>
+                <td>N replicas enforce the limit N times over.</td>
+                <td>Already solved but unconfigured: a shared limiter exists and is verified against a fake Redis. This is a deployment gap, not a code gap.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Commercial weaknesses found</h3>
+        <ul>
+          <li>
+            <strong>Revenue is subscription-plus-AI only.</strong> The platform sits directly on the
+            payment path between main contractor and supply chain — the largest cash flow in the
+            industry — and takes nothing from it. §11 and §13 close this.
+          </li>
+          <li>
+            <strong>The data asset is not monetised.</strong> Cost intelligence is built from
+            committed records per tenancy and never aggregated. An anonymised benchmark across
+            tenancies is a second product with near-zero marginal cost — and one that must be built
+            with explicit consent and k-anonymity, not assumed.
+          </li>
+          <li>
+            <strong>No self-serve expansion.</strong> ACU top-ups exist; there is no upsell engine,
+            no usage-triggered plan recommendation, and no churn signal derived from the very
+            engagement data the ledger already holds.
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="gaps">
+      <div class="sec-head">
+        <div class="sec-num">04</div>
+        <h2>Market gap analysis</h2>
+        <p>
+          Against the incumbents actually encountered in a UK or Gulf tender, not a generic
+          competitive set.
+        </p>
+      </div>
+      <div class="col">
+        <div class="scroller">
+          <table>
+            <thead>
+              <tr><th>Incumbent</th><th>Does well</th><th>Structural gap</th><th>CONSTRUX position</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Procore</td>
+                <td>Field adoption, breadth of modules, marketplace</td>
+                <td>Records are mutable rows. “What did this look like in March” is answered from an audit table, not reconstructed and verified. Commercial depth is shallow outside the US.</td>
+                <td>Verifiable replay; UK/NEC/JCT contract mechanics as first-class logic rather than custom fields</td>
+              </tr>
+              <tr>
+                <td>Autodesk Construction Cloud</td>
+                <td>Design and model authority, coordination</td>
+                <td>Commercially thin. The money — valuation, certification, notices, adjudication — lives elsewhere, so the design decision is never costed against the payment it causes.</td>
+                <td>One ledger carries design change through to the certificate it moves</td>
+              </tr>
+              <tr>
+                <td>Oracle Aconex / Primavera</td>
+                <td>Correspondence of record, mega-project scheduling</td>
+                <td>Implementation cost and cycle time put it out of reach below the top tier. Little native AI; the record is a filing cabinet with permissions.</td>
+                <td>Self-serve to enterprise on one code path; thresholds scale from sole trader to multi-billion</td>
+              </tr>
+              <tr>
+                <td>Buildertrend / Fieldwire</td>
+                <td>SME price point, fast adoption</td>
+                <td>No contract mechanics, no evidential chain. Useless the moment a claim is contested.</td>
+                <td>Same product, same chain, at a package price an SME buys</td>
+              </tr>
+              <tr>
+                <td>Point AI tools (take-off, doc chat)</td>
+                <td>Sharp single-task accuracy</td>
+                <td>Output lands in a spreadsheet with no provenance. Nobody can say which model produced a number, at what confidence, or who accepted it.</td>
+                <td>Every AI write carries provider, model class, confidence, prompt version, assumptions and disposition</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Where users are underserved</h3>
+        <ul>
+          <li>
+            <strong>The quantity surveyor</strong> reconciles the same variation across an upstream
+            client account and a downstream subcontract by hand, in a spreadsheet, every month.
+            CONSTRUX derives the reconciliation and reports the leakage.
+          </li>
+          <li>
+            <strong>The site manager</strong> records the same shift three times — diary, progress
+            claim, safety log — because three systems need it. One capture, three governed records.
+          </li>
+          <li>
+            <strong>The commercial director</strong> discovers a margin problem when the monthly CVR
+            lands, six weeks after the cause. Derived positions are live because they are computed
+            from the ledger, not compiled by a person.
+          </li>
+          <li>
+            <strong>The client</strong> receives a golden thread at handover as a folder of PDFs
+            nobody has verified. Here it is a replay with a root hash and a per-event verdict.
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="users">
+      <div class="sec-head">
+        <div class="sec-num">05</div>
+        <h2>The complete user ecosystem</h2>
+        <p>
+          Every actor the platform serves, with the authority model that already governs each.
+        </p>
+      </div>
+      <div class="col">
+        <p>
+          Authority is not a per-screen setting. It is a matrix of 20 roles against 25 capability
+          areas, with codes <code>R</code> read, <code>C</code> create, <code>U</code> update,
+          <code>A</code> approve, <code>I</code> import/export and <code>X</code> execute AI. The
+          interface fetches this matrix; it never restates it.
+        </p>
+
+        <div class="scroller">
+          <table>
+            <thead>
+              <tr><th>Actor</th><th>Layer</th><th>Principal authority</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Platform operator</td><td>Operator</td><td>Tenancy, billing, system health. <strong>Barred from customer delivery data by construction</strong>, not by policy</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Enterprise admin</td><td>Tenant</td><td>Structure, users, policy, project setup</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Owner / client representative</td><td>Tenant</td><td>Approve at gates, read commercially, accept handover</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Executive / project director</td><td>Tenant</td><td>Portfolio position, gate authority, contract approval</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Commercial manager / QS</td><td>Tenant</td><td>Estimate, valuation, variation, claim, AI execution on contracts</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Project / planning manager</td><td>Tenant</td><td>Programme, work packages, field execution, progress certification</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Designer / BIM lead / principal designer</td><td>Tenant</td><td>Design information, model, clash, CDM duties</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>HSE manager / QA-QC</td><td>Tenant</td><td>RAMS, permits, incidents, ITP, NCR, hold points</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Site supervisor</td><td>Tenant</td><td>Field capture, diary, observation, progress claim. Cannot certify their own claim</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>FM / asset manager</td><td>Tenant</td><td>O&amp;M, lifecycle cost, aftercare, operating position</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Supplier / subcontractor</td><td>External</td><td>Enquiry response, submittal, delivery. Scoped to their packages</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Regulator / auditor</td><td>External</td><td>Read and export with audience redaction; the root hash still covers the withheld record</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Merchant (BitriPay)</td><td>External</td><td>Payment acceptance, settlement, dispute. Own portal, own keys</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>API developer / integrator</td><td>External</td><td>Sandbox and live keys, webhook subscriptions, scoped tokens</td><td class="tight"><span class="chip partial">Partial</span></td></tr>
+              <tr><td>Channel partner / white-label</td><td>External</td><td>Sub-tenancy provisioning, branding, revenue share</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="centres">
+      <div class="sec-head">
+        <div class="sec-num">06</div>
+        <h2>AI command centres</h2>
+        <p>
+          One per user type, assembled from the same seven functions. What differs is the authority
+          it inherits and the questions it can answer.
+        </p>
+      </div>
+      <div class="col">
+        <p>
+          A command centre is <strong>not a chat window</strong>. It is a working surface with four
+          fixed regions, and the platform already answers all four for every screen: what is
+          happening, what changed, what is at risk, and what to do next. The AI layer populates them
+          from the ledger rather than from a prompt.
+        </p>
+
+        <div class="note">
+          <span class="label">The rule that makes it safe</span>
+          <p>
+            A command centre <strong>inherits the authority of the person viewing it and never
+            exceeds it</strong>. It cannot read a record its viewer could not open, and it cannot
+            offer an action its viewer could not perform. This is enforced by passing the ordinary
+            engine context — the same one every domain command authorises against — rather than by
+            filtering results after the fact.
+          </p>
+        </div>
+
+        <div class="scroller">
+          <table>
+            <thead>
+              <tr><th>Function</th><th>What it does</th><th>Foundation today</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Chief of staff</td>
+                <td>The day: what needs a decision, what is overdue, what is about to be. Prioritised by consequence — a time-barred notice outranks a late drawing.</td>
+                <td>Morning briefing, obligation calendar, decision queue, residual obligations</td>
+                <td class="tight"><span class="chip partial">Partial</span></td>
+              </tr>
+              <tr>
+                <td>Analyst</td>
+                <td>Answers a commercial or programme question with the records the answer came from attached.</td>
+                <td>EVM, CVR, cashflow, productivity, completion forecast, lineage traversal</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+              </tr>
+              <tr>
+                <td>Research</td>
+                <td>Outside-in: opportunity radar, framework calls, competitor and rate movement.</td>
+                <td>Tender radar, bid/no-bid scoring, cost intelligence</td>
+                <td class="tight"><span class="chip partial">Partial</span></td>
+              </tr>
+              <tr>
+                <td>Automation</td>
+                <td>Runs the sequence a person would run, inside the mandate, and stops at the first act needing approval.</td>
+                <td>Agent runtime, proposal queue, command catalogue</td>
+                <td class="tight"><span class="chip partial">Partial</span></td>
+              </tr>
+              <tr>
+                <td>Growth</td>
+                <td>Win-rate by sector and client, margin by package type, which pursuits to drop.</td>
+                <td>Pipeline, lessons learned, cost intelligence</td>
+                <td class="tight"><span class="chip spec">Spec</span></td>
+              </tr>
+              <tr>
+                <td>Security</td>
+                <td>Who reached what, from where, and what changed about it. Anomaly against the actor's own baseline.</td>
+                <td>Security audit stream, authorisation denials, watch rules</td>
+                <td class="tight"><span class="chip partial">Partial</span></td>
+              </tr>
+              <tr>
+                <td>Knowledge</td>
+                <td>Corporate memory: what this business learned on the last job like this one.</td>
+                <td>Lessons learned across projects, document catalogue, lexical index</td>
+                <td class="tight"><span class="chip partial">Partial</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>Per-actor specialisation</h4>
+        <ul>
+          <li><strong>QS centre</strong> — opens on the payment cycle: applications due, certificates outstanding, notices approaching a statutory bar, variation leakage between upstream and downstream.</li>
+          <li><strong>Site manager centre</strong> — opens on the shift: today's activities, constraints unresolved, permits expiring, what the handset is still holding unsynced.</li>
+          <li><strong>Director centre</strong> — opens on the portfolio: projects by margin trajectory, gates blocked, the one number that moved most since yesterday and the events that moved it.</li>
+          <li><strong>Operator centre</strong> — opens on the platform: tenancies, ACU burn, watch rules firing, outbox owed, storage against entitlement. Never a customer's delivery record.</li>
+          <li><strong>Merchant centre</strong> — opens on money: settlement due, disputes open, failure rate by method, webhook delivery health.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="agents">
+      <div class="sec-head">
+        <div class="sec-num">07</div>
+        <h2>The agent workforce and its mandate ladder</h2>
+        <p>
+          Twelve agents run today. The specification takes it to thirty-one — and every one of them
+          declares, in code, exactly how far it may go alone.
+        </p>
+      </div>
+      <div class="col">
+        <h3>The mandate ladder</h3>
+        <p>
+          Every agent carries a mandate: the capability areas it may read, the areas it may propose
+          in, the roles that may approve its proposals, and its unattended ceiling. The ceiling is
+          the load-bearing field.
+        </p>
+
+        <div class="ladder">
+          <div class="rung">
+            <b>OBSERVE</b>
+            <p>Reads and reports. Produces findings, never a command. Today's ceiling for the radar, pipeline, HSEQ and supply-chain agents.</p>
+          </div>
+          <div class="rung">
+            <b>DRAFT</b>
+            <p>Prepares a complete, valid command and holds it. Nothing reaches the ledger. This is what the perception drafts already do.</p>
+          </div>
+          <div class="rung">
+            <b>PROPOSE</b>
+            <p>Places the command in the approval queue scoped to the capability area, where a named role decides. Today's ceiling for the other eight agents, and the highest any agent currently reaches.</p>
+          </div>
+          <div class="rung">
+            <b>ACT</b>
+            <p>Executes unattended <em>inside an explicitly granted envelope</em>: named commands, a value ceiling, a time window, and a revocation that takes effect on the next tick. Exists in the model; granting it is a deliberate product decision, and a test fails if an agent grants it to itself.</p>
+          </div>
+        </div>
+
+        <div class="note flag">
+          <span class="label">Where ACT may be granted, and where it may not</span>
+          <p>
+            <strong>Eligible:</strong> acts that are reversible, bounded in value, and create no
+            liability — refreshing a forecast, re-running a clash detection, drafting a
+            transmittal, opening a low-value enquiry, closing a duplicate observation.
+          </p>
+          <p>
+            <strong>Never eligible, enforced by the catalogue:</strong> anything marked
+            <code>aiAllowed: false</code> — certifying payment, approving a variation, signing a
+            gate decision, issuing a statutory notice, closing an NCR, accepting handover, granting
+            a role. A commit by an AI actor against one of these types is a hard failure in
+            <code>commit()</code>, not a rejected request.
+          </p>
+        </div>
+
+        <h3>The full fleet</h3>
+        <div class="scroller">
+          <table>
+            <thead>
+              <tr><th>Division</th><th>Agent</th><th>Ceiling</th><th>Purpose and escalation</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              <tr><td rowspan="2">Market intel</td><td>Radar</td><td class="tight">OBSERVE</td><td>Opportunity discovery against the company profile; escalates a fit above threshold to the owner</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Competitor</td><td class="tight">OBSERVE</td><td>Award and framework movement; feeds bid/no-bid scoring</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+
+              <tr><td rowspan="3">Bid</td><td>Pipeline</td><td class="tight">OBSERVE</td><td>Bid/no-bid on ten factors; escalates a no-bid recommendation on a live pursuit</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Tender</td><td class="tight">PROPOSE</td><td>Estimate build, risk pricing, compliance matrix; proposes to QS/PM/EPC</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Pricing</td><td class="tight">PROPOSE</td><td>Rate benchmarking against committed cost history; flags an outlier before submission</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+
+              <tr><td rowspan="8">Delivery</td><td>Programme</td><td class="tight">PROPOSE</td><td>CPM, delay attribution, recovery scenarios</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Commercial</td><td class="tight">PROPOSE</td><td>EVM, CVR, cashflow, margin erosion alerts</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Risk</td><td class="tight">PROPOSE</td><td>Register scoring, contingency adequacy, Monte Carlo completion</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Contracts</td><td class="tight">PROPOSE</td><td>Clause extraction, entitlement, time-bar countdown; escalates an approaching bar</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Design</td><td class="tight">PROPOSE</td><td>Coordination, clash triage, information readiness against the lookahead</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Field</td><td class="tight">PROPOSE</td><td>Progress verification, diary anomaly, productivity against baseline</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Handover</td><td class="tight">PROPOSE</td><td>O&amp;M assembly, residual obligations, operator readiness</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>HSEQ</td><td class="tight">OBSERVE</td><td>Leading indicators, competency expiry, permit currency</td><td class="tight"><span class="chip built">Built</span></td></tr>
+
+              <tr><td>Supply chain</td><td>Supply chain</td><td class="tight">OBSERVE</td><td>Prequalification currency, delivery risk, subcontractor concentration</td><td class="tight"><span class="chip built">Built</span></td></tr>
+
+              <tr><td rowspan="4">Platform ops</td><td>Health</td><td class="tight">ACT</td><td>Evaluates the watch rules, alerts, reports recovery. Envelope: notify only</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Defect triage</td><td class="tight">PROPOSE</td><td>Clusters 5xx by route and correlation id into one finding with a reproduction</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Release</td><td class="tight">PROPOSE</td><td>Readiness gate before deploy: suite green, migration reversible, rollback rehearsed</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Cost optimisation</td><td class="tight">PROPOSE</td><td>Provider mix and model class against measured accuracy per task; proposes a routing change</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+
+              <tr><td rowspan="5">Security</td><td>Threat hunter</td><td class="tight">OBSERVE</td><td>Anomaly against each actor's own baseline, not a global one</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Identity</td><td class="tight">ACT</td><td>Step-up challenge, session revocation. Envelope: may harden, never relax</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Fraud</td><td class="tight">PROPOSE</td><td>Payment anomaly: duplicate application, round-sum variation, out-of-hours certification</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Vulnerability</td><td class="tight">OBSERVE</td><td>Dependency and configuration drift against the declared baseline</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Data protection</td><td class="tight">PROPOSE</td><td>Retention breaches, export scope, subject-access assembly</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+
+              <tr><td rowspan="3">Revenue</td><td>Expansion</td><td class="tight">PROPOSE</td><td>Usage against entitlement; proposes a plan change with the evidence</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Retention</td><td class="tight">OBSERVE</td><td>Engagement decay by seat and module; the leading indicator, not the renewal date</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Collections</td><td class="tight">ACT</td><td>Dunning sequence. Envelope: notify only, never suspend a tenancy</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+
+              <tr><td rowspan="3">Customer</td><td>Onboarding</td><td class="tight">ACT</td><td>Provisioning, seeding, first-project setup. Envelope: within the purchased package</td><td class="tight"><span class="chip partial">Partial</span></td></tr>
+              <tr><td>Support</td><td class="tight">PROPOSE</td><td>Answers from the customer's own record and the published catalogue; never invents a capability</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Success</td><td class="tight">OBSERVE</td><td>Module adoption against the outcome the customer bought</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+
+              <tr><td rowspan="3">Compliance</td><td>KYB / KYC</td><td class="tight">PROPOSE</td><td>Verification through the identity connector; proposes, never approves onboarding</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>AML</td><td class="tight">PROPOSE</td><td>Screening and monitoring on the payment path; escalates to a named compliance officer</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Regulatory</td><td class="tight">OBSERVE</td><td>Statutory gateway currency — Building Safety Act, CDM, Construction Act dates</td><td class="tight"><span class="chip partial">Partial</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Agent execution contract</h3>
+        <pre><code>type AgentMandate = {
+  reads:        CapabilityArea[];   // may read, nothing wider
+  proposes:     CapabilityArea[];   // may propose in, subset of reads
+  approvers:    Role[];             // who may decide
+  maxUnattended: 'OBSERVE' | 'DRAFT' | 'PROPOSE' | 'ACT';
+  envelope?: {                      // required when maxUnattended is ACT
+    commands:    string[];          // an allow-list, never a pattern
+    valueCapMinor: number;          // 0 for non-financial acts
+    window:      { from: string; to: string };
+    revocable:   true;              // always; effective next tick
+  };
+};</code></pre>
+
+        <p>
+          Every agent run produces a run report — findings, proposals raised, ACUs consumed — and
+          every proposal expires. An unattended proposal that nobody decides is withdrawn after 72
+          hours rather than executing by default, because a queue that drains itself by timeout is
+          an agent acting unattended by another name.
+        </p>
+      </div>
+    </section>
+
+    <section id="selfmanaging">
+      <div class="sec-head">
+        <div class="sec-num">08</div>
+        <h2>The self-managing platform layer</h2>
+        <p>
+          Self-healing where the blast radius is bounded, and a loud refusal where it is not.
+        </p>
+      </div>
+      <div class="col">
+        <div class="scroller">
+          <table>
+            <thead>
+              <tr><th>Capability</th><th>Behaviour</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Health watch</td>
+                <td>Six rules over the gateway counters every interval, as rates over the window rather than totals since boot. Fires on transition in, re-notifies after an interval, and reports recovery. Declines to judge below a minimum sample.</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+              </tr>
+              <tr>
+                <td>Writer protection</td>
+                <td>A second process on the same journal volume refuses to start. Heartbeat rather than pid, because two containers have separate pid namespaces and the naive check takes the lock.</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+              </tr>
+              <tr>
+                <td>Delivery guarantee</td>
+                <td>Transactional outbox with backoff and abandonment. A process that dies mid-send leaves the notice owed, not lost.</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+              </tr>
+              <tr>
+                <td>AI failure containment</td>
+                <td>Provider health, fallback to a healthy provider, refusal on an empty wallet, and no charge without a ledger write.</td>
+                <td class="tight"><span class="chip built">Built</span></td>
+              </tr>
+              <tr>
+                <td>Chain self-verification</td>
+                <td>Scheduled background replay of a sample of projects, verifying chain and state hashes and raising a critical alert on the first divergence — rather than discovering it during a dispute.</td>
+                <td class="tight"><span class="chip spec">Spec</span></td>
+              </tr>
+              <tr>
+                <td>Defect triage</td>
+                <td>Clusters errors by route and correlation id, attaches the request shape and the trace, opens one finding rather than a thousand log lines.</td>
+                <td class="tight"><span class="chip spec">Spec</span></td>
+              </tr>
+              <tr>
+                <td>Auto-repair</td>
+                <td><strong>Bounded to restart and reroute.</strong> Restarting a stuck timer, re-establishing a provider connection, draining a wedged queue, failing over a connector.</td>
+                <td class="tight"><span class="chip spec">Spec</span></td>
+              </tr>
+              <tr>
+                <td>Autonomous code patching and redeploy</td>
+                <td>Refused. An agent that can change the code that holds the evidence can change the evidence. The release agent <em>proposes</em> a change with its test evidence and a human merges.</td>
+                <td class="tight"><span class="chip never">Bounded</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note hard">
+          <span class="label">Why auto-repair stops at restart</span>
+          <p>
+            The industry precedent for autonomous remediation — Netflix, Google SRE — is
+            <em>reverting to a known-good state</em>, not authoring a fix. Rollback, restart,
+            drain, shed load, fail over. Every one of those returns the system to something a human
+            already approved. Generating and deploying a patch does not, and on a platform whose
+            product is an evidential record it converts an availability incident into an
+            integrity incident.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="security">
+      <div class="sec-head">
+        <div class="sec-num">09</div>
+        <h2>Security command centre</h2>
+        <p>
+          Zero trust expressed as things the platform refuses, not as a diagram.
+        </p>
+      </div>
+      <div class="col">
+        <h3>Identity and access</h3>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Control</th><th>Implementation</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>MFA on sign-in</td><td>Challenge/verify with a one-time code; a signature ceremony re-challenges independently of the session</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Short-lived access, rotating refresh</td><td>15-minute access token, 7-day refresh with rotation on use</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Every request authorised</td><td>RBAC + ABAC sensitivity + scope + lifecycle phase, evaluated per request with the decision on the log line</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Tenant isolation</td><td>Enforced in the identity layer and applied on every read including the generic entity route and the audit feed</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Account-layer separation</td><td>Platform operators are refused customer delivery data structurally, not by a role check that could be granted</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Segregation of duties</td><td>The applicant cannot certify; the gate submitter cannot decide it; the claimant cannot verify their own progress</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Device binding and risk-based step-up</td><td>Device fingerprint on session issue; a change in device, geography or behaviour class triggers re-authentication before a privileged act</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Passkeys / WebAuthn</td><td>Replaces the emailed code as the primary factor; the code stays as recovery</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Application attack surface</h3>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Threat</th><th>Control</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>Injection</td><td>No SQL today. Under the Postgres design, parameterised statements only, with the application role holding no DDL and no <code>UPDATE</code>/<code>DELETE</code> on the event table</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>XSS</td><td>Tagged-template escaping by default in the console; raw insertion is an explicit, greppable opt-in</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Stored XSS via upload</td><td>Ingestion refuses active markup in text-shaped files and refuses SVG in the landing-page slots outright</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Malicious upload</td><td>Declared type checked against magic bytes; executables, EICAR, archive-borne executables and declared compression bombs quarantined by name</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Malware</td><td>clamd INSTREAM client; unreachable-when-configured refuses the ingestion rather than recording an unscanned file as checked</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Path traversal</td><td>Containment asserted on the media route with raw HTTP, because <code>fetch</code> normalises <code>..</code> before it leaves the client</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>API abuse / credential stuffing</td><td>Token-bucket limiting per tenant and actor, shared across replicas when a backend is configured; auth-failure rate is a watch rule</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Enumeration</td><td>An unknown project and a forbidden project both answer <code>200</code> with an empty list — deliberately, and tested, so nobody “fixes” it into an oracle</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Prompt injection</td><td>The AI evaluation harness includes injection cases; no provider output is trusted as a command, and every AI write goes through the same authorisation as a human one</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Volumetric DDoS</td><td>Edge — Cloudflare or equivalent. Application-layer limiting does not answer a volumetric attack and this document does not pretend it does</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>CSRF</td><td>Bearer tokens in headers rather than cookies; no ambient authority to forge</td><td class="tight"><span class="chip built">Built</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Data protection</h3>
+        <ul>
+          <li><strong>In transit</strong> — TLS 1.3 terminated at the edge, re-encrypted to origin. <span class="chip spec">Spec</span></li>
+          <li><strong>At rest</strong> — volume encryption for the journal and object store; per-tenant envelope keys for evidence objects so a stolen volume is not a readable archive. <span class="chip spec">Spec</span></li>
+          <li><strong>In use</strong> — sensitivity classification on all 240 entity types, enforced on every read, with provider clearance levels so privileged material never reaches an under-cleared vendor. <span class="chip built">Built</span></li>
+          <li><strong>Secrets</strong> — server-side only, never in the repository; the environment report shows presence and length, never a value. <span class="chip built">Built</span></li>
+          <li><strong>Export</strong> — audience redaction with the withheld set named; the root hash still covers the full record so a redacted pack remains verifiable. <span class="chip built">Built</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="data">
+      <div class="sec-head">
+        <div class="sec-num">10</div>
+        <h2>Data and intelligence layer</h2>
+        <p>
+          The ledger is the source of truth. Everything else is a derived read model that can be
+          rebuilt from it and is therefore allowed to be lost.
+        </p>
+      </div>
+      <div class="col">
+        <div class="note">
+          <span class="label">The architectural rule</span>
+          <p>
+            No store other than the event log is authoritative. A warehouse, a vector index or a
+            graph that disagrees with the ledger is wrong by definition and is rebuilt, not
+            reconciled. This is what keeps a lakehouse from quietly becoming a second system of
+            record with different numbers in it.
+          </p>
+        </div>
+
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Component</th><th>Role</th><th>Rebuild source</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>Event log</td><td>System of record. Append-only, hash-chained, replayable</td><td>—</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Materialised entities</td><td>Current state per <code>(refType, refId)</code>, produced by replay</td><td>Replay from genesis or the last verified snapshot</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Derived positions</td><td>EVM, CVR, cashflow, readiness, obligations — computed on read, never stored</td><td>Computed</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Object store</td><td>Content-addressed evidence, tenant-scoped, hash-verified on write</td><td>Not derivable — the one thing that must be backed up separately</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Lexical index</td><td>Feature-hashed word and bigram vectors; finds near-duplicates and quoted clauses</td><td>Re-ingestion</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Vector index</td><td>Semantic retrieval over documents and correspondence. Routed through the orchestrator with the same refusal discipline as perception: no provider, no embedding, no invented answer</td><td>Re-embedding</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Knowledge graph</td><td>Typed edges — clause governs activity, drawing informs task, NCR blocks handover — traversable for “what does this depend on”</td><td>Projection from the log; the edges are already implicit in entity references</td><td class="tight"><span class="chip partial">Partial</span></td></tr>
+              <tr><td>Analytical warehouse</td><td>Columnar projection for cross-project and cross-tenant analysis under consent</td><td>Projection from the log</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Event stream</td><td>Outbound change feed for integrators, ordered per project, at-least-once with an idempotency key</td><td>The log itself</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Learning that is allowed, and learning that is not</h3>
+        <p>
+          The platform improves in three ways, and none of them is silent model drift on customer
+          data.
+        </p>
+        <ul>
+          <li>
+            <strong>Measured accuracy per task.</strong> The evaluation harness scores accounting,
+            boundary, refusal, injection and determined cases against a gold set with hand-derived
+            expected values. Routing decisions use these numbers.
+          </li>
+          <li>
+            <strong>Disposition feedback.</strong> Every AI output records whether a person accepted
+            it, accepted it with changes, or rejected it — and the corrections are stored separately
+            from the model's original answer. That is a labelled dataset produced as a by-product of
+            normal work.
+          </li>
+          <li>
+            <strong>Cost intelligence from committed records.</strong> Rates derived from what was
+            actually paid, not from a library. Cross-tenant aggregation requires explicit consent
+            and k-anonymity thresholds, and is a separate product with a separate agreement.
+          </li>
+        </ul>
+        <div class="note hard">
+          <span class="label">Not permitted</span>
+          <p>
+            Training or fine-tuning on customer data without an explicit, revocable, per-tenancy
+            agreement. Provider clearance levels already prevent privileged material reaching an
+            under-cleared vendor; the same discipline governs any training corpus.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="bitripay">
+      <div class="sec-head">
+        <div class="sec-num">11</div>
+        <h2>BitriPay integration gateway</h2>
+        <p>
+          A payments layer on the largest cash flow in construction, built as an adapter behind a
+          provider-neutral interface.
+        </p>
+      </div>
+      <div class="col">
+        <div class="note flag">
+          <span class="label">What this section does and does not specify</span>
+          <p>
+            This specifies <strong>the contract CONSTRUX needs from a payment provider</strong> and
+            the whole surface around it — merchant onboarding, key management, webhooks,
+            settlement, reconciliation, disputes and revenue share. It deliberately does
+            <strong>not</strong> invent BitriPay's endpoint paths, field names, signature scheme or
+            error codes. Those must come from BitriPay's own published specification, and writing
+            plausible ones here would produce a document an engineer would implement and then have
+            to unpick.
+          </p>
+          <p>
+            The adapter interface below is the integration point. Mapping it to BitriPay's actual
+            API is a bounded task — a day's work against real documentation — and the same interface
+            admits Stripe, Adyen and Checkout.com without touching anything above it.
+          </p>
+        </div>
+
+        <h3>Why payments belong in this platform</h3>
+        <p>
+          CONSTRUX already runs the payment <em>cycle</em>: application, certification, payment
+          notice, pay-less notice, settlement — with the statutory dates of the Construction Act
+          enforced and the applicant structurally unable to certify their own claim. What it does
+          not do is move the money. That gap is a lost revenue line and, more importantly, a lost
+          reconciliation: the platform knows exactly what <em>should</em> have been paid, and has no
+          record of what <em>was</em>.
+        </p>
+
+        <h3>The adapter interface</h3>
+        <pre><code>type PaymentProvider = {
+  readonly name: string;
+  readonly capabilities: PaymentMethod[];   // QR | WALLET | CARD | BANK_TRANSFER | MOBILE_MONEY
+  readonly settlementCurrency: string[];
+
+  /** Idempotent by construction: the key is the certificate id. */
+  createPayment(request: {
+    idempotencyKey: string;
+    amountMinor: number;
+    currency: string;
+    method: PaymentMethod;
+    reference: string;         // the certificate reference, carried end to end
+    payer: PartyRef;
+    payee: PartyRef;
+    split?: RevenueSplit[];    // platform fee and any partner share
+  }): Promise<PaymentIntent>;
+
+  capture(intentId: string): Promise<PaymentResult>;
+  refund(paymentId: string, amountMinor: number, reason: string): Promise<RefundResult>;
+  settlementReport(from: string, to: string): Promise<SettlementLine[]>;
+
+  /** Verifies the provider's signature. Returns undefined on any failure —
+      an unverifiable webhook is discarded, never processed optimistically. */
+  verifyWebhook(headers: Headers, rawBody: Buffer): WebhookEvent | undefined;
+};</code></pre>
+
+        <h3>Merchant and developer surface</h3>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Capability</th><th>Specification</th></tr></thead>
+            <tbody>
+              <tr><td>Merchant onboarding</td><td>KYB through the identity connector, beneficial-ownership capture, sanctions screening, and a governed <code>MERCHANT_ONBOARDED</code> event. The compliance agent proposes; a named officer approves.</td></tr>
+              <tr><td>API keys</td><td>Separate sandbox and live keys. Displayed once, stored as a hash, prefixed so a leaked key is identifiable in a log. Rotation without downtime via an overlap window; revocation effective immediately.</td></tr>
+              <tr><td>Webhooks</td><td>Signed with a per-merchant secret over the raw body and a timestamp. Replay window enforced. Delivery through the existing outbox, so retries and abandonment behave exactly as notifications do.</td></tr>
+              <tr><td>Sandbox</td><td>A full-fidelity environment with deterministic test outcomes keyed on amount — a documented value that always declines, one that always disputes, one that settles late.</td></tr>
+              <tr><td>Payment links &amp; QR</td><td>Issued against a certificate, carrying its reference, expiring with it. A link that outlives the certificate it pays is a reconciliation problem waiting to happen.</td></tr>
+              <tr><td>Settlement</td><td>Daily reconciliation of provider settlement lines against certificates. A line that matches nothing raises an exception rather than being absorbed.</td></tr>
+              <tr><td>Disputes</td><td>Modelled as a first-class record with an evidence pack assembled from the ledger — the certificate, the notices, the progress records and their evidence hashes.</td></tr>
+              <tr><td>Revenue split</td><td>Platform fee and partner share computed in minor units, recorded on the payment event, and reconciled against the settlement report. Never inferred from a percentage at read time.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>New governed events</h3>
+        <pre><code>MERCHANT_ONBOARDED        Merchant  CREATE   PAYMENTS  requiresEvidence
+PAYMENT_INTENT_CREATED    Payment   CREATE   PAYMENTS  creates
+PAYMENT_CAPTURED          Payment   UPDATE   PAYMENTS  requiresEvidence
+PAYMENT_FAILED            Payment   UPDATE   PAYMENTS
+PAYMENT_REFUNDED          Payment   UPDATE   PAYMENTS  requiresEvidence
+SETTLEMENT_RECONCILED     Settlement CREATE  PAYMENTS  requiresEvidence
+SETTLEMENT_EXCEPTION      Settlement UPDATE  PAYMENTS
+DISPUTE_RAISED            Dispute   CREATE   PAYMENTS  requiresEvidence
+DISPUTE_EVIDENCE_SUBMITTED Dispute  UPDATE   PAYMENTS  requiresEvidence
+DISPUTE_RESOLVED          Dispute   APPROVE  PAYMENTS</code></pre>
+        <p>
+          Every one of these is <code>aiAllowed: false</code>. An agent may reconcile, flag and
+          propose; it does not move money.
+        </p>
+      </div>
+    </section>
+
+    <section id="connectors">
+      <div class="sec-head">
+        <div class="sec-num">12</div>
+        <h2>Third-party connector ecosystem</h2>
+        <p>
+          Every connector is an adapter behind a platform-owned interface, with a declared failure
+          mode. A connector that cannot answer must degrade a feature, never corrupt a record.
+        </p>
+      </div>
+      <div class="col">
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Category</th><th>Why</th><th>Where it connects</th><th>On failure</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>AI providers</td><td>Reasoning and perception</td><td>Orchestrator, behind the capability router</td><td>Fall back to a healthy provider; refuse rather than fabricate when none can see a file</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Email (SMTP)</td><td>Notifications, verification, alerts</td><td>Notification outbox</td><td>Entry stays owed and retries; abandonment is a watch rule</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Malware scanning</td><td>Evidence ingestion</td><td>Ingestion pipeline</td><td>Refuse the ingestion; never record unscanned as checked</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Shared rate-limit store</td><td>Multi-replica limiting</td><td>Gateway middleware</td><td>Fail open to in-process buckets and say so on the health endpoint</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Object storage (S3 / R2)</td><td>Evidence at scale</td><td>Evidence store, behind the existing interface</td><td>Refuse the upload; the hash is not recorded as held</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Payments</td><td>Settlement of certificates</td><td>BitriPay gateway (§11)</td><td>Intent stays pending; nothing is marked paid without a verified callback</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Open banking</td><td>Reconciling actual receipts</td><td>Settlement reconciliation</td><td>Exception queue rather than an assumed match</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>KYB / KYC / AML</td><td>Merchant and supplier onboarding</td><td>Compliance agents</td><td>Onboarding stays pending; never auto-approved on a timeout</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>SMS / push</td><td>Mandatory safety and security notices</td><td>Notification channels (declared, no carrier)</td><td>Falls to email and records the channel that failed</td><td class="tight"><span class="chip partial">Partial</span></td></tr>
+              <tr><td>E-signature</td><td>Contract execution</td><td>Signing ceremony</td><td>Native ceremony with platform witnessing already exists; an external provider is an alternative, not a dependency</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Accounting (Xero, Sage, SAP)</td><td>Certificate to invoice</td><td>Commercial ledger bridge</td><td>Queue and retry; the platform's figure remains authoritative</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Weather</td><td>Delay claims turn on whether weather stopped work</td><td>Daily diary enrichment</td><td>Diary records what the site observed; the feed adds provenance, never replaces the observation</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Commodity pricing</td><td>Fluctuation clauses and rate currency</td><td>Cost intelligence, rate library</td><td>Rates stay at their recorded base date and are marked stale</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Credit reference</td><td>Supplier prequalification</td><td>Supply-chain agent</td><td>Prequalification incomplete rather than assumed passed</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Observability (OTLP)</td><td>Log and metric egress</td><td>Telemetry interface</td><td>Local counters continue; egress failure is itself a watch rule</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>CRM</td><td>Pipeline continuity with sales</td><td>Business development</td><td>One-way projection; the platform never takes a commercial figure from a CRM</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="commercial">
+      <div class="sec-head">
+        <div class="sec-num">13</div>
+        <h2>Commercial model</h2>
+        <p>
+          Eight revenue lines, three of which run today.
+        </p>
+      </div>
+      <div class="col">
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Line</th><th>Mechanism</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>Subscription</td><td>Package-priced, not seat-summed. Legacy tiers map onto packages so existing contracts resolve</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>AI consumption</td><td>ACU wallet in minor units. Provider cost charged at a configured markup with a profit floor derived from the rule rather than configured beside it. 20% of every subscription payment credited as allowance</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Storage</td><td>100 GB blocks, charged monthly for as long as they are held — because an append-only record is a permanent obligation, and a one-off fee for it compounds into a liability</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Payment processing</td><td>Basis-point fee on settled certificate value, plus a fixed component. The largest line at scale: platform-mediated payment on construction cash flow</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>API access</td><td>Metered calls above a plan allowance, with published rate limits per tier</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Data products</td><td>Anonymised cost and productivity benchmarks under explicit consent with k-anonymity thresholds</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>White label</td><td>Sub-tenancy provisioning with partner branding and a revenue share recorded per transaction</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Enterprise</td><td>Single tenancy, private provider keys, custom retention, contracted support</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note hard">
+          <span class="label">Pricing arithmetic is internal</span>
+          <p>
+            The ACU markup, the profit floor and the provider unit cost are operator-facing figures.
+            Customers see a price and a balance. Publishing the derivation to a customer surface —
+            or to a partner portal — is a standing prohibition, and the export redaction already
+            treats these as commercial-in-confidence.
+          </p>
+        </div>
+
+        <h3>Expansion mechanics</h3>
+        <ul>
+          <li><strong>Usage-triggered upgrade</strong> — the expansion agent proposes a plan change with the evidence: which entitlement was exceeded, when, and what it cost. <span class="chip spec">Spec</span></li>
+          <li><strong>Churn signal from the record</strong> — engagement decay by seat and by module, which is a leading indicator, rather than the renewal date, which is a lagging one. <span class="chip spec">Spec</span></li>
+          <li><strong>Land through the field, expand through commercial</strong> — the site app is the cheapest entry and the payment cycle is the highest value. The migration path between them is the growth motion.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <div class="sec-head">
+        <div class="sec-num">14</div>
+        <h2>System and infrastructure architecture</h2>
+        <p>
+          The target topology, and the honest distance from here to it.
+        </p>
+      </div>
+      <div class="col">
+        <pre><code>            edge (TLS 1.3, WAF, volumetric DDoS, cache)          SPEC
+                              │
+                      API gateway  ───────────────────────────── BUILT
+      auth → RBAC/ABAC/scope → phase gate → rate limit →
+      schema validation → route → problem+json → trace
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        │                     │                     │
+   domain commands      AI orchestrator        agent runtime      BUILT
+   (69 modules)       perception/reasoning     (mandate ladder)
+        │                     │                     │
+        └─────────────────────┼─────────────────────┘
+                              │
+                      Golden Thread ledger                        BUILT
+              append-only · hash-chained · replayable
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        │                     │                     │
+   write-ahead journal   evidence store       ACU wallet          BUILT
+   (single writer)       (content-addressed)  (double-entry)
+        │
+        └── Postgres: RLS, append-only rules, chain trigger       SPEC
+            schema verified · driver not written</code></pre>
+
+        <h3>The path to horizontal scale</h3>
+        <ol>
+          <li>
+            <strong>Snapshotting</strong> — periodic signed state snapshots with the snapshot hash
+            chained into the log. Restore replays from the last verified snapshot forward, turning
+            an O(n) boot into an O(recent) one. <span class="chip spec">Spec</span>
+          </li>
+          <li>
+            <strong>The Postgres client</strong> — the schema is written and proven against a live
+            Postgres 16: append-only rules, forced RLS, a chain-head row lock plus a unique index so
+            two concurrent writers produce exactly one winner, and an evidence trigger. What is
+            missing is a wire-protocol client, because zero runtime dependencies is settled. Writing
+            one is a bounded, testable piece of work. <span class="chip partial">Partial</span>
+          </li>
+          <li>
+            <strong>Read replicas</strong> — derived positions and the console's read path move to
+            replicas; the write path stays on the primary, where the chain trigger serialises it.
+            <span class="chip spec">Spec</span>
+          </li>
+          <li>
+            <strong>Stateless application tier</strong> — with the ledger in Postgres and the
+            limiter in a shared store, the application becomes horizontally scalable and the writer
+            lock becomes redundant rather than load-bearing. <span class="chip spec">Spec</span>
+          </li>
+        </ol>
+
+        <h3>Disaster recovery and continuity</h3>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Scenario</th><th>Today</th><th>Target</th></tr></thead>
+            <tbody>
+              <tr><td>Process death</td><td>Restart, replay, verify. Acknowledged events are durable by construction</td><td>Unchanged — this already works</td></tr>
+              <tr><td>Torn write</td><td>Detected and repaired; the dropped event was never acknowledged to a caller</td><td>Unchanged</td></tr>
+              <tr><td>Volume loss</td><td>Restore from backup; RPO is the backup interval</td><td>Streaming replication, RPO seconds</td></tr>
+              <tr><td>Region loss</td><td>Not survivable</td><td>Cross-region replica, promotion runbook, RTO under an hour</td></tr>
+              <tr><td>Tampering</td><td>Detected on replay; the platform refuses to boot on a broken chain</td><td>Plus scheduled background verification so it is detected in hours, not at a dispute</td></tr>
+              <tr><td>Provider outage</td><td>Fallback, then refusal. No fabricated output</td><td>Unchanged</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="schema">
+      <div class="sec-head">
+        <div class="sec-num">15</div>
+        <h2>Database schema</h2>
+        <p>
+          Verified against Postgres 16 by a script that stands up a cluster and tries to break every
+          property the schema claims.
+        </p>
+      </div>
+      <div class="col">
+        <pre><code>event
+  event_id            text PK        -- the platform's ULID, not a serial:
+                                     -- an id the database mints is one the
+                                     -- hash chain does not cover
+  tenant_id           text NOT NULL  -- RLS predicate
+  project_id          text NOT NULL
+  occurred_at         timestamptz    -- the platform's clock; hashes are over this
+  device_timestamp    timestamptz    -- preserved verbatim for offline capture
+  actor_type/_id      text
+  actor_roles         text[]         -- snapshot, not reference: roles change
+  source              text
+  event_type          text NOT NULL
+  entity_type/_id     text NOT NULL
+  action              text NOT NULL
+  before_hash         text NOT NULL  CHECK LIKE 'sha256:%'
+  after_hash          text NOT NULL  CHECK LIKE 'sha256:%'
+  diff                jsonb NOT NULL -- JSON Patch, add/remove/replace only
+  evidence_refs       jsonb
+  ai                  jsonb          -- provider, model class, confidence,
+                                     -- prompt version, assumptions, ACUs
+  policy              jsonb
+  correlation_id      text NOT NULL
+  causation_id        text
+  chain_hash          text NOT NULL
+  previous_chain_hash text
+  recorded_at         timestamptz DEFAULT now()   -- the only column the DB decides
+
+  UNIQUE (project_id, chain_hash)    -- two events cannot follow one predecessor
+  INDEX  (project_id, occurred_at, event_id)      -- replay
+  INDEX  (project_id, entity_type, entity_id, occurred_at)
+  INDEX  (tenant_id, occurred_at DESC)
+  INDEX  (correlation_id)                          -- "what changed"
+
+chain_head            -- one row per project, locked FOR UPDATE by the trigger
+  project_id PK, tenant_id, chain_hash, events, updated_at</code></pre>
+
+        <h4>Enforced by the database, not by the application</h4>
+        <ul>
+          <li><strong>Append-only</strong> — <code>DO INSTEAD NOTHING</code> rules on UPDATE and DELETE. Not a revoked grant: a grant can be given back, and “the application cannot update” is weaker than “the table cannot be updated”.</li>
+          <li><strong>Tenant isolation</strong> — RLS keyed on a session variable and <code>FORCE</code>d so it binds the owner too.</li>
+          <li><strong>Chain integrity under concurrency</strong> — a row lock on the project head plus the unique index. Two writers both try; exactly one wins.</li>
+          <li><strong>Evidence</strong> — a trigger against the list of event types that require it.</li>
+        </ul>
+
+        <div class="note flag">
+          <span class="label">A finding worth carrying into any deployment</span>
+          <p>
+            The verification script's first run <em>passed every isolation check while the database
+            was enforcing nothing</em>. It connected as the bootstrap superuser, and row-level
+            security does not apply to a superuser — nor to any role holding <code>BYPASSRLS</code> —
+            whatever <code>FORCE ROW LEVEL SECURITY</code> says. Each tenancy read the other's
+            events and the cross-tenant write succeeded.
+          </p>
+          <p>
+            The policies were right and the connection was wrong. That is exactly the mistake a
+            deployment makes and exactly the one a schema file cannot show. The application role is
+            <code>NOSUPERUSER NOBYPASSRLS</code>, and one of the checks asserts it is neither.
+          </p>
+        </div>
+
+        <h4>New tables for the specified layers</h4>
+        <pre><code>merchant        id, tenant_id, status, kyb_ref, onboarded_at, approved_by
+payment         id, tenant_id, certificate_ref, amount_minor, currency,
+                method, provider, provider_ref, status, split jsonb,
+                idempotency_key UNIQUE
+settlement_line id, provider, settled_at, amount_minor, payment_id NULL,
+                exception_reason NULL        -- unmatched raises, never absorbs
+dispute         id, payment_id, raised_at, evidence_pack_ref, status
+api_key         id, tenant_id, prefix, hash, scopes[], mode, rotated_at,
+                revoked_at                    -- the value is never stored
+webhook_sub     id, tenant_id, url, secret_hash, events[], created_at
+embedding       id, tenant_id, source_ref, model, dimensions, vector,
+                embedded_at                   -- rebuildable; never authoritative</code></pre>
+      </div>
+    </section>
+
+    <section id="api">
+      <div class="sec-head">
+        <div class="sec-num">16</div>
+        <h2>API specification</h2>
+        <p>
+          705 routes are published today, each with the schema that governs its body. The additions
+          follow the conventions the platform already enforces.
+        </p>
+      </div>
+      <div class="col">
+        <h3>Conventions, enforced by tests</h3>
+        <ul>
+          <li>Every write route declares a JSON Schema. A route without one fails the suite.</li>
+          <li>Every write route is reachable from the console — a capability with no door is a capability nobody has.</li>
+          <li>Every registered event type has a command that emits it. An orphan event fails the suite.</li>
+          <li>Errors are RFC 7807 <code>application/problem+json</code>, with field-level detail where a schema rejected the body.</li>
+          <li>Every response carries <code>x-correlation-id</code>; every log line carries the trace and the authorisation decision.</li>
+          <li>Writes answer <code>201</code>. A denial is a denial — never an empty list.</li>
+        </ul>
+
+        <h4>Representative addition — read a letter for the dates inside it</h4>
+        <pre><code>POST /v1/projects/{projectId}/correspondence/{correspondenceId}/commitments
+Authorization: Bearer &lt;access token&gt;
+
+→ 201
+{ "commitmentIds": ["01M13..."], "found": 2, "dropped": 1, "acuConsumed": 34 }
+
+→ 503  provider-cannot-read
+{ "type": ".../problems/provider-cannot-read",
+  "title": "PROVIDER_CANNOT_READ",
+  "status": 503,
+  "detail": "The provider returned no list of commitments at all, which is not
+             the same as finding none. Reading a letter needs a model that reads
+             prose; the local engines compute, and nothing has been recorded
+             against COR-0001 rather than a reading being invented for it." }</code></pre>
+        <p>
+          The <code>dropped</code> count is the design in miniature: every finding must quote the
+          letter verbatim or it is discarded before it is written. A provider that never read the
+          letter cannot produce a real quote, so fabrication becomes impossible to file rather than
+          merely discouraged.
+        </p>
+
+        <h4>New surfaces</h4>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Surface</th><th>Shape</th><th>Auth</th></tr></thead>
+            <tbody>
+              <tr><td>Merchant API</td><td><code>/v1/merchants/*</code>, <code>/v1/payments/*</code></td><td>API key, scoped, sandbox or live</td></tr>
+              <tr><td>Webhooks out</td><td>Signed POST to the subscriber, retried through the outbox</td><td>Per-merchant HMAC over the raw body plus a timestamp</td></tr>
+              <tr><td>Event stream</td><td><code>GET /v1/stream?after={eventId}</code>, ordered per project</td><td>Bearer, tenant-scoped, at-least-once with an idempotency key</td></tr>
+              <tr><td>Command catalogue</td><td><code>GET /v1/commands</code> — every write route with its schema</td><td>Authenticated; this is the shape of every request the platform accepts</td></tr>
+              <tr><td>Platform watch</td><td><code>GET /v1/admin/watch</code></td><td>Operator only</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="admin">
+      <div class="sec-head">
+        <div class="sec-num">17</div>
+        <h2>Admin super control centre</h2>
+        <p>
+          Total visibility over the platform, and structurally none over a customer's delivery
+          record.
+        </p>
+      </div>
+      <div class="col">
+        <div class="note">
+          <span class="label">The separation that makes it sellable</span>
+          <p>
+            A platform operator can see every tenancy's <em>consumption</em> and no tenancy's
+            <em>content</em>. This is enforced in the routes, not by convention: an operator role
+            reaching a delivery endpoint is refused with
+            <code>ACCOUNT_LAYER_SEPARATION</code>. It is the answer to the first question a
+            main contractor's IT director asks.
+          </p>
+        </div>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Panel</th><th>Answers</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>Tenancies</td><td>Who exists, on what package, provisioned when, with which seats used</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>ACU burn</td><td>Consumption by tenancy, engine and task; who is about to run out</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Watch</td><td>Which platform rules are firing, since when, and whether anybody is being told</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Outbox</td><td>What the platform owes, what it retried, what it abandoned and why</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>AI evaluation</td><td>Harness results across accounting, boundary, refusal, injection and determined cases</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Environment</td><td>Every variable this process reads, its presence and length — never a secret's value</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Storage</td><td>Held bytes against entitlement, and what no record names</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Landing media</td><td>Operator-managed imagery without a rebuild</td><td class="tight"><span class="chip built">Built</span></td></tr>
+              <tr><td>Payments</td><td>Merchant status, settlement exceptions, dispute ageing, failure rate by method</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+              <tr><td>Security</td><td>Denials by policy, authentication failures by actor, sessions revoked, anomalies open</td><td class="tight"><span class="chip partial">Partial</span></td></tr>
+              <tr><td>Chain assurance</td><td>Last verification per project, root hash, events since, any divergence</td><td class="tight"><span class="chip spec">Spec</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <div class="sec-head">
+        <div class="sec-num">18</div>
+        <h2>Build roadmap</h2>
+        <p>
+          Sequenced by dependency and by what unlocks revenue, not by module list.
+        </p>
+      </div>
+      <div class="col">
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Phase</th><th>Delivers</th><th>Gate to leave it</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>0 · Shipped</strong></td>
+                <td>Ledger, identity, lifecycle, engines, agents, evidence, billing, console, PWA, notifications, self-monitoring</td>
+                <td>Passed: 3,560 tests, zero runtime dependencies, one verified deployment path</td>
+              </tr>
+              <tr>
+                <td><strong>1 · Durable at scale</strong></td>
+                <td>Postgres wire client against the verified schema; snapshotting; OTLP egress; object storage adapter; shared limiter configured</td>
+                <td>Two application instances serving one tenancy with a verified chain, and a restore rehearsed from a snapshot</td>
+              </tr>
+              <tr>
+                <td><strong>2 · Money</strong></td>
+                <td>BitriPay adapter against real documentation; merchant portal; keys, webhooks, sandbox; settlement reconciliation; dispute pack</td>
+                <td>One certificate paid end to end, reconciled, with the fee recorded and the exception queue empty</td>
+              </tr>
+              <tr>
+                <td><strong>3 · Intelligence</strong></td>
+                <td>Vector retrieval; knowledge-graph traversal; command centres for the five principal actors; live multimodal provider</td>
+                <td>Perception verified against a live provider rather than a stub — the largest remaining caveat in the record</td>
+              </tr>
+              <tr>
+                <td><strong>4 · Enterprise</strong></td>
+                <td>Passkeys, device binding, step-up; security agents; chain assurance sweep; SOC 2 evidence set; cross-region DR</td>
+                <td>An independent penetration test and a rehearsed region failover</td>
+              </tr>
+              <tr>
+                <td><strong>5 · Ecosystem</strong></td>
+                <td>Public API tiers; event stream; white-label sub-tenancies; connector marketplace; data products under consent</td>
+                <td>A third-party integration in production that the platform team did not write</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="advantage">
+      <div class="sec-head">
+        <div class="sec-num">19</div>
+        <h2>Competitive advantage</h2>
+        <p>
+          Five properties a competitor cannot reach by shipping features.
+        </p>
+      </div>
+      <div class="col">
+        <ol>
+          <li>
+            <strong>The chain cannot be retrofitted.</strong> A competitor can add an audit log
+            tomorrow. They cannot produce a verifiable chain for a project that finished last year,
+            and the customer three years in cannot leave without abandoning the thing that defends
+            their claims.
+          </li>
+          <li>
+            <strong>AI provenance is a moat, not a feature.</strong> Every AI write carries the
+            provider, the model class, the confidence, the prompt version, the assumptions, the
+            known gaps and the human disposition. A platform that cannot say which model produced a
+            number cannot sell into a regulated golden thread at any price.
+          </li>
+          <li>
+            <strong>Refusal is a product property.</strong> The platform refuses to read a drawing
+            with a model that cannot see, refuses to record an unscanned file as checked, refuses to
+            file a commitment the letter does not contain, refuses to boot on a broken chain. Every
+            refusal is a place a competitor will ship a plausible answer — and be found out once.
+          </li>
+          <li>
+            <strong>One code path from sole trader to multi-billion.</strong> Thresholds scale;
+            logic does not fork. The SME entry price and the enterprise contract are the same
+            product, so the land-and-expand motion has no re-platforming cliff in it.
+          </li>
+          <li>
+            <strong>Payments close the loop.</strong> The platform already knows what should be paid
+            and enforces the statutory dates that govern it. Moving the money makes it the system of
+            record for the transaction as well as the entitlement — and that is the position
+            nobody displaces.
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="readiness">
+      <div class="sec-head">
+        <div class="sec-num">20</div>
+        <h2>Production readiness review</h2>
+        <p>
+          What would be signed off today, and what would not.
+        </p>
+      </div>
+      <div class="col">
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Dimension</th><th>Verdict</th><th>Evidence or gap</th></tr></thead>
+            <tbody>
+              <tr><td>Correctness</td><td class="tight"><span class="chip built">Pass</span></td><td>3,560 tests, clean typecheck, replay verification, financial idempotency proven at the domain level</td></tr>
+              <tr><td>Data integrity</td><td class="tight"><span class="chip built">Pass</span></td><td>Hash chain, write-ahead journal, torn-tail repair, single-writer enforcement, refusal to boot on a broken chain</td></tr>
+              <tr><td>Authorisation</td><td class="tight"><span class="chip built">Pass</span></td><td>Per-request RBAC/ABAC/scope/phase, tenant isolation on every read, account-layer separation, segregation of duties</td></tr>
+              <tr><td>Secrets</td><td class="tight"><span class="chip built">Pass</span></td><td>Server-side only; the environment report shows presence and length, never a value</td></tr>
+              <tr><td>Observability</td><td class="tight"><span class="chip partial">Conditional</span></td><td>Structured logs, counters, latency histogram, security stream and self-monitoring exist. Nothing ships them anywhere durable</td></tr>
+              <tr><td>Availability</td><td class="tight"><span class="chip partial">Conditional</span></td><td>Single instance by enforcement. Adequate for early enterprise with a stated SLA; not for a 99.95% commitment</td></tr>
+              <tr><td>Disaster recovery</td><td class="tight"><span class="chip partial">Conditional</span></td><td>Restore rehearsed and verified. RPO is the backup interval; there is no automatic failover</td></tr>
+              <tr><td>Scale</td><td class="tight"><span class="chip spec">Blocked</span></td><td>Schema verified, client not written. This is phase 1 and it is the critical path</td></tr>
+              <tr><td>AI assurance</td><td class="tight"><span class="chip partial">Conditional</span></td><td>Evaluation harness with a hand-derived gold set; provenance and disposition on every write. Multimodal paths verified against a stub, not a live provider — stated, not hidden</td></tr>
+              <tr><td>Accessibility</td><td class="tight"><span class="chip partial">Conditional</span></td><td>Semantic HTML and keyboard focus in place; no audit against WCAG has been performed and none is claimed</td></tr>
+              <tr><td>Compliance evidence</td><td class="tight"><span class="chip spec">Blocked</span></td><td>The controls exist; the evidence set for SOC 2 or ISO 27001 has not been assembled</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note flag">
+          <span class="label">The one-line assessment</span>
+          <p>
+            CONSTRUX is production-ready as a single-instance enterprise deployment with a stated
+            availability SLA, and is not yet ready as a multi-tenant public platform at scale. The
+            distance between those two positions is the Postgres client, the observability egress
+            and the object-storage adapter — three bounded, testable pieces of work, all of them
+            specified above, none of them research.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <p>
+        <strong>CONSTRUX AI-OS blueprint.</strong> Every figure is measured from the repository at
+        the time of writing. Statuses are deliberate: <span class="chip built">Built</span> means it
+        runs and is tested, <span class="chip partial">Partial</span> means the core runs and the gap
+        is named, <span class="chip spec">Spec</span> means it is designed here and not implemented.
+        Nothing existing is removed by anything in this document.
+      </p>
+    </footer>
+  </main>
+</div>
