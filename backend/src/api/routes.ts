@@ -2389,6 +2389,32 @@ export const ROUTES: Route[] = [
 
   // ------------------------------------------------------------------ people
   {
+    method: 'GET',
+    pattern: '/v1/users',
+    readOnly: true,
+    description: 'Everyone in this tenancy, with what each of them may do',
+    handler: (platform, ctx) => {
+      // The gap this closes: a tenancy could create people and never list them.
+      // An administrator onboarded fifteen minutes earlier had no way to see who
+      // was in their own organisation, which makes "change what somebody may do"
+      // unusable — you cannot change the roles of a person you cannot find.
+      //
+      // Scoped to the caller's own tenancy from the token, never from a
+      // parameter: a tenant id in the path would be an invitation to pass
+      // somebody else's.
+      const actor = auth(ctx);
+      return {
+        users: platform.users(actor.tenantId).map((user) => ({
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          roles: user.roles,
+          status: user.status,
+        })),
+      };
+    },
+  },
+  {
     method: 'POST',
     pattern: '/v1/users',
     description: 'Create a user and assign an identity seat',

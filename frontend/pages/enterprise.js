@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { badge, date, html, humanise, money, pct, raw, render, statusTone, table } from '../lib/ui.js';
-import { blockedReason, can, state } from '../app.js';
+import { blockedReason, can, state, tenantGrantableRoles } from '../app.js';
 import { command, commandBar } from '../lib/command.js';
 import { CONTINENT, SECTOR_GROUPED, sectorLabel, today } from '../lib/enums.js';
 
@@ -21,7 +21,7 @@ export async function enterprise(root) {
   // figure below carries the number of projects it was built from, because a
   // total that treats a missing CVR as zero is the most confident wrong number
   // a portfolio screen can print.
-  const [position, portfolios, enterprises, gates, ownership, changes, forecast] = await Promise.all([
+  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people] = await Promise.all([
     api.get('/v1/enterprise/command'),
     api.get('/v1/portfolios').catch(() => ({ portfolios: [] })),
     api.get('/v1/enterprises').catch(() => ({ enterprises: [] })),
@@ -29,6 +29,10 @@ export async function enterprise(root) {
     api.get('/v1/ownership').catch(() => ({ areas: [] })),
     api.get('/v1/enterprise/changes').catch(() => null),
     api.get('/v1/enterprise/forecast').catch(() => null),
+    // Everybody in this tenancy. A tenancy that can create people but never
+    // list them makes "change what somebody may do" unusable, because you
+    // cannot change the roles of a person you cannot find.
+    api.get('/v1/users').catch(() => ({ users: [] })),
   ]);
 
   const { estate, financial, delivery, risks, projects } = position;
@@ -66,6 +70,15 @@ export async function enterprise(root) {
               reason: portfolios.portfolios.length === 0
                 ? 'A project belongs to a portfolio. Create one first.'
                 : blockedReason('ENTERPRISE_STRUCTURE', 'C'),
+            },
+            {
+              id: 'person',
+              label: 'Add a person',
+              // `G` rather than `C`: adding somebody to the tenancy grants them
+              // authority, which is a governance act rather than the creation
+              // of a record.
+              permitted: can('ENTERPRISE_STRUCTURE', 'G'),
+              reason: blockedReason('ENTERPRISE_STRUCTURE', 'G'),
             },
           ]))}
         </div>
@@ -294,6 +307,30 @@ export async function enterprise(root) {
           Gates are evaluated from materialised state, never asserted. A project cannot be marked as having passed a gate it has not met.
         </div>
       </div>
+
+      <div class="card">
+        <h2>People in this tenancy</h2>
+        ${table({
+          headers: ['Name', 'Email', 'Roles', 'Status'],
+          rows: (people.users ?? []).map((person) => [
+            person.name,
+            person.email,
+            // Not `.join(' ')`: `badge` returns a template rather than a
+            // string, so joining stringifies each one to "[object Object]".
+            // The tagged template resolves an array of them properly.
+            html`${(person.roles ?? []).map((role) => badge(humanise(role), 'neutral'))}`,
+            badge(String(person.status ?? '').toLowerCase() || 'unknown', statusTone(person.status)),
+          ]),
+          empty:
+            'Nobody has been added yet. A tenancy with one administrator and no colleagues cannot separate ' +
+            'who proposes from who approves, which is what most of the governance in this platform rests on.',
+        })}
+        <div class="metric-sub" style="margin-top:10px">
+          Roles are offered from the list the platform publishes as grantable. The operator roles are not on it:
+          an administrator who could mint a platform operator would hold the power to credit their own wallet,
+          which would defeat every control on the money model.
+        </div>
+      </div>
     `,
   );
 
@@ -390,6 +427,31 @@ export async function enterprise(root) {
         contractValueMinor: Number(contractValueMinor),
         location: { continentCode, countryCode: String(countryCode ?? '').toUpperCase(), city },
       }),
+    },
+    person: {
+      title: 'Add a person',
+      intent:
+        'Creates an identity in this tenancy and takes a seat against the subscription. There is no password — ' +
+        'the email address is the credential, because sign-in is a one-time code sent to it.',
+      path: '/v1/users',
+      submitLabel: 'Add',
+      fields: [
+        { name: 'name', label: 'Name', hint: 'The person, not a role. This is who the record will name for everything they do.' },
+        {
+          name: 'email',
+          label: 'Email address',
+          hint: 'Where their sign-in code goes. An address nobody reads is an account nobody can use.',
+        },
+        {
+          name: 'roles',
+          label: 'Roles',
+          type: 'multiselect',
+          options: tenantGrantableRoles().map((role) => ({ value: role, label: humanise(role) })),
+          hint:
+            'What they may do. Offered from the list the platform publishes as grantable — the operator roles are ' +
+            'not on it, and asking for one is refused by name rather than quietly dropped.',
+        },
+      ],
     },
   };
 

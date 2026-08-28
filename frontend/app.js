@@ -153,6 +153,20 @@ let writePhaseGates = {};
 /** The roles a tenant admin may grant — published by the API, not assumed here. */
 let grantableRoles = [];
 
+/**
+ * The grantable roles, for a screen that offers them.
+ *
+ * A getter rather than the array, because the value arrives with the permission
+ * matrix: a page importing the binding directly would capture the empty array
+ * this module starts with and offer a role picker with nothing in it.
+ *
+ * Whatever a form offers, the server intersects against `TENANT_GRANTABLE_ROLES`
+ * again — this list makes the picker honest, it does not make it authoritative.
+ */
+export function tenantGrantableRoles() {
+  return grantableRoles;
+}
+
 async function loadMatrix() {
   if (matrix) return matrix;
   const result = await api.get('/v1/permissions/matrix');
@@ -544,6 +558,20 @@ async function loadContext() {
   if (isOperator()) return;
 
   const { projectId } = state.session;
+
+  // A tenancy minutes old has no project, and that is a normal state rather
+  // than a failure. Without this the console interpolated `undefined` into the
+  // path and asked the platform for `/v1/projects/undefined` — so the first
+  // thing a new customer's administrator did was generate two 404s, and the
+  // wallet went unread because the rejected read took the whole `Promise.all`
+  // down with it.
+  if (!projectId) {
+    state.project = null;
+    state.gate = null;
+    state.wallet = await api.get('/v1/billing/wallet').catch(() => null);
+    return;
+  }
+
   const [detail, wallet] = await Promise.all([
     api.get(`/v1/projects/${projectId}`),
     api.get('/v1/billing/wallet').catch(() => null),
