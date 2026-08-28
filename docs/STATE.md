@@ -7066,14 +7066,18 @@ parsing work, not wiring.
   application is closed, and camera or location capture beyond what the browser
   grants
 - **External data feeds** — commodity pricing, weather, credit reference
-- **Postgres, RLS and horizontal scale** — the ledger is durable now (an
-  append-only journal on a volume, verified on restore), and one process owns
-  the file *by enforcement* rather than by convention: a second writer on the
-  same volume now refuses to start rather than interleaving its appends
-  (`goldenthread/writerlock.ts`). That closes the accident; it does not make the
-  platform scale out. Two instances still need the Postgres design, because
-  refusing the second one is not the same as running it. Point-in-time recovery
-  is limited to the backup interval, and there is no automatic failover
+- **The Postgres driver, and therefore horizontal scale** — the ledger is
+  durable now (an append-only journal on a volume, verified on restore), and one
+  process owns the file *by enforcement* rather than by convention: a second
+  writer on the same volume refuses to start rather than interleaving its
+  appends (`goldenthread/writerlock.ts`). The **schema** that would let two
+  instances run is written and verified — `deploy/postgres/` applies to a real
+  Postgres 16 and proves append-only, tenant isolation under RLS, chain
+  integrity under two concurrent writers, and evidence. What is absent is the
+  client: the platform cannot speak to Postgres, because a wire-protocol driver
+  is not written and `pg` is not going to be added. So the design is checkable
+  and the platform still runs on one process. Point-in-time recovery is limited
+  to the backup interval, and there is no automatic failover
 - **Log shipping, metrics store and alerting** — structured JSON goes to stdout
   and counters are exposed; nothing collects them
 
@@ -7785,6 +7789,41 @@ approximation — and the tolerance is named in the case rather than assumed.
 The harness now reports five kinds: accounting, boundary, refusal, injection and
 **determined**. The first four ask whether the platform's defences hold; the
 fifth asks whether its answers are right.
+
+---
+
+## The scaling answer, made checkable
+
+`docs/STATE.md` recorded Postgres as the answer to horizontal scale and left it
+as prose, and prose cannot be wrong in any way anybody notices.
+`deploy/postgres/` is the schema plus a script that stands up a throwaway
+Postgres 16, applies it, and tries to break each property it claims. Nineteen
+checks, and the platform still does not use it: there is no wire-protocol driver
+and there is not going to be a dependency. What changed is that the design is
+now falsifiable.
+
+**The first run passed every isolation check while the database was enforcing
+nothing.** The script connected as the cluster's bootstrap superuser, and
+row-level security does not apply to a superuser — nor to any role holding
+`BYPASSRLS` — whatever `FORCE ROW LEVEL SECURITY` says. Each tenancy read the
+other's events and the cross-tenant write the policy was supposed to refuse
+succeeded. The policies were right and the connection was wrong, which is
+exactly the mistake a deployment makes and exactly the one a schema file cannot
+show. `construx_app` is `NOSUPERUSER NOBYPASSRLS` now, the script connects as
+it, and one check asserts it is neither.
+
+A smaller one from the same run: the cross-tenant write was refused by the
+*chain* trigger, which under RLS could not see the other tenancy's head row and
+reported "this project has no events" about a project with two. Correctly
+refused, misleadingly explained — so there is an explicit tenant check, named to
+sort before the chain trigger because Postgres fires BEFORE row triggers in name
+order.
+
+The property worth the whole exercise is the concurrency one. A row lock on the
+project's head plus `UNIQUE (project_id, chain_hash)` means two writers may both
+try to extend the chain and exactly one succeeds — which is what the writer lock
+buys by *refusing* the second process, bought instead by the database. That is
+the difference between refusing to scale out and scaling out.
 
 ---
 
