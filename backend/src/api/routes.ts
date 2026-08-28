@@ -31,6 +31,7 @@ import * as business from '../domain/business.ts';
 import * as cdm from '../domain/cdm.ts';
 import * as portfolio from '../domain/portfolio.ts';
 import * as commitments from '../domain/commitments.ts';
+import * as watch from '../ops/watch.ts';
 import * as correspondence from '../domain/correspondence.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as programmecontrol from '../domain/programmecontrol.ts';
@@ -1106,6 +1107,30 @@ export const ROUTES: Route[] = [
       // Across every tenancy: "is anything failing to go out" is an operator's
       // question, and the outbox is a platform chain rather than a project one.
       return outbox.outboxPosition(platform);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/watch',
+    readOnly: true,
+    description: 'What the platform is saying about itself: which of its own rules are firing, and whether anybody is told',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read the platform watch');
+      return watch.watchPosition(platform);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/watch/evaluate',
+    description: 'Evaluate every rule now rather than waiting for the interval',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      operatorOnly(ctx, 'evaluate the platform watch');
+      // The same evaluation the timer runs, brought forward. It cannot make a
+      // rule fire that would not have fired on its own — and the first one
+      // after a restart still judges no rate, because there is nothing to
+      // difference against yet.
+      return watch.evaluate(platform);
     },
   },
   {

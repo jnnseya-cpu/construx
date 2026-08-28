@@ -333,6 +333,12 @@ def('system.service_restored', 'Service restored', 'Service restored', 'SUCCESS'
 def('audit.completed', 'Audit completed', 'Audit completed', 'INFO', [I]);
 def('audit.policy_violation', 'Policy violation', 'Policy violation detected', 'CRITICAL', [E, I, S], MANDATORY);
 def('audit.investigation_opened', 'Investigation opened', 'Investigation opened', 'WARNING', [E, I], MANDATORY);
+// The platform telling its operator that one of its own rules is firing.
+// Mandatory: an operator must not be able to mute the platform saying it is
+// broken, and the recovery notice is mandatory for the same reason — somebody
+// woken at three needs to be told it stopped.
+def('system.watch_alert', 'Platform alert', '{{severity}}: {{what}}', 'CRITICAL', [E, I], MANDATORY);
+def('system.watch_resolved', 'Platform alert resolved', 'Resolved: {{what}}', 'SUCCESS', [E, I], MANDATORY);
 
 // ------------------------------------------------------------- Legal & Privacy
 group('LEGAL_PRIVACY');

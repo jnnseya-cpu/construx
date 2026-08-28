@@ -7078,8 +7078,13 @@ parsing work, not wiring.
   is not written and `pg` is not going to be added. So the design is checkable
   and the platform still runs on one process. Point-in-time recovery is limited
   to the backup interval, and there is no automatic failover
-- **Log shipping, metrics store and alerting** — structured JSON goes to stdout
-  and counters are exposed; nothing collects them
+- **Log shipping and a metrics store** — structured JSON still goes to stdout
+  and nothing collects it. **Alerting is built**: `ops/watch.ts` judges the
+  counters the gateway already keeps against a handful of rules every interval
+  and tells the operator through the outbox, so an alert survives a process
+  death like any other notice. What is absent is somewhere durable to ship the
+  logs and metrics *to* — which is infrastructure, and is what a metrics store
+  and a dashboard would be built on
 
 ---
 

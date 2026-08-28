@@ -243,6 +243,32 @@ export const config = {
     timeoutMs: num('ANTIVIRUS_TIMEOUT_MS', 10_000),
   },
 
+  /**
+   * The platform watching its own numbers.
+   *
+   * Counters have existed since the gateway was built and nothing read them.
+   * These are the thresholds a handful of rules judge them against, evaluated
+   * on a timer and sent to the operator through the outbox.
+   */
+  ops: {
+    watchEnabled: bool('OPS_WATCH_ENABLED', true),
+    watchIntervalSeconds: num('OPS_WATCH_INTERVAL_SECONDS', 60),
+    /**
+     * How long a condition may keep firing before the operator is told again.
+     * Short enough that a real outage is not forgotten, long enough that a
+     * two-hour incident does not arrive as 120 emails.
+     */
+    renotifyMinutes: num('OPS_WATCH_RENOTIFY_MINUTES', 30),
+    /**
+     * The floor under every rate rule. "100% of requests failed" over one
+     * request is the alert that gets the whole system muted within a day.
+     */
+    minimumSample: num('OPS_WATCH_MINIMUM_SAMPLE', 20),
+    serverErrorPercent: num('OPS_WATCH_SERVER_ERROR_PERCENT', 5),
+    authFailurePercent: num('OPS_WATCH_AUTH_FAILURE_PERCENT', 20),
+    rateLimitedThreshold: num('OPS_WATCH_RATE_LIMITED_THRESHOLD', 50),
+  },
+
   evidence: {
     storePath: str('EVIDENCE_STORE_PATH', ''),
     /**

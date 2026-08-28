@@ -207,7 +207,7 @@ describe('a configured scanner that will not answer is a refusal', () => {
     // ingestion position until this stopped repeating itself.
     const reachable = await ping();
     assert.equal(reachable.reachable, false);
-    assert.equal(/^127\.0\.0\.1:1\b/.test(reachable.reason ?? ''), false, reachable.reason);
+    assert.equal(/^127\.0\.0\.1:1\b/.test(reachable.reason ?? ''), false, String(reachable.reason));
   });
 
   it('throws rather than returning an unscanned verdict', async () => {

@@ -60,8 +60,8 @@ before(async () => {
 });
 
 describe('the catalogue', () => {
-  it('holds 178 events across 15 categories', () => {
-    assert.equal(NOTIFICATION_EVENTS.length, 178);
+  it('holds 180 events across 15 categories', () => {
+    assert.equal(NOTIFICATION_EVENTS.length, 180);
     assert.equal(CATEGORIES.length, 15);
     assert.equal(new Set(CATEGORIES.map((c) => CATEGORY_TITLES[c])).size, 15, 'two categories share a title');
   });
@@ -93,8 +93,8 @@ describe('the catalogue', () => {
 
   it('reports the channel coverage the architecture claims', () => {
     const coverage = channelCoverage();
-    assert.equal(coverage.INAPP, 178, 'in-app is meant to carry every event');
-    assert.equal(coverage.EMAIL, 131);
+    assert.equal(coverage.INAPP, 180, 'in-app is meant to carry every event');
+    assert.equal(coverage.EMAIL, 133);
     assert.equal(coverage.SMS, 18);
     assert.equal(coverage.PUSH, 28);
   });
@@ -107,13 +107,17 @@ describe('the catalogue', () => {
     assert.equal(channelCoverage().WHATSAPP, 0);
   });
 
-  it('carries 28 mandatory notices, and they are the ones that matter', () => {
-    assert.equal(mandatoryEvents().length, 28);
+  it('carries 30 mandatory notices, and they are the ones that matter', () => {
+    assert.equal(mandatoryEvents().length, 30);
 
     // Spot-checked by name rather than by count alone. A count stays green if
     // somebody moves the flag from "account locked" to "task assigned".
     for (const code of [
       'auth.login.suspicious',
+      // The platform telling its operator it is broken, and that it recovered.
+      // An operator must not be able to mute either.
+      'system.watch_alert',
+      'system.watch_resolved',
       'account.locked',
       'password.reset.successful',
       'security.alert',

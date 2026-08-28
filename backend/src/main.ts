@@ -7,6 +7,7 @@ import { WriterLock } from './goldenthread/writerlock.ts';
 import type { ACUEntry } from './billing/acu.ts';
 import { startNewsletterSchedule } from './messaging/newsletter.ts';
 import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.ts';
+import { startWatch } from './ops/watch.ts';
 import { Platform } from './platform.ts';
 
 /**
@@ -198,6 +199,11 @@ if (owed > 0) {
 }
 const outboxTimer = startOutboxDrain(platform);
 
+// The platform watching its own counters. Nothing read them before this; a
+// counter nobody reads is one that will be wrong for a week before anybody
+// notices.
+const watchTimer = startWatch(platform);
+
 const newsletter = startNewsletterSchedule(platform, (report) => {
   process.stdout.write(
     `[newsletter] ${report.campaign.week} issued — ${report.sent} sent, ${report.recorded} recorded, ${report.failed} failed\n`,
@@ -248,6 +254,7 @@ const shutdown = (signal: string): void => {
   process.stdout.write(`\nReceived ${signal}, shutting down.\n`);
   newsletter.stop();
   outboxTimer();
+  watchTimer();
   server.close(() => {
     platform.ledger.journal?.close();
     // Released last, after the descriptor is closed. Releasing first would
