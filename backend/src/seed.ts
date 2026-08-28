@@ -124,6 +124,354 @@ export async function seedDemoProject(platform: Platform): Promise<SeedResult> {
   return platform.orchestrator.withLocalProviders(() => seedDemoProjectInner(platform));
 }
 
+
+/**
+ * Everything the demonstration gained after the first seed ran, added to a
+ * tenancy that already exists.
+ *
+ * **This is the reason nothing new appeared on a live deployment.** The seed is
+ * all-or-nothing: `getOrCreateConsoleSession` adopts an existing demonstration
+ * tenancy and returns without calling it, which is right — seeding twice would
+ * build a second Meridian on every restart. But it means that on any deployment
+ * whose journal was written by an earlier build, *nothing added to the seed
+ * afterwards is ever created*. A laptop with a thrown-away journal sees the new
+ * work on the next run; the one deployment that keeps its journal never does.
+ * That is precisely backwards, and it is invisible because both paths look like
+ * they worked.
+ *
+ * So this is separate and **idempotent by construction**: every block asks
+ * whether the thing is already there, by the name or address it would have been
+ * created under, and does nothing if it is. It runs on both paths — at the end
+ * of a fresh seed and immediately after an adoption — so a deployment converges
+ * on the same estate whichever way it got there.
+ *
+ * Anything added to the demonstration from now on belongs here rather than in
+ * `seedDemoProjectInner`, for the same reason.
+ */
+export async function ensureDemonstrationExtras(platform: Platform): Promise<{ timeline: string[] }> {
+  const timeline: string[] = [];
+  const note = (message: string): void => {
+    timeline.push(message);
+  };
+
+  const tenant = platform.tenants().find((t) => t.legalName === DEMO_TENANCY.legalName);
+  if (!tenant) return { timeline };
+
+  const users = platform.users(tenant.id);
+  const byEmail = (email: string) => users.find((u) => u.email === email);
+  const owner = byEmail('owner@meridian.example');
+  const pm = byEmail(DEMO_TENANCY.primaryEmail);
+  const qs = byEmail('qs@meridian.example');
+  const bimLead = byEmail('bim@meridian.example');
+  const admin = users.find((u) => u.roles.includes('ENTERPRISE_ADMIN'));
+  if (!owner || !pm || !qs || !bimLead || !admin) return { timeline };
+
+  const ownerAuth = authOf(platform, owner.id);
+  const pmAuth = authOf(platform, pm.id);
+  const qsAuth = authOf(platform, qs.id);
+  const bimAuth = authOf(platform, bimLead.id);
+  const gov = platform.context(authOf(platform, admin.id), `${tenant.id}-governance`, { source: 'WEB' });
+
+  const enterpriseId = String(platform.ledger.listByTenant(tenant.id, 'Enterprise')[0]?.state.id ?? '');
+  const portfolios = () => platform.ledger.listByTenant(tenant.id, 'Portfolio');
+  const euPortfolio = portfolios().find((r) => r.state.name === DEMO_TENANCY.portfolioName);
+  if (!euPortfolio) return { timeline };
+  const euPortfolioId = String(euPortfolio.state.id);
+  const euProgrammeId = String(
+    platform.ledger.listByTenant(tenant.id, 'Programme').find((r) => r.state.name === 'Northern Treatment Upgrades')?.state.id ?? '',
+  );
+
+  /** Is a project with this name already on the chain? */
+  const projectNamed = (name: string): boolean =>
+    platform.ledger.entitiesOfType('Project').some((r) => r.tenantId === tenant.id && r.state.name === name);
+
+  // The seat that runs a site. Added after the first seed, so on a deployment
+  // that adopted an older tenancy it would otherwise never exist — and the
+  // Construction screen would stay shut to everybody senior, which is exactly
+  // the symptom this whole function exists to stop.
+  if (!byEmail('construction@meridian.example')) {
+    platform.createUser({
+      tenantId: tenant.id,
+      name: 'Construction Manager',
+      email: 'construction@meridian.example',
+      roles: ['CONSTRUCTION_MANAGER'],
+      demonstration: true,
+    });
+    note('Construction Manager seat added to the demonstration tenancy');
+  }
+
+  // --- A project on site -----------------------------------------------------
+  //
+  // The third project, and the one that makes construction and site management
+  // reachable at all. Field execution, quality and the whole safety file are
+  // gated to CONSTRUCTION and COMMISSIONING, so with Ashworth in Operations and
+  // Calderdale at Tender there was no project on which a site manager could
+  // issue a permit, approve a method statement or record a diary — for any
+  // role, however senior.
+  //
+  // Walked there through the gates rather than placed there. TENDER demands a
+  // frozen estimate and an executed contract, so this builds both: a real
+  // take-off against a real drawing, an estimate frozen at settlement, and a
+  // negotiated contract signed. Nothing is asserted that the platform would not
+  // have refused.
+  //
+  // It carries no site history. That is the point of it — the empty diary, the
+  // empty permit register and the empty inspection log are what somebody
+  // walking in has come to fill.
+  if (!projectNamed('Calderdale Reservoir Renewal')) {
+    // --- A second project, parked where the work actually happens --------------
+    //
+    // The project above is the whole record: concept to thirty-year operations,
+    // every stage gate passed. It proves what a finished Golden Thread looks
+    // like, and it cannot prove anything else — because **writes are gated by
+    // lifecycle phase**, and it sits in OPERATIONS.
+    //
+    // Measured in a browser across five roles, that meant Tender & Procurement
+    // offered 1 open input out of 32 to *everybody*, the enterprise administrator
+    // included; measurement and estimating were the same. Somebody evaluating the
+    // product opened the bidding screens, found thirty-one padlocked buttons and
+    // reasonably concluded there was nothing there. The enforcement was right and
+    // the demonstration was wrong: one project at the end of the lifecycle can
+    // show the record, but it cannot show the work.
+    //
+    // So a sibling on the same portfolio, stopped at TENDER — the phase that
+    // opens measurement, estimating, enquiries, comparison and award. It carries
+    // no seeded commercial history on purpose: the point of it is the empty
+    // register somebody can put the first record into, and a second finished
+    // project would only be more to read.
+    //
+    // It is walked forward through the real gates rather than set. The transition
+    // out of CONCEPT demands a scope package and the one out of DESIGN demands a
+    // maturity assessment, so both are created — and the first attempt at this
+    // was refused by `PHASE_GATE_FAILED`, which is the platform behaving exactly
+    // as it should against a seed trying to skip its own rules.
+    const tenderProject = structure.createProject(gov, {
+      portfolioId: euPortfolioId,
+      programmeId: euProgrammeId,
+      name: 'Calderdale Reservoir Renewal',
+      sectorType: 'UTILITIES',
+      assetType: 'Impounding reservoir',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Halifax' },
+      contractValueMinor: 940_000_000,
+      currency: 'GBP',
+      plannedStart: '2027-01-11',
+      plannedCompletion: '2029-06-29',
+    });
+
+    const tenderPmCtx = contextFor(platform, pmAuth, tenderProject.projectId);
+    const tenderOwnerCtx = contextFor(platform, ownerAuth, tenderProject.projectId);
+
+    const { packageId: renewalPackageId } = structure.createScopePackage(tenderPmCtx, {
+      name: 'Spillway and embankment works',
+      discipline: 'CIVILS',
+      scopeOfWorks:
+        'Reconstruction of the auxiliary spillway, embankment crest raising to current freeboard standards, and ' +
+        'replacement of the draw-off tower valve gallery, including all temporary works and reservoir drawdown.',
+      inclusions: ['Embankment earthworks', 'Reinforced concrete spillway', 'Valve gallery mechanical replacement'],
+      exclusions: ['Permanent instrumentation supply', 'Access road adoption'],
+      acceptanceCriteria: ['Reservoirs Act 1975 panel engineer sign-off', 'Compaction testing to specification', 'Drawdown test to design rate'],
+      estimatedValueMinor: 640_000_000,
+      designResponsibility: 'CONTRACTOR',
+    });
+    structure.transitionPhase(tenderOwnerCtx, { to: 'DESIGN', justification: 'Scope package defined and the brief accepted' });
+
+    structure.assessDesignMaturity(tenderPmCtx, {
+      packageId: renewalPackageId,
+      disciplineScores: [
+        { discipline: 'CIVILS', ribaStage: 4, completenessPercent: 82, frozen: true },
+        { discipline: 'MECHANICAL', ribaStage: 3, completenessPercent: 61, frozen: false },
+      ],
+      informationGaps: ['Draw-off tower condition survey outstanding', 'Freeboard study awaiting panel engineer comment'],
+      assessorNotes: 'Civils priceable; the valve gallery carries real definition risk and should be a provisional sum.',
+    });
+    structure.transitionPhase(tenderOwnerCtx, { to: 'TENDER', justification: 'Design matured to a priceable state for the civils package' });
+
+    note(
+      `Working project at TENDER: Calderdale Reservoir Renewal (${tenderProject.projectId}) — ` +
+        'measurement, estimating and procurement are writable here',
+    );
+  }
+
+  if (!projectNamed('Rossendale Trunk Main Diversion')) {
+    const siteProject = structure.createProject(gov, {
+      portfolioId: euPortfolioId,
+      programmeId: euProgrammeId,
+      name: 'Rossendale Trunk Main Diversion',
+      sectorType: 'UTILITIES',
+      assetType: 'Potable trunk main',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Rawtenstall' },
+      contractValueMinor: 410_000_000,
+      currency: 'GBP',
+      plannedStart: '2026-02-02',
+      plannedCompletion: '2027-08-13',
+    });
+
+    const siteOwnerCtx = contextFor(platform, ownerAuth, siteProject.projectId);
+    const sitePmCtx = contextFor(platform, pmAuth, siteProject.projectId);
+    const siteQsCtx = contextFor(platform, qsAuth, siteProject.projectId);
+    const siteBimCtx = contextFor(platform, bimAuth, siteProject.projectId);
+
+    const { packageId: diversionPackageId } = structure.createScopePackage(sitePmCtx, {
+      name: 'Trunk main diversion and tie-ins',
+      discipline: 'CIVILS',
+      scopeOfWorks:
+        'Diversion of 1.2km of DN600 potable trunk main around the proposed highway realignment, including two live ' +
+        'tie-ins under night-time shutdown, chamber construction and reinstatement of the carriageway.',
+      inclusions: ['Open-cut pipelaying', 'Two live tie-ins', 'Carriageway reinstatement'],
+      exclusions: ['Permanent traffic signals', 'Third-party service diversions'],
+      acceptanceCriteria: ['Pressure testing to WIS 4-01-01', 'Chlorination and bacteriological clearance', 'Highway reinstatement to HAUC standards'],
+      estimatedValueMinor: 340_000_000,
+      designResponsibility: 'CONTRACTOR',
+    });
+    structure.transitionPhase(siteOwnerCtx, { to: 'DESIGN', justification: 'Diversion scope defined and funding released' });
+
+    structure.assessDesignMaturity(sitePmCtx, {
+      packageId: diversionPackageId,
+      disciplineScores: [{ discipline: 'CIVILS', ribaStage: 5, completenessPercent: 94, frozen: true }],
+      informationGaps: ['Statutory undertaker records for the western verge not yet returned'],
+      assessorNotes: 'Fully priceable. The outstanding utility records are a construction risk, not a pricing one.',
+    });
+    structure.transitionPhase(siteOwnerCtx, { to: 'TENDER', justification: 'Design frozen and the package released for pricing' });
+
+    const siteDrawing = await bim.registerDrawing(siteBimCtx, {
+      fileHash: hash('R-2100-C02.pdf'),
+      titleBlock: {
+        drawingNumber: 'R-2100',
+        title: 'Trunk Main Diversion — Plan and Long Section',
+        revision: 'C02',
+        discipline: 'CIVILS',
+        issueDate: '2025-11-18',
+        status: 'FOR CONSTRUCTION',
+      },
+      packageIds: [diversionPackageId],
+    });
+
+    const siteTakeoff = await tender.runTakeoff(siteQsCtx, {
+      packageId: diversionPackageId,
+      sources: [{ drawingRef: { refType: 'Drawing', refId: siteDrawing.drawingId }, discipline: 'CIVILS', sheetId: 'R-2100' }],
+      costCodePrefix: 'DIV',
+      items: [
+        { description: 'Excavate trench in carriageway, average 1.8m deep', unit: 'm', quantity: 1_240, sourceSheet: 'R-2100', measurementRule: 'NRM2' },
+        { description: 'Lay DN600 ductile iron main including bedding', unit: 'm', quantity: 1_240, sourceSheet: 'R-2100' },
+        { description: 'Reinstate carriageway to HAUC standard', unit: 'm2', quantity: 3_720, sourceSheet: 'R-2100' },
+      ],
+    });
+
+    const siteEstimate = tender.buildEstimate(siteQsCtx, {
+      packageId: diversionPackageId,
+      durationWeeks: 46,
+      lines: [
+        { boqItemId: siteTakeoff.boqItemIds[0] as string, description: 'Excavate trench in carriageway', unit: 'm', quantity: 1_240, labourRateMinor: 8_400, plantRateMinor: 11_200 },
+        { boqItemId: siteTakeoff.boqItemIds[1] as string, description: 'Lay DN600 ductile iron main', unit: 'm', quantity: 1_240, labourRateMinor: 14_600, plantRateMinor: 6_300, materialRateMinor: 78_400, materialWastePercent: 3 },
+        { boqItemId: siteTakeoff.boqItemIds[2] as string, description: 'Carriageway reinstatement', unit: 'm2', quantity: 3_720, labourRateMinor: 4_100, plantRateMinor: 2_700, materialRateMinor: 5_900, materialWastePercent: 5 },
+      ],
+      timeRelated: [
+        { head: 'SITE_MANAGEMENT', description: 'Construction manager', weeklyRateMinor: 210_000, quantity: 1 },
+        { head: 'SITE_MANAGEMENT', description: 'Site engineer', weeklyRateMinor: 160_000, quantity: 1 },
+        // Named because this job is in a live carriageway: the traffic management
+        // is a preliminary that is priced weekly and is the first thing to grow
+        // when the works overrun.
+        { head: 'LOGISTICS', description: 'Traffic management and marshalling', weeklyRateMinor: 165_000, quantity: 1 },
+        { head: 'HEALTH_AND_SAFETY', description: 'Safety adviser attendance', weeklyRateMinor: 68_000, quantity: 1 },
+      ],
+      quantified: [{ head: 'TEMPORARY_WORKS', description: 'Trench support design and hire', unit: 'week', quantity: 34, rateMinor: 186_000 }],
+      margin: { overheadPercent: 6, profitPercent: 7 },
+      basisOfEstimate: 'Measured from R-2100 rev C02 with rates from the 2026 civils library.',
+      assumptions: ['Continuous night-time possession for both tie-ins', 'No rock encountered above formation'],
+    });
+    // No transition here: the project is already at TENDER, and asking for the
+    // phase it is in is refused with PHASE_NO_CHANGE rather than accepted as a
+    // no-op — correctly, because a transition is a governance event and one that
+    // moves nothing is a record of a decision nobody took.
+    tender.freezeEstimate(siteQsCtx, siteEstimate.estimateId, 'Frozen at settlement before the negotiated offer was given');
+
+    // Negotiated, not tendered — which is why `executeContract` had to exist. A
+    // contract could previously only reach EXECUTED by conversion from a locked
+    // bid pack, so this whole route through the platform was closed.
+    const siteContract = claimsEngine.createContract(siteQsCtx, {
+      suite: 'NEC4',
+      form: 'NEC4 ECC Option A',
+      parties: [
+        { role: 'CLIENT', partyId: 'CLIENT-AWA', name: 'Ashworth Water Authority' },
+        { role: 'CONTRACTOR', partyId: 'CONTRACTOR-MERIDIAN', name: 'Meridian Infrastructure Group Ltd' },
+      ],
+      contractSumMinor: siteEstimate.totalMinor,
+      commencementDate: '2026-02-02',
+      completionDate: '2027-08-13',
+      liquidatedDamagesPerDayMinor: 420_000,
+      ldCapPercent: 8,
+      retentionPercent: 3,
+      defectsLiabilityMonths: 12,
+    });
+    claimsEngine.executeContract(siteOwnerCtx, {
+      contractId: siteContract.contractId,
+      signedDocumentHash: hash('rossendale-executed-main-contract'),
+      signatureMethod: 'DEED',
+      executedOn: '2026-01-19',
+    });
+    structure.transitionPhase(siteOwnerCtx, {
+      to: 'CONSTRUCTION',
+      justification: 'Contract executed and estimate frozen; works may commence',
+    });
+    note(
+      `Project on site: Rossendale Trunk Main Diversion (${siteProject.projectId}) at CONSTRUCTION — ` +
+        'permits, method statements, diaries, inspections and traffic management are writable here',
+    );
+  }
+
+  // --- A second region -------------------------------------------------------
+  //
+  // CONSTRUX is a worldwide platform and the demonstration estate was one
+  // portfolio in one country, which makes every regional view a view of a
+  // single row. A portfolio now has to name the region it operates in, and the
+  // interesting thing about that model is not that the field exists — it is
+  // what it refuses. This portfolio is regional rather than national: no
+  // `countryCode`, because East Africa spans several jurisdictions and a
+  // portfolio scoped to one country is a promise that contract law, tax and the
+  // working calendar are common to everything inside it.
+  //
+  // `createProject` holds a project to its portfolio's region, so filing the
+  // Nairobi project under the European portfolio is now refused rather than
+  // silently producing a European rollup with a Kenyan job inside it.
+  if (!portfolios().some((r) => r.state.name === 'East Africa Water Security')) {
+    const { portfolioId: eastAfricaPortfolioId } = structure.createPortfolio(gov, {
+      name: 'East Africa Water Security',
+      enterpriseId: enterpriseId,
+      governanceModel: 'Multilateral-funded, quarterly gate review with in-country oversight',
+      continentCode: 'AF',
+      city: 'Nairobi',
+      targets: { budgetMinor: 2_400_000_000 },
+      riskAppetite: { costTolerancePercent: 7, scheduleToleranceDays: 45 },
+      reportingCadence: 'MONTHLY',
+    });
+
+    const { programmeId: eastAfricaProgrammeId } = structure.createProgramme(gov, {
+      portfolioId: eastAfricaPortfolioId,
+      name: 'Nairobi Bulk Water Resilience',
+      objective: 'Secure dry-season supply for 4.2 million people across the Nairobi metropolitan area',
+    });
+
+    const nairobiProject = structure.createProject(gov, {
+      portfolioId: eastAfricaPortfolioId,
+      programmeId: eastAfricaProgrammeId,
+      name: 'Northern Collector Tunnel — Phase 3',
+      sectorType: 'UTILITIES',
+      assetType: 'Raw water transfer tunnel',
+      location: { continentCode: 'AF', countryCode: 'KE', city: 'Nairobi' },
+      contractValueMinor: 1_260_000_000,
+      currency: 'GBP',
+      plannedStart: '2027-05-04',
+      plannedCompletion: '2030-11-29',
+    });
+    note(
+      `Second region: East Africa Water Security (AF) → Northern Collector Tunnel — Phase 3 ` +
+        `(${nairobiProject.projectId}), at CONCEPT`,
+    );
+  }
+
+  return { timeline };
+}
+
 async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
   const timeline: string[] = [];
   const step = (message: string): void => {
@@ -2897,268 +3245,8 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
       `${position.gaps.length} gaps, ${position.notTracked.length} items the platform does not yet track`,
   );
 
-  // --- A second project, parked where the work actually happens --------------
-  //
-  // The project above is the whole record: concept to thirty-year operations,
-  // every stage gate passed. It proves what a finished Golden Thread looks
-  // like, and it cannot prove anything else — because **writes are gated by
-  // lifecycle phase**, and it sits in OPERATIONS.
-  //
-  // Measured in a browser across five roles, that meant Tender & Procurement
-  // offered 1 open input out of 32 to *everybody*, the enterprise administrator
-  // included; measurement and estimating were the same. Somebody evaluating the
-  // product opened the bidding screens, found thirty-one padlocked buttons and
-  // reasonably concluded there was nothing there. The enforcement was right and
-  // the demonstration was wrong: one project at the end of the lifecycle can
-  // show the record, but it cannot show the work.
-  //
-  // So a sibling on the same portfolio, stopped at TENDER — the phase that
-  // opens measurement, estimating, enquiries, comparison and award. It carries
-  // no seeded commercial history on purpose: the point of it is the empty
-  // register somebody can put the first record into, and a second finished
-  // project would only be more to read.
-  //
-  // It is walked forward through the real gates rather than set. The transition
-  // out of CONCEPT demands a scope package and the one out of DESIGN demands a
-  // maturity assessment, so both are created — and the first attempt at this
-  // was refused by `PHASE_GATE_FAILED`, which is the platform behaving exactly
-  // as it should against a seed trying to skip its own rules.
-  const tenderProject = structure.createProject(governanceCtx, {
-    portfolioId,
-    programmeId,
-    name: 'Calderdale Reservoir Renewal',
-    sectorType: 'UTILITIES',
-    assetType: 'Impounding reservoir',
-    location: { continentCode: 'EU', countryCode: 'GB', city: 'Halifax' },
-    contractValueMinor: 940_000_000,
-    currency: 'GBP',
-    plannedStart: '2027-01-11',
-    plannedCompletion: '2029-06-29',
-  });
-
-  const tenderPmCtx = contextFor(platform, authOf(platform, pm.id), tenderProject.projectId);
-  const tenderOwnerCtx = contextFor(platform, authOf(platform, owner.id), tenderProject.projectId);
-
-  const { packageId: renewalPackageId } = structure.createScopePackage(tenderPmCtx, {
-    name: 'Spillway and embankment works',
-    discipline: 'CIVILS',
-    scopeOfWorks:
-      'Reconstruction of the auxiliary spillway, embankment crest raising to current freeboard standards, and ' +
-      'replacement of the draw-off tower valve gallery, including all temporary works and reservoir drawdown.',
-    inclusions: ['Embankment earthworks', 'Reinforced concrete spillway', 'Valve gallery mechanical replacement'],
-    exclusions: ['Permanent instrumentation supply', 'Access road adoption'],
-    acceptanceCriteria: ['Reservoirs Act 1975 panel engineer sign-off', 'Compaction testing to specification', 'Drawdown test to design rate'],
-    estimatedValueMinor: 640_000_000,
-    designResponsibility: 'CONTRACTOR',
-  });
-  structure.transitionPhase(tenderOwnerCtx, { to: 'DESIGN', justification: 'Scope package defined and the brief accepted' });
-
-  structure.assessDesignMaturity(tenderPmCtx, {
-    packageId: renewalPackageId,
-    disciplineScores: [
-      { discipline: 'CIVILS', ribaStage: 4, completenessPercent: 82, frozen: true },
-      { discipline: 'MECHANICAL', ribaStage: 3, completenessPercent: 61, frozen: false },
-    ],
-    informationGaps: ['Draw-off tower condition survey outstanding', 'Freeboard study awaiting panel engineer comment'],
-    assessorNotes: 'Civils priceable; the valve gallery carries real definition risk and should be a provisional sum.',
-  });
-  structure.transitionPhase(tenderOwnerCtx, { to: 'TENDER', justification: 'Design matured to a priceable state for the civils package' });
-
-  step(
-    `Working project at TENDER: Calderdale Reservoir Renewal (${tenderProject.projectId}) — ` +
-      'measurement, estimating and procurement are writable here',
-  );
-
-  // --- A project on site -----------------------------------------------------
-  //
-  // The third project, and the one that makes construction and site management
-  // reachable at all. Field execution, quality and the whole safety file are
-  // gated to CONSTRUCTION and COMMISSIONING, so with Ashworth in Operations and
-  // Calderdale at Tender there was no project on which a site manager could
-  // issue a permit, approve a method statement or record a diary — for any
-  // role, however senior.
-  //
-  // Walked there through the gates rather than placed there. TENDER demands a
-  // frozen estimate and an executed contract, so this builds both: a real
-  // take-off against a real drawing, an estimate frozen at settlement, and a
-  // negotiated contract signed. Nothing is asserted that the platform would not
-  // have refused.
-  //
-  // It carries no site history. That is the point of it — the empty diary, the
-  // empty permit register and the empty inspection log are what somebody
-  // walking in has come to fill.
-  const siteProject = structure.createProject(governanceCtx, {
-    portfolioId,
-    programmeId,
-    name: 'Rossendale Trunk Main Diversion',
-    sectorType: 'UTILITIES',
-    assetType: 'Potable trunk main',
-    location: { continentCode: 'EU', countryCode: 'GB', city: 'Rawtenstall' },
-    contractValueMinor: 410_000_000,
-    currency: 'GBP',
-    plannedStart: '2026-02-02',
-    plannedCompletion: '2027-08-13',
-  });
-
-  const siteOwnerCtx = contextFor(platform, authOf(platform, owner.id), siteProject.projectId);
-  const sitePmCtx = contextFor(platform, authOf(platform, pm.id), siteProject.projectId);
-  const siteQsCtx = contextFor(platform, authOf(platform, qs.id), siteProject.projectId);
-  const siteBimCtx = contextFor(platform, authOf(platform, bimLead.id), siteProject.projectId);
-
-  const { packageId: diversionPackageId } = structure.createScopePackage(sitePmCtx, {
-    name: 'Trunk main diversion and tie-ins',
-    discipline: 'CIVILS',
-    scopeOfWorks:
-      'Diversion of 1.2km of DN600 potable trunk main around the proposed highway realignment, including two live ' +
-      'tie-ins under night-time shutdown, chamber construction and reinstatement of the carriageway.',
-    inclusions: ['Open-cut pipelaying', 'Two live tie-ins', 'Carriageway reinstatement'],
-    exclusions: ['Permanent traffic signals', 'Third-party service diversions'],
-    acceptanceCriteria: ['Pressure testing to WIS 4-01-01', 'Chlorination and bacteriological clearance', 'Highway reinstatement to HAUC standards'],
-    estimatedValueMinor: 340_000_000,
-    designResponsibility: 'CONTRACTOR',
-  });
-  structure.transitionPhase(siteOwnerCtx, { to: 'DESIGN', justification: 'Diversion scope defined and funding released' });
-
-  structure.assessDesignMaturity(sitePmCtx, {
-    packageId: diversionPackageId,
-    disciplineScores: [{ discipline: 'CIVILS', ribaStage: 5, completenessPercent: 94, frozen: true }],
-    informationGaps: ['Statutory undertaker records for the western verge not yet returned'],
-    assessorNotes: 'Fully priceable. The outstanding utility records are a construction risk, not a pricing one.',
-  });
-  structure.transitionPhase(siteOwnerCtx, { to: 'TENDER', justification: 'Design frozen and the package released for pricing' });
-
-  const siteDrawing = await bim.registerDrawing(siteBimCtx, {
-    fileHash: hash('R-2100-C02.pdf'),
-    titleBlock: {
-      drawingNumber: 'R-2100',
-      title: 'Trunk Main Diversion — Plan and Long Section',
-      revision: 'C02',
-      discipline: 'CIVILS',
-      issueDate: '2025-11-18',
-      status: 'FOR CONSTRUCTION',
-    },
-    packageIds: [diversionPackageId],
-  });
-
-  const siteTakeoff = await tender.runTakeoff(siteQsCtx, {
-    packageId: diversionPackageId,
-    sources: [{ drawingRef: { refType: 'Drawing', refId: siteDrawing.drawingId }, discipline: 'CIVILS', sheetId: 'R-2100' }],
-    costCodePrefix: 'DIV',
-    items: [
-      { description: 'Excavate trench in carriageway, average 1.8m deep', unit: 'm', quantity: 1_240, sourceSheet: 'R-2100', measurementRule: 'NRM2' },
-      { description: 'Lay DN600 ductile iron main including bedding', unit: 'm', quantity: 1_240, sourceSheet: 'R-2100' },
-      { description: 'Reinstate carriageway to HAUC standard', unit: 'm2', quantity: 3_720, sourceSheet: 'R-2100' },
-    ],
-  });
-
-  const siteEstimate = tender.buildEstimate(siteQsCtx, {
-    packageId: diversionPackageId,
-    durationWeeks: 46,
-    lines: [
-      { boqItemId: siteTakeoff.boqItemIds[0] as string, description: 'Excavate trench in carriageway', unit: 'm', quantity: 1_240, labourRateMinor: 8_400, plantRateMinor: 11_200 },
-      { boqItemId: siteTakeoff.boqItemIds[1] as string, description: 'Lay DN600 ductile iron main', unit: 'm', quantity: 1_240, labourRateMinor: 14_600, plantRateMinor: 6_300, materialRateMinor: 78_400, materialWastePercent: 3 },
-      { boqItemId: siteTakeoff.boqItemIds[2] as string, description: 'Carriageway reinstatement', unit: 'm2', quantity: 3_720, labourRateMinor: 4_100, plantRateMinor: 2_700, materialRateMinor: 5_900, materialWastePercent: 5 },
-    ],
-    timeRelated: [
-      { head: 'SITE_MANAGEMENT', description: 'Construction manager', weeklyRateMinor: 210_000, quantity: 1 },
-      { head: 'SITE_MANAGEMENT', description: 'Site engineer', weeklyRateMinor: 160_000, quantity: 1 },
-      // Named because this job is in a live carriageway: the traffic management
-      // is a preliminary that is priced weekly and is the first thing to grow
-      // when the works overrun.
-      { head: 'LOGISTICS', description: 'Traffic management and marshalling', weeklyRateMinor: 165_000, quantity: 1 },
-      { head: 'HEALTH_AND_SAFETY', description: 'Safety adviser attendance', weeklyRateMinor: 68_000, quantity: 1 },
-    ],
-    quantified: [{ head: 'TEMPORARY_WORKS', description: 'Trench support design and hire', unit: 'week', quantity: 34, rateMinor: 186_000 }],
-    margin: { overheadPercent: 6, profitPercent: 7 },
-    basisOfEstimate: 'Measured from R-2100 rev C02 with rates from the 2026 civils library.',
-    assumptions: ['Continuous night-time possession for both tie-ins', 'No rock encountered above formation'],
-  });
-  // No transition here: the project is already at TENDER, and asking for the
-  // phase it is in is refused with PHASE_NO_CHANGE rather than accepted as a
-  // no-op — correctly, because a transition is a governance event and one that
-  // moves nothing is a record of a decision nobody took.
-  tender.freezeEstimate(siteQsCtx, siteEstimate.estimateId, 'Frozen at settlement before the negotiated offer was given');
-
-  // Negotiated, not tendered — which is why `executeContract` had to exist. A
-  // contract could previously only reach EXECUTED by conversion from a locked
-  // bid pack, so this whole route through the platform was closed.
-  const siteContract = claimsEngine.createContract(siteQsCtx, {
-    suite: 'NEC4',
-    form: 'NEC4 ECC Option A',
-    parties: [
-      { role: 'CLIENT', partyId: 'CLIENT-AWA', name: 'Ashworth Water Authority' },
-      { role: 'CONTRACTOR', partyId: 'CONTRACTOR-MERIDIAN', name: 'Meridian Infrastructure Group Ltd' },
-    ],
-    contractSumMinor: siteEstimate.totalMinor,
-    commencementDate: '2026-02-02',
-    completionDate: '2027-08-13',
-    liquidatedDamagesPerDayMinor: 420_000,
-    ldCapPercent: 8,
-    retentionPercent: 3,
-    defectsLiabilityMonths: 12,
-  });
-  claimsEngine.executeContract(siteOwnerCtx, {
-    contractId: siteContract.contractId,
-    signedDocumentHash: hash('rossendale-executed-main-contract'),
-    signatureMethod: 'DEED',
-    executedOn: '2026-01-19',
-  });
-  structure.transitionPhase(siteOwnerCtx, {
-    to: 'CONSTRUCTION',
-    justification: 'Contract executed and estimate frozen; works may commence',
-  });
-  step(
-    `Project on site: Rossendale Trunk Main Diversion (${siteProject.projectId}) at CONSTRUCTION — ` +
-      'permits, method statements, diaries, inspections and traffic management are writable here',
-  );
-
-  // --- A second region -------------------------------------------------------
-  //
-  // CONSTRUX is a worldwide platform and the demonstration estate was one
-  // portfolio in one country, which makes every regional view a view of a
-  // single row. A portfolio now has to name the region it operates in, and the
-  // interesting thing about that model is not that the field exists — it is
-  // what it refuses. This portfolio is regional rather than national: no
-  // `countryCode`, because East Africa spans several jurisdictions and a
-  // portfolio scoped to one country is a promise that contract law, tax and the
-  // working calendar are common to everything inside it.
-  //
-  // `createProject` holds a project to its portfolio's region, so filing the
-  // Nairobi project under the European portfolio is now refused rather than
-  // silently producing a European rollup with a Kenyan job inside it.
-  const { portfolioId: eastAfricaPortfolioId } = structure.createPortfolio(governanceCtx, {
-    name: 'East Africa Water Security',
-    enterpriseId: tenant.enterpriseId as string,
-    governanceModel: 'Multilateral-funded, quarterly gate review with in-country oversight',
-    continentCode: 'AF',
-    city: 'Nairobi',
-    targets: { budgetMinor: 2_400_000_000 },
-    riskAppetite: { costTolerancePercent: 7, scheduleToleranceDays: 45 },
-    reportingCadence: 'MONTHLY',
-  });
-
-  const { programmeId: eastAfricaProgrammeId } = structure.createProgramme(governanceCtx, {
-    portfolioId: eastAfricaPortfolioId,
-    name: 'Nairobi Bulk Water Resilience',
-    objective: 'Secure dry-season supply for 4.2 million people across the Nairobi metropolitan area',
-  });
-
-  const nairobiProject = structure.createProject(governanceCtx, {
-    portfolioId: eastAfricaPortfolioId,
-    programmeId: eastAfricaProgrammeId,
-    name: 'Northern Collector Tunnel — Phase 3',
-    sectorType: 'UTILITIES',
-    assetType: 'Raw water transfer tunnel',
-    location: { continentCode: 'AF', countryCode: 'KE', city: 'Nairobi' },
-    contractValueMinor: 1_260_000_000,
-    currency: 'GBP',
-    plannedStart: '2027-05-04',
-    plannedCompletion: '2030-11-29',
-  });
-  step(
-    `Second region: East Africa Water Security (AF) → Northern Collector Tunnel — Phase 3 ` +
-      `(${nairobiProject.projectId}), at CONCEPT`,
-  );
+  const extras = await ensureDemonstrationExtras(platform);
+  for (const line of extras.timeline) step(line);
 
   const wallet = platform.wallet(tenant.id).snapshot();
   step(
@@ -3169,11 +3257,13 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
   return {
     tenantId: tenant.id,
     projectId,
-    workingProjects: [
-      { projectId: tenderProject.projectId, name: 'Calderdale Reservoir Renewal', phase: 'TENDER' },
-      { projectId: siteProject.projectId, name: 'Rossendale Trunk Main Diversion', phase: 'CONSTRUCTION' },
-      { projectId: nairobiProject.projectId, name: 'Northern Collector Tunnel — Phase 3', phase: 'CONCEPT' },
-    ],
+    // Read back from the chain rather than carried out of the block that made
+    // them: they are created by `ensureDemonstrationExtras`, which also runs on
+    // a tenancy this call did not build.
+    workingProjects: platform.ledger
+      .entitiesOfType('Project')
+      .filter((r) => r.tenantId === tenant.id && r.state.name !== DEMO_TENANCY.projectName)
+      .map((r) => ({ projectId: r.refId, name: String(r.state.name), phase: String(r.state.phase) })),
     enterpriseName: DEMO_TENANCY.enterpriseName,
     portfolioName: DEMO_TENANCY.portfolioName,
     projectName: DEMO_TENANCY.projectName,

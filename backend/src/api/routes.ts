@@ -465,7 +465,7 @@ export function getOrCreateConsoleSession(platform: Platform): Promise<{
   enterpriseName: string;
   portfolioName: string;
 }> {
-  consoleSession ??= import('../seed.ts').then(async ({ DEMO_TENANCY, seedDemoProject }) => {
+  consoleSession ??= import('../seed.ts').then(async ({ DEMO_TENANCY, seedDemoProject, ensureDemonstrationExtras }) => {
     // Adopt before seeding.
     //
     // The memo lives in this process, but the ledger lives on disk. A restart
@@ -482,6 +482,16 @@ export function getOrCreateConsoleSession(platform: Platform): Promise<{
         .entitiesOfType('Project')
         .find((record) => record.tenantId === tenantId && record.state.name === DEMO_TENANCY.projectName);
       if (project) {
+        // Adopted, and then topped up.
+        //
+        // Returning here without this was the reason nothing added to the
+        // demonstration after the first seed ever appeared on a deployment that
+        // keeps its journal — which is the only kind of deployment that
+        // matters. A laptop throwing its journal away saw every addition on the
+        // next run; the live site never did, and both looked like they had
+        // worked. `ensureDemonstrationExtras` asks what is missing and adds only
+        // that, so this is safe to run on every bootstrap.
+        await ensureDemonstrationExtras(platform);
         return {
           projectId: project.refId,
           email: DEMO_TENANCY.primaryEmail,

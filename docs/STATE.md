@@ -9332,3 +9332,55 @@ Measured in a browser, on Rossendale against the same screens:
 
 Four projects now: Ashworth (Operations), Calderdale (Tender), Rossendale
 (Construction) and Northern Collector (Concept, Africa).
+
+---
+
+## Why none of it appeared on the live site
+
+Two separate causes, and only one of them was in the code.
+
+### The seed adopted and stopped
+
+`getOrCreateConsoleSession` **adopts** an existing demonstration tenancy rather
+than seeding a second one — correct, because the memo lives in the process and
+the ledger lives on disk, so seeding unconditionally would build a second
+Meridian on every restart. But adoption **returned immediately**, so anything
+added to the seed after a deployment first ran was never created there.
+
+The asymmetry is what made it invisible. A laptop throws its journal away, so it
+reseeds from scratch and shows every addition on the next run. The one
+deployment that keeps its journal — the live one — adopts, returns, and shows
+none of them. **Development is the environment that cannot reproduce it**, and
+both paths look like they worked.
+
+So every addition of the last several commits — the tender project, the site
+project, the second region, the Construction Manager — was correct in the repo,
+correct in the tests, and would never have appeared on construxvg.com no matter
+how well the deploy ran.
+
+`ensureDemonstrationExtras` is now a separate, **idempotent** function: every
+block asks whether the thing already exists, by the name or address it would
+have been created under, and does nothing if it is there. It runs on both paths
+— at the end of a fresh seed, and immediately after an adoption — so a
+deployment converges on the same estate whichever way it got there. Anything
+added to the demonstration from now on belongs there rather than in
+`seedDemoProjectInner`, for the same reason.
+
+**Proven against the actual failure**, not a reconstruction of it: a journal was
+seeded with `be28948` — the commit the VPS pulled — producing thirteen
+identities and one project. The current build was then started against that same
+journal, and it topped up to fourteen identities and four projects across three
+lifecycle phases and two regions, without duplicating anything. `seedtopup.test.ts`
+holds both halves: it adds what is missing, and a second run adds nothing.
+
+### The live site cannot be reached from the build environment
+
+`construxvg.com` is refused by this environment's egress proxy with a **403
+organisation policy denial**, on every request. That is a hard limit, not a
+transient failure.
+
+It means **every verification recorded in this document was performed against a
+local server in the build sandbox, never against the live deployment.** Where
+this file says "verified in a browser", that is what it means. Nothing here
+establishes that any of it is live, and it was wrong to let those two things
+read as the same claim.
