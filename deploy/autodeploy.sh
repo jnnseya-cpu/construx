@@ -64,6 +64,19 @@ BACKUP_DIR="${CONSTRUX_BACKUP_DIR:-/srv/construx/backups}"
 # so the two cannot drift. It previously hard-coded 8080 while the deployment
 # published 8090, which meant this check had been passing by never being
 # reached rather than by succeeding.
+# Read from .env when systemd has not been told, because compose reads .env and
+# systemd does not. Without this the container publishes on whatever .env says
+# and this script checks 8080 — the two drift silently, the check passes by
+# never being reached, and a broken deploy looks healthy. That happened once
+# already, with the port hard-coded; deriving it from the same file compose uses
+# is what stops it happening again for a different reason.
+if [ -z "${CONSTRUX_HOST_PORT:-}" ] && [ -f "$APP_DIR/.env" ]; then
+  ENV_PORT="$(sed -n 's/^[[:space:]]*CONSTRUX_HOST_PORT[[:space:]]*=[[:space:]]*//p' "$APP_DIR/.env" | head -1 | tr -d '\r')"
+  case "$ENV_PORT" in
+    ''|*[!0-9]*) ;;
+    *) CONSTRUX_HOST_PORT="$ENV_PORT" ;;
+  esac
+fi
 HOST_PORT="${CONSTRUX_HOST_PORT:-8080}"
 LOCAL_HEALTH_URL="${CONSTRUX_HEALTH_URL:-http://127.0.0.1:${HOST_PORT}/readyz}"
 # Derived from the origin the platform already knows it serves, so there is no
