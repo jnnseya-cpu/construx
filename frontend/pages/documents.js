@@ -231,12 +231,24 @@ export async function documents(root) {
                   <div class="metric-sub">refused, and kept — the bytes are still an address</div>
                 </div>
                 <div>
-                  <h2>Not a virus scan</h2>
+                  <h2>${ingestion.position.antivirusConfigured ? 'Signature scanning' : 'Not a virus scan'}</h2>
                   <div class="metric-sub" style="margin-top:8px">
-                    There is no signature engine on this deployment and this does not claim to be one. What is checked is
-                    whether a file <b>is what it says it is</b> — a renamed executable, active markup in a document, an
-                    archive carrying a program. A count of zero above means nothing was refused, not that nothing is
-                    infected.
+                    ${
+                      ingestion.position.antivirusConfigured
+                        ? html`Every file read here is sent to
+                            <b>${ingestion.position.antivirusScanner}</b>${ingestion.position.antivirusReachable
+                              ? ''
+                              : ' — which is not answering, so nothing can be read until it does'}.
+                            The platform holds no signatures of its own; it asks something that does.
+                            ${ingestion.position.ingestedUnscanned > 0
+                              ? html`<br /><b>${ingestion.position.ingestedUnscanned}</b> file(s) here were read before
+                                  the scanner was configured and were never scanned.`
+                              : ''}`
+                        : html`There is no signature engine on this deployment and this does not claim to be one. What is
+                            checked is whether a file <b>is what it says it is</b> — a renamed executable, active markup in
+                            a document, an archive carrying a program. A count of zero above means nothing was refused,
+                            not that nothing is infected.`
+                    }
                   </div>
                 </div>
               </div>

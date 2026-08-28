@@ -22,10 +22,16 @@ import { createHash } from 'node:crypto';
  * be the exact false statement the rest of the platform is built to avoid — a
  * deployment would read "clean" and believe something nobody checked.
  *
- * So the record carries `antivirusScanned: false`, always, and the verdict is
- * about **structure**, not signatures. What that catches is the threat that
- * actually applies to a construction record system, which is not a virus in a
- * drawing: it is a file that **is not what it claims to be**.
+ * A deployment that has a scanner beside it can now have one: `scanner.ts`
+ * speaks clamd's INSTREAM protocol over a socket and `pipeline.ts` sends every
+ * file through it, recording which daemon and which signature database answered.
+ * That is a client, not an engine — it holds no signatures — and where none is
+ * configured `antivirusScanned` stays false on every record.
+ *
+ * Either way the verdict *here* is about **structure**, not signatures, and the
+ * two catch different things. What this catches is the threat that actually
+ * applies to a construction record system, which is not a virus in a drawing: it
+ * is a file that **is not what it claims to be**.
  *
  * - **The declared type is a claim; the first bytes are the fact.** A file
  *   uploaded as `image/png` whose bytes begin `MZ` is a Windows executable
@@ -94,11 +100,20 @@ export type Inspection = {
   declaredType: string;
   findings: InspectionFinding[];
   /**
-   * Always false, and load-bearing. There is no signature engine in this
-   * process; a deployment reading a `PASSED` verdict as "scanned clean" would
-   * be believing something nobody checked.
+   * Whether a signature scanner actually looked at these bytes.
+   *
+   * There is no signature engine *in this process* and there is not going to be
+   * one, so `inspect` always sets this false: its verdict is about structure.
+   * `pipeline.ts` talks to a configured scanner and overwrites it, naming the
+   * daemon and its database in `antivirusScanner`. Load-bearing either way — a
+   * deployment reading a `PASSED` verdict as "scanned clean" would be believing
+   * something nobody checked.
    */
-  antivirusScanned: false;
+  antivirusScanned: boolean;
+  /** The daemon and signature database that answered. Absent where none did. */
+  antivirusScanner?: string;
+  /** What was found, verbatim. A quarantine that will not say what by is useless. */
+  antivirusSignature?: string;
   bytes: number;
 };
 

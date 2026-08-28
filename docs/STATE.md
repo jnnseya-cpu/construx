@@ -7034,7 +7034,8 @@ named so it is not mistaken for finished.
 | Model ingestion | Records the model, hash, discipline, LOD, element count as a governed event | IFC parsing, geometry hash, model diffing |
 | Digital twin | Reconciles observed against expected element status | Observations are structured input, not derived from imagery |
 | Evidence capture | Real SHA-256 over the real file, recorded against the event, and the file itself held in a tenant-scoped content-addressed store | Retention and deletion policy; no antivirus scan on upload |
-| File ingestion | Structural inspection, rules classification with its signals, native text and table extraction, and a lexical index over what was read. A file that is not what it claims to be is quarantined with the finding on the record | No signature scan; a PDF or a photograph reports `NEEDS_OCR` rather than being read; the index is lexical, so it finds a near-duplicate and not a paraphrase |
+| File ingestion | Structural inspection, rules classification with its signals, native text and table extraction, and a lexical index over what was read. A file that is not what it claims to be is quarantined with the finding on the record | A PDF or a photograph reports `NEEDS_OCR` rather than being read; the index is lexical, so it finds a near-duplicate and not a paraphrase |
+| Signature scanning | `evidence/scanner.ts` speaks clamd's INSTREAM protocol over a socket. Every ingested file is sent to it where one is configured, and the record names the daemon and its signature database. Unset means unscanned and every record and every read says so; configured-and-unreachable refuses the ingestion rather than recording an unscanned file as checked | The platform holds no signatures itself and never will. Verified against a daemon of the suite's own speaking the real protocol, not against ClamAV — no ClamAV exists in this environment |
 | Vision tasks | Progress, PPE, plant and defects read from a held photograph, each as a draft a person confirms into the ordinary domain command | Exercised against a stub, not a live provider — the same limit as the drawing and voice tasks |
 | Commitment extraction | Reads a held letter for what it promises and what it demands, drops anything not quoted verbatim from the letter, and registers a confirmed one in the obligation calendar that already exists | Needs a provider that reads prose; a local deployment is refused rather than given an invented undertaking. Exercised against a stub, not a live provider |
 | Clause extraction | From supplied text | OCR and table extraction from a PDF |
@@ -7049,12 +7050,6 @@ Specified in the source documents, deliberately absent, and **not to be claimed
 as present**. Most of it is perception and ingestion infrastructure — real ML and
 parsing work, not wiring.
 
-- **Antivirus scanning** — there is no signature engine in this process and
-  there is not going to be one under the zero-dependency decision. The ingestion
-  pipeline below carries `antivirusScanned: false` on every record and
-  `antivirusConfigured: false` on every read, so a count of zero quarantined is
-  never readable as "nothing infected". Scanning belongs at the storage boundary
-  in a deployment that has one
 - **OCR, and any semantic embedding** — the ingestion pipeline reports
   `NEEDS_OCR` for a PDF or a photograph and routes to the perception pipeline,
   which refuses where no multimodal provider is configured. The document index is
@@ -7790,6 +7785,42 @@ approximation — and the tolerance is named in the case rather than assumed.
 The harness now reports five kinds: accounting, boundary, refusal, injection and
 **determined**. The first four ask whether the platform's defences hold; the
 fifth asks whether its answers are right.
+
+---
+
+## Asking something that has signatures
+
+The ingestion pipeline says plainly that it is not an antivirus, and it still
+does. What it never had was a way to *reach* one, so `antivirusScanned: false`
+was permanent — a deployment with a perfectly good ClamAV beside it carried an
+evidence store nothing had ever scanned.
+
+`backend/src/evidence/scanner.ts` is the missing half: a client for clamd's
+INSTREAM protocol over a socket, about as much code as the SMTP client already
+in this repository, holding no signatures of its own. Unset changes nothing.
+Configured, every ingested file goes to it and the record names the daemon and
+its signature database — "clean" against a database from 2019 is a different
+statement from clean against today's — and a signature quarantines the file
+**by name**, because a quarantine record that will not say what was found is one
+nobody can act on.
+
+**Configured and unreachable is a refusal, not a shrug.** Ingesting anyway and
+marking the file unscanned would leave it in the register looking checked, and
+the operator who configured the scanner would never learn it had stopped
+answering. So the command refuses and the file stays in the not-yet-read queue
+where it is visible.
+
+Two defects came out of running it rather than testing it. The refusal was a
+plain `Error`, so the gateway had no mapping and answered `500 INTERNAL_ERROR —
+The request could not be completed` — precisely the outcome the message was
+written to prevent; it is a `DomainError` at 503 now. And the position endpoint
+read `127.0.0.1:3310 — 127.0.0.1:3310 refused the connection`, because both the
+caller and the reason named the address.
+
+Verified against a daemon of the suite's own speaking the real protocol — the
+framing is the thing being tested, so a stub that answered whatever it was asked
+would test nothing — and then driven through a running server and a browser:
+clean, infected, and scanner-down all read correctly on the screen.
 
 ---
 

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { throwsCode } from './helpers.ts';
+import { rejectsCode, throwsCode } from './helpers.ts';
+import { config } from '../src/config.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import {
   classify,
@@ -350,13 +352,13 @@ describe('ingestion under authorisation, with the finding on the record', () => 
     rmSync(directory, { recursive: true, force: true });
   });
 
-  it('reads a held file and records what it is', () => {
+  it('reads a held file and records what it is', async () => {
     const hash = hold(
       Buffer.from('Clause 4.1 Workmanship. Concrete shall be placed to the approval of the Engineer.'),
       'text/plain',
       'Specification extract',
     );
-    const result = ingestFile(ctxFor('pm'), store, { hash, filename: 'E10-specification.txt' });
+    const result = await ingestFile(ctxFor('pm'), store, { hash, filename: 'E10-specification.txt' });
     assert.equal(result.status, 'INGESTED');
     assert.equal(result.kind, 'SPECIFICATION');
     assert.equal(result.findings, 0);
@@ -368,10 +370,10 @@ describe('ingestion under authorisation, with the finding on the record', () => 
     assert.equal(file.lexicalVector?.length, VECTOR_DIMENSIONS);
   });
 
-  it('quarantines a renamed executable and keeps the bytes', () => {
+  it('quarantines a renamed executable and keeps the bytes', async () => {
     const bytes = Buffer.concat([Buffer.from([0x4d, 0x5a]), Buffer.from('a PE binary in an evidence store')]);
     const hash = hold(bytes, 'image/png', 'Alleged site photograph');
-    const result = ingestFile(ctxFor('pm'), store, { hash, filename: 'site-photo.png' });
+    const result = await ingestFile(ctxFor('pm'), store, { hash, filename: 'site-photo.png' });
 
     assert.equal(result.status, 'QUARANTINED');
     assert.ok(result.findings > 0);
@@ -395,50 +397,50 @@ describe('ingestion under authorisation, with the finding on the record', () => 
     assert.ok(events.includes('FILE_EXTRACTED'));
   });
 
-  it('refuses a hash no evidence record names', () => {
-    const error = throwsCode(
+  it('refuses a hash no evidence record names', async () => {
+    const error = await rejectsCode(
       () => ingestFile(ctxFor('pm'), store, { hash: `sha256:${'0'.repeat(64)}` }),
       'NO_EVIDENCE_RECORD',
     );
     assert.match(String(error.message), /no document to ingest/);
   });
 
-  it('refuses a record whose bytes the platform does not hold', () => {
+  it('refuses a record whose bytes the platform does not hold', async () => {
     const bytes = Buffer.from('a document somebody kept on their own laptop');
     const hash = hashBytes(bytes);
     registerEvidence(ctxFor('pm'), { type: 'SITE_OBSERVATION_MEDIA', hash, description: 'Unheld' });
 
-    const error = throwsCode(() => ingestFile(ctxFor('pm'), store, { hash }), 'BYTES_NOT_HELD');
+    const error = await rejectsCode(() => ingestFile(ctxFor('pm'), store, { hash }), 'BYTES_NOT_HELD');
     // The distinction the whole evidence feature turns on, said out loud.
     assert.match(String(error.message), /holds the hash and not the file/);
   });
 
-  it('refuses to ingest the same bytes twice rather than quietly replacing a finding', () => {
+  it('refuses to ingest the same bytes twice rather than quietly replacing a finding', async () => {
     const hash = hold(Buffer.from('Dear Sir, further to your letter of 3 March.'), 'text/plain', 'Letter');
-    ingestFile(ctxFor('pm'), store, { hash, filename: 'letter.txt' });
+    await ingestFile(ctxFor('pm'), store, { hash, filename: 'letter.txt' });
 
-    const error = throwsCode(() => ingestFile(ctxFor('pm'), store, { hash, filename: 'letter.txt' }), 'ALREADY_INGESTED');
+    const error = await rejectsCode(() => ingestFile(ctxFor('pm'), store, { hash, filename: 'letter.txt' }), 'ALREADY_INGESTED');
     assert.match(String(error.message), /cannot produce a different document/);
   });
 
-  it('takes authority to act on the register, not merely to read it', () => {
+  it('takes authority to act on the register, not merely to read it', async () => {
     const hash = hold(Buffer.from('Programme: critical path through the inlet works.'), 'text/plain', 'Programme');
     // The design lead can read the evidence register — everyone can — and
     // cannot write a governed statement about what a file is. Gating this on
     // `R` would have made it writable by every role in the platform.
-    throwsCode(() => ingestFile(ctxFor('designer'), store, { hash }), 'ACCESS_DENIED');
+    await rejectsCode(() => ingestFile(ctxFor('designer'), store, { hash }), 'ACCESS_DENIED');
     assert.ok(ingestedFiles(ctxFor('designer')).length > 0);
   });
 
-  it('finds the second copy of a document, and says the match is lexical', () => {
+  it('finds the second copy of a document, and says the match is lexical', async () => {
     const original =
       'Clause 12 Notice. The Contractor shall give notice of any event which delays completion within eight ' +
       'weeks of becoming aware of it, stating the effect on the completion date.';
     const first = hold(Buffer.from(original), 'text/plain', 'Notice clause');
     const second = hold(Buffer.from(`${original} Issued for information.`), 'text/plain', 'Notice clause, reissued');
 
-    const one = ingestFile(ctxFor('pm'), store, { hash: first, filename: 'clause-12.txt' });
-    ingestFile(ctxFor('pm'), store, { hash: second, filename: 'clause-12-reissue.txt' });
+    const one = await ingestFile(ctxFor('pm'), store, { hash: first, filename: 'clause-12.txt' });
+    await ingestFile(ctxFor('pm'), store, { hash: second, filename: 'clause-12-reissue.txt' });
 
     const matches = similarFiles(ctxFor('pm'), one.ingestionId);
     assert.ok(matches.length >= 1);
@@ -446,21 +448,21 @@ describe('ingestion under authorisation, with the finding on the record', () => 
     assert.ok(matches[0]!.similarity >= 0.6);
   });
 
-  it('says there is nothing to compare rather than returning an empty list', () => {
+  it('says there is nothing to compare rather than returning an empty list', async () => {
     // An empty list reads as "no similar documents". The truth is that nothing
     // was ever indexed, which is a different answer and a different next step.
     const hash = hold(png(), 'image/png', 'Site photograph');
-    const ingested = ingestFile(ctxFor('pm'), store, { hash, filename: 'progress-01.png' });
+    const ingested = await ingestFile(ctxFor('pm'), store, { hash, filename: 'progress-01.png' });
 
     const error = throwsCode(() => similarFiles(ctxFor('pm'), ingested.ingestionId), 'NOTHING_INDEXED');
     assert.match(String(error.message), /perception pipeline/);
   });
 
-  it('reports what has never been looked at, and never implies a scan', () => {
+  it('reports what has never been looked at, and never implies a scan', async () => {
     // Held and named, and deliberately not ingested.
     hold(Buffer.from('An unread daily allocation sheet.'), 'text/plain', 'Allocation sheet');
 
-    const position = ingestionPosition(ctxFor('pm'), store);
+    const position = await ingestionPosition(ctxFor('pm'), store);
     assert.ok(position.notIngested >= 1);
     assert.ok(position.quarantined >= 1);
     assert.ok(position.read >= 1);
@@ -469,7 +471,132 @@ describe('ingestion under authorisation, with the finding on the record', () => 
     // Said on every read, beside the count, so "0 quarantined" is never read as
     // "nothing infected".
     assert.equal(position.antivirusConfigured, false);
+    // Every file read on a deployment with no scanner was, correctly, not
+    // scanned — and the count says so rather than letting a scanner configured
+    // tomorrow imply the whole register has been checked.
+    assert.equal(position.ingestedUnscanned, position.total);
     assert.equal(position.quarantine.length, position.quarantined);
     assert.ok(position.quarantine[0]!.findings.length > 0);
+  });
+});
+
+describe('with a signature scanner beside it', () => {
+  let scanDirectory: string;
+  let scanStore: EvidenceStore;
+  let scanPlatform: Platform;
+  let scanSeed: SeedResult;
+  let daemon: Server | undefined;
+  let verdict: 'CLEAN' | 'FOUND' = 'CLEAN';
+  const original = { ...config.antivirus };
+
+  const scanCtx = (): EngineContext =>
+    scanPlatform.context(scanSeed.users.pm!.auth, scanSeed.projectId, { correlationId: 'scan-test' });
+
+  /** The same INSTREAM daemon as `scanner.test.ts`, kept minimal here. */
+  function listen(): Promise<number> {
+    return new Promise((resolve) => {
+      daemon = createServer((socket) => {
+        let command = '';
+        const buffered: Buffer[] = [];
+        socket.on('data', (data) => {
+          buffered.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
+          const all = Buffer.concat(buffered);
+          if (command === '') {
+            const end = all.indexOf(0);
+            if (end < 0) return;
+            command = all.subarray(0, end).toString('utf8');
+            buffered.length = 0;
+            buffered.push(all.subarray(end + 1));
+            if (command === 'zVERSION') return void socket.end('ClamAV 1.0.3/27100\0');
+          }
+          const rest = Buffer.concat(buffered);
+          // The stream ends with a zero length; nothing here needs the payload.
+          if (rest.length >= 4 && rest.readUInt32BE(rest.length - 4) === 0) {
+            socket.end(verdict === 'FOUND' ? 'stream: Win.Test.EICAR_HDB-1 FOUND\0' : 'stream: OK\0');
+          }
+        });
+        socket.on('error', () => {});
+      });
+      daemon.listen(0, '127.0.0.1', () => resolve((daemon!.address() as { port: number }).port));
+    });
+  }
+
+  before(async () => {
+    const port = await listen();
+    Object.assign(config.antivirus as object, { host: '127.0.0.1', port, timeoutMs: 1000 });
+    scanDirectory = mkdtempSync(join(tmpdir(), 'construx-scan-'));
+    scanStore = new EvidenceStore(scanDirectory);
+    scanPlatform = new Platform(undefined, scanStore);
+    scanSeed = await seedDemoProject(scanPlatform);
+  });
+
+  after(() => {
+    daemon?.close();
+    Object.assign(config.antivirus as object, original);
+    rmSync(scanDirectory, { recursive: true, force: true });
+  });
+
+  function holdIn(bytes: Buffer, contentType: string, description: string): string {
+    const hash = hashBytes(bytes);
+    registerEvidence(scanCtx(), { type: 'SITE_OBSERVATION_MEDIA', hash, description });
+    scanStore.put(scanSeed.tenantId, hash, bytes, contentType);
+    return hash;
+  }
+
+  it('records the daemon and its database beside a clean verdict', async () => {
+    verdict = 'CLEAN';
+    const hash = holdIn(Buffer.from('Clause 9. The contractor shall maintain the works.'), 'text/plain', 'Spec');
+    const result = await ingestFile(scanCtx(), scanStore, { hash, filename: 'spec.txt' });
+    assert.equal(result.status, 'INGESTED');
+
+    const file = ingestedFiles(scanCtx()).find((entry) => entry.ingestionId === result.ingestionId)!;
+    assert.equal(file.inspection.antivirusScanned, true);
+    // "Clean" against a database from 2019 is a different statement from clean
+    // against today's, so the record names which one answered.
+    assert.match(String(file.inspection.antivirusScanner), /ClamAV 1\.0\.3\/27100/);
+    assert.equal(file.inspection.antivirusSignature, undefined);
+  });
+
+  it('quarantines on a signature, and names the signature', async () => {
+    verdict = 'FOUND';
+    // Structurally a perfectly ordinary text file. The structural inspection
+    // has nothing to say about it, which is exactly why the scan is worth
+    // having beside it.
+    const hash = holdIn(Buffer.from('an entirely ordinary looking letter'), 'text/plain', 'Letter');
+    const result = await ingestFile(scanCtx(), scanStore, { hash, filename: 'letter.txt' });
+
+    assert.equal(result.status, 'QUARANTINED');
+    const file = ingestedFiles(scanCtx()).find((entry) => entry.ingestionId === result.ingestionId)!;
+    assert.equal(file.inspection.antivirusScanned, true);
+    assert.equal(file.inspection.antivirusSignature, 'Win.Test.EICAR_HDB-1');
+    assert.match(file.inspection.findings.map((finding) => finding.what).join(' '), /Win\.Test\.EICAR_HDB-1/);
+    // Kept, like every other quarantine: the bytes are already an address.
+    assert.equal(scanStore.has(scanSeed.tenantId, hash), true);
+  });
+
+  it('refuses the ingestion outright when the configured scanner will not answer', async () => {
+    verdict = 'CLEAN';
+    const hash = holdIn(Buffer.from('a programme narrative for the next quarter'), 'text/plain', 'Programme');
+    const port = (daemon!.address() as { port: number }).port;
+    Object.assign(config.antivirus as object, { port: 1, timeoutMs: 300 });
+
+    // Not "ingested but unscanned". A file recorded as ingested reads as a file
+    // that was checked, and the operator who configured the scanner would never
+    // learn it had stopped answering.
+    await rejectsCode(() => ingestFile(scanCtx(), scanStore, { hash, filename: 'programme.txt' }), 'SCANNER_UNREACHABLE');
+    assert.equal(
+      ingestedFiles(scanCtx()).some((file) => file.hash === hash),
+      false,
+    );
+
+    Object.assign(config.antivirus as object, { port, timeoutMs: 1000 });
+  });
+
+  it('reports the scanner on every read, so a screen can say who checked', async () => {
+    const position = await ingestionPosition(scanCtx(), scanStore);
+    assert.equal(position.antivirusConfigured, true);
+    assert.equal(position.antivirusReachable, true);
+    assert.match(String(position.antivirusScanner), /ClamAV/);
+    assert.equal(position.ingestedUnscanned, 0);
   });
 });

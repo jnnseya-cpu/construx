@@ -2,6 +2,7 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
 import { findByHash } from './registry.ts';
+import { ping, scan, scannerAddress, scannerConfigured } from './scanner.ts';
 import type { EvidenceStore } from './store.ts';
 import {
   classify,
@@ -77,7 +78,7 @@ function filesOf(ctx: EngineContext): IngestedFileState[] {
  * store. Gating it on `R` would have let every role in the platform write to the
  * ledger, because every role can read the register.
  */
-export function ingestFile(
+export async function ingestFile(
   ctx: EngineContext,
   // Passed rather than carried on the context, matching `perception.extract`.
   // The store is a platform resource, not a property of one request, and
@@ -85,7 +86,7 @@ export function ingestFile(
   // tenancy's files whether it needed one or not.
   store: EvidenceStore,
   input: { hash: string; filename?: string },
-): { ingestionId: string; status: IngestedFileState['status']; kind: string; findings: number } {
+): Promise<{ ingestionId: string; status: IngestedFileState['status']; kind: string; findings: number }> {
   authorise(ctx, 'EVIDENCE_AUDIT', 'I');
 
   const record = findByHash(ctx.ledger, ctx.tenantId, input.hash);
@@ -120,6 +121,34 @@ export function ingestFile(
 
   // Stage 1. Before anything else looks at the file, including this pipeline.
   const inspection = inspect({ bytes, declaredType: contentType, filename: input.filename });
+
+  // Stage 1b. The signature scan, where this deployment has a scanner beside it.
+  //
+  // Structural inspection and signature scanning catch different things and
+  // both are on the record: a signature engine knows about a virus in a
+  // document and does not care that a `.png` is a Windows executable, which is
+  // the threat that actually applies to an evidence store.
+  //
+  // `scan` throws where a scanner is configured and will not answer, and that
+  // propagates deliberately. Recording the file as ingested with
+  // `antivirusScanned: false` would leave it in the register looking checked,
+  // and the operator who configured the scanner would never learn it had
+  // stopped responding.
+  const verdict = await scan(bytes);
+  if (verdict.scanned) {
+    inspection.antivirusScanned = true;
+    inspection.antivirusScanner = verdict.scanner;
+    if (!verdict.clean) {
+      inspection.antivirusSignature = verdict.signature;
+      inspection.verdict = 'BLOCKED';
+      inspection.findings.push({
+        what: `The scanner identified ${verdict.signature}`,
+        because:
+          `Reported by ${verdict.scanner}. Recorded by name rather than as "infected": a quarantine record that ` +
+          'will not say what was found is one nobody can act on or argue with.',
+      });
+    }
+  }
 
   // Stage 3 before stage 2 in execution order, and deliberately: the classifier
   // reads the extracted text where there is any, and a filename alone is a
@@ -267,10 +296,20 @@ export type IngestionPosition = {
     findings: Array<{ what: string; because: string }>;
   }>;
   /**
-   * Said on every read. There is no signature engine in this process, and a
-   * screen reporting "0 quarantined" must not be read as "nothing infected".
+   * Whether this deployment has a signature scanner beside it.
+   *
+   * Said on every read, because with it false a screen reporting "0
+   * quarantined" must not be read as "nothing infected" — nothing looked. With
+   * it true, `antivirusScanner` names the daemon and its database, because
+   * "clean" against a database from 2019 is a different statement from "clean"
+   * against today's.
    */
-  antivirusConfigured: false;
+  antivirusConfigured: boolean;
+  /** Where it is, and whether it answered just now. Absent where none is set. */
+  antivirusScanner?: string;
+  antivirusReachable?: boolean;
+  /** Held files read before a scanner was configured. They were never scanned. */
+  ingestedUnscanned: number;
 };
 
 /**
@@ -279,8 +318,13 @@ export type IngestionPosition = {
  * `notIngested` is the number that matters on a project part way through
  * adopting this: it is the evidence the platform holds and has never looked at.
  */
-export function ingestionPosition(ctx: EngineContext, store: EvidenceStore): IngestionPosition {
+export async function ingestionPosition(ctx: EngineContext, store: EvidenceStore): Promise<IngestionPosition> {
   authorise(ctx, 'EVIDENCE_AUDIT', 'R');
+
+  // Asked at read time rather than remembered from boot. A scanner that has
+  // stopped answering is the thing an operator most needs to see on this
+  // screen, and a cached "configured: true" would hide exactly that.
+  const scanner = await ping();
 
   const files = filesOf(ctx);
   const ingested = new Set(files.map((file) => file.hash));
@@ -310,6 +354,13 @@ export function ingestionPosition(ctx: EngineContext, store: EvidenceStore): Ing
         ...(file.filename ? { filename: file.filename } : {}),
         findings: file.inspection.findings,
       })),
-    antivirusConfigured: false,
+    antivirusConfigured: scannerConfigured(),
+    ...(scannerConfigured()
+      ? { antivirusScanner: `${scannerAddress()} — ${scanner.reachable ? scanner.version : scanner.reason}`, antivirusReachable: scanner.reachable }
+      : {}),
+    // Files read before a scanner was configured. They are ingested and they
+    // were never scanned, and the count says so rather than letting a newly
+    // configured scanner imply the whole register has been checked.
+    ingestedUnscanned: files.filter((file) => file.inspection.antivirusScanned !== true).length,
   };
 }

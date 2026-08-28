@@ -13148,10 +13148,10 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/ingestion',
     readOnly: true,
     description: 'What has been read from the project’s files, what was quarantined, and what has never been looked at',
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
       const engineCtx = projectContext(platform, ctx);
       return {
-        position: ingestion.ingestionPosition(engineCtx, platform.evidence),
+        position: await ingestion.ingestionPosition(engineCtx, platform.evidence),
         files: ingestion.ingestedFiles(engineCtx),
       };
     },

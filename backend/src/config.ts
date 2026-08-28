@@ -224,6 +224,25 @@ export const config = {
    * somebody else still has the file. `assertProductionSafety` says so out loud
    * rather than letting a deployment discover it during a dispute.
    */
+  /**
+   * A signature scanner, if this deployment has one beside it.
+   *
+   * The platform holds no signatures and never will — zero runtime dependencies
+   * is settled. What it can do is talk to a daemon that does, over clamd's
+   * INSTREAM protocol. Unset means nothing scans, and every ingestion record and
+   * every read says so rather than implying a check nobody made.
+   */
+  antivirus: {
+    host: str('ANTIVIRUS_CLAMD_HOST', ''),
+    port: num('ANTIVIRUS_CLAMD_PORT', 3310),
+    /**
+     * A scan is in the path of an ingestion somebody is waiting on, and a
+     * daemon that has stopped answering must fail rather than hang. Generous
+     * enough for a large drawing set on a busy scanner.
+     */
+    timeoutMs: num('ANTIVIRUS_TIMEOUT_MS', 10_000),
+  },
+
   evidence: {
     storePath: str('EVIDENCE_STORE_PATH', ''),
     /**
