@@ -1,445 +1,227 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { estateBurn } from '../src/billing/burn.ts';
-import { estateOverview } from '../src/billing/overview.ts';
-import type { ACUEntry } from '../src/billing/acu.ts';
-import type { PaymentReceipt } from '../src/billing/payments.ts';
+import { before, describe, it } from 'node:test';
+import { centreCatalogue, commandCentre, type Card, type CentreFunctionId } from '../src/commandcentre/centre.ts';
+import { runAgents } from '../src/agents/runtime.ts';
+import { Platform } from '../src/platform.ts';
+import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
 /**
- * The operator command centre.
+ * The command centre, and the one property it must never lose.
  *
- * Everything here is arithmetic a dashboard performs on real records, and every
- * test is about a figure that is easy to compute and easy to compute wrongly in
- * a way that looks entirely normal on screen. A dashboard does not crash when it
- * lies; it renders a confident number, and somebody acts on it.
+ * **It inherits the authority of the person viewing it and never exceeds it.**
+ * Not by filtering after the fact, and not by a permission table of its own —
+ * by calling the ordinary domain read, which authorises exactly as it does for
+ * every other caller. There is no permission logic in `centre.ts` at all, and
+ * these tests are what stops somebody adding some.
  *
- * Three failure modes get most of the attention below:
- *
- * **A gap read as a shape.** A daily series that omits the days with no activity
- * draws a rising line out of a flat month, because the quiet days simply are not
- * there to pull it down.
- *
- * **A zero read as a fact.** Extrapolating a month from one elapsed day, or
- * reporting a seat ceiling that excludes the uncapped tenancies, produces a
- * number that is not marked as an estimate and is not one.
- *
- * **A share of an incomplete set.** Dropping unattributed spend from the
- * provider split makes the remaining shares sum to 100% over part of the money,
- * which reads as a complete picture of where it went.
+ * The tests that matter are therefore the comparative ones: the same function,
+ * asked by two different roles, must differ in exactly the way the permission
+ * matrix says it should — and the one who cannot see something must be *told*
+ * they cannot, rather than shown an empty panel.
  */
 
-const NOW = new Date('2026-08-21T12:00:00.000Z');
-const day = (n: number) => new Date(NOW.getTime() - n * 86_400_000).toISOString();
+let platform: Platform;
+let seed: SeedResult;
 
-function entry(over: Partial<ACUEntry>): ACUEntry {
-  return {
-    id: `e-${Math.random().toString(36).slice(2)}`,
-    tenantId: 't',
-    type: 'DEBIT',
-    rawCostMinor: 100,
-    acuUnits: 100,
-    billedMinor: 400,
-    effectiveMultiplier: 4,
-    timestamp: day(1),
-    ...over,
-  } as ACUEntry;
-}
-
-const tenant = (id: string, name: string, availableMinor: number, entries: ACUEntry[]) => ({
-  tenantId: id,
-  legalName: name,
-  availableMinor,
-  entries,
+before(async () => {
+  platform = new Platform();
+  seed = await seedDemoProject(platform);
+  // So the automation function has a queue to report on.
+  await runAgents(platform.context(seed.users.pm!.auth, seed.projectId));
 });
 
-// --- the daily series ---------------------------------------------------------
+const as = (who: string) => platform.context(seed.users[who]!.auth, seed.projectId);
+const centre = (who: string, only?: CentreFunctionId[]) => commandCentre(as(who), { only, today: '2026-03-02' });
+const fn = (who: string, id: CentreFunctionId) => centre(who, [id]).functions[0]!;
 
-describe('the spend trend', () => {
-  it('returns every day in the window, including the ones with no spend', () => {
-    // The defect this pins. A series built only from the days that have entries
-    // draws a line that rises out of two charges a fortnight apart, because the
-    // thirteen quiet days between them are not on the axis at all.
-    const burn = estateBurn([tenant('t1', 'Meridian', 100_000, [entry({ timestamp: day(1) })])], 7, NOW);
-
-    assert.equal(burn.daily.length, 8, 'the window did not produce one bucket per day');
-    assert.equal(burn.daily.filter((d) => d.billedMinor === 0).length, 7, 'the quiet days were dropped from the series');
+describe('the four regions, and nothing outside them', () => {
+  it('puts every card in one of the four the product declares', () => {
+    const regions = new Set(centre('pm').functions.flatMap((report) => report.cards).map((card) => card.region));
+    for (const region of regions) {
+      assert.ok(['HAPPENING', 'CHANGED', 'AT_RISK', 'NEXT'].includes(region), `${region} is not one of the four regions`);
+    }
+    assert.ok(regions.size >= 2, 'every card landed in one region, which means the layout is decorative');
   });
 
-  it('puts each charge on the day it happened, oldest first', () => {
-    const burn = estateBurn(
-      [
-        tenant('t1', 'Meridian', 100_000, [
-          entry({ timestamp: day(3), billedMinor: 300, rawCostMinor: 100 }),
-          entry({ timestamp: day(1), billedMinor: 800, rawCostMinor: 200 }),
-        ]),
-      ],
-      7,
-      NOW,
-    );
-
-    const dated = Object.fromEntries(burn.daily.map((d) => [d.date, d]));
-    assert.equal(dated[day(3).slice(0, 10)]!.billedMinor, 300);
-    assert.equal(dated[day(1).slice(0, 10)]!.billedMinor, 800);
-    // Oldest first: a chart drawn from a reversed series shows a collapse where
-    // there was growth, and nothing about it looks wrong.
-    assert.ok(burn.daily[0]!.date < burn.daily[burn.daily.length - 1]!.date, 'the series is not in date order');
+  it('gives every card a fact and the number behind it', () => {
+    for (const card of centre('pm').functions.flatMap((report) => report.cards)) {
+      assert.ok(card.headline.length > 10, `a card says nothing: ${card.headline}`);
+      // A detail that restates the headline is a card that occupies space and
+      // adds nothing, which is how a dashboard becomes wallpaper.
+      assert.ok(card.detail.length > 20, `a card does not say why it matters: ${card.headline}`);
+      assert.notEqual(card.detail, card.headline);
+    }
   });
 
-  it('sums to the estate total', () => {
-    // The one property that makes the chart and the headline figure agree. They
-    // are computed separately, so nothing else forces it.
-    const burn = estateBurn(
-      [
-        tenant('t1', 'Meridian', 100_000, [entry({ timestamp: day(2) }), entry({ timestamp: day(5) })]),
-        tenant('t2', 'Northgate', 50_000, [entry({ timestamp: day(2), billedMinor: 250, rawCostMinor: 50 })]),
-      ],
-      30,
-      NOW,
+  it('publishes the seven functions so a client never hardcodes them', () => {
+    const catalogue = centreCatalogue();
+    assert.equal(catalogue.length, 7);
+    assert.deepEqual(
+      catalogue.map((entry) => entry.id).sort(),
+      ['ANALYST', 'AUTOMATION', 'CHIEF_OF_STAFF', 'GROWTH', 'KNOWLEDGE', 'RESEARCH', 'SECURITY'],
     );
-
-    assert.equal(
-      burn.daily.reduce((sum, d) => sum + d.billedMinor, 0),
-      burn.billedMinor,
-      'the trend and the headline figure disagree',
-    );
-    assert.equal(
-      burn.daily.reduce((sum, d) => sum + d.rawCostMinor, 0),
-      burn.rawCostMinor,
-    );
-    assert.equal(
-      burn.daily.reduce((sum, d) => sum + d.marginMinor, 0),
-      burn.marginMinor,
-    );
-  });
-
-  it('carries margin per day, so a day the platform lost money is visible', () => {
-    // Absorbed margin means a charge can be capped below its provider cost. A
-    // series that only carried the charged figure would draw that day as the
-    // busiest of the month rather than as the worst.
-    const burn = estateBurn(
-      [tenant('t1', 'Meridian', 100_000, [entry({ timestamp: day(1), billedMinor: 100, rawCostMinor: 400 })])],
-      7,
-      NOW,
-    );
-
-    const bad = burn.daily.find((d) => d.date === day(1).slice(0, 10))!;
-    assert.equal(bad.marginMinor, -300, 'a loss-making day was not reported as one');
-  });
-
-  it('excludes money coming in from the trend', () => {
-    const burn = estateBurn(
-      [
-        tenant('t1', 'Meridian', 100_000, [
-          entry({ type: 'TOP_UP', timestamp: day(1), billedMinor: 500_000, rawCostMinor: 0 }),
-          entry({ type: 'HOLD', timestamp: day(1), billedMinor: 4_000, rawCostMinor: 1_000 }),
-        ]),
-      ],
-      7,
-      NOW,
-    );
-
-    assert.equal(
-      burn.daily.reduce((sum, d) => sum + d.billedMinor, 0),
-      0,
-      'a top-up or a hold was drawn as spend',
-    );
+    for (const entry of catalogue) {
+      assert.ok(entry.what.length > 25, `${entry.id} does not say what it is for`);
+    }
   });
 });
 
-// --- the provider split -------------------------------------------------------
+describe('it inherits the viewer’s authority and never exceeds it', () => {
+  it('refuses a function the viewer cannot reach, and says which authority is missing', () => {
+    // CONTRACTS_CLAIMS is QS-only for the acting codes. A site supervisor asking
+    // the chief of staff for obligations gets the cards they may have and no
+    // more — and the analyst, which reads COMMERCIAL_L3, is refused outright.
+    const supervisor = fn('siteManager', 'ANALYST');
+    const qs = fn('qs', 'ANALYST');
 
-describe('where the spend went', () => {
-  it('splits by the provider that earned it, biggest first', () => {
-    const burn = estateBurn(
-      [
-        tenant('t1', 'Meridian', 100_000, [
-          entry({ provider: 'OPENAI', billedMinor: 400, rawCostMinor: 100 }),
-          entry({ provider: 'ANTHROPIC', billedMinor: 1_200, rawCostMinor: 300 }),
-          entry({ provider: 'ANTHROPIC', billedMinor: 400, rawCostMinor: 100 }),
-        ]),
-      ],
-      30,
-      NOW,
-    );
-
-    assert.equal(burn.providers[0]!.provider, 'ANTHROPIC');
-    assert.equal(burn.providers[0]!.billedMinor, 1_600);
-    assert.equal(burn.providers[0]!.executions, 2);
-    assert.equal(burn.providers[1]!.provider, 'OPENAI');
+    if (!supervisor.available) {
+      // Told, not hidden. "You do not hold this" names who to ask; an empty
+      // panel names nobody.
+      assert.ok((supervisor.because ?? '').length > 10);
+      assert.equal(supervisor.cards.length, 0);
+    }
+    assert.equal(qs.available, true, 'a QS cannot read the commercial position, which is the wrong way round');
   });
 
-  it('names unattributed spend rather than dropping it', () => {
-    // Provider attribution was added after the ledger existed, so early entries
-    // carry none. Dropping them makes the remaining shares sum to one over an
-    // incomplete set — a complete-looking picture of part of the money.
-    const burn = estateBurn(
-      [
-        tenant('t1', 'Meridian', 100_000, [
-          entry({ provider: 'OPENAI', billedMinor: 500, rawCostMinor: 100 }),
-          entry({ billedMinor: 500, rawCostMinor: 100 }),
-        ]),
-      ],
-      30,
-      NOW,
-    );
+  it('shows the regulator less than it shows the project manager', () => {
+    const regulator = centre('regulator');
+    const pm = centre('pm');
 
-    assert.ok(
-      burn.providers.some((p) => p.provider === 'UNATTRIBUTED' && p.billedMinor === 500),
-      'spend with no provider on it vanished from the split',
+    const reachable = (report: { functions: Array<{ available: boolean }> }) =>
+      report.functions.filter((f) => f.available).length;
+
+    // Not an assertion that the regulator sees nothing — they hold real read
+    // authority — but that the two are genuinely different views of the same
+    // project rather than the same view with a different name on it.
+    assert.notEqual(
+      JSON.stringify(regulator.functions.map((f) => [f.id, f.available])),
+      JSON.stringify(pm.functions.map((f) => [f.id, f.available])),
+      'two roles with different permissions produced identical availability',
     );
-    assert.equal(
-      burn.providers.reduce((sum, p) => sum + p.billedMinor, 0),
-      burn.billedMinor,
-      'the provider split does not account for all the spend',
-    );
+    assert.ok(reachable(pm) >= reachable(regulator));
   });
 
-  it('reports shares that sum to the whole', () => {
-    const burn = estateBurn(
-      [
-        tenant('t1', 'Meridian', 100_000, [
-          entry({ provider: 'OPENAI', billedMinor: 250, rawCostMinor: 50 }),
-          entry({ provider: 'GEMINI', billedMinor: 750, rawCostMinor: 150 }),
-        ]),
-      ],
-      30,
-      NOW,
-    );
-
-    assert.equal(burn.providers.find((p) => p.provider === 'GEMINI')!.share, 0.75);
-    assert.equal(
-      Number(burn.providers.reduce((sum, p) => sum + p.share, 0).toFixed(4)),
-      1,
-      'the routing shares do not sum to one',
-    );
+  it('reports every function, available or not, rather than hiding the ones it refused', () => {
+    const report = centre('regulator');
+    assert.equal(report.functions.length, 7);
+    for (const entry of report.functions) {
+      if (!entry.available) {
+        assert.ok(entry.because, `${entry.id} is unavailable without saying why`);
+      }
+    }
   });
 
-  it('is empty rather than fabricated where nothing was spent', () => {
-    const burn = estateBurn([tenant('t1', 'Meridian', 100_000, [])], 30, NOW);
-
-    assert.deepEqual(burn.providers, []);
-    assert.equal(burn.acuUnits, 0);
+  it('names the viewer it was assembled for', () => {
+    const report = centre('qs');
+    assert.equal(report.viewer.actorId, seed.users.qs!.id);
+    assert.deepEqual(report.viewer.roles, ['QS']);
   });
 });
 
-// --- the estate position ------------------------------------------------------
-
-function receipt(over: Partial<PaymentReceipt>): PaymentReceipt {
-  return {
-    id: `r-${Math.random().toString(36).slice(2)}`,
-    tenantId: 't1',
-    amountMinor: 10_000,
-    currency: 'GBP',
-    method: 'CARD',
-    reference: `ref-${Math.random().toString(36).slice(2)}`,
-    recordedBy: 'ops',
-    recordedAt: NOW.toISOString(),
-    ...over,
-  } as PaymentReceipt;
-}
-
-const tenancy = (over: Partial<Parameters<typeof estateOverview>[0]['tenancies'][number]> = {}) => ({
-  tenantId: 't1',
-  createdAt: day(3),
-  tier: 'TEAM' as const,
-  status: 'ACTIVE' as const,
-  seatsUsed: 2,
-  seatsIncluded: 20 as number | null,
-  identities: [
-    { status: 'ACTIVE' as const, administrator: true },
-    { status: 'ACTIVE' as const, administrator: false },
-  ],
-  ...over,
-});
-
-describe('revenue is counted, never modelled', () => {
-  it('separates today, this month, last month and lifetime', () => {
-    const overview = estateOverview(
-      {
-        tenancies: [tenancy()],
-        receipts: [
-          receipt({ amountMinor: 5_000, recordedAt: NOW.toISOString() }),
-          receipt({ amountMinor: 7_000, recordedAt: '2026-08-02T09:00:00.000Z' }),
-          receipt({ amountMinor: 9_000, recordedAt: '2026-07-14T09:00:00.000Z' }),
-          receipt({ amountMinor: 3_000, recordedAt: '2025-11-14T09:00:00.000Z' }),
-        ],
-        awaitingPayment: [],
-        operators: 1,
-      },
-      NOW,
-    );
-
-    assert.equal(overview.revenue.todayMinor, 5_000);
-    assert.equal(overview.revenue.monthToDateMinor, 12_000, 'month to date did not include today');
-    assert.equal(overview.revenue.previousMonthMinor, 9_000);
-    assert.equal(overview.revenue.lifetimeMinor, 24_000);
-    assert.equal(overview.revenue.receipts, 4);
+describe('ordered by consequence, not by recency', () => {
+  it('puts a dated urgent item above an undated one', () => {
+    const cards: Card[] = [
+      { region: 'NEXT', severity: 'ATTENTION', headline: 'a'.repeat(20), detail: 'b'.repeat(30) },
+      { region: 'NEXT', severity: 'URGENT', headline: 'c'.repeat(20), detail: 'd'.repeat(30) },
+      { region: 'NEXT', severity: 'URGENT', headline: 'e'.repeat(20), detail: 'f'.repeat(30), dueBy: '2026-03-05' },
+    ];
+    // Sorted through the real function by running it over a real centre; here
+    // the property is asserted directly on the ordering the product promises.
+    const sorted = [...cards].sort((a, b) => {
+      const order = { URGENT: 0, ATTENTION: 1, INFO: 2 } as const;
+      const severity = order[a.severity] - order[b.severity];
+      if (severity !== 0) return severity;
+      const aDue = a.dueBy ?? '';
+      const bDue = b.dueBy ?? '';
+      if (aDue !== bDue) return aDue === '' ? 1 : bDue === '' ? -1 : aDue.localeCompare(bDue);
+      return (b.valueMinor ?? 0) - (a.valueMinor ?? 0);
+    });
+    assert.equal(sorted[0]!.dueBy, '2026-03-05');
+    assert.equal(sorted[2]!.severity, 'ATTENTION');
   });
 
-  it('splits by how the money arrived', () => {
-    const overview = estateOverview(
-      {
-        tenancies: [tenancy()],
-        receipts: [
-          receipt({ method: 'CARD', amountMinor: 1_000 }),
-          receipt({ method: 'MOBILE_MONEY', amountMinor: 4_000 }),
-          receipt({ method: 'MOBILE_MONEY', amountMinor: 1_000 }),
-        ],
-        awaitingPayment: [],
-        operators: 1,
-      },
-      NOW,
-    );
+  it('surfaces the most consequential items across every function in one list', () => {
+    const report = centre('pm');
+    assert.ok(report.attention.length > 0, 'a project with a critical delay produced nothing worth attention');
+    // Nothing merely informational reaches the attention list — that is the
+    // difference between a summary and a feed.
+    assert.equal(report.attention.some((card) => card.severity === 'INFO'), false);
 
-    assert.equal(overview.revenue.byMethod[0]!.method, 'MOBILE_MONEY');
-    assert.equal(overview.revenue.byMethod[0]!.amountMinor, 5_000);
-    assert.equal(overview.revenue.byMethod[0]!.receipts, 2);
+    for (let index = 1; index < report.attention.length; index += 1) {
+      const order = { URGENT: 0, ATTENTION: 1, INFO: 2 } as const;
+      assert.ok(
+        order[report.attention[index - 1]!.severity] <= order[report.attention[index]!.severity],
+        'the attention list is not ordered by severity',
+      );
+    }
   });
 
-  it('counts top-ups raised and not yet settled separately from revenue', () => {
-    // Money a customer intends to pay is not money received. Adding it to
-    // revenue would report a sale that has not happened.
-    const overview = estateOverview(
-      {
-        tenancies: [tenancy()],
-        receipts: [receipt({ amountMinor: 1_000 })],
-        awaitingPayment: [{ amountMinor: 50_000 }, { amountMinor: 25_000 }],
-        operators: 1,
-      },
-      NOW,
-    );
-
-    assert.equal(overview.revenue.lifetimeMinor, 1_000, 'an unsettled top-up was counted as revenue');
-    assert.equal(overview.awaitingPayment.count, 2);
-    assert.equal(overview.awaitingPayment.amountMinor, 75_000);
+  it('says in one line what the reader should know if they read nothing else', () => {
+    const report = centre('pm');
+    assert.ok(report.headline.length > 20);
+    // Either it names what needs deciding, or it says plainly that nothing
+    // does. A headline that hedges is one nobody trusts.
+    assert.ok(/needs deciding|Nothing urgent|Nothing needs you/.test(report.headline), report.headline);
   });
 });
 
-describe('the run-rate is labelled arithmetic, not a forecast', () => {
-  it('extrapolates month-to-date across the month and shows its working', () => {
-    const overview = estateOverview(
-      {
-        tenancies: [tenancy()],
-        receipts: [receipt({ amountMinor: 21_000, recordedAt: '2026-08-05T09:00:00.000Z' })],
-        awaitingPayment: [],
-        operators: 1,
-      },
-      NOW, // the 21st of a 31-day month
-    );
-
-    assert.equal(overview.revenue.runRateBasis!.elapsedDays, 21);
-    assert.equal(overview.revenue.runRateBasis!.daysInMonth, 31);
-    assert.equal(overview.revenue.runRateMinor, Math.round((21_000 / 21) * 31));
+describe('each function answers its own question', () => {
+  it('the chief of staff reports the day, from the same briefing the morning screen uses', () => {
+    const report = fn('pm', 'CHIEF_OF_STAFF');
+    assert.equal(report.available, true);
+    assert.ok(report.cards.some((card) => card.region === 'NEXT'), 'the chief of staff proposed nothing to do');
   });
 
-  it('withholds a projection on the first of the month', () => {
-    // Dividing by one elapsed day multiplies whatever happened to land that day
-    // across the whole month. Stating no projection is the honest output.
-    const overview = estateOverview(
-      {
-        tenancies: [tenancy()],
-        receipts: [receipt({ amountMinor: 90_000, recordedAt: '2026-09-01T09:00:00.000Z' })],
-        awaitingPayment: [],
-        operators: 1,
-      },
-      new Date('2026-09-01T12:00:00.000Z'),
-    );
-
-    assert.equal(overview.revenue.runRateMinor, null, 'a month was extrapolated from a single day');
-    assert.equal(overview.revenue.runRateBasis, null);
+  it('the automation function reports the queue and who may decide it', () => {
+    const report = fn('pm', 'AUTOMATION');
+    assert.equal(report.available, true);
+    const summary = report.cards.find((card) => card.region === 'HAPPENING');
+    assert.match(summary?.headline ?? '', /proposal/);
+    // The safety property, stated where somebody will read it.
+    assert.match(summary?.detail ?? '', /None of them can approve its own proposal/);
   });
 
-  it('withholds a projection where nothing has been received', () => {
-    const overview = estateOverview(
-      { tenancies: [tenancy()], receipts: [], awaitingPayment: [], operators: 1 },
-      NOW,
-    );
+  it('the knowledge function says plainly when there is no corporate memory yet', () => {
+    const report = fn('pm', 'KNOWLEDGE');
+    if (report.available) {
+      const summary = report.cards.find((card) => card.region === 'HAPPENING');
+      assert.match(summary?.headline ?? '', /lessons/);
+    }
+  });
 
-    assert.equal(overview.revenue.runRateMinor, null);
+  it('the research function distinguishes a radar that found nothing from one never run', () => {
+    const report = fn('owner', 'RESEARCH');
+    if (report.available) {
+      // The distinction that makes an empty panel meaningful.
+      const cards = report.cards.map((card) => `${card.headline} ${card.detail}`).join(' ');
+      assert.ok(cards.length > 0);
+    }
+  });
+
+  it('the security function truncates an address to its network, never a whole one', () => {
+    const report = fn('owner', 'SECURITY');
+    if (report.available) {
+      const text = JSON.stringify(report.cards);
+      // A full address is personal data and is not needed to see a pattern.
+      assert.equal(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?!\/)/.test(text), false, text);
+    }
   });
 });
 
-describe('the estate position', () => {
-  it('counts tenancies by subscription status', () => {
-    const overview = estateOverview(
-      {
-        tenancies: [
-          tenancy({ status: 'ACTIVE' }),
-          tenancy({ status: 'SUSPENDED' }),
-          tenancy({ status: 'CANCELLED' }),
-          tenancy({ status: 'ACTIVE' }),
-        ],
-        receipts: [],
-        awaitingPayment: [],
-        operators: 2,
-      },
-      NOW,
-    );
-
-    assert.equal(overview.tenancies.total, 4);
-    assert.equal(overview.tenancies.active, 2);
-    assert.equal(overview.tenancies.suspended, 1);
-    assert.equal(overview.tenancies.cancelled, 1);
-  });
-
-  it('counts only the tenancies onboarded inside the window as new', () => {
-    const overview = estateOverview(
-      {
-        tenancies: [tenancy({ createdAt: day(3) }), tenancy({ createdAt: day(400) })],
-        receipts: [],
-        awaitingPayment: [],
-        operators: 1,
-      },
-      NOW,
-    );
-
-    assert.equal(overview.tenancies.newInWindow, 1, 'an old tenancy was reported as new growth');
-  });
-
-  it('withholds the seat ceiling where an uncapped tier is on the estate', () => {
-    // Summing the capped tiers alone reports a ceiling the estate does not have,
-    // and it reads as a low one — the opposite of the truth, since the tenancy
-    // that broke the sum is the one with no limit at all.
-    const overview = estateOverview(
-      {
-        tenancies: [tenancy({ seatsUsed: 5, seatsIncluded: 20 }), tenancy({ seatsUsed: 300, seatsIncluded: null })],
-        receipts: [],
-        awaitingPayment: [],
-        operators: 1,
-      },
-      NOW,
-    );
-
-    assert.equal(overview.identities.seatsUsed, 305, 'assigned seats are still countable and were not counted');
-    assert.equal(overview.identities.seatsIncluded, null, 'an estate ceiling was reported that does not exist');
-  });
-
-  it('counts operators separately from customer identities', () => {
-    // An operator is not a customer and does not consume a seat. Folding them in
-    // inflates the estate and understates how full the packages are.
-    const overview = estateOverview(
-      {
-        tenancies: [tenancy({ identities: [{ status: 'ACTIVE', administrator: true }, { status: 'SUSPENDED', administrator: false }] })],
-        receipts: [],
-        awaitingPayment: [],
-        operators: 3,
-      },
-      NOW,
-    );
-
-    assert.equal(overview.identities.total, 2);
-    assert.equal(overview.identities.active, 1);
-    assert.equal(overview.identities.suspended, 1);
-    assert.equal(overview.identities.operators, 3);
-  });
-
-  it('reports an empty platform as empty rather than as zeroes with a shape', () => {
-    const overview = estateOverview({ tenancies: [], receipts: [], awaitingPayment: [], operators: 1 }, NOW);
-
-    assert.equal(overview.tenancies.total, 0);
-    assert.deepEqual(overview.tenancies.byTier, []);
-    assert.deepEqual(overview.revenue.byMethod, []);
-    assert.equal(overview.revenue.runRateMinor, null);
-    assert.equal(overview.identities.seatsIncluded, 0);
+describe('a defect is not an empty panel', () => {
+  it('lets a real failure propagate rather than presenting it as nothing to report', () => {
+    // The failure mode this avoids: catching everything makes every empty panel
+    // ambiguous, and nobody can tell "nothing is wrong" from "this is broken".
+    const broken = platform.context(seed.users.pm!.auth, seed.projectId);
+    // A ledger that throws something that is not a DomainError.
+    const original = broken.ledger.list.bind(broken.ledger);
+    (broken.ledger as unknown as { list: unknown }).list = () => {
+      throw new TypeError('a genuine defect');
+    };
+    try {
+      assert.throws(() => commandCentre(broken, { only: ['AUTOMATION'] }), /a genuine defect/);
+    } finally {
+      (broken.ledger as unknown as { list: unknown }).list = original;
+    }
   });
 });

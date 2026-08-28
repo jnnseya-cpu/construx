@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 3,703 passing, 0 failing, 0 skipped, across 162 files · plus 18 against a live Postgres 16 |
+| Tests | 3,708 passing, 0 failing, 0 skipped, across 164 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
 | Backend | 190 TypeScript files, 117,084 lines |
 | Application | 43 ES modules, 19,333 lines (including a service worker) |
@@ -8362,3 +8362,51 @@ future change that makes a tested function async has the same trap in it.
 the platform holds the *bytes* for" rather than "evidence it holds a *hash* for"
 had to become an awaited presence check, and dropping it would have silently
 turned a meaningful figure into a meaningless one.
+
+---
+
+## The stored session that could never work again
+
+Reported as *"I cannot access and test: UNAUTHENTICATED — Token issuer or
+audience mismatch"*, and reproduced exactly against a running server.
+
+The issuer string moved from `construx.ai` to `construxvg.com` in `dfd980a`.
+Both builds default to the same JWT secret, so a token minted by the **older**
+build passes the signature check — the first thing `verifyToken` does — and then
+fails the issuer check. A browser holding one from before that change was
+refused on every request.
+
+**The refusal was correct. What was wrong is what happened next: nothing.**
+
+- `rotate()` returned `null` when the refresh was refused and left the dead
+  session in `localStorage`. The next request presented the same token and got
+  the same answer.
+- `draw()` called `loadMatrix()` **outside** its `try`/`catch`, so the 401
+  escaped the function entirely — no sign-out, no redirect, no shell rendered,
+  just an unhandled rejection.
+
+The result was permanent. Every reload produced the same refusal for ever and
+the only way out was clearing browser storage by hand. Nobody discovers that,
+and on a field device nobody can reach it to do it.
+
+Both halves are fixed, and the fix is at the layer that fixes every path rather
+than the one call site that noticed:
+
+- A **refused** refresh clears the session, because a refusal is final — an
+  expired refresh token, a revoked one, a rotated secret, or an issuer that has
+  since changed. A **network failure** does not, because a session may be
+  perfectly good and the browser simply offline, and clearing on that would sign
+  a site operative out for driving through a tunnel.
+- A session with no refresh token at all is discarded rather than kept: it can
+  never be renewed, so keeping it only guarantees the next failure.
+- `loadMatrix()` is inside the guard, and only a 401 signs out. Treating every
+  failure as an expired session would hide a real defect behind a login form.
+
+The service worker needed no change: its cache key is derived from a hash of
+every servable file, so changing `app.js` and `lib/api.js` rolls the version,
+installs the new worker and evicts the old cache on activate. That mechanism was
+built for exactly this and it worked.
+
+**Anyone still locked out of a deployment running the old code** signs in again
+after one reload once this is deployed; the stale token is cleared on the first
+refused refresh. Clearing site data for the origin also works and is not needed.

@@ -46,7 +46,13 @@ let refreshing = null;
 
 async function rotate() {
   const current = session.get();
-  if (!current?.refreshToken) return null;
+  if (!current?.refreshToken) {
+    // A session with no refresh token cannot be renewed and never will be. It
+    // is not "not signed in yet" — it is a stored session that is unusable, and
+    // leaving it in place means every future request repeats the same failure.
+    if (current) session.clear();
+    return null;
+  }
 
   refreshing ??= (async () => {
     try {
@@ -55,11 +61,31 @@ async function rotate() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken: current.refreshToken }),
       });
-      if (!response.ok) return null;
+      if (!response.ok) {
+        // The refresh was *refused*, which is final: an expired refresh token,
+        // a revoked one, a rotated signing secret, or a token minted by a build
+        // whose issuer string has since changed. Whatever the reason, this
+        // stored session can never work again.
+        //
+        // Found by somebody being unable to sign in at all. The issuer moved
+        // from `construx.ai` to `construxvg.com`; both builds default to the
+        // same JWT secret, so an old token passed the signature check and
+        // failed the issuer check — and nothing cleared it. Every page load
+        // repeated the same refusal for ever, with no way out but clearing
+        // browser storage by hand.
+        //
+        // Cleared here rather than at each call site, because the call site
+        // that forgets is the one that traps somebody.
+        session.clear();
+        return null;
+      }
       const tokens = await response.json();
       session.set({ ...session.get(), accessToken: tokens.accessToken, refreshToken: tokens.refreshToken });
       return tokens.accessToken;
     } catch {
+      // A network failure is not a refusal. The session may be perfectly good
+      // and the browser simply offline, and clearing it here would sign a site
+      // operative out for driving through a tunnel.
       return null;
     } finally {
       // Cleared on the next tick so concurrent callers all read this result.

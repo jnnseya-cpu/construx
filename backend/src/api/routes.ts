@@ -21,6 +21,7 @@ import * as agents from '../agents/runtime.ts';
 import { fleetManifest } from '../agents/runtime.ts';
 import { AUTOMATABLE_COMMANDS, LADDER, envelopeRegister, grantEnvelope, revokeEnvelope } from '../agents/mandate.ts';
 import { egressPosition, flush as flushEgress } from '../ops/otlp.ts';
+import { centreCatalogue, commandCentre, type CentreFunctionId } from '../commandcentre/centre.ts';
 import type { ACUCaps } from '../billing/acu.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
 import { seatEconomics, TIERS, type SubscriptionTier } from '../billing/subscription.ts';
@@ -10879,6 +10880,30 @@ export const ROUTES: Route[] = [
     pattern: '/v1/agents',
     description: 'The agent fleet, each with the mandate it can never exceed',
     handler: () => ({ agents: fleetManifest() }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/command-centre/functions',
+    readOnly: true,
+    description: 'The seven command-centre functions and what each is for, so a client never hardcodes them',
+    handler: () => ({ functions: centreCatalogue() }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/command-centre',
+    readOnly: true,
+    description: 'The command centre for whoever is asking: what is happening, what changed, what is at risk, what next',
+    handler: (platform, ctx) => {
+      // No authorisation call here on purpose. Every function inside calls the
+      // ordinary domain read, which authorises exactly as it does for any other
+      // caller — a check at this level would be a second source of truth for
+      // who may see what, and the two would eventually disagree.
+      const only = (ctx.query.get('function') ?? '')
+        .split(',')
+        .map((id) => id.trim().toUpperCase())
+        .filter(Boolean) as CentreFunctionId[];
+      return commandCentre(projectContext(platform, ctx), { only });
+    },
   },
   {
     method: 'GET',

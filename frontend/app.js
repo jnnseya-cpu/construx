@@ -33,6 +33,11 @@ export const NAV = [
     group: 'Command',
     items: [
       { id: 'overview', label: 'Project Command Centre', area: 'PROJECT_SETUP', icon: 'grid' },
+      // Assembled per person from seven functions over four questions. Under
+      // PROJECT_SETUP read because that is the narrowest thing every seat
+      // holds; each function inside authorises itself against the area it
+      // actually reads, so the sidebar entry cannot widen anything.
+      { id: 'centre', label: 'Command Centre', area: 'PROJECT_SETUP', icon: 'grid' },
       { id: 'copilot', label: 'Copilot', area: 'PROJECT_SETUP', icon: 'chat' },
       { id: 'autopilot', label: 'Autopilot', area: 'AI_EXECUTION', icon: 'radar' },
       { id: 'enterprise', label: 'Enterprise & Portfolio', area: 'PROJECT_SETUP', icon: 'layers' },
@@ -541,7 +546,19 @@ async function draw() {
     return;
   }
 
-  await loadMatrix();
+  // Inside the guard, not before it. This used to sit above the try below, so a
+  // 401 here escaped `draw()` entirely: no sign-out, a stored session that was
+  // never cleared, and the same refusal on every load with no way out but
+  // clearing browser storage by hand. The refusal is now handled like any other.
+  try {
+    await loadMatrix();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      signOut();
+      return;
+    }
+    throw error;
+  }
 
   const view = PAGES[page] ?? PAGES.overview;
 

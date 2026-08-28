@@ -3,6 +3,7 @@ import { admin } from './admin.js';
 import { audit } from './audit.js';
 import { autopilot } from './autopilot.js';
 import { billing } from './billing.js';
+import { centre } from './centre.js';
 import { commands } from './commands.js';
 import { commercial } from './commercial.js';
 import { concept } from './concept.js';
@@ -28,6 +29,7 @@ import { signup } from './signup.js';
 /** Route id → view. Ids match the navigation model in app.js. */
 export const PAGES = {
   login,
+  centre,
   // Reached without a session, like login. The public site's pricing buttons
   // link straight here with the package in the query string.
   signup,
