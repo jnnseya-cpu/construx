@@ -1,4 +1,5 @@
 import { config } from './config.ts';
+import type { LifecyclePhase } from './lifecycle/phases.ts';
 import { hashEvidence } from './core/canonical.ts';
 import * as aidisposition from './domain/aidisposition.ts';
 import * as business from './domain/business.ts';
@@ -60,6 +61,14 @@ export const DEMO_TENANCY = {
 export type SeedResult = {
   tenantId: string;
   projectId: string;
+  /**
+   * The sibling projects parked at Tender and Construction.
+   *
+   * The flagship project is in Operations, where the lifecycle gates close
+   * procurement, estimating, measurement and field execution to every role.
+   * These two exist so those parts of the product are reachable at all.
+   */
+  workingProjects: { projectId: string; name: string; phase: string }[];
   enterpriseName: string;
   portfolioName: string;
   projectName: string;
@@ -2875,6 +2884,78 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
       `${position.gaps.length} gaps, ${position.notTracked.length} items the platform does not yet track`,
   );
 
+  // --- A second project, parked where the work actually happens --------------
+  //
+  // The project above is the whole record: concept to thirty-year operations,
+  // every stage gate passed. It proves what a finished Golden Thread looks
+  // like, and it cannot prove anything else — because **writes are gated by
+  // lifecycle phase**, and it sits in OPERATIONS.
+  //
+  // Measured in a browser across five roles, that meant Tender & Procurement
+  // offered 1 open input out of 32 to *everybody*, the enterprise administrator
+  // included; measurement and estimating were the same. Somebody evaluating the
+  // product opened the bidding screens, found thirty-one padlocked buttons and
+  // reasonably concluded there was nothing there. The enforcement was right and
+  // the demonstration was wrong: one project at the end of the lifecycle can
+  // show the record, but it cannot show the work.
+  //
+  // So a sibling on the same portfolio, stopped at TENDER — the phase that
+  // opens measurement, estimating, enquiries, comparison and award. It carries
+  // no seeded commercial history on purpose: the point of it is the empty
+  // register somebody can put the first record into, and a second finished
+  // project would only be more to read.
+  //
+  // It is walked forward through the real gates rather than set. The transition
+  // out of CONCEPT demands a scope package and the one out of DESIGN demands a
+  // maturity assessment, so both are created — and the first attempt at this
+  // was refused by `PHASE_GATE_FAILED`, which is the platform behaving exactly
+  // as it should against a seed trying to skip its own rules.
+  const tenderProject = structure.createProject(governanceCtx, {
+    portfolioId,
+    programmeId,
+    name: 'Calderdale Reservoir Renewal',
+    sectorType: 'UTILITIES',
+    assetType: 'Impounding reservoir',
+    location: { continentCode: 'EU', countryCode: 'GB', city: 'Halifax' },
+    contractValueMinor: 940_000_000,
+    currency: 'GBP',
+    plannedStart: '2027-01-11',
+    plannedCompletion: '2029-06-29',
+  });
+
+  const tenderPmCtx = contextFor(platform, authOf(platform, pm.id), tenderProject.projectId);
+  const tenderOwnerCtx = contextFor(platform, authOf(platform, owner.id), tenderProject.projectId);
+
+  const { packageId: renewalPackageId } = structure.createScopePackage(tenderPmCtx, {
+    name: 'Spillway and embankment works',
+    discipline: 'CIVILS',
+    scopeOfWorks:
+      'Reconstruction of the auxiliary spillway, embankment crest raising to current freeboard standards, and ' +
+      'replacement of the draw-off tower valve gallery, including all temporary works and reservoir drawdown.',
+    inclusions: ['Embankment earthworks', 'Reinforced concrete spillway', 'Valve gallery mechanical replacement'],
+    exclusions: ['Permanent instrumentation supply', 'Access road adoption'],
+    acceptanceCriteria: ['Reservoirs Act 1975 panel engineer sign-off', 'Compaction testing to specification', 'Drawdown test to design rate'],
+    estimatedValueMinor: 640_000_000,
+    designResponsibility: 'CONTRACTOR',
+  });
+  structure.transitionPhase(tenderOwnerCtx, { to: 'DESIGN', justification: 'Scope package defined and the brief accepted' });
+
+  structure.assessDesignMaturity(tenderPmCtx, {
+    packageId: renewalPackageId,
+    disciplineScores: [
+      { discipline: 'CIVILS', ribaStage: 4, completenessPercent: 82, frozen: true },
+      { discipline: 'MECHANICAL', ribaStage: 3, completenessPercent: 61, frozen: false },
+    ],
+    informationGaps: ['Draw-off tower condition survey outstanding', 'Freeboard study awaiting panel engineer comment'],
+    assessorNotes: 'Civils priceable; the valve gallery carries real definition risk and should be a provisional sum.',
+  });
+  structure.transitionPhase(tenderOwnerCtx, { to: 'TENDER', justification: 'Design matured to a priceable state for the civils package' });
+
+  step(
+    `Working project at TENDER: Calderdale Reservoir Renewal (${tenderProject.projectId}) — ` +
+      'measurement, estimating and procurement are writable here',
+  );
+
   const wallet = platform.wallet(tenant.id).snapshot();
   step(
     `AI spend for the whole lifecycle: ${(wallet.monthBilledMinor / 100).toFixed(2)} GBP billed on ` +
@@ -2884,6 +2965,7 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
   return {
     tenantId: tenant.id,
     projectId,
+    workingProjects: [{ projectId: tenderProject.projectId, name: 'Calderdale Reservoir Renewal', phase: 'TENDER' }],
     enterpriseName: DEMO_TENANCY.enterpriseName,
     portfolioName: DEMO_TENANCY.portfolioName,
     projectName: DEMO_TENANCY.projectName,

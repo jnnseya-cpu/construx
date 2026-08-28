@@ -27,6 +27,7 @@ const root = document.getElementById('root');
 export const state = {
   session: null,     // { accessToken, user, projectId, enterprise, portfolio }
   project: null,     // materialised project state
+  projects: [],      // every project this identity may open, for the picker
   gate: null,        // current phase gate evaluation
   wallet: null,      // ACU snapshot
 };
@@ -724,6 +725,42 @@ function walletPercent() {
   return Math.max(2, Math.min(100, Math.round((state.wallet.availableMinor / total) * 100)));
 }
 
+/**
+ * The project, and a way to change it.
+ *
+ * A native `<select>`, deliberately. It is the control every browser and every
+ * assistive technology already knows how to operate, it works on a phone
+ * without a custom sheet, and the alternative — a bespoke menu — would be a new
+ * component in a design system that has one for everything it actually needs.
+ *
+ * The phase is on each option because it is the fact that decides what can be
+ * done there: with the lifecycle gates in force, "Ashworth WTW — Operations"
+ * and "Ashworth WTW — Tender" are two different sets of available commands, and
+ * choosing between them blind is choosing blind.
+ *
+ * With one project it renders as plain text. A picker offering a single choice
+ * is a control that does nothing, and it invites the press that proves it.
+ */
+function projectPicker() {
+  const current = state.project?.name ?? (state.session?.projectId ? 'Loading…' : 'no project yet');
+  const projects = state.projects ?? [];
+  if (projects.length < 2) return html`<b>${current}</b>`;
+
+  return html`<select
+    class="project-pick"
+    id="project-pick"
+    aria-label="Project — changing this changes what you are looking at"
+  >
+    ${projects.map((project) => {
+      const id = project.id ?? project.projectId;
+      const phase = project.phase ? ` · ${humanise(project.phase)}` : '';
+      return html`<option value="${id}" ${raw(id === state.session?.projectId ? 'selected' : '')}>
+        ${project.name}${phase}
+      </option>`;
+    })}
+  </select>`;
+}
+
 function topbar() {
   const user = state.session?.user;
   return html`<header class="topbar">
@@ -734,7 +771,7 @@ function topbar() {
           : html`${state.session?.enterprise ?? 'Your enterprise'} <span style="opacity:.4">›</span>
               ${state.session?.portfolio ?? 'no portfolio yet'}
               <span style="opacity:.4">›</span>
-              <b>${state.project?.name ?? (state.session?.projectId ? 'Loading…' : 'no project yet')}</b>`
+              ${projectPicker()}`
       }
     </div>
     <div class="spacer"></div>
@@ -770,13 +807,48 @@ async function loadContext() {
     return;
   }
 
-  const [detail, wallet] = await Promise.all([
+  const [detail, wallet, listed] = await Promise.all([
     api.get(`/v1/projects/${projectId}`),
     api.get('/v1/billing/wallet').catch(() => null),
+    // What else this identity can open. Read here rather than at sign-in
+    // because a project created during the session should appear in the picker
+    // without signing out, and this already runs on every context load.
+    api.get('/v1/projects').catch(() => null),
   ]);
   state.project = detail.project;
   state.gate = detail.gate;
   state.wallet = wallet;
+  state.projects = listed?.projects ?? listed?.items ?? (Array.isArray(listed) ? listed : []);
+}
+
+/**
+ * Move to another project.
+ *
+ * The console had no way to do this at all. `projectId` was chosen once at
+ * sign-in — the first project the tenancy returned — and nothing could change
+ * it afterwards, so a customer with three jobs could reach exactly one of them
+ * and the other two were unreachable from the interface that listed them.
+ *
+ * It matters twice over. For a customer it is the plainest kind of missing
+ * capability. For anybody evaluating the product it was worse than that,
+ * because **writes are gated by lifecycle phase**: the demonstration project
+ * sits in Operations, so procurement, estimating and field execution are
+ * closed on it to every role, correctly, and with no way to reach a project at
+ * an earlier phase the product looked like a viewer with the buttons painted
+ * on.
+ *
+ * Everything derived from the project is dropped rather than left to be
+ * noticed: the materialised project, the phase gate and the wallet all belong
+ * to the one being left.
+ */
+export async function openProject(projectId) {
+  if (!projectId || projectId === state.session?.projectId) return;
+  session.set({ ...session.get(), projectId });
+  state.session = session.get();
+  state.project = null;
+  state.gate = null;
+  state.wallet = null;
+  await draw();
 }
 
 async function draw() {
@@ -868,6 +940,12 @@ async function draw() {
     );
     document.getElementById('user-chip')?.addEventListener('click', () => {
       if (confirm('Sign out and choose a different identity?')) signOut();
+    });
+    // Bound after the second render, which is the one that has the project list
+    // to build the picker from. The first render happens before `loadContext`
+    // and shows the skeleton.
+    document.getElementById('project-pick')?.addEventListener('change', (event) => {
+      void openProject(event.target.value);
     });
 
     const navEntry = navigation().flatMap((group) => group.items).find((item) => item.id === page);

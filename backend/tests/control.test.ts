@@ -239,6 +239,14 @@ describe('The standard against a real project', () => {
     const admin = platform.context(seed.users.admin!.auth, `${seed.tenantId}-governance`, { source: 'WEB' });
     const portfolios = platform.ledger.listByTenant(seed.tenantId, 'Portfolio');
 
+    // How many the tenancy already has, rather than a number written down here.
+    // This assertion used to pin the total at three — the seeded project plus
+    // the two below — and it broke the moment the seed grew a second project,
+    // which it did for a good reason. What the test is actually about is that
+    // the estate view sees *every* project and finds what is common across
+    // them, and that is expressed as a delta.
+    const before = control.estateControl(admin).projects.length;
+
     const { projectId } = structure.createProject(admin, {
       portfolioId: String(portfolios[0]!.state.id),
       name: 'Kielder spillway strengthening',
@@ -309,7 +317,7 @@ describe('The standard against a real project', () => {
     const estate = control.estateControl(admin);
 
     assert.equal(estate.standardItems, CONTROL_ITEMS.length);
-    assert.equal(estate.projects.length, 3);
+    assert.equal(estate.projects.length, before + 2);
     // Worst first, so the view opens on the project that needs attention.
     assert.ok((estate.projects[0]!.completenessPercent ?? 101) <= (estate.projects[1]!.completenessPercent ?? 101));
 
@@ -324,14 +332,23 @@ describe('The standard against a real project', () => {
     assert.ok(estate.systemicGaps.length > 0, 'nothing was found across both projects');
     for (const gap of estate.systemicGaps) {
       assert.ok(gap.missingOn > 1, 'a gap on one project is not systemic');
-      assert.equal(gap.ofProjects, 3);
+      assert.equal(gap.ofProjects, before + 2);
       assert.ok(controlItem(gap.id), `${gap.id} is not a control item`);
     }
+    // The claim is that the gap is shared, not that exactly two projects have
+    // it. Pinning the literal made this assertion a statement about how many
+    // projects the seed happens to build, which is not what it is testing and
+    // is why it broke when the seed grew one.
+    const specificationGap = estate.systemicGaps.find((g) => g.id === 'PRE.SPECIFICATIONS');
+    assert.ok(specificationGap, 'no specification gap was found across the estate');
     assert.ok(
-      estate.systemicGaps.some((g) => g.id === 'PRE.SPECIFICATIONS' && g.missingOn === 2),
-      'neither new project has a specification, and the seeded one now does',
+      specificationGap.missingOn >= 2,
+      `a specification gap on ${specificationGap.missingOn} project(s) is not a shared one`,
     );
-    assert.ok(estate.observations.some((o) => o.includes('missing on 2 of 3 projects')));
+    assert.ok(
+      estate.observations.some((o) => o.includes(`missing on ${specificationGap.missingOn} of ${before + 2} projects`)),
+      'the observation does not report the gap it found',
+    );
   });
 });
 
