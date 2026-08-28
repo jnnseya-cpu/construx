@@ -11,7 +11,18 @@ import { CONTINENT, SECTOR_GROUPED, sectorLabel, today } from '../lib/enums.js';
  * workspaces only appear once a specific project is selected — mixing the two
  * is what produces an enterprise dashboard full of things nobody at enterprise
  * level can act on.
+ *
+ * **Where you operate** leads the page, because this is a worldwide platform
+ * and the estate had no view of that at all. The region was a column on the
+ * portfolio table showing the city and the country code, which is an address
+ * rather than a region: an estate of forty portfolios could not be read as
+ * "we are in four regions and two of them are one project deep". It is the
+ * first question anybody running a multi-country business asks and it was the
+ * one thing the enterprise screen could not answer.
  */
+
+/** The region's name, from the shared vocabulary rather than a second list. */
+const regionLabel = (code) => CONTINENT.find((option) => option.value === code)?.label ?? code ?? 'Not stated';
 
 export async function enterprise(root) {
   await draw();
@@ -43,6 +54,18 @@ export async function enterprise(root) {
   const from = (n) => `from ${n} of ${estate.projects} project${estate.projects === 1 ? '' : 's'}`;
 
   const STATUS_TONE = { GREEN: 'ok', AMBER: 'warn', RED: 'bad', ON_TRACK: 'ok', AT_RISK: 'warn', BEHIND: 'bad' };
+
+  // The API's answer, not a second one assembled here.
+  //
+  // This was computed in the browser from `/v1/portfolios` joined to the estate
+  // rows — and it did not work, because a project row carried no portfolio to
+  // join on, so every project landed under "Not stated" while the regions that
+  // actually held them read zero. The rollup is a rule about the estate rather
+  // than a way of drawing it, and the console holds no rule the API has not
+  // published. `enterpriseCommand` computes it now, from the portfolio each
+  // project is filed under rather than from the project's own location, because
+  // that is the direction the hierarchy runs.
+  const regions = position.byRegion ?? [];
 
   render(
     root,
@@ -152,6 +175,40 @@ export async function enterprise(root) {
       }
 
       <div class="card pad0" style="margin-bottom:14px">
+        <h2 style="padding:15px 17px 0">
+          Where you operate
+          ${badge(`${regions.length} region${regions.length === 1 ? '' : 's'}`, regions.length > 1 ? 'ok' : 'neutral')}
+        </h2>
+        <div class="metric-sub" style="padding:0 17px 10px">
+          A portfolio names the region it operates in, and every project is held to its portfolio's region — so a
+          European portfolio refuses a Kenyan project rather than filing it and producing a European rollup that is
+          quietly wrong. A portfolio with no country is regional on purpose and takes any country inside its region.
+        </div>
+        ${table({
+          headers: ['Region', 'Countries', 'Portfolios', 'Projects', 'Contract value'],
+          align: ['', '', 'num', 'num', 'num'],
+          rows: regions.map((r) => [
+            html`<b>${regionLabel(r.continentCode)}</b>${
+              r.continentCode
+                ? html`<div class="metric-sub mono" style="font-size:10.5px">${r.continentCode}</div>`
+                : html`<div class="metric-sub">recorded before a region was required</div>`
+            }`,
+            r.countryCodes.length > 0
+              ? r.countryCodes.join(', ')
+              : html`<span class="metric-sub">no country recorded yet</span>`,
+            r.portfolios,
+            r.projects,
+            r.contractValueMinor > 0
+              ? r.currency
+                ? money(r.contractValueMinor, r.currency)
+                : html`<span class="metric-sub">mixed currencies</span>`
+              : '—',
+          ]),
+          empty: 'No portfolios yet. The first one names the region it operates in.',
+        })}
+      </div>
+
+      <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Portfolios</h2>
         ${table({
           headers: ['Portfolio', 'Governance', 'Region', 'Budget target', 'Cadence', 'Risk appetite'],
@@ -159,7 +216,9 @@ export async function enterprise(root) {
           rows: portfolios.portfolios.map((p) => [
             p.name,
             p.governanceModel,
-            `${p.city ?? ''}${p.countryCode ? `, ${p.countryCode}` : ''}`,
+            html`<b>${regionLabel(p.continentCode)}</b><div class="metric-sub">${
+              p.countryCode ? `${p.city ? `${p.city}, ` : ''}${p.countryCode} only` : `${p.city ?? 'multi-country'}`
+            }</div>`,
             p.targets?.budgetMinor ? money(p.targets.budgetMinor) : '—',
             humanise(p.reportingCadence ?? ''),
             p.riskAppetite ? `${p.riskAppetite.costTolerancePercent}% cost · ${p.riskAppetite.scheduleToleranceDays}d schedule` : '—',

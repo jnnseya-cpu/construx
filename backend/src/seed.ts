@@ -2956,6 +2956,54 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
       'measurement, estimating and procurement are writable here',
   );
 
+  // --- A second region -------------------------------------------------------
+  //
+  // CONSTRUX is a worldwide platform and the demonstration estate was one
+  // portfolio in one country, which makes every regional view a view of a
+  // single row. A portfolio now has to name the region it operates in, and the
+  // interesting thing about that model is not that the field exists — it is
+  // what it refuses. This portfolio is regional rather than national: no
+  // `countryCode`, because East Africa spans several jurisdictions and a
+  // portfolio scoped to one country is a promise that contract law, tax and the
+  // working calendar are common to everything inside it.
+  //
+  // `createProject` holds a project to its portfolio's region, so filing the
+  // Nairobi project under the European portfolio is now refused rather than
+  // silently producing a European rollup with a Kenyan job inside it.
+  const { portfolioId: eastAfricaPortfolioId } = structure.createPortfolio(governanceCtx, {
+    name: 'East Africa Water Security',
+    enterpriseId: tenant.enterpriseId as string,
+    governanceModel: 'Multilateral-funded, quarterly gate review with in-country oversight',
+    continentCode: 'AF',
+    city: 'Nairobi',
+    targets: { budgetMinor: 2_400_000_000 },
+    riskAppetite: { costTolerancePercent: 7, scheduleToleranceDays: 45 },
+    reportingCadence: 'MONTHLY',
+  });
+
+  const { programmeId: eastAfricaProgrammeId } = structure.createProgramme(governanceCtx, {
+    portfolioId: eastAfricaPortfolioId,
+    name: 'Nairobi Bulk Water Resilience',
+    objective: 'Secure dry-season supply for 4.2 million people across the Nairobi metropolitan area',
+  });
+
+  const nairobiProject = structure.createProject(governanceCtx, {
+    portfolioId: eastAfricaPortfolioId,
+    programmeId: eastAfricaProgrammeId,
+    name: 'Northern Collector Tunnel — Phase 3',
+    sectorType: 'UTILITIES',
+    assetType: 'Raw water transfer tunnel',
+    location: { continentCode: 'AF', countryCode: 'KE', city: 'Nairobi' },
+    contractValueMinor: 1_260_000_000,
+    currency: 'GBP',
+    plannedStart: '2027-05-04',
+    plannedCompletion: '2030-11-29',
+  });
+  step(
+    `Second region: East Africa Water Security (AF) → Northern Collector Tunnel — Phase 3 ` +
+      `(${nairobiProject.projectId}), at CONCEPT`,
+  );
+
   const wallet = platform.wallet(tenant.id).snapshot();
   step(
     `AI spend for the whole lifecycle: ${(wallet.monthBilledMinor / 100).toFixed(2)} GBP billed on ` +
@@ -2965,7 +3013,10 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
   return {
     tenantId: tenant.id,
     projectId,
-    workingProjects: [{ projectId: tenderProject.projectId, name: 'Calderdale Reservoir Renewal', phase: 'TENDER' }],
+    workingProjects: [
+      { projectId: tenderProject.projectId, name: 'Calderdale Reservoir Renewal', phase: 'TENDER' },
+      { projectId: nairobiProject.projectId, name: 'Northern Collector Tunnel — Phase 3', phase: 'CONCEPT' },
+    ],
     enterpriseName: DEMO_TENANCY.enterpriseName,
     portfolioName: DEMO_TENANCY.portfolioName,
     projectName: DEMO_TENANCY.projectName,

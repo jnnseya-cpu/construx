@@ -9160,3 +9160,68 @@ them works; an address that is not a demonstration identity is refused on the
 form with the URL cleaned; a booking confirms with its reference on the page; the
 same slot booked twice is refused, and so is a blank name — each as a sentence on
 the form rather than as JSON.
+
+---
+
+## Worldwide, multi-project: the hierarchy that makes it true
+
+### Portfolios were attached to nowhere
+
+CONSTRUX is a worldwide platform and `continentCode` on a portfolio was
+**optional**. So a portfolio could exist attached to no region at all, and every
+view that groups an estate by region had to cope with a blank. A field that is
+usually empty is not a region model; it is a column, and nothing can aggregate
+on it.
+
+It is now required, from the shared `CONTINENT` vocabulary — the same six
+regions the route schema validates against and the picker offers. `countryCode`
+stays optional, and the distinction is the load-bearing part: **a portfolio
+scoped to one country is a promise that contract law, tax and the working
+calendar are common to everything inside it.** One with no country is regional
+on purpose and takes any country in its region.
+
+### A project's location was never checked against its portfolio's
+
+The hierarchy is Enterprise → Portfolio → Programme → Project and the portfolio
+is the level that carries the geography, so a project's location is a claim
+about where in the portfolio's world it is. Nothing enforced it. A portfolio for
+Europe would accept a project in Kenya without a word, and every regional rollup
+after that — cost by region, risk by region, which jurisdiction's contract law
+applies — is wrong in the way that is hardest to find: each record is
+individually correct and only the relationship between them is false.
+
+`createProject` now refuses `PROJECT_OUTSIDE_PORTFOLIO_REGION` and
+`PROJECT_OUTSIDE_PORTFOLIO_COUNTRY`, both naming the two places involved so the
+refusal can be acted on. A portfolio recorded before the region was required
+carries none, and is not rewritten: the ledger is append-only and a project
+creation is the wrong event to correct a portfolio with.
+
+`geography.test.ts` pins all of it, including the two cases that matter most —
+that a regional portfolio accepts Kenya *and* Tanzania, and that a national one
+refuses the second.
+
+### "Where you operate"
+
+The enterprise screen had a Region column showing the city and the country code,
+which is an address rather than a region: an estate of forty portfolios could
+not be read as "we are in four regions and two of them are one project deep".
+
+`enterpriseCommand` now returns `byRegion` — portfolios, projects, countries and
+committed value per region, largest commitment first. **A project's region comes
+from its portfolio, not from its own location**, because that is the direction
+the hierarchy runs and the project's own location is the derived value.
+
+It was first written in the browser, joining `/v1/portfolios` to the estate
+rows, and it did not work: a project row carried no portfolio to join on, so
+every project landed under "Not stated" while the regions that held them read
+zero. Found by looking at the rendered table rather than by any test. The
+rollup is a rule about the estate rather than a way of drawing it, so it moved
+to the server, where the console's standing rule puts it.
+
+### The demonstration estate spans two regions
+
+One portfolio in one country makes every regional view a view of a single row.
+The seed now also builds **East Africa Water Security** (AF, no country — it is
+regional on purpose) with the Northern Collector Tunnel at Concept, beside the
+European portfolio's two projects. Europe: 1 portfolio, 2 projects, £27.90M.
+Africa: 1 portfolio, 1 project, £12.60M. Verified in a browser.

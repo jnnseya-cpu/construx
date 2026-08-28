@@ -3675,13 +3675,19 @@ export const ROUTES: Route[] = [
     description: 'Create a portfolio',
     schema: {
       type: 'object',
-      required: ['name', 'enterpriseId', 'governanceModel'],
+      // The region is required. This is a multi-country platform and a portfolio
+      // attached to nowhere cannot be rolled up, compared, or held to one
+      // jurisdiction's contract law — and `createProject` now holds every
+      // project to the region of the portfolio it is filed under, which needs a
+      // region to hold it to. The country stays optional: a portfolio scoped to
+      // one is a single-jurisdiction portfolio, and one without is regional.
+      required: ['name', 'enterpriseId', 'governanceModel', 'continentCode'],
       properties: {
         name: stringField,
         enterpriseId: stringField,
         governanceModel: stringField,
         continentCode: { type: 'string', enum: values(CONTINENT) },
-        countryCode: { type: 'string', minLength: 2, maxLength: 2 },
+        countryCode: { type: 'string', minLength: 2, maxLength: 2, pattern: '^[A-Z]{2}$' },
         city: { type: 'string' },
         targets: { type: 'object' },
         riskAppetite: { type: 'object' },

@@ -39,13 +39,46 @@ export type SectorType =
   | 'RMI'
   | 'PROFESSIONAL';
 
+/**
+ * The six regions a portfolio can sit in, from the shared vocabulary.
+ *
+ * Declared as a union here for the same reason `SectorType` is — the engines
+ * switch on it and it is a domain type — while the values stay the shared
+ * list's, which `vocabulary.test.ts` holds the two to.
+ */
+export type ContinentCode = 'EU' | 'AM' | 'AF' | 'AS' | 'OC' | 'AN';
+
+const CONTINENT_CODES = new Set<string>(['EU', 'AM', 'AF', 'AS', 'OC', 'AN']);
+
+/** ISO 3166-1 alpha-2, checked by shape. A list of every country is not ours to hold. */
+const COUNTRY_CODE = /^[A-Z]{2}$/;
+
+/**
+ * A portfolio must say where in the world it is.
+ *
+ * This is a multi-country platform and the region was **optional** — so a
+ * portfolio could exist attached to nowhere, and every estate view that groups
+ * by region had to cope with a blank. A field that is usually empty is not a
+ * region model; it is a column, and no view can aggregate on it.
+ *
+ * Two levels, because both are real. `continentCode` is the commercial region a
+ * business decides to operate in and is always required. `countryCode` is
+ * optional and narrows the portfolio to one jurisdiction — which matters,
+ * because a portfolio scoped to a country is one where contract law, tax and
+ * the working calendar are the same for everything inside it, and a regional
+ * portfolio spanning several is one where they are not.
+ *
+ * Below, `createProject` holds a project to the portfolio it is filed under:
+ * that is the link the hierarchy is for, and without the check it was a foreign
+ * key nobody enforced.
+ */
 export function createPortfolio(
   ctx: EngineContext,
   input: {
     name: string;
     enterpriseId: string;
     governanceModel: string;
-    continentCode?: string;
+    continentCode: ContinentCode;
     countryCode?: string;
     city?: string;
     targets?: { budgetMinor?: number; targetCompletionDate?: string; kpis?: Record<string, number> };
@@ -55,6 +88,24 @@ export function createPortfolio(
   },
 ): { portfolioId: string } {
   authorise(ctx, 'ENTERPRISE_STRUCTURE', 'C');
+
+  if (!CONTINENT_CODES.has(input.continentCode)) {
+    throw new DomainError(
+      'PORTFOLIO_REGION_REQUIRED',
+      `A portfolio must name the region it operates in. "${input.continentCode}" is not one of ` +
+        `${[...CONTINENT_CODES].join(', ')}.`,
+      422,
+      [{ field: 'continentCode', message: 'Choose the region this portfolio operates in' }],
+    );
+  }
+  if (input.countryCode !== undefined && !COUNTRY_CODE.test(input.countryCode)) {
+    throw new DomainError(
+      'COUNTRY_CODE_INVALID',
+      `"${input.countryCode}" is not an ISO 3166-1 alpha-2 country code. Use two capital letters, such as GB or KE.`,
+      422,
+      [{ field: 'countryCode', message: 'Two capital letters, or leave it blank for a multi-country portfolio' }],
+    );
+  }
 
   const portfolioId = ulid();
   write(ctx, {
@@ -163,7 +214,47 @@ export function createProject(
   // forecast all divide by it. Nothing checked, so nothing stopped it.
   assertOrder(input.plannedStart, input.plannedCompletion, 'plannedStart', 'plannedCompletion');
 
-  ctx.ledger.require({ refType: 'Portfolio', refId: input.portfolioId });
+  const portfolio = ctx.ledger.require({ refType: 'Portfolio', refId: input.portfolioId });
+
+  // The project has to sit inside the portfolio it is filed under.
+  //
+  // The hierarchy is Enterprise → Portfolio → Programme → Project, and the
+  // portfolio is what carries the geography, so a project's location is a claim
+  // about where in the portfolio's world it is. Nothing enforced it: a
+  // portfolio for Europe would accept a project in Kenya, and every regional
+  // rollup — cost by region, risk by region, which jurisdiction's contract law
+  // applies — would then be quietly wrong in a way no screen could show.
+  //
+  // A portfolio with no region recorded is one created before the region was
+  // required. It is not rewritten here: the ledger is append-only and a project
+  // creation is the wrong event to correct a portfolio with.
+  const portfolioRegion = portfolio.state.continentCode as string | undefined;
+  const portfolioCountry = portfolio.state.countryCode as string | undefined;
+
+  if (portfolioRegion && input.location.continentCode !== portfolioRegion) {
+    throw new DomainError(
+      'PROJECT_OUTSIDE_PORTFOLIO_REGION',
+      `This portfolio operates in ${portfolioRegion} and the project is in ${input.location.continentCode}. ` +
+        'File it under a portfolio for that region, or create one.',
+      422,
+      [{ field: 'location.continentCode', message: `This portfolio covers ${portfolioRegion}` }],
+    );
+  }
+
+  // A portfolio narrowed to one country is narrowed for a reason — contract
+  // law, tax and the working calendar are the same throughout it, and a second
+  // country inside it makes all three untrue at once. A portfolio with no
+  // country is regional on purpose and accepts any country in its region.
+  if (portfolioCountry && input.location.countryCode !== portfolioCountry) {
+    throw new DomainError(
+      'PROJECT_OUTSIDE_PORTFOLIO_COUNTRY',
+      `This portfolio is scoped to ${portfolioCountry} and the project is in ${input.location.countryCode}. ` +
+        'A portfolio scoped to one country is where contract law, tax and the calendar are common to everything ' +
+        'in it — put this under a regional portfolio instead.',
+      422,
+      [{ field: 'location.countryCode', message: `This portfolio covers ${portfolioCountry} only` }],
+    );
+  }
 
   const projectId = input.projectId ?? ulid();
   write(ctx, {

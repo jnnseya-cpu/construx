@@ -44,6 +44,30 @@ export type ProjectRow = {
   /** 0–100. Higher is worse. Absent where the register is empty. */
   riskScore?: number;
   openIssues: number;
+  /**
+   * The portfolio this project is filed under, and where in the world it is.
+   *
+   * Carried because CONSTRUX is a worldwide platform and the estate could not
+   * be grouped by region without them: the row had a name, a phase and a value,
+   * and nothing that said which part of the business it belonged to. Every
+   * regional view had to be assembled in the browser from a second request and
+   * a join the row could not support.
+   */
+  portfolioId: string;
+  location?: { continentCode?: string; countryCode?: string; city?: string };
+};
+
+/** One region of the estate, with what is committed in it. */
+export type RegionRow = {
+  /** From the shared `CONTINENT` vocabulary, or null for a portfolio predating the requirement. */
+  continentCode: string | null;
+  /** Every country with a project or a portfolio in this region, sorted. */
+  countryCodes: string[];
+  portfolios: number;
+  projects: number;
+  contractValueMinor: number;
+  /** Null where the region holds more than one currency, for the usual reason. */
+  currency: string | null;
 };
 
 export type EnterpriseCommand = {
@@ -72,6 +96,8 @@ export type EnterpriseCommand = {
     behind: number;
     worstDelayDays: number;
   };
+  /** The estate by region. See `regionRows`. */
+  byRegion: RegionRow[];
   risks: Array<{
     projectId: string;
     projectName: string;
@@ -400,6 +426,8 @@ export function enterpriseCommand(ctx: EngineContext): EnterpriseCommand {
       contractValueMinor: Number(state.contractValueMinor ?? 0),
       currency: String(state.currency ?? 'GBP'),
       openIssues: 0,
+      portfolioId: String(state.portfolioId ?? ''),
+      location: state.location as ProjectRow['location'],
     };
 
     // --- Commercial ---------------------------------------------------------
@@ -501,6 +529,79 @@ export function enterpriseCommand(ctx: EngineContext): EnterpriseCommand {
     },
     risks: risks.slice(0, 5),
     projects: rows,
+    // Computed here rather than in the browser. The console holds no rule the
+    // API has not published, and "which regions do we operate in, and how much
+    // is committed in each" is a rule about the estate rather than a way of
+    // drawing it.
+    byRegion: regionRows(ctx, rows),
     withheld,
   };
+}
+
+/**
+ * The estate by region.
+ *
+ * A project's region comes from **its portfolio**, not from its own location.
+ * That is the direction the hierarchy runs — a portfolio is what a business
+ * opens in a region, and `createProject` refuses a project outside its
+ * portfolio's region — so taking it from the project would be reading the
+ * derived value instead of the governing one. The project's own location is the
+ * fallback for a portfolio recorded before the region was required.
+ *
+ * A portfolio with no region at all is grouped under `null` rather than dropped
+ * or guessed at. The ledger is append-only, so that is a fact about the record,
+ * and a view that hid it would hide the thing somebody has to go and correct.
+ */
+function regionRows(ctx: EngineContext, rows: ProjectRow[]): RegionRow[] {
+  const portfolios = ctx.ledger.listByTenant(ctx.tenantId, 'Portfolio');
+  const regionOf = new Map<string, string | null>();
+  const byRegion = new Map<string | null, RegionRow & { currencies: Set<string> }>();
+
+  const region = (code: string | null): RegionRow & { currencies: Set<string> } => {
+    if (!byRegion.has(code)) {
+      byRegion.set(code, {
+        continentCode: code,
+        countryCodes: [],
+        portfolios: 0,
+        projects: 0,
+        contractValueMinor: 0,
+        currency: null,
+        currencies: new Set<string>(),
+      });
+    }
+    return byRegion.get(code)!;
+  };
+
+  const countries = new Map<string | null, Set<string>>();
+  const addCountry = (code: string | null, country?: string): void => {
+    if (!country) return;
+    if (!countries.has(code)) countries.set(code, new Set());
+    countries.get(code)!.add(country);
+  };
+
+  for (const record of portfolios) {
+    const code = (record.state.continentCode as string | undefined) ?? null;
+    regionOf.set(String(record.state.id ?? record.refId), code);
+    region(code).portfolios += 1;
+    addCountry(code, record.state.countryCode as string | undefined);
+  }
+
+  for (const row of rows) {
+    const code = regionOf.get(row.portfolioId) ?? row.location?.continentCode ?? null;
+    const entry = region(code);
+    entry.projects += 1;
+    entry.contractValueMinor += row.contractValueMinor;
+    entry.currencies.add(row.currency);
+    addCountry(code, row.location?.countryCode);
+  }
+
+  return [...byRegion.values()]
+    .map(({ currencies, ...entry }) => ({
+      ...entry,
+      countryCodes: [...(countries.get(entry.continentCode) ?? [])].sort(),
+      currency: currencies.size === 1 ? [...currencies][0]! : null,
+    }))
+    // Largest commitment first: the region with the most money in it is the one
+    // whose problems cost the most, which is the order an estate is read in.
+    .sort((a, b) => b.contractValueMinor - a.contractValueMinor);
 }
