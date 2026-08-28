@@ -97,7 +97,7 @@ export async function ingestFile(
       404,
     );
   }
-  if (!store.has(ctx.tenantId, input.hash)) {
+  if (!(await store.holds(ctx.tenantId, input.hash))) {
     throw new DomainError(
       'BYTES_NOT_HELD',
       'The platform holds the hash and not the file. There is nothing to inspect — the original is with whoever ' +
@@ -117,7 +117,7 @@ export async function ingestFile(
     );
   }
 
-  const { bytes, contentType } = store.get(ctx.tenantId, input.hash);
+  const { bytes, contentType } = await store.fetch(ctx.tenantId, input.hash);
 
   // Stage 1. Before anything else looks at the file, including this pipeline.
   const inspection = inspect({ bytes, declaredType: contentType, filename: input.filename });
@@ -328,10 +328,20 @@ export async function ingestionPosition(ctx: EngineContext, store: EvidenceStore
 
   const files = filesOf(ctx);
   const ingested = new Set(files.map((file) => file.hash));
-  const held = ctx.ledger
+
+  // Evidence the platform holds the *bytes* for, not evidence it holds a hash
+  // for. The distinction is the whole point of this figure: a hash with no file
+  // behind it has never been read and never can be.
+  //
+  // Asked of the store one hash at a time, in parallel, because with an object
+  // store each answer is a round trip. Bounded by the number of evidence items
+  // on one project, which is the same set that was walked synchronously before.
+  const recorded = ctx.ledger
     .list(ctx.projectId, 'EvidenceItem')
     .map((record) => String((record.state as { hash?: string }).hash ?? ''))
-    .filter((hash) => hash !== '' && store.has(ctx.tenantId, hash));
+    .filter((hash) => hash !== '');
+  const presence = await Promise.all(recorded.map((hash) => store.holds(ctx.tenantId, hash)));
+  const held = recorded.filter((_hash, index) => presence[index]);
 
   const byKind: Record<string, number> = {};
   for (const file of files) {

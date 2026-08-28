@@ -233,9 +233,9 @@ process.stdout.write(
     }`,
     `  Ledger       ${durability}`,
     `  Evidence     ${
-      config.evidence.storePath === ''
-        ? 'hashes only — no store configured, so the platform holds no files'
-        : `${config.evidence.storePath} — up to ${Math.round(config.evidence.maxBytes / 1_048_576)}MB per object`
+      platform.evidence.configured
+        ? `${platform.evidence.backend} — up to ${Math.round(config.evidence.maxBytes / 1_048_576)}MB per object`
+        : 'hashes only — no store configured, so the platform holds no files'
     }`,
     `  Signing      ${
       config.signing.privateKeyPem === ''

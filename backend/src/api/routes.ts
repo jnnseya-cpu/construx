@@ -13212,11 +13212,11 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/evidence',
     readOnly: true,
     description: 'Evidence register for a project, and which files the platform actually holds',
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
       const engineCtx = projectContext(platform, ctx);
       authorise(engineCtx, 'EVIDENCE_AUDIT', 'R');
 
-      const entries = evidence.projectRegister(
+      const entries = await evidence.projectRegister(
         platform.ledger,
         platform.evidence,
         engineCtx.tenantId,
@@ -13301,7 +13301,7 @@ export const ROUTES: Route[] = [
     pattern: '/v1/evidence/retention',
     readOnly: true,
     description: 'What the object store holds, what no record names, and the policy on removing any of it',
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
       const actor = auth(ctx);
       if (actor.roles.includes('PLATFORM_ADMIN')) {
         throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
@@ -13313,7 +13313,7 @@ export const ROUTES: Route[] = [
         'EVIDENCE_AUDIT',
         'I',
       );
-      return evidence.retentionPosition(platform.ledger, platform.evidence, actor.tenantId);
+      return await evidence.retentionPosition(platform.ledger, platform.evidence, actor.tenantId);
     },
   },
   {

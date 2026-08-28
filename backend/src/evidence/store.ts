@@ -3,6 +3,21 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { dirname, join } from 'node:path';
 import { DomainError } from '../core/errors.ts';
 import { config } from '../config.ts';
+import { S3Client } from '../store/s3.ts';
+
+/**
+ * The object store this deployment is configured for, built once.
+ *
+ * A module-level singleton rather than a field built per `EvidenceStore`,
+ * because every store in a process addresses the same bucket and building a
+ * client per instance would mean a test constructing three stores opened three
+ * clients to the same place.
+ */
+let shared: S3Client | undefined;
+function defaultS3(): S3Client {
+  shared ??= new S3Client(config.objectStore);
+  return shared;
+}
 
 /**
  * The object store for field evidence.
@@ -78,6 +93,21 @@ export function hashBytes(bytes: Buffer): string {
  */
 export class EvidenceStore {
   readonly #root: string;
+  /**
+   * An S3-compatible store, where one is configured.
+   *
+   * The volume is correct for a single instance and it is precisely why the
+   * application tier cannot be replicated: two containers on separate volumes
+   * each hold half the evidence, and a request routed to the wrong one answers
+   * "the platform holds the hash of this evidence but not the file" about a file
+   * the platform certainly holds.
+   *
+   * When this is set, the object store is the only store — not a cache in front
+   * of the volume. A write-through cache would mean two places a file might be
+   * and two answers to "is it held", and the whole point of a content-addressed
+   * evidence store is that there is one answer.
+   */
+  readonly #objects: S3Client | undefined;
   readonly #maxBytes: number;
   readonly #linkTtlSeconds: number;
   readonly #secret: string;
@@ -86,9 +116,10 @@ export class EvidenceStore {
 
   constructor(
     root: string = config.evidence.storePath,
-    options: { maxBytes?: number; linkTtlSeconds?: number; secret?: string } = {},
+    options: { maxBytes?: number; linkTtlSeconds?: number; secret?: string; objects?: S3Client } = {},
   ) {
     this.#root = root;
+    this.#objects = options.objects ?? (defaultS3().configured ? defaultS3() : undefined);
     this.#maxBytes = options.maxBytes ?? config.evidence.maxBytes;
     this.#linkTtlSeconds = options.linkTtlSeconds ?? config.evidence.linkTtlSeconds;
     // The gateway's own secret rather than a second one: another secret is
@@ -97,9 +128,118 @@ export class EvidenceStore {
     this.#secret = options.secret ?? config.auth.jwtSecret;
   }
 
-  /** Whether a store is configured at all. Empty root means hashes without files. */
+  /** Whether a store is configured at all. Neither means hashes without files. */
   get configured(): boolean {
-    return this.#root !== '';
+    return this.#root !== '' || this.#remote !== undefined;
+  }
+
+  /** The object store, where one is in use. Named so callers can say where they looked. */
+  get #remote(): S3Client | undefined {
+    return this.#objects?.configured ? this.#objects : undefined;
+  }
+
+  /** Where this deployment keeps evidence, in words, with no credential in it. */
+  get backend(): string {
+    if (this.#remote) return this.#remote.address;
+    return this.#root === '' ? 'none — hashes only' : this.#root;
+  }
+
+  /**
+   * The object key for a tenancy's file.
+   *
+   * The same fan-out as the filesystem path, for the same reason and one more:
+   * S3 partitions by key prefix, so a million objects under one flat prefix is
+   * a hot partition as well as an unreadable listing.
+   */
+  #keyFor(tenantId: string, hash: string): string {
+    if (!HASH.test(hash)) throw new DomainError('EVIDENCE_HASH_INVALID', 'Not a sha256 content hash');
+    if (!/^[0-9A-Za-z_-]{1,64}$/.test(tenantId)) {
+      throw new DomainError('EVIDENCE_TENANT_INVALID', 'Not a tenant identifier');
+    }
+    const digest = hash.slice('sha256:'.length);
+    return `${tenantId}/${digest.slice(0, 2)}/${digest.slice(2, 4)}/${digest}`;
+  }
+
+  /**
+   * Is this file held, asked of whichever store is in use.
+   *
+   * Async because an object store is over a network and there is no honest
+   * synchronous answer to a question that requires a round trip. Every caller
+   * that decides whether a file can be read uses this one.
+   *
+   * An unreachable object store **throws** rather than answering false. "Not
+   * held" and "cannot tell" are different facts, and conflating them is how an
+   * evidence register reports files as missing during an outage and somebody
+   * re-uploads what was already there.
+   */
+  async holds(tenantId: string, hash: string): Promise<boolean> {
+    const remote = this.#remote;
+    if (!remote) return this.has(tenantId, hash);
+    if (!HASH.test(hash)) return false;
+    return remote.has(this.#keyFor(tenantId, hash));
+  }
+
+  /** Read the bytes, from whichever store is in use, re-verifying the hash. */
+  async fetch(tenantId: string, hash: string): Promise<{ bytes: Buffer; contentType: string }> {
+    const remote = this.#remote;
+    if (!remote) return this.get(tenantId, hash);
+
+    const held = await remote.get(this.#keyFor(tenantId, hash));
+    if (!held) {
+      throw new DomainError('EVIDENCE_NOT_STORED', 'The platform holds no bytes for this evidence', 404);
+    }
+    // Re-verified on read exactly as the filesystem path does. An object store
+    // is more reliable than a volume and it is still somewhere else's disk, and
+    // the whole point of the record is that it can be trusted years later.
+    if (hashBytes(held.bytes) !== hash) {
+      throw new DomainError('EVIDENCE_CORRUPT', 'The stored bytes no longer match their hash', 500);
+    }
+    return held;
+  }
+
+  /** Store the bytes in whichever store is in use. */
+  async store(tenantId: string, claimedHash: string, bytes: Buffer, contentType: string): Promise<StoredObject> {
+    const remote = this.#remote;
+    if (!remote) return this.put(tenantId, claimedHash, bytes, contentType);
+
+    if (bytes.length === 0) throw new DomainError('EVIDENCE_EMPTY', 'An empty file is not evidence');
+    if (bytes.length > this.#maxBytes) {
+      throw new DomainError(
+        'EVIDENCE_TOO_LARGE',
+        `An object over ${Math.round(this.#maxBytes / 1_048_576)}MB cannot be stored`,
+        413,
+      );
+    }
+    // The hash is checked before the bytes travel, not after. Uploading first
+    // and discovering the mismatch afterwards leaves an object in the bucket
+    // that no record names, which is exactly what the retention sweep then has
+    // to reason about.
+    const actual = hashBytes(bytes);
+    if (actual !== claimedHash) {
+      throw new DomainError(
+        'EVIDENCE_HASH_MISMATCH',
+        `These bytes hash to ${actual}, not to the ${claimedHash} recorded as this evidence`,
+      );
+    }
+
+    await remote.put(this.#keyFor(tenantId, claimedHash), bytes, contentType);
+    this.#usage.delete(tenantId);
+    return { hash: claimedHash, bytes: bytes.length, contentType, storedAt: new Date().toISOString() };
+  }
+
+  /** Everything held for a tenancy, from whichever store is in use. */
+  async held(tenantId: string): Promise<Array<{ hash: string; bytes: number; storedAt: string; partial: boolean }>> {
+    const remote = this.#remote;
+    if (!remote) return this.list(tenantId);
+    if (!/^[0-9A-Za-z_-]{1,64}$/.test(tenantId)) {
+      throw new DomainError('EVIDENCE_TENANT_INVALID', 'Not a tenant identifier');
+    }
+    return (await remote.list(`${tenantId}/`))
+      .map((object) => {
+        const digest = object.key.split('/').pop() ?? '';
+        return { hash: `sha256:${digest}`, bytes: object.size, storedAt: '', partial: false };
+      })
+      .filter((object) => /^sha256:[0-9a-f]{64}$/.test(object.hash));
   }
 
   #pathFor(tenantId: string, hash: string): string {

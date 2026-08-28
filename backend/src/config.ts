@@ -271,6 +271,24 @@ export const config = {
   },
 
   /**
+   * S3-compatible object storage for evidence, if configured.
+   *
+   * Unset means the volume at `EVIDENCE_STORE_PATH`, which is correct for one
+   * instance and is exactly why the application tier cannot be replicated: two
+   * containers on separate volumes each hold half the evidence.
+   */
+  objectStore: {
+    endpoint: str('OBJECT_STORE_ENDPOINT', ''),
+    region: str('OBJECT_STORE_REGION', 'us-east-1'),
+    bucket: str('OBJECT_STORE_BUCKET', ''),
+    accessKeyId: str('OBJECT_STORE_ACCESS_KEY_ID', ''),
+    secretAccessKey: str('OBJECT_STORE_SECRET_ACCESS_KEY', ''),
+    /** Most self-hosted stores need path style; AWS prefers virtual-hosted. */
+    pathStyle: bool('OBJECT_STORE_PATH_STYLE', true),
+    timeoutMs: num('OBJECT_STORE_TIMEOUT_MS', 30_000),
+  },
+
+  /**
    * Where logs and metrics are shipped, if anywhere.
    *
    * Unset means the counters, the latency histogram and the security stream

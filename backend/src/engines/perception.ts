@@ -482,7 +482,7 @@ export async function extract(
     throw new DomainError('PERCEPTION_EVIDENCE_UNKNOWN', 'No evidence record in this tenancy references that hash', 404);
   }
 
-  if (!store.has(ctx.tenantId, input.hash)) {
+  if (!(await store.holds(ctx.tenantId, input.hash))) {
     // The distinction this whole feature turns on. The platform knows a file
     // with this hash was the evidence; it cannot read a file it does not hold.
     throw new DomainError(
@@ -492,7 +492,7 @@ export async function extract(
     );
   }
 
-  const file = store.get(ctx.tenantId, input.hash);
+  const file = await store.fetch(ctx.tenantId, input.hash);
   if (!definition.accepts.includes(file.contentType)) {
     throw new DomainError(
       'PERCEPTION_MEDIA_UNSUPPORTED',

@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 3,671 passing, 0 failing, 0 skipped, across 161 files · plus 18 against a live Postgres 16 |
+| Tests | 3,703 passing, 0 failing, 0 skipped, across 162 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
 | Backend | 190 TypeScript files, 117,084 lines |
 | Application | 43 ES modules, 19,333 lines (including a service worker) |
@@ -8305,3 +8305,60 @@ rather than numbers, cumulative-and-monotonic rather than delta, and per-bucket
 histogram counts differenced from the cumulative source — sending the cumulative
 array as if it were per-bucket produces a total several times the real one and
 every percentile derived from it is wrong in a way that looks reasonable.
+
+---
+
+## Evidence that two containers can both reach
+
+The evidence store held real files behind their content hashes, on a volume.
+Correct for one instance, and precisely the reason the application tier could not
+be replicated: two containers on separate volumes each hold half the evidence,
+and a request routed to the wrong one answers *"the platform holds the hash of
+this evidence but not the file"* about a file the platform certainly holds.
+
+`store/s3.ts` is an S3-compatible client, SigV4-signed by hand because zero
+dependencies is settled and the AWS SDK is therefore not available. S3's API is
+the one every object store implements — R2, MinIO, Backblaze, Ceph — so the
+endpoint and region are configuration rather than a rewrite.
+
+**The signer is checked against AWS's own published SigV4 vector**, not against
+itself. A signature this repository and a fake server both agree on proves two
+halves of the same misunderstanding; only an external vector proves the
+signature a real S3 would accept. The percent-encoding tests exist for the same
+reason: `encodeURIComponent` leaves `!'()*` alone where AWS requires them
+encoded and encodes `~` where AWS requires it left alone, and both differences
+produce *"the security token is invalid"* — an error about credentials, for a bug
+about punctuation.
+
+**When an object store is configured it is the only store**, not a cache in
+front of the volume. A write-through cache means two places a file might be and
+two answers to "is it held", and the whole point of a content-addressed evidence
+store is that there is one answer.
+
+**An unreachable store throws rather than answering "not held".** "Not held" is a
+fact about a file and "cannot tell" is a fact about the platform; conflating them
+is how an evidence register reports files as missing during an outage and
+somebody re-uploads what was already there. The hash is re-verified on read
+exactly as the volume path does, and checked *before* the bytes travel on write —
+uploading first and finding the mismatch afterwards leaves an object in the
+bucket that no record names, which is what the retention sweep then has to reason
+about.
+
+### The cost of it: five reads became asynchronous
+
+`has`, `get` and `list` were synchronous because a volume answers synchronously.
+An object store is over a network and there is no honest synchronous answer to a
+question that needs a round trip, so `holds`, `fetch`, `store` and `held` are
+async and every caller was migrated — `requestSignature`, `projectRegister`,
+`retentionPosition`, the perception extraction and the ingestion pipeline.
+
+That migration surfaced a defect worth naming, because it is silent: **making a
+function async turns every synchronous `throwsCode` guard into a no-op that
+passes.** Three signature tests asserting a refusal were asserting nothing at
+all — the rejected promise was never inspected. They use `rejectsCode` now. Any
+future change that makes a tested function async has the same trap in it.
+
+`ingestionPosition` had a related one: the filter that made `held` mean "evidence
+the platform holds the *bytes* for" rather than "evidence it holds a *hash* for"
+had to become an awaited presence check, and dropping it would have silently
+turned a meaningful figure into a meaningless one.

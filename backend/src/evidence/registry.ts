@@ -74,15 +74,24 @@ export function findByHash(
  * the platform still having the original. A screen that showed only the count
  * of evidence records would imply a completeness the platform does not have.
  */
-export function projectRegister(
+export async function projectRegister(
   ledger: GoldenThreadLedger,
   store: EvidenceStore,
   tenantId: string,
   projectId: string,
-): EvidenceRegisterEntry[] {
-  return ledger
-    .list(projectId, 'EvidenceItem')
-    .map((record) => {
+): Promise<EvidenceRegisterEntry[]> {
+  const records = ledger.list(projectId, 'EvidenceItem');
+
+  // One presence question per record, asked in parallel. With a volume this is
+  // a stat; with an object store it is a round trip, and asking them in
+  // sequence would make opening a register proportional to network latency
+  // times the number of files on the project.
+  const presence = await Promise.all(
+    records.map((record) => store.holds(tenantId, (record.state as EvidenceState).hash).catch(() => false)),
+  );
+
+  return records
+    .map((record, index) => {
       const state = record.state as EvidenceState;
       return {
         id: state.id,
@@ -93,10 +102,10 @@ export function projectRegister(
         capturedAt: state.capturedAt,
         capturedBy: state.capturedBy,
         linkedEntities: state.linkedEntities ?? [],
-        held: store.has(tenantId, state.hash),
+        held: presence[index] === true,
         // Only for what is held. A media type against a file nobody has would
         // be a guess presented as a fact about a document.
-        contentType: store.contentTypeOf(tenantId, state.hash),
+        contentType: presence[index] === true ? store.contentTypeOf(tenantId, state.hash) : undefined,
       };
     })
     .sort((a, b) => (a.capturedAt === b.capturedAt ? (a.id < b.id ? -1 : 1) : a.capturedAt < b.capturedAt ? 1 : -1));
@@ -148,11 +157,11 @@ const RETENTION_POLICY =
   'contract can be sued on, so age is not a reason to remove a file and does not become one. Only bytes ' +
   'no record names may be discarded, and those cannot arise through the platform at all.';
 
-export function retentionPosition(
+export async function retentionPosition(
   ledger: GoldenThreadLedger,
   store: EvidenceStore,
   tenantId: string,
-): RetentionPosition {
+): Promise<RetentionPosition> {
   if (!store.configured) {
     return {
       configured: false,
@@ -172,7 +181,7 @@ export function retentionPosition(
   const recorded = new Set(
     ledger.listByTenant(tenantId, 'EvidenceItem').map((record) => (record.state as EvidenceState).hash),
   );
-  const objects = store.list(tenantId);
+  const objects = await store.held(tenantId);
   const orphans = objects.filter((object) => object.partial || !recorded.has(object.hash));
 
   const held = objects.filter((object) => !object.partial && recorded.has(object.hash));

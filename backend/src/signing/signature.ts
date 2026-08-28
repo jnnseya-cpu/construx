@@ -184,7 +184,7 @@ export type SignatureRequestState = {
  * The document has to exist as evidence and its bytes have to be held, for the
  * same reason a paper signature goes under the text rather than beside it.
  */
-export function requestSignature(
+export async function requestSignature(
   ctx: EngineContext,
   authority: SigningAuthority,
   store: EvidenceStore,
@@ -195,7 +195,7 @@ export function requestSignature(
     requiredSignatories: Array<{ actorId: string; name: string; capacity: string }>;
     dueBy?: string;
   },
-): { requestId: string } {
+): Promise<{ requestId: string }> {
   authorise(ctx, input.area, 'C', { lifecyclePhase: currentPhase(ctx) });
 
   if (input.requiredSignatories.length === 0) {
@@ -206,7 +206,7 @@ export function requestSignature(
   if (!record) {
     throw new DomainError('SIGNATURE_DOCUMENT_UNKNOWN', 'No evidence record in this tenancy references that hash', 404);
   }
-  if (!store.has(ctx.tenantId, input.documentHash)) {
+  if (!(await store.holds(ctx.tenantId, input.documentHash))) {
     throw new DomainError(
       'SIGNATURE_DOCUMENT_NOT_HELD',
       'The platform holds the hash of this document but not the document. Nobody can be asked to sign what cannot be shown to them.',

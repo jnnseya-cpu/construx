@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { throwsCode } from './helpers.ts';
+import { throwsCode, rejectsCode } from './helpers.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import {
@@ -110,12 +110,12 @@ describe('a deployment with no signing key', () => {
     await build(new SigningAuthority(''));
   });
 
-  it('refuses rather than generating a key nothing can verify against tomorrow', () => {
+  it('refuses rather than generating a key nothing can verify against tomorrow', async () => {
     // An ephemeral key is worse than a refusal: every signature the platform had
     // made would fail verification after the next restart, and silently.
     assert.equal(platform.signing.available, false);
 
-    throwsCode(
+    await rejectsCode(
       () =>
         requestSignature(ctxFor('qs'), platform.signing, store, {
           documentHash: DOCUMENT_HASH,
@@ -207,27 +207,28 @@ describe('the ceremony', () => {
     await build(authority);
   });
 
-  function open(purpose: string): string {
-    return requestSignature(ctxFor('qs'), authority, store, {
+  async function open(purpose: string): Promise<string> {
+    const request = await requestSignature(ctxFor('qs'), authority, store, {
       documentHash: DOCUMENT_HASH,
       purpose,
       area: 'PAYMENT_APPLICATIONS',
       requiredSignatories: signatories(),
-    }).requestId;
+    });
+    return request.requestId;
   }
 
-  it('refuses somebody nobody asked', () => {
-    const requestId = open('Agree the sum certified — unasked signatory');
+  it('refuses somebody nobody asked', async () => {
+    const requestId = await open('Agree the sum certified — unasked signatory');
     throwsCode(
       () => signDocument(ctxFor('pm'), authority, { requestId, signatoryName: 'A PM', affirmation: 'I agree' }),
       'NOT_A_REQUESTED_SIGNATORY',
     );
   });
 
-  it('refuses a session that presented one factor', () => {
+  it('refuses a session that presented one factor', async () => {
     // The strongest thing this ceremony can assert about who signed. Without it
     // a signature is made by whoever had the password.
-    const requestId = open('Agree the sum certified — single factor');
+    const requestId = await open('Agree the sum certified — single factor');
     throwsCode(
       () =>
         signDocument(ctxFor('qs', { mfa: false }), authority, {
@@ -239,16 +240,16 @@ describe('the ceremony', () => {
     );
   });
 
-  it('refuses a blank affirmation, because that records a click', () => {
-    const requestId = open('Agree the sum certified — blank affirmation');
+  it('refuses a blank affirmation, because that records a click', async () => {
+    const requestId = await open('Agree the sum certified — blank affirmation');
     throwsCode(
       () => signDocument(ctxFor('qs'), authority, { requestId, signatoryName: 'QS', affirmation: '  ' }),
       'AFFIRMATION_REQUIRED',
     );
   });
 
-  it('produces a signature that verifies, and stops verifying if anything is altered', () => {
-    const requestId = open('Agree the sum certified in payment certificate 07');
+  it('produces a signature that verifies, and stops verifying if anything is altered', async () => {
+    const requestId = await open('Agree the sum certified in payment certificate 07');
     const signed = signDocument(ctxFor('qs'), authority, {
       requestId,
       signatoryName: 'Quantity surveyor',
@@ -266,10 +267,10 @@ describe('the ceremony', () => {
     assert.equal(authority.verify({ ...signed.statement, requestId: 'a-different-request' }, signed.signature), false);
   });
 
-  it('does not verify under a different key', () => {
+  it('does not verify under a different key', async () => {
     // A rotated or substituted key must not silently validate old signatures,
     // which is why each record carries the public key it was made under.
-    const requestId = open('Agree the sum certified — key substitution');
+    const requestId = await open('Agree the sum certified — key substitution');
     const signed = signDocument(ctxFor('qs'), authority, {
       requestId,
       signatoryName: 'Quantity surveyor',
@@ -283,8 +284,8 @@ describe('the ceremony', () => {
     assert.match(String(platform.ledger.get({ refType: 'Signature', refId: signed.signatureId })?.state.publicKeyPem), /BEGIN PUBLIC KEY/);
   });
 
-  it('completes only when everybody asked has signed', () => {
-    const requestId = open('Agree the sum certified — both parties');
+  it('completes only when everybody asked has signed', async () => {
+    const requestId = await open('Agree the sum certified — both parties');
 
     const first = signDocument(ctxFor('qs'), authority, {
       requestId,
@@ -309,11 +310,11 @@ describe('the ceremony', () => {
     assert.equal(platform.ledger.get({ refType: 'SignatureRequest', refId: requestId })?.state.status, 'COMPLETE');
   });
 
-  it('records a refusal as the fact it is, and ends the request', () => {
+  it('records a refusal as the fact it is, and ends the request', async () => {
     // A signature request somebody refused is a materially different fact from
     // one nobody got round to, and a half-signed document left open reads as
     // progress towards an agreement that is not going to happen.
-    const requestId = open('Agree the final account');
+    const requestId = await open('Agree the final account');
     throwsCode(() => declineSignature(ctxFor('owner'), { requestId, reason: 'no' }), 'DECLINE_REASON_REQUIRED');
 
     declineSignature(ctxFor('owner'), {
@@ -370,12 +371,12 @@ describe('a document nobody can be shown', () => {
     await build(new SigningAuthority(PEM));
   });
 
-  it('cannot be put to signature, because that signs a number rather than a document', () => {
+  it('cannot be put to signature, because that signs a number rather than a document', async () => {
     const ctx = ctxFor('qs');
     const hash = hashBytes(Buffer.from('recorded but never uploaded', 'utf8'));
     registerDocument(ctx, hash, 'ev-unheld', 'A certificate the platform never received');
 
-    throwsCode(
+    await rejectsCode(
       () =>
         requestSignature(ctx, platform.signing, store, {
           documentHash: hash,
@@ -387,8 +388,8 @@ describe('a document nobody can be shown', () => {
     );
   });
 
-  it('cannot be put to signature under a hash no record claims', () => {
-    throwsCode(
+  it('cannot be put to signature under a hash no record claims', async () => {
+    await rejectsCode(
       () =>
         requestSignature(ctxFor('qs'), platform.signing, store, {
           documentHash: hashBytes(Buffer.from('never registered as evidence', 'utf8')),

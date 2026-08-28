@@ -441,8 +441,8 @@ describe('evidence over HTTP', () => {
     assert.equal(register.entries.find((e) => e.hash === hash)?.held, false);
   });
 
-  it('joins ledger records to stored bytes and to nothing else', () => {
-    const entries = projectRegister(platform.ledger, platform.evidence, seed.tenantId, seed.projectId);
+  it('joins ledger records to stored bytes and to nothing else', async () => {
+    const entries = await projectRegister(platform.ledger, platform.evidence, seed.tenantId, seed.projectId);
     assert.deepEqual(coverage(entries), {
       total: entries.length,
       held: entries.filter((e) => e.held).length,
@@ -504,10 +504,10 @@ describe('evidence retention', () => {
     throwsCode(() => discardOrphan(platform.ledger, store, seed.tenantId, hash), 'EVIDENCE_RECORDED');
   });
 
-  it('reports bytes no record names, because the upload route cannot have made them', () => {
+  it('reports bytes no record names, because the upload route cannot have made them', async () => {
     const orphan = plant(seed.tenantId, 'restored from a volume nobody kept the ledger for');
 
-    const position = retentionPosition(platform.ledger, store, seed.tenantId);
+    const position = await retentionPosition(platform.ledger, store, seed.tenantId);
     assert.equal(position.configured, true);
     assert.ok(
       position.orphans.some((object) => object.hash === orphan),
@@ -517,18 +517,18 @@ describe('evidence retention', () => {
     assert.match(position.policy, /Nothing the ledger names is deletable/i);
   });
 
-  it('removes an orphan and leaves the register untouched', () => {
+  it('removes an orphan and leaves the register untouched', async () => {
     const orphan = plant(seed.tenantId, 'an interrupted copy');
-    const before = projectRegister(platform.ledger, store, seed.tenantId, seed.projectId);
+    const before = await projectRegister(platform.ledger, store, seed.tenantId, seed.projectId);
 
     assert.deepEqual(discardOrphan(platform.ledger, store, seed.tenantId, orphan), { discarded: true });
     assert.equal(store.has(seed.tenantId, orphan), false);
 
-    const after = projectRegister(platform.ledger, store, seed.tenantId, seed.projectId);
+    const after = await projectRegister(platform.ledger, store, seed.tenantId, seed.projectId);
     assert.deepEqual(after, before, 'discarding an orphan changed what the evidence register reports');
   });
 
-  it('counts a half-written object as removable rather than as evidence', () => {
+  it('counts a half-written object as removable rather than as evidence', async () => {
     // A `.partial` is what a crashed write leaves behind. It is not at its own
     // address — nothing hashes to it — so it can never be served, and leaving it
     // to accumulate is how a volume fills up with nothing.
@@ -537,33 +537,32 @@ describe('evidence retention', () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, `${digest}.partial`), bytesOf('half a photograph'));
 
-    const position = retentionPosition(platform.ledger, store, seed.tenantId);
+    const position = await retentionPosition(platform.ledger, store, seed.tenantId);
     const found = position.orphans.find((object) => object.hash === `sha256:${digest}`);
     assert.ok(found, 'a half-written object was not reported');
     assert.equal(found.partial, true);
   });
 
-  it('does not see another tenancy’s objects at all', () => {
+  it('does not see another tenancy’s objects at all', async () => {
     const foreign = plant('some-other-tenant', 'belongs to somebody else entirely');
 
-    const position = retentionPosition(platform.ledger, store, seed.tenantId);
+    const position = await retentionPosition(platform.ledger, store, seed.tenantId);
     assert.ok(
       !position.orphans.some((object) => object.hash === foreign),
       'the retention report reached across the tenant boundary',
     );
     // And it is genuinely there — otherwise this passes because nothing was
     // planted rather than because the boundary held.
-    assert.ok(
-      retentionPosition(platform.ledger, store, 'some-other-tenant').orphans.some((o) => o.hash === foreign),
-    );
+    const foreignPosition = await retentionPosition(platform.ledger, store, 'some-other-tenant');
+    assert.ok(foreignPosition.orphans.some((o) => o.hash === foreign));
   });
 
-  it('says the platform holds nothing rather than reporting a clean store', () => {
+  it('says the platform holds nothing rather than reporting a clean store', async () => {
     // Unset is a legitimate deployment: hashes recorded, files not held. A
     // retention report of zero orphans would read as a tidy volume rather than
     // as no volume at all.
     const unconfigured = new EvidenceStore('');
-    const position = retentionPosition(platform.ledger, unconfigured, seed.tenantId);
+    const position = await retentionPosition(platform.ledger, unconfigured, seed.tenantId);
 
     assert.equal(position.configured, false);
     assert.equal(position.heldObjects, 0);
