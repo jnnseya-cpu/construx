@@ -15,13 +15,14 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 3,560 passing, 0 failing, 0 skipped, across 157 files |
+| Tests | 3,619 passing, 0 failing, 0 skipped, across 159 files |
 | Typecheck | clean |
 | Backend | 190 TypeScript files, 117,084 lines |
 | Application | 43 ES modules, 19,333 lines (including a service worker) |
-| API routes | 705 — 489 writes, 216 reads (34 of them public) |
-| Event types | 490 Golden Thread (closed) · 180 communication events (closed) |
-| Entity types | 240, all classified for access |
+| API routes | 709 — 492 writes, 217 reads (34 of them public) |
+| Event types | 492 Golden Thread (closed) · 180 communication events (closed) |
+| Entity types | 241, all classified for access |
+| Agents | 32 across 9 divisions — 25 deployed, 7 declared with what each is waiting on |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
@@ -8127,3 +8128,76 @@ What this does **not** establish: no call has been made to any vendor from this
 environment, and none of it says a model reads a drawing correctly. It says the
 platform will understand the reply when one arrives, and will refuse safely when
 it cannot.
+
+---
+
+## The mandate ladder, and why declaring ACT confers nothing
+
+The fleet was twelve agents in four divisions, every one of them capped at
+`PROPOSE`, and a test asserted that no agent anywhere declared `ACT`. That test
+was a placeholder, and its own failure message said so: acting unattended "needs
+an explicit product decision, not a default". There was no mechanism by which
+such a decision could be taken, so the ban stood in for one.
+
+**The ladder is now OBSERVE → DRAFT → PROPOSE → ACT.** `DRAFT` is the rung that
+was missing: a complete, valid command prepared and held, nothing reaching the
+ledger, which is exactly what the perception pipeline already does and had no
+name for.
+
+**Declaring is not granting.** `registry.ts` declares which agents are *eligible*
+for ACT and the outside edge of what such a grant could ever cover — named
+commands, a value ceiling, and a sentence saying why. That confers nothing. An
+agent reaches ACT only through an envelope a person granted:
+
+- authorised against `ENTERPRISE_STRUCTURE` `G`, which within a tenancy only
+  `ENTERPRISE_ADMIN` holds — deliberately not `AI_EXECUTION`, because every role
+  holds `X` on that area and deciding that a machine may act without asking is
+  not the same kind of act as asking it a question;
+- recorded as `AGENT_ENVELOPE_GRANTED`, a governance event with
+  `aiAllowed: false`, so an AI actor committing one is a hard failure in the
+  ledger. There is no path from an agent to its own envelope;
+- narrowing only. A command outside the declaration is refused, a ceiling above
+  the declared one is refused, and a command whose event type is
+  `aiAllowed: false` is refused at grant time *and* would fail again in
+  `commit()`;
+- bounded in time. No open-ended grant — 366 days is the maximum, because the
+  grant nobody remembers making is the one still running in three years;
+- one at a time. Two overlapping grants for one agent is ambiguous authority,
+  and every way of resolving it is wrong in a different direction, so the
+  platform refuses and names the grant in the way.
+
+Revocation takes effect on the next evaluation, not mid-flight. An act already
+executing completes and is recorded; the next pass finds no live envelope.
+Claiming the platform can interrupt a command mid-write would be a safety story
+that is not true, which is worse than a narrow one that is.
+
+**An ungranted act is queued, not lost.** The runtime degrades an `ACT` proposal
+to `PROPOSE` and attaches the reason. Refusing outright would trade a small
+safety gain for the loss of the finding entirely.
+
+Exactly one agent is ACT-eligible — `health` — and its envelope carries a value
+ceiling of zero and writes no governed state: it may tell somebody the platform
+is unwell, and that is all. It is the only act on this platform where waiting
+for an approval makes the outcome worse.
+
+## Nineteen more agents, and the seven that are declared rather than stubbed
+
+Twelve became thirty-two, across nine divisions. Thirteen new ones are deployed
+and read real state: `defect-triage` clusters 5xx by route with the correlation
+ids to reproduce them; `threat-hunter` compares each actor to that actor's own
+baseline rather than a global one; `vulnerability` reads
+`assertProductionSafety()` rather than restating its rules; `fraud` flags two
+applications against one cycle, a valuation landing on an exact round figure
+against a basis that says it was measured, and a certificate signed out of
+hours; `expansion`, `retention`, `collections`, `success` and `onboarding` read
+the wallet, the standing and the ledger's own record of who did what and when;
+`regulatory` watches the dates that lose a right rather than open a negotiation.
+
+Seven are **declared, not stubbed**: `competitor`, `pricing`, `release`,
+`identity`, `kyb-kyc`, `aml` and `support` carry a mandate, no `evaluate`, and a
+sentence naming exactly what each is waiting on — an external award feed, enough
+settled projects for the benchmark to rise above FLOOR confidence, CI metadata,
+device binding, an identity-verification connector, a live payment path and a
+sanctions source, an inbox. A manifest listing thirty-two agents where seven read
+from a source that does not exist would be a lie told in a table, so the runtime
+never runs one and the published manifest says which is which.

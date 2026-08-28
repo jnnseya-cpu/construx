@@ -671,6 +671,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // something other than a list nobody has picked up.
   def('AGENT_PROPOSAL_ASSIGNED', 'AgentProposal', 'UPDATE', 'AI_BILLING'),
   def('AGENT_PROPOSAL_EXECUTED', 'AgentProposal', 'UPDATE', 'AI_BILLING'),
+  // Granting a machine the authority to act without asking is the single
+  // highest-consequence decision anybody makes about this platform, so it is a
+  // governed event and no AI actor may author one. That is what stops an agent
+  // granting itself an envelope: the registry declares *eligibility*, this
+  // records *authority*, and the commit refuses an AI author outright.
+  def('AGENT_ENVELOPE_GRANTED', 'AgentEnvelope', 'APPROVE', 'GOVERNANCE', { creates: true }),
+  // Withdrawal is equally governed, and equally human. An agent that could
+  // revoke could also decline to.
+  def('AGENT_ENVELOPE_REVOKED', 'AgentEnvelope', 'APPROVE', 'GOVERNANCE'),
 
   // --- Platform-to-person messaging -----------------------------------------
   // Consent is a data-protection record: what a person decided, when, and

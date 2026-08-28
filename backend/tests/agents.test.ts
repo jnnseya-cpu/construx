@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import { AGENTS } from '../src/agents/registry.ts';
+import { AUTOMATABLE_COMMANDS, mayActUnattended } from '../src/agents/mandate.ts';
 import { approveProposal, pendingProposals, rejectProposal, runAgents } from '../src/agents/runtime.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import { rolesAllow } from '../src/identity/roles.ts';
@@ -141,6 +142,19 @@ describe('the approval gate', () => {
 });
 
 describe('an agent cannot decide for itself', () => {
+  let fresh: Platform;
+  let freshSeed: SeedResult;
+
+  before(async () => {
+    // Its own tenancy, deliberately. The point being tested is what an agent
+    // may do where nobody has granted it anything, so a platform another
+    // describe has been granting envelopes in would prove nothing.
+    fresh = new Platform();
+    freshSeed = await seedDemoProject(fresh);
+  });
+
+  const owner = () => fresh.context(freshSeed.users.owner!.auth, freshSeed.projectId);
+
   it('the ledger refuses an AI actor committing a decision', () => {
     // Defence in depth: even if the runtime guard were bypassed, the event
     // catalogue does not permit an AI actor to author an approval.
@@ -155,12 +169,47 @@ describe('an agent cannot decide for itself', () => {
   });
 
   it('no agent grants itself unattended authority to act', () => {
+    // This used to assert that no agent declared `ACT` at all. That was a
+    // placeholder for a mechanism that did not exist yet, and its own failure
+    // message said so: acting unattended "needs an explicit product decision,
+    // not a default". The decision has now been taken for exactly one agent,
+    // and the mechanism it needed is built — so the blanket ban is replaced by
+    // the thing it was standing in for, which is strictly stronger.
+    //
+    // A ceiling of ACT in the registry is *eligibility*. Authority comes from an
+    // envelope a person granted, recorded as a governed event no AI actor may
+    // author, with an end date. See `mandate.test.ts`, which fails if an agent
+    // can reach ACT without one.
     for (const agent of AGENTS) {
-      assert.notEqual(
-        agent.mandate.maxUnattended,
-        'ACT',
-        `${agent.name} may act unattended; that needs an explicit product decision, not a default`,
-      );
+      if (agent.mandate.maxUnattended !== 'ACT') continue;
+
+      const envelope = agent.mandate.envelope;
+      assert.ok(envelope, `${agent.name} is ACT-eligible without declaring what such a grant could ever cover`);
+
+      for (const command of envelope!.commands) {
+        const entry = AUTOMATABLE_COMMANDS[command];
+        assert.ok(entry, `${agent.name} may be granted "${command}", which is not in the automatable set`);
+        for (const type of entry!.writes) {
+          // The catalogue is the boundary. An agent may never be granted
+          // anything that writes a decision a person is required to take.
+          assert.equal(
+            lookupEventType(type)?.aiAllowed,
+            true,
+            `${agent.name} could be granted ${command}, which writes ${type} — a decision a person must take`,
+          );
+        }
+      }
+    }
+  });
+
+  it('holds no unattended authority in a tenancy where nobody granted any', () => {
+    // The property that matters more than the declaration: a fresh tenancy has
+    // granted nothing, so nothing acts, however the registry is written.
+    for (const agent of AGENTS.filter((candidate) => candidate.mandate.maxUnattended === 'ACT')) {
+      for (const command of agent.mandate.envelope!.commands) {
+        const verdict = mayActUnattended(owner(), agent.name, { command });
+        assert.equal(verdict.permitted, false, `${agent.name} may run ${command} with nobody having granted it`);
+      }
     }
   });
 });

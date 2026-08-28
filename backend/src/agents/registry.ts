@@ -1,5 +1,6 @@
 import { abbreviateMoney } from '../domain/locale.ts';
 import type { EngineContext } from '../engines/context.ts';
+import { PLATFORM_AGENTS } from './platform.ts';
 import type { AgentDefinition, AgentOutput, Finding, ProposedCommand } from './types.ts';
 
 /**
@@ -824,6 +825,12 @@ export const AGENTS: AgentDefinition[] = [
   hseqAgent,
   // Supply chain — can we still buy what we sell.
   supplyChainAgent,
+  // Platform operations, security, revenue, customer and compliance. Kept in
+  // their own module because they read the platform's own internals — gateway
+  // counters, the security stream, the wallet — rather than a project, and
+  // mixing them here would make the project fleet look as though it had that
+  // reach too.
+  ...PLATFORM_AGENTS,
 ];
 
 export function agentsByDivision(division: AgentDefinition['division']): AgentDefinition[] {
@@ -832,4 +839,17 @@ export function agentsByDivision(division: AgentDefinition['division']): AgentDe
 
 export function agentByName(name: string): AgentDefinition | undefined {
   return AGENTS.find((a) => a.name === name);
+}
+
+/**
+ * The agents that will actually run.
+ *
+ * A `DECLARED` agent has a mandate and no `evaluate`: it is in the manifest so
+ * the org chart and the blast radius are inspectable, and it is not in the
+ * fleet the runtime iterates. Filtering here rather than in the runtime keeps
+ * "which agents exist" and "which agents run" as one question with two answers,
+ * rather than two questions that drift.
+ */
+export function deployedAgents(): AgentDefinition[] {
+  return AGENTS.filter((agent) => agent.deployment !== 'DECLARED' && typeof agent.evaluate === 'function');
 }

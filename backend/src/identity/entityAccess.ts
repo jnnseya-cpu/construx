@@ -434,6 +434,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   AIExecution: { area: 'AI_EXECUTION' },
   AgentRun: { area: 'AI_EXECUTION' },
   AgentProposal: { area: 'AI_EXECUTION' },
+  // Not AI_EXECUTION. Who granted a machine unattended authority, over what,
+  // until when, and who withdrew it is an enterprise governance record — it
+  // must be readable by the people who govern the enterprise, and it must not
+  // be reachable by holding the capability to run AI, which every role holds.
+  AgentEnvelope: { area: 'ENTERPRISE_STRUCTURE' },
 
   // Platform-to-person messaging. These records hold email addresses and the
   // consent decisions behind them, so they sit with the operator layer and are

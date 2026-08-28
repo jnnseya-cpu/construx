@@ -1,0 +1,392 @@
+import assert from 'node:assert/strict';
+import { before, describe, it } from 'node:test';
+import { throwsCode } from './helpers.ts';
+import {
+  envelopeRegister,
+  grantEnvelope,
+  liveEnvelope,
+  mayActUnattended,
+  revokeEnvelope,
+  AUTOMATABLE_COMMANDS,
+  MAX_ENVELOPE_DAYS,
+} from '../src/agents/mandate.ts';
+import { AGENTS, deployedAgents } from '../src/agents/registry.ts';
+import { fleetManifest } from '../src/agents/runtime.ts';
+import { AGENT_DIVISIONS, AUTONOMY_LADDER, exceeds } from '../src/agents/types.ts';
+import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
+import { Platform } from '../src/platform.ts';
+import { seedDemoProject, type SeedResult } from '../src/seed.ts';
+
+/**
+ * The mandate ladder, and the one property the whole thing rests on.
+ *
+ * OBSERVE → DRAFT → PROPOSE → ACT. The first three rungs need no mechanism: an
+ * observation is a finding, a draft is held, a proposal waits for somebody with
+ * the capability. ACT is the rung that removes the human, and everything below
+ * is written to make it hard to reach by accident.
+ *
+ * The property under test throughout: **an agent cannot grant itself ACT.**
+ * Declaring a ceiling of `ACT` in the registry is eligibility. Authority comes
+ * from an envelope a person granted, recorded as a governed event that an AI
+ * actor cannot author. Those two facts have to stay separate, because if the
+ * registry alone conferred autonomy then editing a source file would be how a
+ * machine acquired unattended authority over a customer's project.
+ */
+
+let platform: Platform;
+let seed: SeedResult;
+
+before(async () => {
+  platform = new Platform();
+  seed = await seedDemoProject(platform);
+});
+
+const as = (who: string) => platform.context(seed.users[who]!.auth, seed.projectId);
+
+/** A window that is live today, so a grant under test is actually in force. */
+function window_(days = 30): { from: string; until: string } {
+  const from = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  const until = new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+  return { from, until };
+}
+
+describe('the ladder has four rungs and they are ordered', () => {
+  it('orders them so "higher than" is a comparison rather than a convention', () => {
+    assert.deepEqual(AUTONOMY_LADDER, ['OBSERVE', 'DRAFT', 'PROPOSE', 'ACT']);
+    assert.equal(exceeds('ACT', 'PROPOSE'), true);
+    assert.equal(exceeds('PROPOSE', 'DRAFT'), true);
+    assert.equal(exceeds('DRAFT', 'OBSERVE'), true);
+    assert.equal(exceeds('OBSERVE', 'ACT'), false);
+    assert.equal(exceeds('PROPOSE', 'PROPOSE'), false);
+  });
+});
+
+describe('the fleet declares itself honestly', () => {
+  it('runs only the agents that have something to run', () => {
+    for (const agent of AGENTS) {
+      if (agent.deployment === 'DECLARED') {
+        assert.equal(typeof agent.evaluate, 'undefined', `${agent.name} is declared but carries an evaluate`);
+      } else {
+        assert.equal(typeof agent.evaluate, 'function', `${agent.name} is deployed with nothing to run`);
+      }
+    }
+    assert.equal(
+      deployedAgents().every((agent) => typeof agent.evaluate === 'function'),
+      true,
+    );
+  });
+
+  it('makes every declared agent say what it is waiting on', () => {
+    for (const agent of AGENTS.filter((candidate) => candidate.deployment === 'DECLARED')) {
+      // An agent listed in a manifest with no reason for being absent is how a
+      // roadmap becomes a claim about capability.
+      assert.ok(
+        (agent.needs ?? '').length > 40,
+        `${agent.name} is declared without saying what it needs`,
+      );
+    }
+  });
+
+  it('publishes the whole roster, running or not, with its blast radius', () => {
+    const manifest = fleetManifest();
+    assert.equal(manifest.length, AGENTS.length);
+    const declared = manifest.filter((entry) => entry.deployment === 'DECLARED');
+    assert.ok(declared.length > 0, 'nothing is declared, so the honesty of the manifest is untested');
+    for (const entry of manifest) {
+      // "What could this thing have done" must have a short fixed answer for
+      // every agent in the list, including the ones not running.
+      assert.ok(Array.isArray(entry.reads));
+      assert.ok(entry.maxUnattended);
+      assert.ok(entry.division);
+    }
+  });
+
+  it('puts at least one agent in every division it declares', () => {
+    for (const { division } of AGENT_DIVISIONS) {
+      assert.ok(
+        AGENTS.some((agent) => agent.division === division),
+        `${division} is a division with nobody in it`,
+      );
+    }
+  });
+
+  it('gives every ACT-eligible agent a declared envelope, and nobody else one', () => {
+    for (const agent of AGENTS) {
+      if (agent.mandate.maxUnattended === 'ACT') {
+        const envelope = agent.mandate.envelope;
+        assert.ok(envelope, `${agent.name} is ACT-eligible with no declared envelope`);
+        assert.ok(envelope!.commands.length > 0, `${agent.name} declares an envelope covering nothing`);
+        assert.ok(envelope!.because.length > 40, `${agent.name} does not say why it should act unattended`);
+        for (const command of envelope!.commands) {
+          assert.ok(AUTOMATABLE_COMMANDS[command], `${agent.name} may be granted "${command}", which is not automatable`);
+        }
+      } else {
+        assert.equal(agent.mandate.envelope, undefined, `${agent.name} declares an envelope it can never use`);
+      }
+    }
+  });
+});
+
+describe('no agent can grant itself the authority to act', () => {
+  it('is eligible and still holds nothing until a person grants it', () => {
+    // The single most important assertion in this file. `health` declares a
+    // ceiling of ACT in the registry, and that declaration confers nothing.
+    const ctx = as('admin');
+    assert.equal(liveEnvelope(ctx, 'health'), undefined);
+
+    const verdict = mayActUnattended(ctx, 'health', { command: 'ops:alert' });
+    assert.equal(verdict.permitted, false);
+    assert.match(
+      verdict.permitted === false ? verdict.because : '',
+      /eligible to act but holds no live grant/,
+    );
+  });
+
+  it('records the grant as a decision no AI actor may author', () => {
+    // The other half. Even if something contrived a call to grantEnvelope, the
+    // event it writes is a governance decision, and the ledger refuses an AI
+    // author on one — so there is no path from an agent to its own envelope.
+    const granted = lookupEventType('AGENT_ENVELOPE_GRANTED');
+    const revoked = lookupEventType('AGENT_ENVELOPE_REVOKED');
+    assert.equal(granted?.aiAllowed, false);
+    assert.equal(revoked?.aiAllowed, false);
+  });
+
+  it('refuses a grant from somebody without governance over the enterprise', () => {
+    // Every role holds AI_EXECUTION X. If granting keyed on that, every user
+    // could hand a machine unattended authority.
+    throwsCode(
+      () => grantEnvelope(as('pm'), { agent: 'health', commands: ['ops:alert'], ...window_(), note: 'Wants the alerts' }),
+      'ACCESS_DENIED',
+    );
+    throwsCode(
+      () => grantEnvelope(as('qs'), { agent: 'health', commands: ['ops:alert'], ...window_(), note: 'Wants the alerts' }),
+      'ACCESS_DENIED',
+    );
+  });
+
+  it('refuses to grant an agent that was never written to act', () => {
+    throwsCode(
+      () =>
+        grantEnvelope(as('admin'), {
+          agent: 'commercial',
+          commands: ['ops:alert'],
+          ...window_(),
+          note: 'Would like the CVR run automatically',
+        }),
+      'AGENT_NOT_ACT_ELIGIBLE',
+    );
+  });
+});
+
+describe('a grant may narrow the declaration and never widen it', () => {
+  it('refuses a command outside what the agent declares', () => {
+    throwsCode(
+      () =>
+        grantEnvelope(as('admin'), {
+          agent: 'health',
+          commands: ['cost:certifyPayment'],
+          ...window_(),
+          note: 'Certification is slow',
+        }),
+      'AGENT_ENVELOPE_EXCEEDS_DECLARATION',
+    );
+  });
+
+  it('refuses a ceiling above the declared one', () => {
+    throwsCode(
+      () =>
+        grantEnvelope(as('admin'), {
+          agent: 'health',
+          commands: ['ops:alert'],
+          valueCeilingMinor: 500_000,
+          ...window_(),
+          note: 'Give it some headroom',
+        }),
+      'AGENT_ENVELOPE_EXCEEDS_DECLARATION',
+    );
+  });
+
+  it('refuses an open-ended grant', () => {
+    const from = new Date().toISOString().slice(0, 10);
+    const until = new Date(Date.now() + (MAX_ENVELOPE_DAYS + 30) * 86_400_000).toISOString().slice(0, 10);
+    throwsCode(
+      () => grantEnvelope(as('admin'), { agent: 'health', commands: ['ops:alert'], from, until, note: 'Indefinitely please' }),
+      'AGENT_ENVELOPE_TOO_LONG',
+    );
+  });
+
+  it('refuses a grant that covers nothing', () => {
+    throwsCode(
+      () => grantEnvelope(as('admin'), { agent: 'health', commands: [], ...window_(), note: 'Just in case' }),
+      'AGENT_ENVELOPE_EMPTY',
+    );
+  });
+
+  it('makes the granter say why', () => {
+    throwsCode(
+      () => grantEnvelope(as('admin'), { agent: 'health', commands: ['ops:alert'], ...window_(), note: 'ok' }),
+      'AGENT_ENVELOPE_REASON_REQUIRED',
+    );
+  });
+});
+
+describe('the event catalogue is the real boundary', () => {
+  it('refuses to automate anything a person is required to decide', () => {
+    // Not a list this module maintains: the answer comes from the catalogue,
+    // which is also what fails the commit. One source of truth for "a person
+    // decides this".
+    for (const code of [
+      'APPLICATION_CERTIFIED',
+      'VARIATION_INSTRUCTED',
+      'STAGE_GATE_DECIDED',
+      'NCR_CLOSED',
+      'HANDOVER_ACCEPTED',
+      'USER_ROLE_ASSIGNED',
+    ]) {
+      const definition = lookupEventType(code);
+      if (!definition) continue;
+      assert.equal(definition.aiAllowed, false, `${code} is open to an AI actor`);
+    }
+  });
+
+  it('refuses a command it has never been told about', () => {
+    // "Not listed" is not "harmless". An unknown command cannot be shown to be
+    // safe, so it is refused rather than allowed by omission.
+    const verdict = mayActUnattended(as('admin'), 'health', { command: 'something:invented' });
+    assert.equal(verdict.permitted, false);
+  });
+
+  it('declares what every automatable command writes, including nothing', () => {
+    for (const [command, entry] of Object.entries(AUTOMATABLE_COMMANDS)) {
+      assert.ok(entry.note.length > 20, `${command} does not say what it does`);
+      for (const type of entry.writes) {
+        assert.equal(lookupEventType(type)?.aiAllowed, true, `${command} writes ${type}, which a machine may not author`);
+      }
+    }
+  });
+});
+
+describe('a granted envelope, and taking it back', () => {
+  it('permits exactly what it names, once a person has granted it', () => {
+    const ctx = as('admin');
+    const envelope = grantEnvelope(ctx, {
+      agent: 'health',
+      commands: ['ops:alert'],
+      ...window_(),
+      note: 'Nobody is on call overnight and an alert that waits for approval is not an alert.',
+    });
+
+    assert.equal(envelope.valueCeilingMinor, 0);
+    assert.ok(envelope.until > envelope.from);
+
+    const permitted = mayActUnattended(ctx, 'health', { command: 'ops:alert' });
+    assert.equal(permitted.permitted, true);
+
+    // Granted one command, not two. The declaration covers both; the grant
+    // narrowed it, and narrowing has to actually bind.
+    const other = mayActUnattended(ctx, 'health', { command: 'ops:resolve' });
+    assert.equal(other.permitted, false);
+    assert.match(other.permitted === false ? other.because : '', /does not cover/);
+
+    revokeEnvelope(ctx, { envelopeId: envelope.id, reason: 'Test case complete' });
+  });
+
+  it('refuses a second overlapping grant for the same agent', () => {
+    const ctx = as('admin');
+    const first = grantEnvelope(ctx, {
+      agent: 'health',
+      commands: ['ops:alert'],
+      ...window_(),
+      note: 'The first grant, which the second one must not silently join.',
+    });
+    // Two live grants for one agent is ambiguous authority: the union widens
+    // what somebody granted, the newest narrows it, and the first makes the
+    // second do nothing. Refused, naming the grant in the way.
+    throwsCode(
+      () =>
+        grantEnvelope(ctx, {
+          agent: 'health',
+          commands: ['ops:resolve'],
+          ...window_(),
+          note: 'A second grant overlapping the first.',
+        }),
+      'AGENT_ENVELOPE_OVERLAPS',
+    );
+    revokeEnvelope(ctx, { envelopeId: first.id, reason: 'Test case complete' });
+  });
+
+  it('stops permitting once withdrawn', () => {
+    const ctx = as('admin');
+    const envelope = grantEnvelope(ctx, {
+      agent: 'health',
+      commands: ['ops:alert', 'ops:resolve'],
+      ...window_(),
+      note: 'Overnight alerting while the on-call rota is being set up.',
+    });
+    assert.equal(mayActUnattended(ctx, 'health', { command: 'ops:resolve' }).permitted, true);
+
+    revokeEnvelope(ctx, { envelopeId: envelope.id, reason: 'On-call rota now staffed' });
+
+    // Takes effect on the next evaluation, which is this one.
+    assert.equal(mayActUnattended(ctx, 'health', { command: 'ops:resolve' }).permitted, false);
+    assert.equal(liveEnvelope(ctx, 'health'), undefined);
+    assert.equal(mayActUnattended(ctx, 'health', { command: 'ops:alert' }).permitted, false);
+  });
+
+  it('refuses to withdraw the same grant twice', () => {
+    const ctx = as('admin');
+    const envelope = grantEnvelope(ctx, {
+      agent: 'health',
+      commands: ['ops:alert'],
+      ...window_(),
+      note: 'A grant made in order to be withdrawn twice.',
+    });
+    revokeEnvelope(ctx, { envelopeId: envelope.id, reason: 'No longer needed' });
+
+    throwsCode(
+      () => revokeEnvelope(ctx, { envelopeId: envelope.id, reason: 'No longer needed' }),
+      'AGENT_ENVELOPE_ALREADY_REVOKED',
+    );
+  });
+
+  it('does not treat a grant outside its window as live', () => {
+    const ctx = as('admin');
+    const from = new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10);
+    const until = new Date(Date.now() + 20 * 86_400_000).toISOString().slice(0, 10);
+    grantEnvelope(ctx, {
+      agent: 'health',
+      commands: ['ops:alert'],
+      from,
+      until,
+      note: 'Cover for the maintenance window later this month.',
+    });
+    // Granted, recorded, and not yet in force.
+    assert.equal(mayActUnattended(ctx, 'health', { command: 'ops:alert', today: new Date().toISOString().slice(0, 10) }).permitted, false);
+    assert.equal(mayActUnattended(ctx, 'health', { command: 'ops:alert', today: from }).permitted, true);
+  });
+
+  it('keeps every grant on the record, withdrawn or not', () => {
+    const register = envelopeRegister(as('admin'));
+    assert.ok(register.length >= 3);
+    assert.ok(register.some((entry) => entry.revokedAt), 'no withdrawal is visible in the register');
+    for (const entry of register) {
+      // Who, what, until when, and why. A grant nobody can account for later is
+      // the one that matters most.
+      assert.ok(entry.grantedBy);
+      assert.ok(entry.note.length >= 8);
+      assert.ok(entry.until);
+    }
+  });
+});
+
+describe('an ungranted act is queued, not lost', () => {
+  it('says plainly why it is asking rather than acting', () => {
+    // The degrade path. Refusing outright would trade a small safety gain for
+    // the loss of the finding, so an act with no envelope becomes a proposal
+    // carrying the reason it was not taken.
+    const verdict = mayActUnattended(as('owner'), 'defect-triage', { command: 'ops:alert' });
+    assert.equal(verdict.permitted, false);
+    assert.match(verdict.permitted === false ? verdict.because : '', /ceiling of OBSERVE/);
+  });
+});

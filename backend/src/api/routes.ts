@@ -19,6 +19,7 @@ import type { Engine } from '../ai/orchestrator.ts';
 import type { ProviderCapability } from '../ai/providers/types.ts';
 import * as agents from '../agents/runtime.ts';
 import { fleetManifest } from '../agents/runtime.ts';
+import { AUTOMATABLE_COMMANDS, LADDER, envelopeRegister, grantEnvelope, revokeEnvelope } from '../agents/mandate.ts';
 import type { ACUCaps } from '../billing/acu.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
 import { seatEconomics, TIERS, type SubscriptionTier } from '../billing/subscription.ts';
@@ -10854,6 +10855,53 @@ export const ROUTES: Route[] = [
     pattern: '/v1/agents',
     description: 'The agent fleet, each with the mandate it can never exceed',
     handler: () => ({ agents: fleetManifest() }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/agents/ladder',
+    description: 'The four rungs of the mandate ladder and who is in the loop at each',
+    handler: () => ({ ladder: LADDER, automatableCommands: AUTOMATABLE_COMMANDS }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/agents/envelopes',
+    description: 'Every grant of unattended authority ever made, live or withdrawn',
+    handler: (platform, ctx) => ({ envelopes: envelopeRegister(projectContext(platform, ctx)) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/agents/envelopes',
+    description: 'Grant an agent authority to run named commands unattended, until a stated date',
+    schema: {
+      type: 'object',
+      required: ['agent', 'commands', 'from', 'until', 'note'],
+      properties: {
+        agent: { type: 'string' },
+        commands: { type: 'array', items: { type: 'string' } },
+        valueCeilingMinor: { type: 'number' },
+        from: { type: 'string' },
+        until: { type: 'string' },
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => grantEnvelope(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/agents/envelopes/:envelopeId/revoke',
+    description: 'Withdraw a grant of unattended authority; takes effect on the next evaluation',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      revokeEnvelope(projectContext(platform, ctx), {
+        envelopeId: ctx.params.envelopeId as string,
+        reason: body<{ reason: string }>(ctx).reason,
+      }),
   },
   {
     method: 'POST',

@@ -33,9 +33,13 @@ const brief = (today = '2026-03-02') => morningBriefing(ctx(), { name: 'Justin',
 // ── The fleet ───────────────────────────────────────────────────────────────
 
 describe('The agent fleet', () => {
-  it('runs twelve agents across four divisions', () => {
-    assert.equal(AGENTS.length, 12);
-    assert.equal(new Set(AGENTS.map((a) => a.name)).size, 12, 'an agent name appears twice');
+  it('names every agent once, and puts each in a declared division', () => {
+    // The count is deliberately not asserted. It was 12, and pinning it meant
+    // every new agent broke a test that was not about the new agent — so what
+    // is asserted is the property that actually matters: no duplicate name, and
+    // nobody outside the declared divisions.
+    assert.ok(AGENTS.length >= 12);
+    assert.equal(new Set(AGENTS.map((a) => a.name)).size, AGENTS.length, 'an agent name appears twice');
 
     for (const { division } of AGENT_DIVISIONS) {
       assert.ok(AGENTS.some((a) => a.division === division), `${division} has no agents`);
@@ -53,7 +57,12 @@ describe('The agent fleet', () => {
         assert.ok(agent.mandate.reads.includes(area), `${agent.name} proposes in ${area} without reading it`);
       }
       assert.ok(agent.mandate.approvers.length > 0, `${agent.name} has nobody who can approve it`);
-      assert.notEqual(agent.mandate.maxUnattended, 'ACT', `${agent.name} may act unattended`);
+      // ACT is eligibility, not authority — `mandate.test.ts` holds that line.
+      // What is asserted here is that eligibility is never declared without the
+      // bound that goes with it.
+      if (agent.mandate.maxUnattended === 'ACT') {
+        assert.ok(agent.mandate.envelope, `${agent.name} is ACT-eligible with no declared envelope`);
+      }
     }
   });
 

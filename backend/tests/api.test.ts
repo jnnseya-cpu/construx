@@ -429,7 +429,18 @@ describe('the agent surface', () => {
     assert.ok(reply.body.agents.length >= 8);
     for (const agent of reply.body.agents) {
       assert.ok(agent.approvers.length > 0, `${agent.name} publishes no approvers`);
-      assert.notEqual(agent.maxUnattended, 'ACT', `${agent.name} advertises unattended authority`);
+      // An ACT ceiling is published as eligibility, and the published record
+      // has to say what such a grant could ever cover — otherwise the interface
+      // shows a machine with unattended authority and no stated bound.
+      if (agent.maxUnattended === 'ACT') {
+        assert.ok(agent.envelope, `${agent.name} advertises unattended authority with no declared envelope`);
+        assert.ok(agent.envelope.commands.length > 0);
+      }
+      // Running or declared, never silently absent.
+      assert.ok(['DEPLOYED', 'DECLARED'].includes(agent.deployment), `${agent.name} publishes no deployment state`);
+      if (agent.deployment === 'DECLARED') {
+        assert.ok(agent.needs, `${agent.name} is published as declared without saying what it needs`);
+      }
     }
   });
 

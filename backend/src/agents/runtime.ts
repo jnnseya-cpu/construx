@@ -2,8 +2,9 @@ import { ulid } from '../core/ids.ts';
 import { DomainError, ForbiddenError } from '../core/errors.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
 import { rolesAllow } from '../identity/roles.ts';
-import { AGENTS, agentByName } from './registry.ts';
-import type { AgentDefinition, AgentProposal, AgentRunReport, Finding } from './types.ts';
+import { mayActUnattended } from './mandate.ts';
+import { AGENTS, agentByName, deployedAgents } from './registry.ts';
+import { exceeds, type AgentDefinition, type AgentProposal, type AgentRunReport, type Finding } from './types.ts';
 
 /**
  * The agent runtime.
@@ -49,15 +50,20 @@ export async function runAgents(
   const ranAt = new Date().toISOString();
   const existing = new Set(openProposals(ctx).map((p) => p.finding.key));
 
+  // Declared agents are in the manifest and not in the fleet: they carry a
+  // mandate so the org chart is inspectable, and no `evaluate`, so there is
+  // nothing to run. Naming one explicitly does not conjure one either.
   const fleet = options.only?.length
-    ? options.only.map((name) => agentByName(name)).filter((a): a is AgentDefinition => Boolean(a))
-    : AGENTS;
+    ? options.only
+        .map((name) => agentByName(name))
+        .filter((a): a is AgentDefinition => Boolean(a) && typeof a?.evaluate === 'function')
+    : deployedAgents();
 
   const report: AgentRunReport = { runId, ranAt, agents: [], proposals: [], suppressed: 0 };
 
   for (const agent of fleet) {
     try {
-      const output = await agent.evaluate(ctx);
+      const output = await agent.evaluate!(ctx);
       let raised = 0;
       let suppressed = 0;
 
@@ -78,11 +84,29 @@ export async function runAgents(
               `Agent ${agent.name} proposed in ${proposed.command.area}, which is outside its mandate`,
             );
           }
-          if (proposed.autonomy === 'ACT' && agent.mandate.maxUnattended !== 'ACT') {
+          if (exceeds(proposed.autonomy, agent.mandate.maxUnattended)) {
             throw new DomainError(
               'AGENT_EXCEEDED_AUTONOMY',
-              `Agent ${agent.name} proposed to act unattended beyond its mandate`,
+              `Agent ${agent.name} wants to ${proposed.autonomy} and its ceiling is ${agent.mandate.maxUnattended}`,
             );
+          }
+          if (proposed.autonomy === 'ACT') {
+            // Declaring is not granting. A ceiling of ACT in the registry says
+            // this agent *may be* trusted to act; whether it *is* comes from an
+            // envelope a person granted, on the record, with an end date.
+            //
+            // Degraded rather than refused: the finding still matters and the
+            // work still needs doing, so an ungranted act becomes a proposal
+            // with the reason attached. Refusing would trade a small safety
+            // gain for the loss of the finding entirely.
+            const permitted = mayActUnattended(ctx, agent.name, {
+              command: proposed.command.command,
+              valueMinor: proposed.command.estimatedAcuMinor,
+            });
+            if (!permitted.permitted) {
+              proposed.autonomy = 'PROPOSE';
+              proposed.command.effect = `${proposed.command.effect} (queued rather than run: ${permitted.because})`;
+            }
           }
           // A proposal nobody is permitted to approve is noise that will sit in
           // the queue for ever. Catching it here turns an agent declaring the
@@ -468,14 +492,26 @@ export function pendingProposals(ctx: EngineContext): QueuedProposal[] {
     );
 }
 
-/** The fleet as published to a client, so the UI never hardcodes the roster. */
+/**
+ * The fleet as published to a client, so the UI never hardcodes the roster.
+ *
+ * Every agent appears, running or not. `deployment` and `needs` are what stop
+ * the manifest becoming a claim: an agent listed without an `evaluate` and
+ * without a reason would read as capability the platform does not have, which
+ * is exactly the failure the rest of it refuses.
+ */
 export function fleetManifest() {
   return AGENTS.map((agent) => ({
     name: agent.name,
+    division: agent.division,
     purpose: agent.purpose,
     reads: agent.mandate.reads,
     proposes: agent.mandate.proposes,
     approvers: agent.mandate.approvers,
     maxUnattended: agent.mandate.maxUnattended,
+    /** What an ACT grant against this agent could ever cover. Absent below ACT. */
+    envelope: agent.mandate.envelope,
+    deployment: agent.deployment ?? 'DEPLOYED',
+    needs: agent.needs,
   }));
 }
