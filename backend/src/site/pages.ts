@@ -1075,6 +1075,13 @@ const DEMO_ROLES: Record<string, { lead: string; shows: string }> = {
     lead: 'Design information under control',
     shows: 'Packages, deliverables, RFIs raised off a drawing revision, and what freezing a package actually stops.',
   },
+  CONSTRUCTION_MANAGER: {
+    lead: 'Running the site',
+    shows:
+      'Permits issued and method statements approved, the traffic management plan for a job in a live carriageway, ' +
+      'the week sequenced against the lookahead, and inspections accepted. The seat between the programme and the ' +
+      'people doing the work — start on the Rossendale project, which is the one on site.',
+  },
   SUPERVISOR: {
     lead: 'The site, from the site',
     shows: 'Daily diaries, progress against measure, observations, and what happens to a record captured with no signal.',

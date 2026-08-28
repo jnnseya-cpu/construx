@@ -54,7 +54,12 @@ export const SEATS: Record<SeatType, SeatDefinition> = {
     // The Project Director sits above the Construction Manager and holds the
     // same class of authority — final say on programme, cost and the lifecycle
     // itself. Same seat: it is seniority within one authority, not a new one.
-    roles: ['EPC', 'PROJECT_DIRECTOR'],
+    //
+    // `CONSTRUCTION_MANAGER` was the seat's own name and, until now, not a role
+    // anybody could hold — the seat was priced and sold for a person the
+    // permission model had no seat for. It is the role that runs the site:
+    // approves the method statement, issues the permit, sequences the week.
+    roles: ['CONSTRUCTION_MANAGER', 'EPC', 'PROJECT_DIRECTOR'],
   },
   PROJECT_MANAGER: {
     seat: 'PROJECT_MANAGER',

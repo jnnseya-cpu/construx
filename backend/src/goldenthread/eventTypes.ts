@@ -429,6 +429,16 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // --- Contracts ------------------------------------------------------------
   def('CONTRACT_CREATED', 'Contract', 'CREATE', 'CONTRACTS_CLAIMS'),
   def('CONTRACT_INGESTED', 'Contract', 'IMPORT', 'CONTRACTS_CLAIMS', { aiAllowed: true, requiresEvidence: true }),
+  // Signing the main contract.
+  //
+  // A contract could only reach EXECUTED by being converted from a locked bid
+  // pack — so a negotiated contract, a framework call-off or a two-stage deal
+  // could be created and never signed, and the project it governed could never
+  // pass the tender gate. Not every job is won at a tender.
+  //
+  // Evidence is required and `aiAllowed` is false: this is the moment a
+  // business is bound, and the signed instrument is the thing that binds it.
+  def('CONTRACT_EXECUTED', 'Contract', 'APPROVE', 'CONTRACTS_CLAIMS', { requiresEvidence: true }),
   def('CONTRACT_CLAUSE_EXTRACTED', 'ContractClause', 'CREATE', 'CONTRACTS_CLAIMS', { aiAllowed: true, requiresEvidence: true }),
   def('OBLIGATION_REGISTERED', 'Obligation', 'CREATE', 'CONTRACTS_CLAIMS', { aiAllowed: true }),
   // A promise read out of a letter, and the moment somebody starts counting it

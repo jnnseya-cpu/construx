@@ -76,6 +76,74 @@ export function createContract(
  * Bid-to-contract conversion. Carries the frozen commercial position forward so
  * nobody re-keys it — re-entry is where exclusions and qualifications get lost.
  */
+/**
+ * Execute a contract that was not won at a tender.
+ *
+ * A contract could only reach EXECUTED through `convertBidToContract`, which
+ * needs a locked bid pack — so a **negotiated contract, a framework call-off or
+ * a two-stage deal could be created and never signed**, and the project it
+ * governed could never pass the tender gate into construction. That is a large
+ * share of real work, and the gap was invisible because the demonstration
+ * project happened to come from a tender.
+ *
+ * `A` on `CONTRACTS_CLAIMS` rather than `C`: signing is the act that binds the
+ * business, and the seat that drafts an agreement must not be the seat that
+ * commits to it. Evidence is required for the same reason the subcontract
+ * requires it — the signed instrument is the thing that binds, and a status
+ * that says EXECUTED with nothing behind it is a claim, not a record.
+ *
+ * A contract already executed is refused rather than re-signed. The ledger
+ * would happily hold two executions of one agreement and no reader could then
+ * say which date the obligations ran from.
+ */
+export function executeContract(
+  ctx: EngineContext,
+  input: {
+    contractId: string;
+    signedDocumentHash: string;
+    signatureMethod: string;
+    /** When the parties actually signed, which is not always today. */
+    executedOn?: string;
+  },
+): { contractId: string; contractSumMinor: number; executedAt: string } {
+  authorise(ctx, 'CONTRACTS_CLAIMS', 'A', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'LEGAL_L4' });
+
+  const contract = ctx.ledger.require({ refType: 'Contract', refId: input.contractId });
+  if (contract.state.status === 'EXECUTED') {
+    throw new DomainError(
+      'CONTRACT_ALREADY_EXECUTED',
+      'This contract is already executed. A second execution would leave two signing dates on one agreement and no ' +
+        'way to say which the obligations run from.',
+      409,
+    );
+  }
+
+  const evidence = registerEvidence(ctx, {
+    type: 'EXECUTED_CONTRACT',
+    hash: input.signedDocumentHash,
+    description: `Executed ${String(contract.state.form)} contract (${input.signatureMethod})`,
+  });
+
+  const executedAt = input.executedOn ?? new Date().toISOString();
+  write(ctx, {
+    eventType: 'CONTRACT_EXECUTED',
+    entity: { refType: 'Contract', refId: input.contractId },
+    nextState: {
+      ...contract.state,
+      status: 'EXECUTED',
+      signatureMethod: input.signatureMethod,
+      executedAt,
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return {
+    contractId: input.contractId,
+    contractSumMinor: Number(contract.state.contractSumMinor ?? 0),
+    executedAt,
+  };
+}
+
 export function convertBidToContract(
   ctx: EngineContext,
   input: {

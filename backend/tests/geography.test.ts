@@ -4,6 +4,7 @@ import * as structure from '../src/domain/structure.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 import { DomainError } from '../src/core/errors.ts';
+import { CDM_DOCUMENTS } from '../src/domain/cdm.ts';
 
 /**
  * Where in the world a project is, and who says so.
@@ -184,5 +185,51 @@ describe('the demonstration estate spans more than one region', () => {
         `${String(record.state.name)} is in ${location.continentCode} under a ${portfolio.region} portfolio`,
       );
     }
+  });
+});
+
+describe('the CDM document catalogue has one source of truth', () => {
+  it('offers every type the domain holds, and no others', async () => {
+    const { CDM_DOCUMENTS } = await import('../src/domain/cdm.ts');
+    const { ROUTES } = await import('../src/api/routes.ts');
+
+    // The route's `enum` was a hand-written copy of the catalogue, and the two
+    // agreed only because nobody had added a document since it was written.
+    // Adding the traffic management plan proved it: the domain knew the type
+    // and the gateway refused it, so a document the platform could produce was
+    // unreachable through the only door that reaches it.
+    const route = ROUTES.find((r) => r.pattern === '/v1/projects/:projectId/cdm/documents' && r.method === 'POST');
+    assert.ok(route, 'the draft route is gone');
+
+    const offered = (route.schema as { properties: { type: { enum: string[] } } }).properties.type.enum;
+    assert.deepEqual(
+      [...offered].sort(),
+      CDM_DOCUMENTS.map((d) => d.type).sort(),
+      'the door and the catalogue disagree about which documents exist',
+    );
+  });
+
+  it('holds the site-management documents a live site runs on', () => {
+    // Named individually rather than counted. Traffic management is the one
+    // that matters most and was missing entirely: on a site, being struck by a
+    // vehicle is a far commoner way to be killed than a dropped load, and the
+    // platform could hold a lifting plan and not a traffic plan.
+    const required = ['TRAFFIC_MANAGEMENT_PLAN', 'SITE_LOGISTICS_PLAN', 'UNDERGROUND_SERVICES_PLAN', 'EXCAVATION_PLAN'];
+    for (const type of required) {
+      const spec = CDM_DOCUMENTS.find((d) => d.type === type);
+      assert.ok(spec, `${type} is not in the catalogue`);
+      assert.ok(spec.requiredSections.length >= 5, `${type} has too few required sections to be a floor`);
+      assert.ok(spec.approver, `${type} has no approver, so nothing signs it`);
+    }
+
+    // Vehicle–pedestrian segregation is the single control that prevents the
+    // commonest fatal site accident. A traffic plan that describes routes and
+    // not the separation between them has not addressed the hazard it exists
+    // for, so it is required rather than optional.
+    const traffic = CDM_DOCUMENTS.find((d) => d.type === 'TRAFFIC_MANAGEMENT_PLAN');
+    assert.ok(
+      traffic?.requiredSections.some((section) => /segregation/i.test(section)),
+      'the traffic management plan does not require vehicle and pedestrian segregation',
+    );
   });
 });

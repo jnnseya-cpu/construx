@@ -205,6 +205,19 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
     roles: ['DESIGNER'],
   });
   const qaqc = demoUser({ name: 'QA/QC Engineer', email: 'qaqc@meridian.example', roles: ['QAQC'] });
+  // The person who runs the site.
+  //
+  // Missing, and its absence was the reason the Construction screen looked shut
+  // to anybody senior: the PM holds read-only on SAFETY_RAMS, so on a live
+  // project a Project Manager could see the permit register and issue nothing
+  // into it, and there was no seat between them and the Supervisor that could.
+  // This is the seat that approves the method statement, issues the permit and
+  // sequences the week — and answers for the site to an inspector who walks on.
+  const constructionManager = demoUser({
+    name: 'Construction Manager',
+    email: 'construction@meridian.example',
+    roles: ['CONSTRUCTION_MANAGER'],
+  });
   // The site manager. Absent until the Construction screen was built, and the
   // absence mattered: SUPERVISOR is the role that holds C and U on SAFETY_RAMS,
   // QUALITY_COMMISSIONING and FIELD_EXECUTION — it issues the permits, records
@@ -2956,6 +2969,149 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
       'measurement, estimating and procurement are writable here',
   );
 
+  // --- A project on site -----------------------------------------------------
+  //
+  // The third project, and the one that makes construction and site management
+  // reachable at all. Field execution, quality and the whole safety file are
+  // gated to CONSTRUCTION and COMMISSIONING, so with Ashworth in Operations and
+  // Calderdale at Tender there was no project on which a site manager could
+  // issue a permit, approve a method statement or record a diary — for any
+  // role, however senior.
+  //
+  // Walked there through the gates rather than placed there. TENDER demands a
+  // frozen estimate and an executed contract, so this builds both: a real
+  // take-off against a real drawing, an estimate frozen at settlement, and a
+  // negotiated contract signed. Nothing is asserted that the platform would not
+  // have refused.
+  //
+  // It carries no site history. That is the point of it — the empty diary, the
+  // empty permit register and the empty inspection log are what somebody
+  // walking in has come to fill.
+  const siteProject = structure.createProject(governanceCtx, {
+    portfolioId,
+    programmeId,
+    name: 'Rossendale Trunk Main Diversion',
+    sectorType: 'UTILITIES',
+    assetType: 'Potable trunk main',
+    location: { continentCode: 'EU', countryCode: 'GB', city: 'Rawtenstall' },
+    contractValueMinor: 410_000_000,
+    currency: 'GBP',
+    plannedStart: '2026-02-02',
+    plannedCompletion: '2027-08-13',
+  });
+
+  const siteOwnerCtx = contextFor(platform, authOf(platform, owner.id), siteProject.projectId);
+  const sitePmCtx = contextFor(platform, authOf(platform, pm.id), siteProject.projectId);
+  const siteQsCtx = contextFor(platform, authOf(platform, qs.id), siteProject.projectId);
+  const siteBimCtx = contextFor(platform, authOf(platform, bimLead.id), siteProject.projectId);
+
+  const { packageId: diversionPackageId } = structure.createScopePackage(sitePmCtx, {
+    name: 'Trunk main diversion and tie-ins',
+    discipline: 'CIVILS',
+    scopeOfWorks:
+      'Diversion of 1.2km of DN600 potable trunk main around the proposed highway realignment, including two live ' +
+      'tie-ins under night-time shutdown, chamber construction and reinstatement of the carriageway.',
+    inclusions: ['Open-cut pipelaying', 'Two live tie-ins', 'Carriageway reinstatement'],
+    exclusions: ['Permanent traffic signals', 'Third-party service diversions'],
+    acceptanceCriteria: ['Pressure testing to WIS 4-01-01', 'Chlorination and bacteriological clearance', 'Highway reinstatement to HAUC standards'],
+    estimatedValueMinor: 340_000_000,
+    designResponsibility: 'CONTRACTOR',
+  });
+  structure.transitionPhase(siteOwnerCtx, { to: 'DESIGN', justification: 'Diversion scope defined and funding released' });
+
+  structure.assessDesignMaturity(sitePmCtx, {
+    packageId: diversionPackageId,
+    disciplineScores: [{ discipline: 'CIVILS', ribaStage: 5, completenessPercent: 94, frozen: true }],
+    informationGaps: ['Statutory undertaker records for the western verge not yet returned'],
+    assessorNotes: 'Fully priceable. The outstanding utility records are a construction risk, not a pricing one.',
+  });
+  structure.transitionPhase(siteOwnerCtx, { to: 'TENDER', justification: 'Design frozen and the package released for pricing' });
+
+  const siteDrawing = await bim.registerDrawing(siteBimCtx, {
+    fileHash: hash('R-2100-C02.pdf'),
+    titleBlock: {
+      drawingNumber: 'R-2100',
+      title: 'Trunk Main Diversion — Plan and Long Section',
+      revision: 'C02',
+      discipline: 'CIVILS',
+      issueDate: '2025-11-18',
+      status: 'FOR CONSTRUCTION',
+    },
+    packageIds: [diversionPackageId],
+  });
+
+  const siteTakeoff = await tender.runTakeoff(siteQsCtx, {
+    packageId: diversionPackageId,
+    sources: [{ drawingRef: { refType: 'Drawing', refId: siteDrawing.drawingId }, discipline: 'CIVILS', sheetId: 'R-2100' }],
+    costCodePrefix: 'DIV',
+    items: [
+      { description: 'Excavate trench in carriageway, average 1.8m deep', unit: 'm', quantity: 1_240, sourceSheet: 'R-2100', measurementRule: 'NRM2' },
+      { description: 'Lay DN600 ductile iron main including bedding', unit: 'm', quantity: 1_240, sourceSheet: 'R-2100' },
+      { description: 'Reinstate carriageway to HAUC standard', unit: 'm2', quantity: 3_720, sourceSheet: 'R-2100' },
+    ],
+  });
+
+  const siteEstimate = tender.buildEstimate(siteQsCtx, {
+    packageId: diversionPackageId,
+    durationWeeks: 46,
+    lines: [
+      { boqItemId: siteTakeoff.boqItemIds[0] as string, description: 'Excavate trench in carriageway', unit: 'm', quantity: 1_240, labourRateMinor: 8_400, plantRateMinor: 11_200 },
+      { boqItemId: siteTakeoff.boqItemIds[1] as string, description: 'Lay DN600 ductile iron main', unit: 'm', quantity: 1_240, labourRateMinor: 14_600, plantRateMinor: 6_300, materialRateMinor: 78_400, materialWastePercent: 3 },
+      { boqItemId: siteTakeoff.boqItemIds[2] as string, description: 'Carriageway reinstatement', unit: 'm2', quantity: 3_720, labourRateMinor: 4_100, plantRateMinor: 2_700, materialRateMinor: 5_900, materialWastePercent: 5 },
+    ],
+    timeRelated: [
+      { head: 'SITE_MANAGEMENT', description: 'Construction manager', weeklyRateMinor: 210_000, quantity: 1 },
+      { head: 'SITE_MANAGEMENT', description: 'Site engineer', weeklyRateMinor: 160_000, quantity: 1 },
+      // Named because this job is in a live carriageway: the traffic management
+      // is a preliminary that is priced weekly and is the first thing to grow
+      // when the works overrun.
+      { head: 'LOGISTICS', description: 'Traffic management and marshalling', weeklyRateMinor: 165_000, quantity: 1 },
+      { head: 'HEALTH_AND_SAFETY', description: 'Safety adviser attendance', weeklyRateMinor: 68_000, quantity: 1 },
+    ],
+    quantified: [{ head: 'TEMPORARY_WORKS', description: 'Trench support design and hire', unit: 'week', quantity: 34, rateMinor: 186_000 }],
+    margin: { overheadPercent: 6, profitPercent: 7 },
+    basisOfEstimate: 'Measured from R-2100 rev C02 with rates from the 2026 civils library.',
+    assumptions: ['Continuous night-time possession for both tie-ins', 'No rock encountered above formation'],
+  });
+  // No transition here: the project is already at TENDER, and asking for the
+  // phase it is in is refused with PHASE_NO_CHANGE rather than accepted as a
+  // no-op — correctly, because a transition is a governance event and one that
+  // moves nothing is a record of a decision nobody took.
+  tender.freezeEstimate(siteQsCtx, siteEstimate.estimateId, 'Frozen at settlement before the negotiated offer was given');
+
+  // Negotiated, not tendered — which is why `executeContract` had to exist. A
+  // contract could previously only reach EXECUTED by conversion from a locked
+  // bid pack, so this whole route through the platform was closed.
+  const siteContract = claimsEngine.createContract(siteQsCtx, {
+    suite: 'NEC4',
+    form: 'NEC4 ECC Option A',
+    parties: [
+      { role: 'CLIENT', partyId: 'CLIENT-AWA', name: 'Ashworth Water Authority' },
+      { role: 'CONTRACTOR', partyId: 'CONTRACTOR-MERIDIAN', name: 'Meridian Infrastructure Group Ltd' },
+    ],
+    contractSumMinor: siteEstimate.totalMinor,
+    commencementDate: '2026-02-02',
+    completionDate: '2027-08-13',
+    liquidatedDamagesPerDayMinor: 420_000,
+    ldCapPercent: 8,
+    retentionPercent: 3,
+    defectsLiabilityMonths: 12,
+  });
+  claimsEngine.executeContract(siteOwnerCtx, {
+    contractId: siteContract.contractId,
+    signedDocumentHash: hash('rossendale-executed-main-contract'),
+    signatureMethod: 'DEED',
+    executedOn: '2026-01-19',
+  });
+  structure.transitionPhase(siteOwnerCtx, {
+    to: 'CONSTRUCTION',
+    justification: 'Contract executed and estimate frozen; works may commence',
+  });
+  step(
+    `Project on site: Rossendale Trunk Main Diversion (${siteProject.projectId}) at CONSTRUCTION — ` +
+      'permits, method statements, diaries, inspections and traffic management are writable here',
+  );
+
   // --- A second region -------------------------------------------------------
   //
   // CONSTRUX is a worldwide platform and the demonstration estate was one
@@ -3015,6 +3171,7 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
     projectId,
     workingProjects: [
       { projectId: tenderProject.projectId, name: 'Calderdale Reservoir Renewal', phase: 'TENDER' },
+      { projectId: siteProject.projectId, name: 'Rossendale Trunk Main Diversion', phase: 'CONSTRUCTION' },
       { projectId: nairobiProject.projectId, name: 'Northern Collector Tunnel — Phase 3', phase: 'CONCEPT' },
     ],
     enterpriseName: DEMO_TENANCY.enterpriseName,
@@ -3029,6 +3186,7 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
       owner: { id: owner.id, auth: authOf(platform, owner.id) },
       pm: { id: pm.id, auth: authOf(platform, pm.id) },
       qs: { id: qs.id, auth: authOf(platform, qs.id) },
+      constructionManager: { id: constructionManager.id, auth: authOf(platform, constructionManager.id) },
       planner: { id: planner.id, auth: authOf(platform, planner.id) },
       safety: { id: safetyLead.id, auth: authOf(platform, safetyLead.id) },
       bim: { id: bimLead.id, auth: authOf(platform, bimLead.id) },

@@ -122,10 +122,12 @@ describe('reading the switch', () => {
 describe('the demonstration mark', () => {
   it('is on every seeded delivery identity', () => {
     const seeded = platform.demonstrationUsers();
-    // Twelve: the enterprise administrator plus the eleven-strong delivery
+    // Thirteen: the enterprise administrator plus the twelve-strong delivery
     // team. A count rather than a spot check, so an identity added to the seed
-    // without the mark fails here instead of silently being unreachable.
-    assert.equal(seeded.length, 12, 'the seeded delivery team is not all marked');
+    // without the mark fails here instead of silently being unreachable — which
+    // is exactly what it did when the Construction Manager was added, and the
+    // number is raised deliberately rather than the assertion loosened.
+    assert.equal(seeded.length, 13, 'the seeded delivery team is not all marked');
     for (const user of seeded) {
       assert.equal(user.demonstration, true, `${user.email} is listed as a demonstration identity without the mark`);
       assert.match(user.email, /@meridian\.example$/);
@@ -318,7 +320,7 @@ describe('production with the demonstration switched on', () => {
     };
 
     assert.equal(body.enterprise, DEMO_TENANCY.enterpriseName);
-    assert.equal(body.identities.length, 12);
+    assert.equal(body.identities.length, 13);
     assert.equal(
       body.identities.some((i) => i.layer === 'PLATFORM_ADMIN'),
       false,

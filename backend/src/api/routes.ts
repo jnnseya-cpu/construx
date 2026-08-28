@@ -47,6 +47,7 @@ import { AuthError, DomainError, ForbiddenError, NotFoundError, ValidationError 
 import type { Schema } from '../core/validate.ts';
 import * as business from '../domain/business.ts';
 import * as cdm from '../domain/cdm.ts';
+import { CDM_DOCUMENTS } from '../domain/cdm.ts';
 import * as portfolio from '../domain/portfolio.ts';
 import * as commitments from '../domain/commitments.ts';
 import * as watch from '../ops/watch.ts';
@@ -2601,14 +2602,15 @@ export const ROUTES: Route[] = [
       type: 'object',
       required: ['type', 'title'],
       properties: {
-        type: {
-          type: 'string',
-          enum: [
-            'CONSTRUCTION_PHASE_PLAN', 'RAMS', 'COSHH_ASSESSMENT', 'TEMPORARY_WORKS_DESIGN_BRIEF',
-            'LIFTING_PLAN', 'WORKING_AT_HEIGHT_PLAN', 'FIRE_SAFETY_PLAN', 'EMERGENCY_ARRANGEMENTS',
-            'ENVIRONMENTAL_CONTROL_PLAN', 'WORK_EQUIPMENT_REGISTER', 'SITE_INDUCTION', 'TOOLBOX_TALK',
-          ],
-        },
+        // Derived from the catalogue, not restated.
+        //
+        // This was a hand-written copy of the twelve types `CDM_DOCUMENTS` held,
+        // and the two agreed only because nobody had added a document since.
+        // Adding the traffic management plan proved it: the domain knew the type
+        // and the gateway refused it, so a document the platform could produce
+        // was unreachable through the only door that reaches it. A picker
+        // offering a value the command rejects is worse than a free-text box.
+        type: { type: 'string', enum: CDM_DOCUMENTS.map((document) => document.type) },
         title: stringField,
         sections: {
           type: 'array',
@@ -10850,6 +10852,26 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => claims.createContract(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contracts/:contractId/execute',
+    description: 'Engine F — execute a contract that was negotiated rather than tendered',
+    schema: {
+      type: 'object',
+      required: ['signedDocumentHash', 'signatureMethod'],
+      properties: {
+        signedDocumentHash: { type: 'string', minLength: 64, maxLength: 64 },
+        signatureMethod: { type: 'string', enum: ['WET_INK', 'E_SIGNATURE', 'DEED'] },
+        executedOn: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      claims.executeContract(projectContext(platform, ctx), {
+        contractId: String(ctx.params.contractId),
+        ...body<{ signedDocumentHash: string; signatureMethod: string; executedOn?: string }>(ctx),
+      }),
   },
   {
     method: 'POST',

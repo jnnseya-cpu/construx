@@ -79,6 +79,23 @@ export type Role =
   | 'QAQC'
   | 'DESIGNER'
   | 'BIM'
+  /**
+   * The person who runs the site.
+   *
+   * Missing entirely, and it is the seat a construction business is built
+   * around: the one who runs the works between the Project Manager's programme
+   * and the Supervisor's records. The Supervisor *records* what happened and
+   * this role *decides what happens* — it issues the permit, approves the
+   * method statement, sequences the week and answers for the site to an
+   * inspector who walks on.
+   *
+   * The separation from SAFETY is deliberate and is the whole of why both
+   * exist. The construction manager may approve a method statement for the
+   * works they are running; the safety lead approves the plans that govern the
+   * site itself and holds the CDM duty. One person doing both is a site where
+   * the person under programme pressure signs off their own controls.
+   */
+  | 'CONSTRUCTION_MANAGER'
   | 'SUPERVISOR'
   | 'FM'
   | 'SUPPLIER'
@@ -138,6 +155,7 @@ export const ROLE_ACCOUNT_LAYER: Record<Role, AccountLayer> = {
   QAQC: 'TENANT_USER',
   DESIGNER: 'TENANT_USER',
   BIM: 'TENANT_USER',
+  CONSTRUCTION_MANAGER: 'TENANT_USER',
   SUPERVISOR: 'TENANT_USER',
   FM: 'TENANT_USER',
   SUPPLIER: 'TENANT_USER',
@@ -548,6 +566,44 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     BIM_TWIN: ['R', 'C', 'U', 'A', 'I', 'X'],
     WORKPACKAGES_TASKS: ['R'],
     BOQ_TAKEOFF: ['R', 'X'],
+    HANDOVER_OM: ['R', 'C', 'U'],
+    EVIDENCE_AUDIT: ['R', 'I'],
+    AI_EXECUTION: ['R', 'X'],
+  },
+
+  /**
+   * Runs the works. Authors and approves what the site is built to, records
+   * against it, and holds none of the commercial keys.
+   *
+   * Compared with the Supervisor below: create *and approve* on safety and
+   * quality, because issuing a permit and accepting an inspection are this
+   * seat's daily work rather than an escalation. Compared with the PM: no
+   * approval on the programme baseline or on change, because the person under
+   * pressure to hit a date must not be the person who moves it.
+   *
+   * Create on `WORKPACKAGES_TASKS` and `LOOKAHEAD_CONSTRAINTS` because
+   * sequencing the next three weeks is the job, and nothing else in the model
+   * gave that authority to anybody actually on site.
+   */
+  CONSTRUCTION_MANAGER: {
+    PROJECT_SETUP: ['R'],
+    DESIGN_INFORMATION: ['R', 'C', 'U'],
+    WORKPACKAGES_TASKS: ['R', 'C', 'U', 'A'],
+    PROGRAMME_BASELINES: ['R'],
+    LOOKAHEAD_CONSTRAINTS: ['R', 'C', 'U', 'A'],
+    PROCUREMENT_AWARD: ['R'],
+    BUDGET_COST: ['R'],
+    CHANGE_VARIATION: ['R', 'C'],
+    CONTRACTS_CLAIMS: ['R'],
+    RISK_REGISTER: ['R', 'C', 'U'],
+    // Approve, because the construction manager signs the RAMS and the permit
+    // for the works they are running. `X` is not held: running an AI engine
+    // against the safety file is the safety lead's, and a method statement a
+    // model wrote and the site manager approved has nobody in it who read it.
+    SAFETY_RAMS: ['R', 'C', 'U', 'A'],
+    FIELD_EXECUTION: ['R', 'C', 'U', 'A'],
+    QUALITY_COMMISSIONING: ['R', 'C', 'U', 'A'],
+    BIM_TWIN: ['R'],
     HANDOVER_OM: ['R', 'C', 'U'],
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],

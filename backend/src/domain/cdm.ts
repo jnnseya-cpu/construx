@@ -42,6 +42,10 @@ export type CDMDocumentType =
   | 'FIRE_SAFETY_PLAN'
   | 'EMERGENCY_ARRANGEMENTS'
   | 'ENVIRONMENTAL_CONTROL_PLAN'
+  | 'TRAFFIC_MANAGEMENT_PLAN'
+  | 'SITE_LOGISTICS_PLAN'
+  | 'UNDERGROUND_SERVICES_PLAN'
+  | 'EXCAVATION_PLAN'
   | 'WORK_EQUIPMENT_REGISTER'
   | 'SITE_INDUCTION'
   | 'TOOLBOX_TALK';
@@ -134,6 +138,86 @@ export const CDM_DOCUMENTS: DocumentSpec[] = [
     label: 'Environmental control plan',
     approver: 'SAFETY',
     requiredSections: ['Consents and permits', 'Dust and air quality', 'Noise and vibration limits', 'Water and pollution prevention', 'Waste and duty of care', 'Ecology and protected species', 'Spill response'],
+  },
+  // --- Site management ------------------------------------------------------
+  //
+  // The four below were missing, and they are not fringe: between them they
+  // cover how people and vehicles move on a site and what is under it. Every
+  // one of them is a document a site runs on daily and an inspector asks for
+  // first, and none of them had anywhere to live in this catalogue — which
+  // meant the platform could hold a lifting plan and not a traffic plan, on a
+  // site where being run over is a far commoner way to be killed than a
+  // dropped load.
+  //
+  // Authored, not generated. These carry a site's specific arrangements —
+  // which gate, which route, whose banksman, which utility's records — and a
+  // model does not know any of them. The sections are the floor the document
+  // is not valid without; the content is a person's.
+  {
+    type: 'TRAFFIC_MANAGEMENT_PLAN',
+    label: 'Traffic management plan',
+    approver: 'SAFETY',
+    // Vehicle–pedestrian segregation is the first section for a reason: it is
+    // the single control that prevents the commonest fatal site accident, and
+    // a plan that describes routes without describing the separation between
+    // them has not addressed the hazard it exists for.
+    requiredSections: [
+      'Vehicle and pedestrian segregation',
+      'Site access and egress points',
+      'Internal haul routes and one-way system',
+      'Speed limits and enforcement',
+      'Reversing, banksman and marshalling arrangements',
+      'Delivery booking and holding areas',
+      'Public highway interface and permissions',
+      'Signage, barriers and lighting',
+      'Emergency vehicle access',
+    ],
+  },
+  {
+    type: 'SITE_LOGISTICS_PLAN',
+    label: 'Site logistics plan',
+    approver: 'EPC',
+    requiredSections: [
+      'Site setup and compound layout',
+      'Material storage and laydown areas',
+      'Craneage and hoisting arrangements',
+      'Waste and skip management',
+      'Welfare and parking provision',
+      'Utilities and temporary supplies',
+      'Neighbour and stakeholder constraints',
+    ],
+  },
+  {
+    type: 'UNDERGROUND_SERVICES_PLAN',
+    label: 'Underground services plan',
+    approver: 'EPC',
+    // HSG47. Striking a buried service is one of the few site events that can
+    // kill somebody who is nowhere near the excavation, and the controls are
+    // sequential — plans, then locate, then dig safely — which is why the
+    // sections are in that order rather than alphabetical.
+    requiredSections: [
+      'Utility records obtained and their date',
+      'Survey and detection method',
+      'Marking on the ground',
+      'Safe digging practice and tool restrictions',
+      'Trial holes and hand-dig zones',
+      'Service diversions and isolations',
+      'Emergency procedure on a strike',
+    ],
+  },
+  {
+    type: 'EXCAVATION_PLAN',
+    label: 'Excavation plan',
+    approver: 'EPC',
+    requiredSections: [
+      'Excavation extent and depth',
+      'Ground conditions and groundwater',
+      'Support system and design check',
+      'Edge protection and access',
+      'Spoil placement and surcharge',
+      'Adjacent structures and services',
+      'Inspection regime and permit to enter',
+    ],
   },
   {
     type: 'WORK_EQUIPMENT_REGISTER',

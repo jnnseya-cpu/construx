@@ -9225,3 +9225,110 @@ The seed now also builds **East Africa Water Security** (AF, no country — it i
 regional on purpose) with the Northern Collector Tunnel at Concept, beside the
 European portfolio's two projects. Europe: 1 portfolio, 2 projects, £27.90M.
 Africa: 1 portfolio, 1 project, £12.60M. Verified in a browser.
+
+---
+
+## The site: a Construction Manager, a project on site, and traffic management
+
+### There was no Construction Manager
+
+The role did not exist. `SUPERVISOR` records what happened and `PM` runs the
+programme, and between them sat nothing — so on a live project a **Project
+Manager could see the permit register and issue nothing into it** (the PM holds
+read-only on `SAFETY_RAMS`), and the only seat that could was the supervisor.
+
+`CONSTRUCTION_MANAGER` is now a role. It creates *and approves* on safety,
+quality and field execution, because issuing a permit and accepting an
+inspection are this seat's daily work rather than an escalation; it holds
+create on work packages and lookahead, because sequencing the next three weeks
+is the job and nothing in the model gave that authority to anybody on site; and
+it holds no approval on the programme baseline or on change, because the person
+under pressure to hit a date must not be the person who moves it.
+
+It is separate from `SAFETY` deliberately: the construction manager approves the
+method statement for the works they are running, and the safety lead approves
+the plans that govern the site and holds the CDM duty. One person doing both is
+a site where somebody signs off their own controls.
+
+**The seat already existed and the role did not.** `billing/seats.ts` has had a
+`CONSTRUCTION_MANAGER` seat at £180/month since the pricing work — a seat priced
+and sold for a person the permission model had no role for. `authority.test.ts`
+and `billing.test.ts` both caught it the moment the role appeared, which is the
+invariant doing exactly its job.
+
+### Traffic management did not exist anywhere
+
+Four site-management documents were absent from the CDM catalogue, and the first
+is not a fringe case: the platform could hold a **lifting plan** and not a
+**traffic management plan**, on a site where being struck by a vehicle is a far
+commoner way to be killed than a dropped load.
+
+- **Traffic management plan** — vehicle and pedestrian segregation first,
+  because it is the single control that prevents the commonest fatal site
+  accident, and a plan describing routes without the separation between them has
+  not addressed the hazard it exists for.
+- **Site logistics plan** — compound, storage, craneage, waste, welfare.
+- **Underground services plan** — HSG47, sections in the order the controls run:
+  records, then locate, then dig safely.
+- **Excavation plan** — support, edge protection, surcharge, permit to enter.
+
+They are **authored, not generated**. These carry a site's specific
+arrangements — which gate, which route, whose banksman, which utility's records
+— and a model does not know any of them. The required sections are the floor the
+document is not valid without; the content is a person's.
+
+### The door and the catalogue disagreed
+
+Adding them exposed a second defect: `POST /v1/projects/:projectId/cdm/documents`
+carried a **hand-written copy** of the twelve document types, and the two agreed
+only because nobody had added a document since it was written. The domain knew
+the traffic management plan and the gateway refused it — a document the platform
+could produce, unreachable through the only door that reaches it. The enum is
+derived from `CDM_DOCUMENTS` now, and `geography.test.ts` fails if the door and
+the catalogue ever disagree again.
+
+### A contract that was not won at a tender could never be signed
+
+A contract could only reach `EXECUTED` through `convertBidToContract`, which
+needs a locked bid pack. So a **negotiated contract, a framework call-off or a
+two-stage deal could be created and never signed** — and the project it governed
+could never pass the tender gate into construction. That is a large share of
+real work, and the gap was invisible because the demonstration project happened
+to come from a tender.
+
+`executeContract` takes `A` on `CONTRACTS_CLAIMS` rather than `C` — signing is
+the act that binds the business, and the seat that drafts an agreement must not
+be the seat that commits to it — requires the signed instrument as evidence, and
+refuses a second execution rather than leaving two signing dates on one
+agreement with no way to say which the obligations run from.
+
+### Rossendale: a project actually on site
+
+Field execution, quality and the safety file are gated to CONSTRUCTION and
+COMMISSIONING. With Ashworth in Operations and Calderdale at Tender there was no
+project on which anybody could issue a permit, approve a method statement or
+record a diary — for any role, however senior.
+
+**Rossendale Trunk Main Diversion** is walked to CONSTRUCTION through the real
+gates: a scope package, a design maturity assessment, a take-off against a real
+drawing, an estimate frozen at settlement, and a negotiated contract signed as a
+deed. Nothing is asserted that the platform would have refused — the first
+attempt was refused with `PHASE_NO_CHANGE` for asking for the phase it was
+already in, which is correct: a transition that moves nothing is a record of a
+decision nobody took.
+
+It carries no site history on purpose. The empty diary, the empty permit
+register and the empty inspection log are what somebody walking in has come to
+fill.
+
+Measured in a browser, on Rossendale against the same screens:
+
+| Role | Field execution | Construction |
+|---|---|---|
+| Construction Manager | **11/11** | 5/9 |
+| Supervisor | 11/11 (was 6/11) | 5/9 (was 3/9) |
+| Safety | 7/11 (was 2/11) | 3/9 |
+| PM | 6/11 (was 1/11) | 0/9 — correctly: the PM holds read-only on the safety file |
+
+Four projects now: Ashworth (Operations), Calderdale (Tender), Rossendale
+(Construction) and Northern Collector (Concept, Africa).
