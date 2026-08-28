@@ -8,6 +8,8 @@ import type { ACUEntry } from './billing/acu.ts';
 import { startNewsletterSchedule } from './messaging/newsletter.ts';
 import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.ts';
 import { rehydrateKeys } from './developer/keys.ts';
+import { startAssurance } from './ops/assurance.ts';
+import { armRepair, startRepair } from './ops/repair.ts';
 import { egressConfigured, startEgress } from './ops/otlp.ts';
 import { startWatch } from './ops/watch.ts';
 import { Platform } from './platform.ts';
@@ -217,6 +219,17 @@ const watchTimer = startWatch(platform);
 // until now — said out loud on the banner rather than left to be discovered
 // after an incident nobody could reconstruct.
 const egressTimer = startEgress();
+
+// Verifying the chain before somebody has to rely on it. Without this the first
+// moment a divergence could be discovered is during a dispute, by the person
+// least able to do anything about it.
+const assuranceTimer = startAssurance(platform);
+
+// Auto-repair, bounded to restart and reroute. Handed a function rather than a
+// timer handle, so it can re-arm the real drain rather than clear one it could
+// not replace.
+armRepair(() => startOutboxDrain(platform));
+const repairTimer = startRepair(platform);
 
 const newsletter = startNewsletterSchedule(platform, (report) => {
   process.stdout.write(

@@ -21,6 +21,8 @@ import * as agents from '../agents/runtime.ts';
 import { fleetManifest } from '../agents/runtime.ts';
 import { AUTOMATABLE_COMMANDS, LADDER, envelopeRegister, grantEnvelope, revokeEnvelope } from '../agents/mandate.ts';
 import { egressPosition, flush as flushEgress } from '../ops/otlp.ts';
+import { assurancePosition, sweep } from '../ops/assurance.ts';
+import { repair, repairPosition } from '../ops/repair.ts';
 import { centreCatalogue, commandCentre, type CentreFunctionId } from '../commandcentre/centre.ts';
 import { grantableScopes, issueKey, keyRegister, revokeKey } from '../developer/keys.ts';
 import { subscribe, subscriptionRegister, unsubscribe, webhookPosition } from '../developer/webhooks.ts';
@@ -1122,6 +1124,47 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => {
       operatorOnly(ctx, 'read the platform watch');
       return watch.watchPosition(platform);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/repair',
+    readOnly: true,
+    description: 'What the platform has repaired about itself, how often, and what it refuses to touch',
+    handler: (_platform, ctx) => {
+      operatorOnly(ctx, 'read the auto-repair position');
+      return repairPosition();
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/repair',
+    description: 'Run a repair pass now: restart a stopped drain, move a queue that is owed',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      operatorOnly(ctx, 'run a repair pass');
+      return { taken: await repair(platform) };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/assurance',
+    readOnly: true,
+    description: 'When each project’s chain was last proved, and anything that no longer verifies',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read the chain assurance position');
+      return assurancePosition(platform);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/assurance/sweep',
+    description: 'Verify the next slice of projects now rather than waiting for the interval',
+    schema: { type: 'object', properties: { projects: { type: 'number' } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'run a chain verification sweep');
+      const { projects } = body<{ projects?: number }>(ctx);
+      return sweep(platform, projects);
     },
   },
   {

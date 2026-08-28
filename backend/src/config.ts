@@ -289,6 +289,37 @@ export const config = {
   },
 
   /**
+   * Auto-repair, bounded to restart and reroute.
+   *
+   * Never code, never configuration, never a deploy, and never a chain. What it
+   * fixes is a timer that stopped and a queue that is owed and idle — both
+   * silent failures whose first symptom is a customer noticing.
+   */
+  repair: {
+    enabled: bool('AUTO_REPAIR_ENABLED', true),
+    intervalSeconds: num('AUTO_REPAIR_INTERVAL_SECONDS', 120),
+  },
+
+  /**
+   * Verifying the chain before somebody has to rely on it.
+   *
+   * The verification has existed since the ledger did; what did not exist was
+   * anything that ran it in the background. Off means a divergence is found
+   * during a dispute, by the person least able to do anything about it.
+   */
+  assurance: {
+    enabled: bool('CHAIN_ASSURANCE_ENABLED', true),
+    intervalSeconds: num('CHAIN_ASSURANCE_INTERVAL_SECONDS', 900),
+    /**
+     * A slice per pass, rotating. A full verification of every project on every
+     * pass grows without bound and would consume the process on a mature
+     * estate; the position reports how many passes a full circuit takes, so
+     * "verified continuously" is a measurable claim rather than a reassuring one.
+     */
+    projectsPerPass: num('CHAIN_ASSURANCE_PROJECTS_PER_PASS', 5),
+  },
+
+  /**
    * Where logs and metrics are shipped, if anywhere.
    *
    * Unset means the counters, the latency histogram and the security stream

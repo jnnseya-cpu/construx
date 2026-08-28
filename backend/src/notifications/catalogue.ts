@@ -339,6 +339,19 @@ def('audit.investigation_opened', 'Investigation opened', 'Investigation opened'
 // woken at three needs to be told it stopped.
 def('system.watch_alert', 'Platform alert', '{{severity}}: {{what}}', 'CRITICAL', [E, I], MANDATORY);
 def('system.watch_resolved', 'Platform alert resolved', 'Resolved: {{what}}', 'SUCCESS', [E, I], MANDATORY);
+// A hash chain that no longer verifies. The most serious thing this platform can
+// say about itself: the record it exists to prove is, on this project, no longer
+// provable. Mandatory and critical for the obvious reason — and it is a
+// detection, never a repair, because a process that "fixed" a chain would be
+// indistinguishable from the tampering it exists to catch.
+def(
+  'system.chain_divergence',
+  'Chain divergence',
+  'The chain on {{projectId}} no longer verifies',
+  'CRITICAL',
+  [E, I],
+  MANDATORY,
+);
 
 // ------------------------------------------------------------- Legal & Privacy
 group('LEGAL_PRIVACY');

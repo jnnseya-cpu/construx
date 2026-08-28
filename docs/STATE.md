@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 3,758 passing, 0 failing, 0 skipped, across 165 files · plus 18 against a live Postgres 16 |
+| Tests | 3,776 passing, 0 failing, 0 skipped, across 166 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
 | Backend | 190 TypeScript files, 117,084 lines |
 | Application | 43 ES modules, 19,333 lines (including a service worker) |
@@ -8480,3 +8480,60 @@ failure originally re-used `WEBHOOK_SUBSCRIBED`, which `creates`. The second
 failure against the same subscription would have been refused as a duplicate
 creation — so the drain would have failed on the endpoint that was already
 failing, which is exactly the wrong moment. Health is its own UPDATE event now.
+
+---
+
+## Verifying the chain before somebody has to rely on it
+
+`replayProject` has recomputed every state hash and every chain link since the
+ledger existed. What did not exist was anything that **ran** it — so the first
+realistic moment a divergence could be discovered was during a dispute, by the
+person least able to do anything about it, in front of the people it was going
+to be shown to.
+
+`ops/assurance.ts` runs it continuously and raises a **critical** alert on the
+first divergence rather than the first query. It uses `replayProject` rather
+than a verification of its own: two implementations of "is this chain intact"
+would eventually disagree, and the one that disagreed quietly would be the new
+one.
+
+**A rotating slice, and honest about being one.** Verifying every project every
+pass is O(all events) and would consume the process on a mature estate. So a
+slice moves through the estate, and the position reports **when each project was
+last proved** and **how many passes a full circuit takes** — because "verified
+continuously" means nothing without that second number.
+
+**It detects and never repairs.** A divergence in an append-only hash chain
+cannot be repaired; that is the point of it, and a process that "fixed" one
+would be indistinguishable from the tampering it exists to catch. A test asserts
+the module exports nothing whose name suggests otherwise, so nobody adds a repair
+later as a convenience. A verification that itself throws is recorded as a
+failure, never as intact — reporting "all clear" for a check that did not run is
+the single worst thing this module could do.
+
+## Auto-repair, bounded to restart and reroute
+
+Two silent failures are worth fixing without asking, and both have a blast radius
+identical to normal operation: **a timer that stopped**, and **a queue that is
+owed and idle**. A stopped drain produces no error — the outbox fills, nothing
+sends, and the first symptom is a customer saying they never received something.
+
+`ops/repair.ts` restarts the drain and re-runs it, and flushes telemetry that
+stalled after a collector recovered without telling anybody. That is the whole
+list.
+
+**What it refuses is published** on `/v1/admin/repair` rather than left to be
+assumed — changing code, deploying, writing project state, changing
+configuration or credentials, and repairing a chain. The line from the blueprint
+is kept literally: an agent that can change the code holding the evidence can
+change the evidence, and no approval workflow around that changes it, because
+the capability itself is the problem.
+
+It is deliberately **not offered to an agent**. The `health` agent's envelope is
+notify-only, which is the right ceiling for something that reads rules and tells
+somebody; this changes the running process, and "an agent may restart parts of
+the platform" needs a much better reason than convenience.
+
+**A repair that keeps firing is reported as a finding rather than a fix.** Once
+is a blip. Five times means something is re-breaking and the thing meant to
+paper over a blip is hiding a defect instead.
