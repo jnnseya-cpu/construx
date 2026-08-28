@@ -7072,11 +7072,13 @@ parsing work, not wiring.
   grants
 - **External data feeds** — commodity pricing, weather, credit reference
 - **Postgres, RLS and horizontal scale** — the ledger is durable now (an
-  append-only journal on a volume, verified on restore), but one process owns
-  the file. Two containers writing to one volume would interleave events and
-  break the chain, so scaling out needs the Postgres design rather than another
-  replica. Point-in-time recovery is limited to the backup interval, and there
-  is no automatic failover
+  append-only journal on a volume, verified on restore), and one process owns
+  the file *by enforcement* rather than by convention: a second writer on the
+  same volume now refuses to start rather than interleaving its appends
+  (`goldenthread/writerlock.ts`). That closes the accident; it does not make the
+  platform scale out. Two instances still need the Postgres design, because
+  refusing the second one is not the same as running it. Point-in-time recovery
+  is limited to the backup interval, and there is no automatic failover
 - **Log shipping, metrics store and alerting** — structured JSON goes to stdout
   and counters are exposed; nothing collects them
 

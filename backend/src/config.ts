@@ -203,6 +203,17 @@ export const config = {
      * need. Never turn this off in a deployment.
      */
     fsync: bool('LEDGER_JOURNAL_FSYNC', true),
+    /**
+     * How often the writer refreshes its claim on the journal, and therefore
+     * how long a dead writer blocks a replacement — three heartbeats.
+     *
+     * Ten seconds is chosen against the two failure modes in tension. Longer,
+     * and a container killed by an OOM leaves the volume unusable for minutes
+     * while its replacement refuses to start. Shorter, and a process paused by
+     * a long GC or a slow flush looks dead to a replica that is about to
+     * corrupt the chain by taking over from it.
+     */
+    writerHeartbeatSeconds: num('LEDGER_WRITER_HEARTBEAT_SECONDS', 10),
   },
 
   /**

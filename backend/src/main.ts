@@ -3,6 +3,7 @@ import { rateLimiter } from './api/middleware.ts';
 import { SharedLimiter } from './api/sharedlimiter.ts';
 import { assertProductionSafety, config } from './config.ts';
 import { Journal, RecordJournal } from './goldenthread/journal.ts';
+import { WriterLock } from './goldenthread/writerlock.ts';
 import type { ACUEntry } from './billing/acu.ts';
 import { startNewsletterSchedule } from './messaging/newsletter.ts';
 import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.ts';
@@ -26,8 +27,35 @@ for (const warning of assertProductionSafety()) {
 // --- Durability -------------------------------------------------------------
 
 let durability = 'in memory only — every record is lost on restart';
+/** Held for as long as this process is the one extending the chain. */
+let writerLock: WriterLock | undefined;
 
 if (config.ledger.journalPath !== '') {
+  // Claimed before the file is read, let alone appended to.
+  //
+  // Two containers on one volume interleave their appends, and every event
+  // after the first interleave hashes against a predecessor that is not its
+  // predecessor. Nothing verifies, and nobody finds out until a replay is run
+  // to prove something in a dispute. So the second process refuses to start.
+  writerLock = new WriterLock(`${config.ledger.journalPath}.writer`, {
+    heartbeatSeconds: config.ledger.writerHeartbeatSeconds,
+  });
+  try {
+    const claim = writerLock.acquire();
+    if (claim.taken === 'TAKEN_OVER') {
+      // Said out loud. The previous holder did not release, which means it was
+      // killed rather than stopped — worth knowing on the way up.
+      process.stderr.write(
+        `[journal] took over the writer lock from ${claim.previous?.host} (pid ${claim.previous?.pid}), ` +
+          `whose last heartbeat was ${claim.previous?.heartbeatAt}. That process did not shut down cleanly.\n`,
+      );
+    }
+    writerLock.start();
+  } catch (error) {
+    process.stderr.write(`\n[journal] ${(error as Error).message}\n\n`);
+    process.exit(1);
+  }
+
   const journal = new Journal(config.ledger.journalPath, { fsync: config.ledger.fsync });
   const { events, stats } = journal.read();
 
@@ -222,6 +250,10 @@ const shutdown = (signal: string): void => {
   outboxTimer();
   server.close(() => {
     platform.ledger.journal?.close();
+    // Released last, after the descriptor is closed. Releasing first would
+    // leave a window in which another process could claim the volume while
+    // this one still had the journal open.
+    writerLock?.release();
     process.exit(0);
   });
 };
