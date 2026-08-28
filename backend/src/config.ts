@@ -232,6 +232,44 @@ export const config = {
    * INSTREAM protocol. Unset means nothing scans, and every ingestion record and
    * every read says so rather than implying a check nobody made.
    */
+  /**
+   * Postgres, for the deployment that has one.
+   *
+   * Unset means the ledger stays in the append-only journal on a volume, which
+   * is what every deployment does today and is a complete, durable answer for a
+   * single instance. Setting `POSTGRES_HOST` is what makes the application tier
+   * stateless and therefore horizontally scalable — the schema in
+   * `deploy/postgres/` and the client in `backend/src/store/` are both verified
+   * against a live Postgres 16.
+   */
+  postgres: {
+    host: str('POSTGRES_HOST', ''),
+    port: num('POSTGRES_PORT', 5432),
+    user: str('POSTGRES_USER', 'construx_app'),
+    password: str('POSTGRES_PASSWORD', ''),
+    database: str('POSTGRES_DATABASE', 'construx'),
+    /**
+     * `require` refuses a server that will not start TLS, and is the only
+     * defensible setting for a database reached over anything but a loopback.
+     */
+    tls: str('POSTGRES_TLS', 'require') as 'require' | 'prefer' | 'disable',
+    verifyCertificate: bool('POSTGRES_TLS_VERIFY', true),
+    /**
+     * Where the ledger tables live. Pinned as a startup parameter rather than
+     * SET later, so it holds for the first statement and cannot be changed
+     * mid-connection by a hostile schema shadowing a function.
+     */
+    searchPath: str('POSTGRES_SEARCH_PATH', 'goldenthread, public'),
+    poolSize: num('POSTGRES_POOL_SIZE', 8),
+    connectTimeoutMs: num('POSTGRES_CONNECT_TIMEOUT_MS', 10_000),
+    /**
+     * A statement that has run this long is not going to finish usefully, and
+     * one holding the chain-head row lock blocks every other writer on that
+     * project while it does.
+     */
+    statementTimeoutMs: num('POSTGRES_STATEMENT_TIMEOUT_MS', 30_000),
+  },
+
   antivirus: {
     host: str('ANTIVIRUS_CLAMD_HOST', ''),
     port: num('ANTIVIRUS_CLAMD_PORT', 3310),

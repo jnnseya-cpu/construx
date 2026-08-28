@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 3,619 passing, 0 failing, 0 skipped, across 159 files |
+| Tests | 3,652 passing, 0 failing, 0 skipped, across 160 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
 | Backend | 190 TypeScript files, 117,084 lines |
 | Application | 43 ES modules, 19,333 lines (including a service worker) |
@@ -7085,18 +7085,18 @@ parsing work, not wiring.
   application is closed, and camera or location capture beyond what the browser
   grants
 - **External data feeds** — commodity pricing, weather, credit reference
-- **The Postgres driver, and therefore horizontal scale** — the ledger is
-  durable now (an append-only journal on a volume, verified on restore), and one
-  process owns the file *by enforcement* rather than by convention: a second
-  writer on the same volume refuses to start rather than interleaving its
-  appends (`goldenthread/writerlock.ts`). The **schema** that would let two
-  instances run is written and verified — `deploy/postgres/` applies to a real
-  Postgres 16 and proves append-only, tenant isolation under RLS, chain
-  integrity under two concurrent writers, and evidence. What is absent is the
-  client: the platform cannot speak to Postgres, because a wire-protocol driver
-  is not written and `pg` is not going to be added. So the design is checkable
-  and the platform still runs on one process. Point-in-time recovery is limited
-  to the backup interval, and there is no automatic failover
+- **Horizontal scale in production** — every piece now exists and none of it has
+  been run at scale. The **schema** is verified against a real Postgres 16
+  (`deploy/postgres/verify.sh`, 19 checks) and the **client** is verified against
+  one too (`deploy/postgres/client-check.sh`, 18 checks): a zero-dependency
+  wire-protocol implementation doing SCRAM-SHA-256, parameterised statements,
+  transaction-scoped tenancy under RLS, and the two-concurrent-writer race the
+  chain trigger exists to settle. What is **not** done is the migration itself:
+  `goldenthread/ledger.ts` still reads and writes the in-process journal, and
+  moving it is a separate, careful piece of work on the most dangerous file in
+  the repository. Until that lands the writer lock is still load-bearing, point-
+  in-time recovery is still the backup interval, and there is no automatic
+  failover
 - **Log shipping and a metrics store** — structured JSON still goes to stdout
   and nothing collects it. **Alerting is built**: `ops/watch.ts` judges the
   counters the gateway already keeps against a handful of rules every interval
@@ -8201,3 +8201,63 @@ device binding, an identity-verification connector, a live payment path and a
 sanctions source, an inbox. A manifest listing thirty-two agents where seven read
 from a source that does not exist would be a lie told in a table, so the runtime
 never runs one and the published manifest says which is which.
+
+---
+
+## The Postgres client, and what it does not yet do
+
+`deploy/postgres/` has carried a schema verified against a real Postgres 16
+since it was written, and `docs/STATE.md` has carried the same sentence beside
+it: *what is absent is the client*. The design was checkable and unreachable.
+
+`backend/src/store/` is the client. Zero dependencies, because `pg` is not an
+option and the alternative to writing this was not using Postgres. Two files:
+`wire.ts` is the protocol as pure functions, `postgres.ts` is the socket, the
+state machine and the pool.
+
+**Verified twice, in two different ways.**
+`deploy/postgres/client-check.sh` stands up a throwaway cluster initialised with
+`--auth-host=scram-sha-256`, applies the schema, and runs 18 assertions through
+the client — so a client that only spoke MD5 could not have connected at all.
+It proves SCRAM-SHA-256, a parameterised statement carrying `'; DROP TABLE
+event; --` as a value, `null` distinct from `''`, `numeric` never becoming a
+float, a megabyte crossing many TCP reads, a `text[]` containing a comma and a
+quote, the tenant-mismatch trigger, forced RLS as a `NOBYPASSRLS` role, the
+append-only rules affecting zero rows, and **exactly one of two concurrent
+writers extending the chain**.
+
+Separately, `tests/wire.test.ts` runs in `npm test` with no cluster and checks
+SCRAM-SHA-256 against **RFC 7677's own published test vector**. That matters: a
+live server proves the two ends agree, and only an external vector proves this
+end is the one that is right.
+
+**Three defects were found by running it, not by reading it.**
+
+- The tables live in the `goldenthread` schema and a connection's default path
+  is `"$user", public`, so every statement answered `relation "event" does not
+  exist`. The client had connected perfectly and could see nothing. `search_path`
+  is now a **startup parameter** rather than a later `SET` — it holds for the
+  first statement as well as the hundredth, and it cannot be changed
+  mid-connection, which is what stops a function in an attacker-created schema
+  shadowing one the triggers rely on.
+- The RFC vector sends a username in `n=` and Postgres sends it empty. The class
+  hard-coded the empty form and therefore could not be checked against the only
+  external authority on whether it was correct. It is a parameter now, defaulting
+  to what Postgres wants.
+- A test asserting that `null` and `''` produce different message lengths was
+  wrong: both carry a four-byte length and no data, so the size proves nothing
+  and the *value* of that length is the whole distinction.
+
+**What this does not do.** The ledger has not moved. `goldenthread/ledger.ts`
+still reads and writes the in-process journal, and switching it is a separate,
+careful piece of work on the most dangerous file in the repository — not
+something to fold into the commit that introduced the client. Until that lands:
+the writer lock is still load-bearing rather than redundant, recovery is still
+bounded by the backup interval, and nothing fails over. Named here so the
+distance is not mistaken for zero.
+
+Statement caching and binary result format are both deliberately absent.
+Caching is how a pooled connection ends up holding a plan built for a different
+search path, and binary format would mean converting `numeric` client-side — a
+rounding error in a payment certificate is not a trade worth making for parsing
+speed.
