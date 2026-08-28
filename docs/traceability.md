@@ -13,10 +13,34 @@ lives in the build. Status is one of:
 | **Built** | Implemented in code, covered by tests |
 | **Partial** | Core implemented; a stated extension is not |
 | **Design only** | Specified and designed for, but not implemented here |
+| **Not built** | Absent, deliberately, with the reason stated |
+| **Not adopted** | Specified, and the build does the same thing another way |
+
+Those five words are the whole vocabulary. `traceability.test.ts` refuses a
+sixth: each new shade of done is one nobody agreed the meaning of, and the
+reader is left to guess. The same test asserts that every source file this
+document points at exists, which is how a "Built" claim is made to cost
+something to write.
 
 The "Design only" rows are the honest part of this document. They are mostly
 deployment topology and native mobile clients — real work that this build does
 not pretend to have done.
+
+## This register was audited, and it was wrong
+
+It had drifted in one direction: **understating what exists.** Ten rows were
+re-checked against the code and every one of them was wrong the same way — PDF
+export called "a downstream concern" when `backend/src/export/pdf.ts` renders
+one with a cover page and a content hash; Last Planner PPC called "not
+computed" when `reviewWeek()` computes it; the evidence object store, the
+webhooks, the project creation form, the lineage traversal API, the seat
+prices, the packages, the ACU bundles and the shared status enums all reported
+as absent or partial and all of them built and tested.
+
+Understatement is not the harmless direction to be wrong in. A register saying
+a finished thing is unbuilt gets the work commissioned a second time, and it
+tells anybody deciding whether to trust the product that most of it is a plan.
+Every row below has been brought back to what the code actually does.
 
 ---
 
@@ -69,7 +93,7 @@ not pretend to have done.
 | Timeline / range replay | Built | `replayTimeline()` |
 | Evidence pack for court, regulator, insurer | Built | `claims.buildEvidencePack()` + `exports.auditExport()` with attestation |
 | Audience-based redaction | Built | Regulator audience withholds commercial entities; root hash still covers the full record |
-| PDF/JSON bundle export | Partial | Structured document model + HTML rendering built; PDF rendering is a downstream concern |
+| PDF/JSON bundle export | Built | `export/pdf.ts` renders PDF with zero dependencies — cover page, content hash, page numbering from two against the true total. Served by `GET /v1/projects/:projectId/exports/report.pdf` and the site-visit report. Asserted in `pdf.test.ts` |
 
 ## 4. Seven AI engines
 
@@ -87,7 +111,7 @@ not pretend to have done.
 | AI-generated CPM programmes | Built | `generateWBS()` proposes; a planner approves |
 | Critical path probability forecasting | Built | PERT variance → `probabilityOnTime`, `p80DurationDays` |
 | 4D BIM-linked scheduling | Partial | Twin states link to task ids; no 4D visualisation |
-| Lookahead planning (Last Planner) | Partial | Lookahead and constraint entities in the catalogue; PPC metrics not computed |
+| Lookahead planning (Last Planner) | Built | `engines/planning.ts` — lookahead, constraints, weekly commitments and `reviewWeek()` computing `ppcPercent` from completed against committed, with the reason each missed commitment failed |
 | Delay likelihood modelling with recovery scenarios | Built | `forecastDelay()` + system-controlled corrective measures library |
 | C — Resource & Cost Intelligence | Built | `backend/src/engines/cost.ts` |
 | Earned value (EAC, ETC, CPI, SPI) | Built | `calculateEVM()` with three EAC scenarios and confidence |
@@ -318,7 +342,8 @@ not pretend to have done.
 | Health and readiness endpoints | Built | `/healthz`, `/readyz` |
 | Zero-trust response headers | Built | `sendJson()` |
 | Kong / Redis / Terraform deployment topology | Design only | Specified in the source documents; this build runs as a single Node process |
-| Kafka topics, AsyncAPI contracts, webhooks | Design only | The ledger publishes to subscribers in-process; no broker wired |
+| Webhooks | Built | `developer/webhooks.ts` — endpoints, signed delivery, retry and a delivery log, beside the API key register |
+| Kafka topics and AsyncAPI contracts | Design only | The ledger publishes to subscribers in-process; no broker wired |
 
 ## 12. Brand and application
 
@@ -339,8 +364,8 @@ not pretend to have done.
 | Field input zones (labour, plant, weather, progress) | Built | Daily site record on `frontend/pages/field.js`, submitted as an evidenced progress measurement |
 | Canonical enum dropdowns shared across pickers | Built | `frontend/lib/enums.js`; every value matches the enum the API validates |
 | Dates via picker, stored UTC | Built | Date controls in the command layer; ISO conversion on submit |
-| Evidence attached at the point of capture | Partial | The file is hashed with SHA-256 in the browser and the hash is recorded; there is no object store for the file itself |
-| Project profile input with canonical enums at creation | Design only | Projects are created through the API; the guided creation form is not built |
+| Evidence attached at the point of capture | Built | Hashed with SHA-256 in the browser, and the bytes stored: `evidence/store.ts` with an S3 driver in `store/s3.ts`, tenant-scoped, addressed by the hash the record commits to. A deployment with no store configured refuses the upload with that reason rather than accepting bytes it will lose |
+| Project profile input with canonical enums at creation | Built | The Enterprise & Portfolio screen's `Create project` command generates its form from the route's published schema, so the pickers offer exactly the enums the API validates against |
 | Native Android and iOS clients | Design only | The sync and source model supports them; no native client written |
 
 ---
@@ -371,7 +396,7 @@ by a "Built" row elsewhere.
 | Audio: transcription | Built | The `VOICE_NOTE` perception task, confirmed into `captureSiteObservation` |
 | Commitment and deadline extraction from correspondence | Built | `domain/commitments.ts` reads a held letter for what it promises and what it demands. Every finding must quote the letter verbatim or it is dropped before it is written, which is what stops a provider that cannot read prose from filing an invented undertaking; a confirmed one is registered in the obligation calendar through `registerObligation`. Exercised against a stub, not a live provider |
 | `COMMITMENT_REGISTERED`, `DEADLINE_TRACKED` events | Built | Plus `COMMITMENT_DISCARDED`, because a rejected reading is a fact too. The entity is `CorrespondenceCommitment` — `Commitment` was already the cost commitment against a budget |
-| Knowledge graph with typed edges and traversal | Partial | Entities cross-reference by id and the ledger reconstructs the lineage; there is no graph store or traversal API |
+| Knowledge graph with typed edges and traversal | Partial | Traversal is built and served — `goldenthread/lineage.ts` behind `GET /v1/projects/:projectId/lineage/:refType/:refId`, walking the chain in both directions from any entity. It reconstructs edges from the ledger rather than holding them in a graph store, so a query is a walk rather than an index lookup |
 
 ## 14. Commercial packaging
 
@@ -382,9 +407,9 @@ pricing. The build still carries the earlier model.
 |---|---|---|
 | Subscription separated from AI consumption | Built | `backend/src/billing/subscription.ts` and `backend/src/billing/acu.ts` are independent |
 | Trial granted automatically on tenant creation, no manual override | Built | `grantTrialCredit()` in `createTenant()`; no operator path adds trial credit |
-| Seat model with per-role prices (£25–£180) | Design only | Seats are counted and capped by tier; they carry no role price |
-| Packages: Core Project £950, Professional Delivery £2,200, Enterprise £6,500 | Design only | Tiers are SOLO/TEAM/BUSINESS/ENTERPRISE/SOVEREIGN at the earlier prices |
-| ACU bundles: Starter £300, Growth £1,000, Scale £2,500 | Design only | Top-ups are an arbitrary amount, not a bundle |
+| Seat model with per-role prices (£25–£180) | Built | `billing/seats.ts` — every seat carries its role price, and the price list is one source of truth for the pricing page, the signup flow and the invoice |
+| Packages: Core Project £950, Professional Delivery £2,200, Enterprise £6,500 | Built | `PackageTier` in `billing/seats.ts` — `CORE_PROJECT`, `PROFESSIONAL_DELIVERY`, `ENTERPRISE` and `FREE_TRIAL`, each with its included seats and storage |
+| ACU bundles: Starter £300, Growth £1,000, Scale £2,500 | Built | `BundleName` in `billing/seats.ts` at 30,000 / 100,000 / 250,000 minor units. An arbitrary top-up is still accepted alongside them |
 
 ---
 
@@ -465,7 +490,7 @@ against intent.
 | 18 Phase 5 intelligence hardening | **Partial** | Specialist agents, scenario forecasting, organisation memory and the evaluation harness are built; the scale work is not |
 | 18.1 Epic naming | **Not adopted** | The build is organised by lifecycle stage and workflow id rather than by the EPIC-* labels. No code change would follow from adopting them |
 | A.1 KPI calculation rules | **Partial** | Stage completeness, SPI, CPI, forecast final cost, unapproved change exposure, design readiness, commissioning readiness and handover readiness are all implemented as derivations. Milestone confidence carries a band. **Data freshness is not implemented** as a first-class per-domain measure |
-| A.2 Shared status enums | **Partial** | Each object carries a status vocabulary and the handover deliverable path matches A.2 exactly. They are not consolidated into one shared enum module, so a status added to one object is not automatically offered to another |
+| A.2 Shared status enums | Built | `shared/vocabulary.js` is the one module both sides import — the browser's pickers and the API's `enum` validation are the same bytes rather than two lists that happen to agree. Asserted in `vocabulary.test.ts` |
 | B.2 Industry references | **Built** | The standards are what the domain rules were written against — HGCRA payment and notice logic, CDM duty holders, RIBA stage structure, ISO 19650 information control, CIBSE Code M commissioning sequence |
 
 **The honest summary of this table:** most of sections 12–18 describe
