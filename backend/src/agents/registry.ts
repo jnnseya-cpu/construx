@@ -29,6 +29,16 @@ const empty: AgentOutput = { findings: [], proposals: [] };
 
 const programmeAgent: AgentDefinition = {
   name: 'programme',
+  agentId: 'AGT-PROG-DELAY',
+  activeIn: ['CONSTRUCTION', 'COMMISSIONING'],
+  triggers: [{ kind: 'SCHEDULE', at: '06:00' }, { kind: 'EVENT', eventType: 'DELAY_EVENT_RECORDED' }, { kind: 'EVENT', eventType: 'PROGRESS_MEASURED' }],
+  inputs: ['Approved programme baseline', 'Progress measurements', 'Delay events', 'Critical path'],
+  outputs: ['Delay prediction', 'Critical-path threats', 'Recovery scenarios', 'EOT candidates with evidence chains'],
+  emits: ['DELAY_FORECAST_RUN', 'RECOVERY_PLAN_PROPOSED'],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.6,
+  acuTier: 'HIGH',
+  memory: { reads: ['PROJECT', 'ORGANISATION'], writes: ['PROJECT'] },
   division: 'DELIVERY',
   purpose: 'Watches the critical path and the delay forecast, and proposes the cheapest recovery that is actually applicable.',
   mandate: {
@@ -106,6 +116,16 @@ const programmeAgent: AgentDefinition = {
 
 const commercialAgent: AgentDefinition = {
   name: 'commercial',
+  agentId: 'AGT-COMMERCIAL',
+  activeIn: ['CONSTRUCTION', 'COMMISSIONING', 'HANDOVER'],
+  triggers: [{ kind: 'SCHEDULE', at: '07:00', days: [1] }, { kind: 'EVENT', eventType: 'CVR_PUBLISHED' }],
+  inputs: ['Cost value reconciliation', 'Commitments', 'Applications and certificates', 'Variation register'],
+  outputs: ['Margin-erosion alerts', 'Cost to complete', 'Over/under-claim detection', 'What changed this week'],
+  emits: ['CVR_PUBLISHED'],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.65,
+  acuTier: 'HIGH',
+  memory: { reads: ['PROJECT', 'ORGANISATION'], writes: ['PROJECT'] },
   division: 'DELIVERY',
   purpose: 'Watches margin, cost against budget and the certified-versus-paid position, and proposes a CVR refresh when the picture has moved.',
   mandate: {
@@ -188,6 +208,16 @@ const commercialAgent: AgentDefinition = {
 
 const riskAgent: AgentDefinition = {
   name: 'risk',
+  agentId: 'CX-RISK-REGISTER',
+  activeIn: 'ANY',
+  triggers: [{ kind: 'CONTINUOUS' }, { kind: 'EVENT', eventType: 'RISK_SCORED' }],
+  inputs: ['Risk register', 'Contract value', 'Programme float'],
+  outputs: ['Unmitigated exposure', 'Risks with no owner', 'Scoring drift'],
+  emits: ['RISK_MITIGATION_SET'],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.6,
+  acuTier: 'LOW',
+  memory: { reads: ['PROJECT', 'ORGANISATION'], writes: ['PROJECT'] },
   division: 'DELIVERY',
   purpose: 'Watches the risk register and the leading safety indicators, and proposes a contingency reassessment when exposure moves.',
   mandate: {
@@ -267,6 +297,16 @@ const riskAgent: AgentDefinition = {
 
 const contractsAgent: AgentDefinition = {
   name: 'contracts',
+  agentId: 'AGT-CONTRACT-OBS',
+  activeIn: ['TENDER', 'CONSTRUCTION', 'COMMISSIONING', 'HANDOVER'],
+  triggers: [{ kind: 'SCHEDULE', at: '06:30' }, { kind: 'EVENT', eventType: 'CONTRACT_EXECUTED' }],
+  inputs: ['Executed contract', 'Clause register', 'Obligation calendar', 'Notices served'],
+  outputs: ['Obligations falling due', 'Missed notice windows', 'Time-bar exposure'],
+  emits: ['CONTRACT_NOTICE_SERVED'],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.7,
+  acuTier: 'MED',
+  memory: { reads: ['PROJECT', 'ORGANISATION'], writes: ['PROJECT'] },
   division: 'DELIVERY',
   purpose: 'Watches notices against their time bars and change against its downstream effect. A missed time bar cannot be recovered by argument.',
   mandate: {
@@ -347,6 +387,16 @@ const contractsAgent: AgentDefinition = {
 
 const designAgent: AgentDefinition = {
   name: 'design',
+  agentId: 'AGT-DESIGN-COORD',
+  activeIn: ['DESIGN', 'TENDER', 'CONSTRUCTION'],
+  triggers: [{ kind: 'EVENT', eventType: 'MODEL_INGESTED' }, { kind: 'EVENT', eventType: 'CLASH_RUN_COMPLETED' }, { kind: 'CONTINUOUS' }],
+  inputs: ['Federated model revisions', 'Clash runs', 'Design packages', 'RFIs'],
+  outputs: ['Unresolved clash exposure', 'Coordination risk by discipline', 'Freeze readiness'],
+  emits: ['CLASH_RESOLVED'],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.6,
+  acuTier: 'HIGH',
+  memory: { reads: ['PROJECT'], writes: ['PROJECT'] },
   division: 'DELIVERY',
   purpose: 'Watches clashes and design maturity, and keeps the cost of fixing something once built in front of whoever can still avoid it.',
   mandate: {
@@ -393,6 +443,16 @@ const designAgent: AgentDefinition = {
 
 const fieldAgent: AgentDefinition = {
   name: 'field',
+  agentId: 'AGT-SITE-PROGRESS',
+  activeIn: ['CONSTRUCTION', 'COMMISSIONING'],
+  triggers: [{ kind: 'SCHEDULE', at: '18:00' }, { kind: 'EVENT', eventType: 'DAILY_DIARY_RECORDED' }],
+  inputs: ['Daily diaries', 'Progress measurement', 'Work orders', 'Site observations'],
+  outputs: ['Diary gaps', 'Progress against measure', 'Productivity drift'],
+  emits: ['PROGRESS_MEASURED'],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.55,
+  acuTier: 'MED',
+  memory: { reads: ['PROJECT'], writes: ['PROJECT'] },
   division: 'DELIVERY',
   purpose: 'Watches measurement coverage and open snags, because a forecast built on thin data is a guess wearing a number.',
   mandate: {
@@ -439,6 +499,16 @@ const fieldAgent: AgentDefinition = {
 
 const handoverAgent: AgentDefinition = {
   name: 'handover',
+  agentId: 'AGT-HANDOVER',
+  activeIn: ['COMMISSIONING', 'HANDOVER', 'OPERATIONS'],
+  triggers: [{ kind: 'CONTINUOUS' }, { kind: 'EVENT', eventType: 'HANDOVER_PACK_COMPILED' }],
+  inputs: ['Handover requirements matrix', 'O&M manuals', 'Asset register', 'Training records'],
+  outputs: ['Handover readiness', 'Missing deliverables by requirement', 'Acceptance blockers'],
+  emits: ['HANDOVER_PACK_COMPILED'],
+  hitl: 'APPROVAL',
+  confidenceFloor: 0.7,
+  acuTier: 'MED',
+  memory: { reads: ['PROJECT', 'ASSET'], writes: ['PROJECT', 'ASSET'] },
   division: 'DELIVERY',
   purpose: 'Watches handover completeness, defects under warranty and the maintenance forecast across the operating life.',
   mandate: {
@@ -511,6 +581,16 @@ const handoverAgent: AgentDefinition = {
 
 const tenderAgent: AgentDefinition = {
   name: 'tender',
+  agentId: 'AGT-ESTIMATE',
+  activeIn: ['CONCEPT', 'DESIGN', 'TENDER'],
+  triggers: [{ kind: 'EVENT', eventType: 'TAKEOFF_COMPLETED' }, { kind: 'ON_DEMAND' }],
+  inputs: ['Take-off', 'Organisation rate library', 'Commodity indices', 'Risk register'],
+  outputs: ['Bottom-up estimate', 'BoQ benchmark deltas', 'Assumption register'],
+  emits: ['ESTIMATE_CREATED', 'ESTIMATE_REPRICED'],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.65,
+  acuTier: 'HIGH',
+  memory: { reads: ['PROJECT', 'ORGANISATION'], writes: ['PROJECT'] },
   division: 'BID',
   purpose: 'Watches the tender position — estimate currency, return variance and award conditions that were never closed out.',
   mandate: {
@@ -582,6 +662,16 @@ const tenderAgent: AgentDefinition = {
  */
 const radarAgent: AgentDefinition = {
   name: 'radar',
+  agentId: 'CX-TENDER-RADAR',
+  activeIn: ['CONCEPT', 'DESIGN', 'TENDER'],
+  triggers: [{ kind: 'SCHEDULE', at: '05:00' }],
+  inputs: ['Published notices', 'Capability profile', 'Framework memberships'],
+  outputs: ['Shortlisted notices', 'Filtered-out reasoning'],
+  emits: [],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.5,
+  acuTier: 'MED',
+  memory: { reads: ['ORGANISATION'], writes: [] },
   division: 'MARKET_INTEL',
   purpose: 'Watches shortlisted opportunities against their return dates, and the requirements that keep disqualifying the business.',
   mandate: {
@@ -646,6 +736,16 @@ const radarAgent: AgentDefinition = {
  */
 const pipelineAgent: AgentDefinition = {
   name: 'pipeline',
+  agentId: 'CX-PIPELINE',
+  activeIn: ['CONCEPT', 'DESIGN', 'TENDER'],
+  triggers: [{ kind: 'CONTINUOUS' }],
+  inputs: ['Opportunity pipeline', 'Bid decisions', 'Win/loss history'],
+  outputs: ['Pipeline coverage', 'Decision latency', 'Conversion drift'],
+  emits: [],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.5,
+  acuTier: 'LOW',
+  memory: { reads: ['PROJECT', 'ORGANISATION'], writes: [] },
   division: 'BID',
   purpose: 'Watches qualified opportunities awaiting a bid decision, and bids taken against the algorithm.',
   mandate: {
@@ -690,6 +790,16 @@ const pipelineAgent: AgentDefinition = {
  */
 const supplyChainAgent: AgentDefinition = {
   name: 'supply-chain',
+  agentId: 'AGT-PROCURE',
+  activeIn: ['TENDER', 'CONSTRUCTION'],
+  triggers: [{ kind: 'CONTINUOUS' }, { kind: 'EVENT', eventType: 'RFQ_ISSUED' }],
+  inputs: ['Enquiries and returns', 'Subcontract register', 'Supplier performance', 'Buyout position'],
+  outputs: ['Packages without cover', 'Buyout exposure', 'Single-source risk'],
+  emits: ['RFQ_ISSUED', 'SUBCONTRACT_EXECUTED'],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.6,
+  acuTier: 'MED',
+  memory: { reads: ['PROJECT', 'ORGANISATION'], writes: ['PROJECT'] },
   division: 'SUPPLY_CHAIN',
   purpose: 'Watches supplier eligibility, trades too thin to compete, and frameworks running out of term.',
   mandate: {
@@ -747,6 +857,16 @@ const supplyChainAgent: AgentDefinition = {
  */
 const hseqAgent: AgentDefinition = {
   name: 'hseq',
+  agentId: 'AGT-HSE',
+  activeIn: ['CONSTRUCTION', 'COMMISSIONING', 'HANDOVER'],
+  triggers: [{ kind: 'CONTINUOUS' }, { kind: 'EVENT', eventType: 'INCIDENT_REPORTED' }, { kind: 'EVENT', eventType: 'SAFETY_OBSERVATION_LOGGED' }],
+  inputs: ['Permits', 'Method statements', 'Inductions', 'Incidents', 'Observations'],
+  outputs: ['Expired or missing controls', 'Induction gaps', 'Incident trend'],
+  emits: ['SAFETY_OBSERVATION_LOGGED'],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.7,
+  acuTier: 'MED',
+  memory: { reads: ['PROJECT', 'ORGANISATION'], writes: ['PROJECT'] },
   division: 'DELIVERY',
   purpose: 'Watches the Construction Phase Plan, RIDDOR answers and competency expiry — the duties that are law rather than preference.',
   mandate: {

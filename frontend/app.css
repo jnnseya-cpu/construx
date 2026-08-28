@@ -912,3 +912,21 @@ input:focus, select:focus, textarea:focus {
 /* The dictate control, beside a file input rather than instead of one. */
 .voice-field { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
 .voice-field .voice-taken { font-size: 11.5px; color: var(--success); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* The banner on an account page. Fixed aspect so an uploaded image cannot
+   change the page's shape, and object-fit so it is cropped rather than
+   distorted — a stretched photograph looks like a rendering fault. */
+.account-cover {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 4 / 1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, .02);
+  color: var(--text-3);
+  font-size: 12.5px;
+  overflow: hidden;
+}
+.account-cover.has-image { border-style: solid; }
+.account-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }

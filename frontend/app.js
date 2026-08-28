@@ -127,19 +127,21 @@ export const NAV = [
       // The public blog. Beside the newsletter because both are the platform
       // talking outward under its own name, and neither is a customer's.
       { id: 'blog', label: 'Blog', area: 'PLATFORM_ADMINISTRATION', icon: 'clipboard' },
-      // Under PROJECT_SETUP read — the narrowest thing every seat holds —
-      // because `GET /v1/notifications/catalogue` is readable by any
-      // authenticated identity and says so on the route: a person is entitled
-      // to know what the platform may send them before being asked to set
-      // preferences about it.
+      // Platform administration, not a customer screen.
       //
-      // It was bound to ENTERPRISE_STRUCTURE, which only the enterprise
-      // administrator holds, so eleven of the thirteen seeded identities saw a
-      // lock on a screen the server would have served them. The screen's own
-      // comment already described the intent this binding now matches. The
-      // delivery log inside it is the tenancy's outbound mail and stays refused
-      // by name rather than shown as zero.
-      { id: 'communications', label: 'Communications', area: 'PROJECT_SETUP', icon: 'radar' },
+      // I moved this to PROJECT_SETUP on the argument that
+      // `GET /v1/notifications/catalogue` is readable by any authenticated
+      // identity, which is true — and it was the wrong conclusion. The screen is
+      // not the catalogue: it is the *operator's* view of the event
+      // architecture, with channel wiring, provider status, template QA and the
+      // estate-wide coverage figures. Those are platform operations questions,
+      // and the delivery log inside it is refused to an operator by name for the
+      // opposite reason — it is a tenancy's own outbound mail.
+      //
+      // A customer who wants to know what the platform may send them reads their
+      // own notification preferences on the Account screen, which is where that
+      // question belongs.
+      { id: 'communications', label: 'Communications', area: 'PLATFORM_ADMINISTRATION', icon: 'radar' },
       // Outside the capability matrix — see `visible()`. Asking to be erased is
       // not a permission somebody else grants you, and the mobile stores
       // require the route to exist for every account.

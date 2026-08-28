@@ -109,6 +109,25 @@ export async function account(root) {
       </div>
 
       <div class="card">
+        <h2>Your cover image</h2>
+        <div class="metric-sub" style="margin-bottom:10px">
+          The banner across the top of your own page. Decoration rather than identification — which is exactly why it
+          is a separate image from the picture below: a face cropped square onto a record is not the same thing as a
+          wide photograph of a site, and one field serving both gives a stretched face and a squashed landscape.
+        </div>
+        <div class="account-cover ${raw(user?.coverHash ? 'has-image' : '')}">
+          ${user?.coverHash ? html`<img src="/v1/users/${user.id}/cover" alt="" />` : html`<span>No cover image yet</span>`}
+        </div>
+        <div style="margin-top:11px">
+          <input type="file" accept="image/png,image/jpeg,image/webp" data-cover style="display:none" />
+          <button class="btn quiet" data-choose-cover>${user?.coverHash ? 'Replace it' : 'Choose a cover image'}</button>
+          <div class="metric-sub" style="margin-top:6px">
+            Same rules as the picture: PNG, JPEG or WebP, the type read from the file itself, and an SVG refused.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>Your account picture</h2>
         <div class="metric-sub" style="margin-bottom:10px">
           It appears beside your name wherever the platform names you — on a permit you issued, on an induction
@@ -170,6 +189,22 @@ export async function account(root) {
       await account(root);
     } catch (error) {
       toast('That picture was refused', error.message, 'err');
+    }
+  });
+
+  root.querySelector('[data-choose-cover]')?.addEventListener('click', () => {
+    root.querySelector('[data-cover]')?.click();
+  });
+
+  root.querySelector('[data-cover]')?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      await api.upload('/v1/me/cover', file);
+      toast('Cover set', 'It appears across the top of your account page.', 'ok');
+      await account(root);
+    } catch (error) {
+      toast('That image was refused', error.message, 'err');
     }
   });
 

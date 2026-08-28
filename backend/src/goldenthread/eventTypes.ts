@@ -732,6 +732,12 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // who made it. `aiAllowed: false` on both — no agent decides what a person
   // looks like or what a company's documents carry.
   def('USER_PICTURE_SET', 'User', 'UPDATE', 'GOVERNANCE'),
+  // The banner on an account page. A separate event from the picture because
+  // they are separate images with separate purposes — one identifies a person
+  // on a record they authored, the other is decoration on their own page — and
+  // one event carrying either would make the audit trail unable to say which
+  // was changed.
+  def('USER_COVER_SET', 'User', 'UPDATE', 'GOVERNANCE'),
 
   // The identity a tenancy's documents go out under — the client's name, mark,
   // cover image, colour and the party that carries the duty. A governance act,

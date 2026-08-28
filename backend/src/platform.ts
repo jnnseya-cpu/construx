@@ -85,6 +85,16 @@ export type PlatformUser = {
    */
   pictureHash?: string;
   /**
+   * The banner behind the name on an account page.
+   *
+   * Separate from `pictureHash` and not a variant of it. A profile picture
+   * identifies a person on a record they authored — a permit, an induction —
+   * and is cropped square and shown small; a cover is decoration on their own
+   * page and is shown wide. Storing one field and cropping it two ways gives a
+   * face stretched across a banner and a landscape squeezed into an avatar.
+   */
+  coverHash?: string;
+  /**
    * Created by the demonstration seed.
    *
    * The one thing that distinguishes an identity anybody may sign in as from a
@@ -482,6 +492,11 @@ export class Platform {
     userId: string;
     bytes: Buffer;
     contentType?: string;
+    /**
+     * Which of the two images this is. Defaults to the profile picture, so
+     * every existing caller means exactly what it meant before.
+     */
+    kind?: 'PROFILE' | 'COVER';
   }): Promise<PlatformUser> {
     const user = this.#users.get(input.userId);
     if (!user) throw new NotFoundError(`No user ${input.userId}`);
@@ -509,7 +524,9 @@ export class Platform {
     const hash = createHash('sha256').update(input.bytes).digest('hex');
     await this.evidence.store(user.tenantId, hash, input.bytes, signature.contentType);
 
-    const updated: PlatformUser = { ...user, pictureHash: hash };
+    const kind = input.kind ?? 'PROFILE';
+    const updated: PlatformUser =
+      kind === 'COVER' ? { ...user, coverHash: hash } : { ...user, pictureHash: hash };
     this.#users.set(user.id, updated);
 
     this.ledger.commit({
@@ -518,7 +535,7 @@ export class Platform {
       actor: { refType: 'User', refId: input.actorId },
       source: 'WEB',
       correlationId: hash,
-      eventType: 'USER_PICTURE_SET',
+      eventType: kind === 'COVER' ? 'USER_COVER_SET' : 'USER_PICTURE_SET',
       entity: { refType: 'User', refId: user.id },
       nextState: {
         id: user.id,
@@ -527,7 +544,8 @@ export class Platform {
         email: user.email,
         roles: user.roles,
         status: user.status,
-        pictureHash: hash,
+        pictureHash: updated.pictureHash,
+        coverHash: updated.coverHash,
       },
     });
 
@@ -541,11 +559,17 @@ export class Platform {
    * way to read any hash in the store by guessing: the hash has to be the one
    * recorded against a user in the caller's own tenancy.
    */
-  async userPicture(tenantId: string, userId: string): Promise<{ bytes: Buffer; contentType: string } | undefined> {
+  async userPicture(
+    tenantId: string,
+    userId: string,
+    kind: 'PROFILE' | 'COVER' = 'PROFILE',
+  ): Promise<{ bytes: Buffer; contentType: string } | undefined> {
     const user = this.#users.get(userId);
-    if (!user || user.tenantId !== tenantId || !user.pictureHash) return undefined;
-    if (!(await this.evidence.holds(tenantId, user.pictureHash))) return undefined;
-    return this.evidence.fetch(tenantId, user.pictureHash);
+    if (!user || user.tenantId !== tenantId) return undefined;
+    const hash = kind === 'COVER' ? user.coverHash : user.pictureHash;
+    if (!hash) return undefined;
+    if (!(await this.evidence.holds(tenantId, hash))) return undefined;
+    return this.evidence.fetch(tenantId, hash);
   }
 
   /** Every operator account on the platform. */

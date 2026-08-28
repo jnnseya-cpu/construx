@@ -52,8 +52,39 @@ const empty: AgentOutput = { findings: [], proposals: [] };
  * same queue as everything else, so an operator has one place to look rather
  * than an inbox and a screen.
  */
+
+/**
+ * The contract fields shared by every platform agent.
+ *
+ * Declared once and spread explicitly into each definition rather than
+ * defaulted, because the specification requires an agent to *declare* these and
+ * a default is the opposite of a declaration — it is what you get for not
+ * saying. Spreading it keeps the statement at each site while admitting the
+ * honest fact that the answer is the same for all of them, and for one reason:
+ * these agents watch the platform rather than a project.
+ *
+ * `activeIn: 'ANY'` because a platform fault does not care what lifecycle stage
+ * a customer's project is in. `CONTINUOUS` because they run on the fleet sweep.
+ * Memory is organisation-level only: none of them may read a project's own
+ * record, which is the same account-layer separation the permission model
+ * enforces everywhere else.
+ */
+const PLATFORM_CONTRACT = {
+  activeIn: 'ANY' as const,
+  triggers: [{ kind: 'CONTINUOUS' as const }],
+  memory: { reads: ['ORGANISATION' as const], writes: [] },
+  hitl: 'REVIEW' as const,
+  confidenceFloor: 0.6,
+  acuTier: 'LOW' as const,
+};
+
 const healthAgent: AgentDefinition = {
   name: 'health',
+  agentId: 'CX-PLATFORM-HEALTH',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
   division: 'PLATFORM_OPS',
   purpose: 'Reports what the health watch is currently firing on, so a platform fault appears beside project findings rather than only in an inbox.',
   mandate: {
@@ -108,6 +139,11 @@ const healthAgent: AgentDefinition = {
  */
 const defectTriageAgent: AgentDefinition = {
   name: 'defect-triage',
+  agentId: 'CX-PLATFORM-DEFECT-TRIAGE',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
   division: 'PLATFORM_OPS',
   purpose: 'Clusters server errors by route into one finding with the correlation ids to reproduce it, rather than a thousand log lines.',
   mandate: {
@@ -174,6 +210,11 @@ const defectTriageAgent: AgentDefinition = {
  */
 const costOptimisationAgent: AgentDefinition = {
   name: 'cost-optimisation',
+  agentId: 'CX-PLATFORM-COST-OPTIMISATION',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
   division: 'PLATFORM_OPS',
   purpose: 'Watches what each engine actually costs per call and flags a task whose spend has become unpredictable.',
   mandate: {
@@ -221,6 +262,11 @@ const costOptimisationAgent: AgentDefinition = {
  */
 const threatHunterAgent: AgentDefinition = {
   name: 'threat-hunter',
+  agentId: 'CX-PLATFORM-THREAT-HUNTER',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
   division: 'SECURITY',
   purpose: "Compares each actor's activity to that actor's own baseline, so an anomaly is anomalous for them rather than for the average user.",
   mandate: {
@@ -292,6 +338,11 @@ const threatHunterAgent: AgentDefinition = {
  */
 const vulnerabilityAgent: AgentDefinition = {
   name: 'vulnerability',
+  agentId: 'CX-PLATFORM-VULNERABILITY',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
   division: 'SECURITY',
   purpose: 'Checks the platform against what it declares about itself: no runtime dependencies, and no unsafe configuration in production.',
   mandate: {
@@ -327,6 +378,11 @@ const vulnerabilityAgent: AgentDefinition = {
  */
 const fraudAgent: AgentDefinition = {
   name: 'fraud',
+  agentId: 'CX-PLATFORM-FRAUD',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
   division: 'SECURITY',
   purpose: 'Flags the payment shapes worth a second look: two applications for one cycle, a round-sum valuation, a certificate signed out of hours.',
   mandate: {
@@ -414,6 +470,11 @@ const fraudAgent: AgentDefinition = {
  */
 const dataProtectionAgent: AgentDefinition = {
   name: 'data-protection',
+  agentId: 'CX-PLATFORM-DATA-PROTECTION',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
   division: 'SECURITY',
   purpose: 'Notices evidence held past its retention date, so a retention policy is a measurement rather than a document.',
   mandate: {
@@ -464,6 +525,11 @@ const dataProtectionAgent: AgentDefinition = {
  */
 const expansionAgent: AgentDefinition = {
   name: 'expansion',
+  agentId: 'CX-PLATFORM-EXPANSION',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
   division: 'REVENUE',
   purpose: 'Notices where the plan a customer bought is now refusing them, and proposes the change with the evidence attached.',
   mandate: {
@@ -518,6 +584,11 @@ const expansionAgent: AgentDefinition = {
  */
 const retentionAgent: AgentDefinition = {
   name: 'retention',
+  agentId: 'CX-PLATFORM-RETENTION',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
   division: 'REVENUE',
   purpose: 'Compares each seat\'s activity to its own recent history, so a customer going quiet is visible months before the renewal.',
   mandate: {
@@ -576,6 +647,11 @@ const retentionAgent: AgentDefinition = {
  */
 const collectionsAgent: AgentDefinition = {
   name: 'collections',
+  agentId: 'CX-PLATFORM-COLLECTIONS',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
   division: 'REVENUE',
   purpose: 'Watches for a tenancy that has stopped being able to pay, and tells somebody. It never suspends anything.',
   mandate: {
@@ -617,6 +693,11 @@ const collectionsAgent: AgentDefinition = {
  */
 const successAgent: AgentDefinition = {
   name: 'success',
+  agentId: 'CX-PLATFORM-SUCCESS',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
   division: 'CUSTOMER',
   purpose: 'Measures how much of the platform a customer actually reaches, because breadth of use is what the renewal turns on.',
   mandate: {
@@ -659,6 +740,11 @@ const successAgent: AgentDefinition = {
  */
 const onboardingAgent: AgentDefinition = {
   name: 'onboarding',
+  agentId: 'CX-PLATFORM-ONBOARDING',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
   division: 'CUSTOMER',
   purpose: 'Notices a tenancy that was set up and then never used, while it is still early enough to matter.',
   mandate: {
@@ -704,6 +790,11 @@ const onboardingAgent: AgentDefinition = {
  */
 const regulatoryAgent: AgentDefinition = {
   name: 'regulatory',
+  agentId: 'CX-PLATFORM-REGULATORY',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
   division: 'COMPLIANCE',
   purpose: 'Watches the dates that carry a statutory consequence, where missing one loses a right rather than opening a negotiation.',
   mandate: {
@@ -751,6 +842,11 @@ const regulatoryAgent: AgentDefinition = {
 const declared: AgentDefinition[] = [
   {
     name: 'competitor',
+  agentId: 'CX-PLATFORM-COMPETITOR',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
     division: 'MARKET_INTEL',
     purpose: 'Award and framework movement, feeding the bid/no-bid score with who else is winning what.',
     mandate: { reads: ['BUSINESS_DEVELOPMENT'], proposes: [], approvers: ['OWNER'], maxUnattended: 'OBSERVE' },
@@ -761,6 +857,11 @@ const declared: AgentDefinition[] = [
   },
   {
     name: 'pricing',
+  agentId: 'CX-PLATFORM-PRICING',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
     division: 'BID',
     purpose: 'Benchmarks each rate against this business\'s own committed cost history and flags an outlier before submission.',
     mandate: {
@@ -777,6 +878,11 @@ const declared: AgentDefinition[] = [
   },
   {
     name: 'release',
+  agentId: 'CX-PLATFORM-RELEASE',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
     division: 'PLATFORM_OPS',
     purpose: 'Gates a deploy on the suite being green, the migration being reversible and the rollback having been rehearsed.',
     mandate: { reads: ['PLATFORM_ADMINISTRATION'], proposes: [], approvers: ['PLATFORM_ADMIN'], maxUnattended: 'OBSERVE' },
@@ -787,6 +893,11 @@ const declared: AgentDefinition[] = [
   },
   {
     name: 'identity',
+  agentId: 'CX-PLATFORM-IDENTITY',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
     division: 'SECURITY',
     purpose: 'Raises the bar on a session that has become unusual: step-up challenge, and revocation where the risk is high.',
     mandate: { reads: ['PLATFORM_ADMINISTRATION'], proposes: [], approvers: ['PLATFORM_ADMIN'], maxUnattended: 'OBSERVE' },
@@ -797,6 +908,11 @@ const declared: AgentDefinition[] = [
   },
   {
     name: 'kyb-kyc',
+  agentId: 'CX-PLATFORM-KYB-KYC',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
     division: 'COMPLIANCE',
     purpose: 'Verifies a business and its officers at onboarding, and proposes — never approves — the outcome.',
     mandate: { reads: ['ENTERPRISE_STRUCTURE'], proposes: [], approvers: ['PLATFORM_ADMIN'], maxUnattended: 'OBSERVE' },
@@ -807,6 +923,11 @@ const declared: AgentDefinition[] = [
   },
   {
     name: 'aml',
+  agentId: 'CX-PLATFORM-AML',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
     division: 'COMPLIANCE',
     purpose: 'Screens and monitors on the payment path, escalating to a named compliance officer.',
     mandate: { reads: ['PAYMENT_APPLICATIONS'], proposes: [], approvers: ['PLATFORM_ADMIN'], maxUnattended: 'OBSERVE' },
@@ -817,6 +938,11 @@ const declared: AgentDefinition[] = [
   },
   {
     name: 'support',
+  agentId: 'CX-PLATFORM-SUPPORT',
+  ...PLATFORM_CONTRACT,
+  inputs: ['Platform telemetry and operator records'],
+  outputs: ['Findings on the operator queue'],
+  emits: [],
     division: 'CUSTOMER',
     purpose: 'Answers from the customer\'s own record and the published catalogue, and never invents a capability.',
     mandate: { reads: ['EVIDENCE_AUDIT'], proposes: [], approvers: ['OWNER'], maxUnattended: 'OBSERVE' },

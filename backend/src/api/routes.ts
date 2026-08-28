@@ -2851,6 +2851,46 @@ export const ROUTES: Route[] = [
     },
   },
   {
+    method: 'POST',
+    pattern: '/v1/me/cover',
+    upload: true,
+    maxBytes: config.site.mediaMaxBytes,
+    description: 'Set your own account cover image. PNG, JPEG or WebP, read from the file rather than what it claims',
+    // Your own, and nobody else's, for the same reason as the picture above.
+    // A cover is on your page and it is yours to choose; an administrator
+    // putting one there is decorating somebody else's identity.
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      const user = await platform.setUserPicture({
+        actorId: actor.actorId,
+        userId: actor.actorId,
+        bytes: ctx.rawBody ?? Buffer.alloc(0),
+        kind: 'COVER',
+      });
+      return { coverHash: user.coverHash };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/users/:userId/cover',
+    readOnly: true,
+    binary: true,
+    description: 'An account cover image, for anybody in the same tenancy as the person',
+    handler: async (platform, ctx) => {
+      // Same tenancy scoping as the picture: the hash is never supplied by the
+      // caller, only looked up against a user already inside their tenancy.
+      const actor = auth(ctx);
+      const held = await platform.userPicture(actor.tenantId, ctx.params.userId as string, 'COVER');
+      if (!held) throw new NotFoundError('That account has no cover image');
+      return {
+        bytes: held.bytes,
+        contentType: held.contentType,
+        filename: `${ctx.params.userId}-cover.img`,
+        disposition: 'inline' as const,
+      };
+    },
+  },
+  {
     method: 'GET',
     pattern: '/v1/users/:userId/picture',
     readOnly: true,

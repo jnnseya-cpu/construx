@@ -1,5 +1,6 @@
 import type { EngineContext } from '../engines/context.ts';
 import type { CapabilityArea, PermissionCode, Role } from '../identity/roles.ts';
+import type { LifecyclePhase } from '../lifecycle/phases.ts';
 
 /**
  * The agent contract.
@@ -76,6 +77,105 @@ export type EnvelopeSpec = {
   valueCeilingMinor: number;
   /** One sentence an approver reads before granting. Not a restatement of the list. */
   because: string;
+};
+
+
+// --- The Agent Contract ------------------------------------------------------
+//
+// The specification requires every agent to declare twelve fields, and six of
+// them had nowhere to live: `active_in_states`, `triggers`, `emits`,
+// `confidence_floor`, `acu_tier` and `memory_access`. The consequences were not
+// cosmetic. An agent could not be blocked from running in the wrong lifecycle
+// state; nothing could route a domain event to the agent that exists to answer
+// it; an agent could not declare what it publishes, so the fleet's own graph
+// was unknowable; there was no floor below which it must escalate rather than
+// act; the ACU meter could not price a run before making it; and the three
+// memory layers had no per-agent access control at all.
+//
+// They are added here beside the fields that already existed. Nothing is
+// replaced: `mandate`, `division` and `purpose` remain exactly what they were,
+// and `maxUnattended` is still the load-bearing autonomy ceiling. These are the
+// declarations the runtime now enforces.
+
+/**
+ * Lifecycle states an agent may run in.
+ *
+ * The specification's `active_in_states[]`, and it is a refusal rather than a
+ * preference: a tender agent that wakes on a project in operations is reading a
+ * job whose tender closed years ago, and whatever it concludes is noise
+ * presented with the same confidence as a real finding.
+ *
+ * `ANY` is written out rather than left implicit. An agent that genuinely runs
+ * everywhere — the Golden Thread auditor, the lessons agent — is making a claim
+ * about itself, and a claim is better than an omission that reads the same way.
+ */
+export type AgentStates = LifecyclePhase[] | 'ANY';
+
+/**
+ * What wakes an agent.
+ *
+ * Domain event codes from the closed catalogue, and/or a schedule. The
+ * distinction matters for cost as much as correctness: an agent triggered by
+ * `TENDER_RETURN_RECEIVED` runs when there is something to look at, and one on
+ * a daily schedule runs whether or not anything happened.
+ *
+ * `CONTINUOUS` is the fleet sweep the runtime already performs — every agent
+ * that carried no trigger before this existed is exactly that, so migrating the
+ * twelve built agents onto the contract is a statement of what they already do.
+ */
+export type AgentTrigger =
+  | { kind: 'EVENT'; eventType: string }
+  /** `at` is 24-hour local time, "06:00". Days omitted means every day. */
+  | { kind: 'SCHEDULE'; at: string; days?: number[] }
+  | { kind: 'CONTINUOUS' }
+  /** A person asked for it. Always allowed; declared so the list is complete. */
+  | { kind: 'ON_DEMAND' };
+
+/**
+ * How much human involvement a run requires, from the specification.
+ *
+ * Distinct from `maxUnattended`, and the two answer different questions.
+ * `maxUnattended` is the ceiling on what the agent may *do*; `hitl` is what a
+ * person must do with the *output*. An agent can be `OBSERVE` — changing
+ * nothing — and still be `APPROVAL`, because a bid/no-bid recommendation
+ * changes nothing by itself and must not reach a decision maker as though
+ * nobody needed to sign it.
+ */
+export type HumanInTheLoop =
+  /** Output is published. Used only where being wrong costs nothing. */
+  | 'NONE'
+  /** A person must read it before it counts as seen. */
+  | 'REVIEW'
+  /** A person with authority must approve before anything follows from it. */
+  | 'APPROVAL';
+
+/**
+ * The metering class for one run, from the specification's Part H.
+ *
+ * A class rather than a price. The price of a tier is configuration and lives
+ * with the rest of the money model; what belongs on the agent is the claim
+ * about how expensive its thinking is, so a run can be quoted before it is made
+ * and refused against an empty wallet before a provider is called.
+ */
+export type AcuTier = 'LOW' | 'MED' | 'HIGH' | 'PREMIUM';
+
+/**
+ * The three memory layers, and which of them an agent may touch.
+ *
+ * Read and write are separate because the failure modes are. An agent reading
+ * organisation memory is using what the business has learned; an agent
+ * *writing* it is changing what every future project on every other job will be
+ * told — so the estimating agent reads the rate library and does not edit it,
+ * and the lessons agent is the one that writes.
+ *
+ * Asset memory outlives the project and the contract both. An agent that may
+ * write it is writing into a record somebody will read in year twenty-nine.
+ */
+export type MemoryLayer = 'PROJECT' | 'ORGANISATION' | 'ASSET';
+
+export type MemoryAccess = {
+  reads: MemoryLayer[];
+  writes: MemoryLayer[];
 };
 
 /** Severity of a finding, which drives what a human sees first. */
@@ -226,11 +326,45 @@ export type AgentDeployment = 'DEPLOYED' | 'DECLARED';
 
 export type AgentDefinition = {
   name: string;
+  /**
+   * The specification's stable `agent_id`, e.g. `AGT-TENDER-RETURN`.
+   *
+   * Beside `name` rather than instead of it. `name` is what the console, the
+   * proposal records and the existing ledger entries already use, and rewriting
+   * it would rename every agent in every historical proposal on an append-only
+   * chain. The id is the contract's identifier; the name is this platform's.
+   */
+  agentId: string;
   /** Which division this agent reports into. */
   division: AgentDivision;
   /** One sentence: what this agent is for. Shown to the approver. */
   purpose: string;
   mandate: AgentMandate;
+  /** Lifecycle states this agent may run in. The runtime refuses elsewhere. */
+  activeIn: AgentStates;
+  /** What wakes it. */
+  triggers: AgentTrigger[];
+  /** Named data sources, for the contract's `inputs`. Plain language. */
+  inputs: string[];
+  /** Named artefacts it produces, for the contract's `outputs`. */
+  outputs: string[];
+  /** Event codes this agent's proposals lead to, once approved and executed. */
+  emits: string[];
+  /** What a person must do with the output before anything follows from it. */
+  hitl: HumanInTheLoop;
+  /**
+   * Below this the agent must escalate rather than act, 0–1.
+   *
+   * Enforced by the runtime: a finding under the floor is still recorded — it
+   * is evidence that the agent looked — but it cannot carry a proposal, because
+   * a proposal is a request to change the project and the agent has just said
+   * it is not sure.
+   */
+  confidenceFloor: number;
+  /** Metering class for one run. */
+  acuTier: AcuTier;
+  /** Which memory layers it may read and write. */
+  memory: MemoryAccess;
   /** Running, or declared and waiting. Defaults to running. */
   deployment?: AgentDeployment;
   /** What a `DECLARED` agent is waiting on. Required for one, and tested. */
