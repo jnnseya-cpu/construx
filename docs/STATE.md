@@ -7036,6 +7036,7 @@ named so it is not mistaken for finished.
 | Evidence capture | Real SHA-256 over the real file, recorded against the event, and the file itself held in a tenant-scoped content-addressed store | Retention and deletion policy; no antivirus scan on upload |
 | File ingestion | Structural inspection, rules classification with its signals, native text and table extraction, and a lexical index over what was read. A file that is not what it claims to be is quarantined with the finding on the record | No signature scan; a PDF or a photograph reports `NEEDS_OCR` rather than being read; the index is lexical, so it finds a near-duplicate and not a paraphrase |
 | Vision tasks | Progress, PPE, plant and defects read from a held photograph, each as a draft a person confirms into the ordinary domain command | Exercised against a stub, not a live provider — the same limit as the drawing and voice tasks |
+| Commitment extraction | Reads a held letter for what it promises and what it demands, drops anything not quoted verbatim from the letter, and registers a confirmed one in the obligation calendar that already exists | Needs a provider that reads prose; a local deployment is refused rather than given an invented undertaking. Exercised against a stub, not a live provider |
 | Clause extraction | From supplied text | OCR and table extraction from a PDF |
 | 4D scheduling | Twin states link to task ids | No visualisation |
 | Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded | No bounce processing or suppression list; DKIM belongs at the relay, where the key should live |
@@ -7062,10 +7063,6 @@ parsing work, not wiring.
 - **A plant register** — plant recognised in a photograph is filed as a site
   observation naming what was seen and whether it was standing. There is no
   register of plant on hire, and utilisation is not derived
-- **Audio and communication intelligence** — commitment and deadline extraction,
-  `COMMITMENT_REGISTERED`, `DEADLINE_TRACKED`. Transcription of a site voice note
-  into a confirmed observation is built, through the perception pipeline; what is
-  absent is reading obligations out of correspondence
 - **Deployment topology** — Terraform, Kong, MSK, RDS, S3
 - **Native Android and iOS clients** — the installed PWA covers the field case
   today, including offline capture, and the `ANDROID`/`IOS` event sources exist
@@ -7893,6 +7890,55 @@ voice tasks already carry. In the console the refusal branch is what a local
 deployment shows, and it was checked in a browser: the panel states that no
 provider here can read a file, and offers only the tasks the reader's own
 authority covers.
+
+---
+
+## The dates inside the letters
+
+The obligation calendar held what the *contract* required. What nobody was
+tracking was what the parties said to each other afterwards — "we will complete
+the outstanding remedial works to panels 3 and 4 by 14 October", "unless we
+receive your comments by 30 September we will proceed on the basis set out
+above". Those dates sat in the correspondence register as prose.
+
+`backend/src/domain/commitments.ts` reads one held letter and offers what it
+finds as candidate obligations. `COMMITMENT_REGISTERED` is the reading;
+`DEADLINE_TRACKED` is a person confirming it, and it registers the obligation
+through `registerObligation` so the date lands in the calendar that already
+counts down and already reports overdue. There is no second list of dates to
+disagree with the first.
+
+**Nothing is recorded that the letter does not say.** Every commitment the
+provider returns has to carry the sentence it read it from, and that sentence
+has to appear verbatim in the body — whitespace normalised, so a letter reflowed
+by an email client does not lose its own commitment. Anything that does not is
+dropped before it is written, and if nothing survives the command refuses.
+
+This is the same problem the perception pipeline solves with its `multimodal`
+flag, solved without one. The local stand-in derives its answers from a hash of
+its inputs; asked what a letter promised it will answer, confidently and
+fictionally. A verbatim quote is the one thing a provider that never read the
+letter cannot produce, so the check makes fabrication impossible to *file*
+rather than merely discouraged. It also makes every entry arguable: a date in
+the calendar can be read back against the sentence it came from.
+
+**Three refusals, not one, and only one of them is about the letter.** Found
+against a running server: the local engine returns no commitment list at all,
+and the platform told the operator "nothing in COR-0001 undertakes to do
+anything by a date" about a letter that plainly did. An empty list is an answer
+(`NOTHING_PROMISED`); no list is a provider that cannot do this
+(`PROVIDER_CANNOT_READ`); findings that all failed the quote check is a provider
+answering anyway (`NOTHING_QUOTED`). The console says which.
+
+**The date is the confirmer's.** A letter that says "within ten working days"
+states a period, and which day that lands on — from which receipt, past which
+holidays — is not something to infer from prose and file against a party. The
+reading records no date at all in that case, and the screen says "a period, not
+a date" rather than offering a guess.
+
+The entity is `CorrespondenceCommitment`, not `Commitment`: that name was
+already taken by a cost commitment against a budget, and one word for two
+concepts is how a permission model goes wrong.
 
 ---
 

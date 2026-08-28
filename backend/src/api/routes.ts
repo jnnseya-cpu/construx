@@ -30,6 +30,7 @@ import type { Schema } from '../core/validate.ts';
 import * as business from '../domain/business.ts';
 import * as cdm from '../domain/cdm.ts';
 import * as portfolio from '../domain/portfolio.ts';
+import * as commitments from '../domain/commitments.ts';
 import * as correspondence from '../domain/correspondence.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as programmecontrol from '../domain/programmecontrol.ts';
@@ -9258,6 +9259,71 @@ export const ROUTES: Route[] = [
     readOnly: true,
     description: 'What is awaiting a reply, what is past the contractual period, and what silence has already decided',
     handler: (platform, ctx) => correspondence.correspondencePosition(projectContext(platform, ctx)),
+  },
+
+  // --- Commitments read out of the post --------------------------------------
+  //
+  // The letters are full of dates nobody is tracking. Reading one produces
+  // candidate obligations quoting the sentence they came from; confirming one
+  // registers it in the obligation calendar that already exists.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/commitments',
+    readOnly: true,
+    description: 'What has been read out of the post, what is being tracked, and how many letters nobody has read',
+    handler: (platform, ctx) => commitments.commitmentPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/correspondence/:correspondenceId/commitments',
+    description: 'Read one letter for what it promises and what it demands, quoting the letter for each',
+    ai: { engine: 'CONTRACTS_CLAIMS', taskType: 'commitment_extraction', capability: 'REASONING' },
+    // No body: the letter is named in the path and its text is already held.
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      commitments.readCommitments(projectContext(platform, ctx), {
+        correspondenceId: ctx.params.correspondenceId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commitments/:commitmentId/track',
+    description: 'Confirm a reading and put the date into the obligation calendar, against an owner',
+    schema: {
+      type: 'object',
+      required: ['contractId', 'owner', 'dueDate'],
+      properties: {
+        contractId: stringField,
+        owner: stringField,
+        // Required rather than defaulted from the letter: "within ten working
+        // days" is a period, and which day it lands on is not something to
+        // infer from prose and file against a party.
+        dueDate: stringField,
+        description: { type: 'string', minLength: 4 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      commitments.trackCommitment(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof commitments.trackCommitment>[1], 'commitmentId'>>(ctx),
+        commitmentId: ctx.params.commitmentId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/commitments/:commitmentId/discard',
+    description: 'Reject a reading, saying why. What was read is kept.',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 4 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      commitments.discardCommitment(projectContext(platform, ctx), {
+        reason: body<{ reason: string }>(ctx).reason,
+        commitmentId: ctx.params.commitmentId as string,
+      }),
   },
   {
     method: 'POST',

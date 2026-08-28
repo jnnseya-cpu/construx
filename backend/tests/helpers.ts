@@ -21,13 +21,20 @@ export function throwsCode(fn: () => unknown, code: string, message?: string): {
   assert.fail(message ?? `expected the call to throw ${code}, but it returned normally`);
 }
 
-export async function rejectsCode(fn: () => Promise<unknown>, code: string, message?: string): Promise<void> {
+export async function rejectsCode(
+  fn: () => Promise<unknown>,
+  code: string,
+  message?: string,
+): Promise<{ code?: string; message?: string }> {
   try {
     await fn();
   } catch (error) {
     const actual = (error as { code?: string }).code;
     assert.equal(actual, code, message ?? `expected error code ${code}, received ${actual ?? '(none)'}`);
-    return;
+    // Returned like `throwsCode`, so a test can go on to assert what the
+    // refusal actually said. A code proves the right rule fired; the sentence
+    // is what the person on the other end of it reads.
+    return error as { code?: string; message?: string };
   }
   assert.fail(message ?? `expected the call to reject with ${code}, but it resolved`);
 }

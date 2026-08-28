@@ -501,15 +501,9 @@ describe('defect detection raises one NCR per defect', () => {
         { description: 'Spalling to the nib', severity: 'HIGH', proposedAction: 'Break out and reinstate.' },
       ],
     });
-    await assert.rejects(
-      () => perception.confirm(ctxFor('qaqc'), { draftId }),
-      (error: { code?: string; message?: string }) => {
-        assert.equal(error.code, 'PERCEPTION_SEVERITY_INVALID');
-        // Names which one, so the confirmer knows what to correct.
-        assert.match(String(error.message), /Defect 2/);
-        return true;
-      },
-    );
+    const error = await rejectsCode(() => perception.confirm(ctxFor('qaqc'), { draftId }), 'PERCEPTION_SEVERITY_INVALID');
+    // Names which one, so the confirmer knows what to correct.
+    assert.match(String(error.message), /Defect 2/);
   });
 
   it('will not confirm a photograph the model found nothing wrong in', async () => {

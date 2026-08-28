@@ -253,6 +253,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   Contract: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },
   ContractClause: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },
   Obligation: { area: 'CONTRACTS_CLAIMS' },
+  // A promise read out of a letter, quoting the letter. Named for where it
+  // comes from because `Commitment` is already taken by the cost commitment
+  // above — a purchase order against a budget is a different thing entirely,
+  // and one word for two concepts is how a permission model goes wrong.
+  CorrespondenceCommitment: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },
   ChangeRequest: { area: 'CHANGE_VARIATION' },
   Variation: { area: 'CHANGE_VARIATION', sensitivity: 'COMMERCIAL_L3' },
   DelayEvent: { area: 'CONTRACTS_CLAIMS' },

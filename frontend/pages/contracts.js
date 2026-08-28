@@ -32,9 +32,13 @@ export async function contracts(root) {
   // Contractual correspondence, and the matrix that governs it. The matrix is
   // fetched rather than restated here: who a letter must be served on is a rule,
   // and the interface holds no rule the API does not publish.
-  const [letters, matrix] = await Promise.all([
+  const [letters, matrix, commitments] = await Promise.all([
     api.get(`/v1/projects/${projectId}/correspondence/position`).catch(() => null),
     api.get('/v1/correspondence/matrix').catch(() => ({ types: [] })),
+    // The dates the letters contain, which the obligation calendar does not
+    // hold: the calendar is what the contract says, and these are what the
+    // parties said afterwards.
+    api.get(`/v1/projects/${projectId}/commitments`).catch(() => null),
   ]);
   const evidenceHeld = await api
     .get(`/v1/projects/${projectId}/evidence`)
@@ -182,6 +186,71 @@ export async function contracts(root) {
                 ]),
                 empty: 'Every letter has been answered',
               })}
+            </div>`
+      }
+
+      ${
+        !commitments || (commitments.unread === 0 && commitments.read === 0 && commitments.tracked === 0)
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <div style="padding:15px 17px 0">
+                <h2>The dates inside the letters</h2>
+                <p class="metric-sub" style="margin-bottom:12px">
+                  The obligation calendar holds what the contract requires. This is what the parties promised each
+                  other afterwards — "we will complete by 14 October", "unless we hear from you by the 30th".
+                  Every reading quotes the sentence it came from, and nothing that is not in the letter word for word
+                  is recorded at all. Confirming one puts its date into the same calendar as everything else.
+                </p>
+                <div class="split-list" style="margin-bottom:12px">
+                  <div class="row">
+                    <span class="lbl">Letters never read for a date</span><span class="val">${commitments.unread}</span>
+                  </div>
+                  <div class="row">
+                    <span class="lbl">Read, awaiting a decision</span><span class="val">${commitments.read}</span>
+                  </div>
+                  <div class="row">
+                    <span class="lbl">In the obligation calendar</span><span class="val">${commitments.tracked}</span>
+                  </div>
+                  <div class="row"><span class="lbl">Rejected</span><span class="val">${commitments.discarded}</span></div>
+                </div>
+              </div>
+              ${table({
+                headers: ['Letter', 'What was promised', 'Owed by', 'Date stated', 'Quoted from the letter', ''],
+                rows: commitments.awaitingDecision.map((entry) => [
+                  entry.correspondenceReference,
+                  entry.description,
+                  entry.party,
+                  entry.statedDueDate
+                    ? date(entry.statedDueDate)
+                    : // A letter that said "within ten working days" stated a
+                      // period. Which day that is remains the confirmer's.
+                      badge('a period, not a date', 'warn'),
+                  html`<span class="metric-sub">“${entry.quotedText}”</span>`,
+                  html`<button class="btn sm" data-track="${entry.commitmentId}">Track it</button>
+                    <button class="btn quiet sm" data-drop="${entry.commitmentId}">Reject</button>`,
+                ]),
+                empty:
+                  commitments.unread > 0
+                    ? `Nothing read yet. ${commitments.unread} letter(s) on this project have never been looked at for a date.`
+                    : 'Every letter has been read.',
+              })}
+              ${
+                (commitments.unreadLetters ?? []).length === 0
+                  ? ''
+                  : html`<div style="padding:0 17px 15px">
+                      <h2 style="margin-top:14px">Not yet read</h2>
+                      ${table({
+                        headers: ['Reference', 'Subject', ''],
+                        rows: commitments.unreadLetters.map((letter) => [
+                          letter.reference,
+                          letter.subject,
+                          html`<button class="btn quiet sm" data-read-letter="${letter.correspondenceId}">
+                            Read for dates
+                          </button>`,
+                        ]),
+                      })}
+                    </div>`
+              }
             </div>`
       }
 
@@ -584,6 +653,112 @@ export async function contracts(root) {
   );
 
   root.addEventListener('click', async (event) => {
+    const readLetter = event.target.closest('[data-read-letter]');
+    if (readLetter) {
+      const letter = (commitments?.unreadLetters ?? []).find(
+        (entry) => entry.correspondenceId === readLetter.dataset.readLetter,
+      );
+      const approved = await confirmCost({
+        title: `Read ${letter?.reference ?? 'this letter'} for dates`,
+        intent:
+          'The contracts engine reads the letter for what it promises and what it demands. Every finding has to ' +
+          'quote the letter word for word; anything that does not is dropped before it is recorded.',
+        path: `/v1/projects/${projectId}/correspondence/${readLetter.dataset.readLetter}/commitments`,
+      });
+      if (!approved) return;
+      try {
+        const result = await api.post(
+          `/v1/projects/${projectId}/correspondence/${readLetter.dataset.readLetter}/commitments`,
+          {},
+        );
+        toast(
+          `${result.found} date(s) read`,
+          result.dropped > 0
+            ? `${result.dropped} finding(s) quoted words that are not in the letter and were not recorded.`
+            : 'Each one quotes the sentence it came from. Nothing is in the calendar until you say so.',
+          'ok',
+        );
+        await draw();
+      } catch (error) {
+        // Three very different answers. Only the first is about the letter;
+        // the other two are about what this deployment can actually do, and
+        // presenting either as "the letter promised nothing" would be a false
+        // statement about the project.
+        const aboutTheLetter = error.code === 'NOTHING_PROMISED';
+        toast(
+          aboutTheLetter
+            ? 'Nothing promised'
+            : error.code === 'PROVIDER_CANNOT_READ'
+              ? 'Nothing here can read a letter'
+              : 'Nothing recorded',
+          error.detail ?? error.message ?? '',
+          aboutTheLetter ? 'ok' : 'warn',
+        );
+      }
+      return;
+    }
+
+    const track = event.target.closest('[data-track]');
+    if (track) {
+      const entry = (commitments?.awaitingDecision ?? []).find(
+        (candidate) => candidate.commitmentId === track.dataset.track,
+      );
+      const result = await command({
+        title: 'Put this date in the calendar',
+        intent: entry ? `“${entry.quotedText}” — ${entry.correspondenceReference}` : '',
+        path: `/v1/projects/${projectId}/commitments/${track.dataset.track}/track`,
+        submitLabel: 'Track it',
+        fields: [
+          {
+            name: 'contractId',
+            label: 'Against which contract',
+            type: 'select',
+            options: b.Contract.map((entry_) => ({ value: entry_._refId, label: contractLabel(entry_) })),
+          },
+          {
+            name: 'owner',
+            label: 'Who answers for it here',
+            type: 'text',
+            hint: 'An obligation with nobody against it is a note, not an obligation.',
+          },
+          {
+            name: 'dueDate',
+            label: 'Due by',
+            type: 'date',
+            value: entry?.statedDueDate ?? today(),
+            hint: entry?.statedDueDate
+              ? 'As stated in the letter. Change it if the letter is wrong.'
+              : 'The letter stated a period rather than a day. Say which day it falls on.',
+          },
+          {
+            name: 'description',
+            label: 'What is owed',
+            type: 'text',
+            required: false,
+            value: entry?.description ?? '',
+          },
+        ],
+      });
+      if (result) {
+        toast('Tracked', `${result.obligationReference} — it now counts down with everything else.`, 'ok');
+        await draw();
+      }
+      return;
+    }
+
+    const drop = event.target.closest('[data-drop]');
+    if (drop) {
+      const result = await command({
+        title: 'Reject this reading',
+        intent: 'What the model read is kept on the record. Say why it is not worth tracking.',
+        path: `/v1/projects/${projectId}/commitments/${drop.dataset.drop}/discard`,
+        submitLabel: 'Reject',
+        fields: [{ name: 'reason', label: 'Why', type: 'text' }],
+      });
+      if (result) await draw();
+      return;
+    }
+
     const signButton = event.target.closest('[data-sign]');
     if (signButton) {
       const affirmation = window.prompt(

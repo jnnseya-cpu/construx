@@ -431,6 +431,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('CONTRACT_INGESTED', 'Contract', 'IMPORT', 'CONTRACTS_CLAIMS', { aiAllowed: true, requiresEvidence: true }),
   def('CONTRACT_CLAUSE_EXTRACTED', 'ContractClause', 'CREATE', 'CONTRACTS_CLAIMS', { aiAllowed: true, requiresEvidence: true }),
   def('OBLIGATION_REGISTERED', 'Obligation', 'CREATE', 'CONTRACTS_CLAIMS', { aiAllowed: true }),
+  // A promise read out of a letter, and the moment somebody starts counting it
+  // down. Two events because they are two acts by two parties: the reading is
+  // the machine's and carries the sentence it read it from verbatim; tracking
+  // is a person's, and it is what puts the date into the obligation calendar.
+  // `COMMITMENT_DISCARDED` exists because a rejected reading is a fact too — a
+  // machine's finding that quietly vanishes is the one thing nobody can audit.
+  def('COMMITMENT_REGISTERED', 'CorrespondenceCommitment', 'CREATE', 'CONTRACTS_CLAIMS', { aiAllowed: true, creates: true }),
+  def('DEADLINE_TRACKED', 'CorrespondenceCommitment', 'APPROVE', 'CONTRACTS_CLAIMS'),
+  def('COMMITMENT_DISCARDED', 'CorrespondenceCommitment', 'UPDATE', 'CONTRACTS_CLAIMS'),
   def('NOTICE_ISSUED', 'Notice', 'ISSUE', 'CONTRACTS_CLAIMS', { requiresEvidence: true, creates: true }),
   // CN-WF-08. Sequentially numbered, because a gap in an instruction sequence is
   // a question somebody will ask and an unnumbered instruction is one nobody can

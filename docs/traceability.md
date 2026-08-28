@@ -349,8 +349,9 @@ not pretend to have done.
 
 The specification describes a full intake stack in front of the engines. Most of
 it is now built — upload and storage, structural inspection, classification,
-native extraction, a lexical index, and seven perception tasks that read a held
-file and produce a draft a person confirms. What remains absent is the part that
+native extraction, a lexical index, seven perception tasks that read a held file
+and produce a draft a person confirms, and commitment extraction from
+correspondence. What remains absent is the part that
 needs a model or a library this platform does not have: signature scanning, OCR,
 semantic embedding and IFC parsing. Those rows say so rather than being implied
 by a "Built" row elsewhere.
@@ -368,8 +369,8 @@ by a "Built" row elsewhere.
 | Vision: progress estimation, PPE compliance, equipment recognition, defect detection | Built | Four tasks in `engines/perception.ts`, each a draft a person confirms into the ordinary domain command — `submitProgress`, `logSafetyObservation`, `captureSiteObservation`, `raiseNCR`. Refused outright where no configured provider can be shown a file. Exercised against a stub, not a live provider |
 | `PROGRESS_EXTRACTED_FROM_IMAGES` event | Built | Written against the submission beside `PROGRESS_REPORTED`, carrying the provider, whether the answer was synthetic, the stated basis, what the model could not see and what the confirmer changed |
 | Audio: transcription | Built | The `VOICE_NOTE` perception task, confirmed into `captureSiteObservation` |
-| Audio: commitment and deadline extraction | Design only | Not implemented |
-| `COMMITMENT_REGISTERED`, `DEADLINE_TRACKED` events | Design only | Not in the catalogue |
+| Commitment and deadline extraction from correspondence | Built | `domain/commitments.ts` reads a held letter for what it promises and what it demands. Every finding must quote the letter verbatim or it is dropped before it is written, which is what stops a provider that cannot read prose from filing an invented undertaking; a confirmed one is registered in the obligation calendar through `registerObligation`. Exercised against a stub, not a live provider |
+| `COMMITMENT_REGISTERED`, `DEADLINE_TRACKED` events | Built | Plus `COMMITMENT_DISCARDED`, because a rejected reading is a fact too. The entity is `CorrespondenceCommitment` — `Commitment` was already the cost commitment against a budget |
 | Knowledge graph with typed edges and traversal | Partial | Entities cross-reference by id and the ledger reconstructs the lineage; there is no graph store or traversal API |
 
 ## 14. Commercial packaging
