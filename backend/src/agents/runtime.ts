@@ -1,6 +1,6 @@
 import { ulid } from '../core/ids.ts';
 import { DomainError, ForbiddenError } from '../core/errors.ts';
-import { authorise, write, type EngineContext } from '../engines/context.ts';
+import { authorise, currentPhase, write, type EngineContext } from '../engines/context.ts';
 import { rolesAllow } from '../identity/roles.ts';
 import { mayActUnattended } from './mandate.ts';
 import { AGENTS, agentByName, deployedAgents } from './registry.ts';
@@ -59,10 +59,31 @@ export async function runAgents(
         .filter((a): a is AgentDefinition => Boolean(a) && typeof a?.evaluate === 'function')
     : deployedAgents();
 
-  const report: AgentRunReport = { runId, ranAt, agents: [], proposals: [], suppressed: 0 };
+  const report: AgentRunReport = { runId, ranAt, agents: [], proposals: [], suppressed: 0, belowFloor: 0 };
+  let belowFloor = 0;
+
+  const phase = currentPhase(ctx);
 
   for (const agent of fleet) {
     try {
+      // The contract's `active_in_states`, enforced rather than declared.
+      //
+      // A tender agent waking on a project in operations is reading a job whose
+      // tender closed years ago, and whatever it concludes arrives with the same
+      // confidence as a real finding. Skipped rather than failed: running
+      // outside your states is not an error in the agent, it is the runtime
+      // correctly declining to ask a question that has no meaning here.
+      if (agent.activeIn !== 'ANY' && phase !== undefined && !agent.activeIn.includes(phase)) {
+        report.agents.push({
+          agent: agent.name,
+          findings: 0,
+          proposalsRaised: 0,
+          suppressed: 0,
+          skipped: `not active in ${phase} — declared for ${agent.activeIn.join(', ')}`,
+        });
+        continue;
+      }
+
       const output = await agent.evaluate!(ctx);
       let raised = 0;
       let suppressed = 0;
@@ -74,7 +95,20 @@ export async function runAgents(
         }
         existing.add(finding.key);
 
-        const proposed = output.proposals.find((p) => p.findingKey === finding.key);
+        let proposed = output.proposals.find((p) => p.findingKey === finding.key);
+
+        // The contract's `confidence_floor`.
+        //
+        // Below it the agent must escalate rather than act. The finding is still
+        // recorded — it is evidence that the agent looked, and dropping it would
+        // hide the near-misses that are often the most useful thing on the
+        // queue — but it cannot carry a proposal, because a proposal is a
+        // request to change the project and the agent has just said it is not
+        // sure enough to make one.
+        if (proposed && typeof finding.confidence === 'number' && finding.confidence < agent.confidenceFloor) {
+          belowFloor += 1;
+          proposed = undefined;
+        }
 
         if (proposed) {
           // Rule 2: the mandate is the ceiling, checked outside the agent.
@@ -155,6 +189,7 @@ export async function runAgents(
     },
   });
 
+  report.belowFloor = belowFloor;
   return report;
 }
 

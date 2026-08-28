@@ -194,6 +194,15 @@ export type Finding = {
    * source is an opinion, and the platform does not store opinions as facts.
    */
   evidence: Array<{ refType: string; refId: string; note: string }>;
+  /**
+   * How sure the agent is, 0–1. Optional, and its absence means something.
+   *
+   * An agent whose trigger is pure arithmetic over the record — "this permit
+   * expired yesterday" — has no confidence to report, because it is not
+   * estimating anything. Confidence belongs on a finding that involved a
+   * judgement, and the runtime only applies the floor where one is stated.
+   */
+  confidence?: number;
 };
 
 /**
@@ -397,8 +406,19 @@ export type AgentRunReport = {
     proposalsRaised: number;
     suppressed: number;
     error?: string;
+    /**
+     * Why this agent did not run. Set where the lifecycle state gate declined
+     * it — reported rather than omitted, so a fleet run that skipped half the
+     * fleet says so instead of looking like a fleet half this size.
+     */
+    skipped?: string;
   }>;
   proposals: AgentProposal[];
   /** Findings that were already open, so nothing was raised twice. */
   suppressed: number;
+  /**
+   * Findings whose confidence fell below their agent's floor, so the finding
+   * was kept and its proposal was not raised.
+   */
+  belowFloor: number;
 };

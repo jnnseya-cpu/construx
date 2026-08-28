@@ -9384,3 +9384,56 @@ local server in the build sandbox, never against the live deployment.** Where
 this file says "verified in a browser", that is what it means. Nothing here
 establishes that any of it is live, and it was wrong to let those two things
 read as the same claim.
+
+### The Agent Contract, enforced rather than declared
+
+The specification requires every agent to publish twelve fields. Six of them had
+nowhere to live: `active_in_states`, `triggers`, `emits`, `confidence_floor`,
+`acu_tier` and `memory_access`. They are now on `AgentDefinition`, and two of
+them are enforced by the runtime rather than being documentation:
+
+- **The state gate.** An agent whose `activeIn` excludes the project's lifecycle
+  phase is skipped and says so in the run report. A tender agent waking on a job
+  whose tender closed three years ago reads a dead record and reports whatever it
+  concludes with the same confidence as a live finding.
+- **The confidence floor.** A finding that states a confidence below the agent's
+  own floor keeps the finding and **drops the proposal**. The observation is
+  still worth a person's attention; the recommendation is not worth acting on,
+  and the run report counts how many were held back.
+
+`emits`, `triggers`, `acuTier` and `memory` are declared and checked but not yet
+routed on — trigger-driven wake-up, per-tier ACU metering and memory-scope
+enforcement are **not built**, and the fields exist so those can be built against
+a declaration rather than a guess.
+
+**Twenty-five lifecycle agents** were added in `agents/lifecycle.ts`, taking the
+fleet to fifty-seven. Every agent the specification names by id now exists;
+seven of the new ones are `DECLARED` rather than deployed, each naming what it is
+waiting on, because an agent that cannot see its inputs is a stub, and a stub
+that raises findings is worse than nothing.
+
+`agentcontract.test.ts` is what makes the contract real. It holds every agent to
+a lifecycle state that exists, a trigger and an emit that resolve against the
+**closed** event catalogue, a confidence floor inside 0–1, no memory layer
+written that is not also read, at most three writers of organisation memory,
+approval required wherever the output binds the business, and proposals never
+wider than reads. The list of agents eligible to act unattended is pinned at one
+— the platform-health agent, whose envelope carries a value ceiling of zero —
+so widening it is an edit to a test rather than a quiet change.
+
+**What the state gate found immediately.** Six agents were declared out of
+lifecycle phases they belong in, and the flagship demonstration project sits in
+OPERATIONS, so the gate silenced twenty-eight agents on it at once. The
+declarations were wrong, not the gate:
+
+- The **market radar** and the **pipeline** agent are business-level. Gating
+  what is out there to win on the phase of whichever project the reader happens
+  to have open is simply the wrong axis; both are now `ANY`.
+- **Commercial**, **contracts**, **payment**, **claims** and **quality** were
+  stopped at handover. The final account is settled after the works finish,
+  retention is released in two halves with the second at the end of the defects
+  period, latent-defect claims run for years, and the defects liability period is
+  precisely when defects appear. Stopping there switched them off exactly where
+  the remaining money and the remaining risk are. All five now reach OPERATIONS.
+- **HSEQ** and **supply chain** likewise: an operating asset still carries a
+  health and safety file and still needs spares.

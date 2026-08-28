@@ -252,6 +252,27 @@ describe('assign names who decides, and is not a decision', () => {
     return open[0]!.id;
   }
 
+  /**
+   * An open proposal a safety lead has no standing to decide.
+   *
+   * Chosen by reading the proposal's own approver list rather than taking the
+   * first item in the queue. The fleet's composition is not this test's
+   * subject, and pinning it to whichever agent happens to sort first turns any
+   * change in the fleet into a failure here — which is exactly what happened
+   * when the commercial and contracts agents were let into operations.
+   */
+  function beyondTheSafetyLead(): string {
+    // The seeded HSE Manager holds exactly one role, and it is named here
+    // rather than read back off the user so this reads as the statement it is:
+    // a safety lead cannot decide a commercial or contractual proposal.
+    const open = agents
+      .pendingProposals(ctx('pm'))
+      .filter((proposal) => proposal.mine && proposal.status === 'OPEN')
+      .find((proposal) => !proposal.approvers.includes('SAFETY'));
+    assert.ok(open, 'every open proposal can be decided by a safety lead, so the refusal cannot be tested');
+    return open.id;
+  }
+
   it('leaves the proposal open, because moving it is not dealing with it', async () => {
     const id = openProposal();
     const owners = await call('GET', `/v1/projects/${seed.projectId}/proposals/${id}/owners`, 'pm');
@@ -277,7 +298,7 @@ describe('assign names who decides, and is not a decision', () => {
   it('refuses an assignee who could not decide it, and says why', async () => {
     // An item assigned to somebody who cannot act looks owned and cannot move,
     // which is worse than an unassigned one — at least that is visibly nobody's.
-    const id = openProposal();
+    const id = beyondTheSafetyLead();
     const refused = await call('POST', `/v1/projects/${seed.projectId}/proposals/${id}/assign`, 'pm', {
       userId: seed.users.safety!.id,
     });

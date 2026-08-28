@@ -1,5 +1,6 @@
 import { abbreviateMoney } from '../domain/locale.ts';
 import type { EngineContext } from '../engines/context.ts';
+import { LIFECYCLE_AGENTS } from './lifecycle.ts';
 import { PLATFORM_AGENTS } from './platform.ts';
 import type { AgentDefinition, AgentOutput, Finding, ProposedCommand } from './types.ts';
 
@@ -31,10 +32,10 @@ const programmeAgent: AgentDefinition = {
   name: 'programme',
   agentId: 'AGT-PROG-DELAY',
   activeIn: ['CONSTRUCTION', 'COMMISSIONING'],
-  triggers: [{ kind: 'SCHEDULE', at: '06:00' }, { kind: 'EVENT', eventType: 'DELAY_EVENT_RECORDED' }, { kind: 'EVENT', eventType: 'PROGRESS_MEASURED' }],
+  triggers: [{ kind: 'SCHEDULE', at: '06:00' }, { kind: 'EVENT', eventType: 'DELAYEVENT_RECORDED' }, { kind: 'EVENT', eventType: 'PROGRESS_RECORDED' }],
   inputs: ['Approved programme baseline', 'Progress measurements', 'Delay events', 'Critical path'],
   outputs: ['Delay prediction', 'Critical-path threats', 'Recovery scenarios', 'EOT candidates with evidence chains'],
-  emits: ['DELAY_FORECAST_RUN', 'RECOVERY_PLAN_PROPOSED'],
+  emits: ['DELAY_RISK_FORECAST', 'RECOVERY_PLAN_APPROVED'],
   hitl: 'REVIEW',
   confidenceFloor: 0.6,
   acuTier: 'HIGH',
@@ -117,7 +118,11 @@ const programmeAgent: AgentDefinition = {
 const commercialAgent: AgentDefinition = {
   name: 'commercial',
   agentId: 'AGT-COMMERCIAL',
-  activeIn: ['CONSTRUCTION', 'COMMISSIONING', 'HANDOVER'],
+  // The final account is settled after the job is finished, and retention is
+  // released in two halves, the second of which falls at the end of the
+  // defects period. Stopping the commercial agent at handover would switch it
+  // off exactly where the remaining money is.
+  activeIn: ['CONSTRUCTION', 'COMMISSIONING', 'HANDOVER', 'OPERATIONS'],
   triggers: [{ kind: 'SCHEDULE', at: '07:00', days: [1] }, { kind: 'EVENT', eventType: 'CVR_PUBLISHED' }],
   inputs: ['Cost value reconciliation', 'Commitments', 'Applications and certificates', 'Variation register'],
   outputs: ['Margin-erosion alerts', 'Cost to complete', 'Over/under-claim detection', 'What changed this week'],
@@ -298,11 +303,15 @@ const riskAgent: AgentDefinition = {
 const contractsAgent: AgentDefinition = {
   name: 'contracts',
   agentId: 'AGT-CONTRACT-OBS',
-  activeIn: ['TENDER', 'CONSTRUCTION', 'COMMISSIONING', 'HANDOVER'],
+  // Operations is where the contract runs longest and is watched least. The
+  // defects liability period, the limitation period on latent defects and
+  // every collateral warranty outlive practical completion, and a deadline
+  // missed here is missed permanently.
+  activeIn: ['TENDER', 'CONSTRUCTION', 'COMMISSIONING', 'HANDOVER', 'OPERATIONS'],
   triggers: [{ kind: 'SCHEDULE', at: '06:30' }, { kind: 'EVENT', eventType: 'CONTRACT_EXECUTED' }],
   inputs: ['Executed contract', 'Clause register', 'Obligation calendar', 'Notices served'],
   outputs: ['Obligations falling due', 'Missed notice windows', 'Time-bar exposure'],
-  emits: ['CONTRACT_NOTICE_SERVED'],
+  emits: ['NOTICE_ISSUED'],
   hitl: 'REVIEW',
   confidenceFloor: 0.7,
   acuTier: 'MED',
@@ -445,10 +454,10 @@ const fieldAgent: AgentDefinition = {
   name: 'field',
   agentId: 'AGT-SITE-PROGRESS',
   activeIn: ['CONSTRUCTION', 'COMMISSIONING'],
-  triggers: [{ kind: 'SCHEDULE', at: '18:00' }, { kind: 'EVENT', eventType: 'DAILY_DIARY_RECORDED' }],
+  triggers: [{ kind: 'SCHEDULE', at: '18:00' }, { kind: 'EVENT', eventType: 'SITE_DIARY_RECORDED' }],
   inputs: ['Daily diaries', 'Progress measurement', 'Work orders', 'Site observations'],
   outputs: ['Diary gaps', 'Progress against measure', 'Productivity drift'],
-  emits: ['PROGRESS_MEASURED'],
+  emits: ['PROGRESS_RECORDED'],
   hitl: 'REVIEW',
   confidenceFloor: 0.55,
   acuTier: 'MED',
@@ -586,7 +595,7 @@ const tenderAgent: AgentDefinition = {
   triggers: [{ kind: 'EVENT', eventType: 'TAKEOFF_COMPLETED' }, { kind: 'ON_DEMAND' }],
   inputs: ['Take-off', 'Organisation rate library', 'Commodity indices', 'Risk register'],
   outputs: ['Bottom-up estimate', 'BoQ benchmark deltas', 'Assumption register'],
-  emits: ['ESTIMATE_CREATED', 'ESTIMATE_REPRICED'],
+  emits: ['ESTIMATE_CREATED'],
   hitl: 'REVIEW',
   confidenceFloor: 0.65,
   acuTier: 'HIGH',
@@ -663,7 +672,10 @@ const tenderAgent: AgentDefinition = {
 const radarAgent: AgentDefinition = {
   name: 'radar',
   agentId: 'CX-TENDER-RADAR',
-  activeIn: ['CONCEPT', 'DESIGN', 'TENDER'],
+  // Market intelligence is business-level for the same reason as the pipeline:
+  // what is out there to win has nothing to do with the state of the job in
+  // front of you.
+  activeIn: 'ANY',
   triggers: [{ kind: 'SCHEDULE', at: '05:00' }],
   inputs: ['Published notices', 'Capability profile', 'Framework memberships'],
   outputs: ['Shortlisted notices', 'Filtered-out reasoning'],
@@ -737,7 +749,10 @@ const radarAgent: AgentDefinition = {
 const pipelineAgent: AgentDefinition = {
   name: 'pipeline',
   agentId: 'CX-PIPELINE',
-  activeIn: ['CONCEPT', 'DESIGN', 'TENDER'],
+  // The opportunity funnel belongs to the business, not to a project. Gating
+  // it on the phase of whichever project the reader happens to have open would
+  // mean the pipeline went quiet the moment somebody looked at a finished job.
+  activeIn: 'ANY',
   triggers: [{ kind: 'CONTINUOUS' }],
   inputs: ['Opportunity pipeline', 'Bid decisions', 'Win/loss history'],
   outputs: ['Pipeline coverage', 'Decision latency', 'Conversion drift'],
@@ -791,7 +806,10 @@ const pipelineAgent: AgentDefinition = {
 const supplyChainAgent: AgentDefinition = {
   name: 'supply-chain',
   agentId: 'AGT-PROCURE',
-  activeIn: ['TENDER', 'CONSTRUCTION'],
+  // Spares and long-lead replacements are a commissioning problem as much as
+  // a construction one, and the supplier who cannot deliver a replacement
+  // actuator in week two of operations was the same supplier all along.
+  activeIn: ['TENDER', 'CONSTRUCTION', 'COMMISSIONING', 'OPERATIONS'],
   triggers: [{ kind: 'CONTINUOUS' }, { kind: 'EVENT', eventType: 'RFQ_ISSUED' }],
   inputs: ['Enquiries and returns', 'Subcontract register', 'Supplier performance', 'Buyout position'],
   outputs: ['Packages without cover', 'Buyout exposure', 'Single-source risk'],
@@ -858,8 +876,12 @@ const supplyChainAgent: AgentDefinition = {
 const hseqAgent: AgentDefinition = {
   name: 'hseq',
   agentId: 'AGT-HSE',
-  activeIn: ['CONSTRUCTION', 'COMMISSIONING', 'HANDOVER'],
-  triggers: [{ kind: 'CONTINUOUS' }, { kind: 'EVENT', eventType: 'INCIDENT_REPORTED' }, { kind: 'EVENT', eventType: 'SAFETY_OBSERVATION_LOGGED' }],
+  // A live asset still carries duties. The health and safety file is a
+  // handover deliverable that is maintained through operations, and
+  // maintenance access is a construction-phase design decision somebody has
+  // to live with for thirty years.
+  activeIn: ['CONSTRUCTION', 'COMMISSIONING', 'HANDOVER', 'OPERATIONS'],
+  triggers: [{ kind: 'CONTINUOUS' }, { kind: 'EVENT', eventType: 'INCIDENT_RECORDED' }, { kind: 'EVENT', eventType: 'SAFETY_OBSERVATION_LOGGED' }],
   inputs: ['Permits', 'Method statements', 'Inductions', 'Incidents', 'Observations'],
   outputs: ['Expired or missing controls', 'Induction gaps', 'Incident trend'],
   emits: ['SAFETY_OBSERVATION_LOGGED'],
@@ -950,6 +972,10 @@ export const AGENTS: AgentDefinition[] = [
   // counters, the security stream, the wallet — rather than a project, and
   // mixing them here would make the project fleet look as though it had that
   // reach too.
+  // The specification's lifecycle fleet, in `lifecycle.ts`. Separate from the
+  // twelve above because those are organised by division and these by stage —
+  // a third of them only ever run before a spade goes in the ground.
+  ...LIFECYCLE_AGENTS,
   ...PLATFORM_AGENTS,
 ];
 
