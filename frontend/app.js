@@ -119,6 +119,91 @@ export const NAV = [
   },
 ];
 
+/**
+ * The platform operator's own navigation.
+ *
+ * A separate model rather than a filter over `NAV`, because it is a different
+ * application. An operator cannot open a project, a drawing or a daily log —
+ * that is the account layer, enforced in ABAC — so filtering the delivery
+ * navigation down to what they can reach produced what it always produced: a
+ * short list with locks on it and two live screens, which is what somebody
+ * running a platform was being handed.
+ *
+ * What an operator actually does is run a business: know where the money is,
+ * who is about to leave, what is failing, who is waiting for an answer, and
+ * what the record says. Each entry below is a screen over reads the platform
+ * already publishes, grouped the way the job is done rather than the way the
+ * API is organised.
+ *
+ * The delivery navigation is not removed by this — a customer account still
+ * gets `NAV`, unchanged. `navigation()` picks between them.
+ */
+export const OPERATOR_NAV = [
+  {
+    group: 'Overview',
+    items: [
+      { id: 'admin', label: 'Command Center', area: 'PLATFORM_ADMINISTRATION', icon: 'grid' },
+      { id: 'performance', label: 'Performance', area: 'PLATFORM_ADMINISTRATION', icon: 'chart' },
+      { id: 'value', label: 'Customer Value', area: 'PLATFORM_ADMINISTRATION', icon: 'coins' },
+      { id: 'intel', label: 'Predictive Intel', area: 'PLATFORM_ADMINISTRATION', icon: 'radar' },
+    ],
+  },
+  {
+    group: 'Customers',
+    items: [
+      { id: 'tenants', label: 'Tenants & Users', area: 'PLATFORM_ADMINISTRATION', icon: 'layers' },
+      { id: 'onboarding', label: 'Onboarding Queue', area: 'PLATFORM_ADMINISTRATION', icon: 'target' },
+      // Outside PLATFORM_ADMINISTRATION deliberately: a support request belongs
+      // to the tenancy that raised it, and the customer has to be able to read
+      // back what they were told. The screen serves both sides.
+      { id: 'support', label: 'Support Queue', area: 'ENTERPRISE_STRUCTURE', icon: 'chat' },
+      { id: 'communications', label: 'Communications', area: 'ENTERPRISE_STRUCTURE', icon: 'mail' },
+    ],
+  },
+  {
+    group: 'AI & economy',
+    items: [
+      { id: 'aiengine', label: 'AI Engine', area: 'PLATFORM_ADMINISTRATION', icon: 'radar' },
+      { id: 'economy', label: 'ACU Economy', area: 'PLATFORM_ADMINISTRATION', icon: 'meter' },
+      { id: 'invoices', label: 'Billing & Invoices', area: 'PLATFORM_ADMINISTRATION', icon: 'coins' },
+    ],
+  },
+  {
+    group: 'Risk & system',
+    items: [
+      { id: 'alerts', label: 'Risk & Alerts', area: 'PLATFORM_ADMINISTRATION', icon: 'shield' },
+      { id: 'system', label: 'System Control', area: 'PLATFORM_ADMINISTRATION', icon: 'cog' },
+      { id: 'operations', label: 'Platform Operations', area: 'PLATFORM_ADMINISTRATION', icon: 'checklist' },
+      { id: 'auditlogs', label: 'Audit Logs', area: 'PLATFORM_ADMINISTRATION', icon: 'link' },
+      { id: 'eventstore', label: 'Event Store', area: 'PLATFORM_ADMINISTRATION', icon: 'cube' },
+    ],
+  },
+  {
+    group: 'Content & reports',
+    items: [
+      { id: 'reports', label: 'Reports', area: 'PLATFORM_ADMINISTRATION', icon: 'clipboard' },
+      { id: 'blog', label: 'SEO & Content', area: 'PLATFORM_ADMINISTRATION', icon: 'clipboard' },
+      { id: 'newsletter', label: 'Newsletter', area: 'PLATFORM_ADMINISTRATION', icon: 'mail' },
+      { id: 'blueprint', label: 'Blueprint', area: 'PLATFORM_ADMINISTRATION', icon: 'cube' },
+    ],
+  },
+  {
+    group: 'Account & settings',
+    items: [
+      { id: 'partners', label: 'Growth Partner Programme', area: 'PLATFORM_ADMINISTRATION', icon: 'layers' },
+      { id: 'influencers', label: 'Influencers', area: 'PLATFORM_ADMINISTRATION', icon: 'target' },
+      { id: 'company', label: 'Company Profile', area: 'PLATFORM_ADMINISTRATION', icon: 'grid' },
+      { id: 'settings', label: 'Settings', area: 'PLATFORM_ADMINISTRATION', icon: 'cog' },
+      { id: 'account', label: 'My Account', area: 'PROJECT_SETUP', icon: 'cog' },
+    ],
+  },
+];
+
+/** Which navigation this identity gets. The operator's is a different app. */
+export function navigation() {
+  return isOperator() ? OPERATOR_NAV : NAV;
+}
+
 const ICONS = {
   grid: 'M3 3h7v7H3zM11 3h7v7h-7zM3 11h7v7H3zM11 11h7v7h-7z',
   chat: 'M3 4h15v10H8l-5 4z',
@@ -423,7 +508,7 @@ function sidebar(active) {
       <span style="white-space:nowrap">CONSTRU<span class="x">X</span></span>
     </a>
 
-    ${NAV.map((group) => {
+    ${navigation().map((group) => {
       // A group where the viewer can reach nothing is hidden outright — an
       // entire section of locks teaches less than it costs. Within a group the
       // viewer *can* use, the unreachable items stay visible and locked,
@@ -481,7 +566,11 @@ function reachable(item) {
   // channel is wired to a provider is a platform operations question, and the
   // operator is the person who answers it. The delivery log inside it stays
   // the tenancy's own and is refused by name rather than shown empty.
-  if (isOperator()) return item.area === 'PLATFORM_ADMINISTRATION' || item.id === 'communications';
+  // Every item in the operator's own navigation is one an operator holds. The
+  // filter that used to sit here was answering a different question — which of
+  // the *delivery* items can an operator reach — and the answer was "almost
+  // none", which is how the sidebar came to be mostly locks.
+  if (isOperator()) return OPERATOR_NAV.some((group) => group.items.some((entry) => entry.id === item.id));
   if (item.area === 'PLATFORM_ADMINISTRATION') return false;
   return can(item.area, 'R') || item.id === 'overview' || item.id === 'copilot';
 }
@@ -664,7 +753,7 @@ async function draw() {
       if (confirm('Sign out and choose a different identity?')) signOut();
     });
 
-    const navEntry = NAV.flatMap((group) => group.items).find((item) => item.id === page);
+    const navEntry = navigation().flatMap((group) => group.items).find((item) => item.id === page);
     if (navEntry && !reachable(navEntry)) {
       render(
         document.getElementById('view'),

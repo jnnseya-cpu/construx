@@ -22,6 +22,13 @@ import { fleetManifest } from '../agents/runtime.ts';
 import { AUTOMATABLE_COMMANDS, LADDER, envelopeRegister, grantEnvelope, revokeEnvelope } from '../agents/mandate.ts';
 import { egressPosition, flush as flushEgress } from '../ops/otlp.ts';
 import { assurancePosition, sweep } from '../ops/assurance.ts';
+import { blueprintPosition } from '../ops/blueprint.ts';
+import { eventStorePosition, platformEventStream } from '../ops/eventstore.ts';
+import * as reports from '../ops/reports.ts';
+import { forecastPosition } from '../ops/forecast.ts';
+import * as growth from '../growth/partners.ts';
+import * as support from '../support/queue.ts';
+import { latencySummaries, performancePosition } from '../ops/performance.ts';
 import { repair, repairPosition } from '../ops/repair.ts';
 import { centreCatalogue, commandCentre, type CentreFunctionId } from '../commandcentre/centre.ts';
 import { grantableScopes, issueKey, keyRegister, revokeKey } from '../developer/keys.ts';
@@ -1166,6 +1173,187 @@ export const ROUTES: Route[] = [
       operatorOnly(ctx, 'run a chain verification sweep');
       const { projects } = body<{ projects?: number }>(ctx);
       return sweep(platform, projects);
+    },
+  },
+  // ---------------------------------------------------------------- support
+  //
+  // Reachable by everybody with a session, not only the operator. A support
+  // queue only an operator can see is an inbox; the point of putting a request
+  // in the ledger is that the customer can read back what they were told.
+  {
+    method: 'GET',
+    pattern: '/v1/support',
+    readOnly: true,
+    description: 'Support requests — the estate for an operator, their own tenancy for anybody else',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      return { ...support.supportPosition(platform, actor), canRaise: support.canRaise(actor), categories: support.CATEGORY_LABELS };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/support/:ticketId',
+    readOnly: true,
+    description: 'One support request with its full thread',
+    handler: (platform, ctx) => support.ticket(platform, auth(ctx), ctx.params.ticketId ?? ''),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/support',
+    description: 'Raise a support request',
+    schema: {
+      type: 'object',
+      required: ['subject', 'body', 'category'],
+      properties: {
+        subject: stringField,
+        body: stringField,
+        category: { type: 'string', enum: ['ACCESS', 'BILLING', 'DATA', 'DEFECT', 'HOW_TO', 'FEATURE_REQUEST', 'OTHER'] },
+        priority: { type: 'string', enum: ['URGENT', 'NORMAL', 'LOW'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const input = body<{ subject: string; body: string; category: support.TicketCategory; priority?: support.TicketPriority }>(ctx);
+      return support.raise(platform, auth(ctx), input);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/support/:ticketId/reply',
+    description: 'Reply on a support request — the side is taken from the actor, never from the request',
+    schema: { type: 'object', required: ['body'], properties: { body: stringField }, additionalProperties: false },
+    handler: (platform, ctx) => support.reply(platform, auth(ctx), ctx.params.ticketId ?? '', body<{ body: string }>(ctx).body),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/support/:ticketId/assign',
+    description: 'Take ownership of a support request (platform operator only)',
+    schema: { type: 'object', required: ['operatorId'], properties: { operatorId: stringField }, additionalProperties: false },
+    handler: (platform, ctx) =>
+      support.assign(platform, auth(ctx), ctx.params.ticketId ?? '', body<{ operatorId: string }>(ctx).operatorId),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/support/:ticketId/resolve',
+    description: 'Resolve a support request, stating what was done (platform operator only)',
+    schema: { type: 'object', required: ['resolution'], properties: { resolution: stringField }, additionalProperties: false },
+    handler: (platform, ctx) =>
+      support.resolve(platform, auth(ctx), ctx.params.ticketId ?? '', body<{ resolution: string }>(ctx).resolution),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/performance',
+    readOnly: true,
+    description: 'Request performance per route: how often, how slow, how often it fails',
+    handler: (_platform, ctx) => {
+      operatorOnly(ctx, 'read platform performance');
+      return { ...performancePosition(), latency: latencySummaries() };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/events',
+    readOnly: true,
+    description: 'The event store by type, group and tenancy — counts only, never content',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read the event store position');
+      const windowDays = ctx.query.get('windowDays') ? Number(ctx.query.get('windowDays')) : undefined;
+      return {
+        ...eventStorePosition(platform, windowDays),
+        // The platform's own chain, in full. Every other chain is counted and
+        // never read — the split is the account boundary, not a preference.
+        stream: platformEventStream(platform, 100),
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/reports',
+    readOnly: true,
+    description: 'The estate reports an operator can compose, and what each answers',
+    handler: (_platform, ctx) => ({ reports: reports.catalogue(auth(ctx)) }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/reports/:reportId',
+    readOnly: true,
+    description: 'Compose one estate report from the live positions',
+    handler: (platform, ctx) => reports.generate(platform, auth(ctx), ctx.params.reportId ?? ''),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/blueprint',
+    readOnly: true,
+    description: 'The product blueprint’s roadmap and claims, against what this build measurably contains',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read the blueprint');
+      return blueprintPosition(platform, ROUTES.length);
+    },
+  },
+  // ------------------------------------------------------- growth programme
+  {
+    method: 'GET',
+    pattern: '/v1/admin/growth',
+    readOnly: true,
+    description: 'Resellers and influencers, what they have brought and what they are owed',
+    handler: (platform, ctx) => growth.programmePosition(platform, auth(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/growth',
+    description: 'Enrol a reseller or an influencer on the growth programme',
+    schema: {
+      type: 'object',
+      required: ['kind', 'name', 'email', 'code'],
+      properties: {
+        kind: { type: 'string', enum: ['PARTNER', 'INFLUENCER'] },
+        name: stringField,
+        email: stringField,
+        code: { type: 'string', minLength: 3, maxLength: 32 },
+        commissionBps: { type: 'number' },
+        bountyMinor: { type: 'number' },
+        audience: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => growth.enrol(platform, auth(ctx), body<Parameters<typeof growth.enrol>[2]>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/growth/:partnerId/status',
+    description: 'Pause or end a growth agreement, stating why',
+    schema: {
+      type: 'object',
+      required: ['status', 'reason'],
+      properties: { status: { type: 'string', enum: ['ACTIVE', 'PAUSED', 'ENDED'] }, reason: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const input = body<{ status: growth.PartnerStatus; reason: string }>(ctx);
+      return growth.setStatus(platform, auth(ctx), ctx.params.partnerId ?? '', input.status, input.reason);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/growth/:partnerId/payout',
+    description: 'Record a payout already sent to a partner. Records money; it does not move any',
+    schema: {
+      type: 'object',
+      required: ['amountMinor', 'reference'],
+      properties: { amountMinor: { type: 'number' }, reference: stringField, note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      growth.recordPayout(platform, auth(ctx), ctx.params.partnerId ?? '', body<{ amountMinor: number; reference: string; note?: string }>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/forecast',
+    readOnly: true,
+    description: 'What lands next on the estate, each with the arithmetic it came from',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read the estate forecast');
+      return forecastPosition(platform);
     },
   },
   {
@@ -2853,6 +3041,11 @@ export const ROUTES: Route[] = [
         jurisdiction: { type: 'string', enum: Object.keys(JURISDICTIONS) },
         currency: { type: 'string', enum: Object.keys(CURRENCIES) },
         package: { type: 'string', enum: signup.SELF_SERVE_PACKAGES },
+        // A referral code from a partner's link. Optional, bounded, and stored
+        // whether or not anybody in the programme holds it — an unknown code is
+        // reported as unattributed rather than dropped, because a typo in
+        // somebody's link is a fact worth seeing.
+        referralCode: { type: 'string', minLength: 3, maxLength: 32 },
       },
       additionalProperties: false,
     },

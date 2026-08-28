@@ -729,6 +729,26 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SITE_POST_WITHDRAWN', 'SitePost', 'UPDATE', 'GOVERNANCE'),
   def('NEWSLETTER_DELIVERY_RECORDED', 'NewsletterDelivery', 'CREATE', 'GOVERNANCE'),
 
+  // Support. On the raising tenancy's governance chain rather than in the
+  // operator layer, because the request belongs to the customer who wrote it
+  // and the record of what they were told has to outlive whoever told them.
+  // `aiAllowed: false` throughout — a model may help somebody draft a reply,
+  // and the reply that is sent is a person's.
+  def('SUPPORT_REQUEST_RAISED', 'SupportRequest', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('SUPPORT_REQUEST_ANSWERED', 'SupportRequest', 'UPDATE', 'GOVERNANCE'),
+  def('SUPPORT_REQUEST_ASSIGNED', 'SupportRequest', 'UPDATE', 'GOVERNANCE'),
+  def('SUPPORT_REQUEST_RESOLVED', 'SupportRequest', 'UPDATE', 'GOVERNANCE'),
+
+  // The growth programme — resellers and influencers who introduce tenancies.
+  // On the platform's own chain, because the agreement is between the company
+  // and them and has nothing to do with any customer's record. Commission is
+  // computed from settled receipts at read time and is deliberately not an
+  // event: an accrual written into the record would be a second source of truth
+  // for money the payment ledger already holds.
+  def('GROWTH_PARTNER_ENROLLED', 'GrowthPartner', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('GROWTH_PARTNER_STATUS_SET', 'GrowthPartner', 'UPDATE', 'GOVERNANCE'),
+  def('GROWTH_PARTNER_PAID', 'GrowthPartner', 'UPDATE', 'GOVERNANCE'),
+
   // Transactional communication. Separate from the newsletter because the
   // obligation is different: a marketing send is subject to consent, and a
   // notice that an account was locked is subject to nothing — the recipient is

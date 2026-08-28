@@ -56,6 +56,15 @@ export type Tenant = {
   defaultCurrency: string;
   enterpriseId?: string;
   createdAt: string;
+  /**
+   * The referral code this tenancy arrived with, if any.
+   *
+   * Recorded at creation and never afterwards. Attribution that can be edited
+   * later is attribution somebody can rewrite once they know what a tenancy
+   * turned out to be worth — so it is set once, on the way in, and the growth
+   * programme computes commission by matching against it.
+   */
+  referralCode?: string;
 };
 
 export type PlatformUser = {
@@ -214,6 +223,15 @@ export class Platform {
      * grant per employee, and one person took one per plus-suffix.
      */
     trialGrant?: boolean;
+    /**
+     * A referral code carried in from a partner's link.
+     *
+     * Normalised and stored verbatim, whether or not anybody in the growth
+     * programme holds it. An unknown code is reported as unattributed rather
+     * than discarded: somebody is sending traffic and a typo in their link is
+     * worth seeing.
+     */
+    referralCode?: string;
   }): { tenant: Tenant; subscription: Subscription; wallet: ACUWallet } {
     const tenantId = ulid();
     const enterpriseId = ulid();
@@ -225,6 +243,7 @@ export class Platform {
       defaultCurrency: input.defaultCurrency,
       enterpriseId,
       createdAt: new Date().toISOString(),
+      referralCode: input.referralCode?.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '') || undefined,
     };
     this.#tenants.set(tenantId, tenant);
 

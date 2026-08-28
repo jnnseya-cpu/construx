@@ -455,6 +455,17 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // read, which is the opposite of everything else in this block.
   SitePost: { area: 'PLATFORM_ADMINISTRATION' },
   NewsletterDelivery: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
+  // A support request. Classified under ENTERPRISE_STRUCTURE rather than
+  // PLATFORM_ADMINISTRATION on purpose: it belongs to the tenancy that raised
+  // it, and the customer who wrote it has to be able to read it back. Putting
+  // it in the operator area would make a customer's own request invisible to
+  // them, which is the opposite of what a support record is for. Sensitivity is
+  // LEGAL_L4 because somebody describing what went wrong writes down whatever
+  // they need to — a request is free text and can carry anything.
+  SupportRequest: { area: 'ENTERPRISE_STRUCTURE', sensitivity: 'LEGAL_L4' },
+  // A reseller or influencer agreement. Operator-layer and commercial: it names
+  // a person, the share they take and what has been sent to them.
+  GrowthPartner: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'COMMERCIAL_L3' },
   // A dispatch record names a person and what they were told. The delivery
   // record additionally names their address and whether it reached them, which
   // is why the two are classified apart rather than together.

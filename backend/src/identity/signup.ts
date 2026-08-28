@@ -107,6 +107,8 @@ export type Registration = {
   jurisdiction: string;
   currency: string;
   package: PackageTier;
+  /** The referral code the signup link carried, if any. Fixed at registration. */
+  referralCode?: string;
   status: RegistrationStatus;
   createdAt: string;
   expiresAt: string;
@@ -253,6 +255,14 @@ export function register(
     jurisdiction: string;
     currency: string;
     package: PackageTier;
+    /**
+     * A referral code from the link they arrived on.
+     *
+     * Carried through verification onto the tenancy, so attribution is fixed at
+     * the moment somebody signs up rather than assigned afterwards by whoever
+     * is looking at the numbers.
+     */
+    referralCode?: string;
   },
 ): { receipt: RegistrationReceipt; outcome: 'NEW' | 'ALREADY_REGISTERED'; registration?: Registration; token?: string } {
   const email = normaliseEmail(input.email);
@@ -314,6 +324,7 @@ export function register(
     jurisdiction: input.jurisdiction,
     currency: input.currency,
     package: input.package,
+    referralCode: input.referralCode?.trim() || undefined,
     status: 'PENDING_VERIFICATION',
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + VERIFICATION_TTL_MINUTES * 60_000).toISOString(),
@@ -393,6 +404,10 @@ export function verify(
     tier: 'FREE_TRIAL',
     package: record.package,
     enterpriseName: record.organisationName,
+    // Carried from the registration rather than read here, so the code that
+    // credits a partner is the one the person actually arrived on — not
+    // whatever link happened to be open when they finished verifying.
+    referralCode: record.referralCode,
   });
 
   const roles: Role[] = ['ENTERPRISE_ADMIN'];

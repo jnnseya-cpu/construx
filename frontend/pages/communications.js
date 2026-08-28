@@ -54,14 +54,17 @@ export async function communications(root) {
 
   const channelRow = (channel) => {
     const count = catalogue.coverage[channel.channel] ?? 0;
-    const sent = feed.deliveries.filter((d) => d.channel === channel.channel && d.status !== 'SUPPRESSED').length;
+    // Only counted when the feed was actually readable. A refused feed has no
+    // deliveries to count, and reporting "0 sent" from one would be the same
+    // lie the tile below refuses to tell.
+    const sent = feedRefused ? null : feed.deliveries.filter((d) => d.channel === channel.channel && d.status !== 'SUPPRESSED').length;
     return html`
       <div class="row">
         <span class="lbl">
           ${CHANNEL_LABEL[channel.channel] ?? channel.channel}
           ${channel.wired ? '' : html` ${badge('no provider', 'warn')}`}
         </span>
-        <span class="val">${count} event${count === 1 ? '' : 's'}${sent > 0 ? ` · ${sent} sent` : ''}</span>
+        <span class="val">${count} event${count === 1 ? '' : 's'}${sent ? ` · ${sent} sent` : ''}</span>
       </div>
     `;
   };
@@ -89,12 +92,24 @@ export async function communications(root) {
         </div>
         <div class="card">
           <h2>Messages delivered</h2>
-          <div class="metric ${raw(totals.failed > 0 ? 'bad' : 'good')}">${delivered}</div>
-          <div class="metric-sub">
-            of ${totals.attempted} attempted${totals.failed > 0 ? ` · ${totals.failed} failed` : ''}${
-              totals.suppressed > 0 ? ` · ${totals.suppressed} suppressed` : ''
-            }
-          </div>
+          <!-- A denial is shown as a denial, never as zero.
+               This tile read "0 of 0 attempted" for a platform operator, whose
+               request for the delivery log is refused because the log is the
+               tenant's own outbound mail. That is not "nothing has been sent" —
+               it is "you may not see this", and the two look identical as a
+               zero. The refusal is now the tile. -->
+          ${feedRefused
+            ? html`<div class="metric" style="font-size:15px">not yours to see</div>
+                <div class="metric-sub">
+                  The delivery log is the tenancy's own outbound mail and a platform operator is refused it —
+                  correctly. This is a refusal, not an empty log.
+                </div>`
+            : html`<div class="metric ${raw(totals.failed > 0 ? 'bad' : 'good')}">${delivered}</div>
+                <div class="metric-sub">
+                  of ${totals.attempted} attempted${totals.failed > 0 ? ` · ${totals.failed} failed` : ''}${
+                    totals.suppressed > 0 ? ` · ${totals.suppressed} suppressed` : ''
+                  }
+                </div>`}
         </div>
         <div class="card">
           <h2>Channels wired</h2>

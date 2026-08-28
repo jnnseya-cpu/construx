@@ -8736,3 +8736,141 @@ renderer has no cover page. The design is settled — `coverEvidenceHash`
 alongside the logo, resolved through the same `ImageResolver` a site photograph
 takes, so the document's content hash commits to exactly which image was on it —
 but none of it is written. Printed documents today are branded by logo only.
+
+---
+
+## The operator console: twenty-five screens, no locks
+
+An operator signed in and saw five sidebar items, three of them wearing a
+padlock, and two screens that worked. The locks were the tell: they sat on
+customer capability areas an operator can never hold — a different account layer
+rather than a senior role — so they named nobody to ask and could never come
+off. That is furniture, not information.
+
+The cause was structural. There was one navigation model, written for delivery
+work, filtered down for an operator. Filtering "which project screens can
+somebody who is barred from every project reach" was always going to answer
+"almost none".
+
+**`OPERATOR_NAV` is a second navigation model**, and `navigation()` picks between
+them. Six groups, twenty-five screens, every one of them reachable, none of them
+locked — because every entry is a surface an operator actually holds. The
+delivery navigation is untouched; a customer account gets exactly what it got.
+
+| Group | Screens |
+|---|---|
+| Overview | Command Center · Performance · Customer Value · Predictive Intel |
+| Customers | Tenants & Users · Onboarding Queue · Support Queue · Communications |
+| AI & economy | AI Engine · ACU Economy · Billing & Invoices |
+| Risk & system | Risk & Alerts · System Control · Platform Operations · Audit Logs · Event Store |
+| Content & reports | Reports · SEO & Content · Newsletter · Blueprint |
+| Account & settings | Growth Partner Programme · Influencers · Company Profile · Settings · My Account |
+
+**The Command Center stopped being the whole console.** It was every panel the
+platform had on one scroll: an operator opening it had to read four thousand
+pixels to find out whether anything was wrong. It now answers one question — is
+anything wrong, and where is the money — and hands off. Its "Needs you today"
+panel is assembled from the watch, the forecast, the readiness report, the
+support queue and the estate at once, so finding out whether anything needs
+attention does not require visiting five screens.
+
+### What was built to fill them
+
+Six of these had no backend at all. Each is a real read over the record rather
+than a panel that looks like one.
+
+**`ops/performance.ts`** aggregates the gateway's log buffer per route. The
+console had one estate-wide p95, which hides a four-second document generation
+behind ten thousand cheap reads. The panel that earns the screen is **tail
+attribution**: not "which route has the worst p95" — a route called twice slowly
+has a terrible p95 and costs nobody anything — but which routes' calls are
+actually landing past the estate p95. Two limits are published rather than
+implied: the buffer is in-process and bounded at 5,000 records, and a restart
+empties it. The request total is read from a monotonic counter instead, so the
+one number somebody watches for saturation never goes down when the buffer trims.
+
+**`ops/eventstore.ts`** counts and never reads. Every figure comes from an
+event's type, tenancy, chain and timestamp; the diff, entity, evidence and actor
+of a customer chain are not reachable from the operator layer. Two things it
+answers that nothing else could: **which catalogue codes have never been
+written** — the catalogue invariant proves a command exists that emits each
+code, not that anybody ever ran it — and **whether the journal agrees with the
+ledger**, where a ledger holding more than the journal means writes that would
+not survive a restart.
+
+**`ops/forecast.ts`** is Predictive Intel, and it forecasts nothing it cannot
+show its working for. There is no churn score. A "churn risk 72%" on an estate
+of a dozen tenancies is invented, and the first time somebody acts on one and is
+wrong, every other figure on the console loses its credibility with it. What is
+there is a queue of things that will happen unless somebody acts — AI credit
+running out, a renewal, a trial ending, seats full, storage full, no
+administrator, a tenancy gone quiet, a top-up never settled — each with the
+arithmetic printed beside it and ranked by when it lands. `notForecast` names
+what is deliberately absent so the absence is a position rather than a gap.
+
+**`support/queue.ts`** is a genuine vertical, not a panel. A request is a ledger
+record on the *raising tenancy's* governance chain, so it belongs to the customer
+who raised it and they can read back what they were told after whoever told them
+has gone. One screen serves both sides and the server decides what each may see.
+`respondedAt` is set once, at the first operator reply, so first-response time
+cannot be improved by replying twice — a queue measured on how fast it closes
+things is a queue optimised for closing things. An operator cannot raise one;
+they have nobody to raise it with.
+
+**`growth/partners.ts`** carries resellers and influencers on one mechanism with
+different terms. The rule that runs through all of it: **commission is computed
+from payments actually received**, walked from settled receipts, never from
+signups. A programme that accrues against expected revenue eventually pays
+commission on money that never arrived. Attribution is fixed at signup —
+`referralCode` is written onto the tenancy at creation and never afterwards,
+because attribution that can be edited later is attribution somebody can rewrite
+once they know what a tenancy turned out to be worth. A code is never reused,
+including after an agreement ends. Recording a payout writes down that money was
+sent; it moves none, because there is no outbound rail and pretending otherwise
+inside a financial record would be the worst kind of fiction.
+
+**`ops/reports.ts`** composes six operator reports at the moment they are asked
+for, from the same reads the console uses — so a report and the screen it came
+from cannot disagree. Nothing is stored: a report is a view of the record, not a
+new fact about it, and committing one would put a second copy of every number
+inside the thing the numbers are derived from. Each prints what it excludes.
+
+**`ops/blueprint.ts`** does not display `docs/ai-os-blueprint.md`. It reads the
+roadmap and the `[BUILT]`/`[EXTEND]`/`[NEW]` markers out of it and puts them
+beside figures counted from the running process. Where a claim and a count
+disagree, the count is the one that is true.
+
+### A denial shown as zero, found by walking the product
+
+The suite was green and the console was wrong. On Communications, an operator's
+refused delivery log rendered as **"0 of 0 attempted"** — which reads as "this
+tenancy has sent nothing" when the truth is "you may not see this". The refusal
+had already been fixed on the table below it and the tile above it was still
+lying. Found by opening all twenty-five screens in a browser and reading them,
+which is the fourth defect in a row that no test caught.
+
+### The binding invariant, corrected rather than worked around
+
+`consolebindings.test.ts` failed on a *comment*: "`humanise` would render
+`OPENAI` as Openai" reads as a call to `render` to a regex. The fix is comment
+stripping in the detector, not rewording the prose — a check that fails on
+correct comments is a check somebody weakens, and then the `ReferenceError` it
+exists to catch comes back. Bindings are still read from the whole file; only
+usages are read from the code.
+
+### What is deliberately not on these screens
+
+- **Settings changes nothing.** Every setting is an environment variable on the
+  server. A settings page that could write configuration is a page that can
+  disable authentication or repoint a payment rail from a browser session, with
+  no deployment and no review. System Control reports what this process actually
+  received, which is the useful half.
+- **No report is a PDF.** The PDF renderer builds *branded customer documents*
+  against a project; an operator report has no customer and no project, and
+  running one through that path would put a client's branding on the company's
+  own internal position. The reports print from the browser.
+- **No health score, anywhere.** Customer Value shows four honest columns —
+  paid, consumed, headcount, record built — because a score would be the number
+  people quoted. "Record built" is labelled as a count of events and not a
+  measure of engagement: a tenancy between projects is quiet and perfectly
+  healthy.

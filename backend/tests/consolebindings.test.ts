@@ -58,6 +58,29 @@ const SHARED = [
   'api', 'entities', 'entityBundle', 'insightPanel',
 ];
 
+/**
+ * The file with its comments taken out.
+ *
+ * Necessary, and narrow. These files carry long explanatory comments that name
+ * the very helpers they are explaining — "`humanise` would render `OPENAI` as
+ * Openai" reads as a call to `render` to a regex, and the check failed on prose
+ * that was correct. A check that fails on comments is a check somebody weakens
+ * or deletes, and then the ReferenceError it exists to catch comes back.
+ *
+ * Deliberately not a tokeniser. Block comments go, and so do lines that *begin*
+ * with `//` or `*` — which is every comment these files actually contain. A
+ * trailing `//` after code is left alone on purpose: stripping to end-of-line
+ * would eat the rest of any line holding a `https://` URL, and hiding a real
+ * usage is a worse failure than the one this fixes.
+ */
+function withoutComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .split('\n')
+    .filter((line) => !/^\s*(\/\/|\*)/.test(line))
+    .join('\n');
+}
+
 /** Every name this file binds: imported, declared, or assigned a function. */
 function boundIn(source: string): Set<string> {
   const bound = new Set<string>();
@@ -94,8 +117,12 @@ describe('a console page binds every shared name it calls', () => {
     const missing: string[] = [];
 
     for (const file of pageFiles()) {
-      const source = readFileSync(file, 'utf8');
-      const bound = boundIn(source);
+      const raw = readFileSync(file, 'utf8');
+      // Bindings are read from the whole file and usages only from the code:
+      // a name imported inside a comment does not exist, but a name declared
+      // in code and only mentioned in a comment is still bound.
+      const source = withoutComments(raw);
+      const bound = boundIn(raw);
 
       for (const name of SHARED) {
         // A call, a tagged template, or a reference — not the word appearing in
