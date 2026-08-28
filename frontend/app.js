@@ -107,6 +107,9 @@ export const NAV = [
       // it is `operatorOnly` on the server.
       { id: 'operations', label: 'Platform Operations', area: 'PLATFORM_ADMINISTRATION', icon: 'shield' },
       { id: 'newsletter', label: 'Newsletter', area: 'PLATFORM_ADMINISTRATION', icon: 'mail' },
+      // The public blog. Beside the newsletter because both are the platform
+      // talking outward under its own name, and neither is a customer's.
+      { id: 'blog', label: 'Blog', area: 'PLATFORM_ADMINISTRATION', icon: 'clipboard' },
       { id: 'communications', label: 'Communications', area: 'ENTERPRISE_STRUCTURE', icon: 'radar' },
       // Outside the capability matrix — see `visible()`. Asking to be erased is
       // not a permission somebody else grants you, and the mobile stores

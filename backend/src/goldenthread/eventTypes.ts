@@ -708,6 +708,18 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // able to opt somebody into being written to.
   def('MARKETING_CONSENT_SET', 'MarketingConsent', 'UPDATE', 'GOVERNANCE', { creates: true }),
   def('NEWSLETTER_CAMPAIGN_ISSUED', 'NewsletterCampaign', 'ISSUE', 'GOVERNANCE', { creates: true }),
+
+  // The public blog, as records rather than as source code.
+  //
+  // `aiAllowed` on the draft and on nothing else, which is the whole safety
+  // shape: a model may propose an article and may never put one on the public
+  // internet. Publication is a human act against the company's own face, and it
+  // sits outside the agent mandate ladder entirely — the ladder governs acting
+  // on a project's record, and this is not that.
+  def('SITE_POST_DRAFTED', 'SitePost', 'CREATE', 'GOVERNANCE', { aiAllowed: true, creates: true }),
+  def('SITE_POST_REVISED', 'SitePost', 'UPDATE', 'GOVERNANCE'),
+  def('SITE_POST_PUBLISHED', 'SitePost', 'APPROVE', 'GOVERNANCE'),
+  def('SITE_POST_WITHDRAWN', 'SitePost', 'UPDATE', 'GOVERNANCE'),
   def('NEWSLETTER_DELIVERY_RECORDED', 'NewsletterDelivery', 'CREATE', 'GOVERNANCE'),
 
   // Transactional communication. Separate from the newsletter because the

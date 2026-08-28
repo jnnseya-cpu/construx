@@ -216,6 +216,19 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     PLATFORM_ADMINISTRATION: ['R', 'C', 'U', 'A', 'G'],
     BILLING_ACU: ['R', 'C', 'U', 'A'],
     EVIDENCE_AUDIT: ['R'],
+    // Running AI on the platform's own tenancy, and nowhere else.
+    //
+    // Added for the blog: a model drafts an article for the marketing site, and
+    // without this the operator — the only identity that owns that site — was
+    // the one identity that could not ask for one.
+    //
+    // It does not widen what an operator can reach. `runAI` acts through an
+    // engine context, and `projectContext` refuses a PLATFORM_ADMIN outright
+    // with ACCOUNT_LAYER_SEPARATION, so there is no customer project to build
+    // one against. The spend lands on the platform's own metered wallet like
+    // anybody else's, which is the point: the company's marketing AI is a cost
+    // somebody should be able to see, not a free path around the meter.
+    AI_EXECUTION: ['X'],
   },
 
   ENTERPRISE_ADMIN: {

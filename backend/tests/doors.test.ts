@@ -171,7 +171,21 @@ describe('every command has a door', () => {
     const aiWrites = writeRoutes.filter((route) => route.ai);
     assert.ok(aiWrites.length > 0);
     for (const route of aiWrites) {
-      assert.ok(route.pattern.includes(':projectId'), `${route.pattern} is quotable only if it is project-scoped`);
+      // Project-scoped, or the platform's own marketing surface.
+      //
+      // The rule exists so nobody spends a tenancy's ACUs without seeing the
+      // cost, and the quote is assembled from a project. `/v1/site/posts/draft`
+      // has no project because it acts on the company's own website — the spend
+      // lands on the platform's own metered wallet, and the operator pressing
+      // the button is the person who owns that wallet.
+      //
+      // Named as an exception rather than the check being loosened to "most
+      // routes". A second entry here should be argued for, not appended.
+      const platformOwn = route.pattern === '/v1/site/posts/draft';
+      assert.ok(
+        route.pattern.includes(':projectId') || platformOwn,
+        `${route.pattern} is quotable only if it is project-scoped, or spends the platform's own wallet`,
+      );
     }
   });
 });

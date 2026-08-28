@@ -257,6 +257,15 @@ process.stdout.write(
         ? `${platform.evidence.backend} — up to ${Math.round(config.evidence.maxBytes / 1_048_576)}MB per object`
         : 'hashes only — no store configured, so the platform holds no files'
     }`,
+    // Where the landing-page pictures are written, and whether they will still
+    // be there tomorrow. Uploading one used to work, look right, and vanish on
+    // the next rebuild — a silent loss with nothing anywhere saying it would
+    // happen. Now the banner says it on every boot.
+    `  Site media   ${
+      process.env.SITE_MEDIA_PATH
+        ? `${process.env.SITE_MEDIA_PATH} — survives a redeploy`
+        : 'the checkout — fine on a laptop, LOST ON EVERY REDEPLOY in a container. Set SITE_MEDIA_PATH.'
+    }`,
     `  Signing      ${
       config.signing.privateKeyPem === ''
         ? 'no key — every signature request will be refused'

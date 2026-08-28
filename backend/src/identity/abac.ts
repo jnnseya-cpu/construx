@@ -104,7 +104,21 @@ export function evaluateAccess(
 
   // --- Account-layer separation ---------------------------------------------
   const layer = accountLayerFor(auth.roles);
-  if (layer === 'PLATFORM_ADMIN' && area !== 'PLATFORM_ADMINISTRATION' && area !== 'BILLING_ACU' && area !== 'EVIDENCE_AUDIT') {
+  // `AI_EXECUTION` joins the three areas an operator may touch, and the bound
+  // that makes it safe is not here.
+  //
+  // The platform runs AI of its own — it drafts articles for its own marketing
+  // site — so the operator has to be able to reach an engine. What stops that
+  // becoming a way into customer data is `Platform.context`, which refuses a
+  // PLATFORM_ADMIN any project outside the platform's own tenancy. An engine
+  // context is the only way to reach `runAI`, so an operator can run AI on
+  // `platform-marketing` and on nothing else.
+  //
+  // That is a stricter bound than this list can express: this asks "which
+  // area", and the real question is "whose project". Both are asserted —
+  // `entitlement.test.ts` proves the refusal in both directions.
+  const operatorAreas = ['PLATFORM_ADMINISTRATION', 'BILLING_ACU', 'EVIDENCE_AUDIT', 'AI_EXECUTION'];
+  if (layer === 'PLATFORM_ADMIN' && !operatorAreas.includes(area)) {
     return {
       decision: 'DENY',
       policyId,

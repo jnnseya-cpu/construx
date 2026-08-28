@@ -450,6 +450,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // marked personal — a delivery log is a list of who was contacted and when.
   MarketingConsent: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
   NewsletterCampaign: { area: 'PLATFORM_ADMINISTRATION' },
+  // A blog post. Operator-layer because the marketing site is the platform's
+  // own, and carrying no personal data — the prose is written for strangers to
+  // read, which is the opposite of everything else in this block.
+  SitePost: { area: 'PLATFORM_ADMINISTRATION' },
   NewsletterDelivery: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
   // A dispatch record names a person and what they were told. The delivery
   // record additionally names their address and whether it reached them, which

@@ -318,15 +318,35 @@ describe('what a stopped subscription must not break', () => {
     assert.ok(platform.ledger.list(seed.projectId, 'ScopePackage').length >= 0);
   });
 
-  it('keeps the operator out of engine contexts entirely, which is stronger', () => {
-    // Discovered writing this test, and worth pinning: `platform.context` needs
-    // a wallet, and the operator tenancy has none — so the platform operator
-    // cannot hold an engine context for any tenancy at all, and therefore
-    // cannot write to a customer's ledger through the engines whatever their
-    // subscription says. The exemption in the entitlement rules exists for the
-    // export gate, which is asked by tenant and roles rather than by context.
+  it('keeps the operator out of every customer engine context, which is stronger', () => {
+    // This used to hold for a reason nobody chose. `platform.context` needs a
+    // wallet, the operator tenancy had none, and so an operator could not hold
+    // an engine context for anything at all. That was the right outcome from an
+    // accident, and this test pinned it.
+    //
+    // The platform now has its own wallet, because it runs AI of its own — it
+    // drafts articles for its own marketing site — and that spend has to be
+    // metered like everybody else's rather than sitting outside the meter. So
+    // the accident is gone and the property is a check: `context` refuses any
+    // project that is not the platform's own.
+    //
+    // Asserted on the refusal code rather than a wallet message, because the
+    // point was never the wallet. Without this, a caller could pass a
+    // customer's project id with an operator's token and get an engine context
+    // over their record, charged to the platform's wallet.
     suspend();
-    assert.throws(() => as('operator'), /No ACU wallet/);
+    assert.throws(() => as('operator'), /ACCOUNT_LAYER_SEPARATION|barred from customer delivery data/);
+  });
+
+  it('lets the operator hold a context for the platform\u2019s own surface, and only that', () => {
+    // The other half of the same boundary, and the reason the blog can exist:
+    // an operator drafting an article acts on `platform-marketing`, which is
+    // not a customer's anything.
+    const operator = platform.operators()[0];
+    assert.ok(operator, 'no operator to test with');
+    const auth = { actorId: operator.id, tenantId: operator.tenantId, roles: operator.roles, scopes: [] } as never;
+    assert.doesNotThrow(() => platform.context(auth, 'platform-marketing'));
+    assert.throws(() => platform.context(auth, seed.projectId), /barred from customer delivery data/);
   });
 
   it('does not gate a regulator', () => {

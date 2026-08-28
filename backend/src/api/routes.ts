@@ -138,6 +138,7 @@ import { isPlatformGovernanceEvent } from '../goldenthread/eventTypes.ts';
 import * as evidence from '../evidence/registry.ts';
 import * as ingestion from '../evidence/pipeline.ts';
 import * as siteMedia from '../site/media.ts';
+import * as blog from '../site/blog.ts';
 import * as conflicts from '../field/conflicts.ts';
 import * as outbox from '../notifications/outbox.ts';
 import * as aievaluation from '../ai/evaluation.ts';
@@ -2744,6 +2745,21 @@ export const ROUTES: Route[] = [
   // and engineering notes belong in neither — they are reached from the blog
   // index and from links people share. Their own URLs are also the only way
   // anything can count them: every measurement tool counts pages, not cards.
+  // A post published through the console. One pattern rather than one route per
+  // post, because these are created after this table is built — the compiled
+  // six keep their own concrete routes below, and this answers for the rest.
+  // `site.render` refuses any slug that is not PUBLISHED, so a draft is not
+  // reachable by guessing its address.
+  {
+    method: 'GET' as const,
+    pattern: '/blog/:slug',
+    public: true,
+    html: true,
+    htmlPolicy: 'PUBLIC_SITE' as const,
+    description: 'A blog post published from the console',
+    handler: (platform: Platform, ctx: RequestContext) => site.render(`/blog/${ctx.params.slug as string}`, platform, ctx),
+  },
+
   ...POST_PAGES.map((post) => ({
     method: 'GET' as const,
     pattern: post.path,
@@ -13363,7 +13379,30 @@ export const ROUTES: Route[] = [
       // check — each command also authorises its own capability area when it
       // runs, and a quote does not stand in for that.
       const projectId = matched.params.projectId;
-      if (!projectId) throw new DomainError('QUOTE_SCOPE', 'AI actions are quoted against a project', 400);
+
+      // An AI route with no project in its path spends the platform's own
+      // wallet rather than a tenancy's — today that is the blog draft, and the
+      // exception is named in `quote.test.ts` rather than left implicit.
+      //
+      // Without this the quote refused, the console's submit button stayed
+      // disabled waiting for a price that never arrived, and the action was
+      // unreachable: the rule that nothing spends without showing its cost
+      // first had made the one honest path impossible.
+      if (!projectId) {
+        const actor = auth(ctx);
+        if (!actor.roles.includes('PLATFORM_ADMIN')) {
+          throw new DomainError('QUOTE_SCOPE', 'AI actions are quoted against a project', 400);
+        }
+        const platformCtx = platform.context(actor, blog.BLOG_PROJECT_ID, { correlationId: ctx.correlationId });
+        authorise(platformCtx, 'AI_EXECUTION', 'X');
+        return platform.orchestrator.quote({
+          capability: matched.route.ai.capability,
+          engine: matched.route.ai.engine,
+          taskType: matched.route.ai.taskType,
+          wallet: platformCtx.wallet,
+          projectId: blog.BLOG_PROJECT_ID,
+        });
+      }
 
       const engineCtx = projectContext(platform, ctx, projectId);
 
@@ -13762,6 +13801,112 @@ export const ROUTES: Route[] = [
     handler: (_platform, ctx) => {
       operatorOnly(ctx, 'change the landing page pictures');
       return siteMedia.removeSlotImage(ctx.params.slot as string);
+    },
+  },
+
+  // --- The blog -------------------------------------------------------------
+  //
+  // Operator-only in both directions, for the same reason the landing page
+  // pictures are: this is the company's own marketing site, and a customer has
+  // no business in it. A model may draft; only a person may publish.
+  {
+    method: 'GET',
+    pattern: '/v1/site/posts',
+    readOnly: true,
+    description: 'Every blog post, its state, and what is stopping it being published',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read the blog');
+      return blog.blogPosition(platform);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/site/posts/draft',
+    ai: { engine: 'EXECUTIVE', taskType: 'site_blog_draft', capability: 'REASONING' },
+    description: 'Ask the reasoning engine for a draft article. Writes a draft and publishes nothing',
+    schema: {
+      type: 'object',
+      required: ['keyword', 'angle'],
+      properties: { keyword: stringField, angle: stringField, tag: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      operatorOnly(ctx, 'draft a blog post');
+      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, { correlationId: ctx.correlationId });
+      return blog.draftPost(context, platform, body(ctx));
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/site/posts',
+    description: 'Write a post by hand. No model is involved and the record says so',
+    schema: {
+      type: 'object',
+      required: ['title', 'standfirst', 'metaDescription', 'body', 'keyword'],
+      properties: {
+        title: stringField,
+        standfirst: stringField,
+        metaDescription: stringField,
+        body: { type: 'array', minItems: 1, items: { type: 'string' } },
+        keyword: stringField,
+        tag: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'write a blog post');
+      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, { correlationId: ctx.correlationId });
+      return blog.writePost(context, platform, body(ctx));
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/site/posts/:postId/revise',
+    description: 'Edit a draft. A live post is withdrawn before it can be changed',
+    schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        standfirst: { type: 'string' },
+        metaDescription: { type: 'string' },
+        body: { type: 'array', items: { type: 'string' } },
+        keyword: { type: 'string' },
+        tag: { type: 'string' },
+        slug: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'edit a blog post');
+      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, { correlationId: ctx.correlationId });
+      return blog.revisePost(context, platform, ctx.params.postId as string, body(ctx));
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/site/posts/:postId/publish',
+    description: 'Put a post on the public site. Refused while any SEO check fails',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'publish a blog post');
+      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, { correlationId: ctx.correlationId });
+      return blog.publishPost(context, platform, ctx.params.postId as string);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/site/posts/:postId/withdraw',
+    description: 'Take a post down. The record stays; the URL stops answering',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'withdraw a blog post');
+      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, { correlationId: ctx.correlationId });
+      return { post: blog.withdrawPost(context, platform, ctx.params.postId as string, body<{ reason: string }>(ctx).reason) };
     },
   },
 

@@ -80,6 +80,10 @@ describe('what an anonymous caller can obtain', () => {
     const publicApi = publicRoutes.filter((id) => !sitePaths.has(id));
 
     assert.deepEqual(publicApi, [
+      // A post published from the console. Same class as the compiled six, but
+      // one pattern rather than a derived list, because it is created after
+      // this table is built. Only a PUBLISHED post is served.
+      'GET /blog/:slug',
       'GET /healthz',
       'GET /readyz',
       'GET /unsubscribe',

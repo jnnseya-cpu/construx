@@ -37,7 +37,23 @@ function hardcoded(): string[] {
   const block = /\n {4}environment:\n((?: {6}.*\n|\n)*)/.exec(compose)?.[1] ?? '';
   return block
     .split('\n')
-    .map((line) => /^ {6}([A-Z][A-Z0-9_]*):/.exec(line)?.[1])
+    .map((line) => {
+      const entry = /^ {6}([A-Z][A-Z0-9_]*): *(.*)$/.exec(line);
+      if (!entry) return undefined;
+      const [, name, value] = entry;
+
+      // `NAME: ${NAME:-default}` is a pass-through with a fallback, not a
+      // shadow: compose interpolates it from `.env`, so a deployment that sets
+      // it still wins and only a deployment that says nothing gets the default.
+      //
+      // The detector used to treat every line in this block as hardcoded, which
+      // made "give this a safe default" indistinguishable from "override
+      // whatever they set" — and pushed anything needing a default onto an
+      // exemption list, where the difference stopped being visible at all.
+      if (new RegExp(`^\\$\\{${name}(:-.*)?\\}$`).test(value!.trim())) return undefined;
+
+      return name;
+    })
     .filter((name): name is string => name !== undefined);
 }
 

@@ -8469,6 +8469,114 @@ screen rendered.
 
 ---
 
+## The blog, as records rather than as source code
+
+Six posts lived as a hard-coded array in `site/posts.ts`. Publishing a seventh
+meant editing TypeScript, rebuilding the image and redeploying — so nobody did,
+and the marketing site had a blog that had not moved in months.
+
+`site/blog.ts` puts a post in the ledger and lets the reasoning engine draft one.
+Four properties make that a publishing tool rather than a spam generator pointed
+at the company's own domain.
+
+**A model drafts; a person publishes.** `draftPost` writes a DRAFT and nothing
+else. `publishPost` is a separate command a named human runs, and it is the only
+thing that puts a URL on the public internet. No agent mandate reaches it: the
+ladder governs acting on a project's record, and this acts on the company's
+public face.
+
+**The stand-in is never published.** With no provider configured the local
+adapter reasons about nothing and says so. Dressing that as an article under the
+company's name would be the failure `documents/generate.ts` already refuses —
+prose attributed to reasoning that never happened — so a synthetic draft is
+refused at the point of drafting. Verified live: with `AI_MODE=local` the route
+answers **503 NO_REASONING_PROVIDER**.
+
+**SEO is a gate, not a score.** Seven checks — title length, meta description,
+slug shape, depth, the keyword in the title and the opening, the standfirst —
+and publication is refused while any fails, with every failure named. A blog that
+publishes anyway and shows a red number nobody acts on is how a site accumulates
+pages that make it rank worse.
+
+**The compiled posts stay.** They are not migrated, rewritten or replaced.
+Published records are added alongside them, and the count on the screen is read
+from the data rather than written into the sentence.
+
+Model output is **escaped** into the page; the compiled six keep their trusted
+markup. That difference is stated in code rather than assumed — a script tag in a
+drafted paragraph would otherwise be an injection on the company's own domain,
+published and indexed.
+
+### What it cost to let the operator run AI at all
+
+The blog needed the operator to reach an engine, and three things stood in the
+way. Each was load-bearing and each was replaced rather than removed.
+
+- **No `AI_EXECUTION` in the role matrix.** Granted, and bounded below.
+- **No wallet on the platform tenancy.** The platform is now a tenant of itself:
+  same wallet, same ACU arithmetic, same refusal when it runs out. Letting the
+  company's own AI run uncharged would put the one figure an operator most needs
+  to trust — what this platform costs to run — outside the meter that governs
+  everybody else's. It takes no trial grant, so an unfunded deployment is
+  refused for want of credit and says so.
+- **ABAC barring the operator from every area but three.** `AI_EXECUTION` joins
+  them.
+
+The bound that makes all three safe is **not** any of those lists. It is
+`Platform.context`, which now refuses a `PLATFORM_ADMIN` any project outside
+`platform-*`. An engine context is the only way to reach `runAI`, so an operator
+can run AI on `platform-marketing` and nowhere else.
+
+That property used to hold by accident: the operator tenancy had no wallet, so
+`context` threw, and `entitlement.test.ts` pinned that and called it stronger —
+correctly, because a route guard can be forgotten on a new route. Giving the
+platform a wallet removed the accident, so the property is now an explicit check
+with both directions asserted: the platform's own project is allowed, a
+customer's is refused by name.
+
+### Two defects the walk found and the suite did not
+
+**The quote refused, so the button never enabled.** `/v1/ai/quote` demanded a
+project, the blog draft has none, and the console holds submit shut until a price
+arrives. The rule that nothing spends without showing its cost first had made the
+one honest path impossible. An AI route with no project now quotes against the
+platform's own wallet, and the exception is named in `quote.test.ts` and
+`doors.test.ts` rather than left implicit.
+
+**The platform tenancy existed only on a first boot.** It was created in
+`createOperator`, which does not run when an operator is replayed from the
+journal — so the wallet was present on a fresh deployment and absent on every
+restarted one. It is created from the constructor now.
+
+---
+
+## Landing-page pictures were being written somewhere that does not survive a deploy
+
+Reported as "my pictures are nowhere to be found", and it was not the stale
+deployment that explained the rest.
+
+`SITE_MEDIA_PATH` was blank in `.env.example` and unset in compose, so
+`mediaDir()` fell back to the checkout — which inside the image is the
+container's own writable layer. Uploading a picture worked, looked right, and
+survived exactly until the next rebuild, which autodeploy does on every push.
+
+`.env.example` had documented the risk in full. Nobody set it, which is the
+whole lesson: a warning in a file nobody opens at the moment it matters is not a
+control.
+
+Two changes. Compose now supplies `/data/site-media` — on the same volume as the
+journal — as a **default rather than an override**, so a deployment that sets its
+own still wins. And the boot banner states where the pictures go and whether they
+will outlive a redeploy, so a deployment in the bad state is uncomfortable to
+look at rather than silent.
+
+The deployment invariant was taught the difference between `NAME: literal` and
+`NAME: ${NAME:-default}` in the process. It had treated every line in compose's
+`environment:` block as a shadow, which made "give this a safe default"
+indistinguishable from "override whatever they set".
+
+---
+
 ## The developer surface: a credential that is not a person
 
 An integration wants to post daily progress. Giving it a user's session gives it

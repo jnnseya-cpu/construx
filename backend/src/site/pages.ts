@@ -8,6 +8,8 @@ import { ROUTES } from '../api/routes.ts';
 import { accountTypes } from '../identity/signup.ts';
 import { absolute, cards, cta, jsonLd, organisation, page, pageHead, SITE_PAGES } from './layout.ts';
 import { POSTS, longDate } from './posts.ts';
+import { publishedPost, publishedPosts } from './blog.ts';
+import type { Platform } from '../platform.ts';
 
 /**
  * The public pages.
@@ -285,8 +287,25 @@ ${cta({
 // ----------------------------------------------------------------------- Blog
 
 /** One post, at its own address. Unknown slugs never reach here — there is no route for them. */
-export function blogPost(slug: string): string {
-  const post = POSTS.find((candidate) => candidate.slug === slug);
+export function blogPost(slug: string, platform?: Platform): string {
+  const fixed = POSTS.find((candidate) => candidate.slug === slug);
+
+  // Two sources, and they are not equally trusted.
+  //
+  // A post in `POSTS` is markup written into this repository by hand, and its
+  // paragraphs carry deliberate `<code>` and `<em>`. A post in the ledger was
+  // drafted by a model or typed into a form, and putting either into the page
+  // unescaped would be a script tag away from an injection on the company's own
+  // domain — published, indexed and served to strangers. So the stored ones are
+  // escaped and the compiled ones are not, which is the difference between
+  // trusted markup and untrusted text stated in code rather than assumed.
+  const stored = !fixed && platform?.ledger ? publishedPost(platform, slug) : undefined;
+  const post = fixed
+    ? { ...fixed, paragraphs: fixed.body, date: fixed.date }
+    : stored
+      ? { ...stored, paragraphs: stored.body.map((line) => esc(line)), date: (stored.publishedAt ?? '').slice(0, 10) }
+      : undefined;
+
   if (!post) throw new Error(`No post ${slug}`);
 
   return page(
@@ -321,7 +340,7 @@ export function blogPost(slug: string): string {
 <section class="prose">
   <div class="wrap narrow">
     <p class="post-date"><time datetime="${esc(post.date)}">${esc(longDate(post.date))}</time></p>
-    ${post.body.map((paragraph) => `<p>${paragraph}</p>`).join('\n    ')}
+    ${post.paragraphs.map((paragraph) => `<p>${paragraph}</p>`).join('\n    ')}
     <p class="note"><a href="/blog">← All engineering notes</a></p>
   </div>
 </section>`,
@@ -329,7 +348,25 @@ export function blogPost(slug: string): string {
 }
 
 
-export function blog(): string {
+export function blog(platform?: Platform): string {
+  // Newest first across both sources, so a post published this morning is not
+  // buried under one compiled in last year.
+  //
+  // Guarded on the ledger rather than on the platform: these renderers are
+  // called with a stub in the tests that walk every public page, and a site
+  // that cannot reach a ledger has no stored posts — it still has the six in
+  // the build, and rendering those is the right answer rather than an error.
+  const entries = [
+    ...POSTS.map((post) => ({ slug: post.slug, title: post.title, standfirst: post.standfirst, tag: post.tag, date: post.date })),
+    ...(platform?.ledger ? publishedPosts(platform) : []).map((post) => ({
+      slug: post.slug,
+      title: post.title,
+      standfirst: post.standfirst,
+      tag: post.tag,
+      date: (post.publishedAt ?? '').slice(0, 10),
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+
   return page(
     {
       title: 'Blog',
@@ -347,7 +384,7 @@ export function blog(): string {
 <section class="prose">
   <div class="wrap narrow">
     <div class="posts">
-      ${POSTS.map(
+      ${entries.map(
         (post) => `<article class="post">
         <div class="post-meta"><span class="tag">${esc(post.tag)}</span><time datetime="${esc(post.date)}">${esc(
           longDate(post.date),

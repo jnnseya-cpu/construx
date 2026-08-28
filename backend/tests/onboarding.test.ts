@@ -191,9 +191,21 @@ describe('every tenancy on the estate has a way in', () => {
     // tenancy with no ENTERPRISE_ADMIN cannot be administered, cannot invite
     // anybody, and cannot be used — whatever it is paying.
     for (const tenant of platform.tenants()) {
-      const admins = platform.users(tenant.id).filter((user) => user.roles.includes('ENTERPRISE_ADMIN'));
+      // The platform's own tenancy is administered by the operator layer, not
+      // by an ENTERPRISE_ADMIN, and that is the separation rather than a gap:
+      // an enterprise administrator of CONSTRUX would be a customer role over
+      // the platform itself. It exists as a tenancy because the platform now
+      // runs AI of its own — drafting its own marketing — and that spend is
+      // metered on its own wallet like everybody else's.
+      //
+      // So the invariant is "somebody can administer it", and for this one
+      // tenancy that somebody is an operator. Still asserted, because a
+      // platform tenancy with no operator is exactly as stranded.
+      const administrators = platform
+        .users(tenant.id)
+        .filter((user) => user.roles.includes(tenant.id === 'platform' ? 'PLATFORM_ADMIN' : 'ENTERPRISE_ADMIN'));
       assert.ok(
-        admins.length > 0,
+        administrators.length > 0,
         `${tenant.legalName} exists on the estate with nobody who can administer it`,
       );
     }

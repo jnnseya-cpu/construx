@@ -108,6 +108,14 @@ describe('the routing table itself', () => {
     const publicApi = publicRoutes.filter((id) => !sitePaths.has(id));
 
     assert.deepEqual(publicApi, [
+      // A post published from the console rather than compiled into the build.
+      // It is the same class of thing as the six above — public,
+      // server-rendered, no API surface — but it cannot be derived from
+      // POST_PAGES because it did not exist when that list was built, so it is
+      // one pattern and is named here. `site.render` serves only a post whose
+      // status is PUBLISHED, so a draft is not reachable by guessing its
+      // address, and that refusal is tested.
+      'GET /blog/:slug',
       'GET /healthz',
       'GET /readyz',
       'GET /unsubscribe',

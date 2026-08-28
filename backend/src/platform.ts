@@ -145,6 +145,17 @@ export class Platform {
     this.evidence = evidence;
     this.signing = signing;
     this.sync = new SyncEngine(this.ledger);
+
+    // The platform's own tenancy exists from the start, not from the first
+    // operator being created.
+    //
+    // Created in `createOperator` alone, it was missing on every boot that
+    // rehydrated an operator from the journal rather than creating one — which
+    // is every boot after the first. The wallet the platform's own AI spends
+    // from would then be absent on a restarted deployment and present on a
+    // fresh one, which is the worst kind of difference: it works on the machine
+    // it was tested on.
+    this.#ensurePlatformTenancy();
     // The exporter asks whether a tenant may take a document out; the platform
     // is what knows. A tenant with no subscription on record is refused rather
     // than allowed — the failure of a lookup should not open the gate.
@@ -334,6 +345,7 @@ export class Platform {
    * what customers build on it is structural, not a setting someone can relax.
    */
   createOperator(input: { name: string; email: string }): PlatformUser {
+    this.#ensurePlatformTenancy();
     const userId = ulid();
 
     const user: PlatformUser = {
@@ -365,6 +377,59 @@ export class Platform {
     });
 
     return user;
+  }
+
+  /**
+   * The platform's own tenancy: a subscription and a metered wallet.
+   *
+   * The operator layer had neither. That was fine for as long as the operator
+   * only ever read — but the platform now runs AI of its own, drafting articles
+   * for its own marketing site, and that is real provider spend.
+   *
+   * Two ways to handle it and only one is honest. Letting the operator's AI run
+   * uncharged would put the company's own spend outside the meter that governs
+   * everybody else's, so the one figure the operator most needs to trust — what
+   * this platform costs to run — would be the one figure missing its own line.
+   * So the platform is a tenant of itself: same wallet, same ACU arithmetic,
+   * same refusal when it runs out.
+   *
+   * Idempotent, because it is called on every operator creation and there is
+   * exactly one platform tenancy however many operators exist.
+   */
+  #ensurePlatformTenancy(): void {
+    if (this.#wallets.has(PLATFORM_TENANT_ID)) return;
+
+    if (!this.#tenants.has(PLATFORM_TENANT_ID)) {
+      this.#tenants.set(PLATFORM_TENANT_ID, {
+        id: PLATFORM_TENANT_ID,
+        legalName: 'CONSTRUX',
+        jurisdiction: 'GB',
+        defaultCurrency: 'GBP',
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    if (!this.#subscriptions.has(PLATFORM_TENANT_ID)) {
+      this.#subscriptions.set(PLATFORM_TENANT_ID, {
+        id: ulid(),
+        tenantId: PLATFORM_TENANT_ID,
+        tier: 'ENTERPRISE',
+        package: packageForTier('ENTERPRISE'),
+        status: 'ACTIVE',
+        assignedIdentities: [],
+        startedAt: new Date().toISOString(),
+        renewsAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+      });
+    }
+
+    const wallet = new ACUWallet(PLATFORM_TENANT_ID, { volumeIncentive: true });
+    if (this.#walletSink) wallet.attachSink(this.#walletSink);
+    // No trial grant. The trial is an offer to a customer deciding whether to
+    // buy, and the platform is not deciding. It starts empty and is credited
+    // the way any other tenancy is — which means the first attempt to draft an
+    // article on a deployment nobody has funded is refused for want of credit,
+    // and says so.
+    this.#wallets.set(PLATFORM_TENANT_ID, wallet);
   }
 
   /** Every operator account on the platform. */
@@ -1400,6 +1465,27 @@ export class Platform {
 
   /** Build a per-request engine context. */
   context(auth: AuthContext, projectId: string, options: { source?: EventSource; correlationId?: string } = {}): EngineContext {
+    // The account-layer boundary, enforced here rather than left to an accident.
+    //
+    // It used to hold for a reason nobody chose: the operator tenancy had no
+    // wallet, so `this.wallet()` below threw and an operator could not hold an
+    // engine context for anything. `entitlement.test.ts` pinned that and called
+    // it "stronger", correctly — a route guard can be forgotten on a new route,
+    // and this cannot.
+    //
+    // Giving the platform its own wallet, so its marketing AI is metered like
+    // everybody else's, removed that accident. The property is too important to
+    // depend on one, so it is now a check: an operator may hold a context for
+    // the platform's own projects and for nothing else. Without this, a caller
+    // could pass a customer's project id with an operator's token and get an
+    // engine context over their record, charged to the platform's wallet.
+    if (auth.roles.includes('PLATFORM_ADMIN') && !projectId.startsWith(`${PLATFORM_TENANT_ID}-`)) {
+      throw new ForbiddenError(
+        'Platform operators are barred from customer delivery data',
+        'ACCOUNT_LAYER_SEPARATION',
+      );
+    }
+
     return {
       ledger: this.ledger,
       orchestrator: this.orchestrator,

@@ -68,6 +68,20 @@ services:
       # the platform records evidence hashes and holds no files — a chain that
       # lasts exactly as long as whoever took the photograph still has it.
       EVIDENCE_STORE_PATH: /data/evidence
+      # On the volume, and this one was the bug.
+      #
+      # Left unset, `mediaDir()` falls back to the checkout — which inside the
+      # image is the container's own writable layer. Uploading a landing-page
+      # picture then worked, looked right, and survived exactly until the next
+      # rebuild, which autodeploy does on every push. The pictures were not
+      # lost by anything anybody could see; they were written somewhere that
+      # does not outlive a deploy.
+      #
+      # A default rather than an override, so a deployment that sets it in .env
+      # still wins. Hardcoding it would mean somebody could set it, see no
+      # error, and get this value anyway — which is the same class of silent
+      # surprise as the bug it fixes.
+      SITE_MEDIA_PATH: ${SITE_MEDIA_PATH:-/data/site-media}
       # Required, and checked here rather than at boot so the failure is "you
       # have not set this" instead of a service that starts and signs tokens
       # anybody could forge.

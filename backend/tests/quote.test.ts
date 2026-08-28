@@ -353,7 +353,21 @@ describe('every AI route can be quoted, and only those', () => {
 
     for (const route of declared) {
       assert.equal(route.method, 'POST');
-      assert.ok(route.pattern.includes(':projectId'), `${route.pattern} must be project-scoped to be quoted`);
+      // Project-scoped, or the platform's own marketing surface.
+      //
+      // The rule exists so nobody spends a tenancy's ACUs without seeing the
+      // price, and the quote is assembled from a project. `/v1/site/posts/draft`
+      // has no project because it acts on the company's own website: the spend
+      // lands on the platform's own metered wallet, and the operator pressing
+      // the button owns that wallet.
+      //
+      // Named as a single exception rather than the check being softened. A
+      // second entry here should be argued for, not appended.
+      const platformOwn = route.pattern === '/v1/site/posts/draft';
+      assert.ok(
+        route.pattern.includes(':projectId') || platformOwn,
+        `${route.pattern} must be project-scoped to be quoted, or spend the platform's own wallet`,
+      );
       assert.match(route.ai!.taskType, /^[a-z_]+$/);
     }
   });

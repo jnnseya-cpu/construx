@@ -4,6 +4,7 @@ import { channelStatus } from '../notifications/notify.ts';
 import { SITE_PAGES } from './layout.ts';
 import { landing } from './landing.ts';
 import { POST_PAGES } from './posts.ts';
+import { publishedPost } from './blog.ts';
 import {
   about,
   blog,
@@ -37,13 +38,13 @@ const RENDERERS: Record<string, Renderer> = {
   '/about': () => about(),
   '/how-it-works': () => howItWorks(),
   '/industries': () => industries(),
-  '/blog': () => blog(),
+  '/blog': (platform) => blog(platform),
   // One concrete route per post rather than a `:slug` pattern. It keeps the
   // "one map from path to renderer" shape that makes a page impossible to
   // reach without existing, and an unknown slug then 404s through the ordinary
   // not-found path instead of needing a lookup that can miss.
   ...Object.fromEntries(
-    POST_PAGES.map((post) => [post.path, () => blogPost(post.path.slice('/blog/'.length))] as const),
+    POST_PAGES.map((post) => [post.path, (platform: Platform) => blogPost(post.path.slice('/blog/'.length), platform)] as const),
   ),
   '/developers': () => developers(),
   '/contact': () => contact(),
@@ -64,8 +65,19 @@ const RENDERERS: Record<string, Renderer> = {
 
 export function render(path: string, platform: Platform, ctx: RequestContext): string {
   const renderer = RENDERERS[path];
-  if (!renderer) throw new Error(`No public page for ${path}`);
-  return renderer(platform, ctx);
+  if (renderer) return renderer(platform, ctx);
+
+  // A post published through the console has no entry in the map above, because
+  // the map is built at import time and the post did not exist then. This is
+  // the one place a path is looked up rather than declared — and it is narrow
+  // on purpose: only under `/blog/`, only against posts that are PUBLISHED, and
+  // an unknown slug still falls through to the ordinary not-found path.
+  if (path.startsWith('/blog/')) {
+    const slug = path.slice('/blog/'.length);
+    if (publishedPost(platform, slug)) return blogPost(slug, platform);
+  }
+
+  throw new Error(`No public page for ${path}`);
 }
 
 /** The marketing front door. */

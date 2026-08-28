@@ -178,7 +178,7 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
       return;
     }
     if (ctx.method === 'GET' && ctx.path === '/sitemap.xml') {
-      sendDocument(res, ctx, 'application/xml; charset=utf-8', sitemap());
+      sendDocument(res, ctx, 'application/xml; charset=utf-8', sitemap(platform));
       logRequest(ctx, 200);
       return;
     }
