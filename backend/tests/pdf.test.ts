@@ -274,3 +274,51 @@ describe('through the platform', () => {
     );
   });
 });
+
+/**
+ * Document Properties is the first place anybody looks to ask where a file came
+ * from, and it was answering with this platform's name.
+ *
+ * The Info dictionary carried `Producer: CONSTRUX` and named the client — who
+ * the document was prepared *for* — as its Author. Neither is on the page, and
+ * both are one keyboard shortcut away in every reader. On a document that
+ * carries the customer's mark, their colour and their registered office, the
+ * honest answer there is the customer.
+ */
+describe('the file says whose it is', () => {
+  it('names the issuing entity in every field a reader shows', () => {
+    const pdf = latin1(
+      renderPdf(
+        sampleDocument({
+          branding: {
+            clientName: 'Yorkshire Water Services Limited',
+            issuingEntity: 'Meridian Infrastructure Group Ltd',
+            primaryColour: '#e2571e',
+            legalFooter: 'Meridian Infrastructure Group Ltd · registered in GB',
+            documentReferencePrefix: 'MIGL',
+          },
+        }),
+      ),
+    );
+
+    assert.match(pdf, /\/Author \(Meridian Infrastructure Group Ltd\)/);
+    assert.match(pdf, /\/Creator \(Meridian Infrastructure Group Ltd\)/);
+    assert.match(pdf, /\/Producer \(Meridian Infrastructure Group Ltd\)/);
+    // The client is who it is *for*. Naming them as the author is how a
+    // subcontractor comes to believe a method statement came from elsewhere.
+    assert.ok(!/\/Author \(Yorkshire Water/.test(pdf), 'the client was named as the document author');
+  });
+
+  it('falls back to the tenancy name when no issuing entity is separated out', () => {
+    const pdf = latin1(renderPdf(sampleDocument()));
+    assert.match(pdf, /\/Producer \(Meridian Infrastructure Group Ltd\)/);
+  });
+
+  it('stamps this platform name nowhere in the file', () => {
+    // Over the whole file rather than the Info dictionary alone: a mark added
+    // to a header, an XMP packet or a font name would be invisible to a test
+    // that only read the one object.
+    const pdf = latin1(renderPdf(sampleDocument()));
+    assert.ok(!/construx/i.test(pdf), 'the rendered PDF carries this platform name');
+  });
+});

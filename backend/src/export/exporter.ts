@@ -74,6 +74,33 @@ export type ClientBranding = {
 };
 
 /**
+ * Whose document this is, for the file's own properties.
+ *
+ * The page was already the customer's — their mark, their colour, their legal
+ * footer, and nothing of this platform's anywhere on it. The *file* was not. A
+ * PDF carried `Producer: CONSTRUX` in its Info dictionary and named the client
+ * as its Author, and a Word file carried no properties at all, so it opened
+ * with a blank author where the customer's name should be.
+ *
+ * None of that is visible on the page and all of it is visible in Document
+ * Properties, which is the first place anybody looks when they want to know
+ * where a document came from — and on a document that is meant to be the
+ * customer's own instrument, the honest answer there is the customer.
+ *
+ * `issuingEntity` first, because that is the party carrying the duty under the
+ * document: the one a regulator writes to about a permit, the one named on a
+ * method statement a subcontractor works to. `clientName` is who it was
+ * prepared *for*, and is the fallback only because a tenancy that has not
+ * separated the two still has to have a name on its files.
+ *
+ * One function, used by both renderers, so a Word file and a PDF of the same
+ * document cannot disagree about who issued it.
+ */
+export function documentOrigin(branding: ClientBranding): string {
+  return branding.issuingEntity?.trim() || branding.clientName;
+}
+
+/**
  * `DOCX` sits beside `PDF` rather than replacing it, because the two answer
  * different questions. A PDF is what you *issue* — fixed, hashed, and the same
  * on every screen it opens on. A Word file is what you send when the next step

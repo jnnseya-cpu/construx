@@ -62,7 +62,17 @@ function documentWith(overrides: Partial<ExportDocument> = {}): ExportDocument {
         rows: [['ITP-01', 'Reinforcement fixing', 'Yes'], ['ITP-02', 'Concrete pour', 'Yes & witnessed']],
       },
       { kind: 'LIST', ordered: false, items: ['Compaction testing to specification'] },
-      { kind: 'ATTESTATION', rootHash: 'f3a9'.repeat(16), chainHead: '9c21'.repeat(16), instructions: 'Verify at construxvg.com' },
+      {
+        kind: 'ATTESTATION',
+        rootHash: 'f3a9'.repeat(16),
+        chainHead: '9c21'.repeat(16),
+        // The wording the exporter actually produces: how to recompute the
+        // chain, not where to visit. A fixture that sent the reader to this
+        // platform's own address was modelling something the platform does not
+        // do, and it was the only reason a rendered document ever mentioned it.
+        instructions:
+          'Recompute the chain from the first event forward: any insertion, deletion or alteration produces a different chain head.',
+      },
     ],
     ...overrides,
   };
@@ -299,5 +309,83 @@ describe('taking a document out is charged, in either form', () => {
 
   it('prices from configuration rather than from a number in the renderer', () => {
     assert.ok(config.billing.documentRenderRawCostMinor > 0);
+  });
+});
+
+// ── Whose file this is ──────────────────────────────────────────────────────
+
+/**
+ * The page was the customer's and the file was not.
+ *
+ * Every visible surface was already white-labelled — their mark, their colour,
+ * their legal footer, and nothing of this platform's on the page anywhere. The
+ * *properties* told a different story: a PDF carried `Producer: CONSTRUX` in
+ * its Info dictionary and named the client as its Author rather than the party
+ * issuing the document, and a Word file carried no properties at all, so it
+ * opened with a blank Author on an instrument the customer stands behind.
+ *
+ * None of that is on the page and all of it is in Document Properties, which is
+ * the first place anybody looks when they want to know where a file came from.
+ * A document handed to a regulator whose properties name the tooling rather
+ * than the duty holder is answering the wrong question.
+ */
+describe('the file says whose it is, and never says whose tooling made it', () => {
+  const parts = unzip(renderDocx(documentWith()));
+  const core = parts.get('docProps/core.xml') ?? '';
+  const app = parts.get('docProps/app.xml') ?? '';
+
+  it('carries the property parts a reader looks in', () => {
+    // Declared and related, not merely present: a part in the archive that the
+    // content types do not name and the package rels do not point at is a part
+    // Word ignores, which looks identical to not writing it.
+    assert.ok(core.length > 0, 'the package carries no core properties');
+    assert.ok(app.length > 0, 'the package carries no extended properties');
+    assert.match(parts.get('[Content_Types].xml') ?? '', /PartName="\/docProps\/core\.xml"/);
+    assert.match(parts.get('[Content_Types].xml') ?? '', /PartName="\/docProps\/app\.xml"/);
+    assert.match(parts.get('_rels/.rels') ?? '', /Target="docProps\/core\.xml"/);
+    assert.match(parts.get('_rels/.rels') ?? '', /Target="docProps\/app\.xml"/);
+  });
+
+  it('names the issuing entity as the author, not the client it was prepared for', () => {
+    // The distinction the branding model already draws: `clientName` is who a
+    // document is *for*, `issuingEntity` is who carries the duty under it.
+    // Naming the client as author is how a subcontractor comes to believe a
+    // method statement was written by somebody else.
+    assert.match(core, /<dc:creator>Meridian Infrastructure Group Limited<\/dc:creator>/);
+    assert.match(core, /<cp:lastModifiedBy>Meridian Infrastructure Group Limited<\/cp:lastModifiedBy>/);
+    assert.match(app, /<Company>Meridian Infrastructure Group Limited<\/Company>/);
+    assert.ok(
+      !core.includes('<dc:creator>Yorkshire Water'),
+      'the client the document was prepared for is named as its author',
+    );
+  });
+
+  it('falls back to the tenancy name when no issuing entity is separated out', () => {
+    // A tenancy that has not distinguished the two still has to have a name on
+    // its files. Blank is what an untitled draft looks like.
+    const noIssuer = unzip(
+      renderDocx(documentWith({ branding: { ...BRANDING, issuingEntity: undefined } })),
+    );
+    assert.match(noIssuer.get('docProps/core.xml') ?? '', /<dc:creator>Meridian Infrastructure Group<\/dc:creator>/);
+  });
+
+  it('carries the reference and the content hash, so a file alone still says what it is', () => {
+    // A document separated from its covering email is the normal case by the
+    // time anybody argues about it.
+    assert.match(core, /<cp:category>CX-QP-0001<\/cp:category>/);
+    assert.match(core, /<cp:contentStatus>abc123<\/cp:contentStatus>/);
+  });
+
+  it(`stamps this platform name nowhere in the package`, () => {
+    // The assertion the whole section exists for, over every part rather than
+    // the ones this file happens to have named. A future part carrying the
+    // platform's identity would be invisible to a test that only checked the
+    // two above.
+    for (const [name, content] of parts) {
+      assert.ok(
+        !/construx/i.test(content),
+        `${name} carries this platform's name into a document that is the customer's`,
+      );
+    }
   });
 });

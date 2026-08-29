@@ -1,5 +1,5 @@
 import { decodeImage, decodeLogo, UnsupportedImageError, type DecodedImage } from './image.ts';
-import type { DocumentBlock, ExportDocument } from './exporter.ts';
+import { documentOrigin, type DocumentBlock, type ExportDocument } from './exporter.ts';
 
 /**
  * PDF, written by hand.
@@ -791,7 +791,7 @@ export function renderPdf(document: ExportDocument, resolveImage?: ImageResolver
     (index === 0 ? ops : [...ops, ...footerOps(index + 1, pageCount)]).join('\n'),
   );
 
-  return assemble(streams, document.title, document.branding.clientName, logo, photos);
+  return assemble(streams, document.title, documentOrigin(document.branding), logo, photos);
 }
 
 /**
@@ -804,7 +804,8 @@ export function renderPdf(document: ExportDocument, resolveImage?: ImageResolver
 function assemble(
   streams: string[],
   title: string,
-  author: string,
+  /** Who issued the document. Author and producer both, because both are read. */
+  origin: string,
   logo?: DecodedImage,
   photos: Map<string, PlacedImage> = new Map(),
 ): Uint8Array {
@@ -871,8 +872,18 @@ function assemble(
   objects[pagesId - 1] = `<< /Type /Pages /Count ${pageIds.length} /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] >>`;
   objects[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
 
+  // The customer's name in every field a reader shows, and this platform's in
+  // none of them.
+  //
+  // `Producer` conventionally names the software that wrote the file, and that
+  // convention is wrong for this document. What leaves here is the customer's
+  // instrument, carrying their mark and their legal footer, and a reader
+  // opening Document Properties to ask where it came from should be told the
+  // customer — not the tooling they happen to run. `Creator` is set for the
+  // same reason: left unset, some readers fall back to showing the producer.
   const infoId = add(
-    `<< /Title ${pdfTextString(title)} /Author ${pdfTextString(author)} /Producer ${pdfTextString('CONSTRUX')} ` +
+    `<< /Title ${pdfTextString(title)} /Author ${pdfTextString(origin)} ` +
+      `/Creator ${pdfTextString(origin)} /Producer ${pdfTextString(origin)} ` +
       `/CreationDate ${pdfString(pdfDate())} >>`,
   );
 
