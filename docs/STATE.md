@@ -9498,3 +9498,62 @@ other advisory task still writes its narrative unchecked, and moving each one
 across is a per-task decision — an extraction must not be forced into these ten
 fields, or a model will invent a commercial impact for a drawing revision, which
 is the failure the standard exists to prevent.
+
+### The thirty-five "missing" events, answered once
+
+The specification's workflow sections name event codes this platform does not
+emit, and the count was thirty-five. Adding thirty-five event types would have
+been the wrong answer to that number: the Golden Thread catalogue is **closed**
+and is the single source of truth for what can happen on a project, so a synonym
+in it is not a new capability — it is two codes for one fact, which is how a
+register ends up disagreeing with itself.
+
+Each of the thirty-five was checked against the 517 codes already in the
+catalogue **and against the code that emits them**, not against the names alone.
+Thirty-three were the same capability under a different name. Two were real, and
+both had the same shape — a register that could be added to and never closed.
+
+**The two that were real, now built:**
+
+| Spec code | What was missing |
+|---|---|
+| `RFI_CLOSED` | An RFI went RAISED → ANSWERED and stopped. The register could say a question had been answered and never whether the asker got what they needed |
+| `ITP_APPROVED` | A plan could be written and inspected against in the same minute, so an inspection recorded one party checking its own work against its own criteria |
+
+**The thirty-three that already exist, with the code that carries them:**
+
+| Spec code | This platform |
+|---|---|
+| `DELAY_EVENT_RECORDED` | `DELAYEVENT_RECORDED` |
+| `CLAIM_EVIDENCE_PACK_BUILT` | `CLAIM_EVIDENCEPACK_BUILT` |
+| `TENDER_SUBMISSION_LOCKED` | `BID_PACK_LOCKED` |
+| `TAKEOFF_CAPTURED` | `TAKEOFF_COMPLETED` |
+| `SUBMITTAL_SUBMITTED` · `SUBMITTAL_DECIDED` | `SUBMITTAL_RAISED` · `SUBMITTAL_REVIEWED` |
+| `RISK_CREATED` · `RISK_ASSESSED` | `RISK_REGISTERED` · `RISK_SCORED` |
+| `CONSTRAINT_ADDED` | `CONSTRAINT_RAISED` / `CONSTRAINT_IDENTIFIED` |
+| `LOOKAHEAD_CREATED` | `LOOKAHEAD_PUBLISHED` |
+| `MEETING_RECORDED` | `MEETING_HELD` |
+| `FILE_UPLOADED` | `FILE_INGESTED` |
+| `ASSET_CREATED` | `ASSET_REGISTERED` |
+| `REVISION_SUPERSEDED` | `DRAWING_SUPERSEDED` |
+| `CERTIFICATE_RECORDED` | `PAYMENT_CERTIFIED` / `COMPLETION_CERTIFICATE_RECEIVED` |
+| `ADDENDUM_RECEIVED` | `TENDER_ADDENDUM_ISSUED` |
+| `CVR_SNAPSHOT_APPROVED` | `CVR_PUBLISHED` |
+| `TECHNICAL_RESPONSE_ISSUED` | `RFI_ANSWERED` |
+| `TECHNICAL_DECISION_ACCEPTED` | `DECISION_RECORDED` / `DESIGN_ACCEPTED` |
+| `STAGE_VALIDATED` | `STAGE_GATE_DECIDED` |
+| `CHANGE_EVENT_CREATED` | `CHANGE_REQUEST_SUBMITTED` |
+| `WORKFORCE_BRIEFED` | `TOOLBOX_TALK_DELIVERED` |
+| `TRAINING_SCHEDULED` | `TRAINING_NEEDS_DEFINED` / `TRAINING_GAP_PLANNED` |
+| `WARRANTY_ACTIVATED` | `WARRANTY_REGISTERED` |
+| `READINESS_UPDATED` | `COMPLETION_READINESS_CHECKED` / `TEST_READINESS_CHECKED` |
+| `ACTION_ASSIGNED` | The specific ones: `MEETING_ACTION_CLOSED`, `INVESTIGATION_ASSIGNED`, `DELIVERABLE_ASSIGNED`, `COORDINATION_ISSUE_ASSIGNED` |
+| `COMPLIANCE_MATRIX_CREATED` | `ITT_ANALYSED` — the matrix is the analysis |
+| `TRANSMITTAL_ISSUED` | Built: `informationcontrol.issueTransmittal`, `POST /v1/projects/:projectId/transmittals` |
+| `INFORMATION_VALIDATED` · `CDE_WORKFLOW_APPROVED` | The CDE ladder in `domain/designplan.ts` — WIP → Shared → Published → Archived, with the check rule beneath it |
+| `PAYMENT_RECONCILED` | `cost.postPayment` posts against the certificate; the Construction Act engine derives paid-versus-notified, late payment and the s.112 suspension right from it |
+| `PRODUCTIVITY_ANALYSED` | Derived in `planning.ts` against the baseline rather than stored — a figure that recomputes cannot go stale |
+| `RESOURCE_DEMAND_UPDATED` | The procurement schedule in `domain/conceptstrategy.ts`: lead time against the required-on-site milestone |
+
+This is recorded as a table rather than a sentence so the question is settled.
+Re-deriving it costs half a day and produces the same answer.
