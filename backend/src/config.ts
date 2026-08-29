@@ -824,6 +824,22 @@ export const config = {
      * which is long enough for somebody to notice an email and short enough
      * that a genuine non-payer is not running a platform for a month free.
      */
+    /**
+     * What rendering one document out of the platform costs, before markup.
+     *
+     * Rendering is deterministic local compute, so unlike an AI task it carries
+     * no provider bill — this is a platform service price, and it is here
+     * rather than inline in the renderer for the same reason every other
+     * figure is: a price written into a function is a price nobody can find.
+     *
+     * The same for both forms. A Word file and a PDF of one document are the
+     * same instrument off the same `ExportDocument`, and charging differently
+     * for them would be charging for the file extension. It runs through the
+     * ordinary markup, so the ACU statement shows a document render beside an
+     * AI call in the units the customer already reads.
+     */
+    documentRenderRawCostMinor: num('DOCUMENT_RENDER_RAW_COST_MINOR', 4),
+
     subscriptionGraceDays: num('SUBSCRIPTION_GRACE_DAYS', 7),
     /**
      * Whether the collection timer runs.

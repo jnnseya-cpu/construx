@@ -5,6 +5,7 @@ import type { GoldenThreadLedger } from '../goldenthread/ledger.ts';
 import { replayProject, replayTimeline } from '../goldenthread/replay.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import { formatMoney } from '../domain/locale.ts';
+import { renderDocx } from './docx.ts';
 import { renderPdf, type ImageResolver } from './pdf.ts';
 
 /**
@@ -72,7 +73,21 @@ export type ClientBranding = {
   documentReferencePrefix: string;
 };
 
-export type ExportFormat = 'PDF' | 'JSON_BUNDLE' | 'CSV' | 'HTML';
+/**
+ * `DOCX` sits beside `PDF` rather than replacing it, because the two answer
+ * different questions. A PDF is what you *issue* — fixed, hashed, and the same
+ * on every screen it opens on. A Word file is what you send when the next step
+ * is somebody else's tracked changes: a quality plan the client comments on, a
+ * contract a solicitor marks up, a method statement a subcontractor adds their
+ * own sequence to. Offering only the first meant every one of those left the
+ * platform as a PDF and came back as a retyped copy, and the retyped copy is
+ * the one that goes out of step with the record.
+ *
+ * Both render from the same `ExportDocument`, so a Word file and a PDF of one
+ * document carry the same `contentHash` and are the same instrument in two
+ * forms.
+ */
+export type ExportFormat = 'PDF' | 'DOCX' | 'JSON_BUNDLE' | 'CSV' | 'HTML';
 
 export type ExportAudience = 'INTERNAL' | 'CLIENT' | 'SUPPLIER' | 'REGULATOR' | 'INSURER' | 'ADJUDICATOR' | 'COURT';
 
@@ -638,6 +653,11 @@ export class ExportService {
    */
   toPdf(document: ExportDocument, resolveImage?: ImageResolver): Uint8Array {
     return renderPdf(document, resolveImage);
+  }
+
+  /** The same document, editable, with the same branding and the same hash. */
+  toDocx(document: ExportDocument, resolveImage?: ImageResolver): Uint8Array {
+    return renderDocx(document, resolveImage);
   }
 
   toHtml(document: ExportDocument): string {

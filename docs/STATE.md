@@ -10215,3 +10215,64 @@ deployment instead of a false one about the tender. That refusal is tested too.
 The remote adapters are written to both vendors' documented multimodal shapes
 and exercised here against a stub; no call to a live provider has been made
 from this environment, and nothing above should be read as saying one has.
+
+### Word as well as PDF, and both metered
+
+A PDF is the right thing to **issue** and the wrong thing to receive when the
+next step is somebody's tracked changes. A quality plan a client comments on, a
+contract a solicitor marks up, a method statement a subcontractor adds their
+own sequence to — every one of those left this platform as a PDF and came back
+as a retyped copy, and the retyped copy is the one that goes out of step with
+the record.
+
+So the choice is the customer's, per document: `format: 'PDF' | 'DOCX'`.
+
+**Both render from one `ExportDocument`.** The blocks, the branding, the
+redaction notice and the attestation are fixed before either renderer sees
+them, so a Word file and a PDF of the same document carry the same
+`contentHash` and are provably the same instrument in two forms. A second
+document model per format would have been two chances to disagree.
+
+**It is a real Word package, not HTML with a `.docx` extension.** That trick
+renders in Word, fails in Google Docs, and produces a file whose tracked
+changes nothing can merge. `export/docx.ts` writes WordprocessingML: styled
+paragraphs, real tables with borders and a repeating header row, a numbering
+definition for lists, and images as `w:drawing` with their own relationships.
+Written by hand because zero runtime dependencies is settled — `node:zlib`
+deflates and the ZIP headers are a few dozen bytes of little-endian fields,
+the same argument that produced `export/pdf.ts`.
+
+Verified by reading the package back apart rather than by trusting the writer:
+the required parts are present, every `r:embed` resolves to a relationship,
+every `w:numId` has a numbering definition, every `w:pStyle` has a style, and
+`w:sectPr` is the last child of the body with the page size inside it — which
+is what stops Word showing a client the "this document is damaged" repair
+dialog. An independent reader (`python-docx`) opens the output and reads back
+the headings, the styles and a 3×3 table.
+
+LibreOffice is installed in the build container and is broken — it cannot
+convert a plain text file — so it was used for nothing here, and no claim above
+rests on it.
+
+**Rendering is charged, in either form.** Generation was metered and *issuing*
+was free, so a tenancy could take five hundred branded reports out and the ACU
+statement would show the writing and none of the leaving. That is the wrong way
+round for the thing that actually leaves the building: a rendered document
+carries the customer's branding, their client's name, the redaction decision
+and the attestation hash, and it is the artefact a dispute is argued over.
+
+- **One price for both forms**, from `config.billing.documentRenderRawCostMinor`.
+  Charging differently would be charging for the file extension, and it would
+  push people towards the form that suits the bill rather than the job. The
+  hold *and* the settlement are asserted equal — comparing only the final
+  charge let a mutation that tripled the Word hold pass, and the hold is what
+  refuses a render.
+- **Reserved and settled**, through the same wallet path every other charge
+  takes, so a render appears in the statement with `module: 'EXPORT'` and
+  `feature: 'document_render_docx'` beside everything else.
+- **A failed render bills nothing.** The hold is released and nothing settles,
+  so a customer is never charged for a document they did not receive.
+- **Quoted before the button.** `GET /v1/exports/render-quote` gives the price
+  and the balance, and the Golden Thread screen shows it beside the format
+  chooser — the rule that nothing spends a balance without showing the cost
+  first does not stop being true because the work is local.

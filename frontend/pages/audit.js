@@ -13,7 +13,7 @@ import { can, state } from '../app.js';
 
 export async function audit(root) {
   const projectId = state.session.projectId;
-  const [data, timeline, sync, evidence] = await Promise.all([
+  const [data, timeline, sync, quote, evidence] = await Promise.all([
     api.get(`/v1/projects/${projectId}/audit/events`),
     // The same events told as a narrative rather than as rows, and the sync
     // cursor a device pulls from. Both had engines and no screen — the timeline
@@ -21,6 +21,9 @@ export async function audit(root) {
     // not that.
     api.get(`/v1/projects/${projectId}/audit/timeline`).catch((error) => ({ error })),
     api.get(`/v1/projects/${projectId}/sync/pull`).catch((error) => ({ error })),
+    // What taking the report out will cost, quoted before the control is
+    // offered — the same rule an AI command follows.
+    api.get('/v1/exports/render-quote').catch(() => null),
     // The other half of the same claim. A chain of hashes proves nothing has
     // been altered; it does not prove anybody still has the documents those
     // hashes describe, and until this screen showed both, that difference was
@@ -48,7 +51,18 @@ export async function audit(root) {
         <div class="actions">
           <button class="btn" id="replay">Run verification replay</button>
           ${can('EVIDENCE_AUDIT', 'I') ? html`<button class="btn quiet" id="export">Export audit pack</button>` : ''}
-          ${can('EVIDENCE_AUDIT', 'I') ? html`<button class="btn quiet" id="pdf">Download report PDF</button>` : ''}
+          ${
+            can('EVIDENCE_AUDIT', 'I')
+              ? html`<label class="field" style="margin:0;min-width:190px">
+                    <span>Take the report out as${quote ? ` · ${quote.chargeMinor} ACUs` : ''}</span>
+                    <select id="report-format">
+                      <option value="PDF">PDF — fixed, to issue</option>
+                      <option value="DOCX">Word — editable, to mark up</option>
+                    </select>
+                  </label>
+                  <button class="btn quiet" id="pdf">Download report</button>`
+              : ''
+          }
         </div>
       </div>
 
@@ -405,15 +419,25 @@ export async function audit(root) {
     button.textContent = 'Rendering…';
     try {
       // Rendered from the same document the hash was taken over, rather than
-      // from whatever a browser's print pipeline makes of the page.
-      const { filename } = await api.download(`/v1/projects/${projectId}/exports/report.pdf`, { audience: 'ADJUDICATOR' });
-      toast('Report downloaded', `${filename} — branded, hashed and recorded as an export`, 'ok');
+      // from whatever a browser's print pipeline makes of the page. Both forms
+      // come off that one document, so the Word file and the PDF carry the same
+      // content hash and are the same instrument.
+      const format = document.getElementById('report-format')?.value ?? 'PDF';
+      const { filename } = await api.download(`/v1/projects/${projectId}/exports/report.pdf`, {
+        audience: 'ADJUDICATOR',
+        format,
+      });
+      toast(
+        'Report downloaded',
+        `${filename} — branded, hashed and recorded as an export${quote ? `. ${quote.chargeMinor} ACUs charged.` : ''}`,
+        'ok',
+      );
     } catch (error) {
       if (error.code === 'EXPORT_NOT_ENTITLED') toast('Not on this plan', error.message, 'warn');
       else toast('Could not render', error.message, 'err');
     }
     button.disabled = false;
-    button.textContent = 'Download report PDF';
+    button.textContent = 'Download report';
   });
 
   document.getElementById('export')?.addEventListener('click', async (event) => {

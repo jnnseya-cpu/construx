@@ -145,6 +145,7 @@ import { unsubscribePage, verificationPage } from '../messaging/render.ts';
 import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
 import { lockedSubjects } from '../identity/lockout.ts';
+import { renderAndCharge, quoteRender, type RenderableFormat } from '../export/render.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
 import { FIELD_FORBIDDEN_EVENTS } from '../field/sync.ts';
 import { estateBurn } from '../billing/burn.ts';
@@ -12307,31 +12308,57 @@ export const ROUTES: Route[] = [
     },
   },
   {
+    method: 'GET',
+    pattern: '/v1/exports/render-quote',
+    description: 'What taking one document out costs, in either form, before anybody presses anything',
+    handler: (platform, ctx) => {
+      // Quoted before the control is offered, exactly as an AI command is. The
+      // rule that nothing spends a tenancy's balance without showing the price
+      // first does not stop being true because the work happens locally.
+      const quote = quoteRender(platform.wallet(auth(ctx).tenantId));
+      return {
+        ...quote,
+        // One price for both. A Word file and a PDF are the same instrument off
+        // the same document, and charging by file extension would push people
+        // towards the form that suits the bill rather than the job.
+        formats: ['PDF', 'DOCX'],
+        because:
+          'A rendered document carries your branding, your client\'s name and the attestation hash, and it is the ' +
+          'artefact a dispute is argued over. It is metered like any other output.',
+      };
+    },
+  },
+  {
     method: 'POST',
     pattern: '/v1/projects/:projectId/exports/report.pdf',
     binary: true,
-    description: 'The same report as a PDF file, rendered from the document that was hashed',
+    description: 'The report as a file — a fixed PDF to issue, or an editable Word document to be marked up',
     schema: {
       type: 'object',
       properties: {
         audience: { type: 'string', enum: ['INTERNAL', 'CLIENT', 'SUPPLIER', 'REGULATOR', 'INSURER', 'ADJUDICATOR', 'COURT'] },
+        // The customer's choice, per document. Both come off the same
+        // `ExportDocument`, so they carry the same content hash.
+        format: { type: 'string', enum: ['PDF', 'DOCX'] },
       },
       additionalProperties: false,
     },
     handler: (platform, ctx) => {
-      const { audience } = body<{ audience?: ExportAudience }>(ctx);
+      const { audience, format } = body<{ audience?: ExportAudience; format?: RenderableFormat }>(ctx);
       const actor = auth(ctx);
+      const chosen: RenderableFormat = format ?? 'PDF';
       const document = platform.exports.projectReport(actor, ctx.params.projectId as string, {
         audience: actor.roles.includes('REGULATOR') ? 'REGULATOR' : (audience ?? 'CLIENT'),
-        format: 'PDF',
+        format: chosen,
         correlationId: ctx.correlationId,
       });
 
-      return {
-        contentType: 'application/pdf',
-        filename: `${document.reference}.pdf`,
-        bytes: platform.exports.toPdf(document),
-      };
+      return renderAndCharge(
+        platform.wallet(actor.tenantId),
+        document,
+        { format: chosen, projectId: ctx.params.projectId as string, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
     },
   },
   {
@@ -12343,6 +12370,7 @@ export const ROUTES: Route[] = [
       type: 'object',
       properties: {
         audience: { type: 'string', enum: ['INTERNAL', 'CLIENT', 'SUPPLIER', 'REGULATOR', 'INSURER', 'ADJUDICATOR', 'COURT'] },
+        format: { type: 'string', enum: ['PDF', 'DOCX'] },
       },
       additionalProperties: false,
     },
@@ -12352,30 +12380,35 @@ export const ROUTES: Route[] = [
       const { title, subtitle, blocks } = sitevisit.siteVisitReportBlocks(engineCtx, ctx.params.visitId as string);
 
       const actor = auth(ctx);
+      const asked = body<{ audience?: ExportAudience; format?: RenderableFormat }>(ctx);
+      const chosen: RenderableFormat = asked.format ?? 'PDF';
       const document = platform.exports.document(actor, projectId, {
         title,
         subtitle,
         blocks,
-        audience: actor.roles.includes('REGULATOR') ? 'REGULATOR' : (body<{ audience?: ExportAudience }>(ctx).audience ?? 'INTERNAL'),
+        audience: actor.roles.includes('REGULATOR') ? 'REGULATOR' : (asked.audience ?? 'INTERNAL'),
         correlationId: ctx.correlationId,
       });
 
-      return {
-        contentType: 'application/pdf',
-        filename: `${document.reference}.pdf`,
-        // The resolver, not the store: the renderer is handed a way to fetch
-        // one tenant's bytes by hash, and never the store itself. A photograph
-        // the platform does not hold — still on a device, or aged out under the
-        // retention policy — comes back undefined and the page says so.
-        bytes: platform.exports.toPdf(document, (hash) => {
-          try {
-            const held = platform.evidence.get(actor.tenantId, hash);
-            return { mime: held.contentType, bytes: held.bytes };
-          } catch {
-            return undefined;
-          }
-        }),
+      // The resolver, not the store: the renderer is handed a way to fetch one
+      // tenant's bytes by hash, and never the store itself. A photograph the
+      // platform does not hold — still on a device, or aged out under the
+      // retention policy — comes back undefined and the page says so.
+      const resolveImage = (hash: string) => {
+        try {
+          const held = platform.evidence.get(actor.tenantId, hash);
+          return { mime: held.contentType, bytes: held.bytes };
+        } catch {
+          return undefined;
+        }
       };
+
+      return renderAndCharge(
+        platform.wallet(actor.tenantId),
+        document,
+        { format: chosen, projectId, userId: actor.actorId, resolveImage },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
     },
   },
   // --------------------------------------------- reading the tender documents (T-WF-02)
