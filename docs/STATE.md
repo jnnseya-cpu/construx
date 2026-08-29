@@ -10276,3 +10276,67 @@ and the attestation hash, and it is the artefact a dispute is argued over.
   and the balance, and the Golden Thread screen shows it beside the format
   chooser — the rule that nothing spends a balance without showing the cost
   first does not stop being true because the work is local.
+
+### An incoming tender on the demonstration, and a chain defect found doing it
+
+The demonstration could show a contractor **buying** — twenty-six events of
+take-off, estimate, RFQ, evaluation and award to subcontractors, all on
+Ashworth. It could not show a business **receiving a client's invitation and
+responding to it**, because nothing ever exercised that half. A fleet run on
+the tender project bore it out: thirty agents active, three findings, zero
+proposals.
+
+Calderdale now carries the front half: an opportunity registered off the AMP8
+civils framework, qualified on the ten factors at **76% — BID**, and a bid
+decision taken with its conditions ("drawdown window confirmed in writing
+before the return", "valve gallery carried as a provisional sum"), followed by
+the invitation as it arrived — reference, issue date, return deadline in its
+stated time zone, clarification deadline, site visit, and the five documents
+the transmittal contained.
+
+The estimating and procurement registers stay empty. That was already a
+deliberate decision and it still is: this is the project somebody puts the
+first record into. What was missing was the *reason* it exists — a project
+sitting at TENDER with no invitation behind it is a tender nobody was invited
+to.
+
+**`AGT-TENDER-INTEL` could not raise a finding, and nothing said so.** Its only
+branch read `analysis.missingInformation` — a field `analyseITT` has never
+written, absent from `domain/itt.ts` entirely. The read returned `undefined`,
+the length check fell through, and an agent with a HIGH ACU tier and four named
+approvers was structurally incapable of ever speaking. A silent agent and an
+agent with nothing to report are indistinguishable from outside, which is why
+it survived.
+
+It now reads what the analysis carries and answers what a bid manager asks
+first: terms that are a **bar** rather than a negotiation, mandatory
+requirements with no evidence behind them, whether the thing is priceable at
+all, the questions that must reach the buyer before the clarification deadline,
+and the exposure as a figure. Both forms of the original defect — the agent
+going silent, and the agent reading a field that does not exist — now fail a
+test.
+
+**A chain divergence in `analyseITT`, found and not fixed.**
+
+Seeding the compliance matrix put a permanently diverged chain into the
+demonstration, so it is not seeded. The defect is real and reproducible:
+
+- `ITT_ANALYSED` fails `replayProject` with "Chain hash does not match
+  recomputed value", and the assurance sweep reports the project diverged.
+- It reproduces with a full `CommercialTerms` — bond, retention, damages with a
+  cap, design liability — against a contract value in the hundreds of millions.
+  Sparse terms are fine, and every field added on its own is fine.
+- It is not the state: the event body round-trips through JSON to an identical
+  canonical form, and `undefined` values inside nested arrays canonicalise
+  identically.
+- It is not the linkage: the event's `previousChainHash` equals the ledger head
+  it was written against, and the mismatch is present the instant `commit`
+  returns.
+- The ledger's `chainBody` and the replay's body extraction are byte-identical
+  code, which is what makes this worth someone's full attention rather than a
+  patch.
+
+**Nothing was changed to work around it.** The demonstration carries the
+invitation and not its analysis, because a screen with one fewer panel is a
+smaller untruth than a diverged chain on a platform whose central claim is that
+the chain verifies.

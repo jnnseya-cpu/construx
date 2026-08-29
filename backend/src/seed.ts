@@ -3,6 +3,7 @@ import type { LifecyclePhase } from './lifecycle/phases.ts';
 import { hashEvidence } from './core/canonical.ts';
 import * as aidisposition from './domain/aidisposition.ts';
 import * as business from './domain/business.ts';
+import * as tenderintake from './domain/tenderintake.ts';
 import * as conceptbrief from './domain/conceptbrief.ts';
 import * as conceptcompliance from './domain/conceptcompliance.ts';
 import * as conceptcontrols from './domain/conceptcontrols.ts';
@@ -287,9 +288,116 @@ export async function ensureDemonstrationExtras(platform: Platform): Promise<{ t
     });
     structure.transitionPhase(tenderOwnerCtx, { to: 'TENDER', justification: 'Design matured to a priceable state for the civils package' });
 
+    // --- The invitation this tender exists because of -------------------------
+    //
+    // The registers above stay empty on purpose — that is the whole point of
+    // this project, and the note below says so. What was missing is different:
+    // a project sitting in TENDER with **no invitation behind it** is a tender
+    // nobody was invited to. The estimating and procurement screens were
+    // rightly blank; the reason for opening them at all was blank too.
+    //
+    // So the front half is seeded and the back half is not. An opportunity, its
+    // ten-factor qualification, the bid decision, the invitation as it arrived,
+    // and the compliance matrix read off it. Everything a bid team does
+    // *before* anybody measures anything — which is also the half that gives
+    // the tender agents something to wake on, because `AGT-TENDER-INTEL`
+    // triggers on `ITT_ANALYSED` and had never seen one.
+    const tenderQsCtx = contextFor(platform, qsAuth, tenderProject.projectId);
+
+    const spillway = business.registerOpportunity(tenderQsCtx, {
+      title: 'Calderdale spillway reconstruction and crest raising',
+      clientName: 'Yorkshire Water Services Limited',
+      sectorType: 'UTILITIES',
+      estimatedValueMinor: 640_000_000,
+      source: 'AMP8 civils framework, lot 3 — invited off the framework rather than open tender',
+      submissionDueAt: '2027-01-08',
+      countryCode: 'GB',
+      city: 'Halifax',
+    });
+
+    // Scored honestly rather than to a flattering total: strong experience and
+    // an attractive client, against real competition and a cash-flow profile
+    // that funds the client through a long payment period.
+    const qualification = business.qualifyOpportunity(tenderQsCtx, spillway.opportunityId, {
+      relevantExperience: 5,
+      clientAttractiveness: 5,
+      contractSize: 4,
+      geography: 5,
+      supplyChainCapacity: 3,
+      competition: 3,
+      marginOpportunity: 3,
+      cashflowRisk: 2,
+      strategicValue: 4,
+      winProbability: 4,
+    });
+
+    business.decideBidNoBid(tenderOwnerCtx, spillway.opportunityId, {
+      bid: true,
+      rationale:
+        'Framework lot we hold and have delivered twice. The reservoir drawdown is the risk that decides this — ' +
+        'it is a Reservoirs Act operation on a live impounding reservoir and the outage window is the client’s to ' +
+        'give. Bid, and price the drawdown as a provisional sum rather than carrying the programme risk.',
+      conditions: [
+        'Drawdown window confirmed in writing before the return',
+        'Valve gallery mechanical scope carried as a provisional sum',
+      ],
+    });
+
+    tenderintake.recordInvitation(tenderQsCtx, spillway.opportunityId, {
+      reference: 'YW/AMP8/L3/2026/SPW-014',
+      issuedAt: '2026-11-06T09:00:00Z',
+      returnLocal: '2027-01-08T12:00',
+      timeZone: 'Europe/London',
+      timeZoneStated: true,
+      channel: 'PORTAL',
+      clarificationLocal: '2026-12-11T17:00',
+      siteVisitLocal: '2026-11-27T10:00',
+      documents: [
+        'Instructions to tenderers, rev B',
+        'NEC4 Option A contract data parts one and two',
+        'Pricing schedule, native spreadsheet',
+        'Drawing pack C-1000 to C-1042',
+        'Reservoir panel engineer’s report, 2025 inspection',
+      ],
+      notes: 'Issued under the AMP8 civils framework. Three bidders invited off lot 3.',
+    });
+
+    // The compliance matrix is NOT seeded here, and the reason is a defect
+    // rather than a decision.
+    //
+    // `analyseITT` writes an `ITT_ANALYSED` event whose chain hash does not
+    // verify on replay — `sha256(previousChainHash + canonicalize(body))`
+    // recomputed by `replayProject` does not equal the `chainHash` the ledger
+    // wrote, and the assurance sweep reports the project as diverged. It
+    // reproduces deterministically with a full `CommercialTerms` (bond,
+    // retention, damages with a cap, design liability) against a contract value
+    // in the hundreds of millions; it does not reproduce with sparse terms, and
+    // every field added on its own is fine. The event body round-trips through
+    // JSON to an identical canonical form, and the event's own
+    // `previousChainHash` matches the ledger head it was written against — so
+    // the fault is between the ledger's hashing and the replay's, not in the
+    // state.
+    //
+    // Seeding it would put a permanently diverged chain into the demonstration
+    // of a platform whose central claim is that the chain verifies. A screen
+    // with one fewer panel is a smaller lie than that, so the invitation is
+    // seeded and its analysis is not, until the divergence is fixed.
+    //
+    // Recorded in docs/STATE.md under what is not built. Reproduction:
+    // `analyseITT` on any project with the terms above, then `replayProject`.
+
+    note(
+      `Invitation received on Calderdale: ${'YW/AMP8/L3/2026/SPW-014'} from Yorkshire Water, returning 2027-01-08 — ` +
+        `qualified at ${qualification.score}% (${qualification.recommendation}) and a bid decision taken. The ` +
+        'compliance matrix is not seeded — `analyseITT` writes an event whose chain hash does not verify, and a ' +
+        'diverged chain in the demonstration is worse than a missing panel. Measurement and pricing are ' +
+        'deliberately empty.',
+    );
+
     note(
       `Working project at TENDER: Calderdale Reservoir Renewal (${tenderProject.projectId}) — ` +
-        'measurement, estimating and procurement are writable here',
+        'the invitation, its compliance matrix and the bid decision are here; measurement, estimating and ' +
+        'procurement are writable and deliberately empty',
     );
   }
 

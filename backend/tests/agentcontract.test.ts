@@ -5,6 +5,10 @@ import { LIFECYCLE_AGENTS } from '../src/agents/lifecycle.ts';
 import { EVENT_TYPES } from '../src/goldenthread/eventTypes.ts';
 import { LIFECYCLE_ORDER } from '../src/lifecycle/phases.ts';
 import { AUTONOMY_LADDER } from '../src/agents/types.ts';
+import { runAgentsForChanges } from '../src/agents/runtime.ts';
+import { Platform } from '../src/platform.ts';
+import { seedDemoProject } from '../src/seed.ts';
+import * as itt from '../src/domain/itt.ts';
 
 /**
  * The Agent Contract, held to what the specification requires.
@@ -187,5 +191,91 @@ describe('an agent that cannot see its inputs is declared, not deployed', () => 
       if (agent.deployment === 'DECLARED') continue;
       assert.equal(typeof agent.evaluate, 'function', `${agent.agentId} is deployed with nothing to run`);
     }
+  });
+});
+
+/**
+ * An agent that reads a field nothing writes.
+ *
+ * `AGT-TENDER-INTEL` was declared, triggered on `ITT_ANALYSED`, given a HIGH
+ * ACU tier and four named approvers — and its only branch read
+ * `analysis.missingInformation`, which `analyseITT` has never written. The read
+ * returned `undefined`, the length check fell through, and the agent was
+ * structurally incapable of ever producing a finding. It looked alive in the
+ * fleet register and in every run report, because a silent agent and an agent
+ * with nothing to report are indistinguishable from the outside.
+ *
+ * The general form of that defect is what this guards: **an agent's evaluate
+ * must read fields the record actually carries.** A typo, a renamed field, or a
+ * field that was planned and never built all produce the same silence, and
+ * silence is the one failure mode a fleet cannot report on itself.
+ */
+describe('an agent reads fields that exist', () => {
+  it('gives the tender analyst something to say about a barred tender', async () => {
+    // The seeded invitation carries a term the business does not accept and a
+    // weighting table that does not add up. An agent whose stated purpose is
+    // "states the scope, the risk and whether the job is worth chasing" has to
+    // react to that, or it is furniture.
+    const platform = new Platform();
+    const seed = await seedDemoProject(platform);
+    const tender = platform.ledger
+      .listByTenant(seed.tenantId, 'Project')
+      .map((record) => record.state)
+      .find((project) => project.phase === 'TENDER') as { id: string; phase: string } | undefined;
+    assert.ok(tender, 'the demonstration has no project at tender');
+
+    // The analysis is produced here rather than taken from the seed. The
+    // demonstration deliberately does not carry one — `analyseITT` writes an
+    // event whose chain hash does not verify on replay, so seeding it would put
+    // a diverged chain into the demonstration (see docs/STATE.md). The agent's
+    // behaviour is still testable: the defect is in how the event hashes, not
+    // in the analysis it produces.
+    itt.analyseITT(platform.context(seed.users.qs!.auth, tender.id), {
+      reference: 'YW/AMP8/L3/2026/SPW-014',
+      clientName: 'Yorkshire Water Services Limited',
+      returnBy: '2027-01-08',
+      estimatedValueMinor: 640_000_000,
+      durationWeeks: 128,
+      requirements: [
+        {
+          reference: 'SQ 4.1',
+          category: 'INSURANCE',
+          requirement: 'Public liability insurance of not less than £10,000,000 per occurrence.',
+          mandatory: true,
+          evidenceRequired: 'Certificate of insurance',
+        },
+      ],
+      terms: {
+        contractForm: 'NEC4 Option A with Z-clauses',
+        designLiability: 'FITNESS_FOR_PURPOSE',
+        parentCompanyGuaranteeRequired: true,
+      },
+    });
+
+    const analysis = platform.ledger.listByTenant(seed.tenantId, 'ITTAnalysis').map((r) => r.state).at(-1);
+    assert.ok(analysis, 'the invitation was not analysed');
+
+    // The fields the agent reads, asserted to exist on the record it reads them
+    // from. This is the assertion that would have caught the original defect.
+    for (const field of ['bars', 'mandatoryGaps', 'clarifications', 'readyToPrice', 'quantifiedExposureMinor']) {
+      assert.ok(field in analysis, `ITTAnalysis carries no "${field}" — the tender analyst reads it`);
+    }
+
+    const report = await runAgentsForChanges(platform.context(seed.users.qs!.auth, tender.id), new Date());
+    const intel = report.agents.find((entry) => entry.agent === 'tender-intel');
+
+    assert.ok(intel, 'the tender analyst was not woken by ITT_ANALYSED');
+    assert.equal(intel.skipped, undefined, 'the tender analyst was skipped on a tender project');
+    assert.ok(
+      intel.findings > 0,
+      'the tender analyst read an invitation with a barred term and had nothing to say',
+    );
+
+    // And it names the bar rather than reporting a count.
+    const raised = report.proposals.map((proposal) => String(proposal.finding?.summary ?? ''));
+    assert.ok(
+      raised.some((summary) => /does not accept/.test(summary)),
+      'the barred term was not named',
+    );
   });
 });

@@ -521,27 +521,122 @@ const tenderIntelAgent: AgentDefinition = {
     approvers: ['OWNER', 'EPC', 'COMMERCIAL_MANAGER', 'PROJECT_DIRECTOR'],
     maxUnattended: 'OBSERVE',
   },
+  /**
+   * This agent could not raise a finding, and nothing said so.
+   *
+   * Its only branch read `analysis.missingInformation`, which `analyseITT` has
+   * never written — the field does not appear anywhere in `domain/itt.ts`. So
+   * the read returned `undefined`, the length check fell through to `empty`,
+   * and an agent declared, triggered on `ITT_ANALYSED`, given a HIGH ACU tier
+   * and an approver list was structurally incapable of ever saying anything.
+   * It looked alive in the fleet register and in every run report, because a
+   * silent agent and an agent with nothing to report are indistinguishable
+   * from the outside.
+   *
+   * What the analysis actually carries is the answer to the two questions a
+   * bid manager asks first, and they are now what this reports:
+   *
+   * **A barred term ends the bid before pricing starts.** `analyseITT`
+   * classifies terms as BAR, SEVERE, MATERIAL or ROUTINE, and a BAR is not a
+   * negotiation — it is fitness-for-purpose design liability on a job the
+   * business insures for reasonable skill and care, or unlimited consequential
+   * loss. Finding that out at settlement is finding out too late.
+   *
+   * **A mandatory requirement with no evidence behind it is a disqualification
+   * waiting to happen.** Not a scored weakness — a pass/fail the business
+   * fails, and the bid cost is spent before anybody reads the price.
+   *
+   * The clarifications are reported at ATTENTION rather than URGENT because
+   * they have a deadline of their own that is earlier than the return, and
+   * missing that deadline is what turns a question into a qualification.
+   */
   evaluate(ctx) {
-    const analyses = states(ctx, 'ITTAnalysis');
-    const analysis = analyses.at(-1);
+    const analysis = states(ctx, 'ITTAnalysis').at(-1);
     if (!analysis) return empty;
 
-    const gaps = (analysis.missingInformation as string[] | undefined) ?? [];
-    if (gaps.length === 0) return empty;
+    const reference = String(analysis.reference ?? 'the invitation');
+    const bars = (analysis.bars as string[] | undefined) ?? [];
+    const mandatoryGaps = (analysis.mandatoryGaps as Array<{ reference?: unknown }> | undefined) ?? [];
+    const clarifications = (analysis.clarifications as string[] | undefined) ?? [];
+    const exposureMinor = Number(analysis.quantifiedExposureMinor ?? 0);
+    const findings = [];
 
-    return {
-      findings: [
+    if (bars.length > 0) {
+      findings.push(
         finding(
-          'tender-intel:missing-information',
+          'tender-intel:barred-terms',
           'URGENT',
-          `The invitation is missing ${gaps.length} item(s) needed to price it: ${gaps.slice(0, 3).join('; ')}.`,
-          'Pricing around a gap is pricing a guess. Every one of these is either a clarification before the return or a qualification on it.',
+          `${reference} carries ${bars.length} term(s) this business does not accept: ${bars.join('; ')}.`,
+          'A bar is not a negotiation. Either it is struck out before the return or the bid is a no-bid, and the ' +
+            'cost of finding that out at settlement is the whole bid.',
           cite(ctx, 'ITTAnalysis', 'ITT analysis'),
-          0.85,
+          0.9,
         ),
-      ],
-      proposals: [],
-    };
+      );
+    }
+
+    if (mandatoryGaps.length > 0) {
+      const named = mandatoryGaps
+        .map((gap) => String(gap.reference ?? ''))
+        .filter(Boolean)
+        .slice(0, 4);
+      findings.push(
+        finding(
+          'tender-intel:mandatory-gaps',
+          'URGENT',
+          `${mandatoryGaps.length} mandatory requirement(s) have no evidence behind them${named.length > 0 ? `: ${named.join(', ')}` : ''}.`,
+          'These are pass/fail. A bid that fails one is disqualified before anybody opens the price, and the bid ' +
+            'cost is spent either way.',
+          cite(ctx, 'ITTAnalysis', 'ITT analysis'),
+          0.9,
+        ),
+      );
+    }
+
+    if (analysis.readyToPrice === false && bars.length === 0 && mandatoryGaps.length === 0) {
+      // Not priceable, and not for either reason above — worth saying on its
+      // own rather than leaving somebody to infer it from a quiet screen.
+      findings.push(
+        finding(
+          'tender-intel:not-priceable',
+          'ATTENTION',
+          `${reference} is not yet in a state that can be priced.`,
+          'The compliance matrix names what is outstanding. Pricing around a gap is pricing a guess.',
+          cite(ctx, 'ITTAnalysis', 'ITT analysis'),
+          0.8,
+        ),
+      );
+    }
+
+    if (clarifications.length > 0) {
+      findings.push(
+        finding(
+          'tender-intel:clarifications',
+          'ATTENTION',
+          `${clarifications.length} question(s) should go to the buyer before the return: ${clarifications.slice(0, 3).join('; ')}.`,
+          'The clarification deadline falls before the return. A question asked after it becomes a qualification ' +
+            'on the bid, which buyers are entitled to disregard.',
+          cite(ctx, 'ITTAnalysis', 'ITT analysis'),
+          0.8,
+        ),
+      );
+    }
+
+    if (exposureMinor > 0 && findings.length > 0) {
+      findings.push(
+        finding(
+          'tender-intel:quantified-exposure',
+          'ATTENTION',
+          `The terms carry £${Math.round(exposureMinor / 100).toLocaleString()} of quantified exposure against this tender.`,
+          'Damages, bond and retention priced as a number rather than described as a risk, so it can be set ' +
+            'against the margin the job is expected to carry.',
+          cite(ctx, 'ITTAnalysis', 'ITT analysis'),
+          0.75,
+        ),
+      );
+    }
+
+    return { findings, proposals: [] };
   },
 };
 
