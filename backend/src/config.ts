@@ -724,31 +724,28 @@ export const config = {
      * The company's required profit on every AI transaction, as a percentage
      * of what the provider charged.
      *
-     * 100 means the platform keeps at least as much as it paid out — it never
-     * takes less than double what a call cost it. This is a floor and a
-     * business rule, not the price: the price is `markupMultiplier`, and at 5x
-     * the realised profit is 400% of cost, well above the requirement.
+     * 400 means £1 of provider cost must produce £5 of revenue — the business
+     * rule as stated, expressed as the profit it requires rather than as a bare
+     * multiplier so the rule reads as the rule. A number called
+     * `minimumMultiplier` invites somebody to tune it without asking what
+     * profit it leaves.
      *
-     * **Kept below the price on purpose, and this is not a rounding of the
-     * business rule.** When the rate moved to 5× the obvious move was to raise
-     * this to 400 so the floor and the price coincided. That silently deletes
-     * a customer protection: an execution that overruns its estimate is capped
-     * at the amount that was reserved and disclosed, *unless* honouring the cap
-     * would sell below this floor — see `settle` in `billing/acu.ts`. With the
-     * floor at the price, `floor === billed` on every overrun, the cap can
-     * never bite, and a customer shown £5 can be charged £7.50 with no ceiling.
+     * **The floor and the price now coincide at 5×, and that has a consequence
+     * worth stating rather than discovering.** `settle` capped an execution
+     * that overran its estimate at the amount reserved and disclosed, *unless*
+     * honouring the cap would sell below this floor. With the floor at the
+     * price, `floor === billed` on every settlement, so the cap is inert: an
+     * execution that costs more than its estimate is charged in full at 5× and
+     * the customer pays more than they were quoted.
      *
-     * So the two numbers answer different questions. The price is what the
-     * business charges: five times provider cost, £1 in produces £5. The floor
-     * is what stops an overrun being sold at a loss. Collapsing them costs the
-     * estimate cap and buys nothing, because nothing in the platform prices
-     * below 5× anyway — the bands are flat and `effectiveMultiplier` clamps.
-     *
-     * Expressed as a profit requirement rather than as a bare multiplier so
-     * the rule reads as the rule. A number called `minimumMultiplier` invites
-     * somebody to tune it without asking what profit it leaves.
+     * That is the rule as instructed — every £1 of provider cost produces £5,
+     * with no case in which it produces less — and the exposure it creates is
+     * handled by disclosure rather than by a silent discount: an overrun is
+     * named on the ledger entry, carried into the invoice line, and shows up in
+     * the operator's realised-multiplier view. Nothing about it is inferred
+     * from arithmetic after the fact.
      */
-    minimumProfitPercent: num('ACU_MINIMUM_PROFIT_PERCENT', 100),
+    minimumProfitPercent: num('ACU_MINIMUM_PROFIT_PERCENT', 400),
     /**
      * One ACU is one minor unit, so £1 buys 100 ACUs and $1 buys 100. Stated
      * as its own value rather than assumed, because a currency with a

@@ -75,21 +75,33 @@ application. Do not rebuild them.
    cannot be spent.
 
 The rule under all of them: **the company takes at least 100% profit on every
-AI transaction** — it never keeps less than it paid the provider.
+AI transaction** — 400%, which is the price: £1 of provider cost produces £5.
 `minimumProfitPercent` states it, and the multiplier floor is *derived* from it
-(`1 + pct/100 = 2×`) rather than configured beside it, so the rule and the
-arithmetic cannot drift apart. At the 5× price the realised profit is 400%,
-well clear of the floor.
+(`1 + pct/100 = 5×`) rather than configured beside it, so the rule and the
+arithmetic cannot drift apart.
 
-**The floor is kept below the price on purpose.** When the rate moved from 4× to
-5× the tidy-looking move was to raise the floor to 400% so the two coincided.
-That silently deletes a customer protection: an execution that overruns its
-estimate is capped at the amount reserved and disclosed, *unless* honouring the
-cap would sell below the floor. With the floor at the price, `floor === billed`
-on every overrun, the cap can never bite, and a customer shown £5 can be charged
-£7.50 with no ceiling. The two numbers answer different questions — the price is
-what the business charges, the floor is what stops an overrun being sold at a
-loss — and `economics.test.ts` now asserts they stay apart.
+**The floor is set at the price, by decision.** The rule is that £1 of provider
+cost produces £5 with no exceptions — no band, no bundle, no cap that could make
+it less — so `minimumProfitPercent` is 400 and `minimumMultiplier()` is 5.
+
+The consequence was raised before it was made and is recorded here rather than
+left to be discovered. `settle` capped an execution that overran its estimate at
+the amount reserved and disclosed, *unless* honouring the cap would sell below
+the floor. With the floor at the price, `floor === billed` on every settlement,
+so **the cap is inert**: a run that costs more than its estimate is charged for
+what it cost, and the customer pays more than they were quoted.
+
+That exposure is handled by disclosure rather than by a silent discount. An
+overrun is named on the ledger entry — what was quoted, what it cost, what was
+charged — carried into the invoice line, and visible in the operator's realised
+multiplier. `billing.test.ts` and `economics.test.ts` both assert the note,
+because with the cap gone it is the only thing standing between a customer and a
+surprise.
+
+The arithmetic in `settle` is left in its `max(min(billed, held), floor)` shape
+rather than simplified to `billed`: the shape is what shows a cap exists and
+what the floor does to it, and lowering the floor restores the cap without a
+code change.
 
 The realised figure is reported rather than assumed: every wallet snapshot
 carries `lifetimeProfitMinor` and `lifetimeProfitPercent`, so "are we hitting
@@ -7145,10 +7157,10 @@ Re-opening these is what caused churn before.
    one value, `ACU_MARKUP_MULTIPLIER`, and every test fixture derives its
    arithmetic from it, so the suite follows whichever number is set.
 
-   The **loss floor is separate and stays below the price**, at 100% profit.
-   It is not the price; it is what stops an execution that overruns its
-   estimate being sold at a loss, and raising it to meet the price would delete
-   the disclosed-hold cap that protects a customer from an overrun.
+   The **loss floor is the price**, at 400% required profit: no band, bundle or
+   cap may take a charge below 5×. The cost is the estimate cap — an overrun is
+   charged for what it cost rather than capped at the disclosed hold — and that
+   is handled by naming the overrun on the entry and the invoice line.
 6. **The interface never holds a rule the API does not publish.** Permission
    matrix and phase gates are fetched, not duplicated.
 7. **A denial is displayed as a denial.** Never as zero, never as empty.
@@ -9722,19 +9734,14 @@ the ACU bundle catalogue (£300 now buys 6,000 ACUs, £1,000 buys 20,000, £2,50
 buys 50,000). The volume band table is flat at 5× for the same reason it was
 flat at 4×: there is no rate below the headline anywhere in the platform.
 
-**One thing was nearly got wrong and is worth recording.** The tidy move was to
-raise `minimumProfitPercent` to 400 so the loss floor and the price coincided —
-"every £1 must produce £5" reads like a floor. It is not one, and setting it
-there deletes a customer protection. An execution that overruns its estimate is
-capped at the amount reserved and disclosed, *unless* honouring that cap would
-sell below the floor. With the floor at the price, `floor === billed` on every
-overrun, the cap can never bite, and a customer shown £5 can be charged £7.50
-with no ceiling. `billing.test.ts` caught it as a failing overrun cap.
-
-So the two numbers stay apart and answer different questions: the **price** is
-what the business charges, the **floor** is what stops an overrun being sold at a
-loss. `economics.test.ts` now asserts the floor stays strictly below the price,
-with the reason, so the collapse cannot be reintroduced as tidying.
+**The loss floor is the price too**, at 400% required profit: there is no case
+in which £1 of provider cost produces less than £5. That was queried before it
+was set, because it costs the estimate cap — `settle` capped an overrun at the
+disclosed hold unless the cap would sell below the floor, and with floor equal
+to price the cap can never win. Confirmed as intended, so an execution that
+costs more than its estimate is charged for what it cost and the entry says so
+in those words. Disclosure replaces the cap; `billing.test.ts` asserts the note
+rather than treating it as decoration.
 
 ### ACU tier metering, and the memory boundary
 

@@ -129,25 +129,42 @@ describe('rule 3 — provider cost is charged at 5x', () => {
   });
 
   it('derives the floor from the profit rule rather than from a loose constant', () => {
-    // Required profit of 100% means charging twice: 1 + 100/100. Changing the
-    // rule changes the floor by construction, so the two cannot drift apart.
-    assert.equal(config.billing.minimumProfitPercent, 100);
-    assert.equal(minimumMultiplier(), 2);
+    // Required profit of 400% means charging five times: 1 + 400/100. Changing
+    // the rule changes the floor by construction, so the two cannot drift apart.
+    assert.equal(config.billing.minimumProfitPercent, 400);
+    assert.equal(minimumMultiplier(), 5);
     assert.equal(profitPercent(100, 100 * minimumMultiplier()), config.billing.minimumProfitPercent);
   });
 
-  it('keeps the floor below the price, because the two answer different questions', () => {
-    // The price is what the business charges: 5×, £1 of provider cost produces
-    // £5. The floor is what stops an overrun being sold at a loss. Raising the
-    // floor to meet the price looks tidy and deletes a customer protection —
-    // an overrun is capped at the disclosed hold *unless* honouring the cap
-    // would sell below the floor, so with floor === price the floor equals the
-    // charge on every overrun, the cap never bites, and a customer shown £5 can
-    // be billed £7.50 with no ceiling.
-    assert.ok(
-      minimumMultiplier() < config.billing.markupMultiplier,
-      'the loss floor has been raised to the price, which removes the estimate cap',
-    );
+  it('sets the floor at the price, so there is no case that produces less than £5', () => {
+    // The rule as instructed, and the whole of it: £1 of provider cost produces
+    // £5, with no discount, no band and no cap that could make it less.
+    assert.equal(minimumMultiplier(), config.billing.markupMultiplier);
+    for (const spend of [0, 200_000, 1_000_000, Number.MAX_SAFE_INTEGER]) {
+      for (const incentive of [true, false]) {
+        assert.ok(
+          effectiveMultiplier(spend, incentive) >= minimumMultiplier(),
+          `spend ${spend} with incentive ${incentive} priced below the rule`,
+        );
+      }
+    }
+  });
+
+  it('charges an overrun in full, which is what the floor at the price means', () => {
+    // The consequence, asserted rather than left to be discovered. `settle`
+    // capped an execution at the amount reserved and disclosed unless the cap
+    // would sell below the floor. With the floor at the price the cap can never
+    // win, so a run that costs more than its estimate is charged for what it
+    // cost — and the entry has to say so, because that is the only thing
+    // standing between a customer and a surprise.
+    const wallet = new ACUWallet('tenant-1');
+    wallet.topUp(100_000);
+    const hold = wallet.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 100 });
+    const entry = wallet.settle(hold.holdId, 150, 'OPENAI');
+
+    assert.equal(entry.billedMinor, 150 * config.billing.markupMultiplier);
+    assert.ok(entry.billedMinor > hold.heldMinor, 'the estimate was not exceeded, so this proves nothing');
+    assert.match(String(entry.note), /above the estimate/i, 'an overrun was charged without being disclosed');
   });
 
   it('reports the profit it actually made on an account', () => {

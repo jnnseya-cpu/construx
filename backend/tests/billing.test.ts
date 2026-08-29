@@ -59,15 +59,24 @@ describe('ACU wallet', () => {
     assert.equal(w.snapshot().heldMinor, 0);
   });
 
-  it('caps a mild overrun at the amount reserved', () => {
-    // Estimate 100 raw, held at 5x = 500. Actual 150 raw would bill 750, so the
-    // cap bites and the customer pays the 500 they were shown. The platform
-    // still made 350 on a 150 cost, above what it paid out.
+  it('charges an overrun in full, and says so on the entry', () => {
+    // Estimate 100 raw, held at 5× = 500. Actual 150 raw bills 750, and 750 is
+    // what is charged: the profit floor is the price, so the cap at the
+    // disclosed hold can never win.
+    //
+    // This asserted the opposite until the floor moved. The rule is that £1 of
+    // provider cost produces £5 with no exceptions, so the customer pays for
+    // what the run actually cost rather than what it was estimated at — and
+    // the whole exposure that creates rests on the entry saying so, which is
+    // why the note is asserted rather than treated as decoration.
     const w = wallet();
     const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
     const entry = w.settle(hold.holdId, 150, 'OPENAI');
-    assert.equal(entry.billedMinor, hold.heldMinor, 'the customer is charged the disclosed hold, not more');
-    assert.ok(entry.billedMinor > entry.rawCostMinor, 'and the platform did not sell below cost');
+
+    assert.equal(entry.billedMinor, 150 * config.billing.markupMultiplier, 'an overrun is charged at the rate');
+    assert.ok(entry.billedMinor > hold.heldMinor, 'the charge did not exceed the estimate, so nothing overran');
+    assert.match(String(entry.note), /above the estimate/i, 'an overrun that is not disclosed is a surprise');
+    assert.match(String(entry.note), new RegExp(String(hold.heldMinor)), 'the note must name what was quoted');
   });
 
   it('will not honour the cap by selling below cost', () => {
@@ -81,8 +90,11 @@ describe('ACU wallet', () => {
      * demanding a long list produces exactly this, repeatably, for anybody who
      * noticed.
      *
-     * The cap now yields to the company's own profit floor: never below
-     * `minimumMultiplier` on the cost actually incurred.
+     * The cap yields to the company's own profit floor: never below
+     * `minimumMultiplier` on the cost actually incurred. Since the floor was
+     * raised to the price, that is every settlement rather than only the large
+     * overruns — but this case is the one the floor was written for, and it is
+     * kept as the case that must never regress whatever the floor is set to.
      */
     const w = wallet();
     const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
@@ -94,7 +106,7 @@ describe('ACU wallet', () => {
       profitPercent(entry.rawCostMinor, entry.billedMinor) >= config.billing.minimumProfitPercent,
       'an overrun was settled below the required profit',
     );
-    assert.match(String(entry.note), /profit floor/i, 'an overrun must say so on the entry');
+    assert.match(String(entry.note), /above the estimate/i, 'an overrun must say so on the entry');
   });
 
   it('refuses to settle the same hold twice', () => {

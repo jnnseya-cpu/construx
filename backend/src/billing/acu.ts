@@ -473,21 +473,27 @@ export class ACUWallet {
     const multiplier = effectiveMultiplier(this.monthRawSpendMinor(), this.#volumeIncentive);
     const billedMinor = Math.ceil(actualRawCostMinor * multiplier);
 
-    // An execution that overruns its estimate is capped at the held amount: the
-    // customer is never charged more than was reserved and disclosed.
+    // An execution that overruns its estimate was capped at the held amount, so
+    // the customer was never charged more than was reserved and disclosed —
+    // unless honouring the cap would sell below the company's own profit floor,
+    // in which case the floor won. The hold is sized from an *estimate*, and
+    // the estimator assumes output is a quarter of input; a request whose
+    // answer is much larger than its question costs several times the estimate,
+    // and capping there meant paying a provider more than the customer paid.
     //
-    // With one floor, and the floor is why this is not a plain `min`. The hold
-    // is sized from an *estimate*, and the estimator assumes output is a
-    // quarter of input. A request whose answer is much larger than its question
-    // — a short prompt against a schema demanding a long list — costs several
-    // times the estimate. Capping at the hold there meant paying a provider
-    // more than the customer was charged: a straight loss, larger the more the
-    // caller did it, and available to anybody who noticed.
+    // **The floor is now the price, so this cap no longer binds and that is
+    // deliberate.** The business rule is that £1 of provider cost produces £5,
+    // with no case in which it produces less, and `minimumProfitPercent` states
+    // it — so `floorMinor === billedMinor` on every settlement and the `min`
+    // against the hold can never win. The arithmetic is left exactly as it is
+    // rather than simplified to `billedMinor`: the shape is what shows that a
+    // cap exists and what the floor does to it, and lowering the floor below
+    // the price restores the cap without a code change, which is the property
+    // worth keeping.
     //
-    // So the cap holds unless honouring it would sell below the company's own
-    // profit floor, in which case the floor wins. That is the same rule the
-    // price is derived from, applied at the moment the real cost is known
-    // rather than only at the moment it was guessed.
+    // The exposure that creates is handled by disclosure, below: an overrun is
+    // named on the entry rather than left to be inferred by anybody who
+    // recomputes the arithmetic.
     const floorMinor = Math.ceil(actualRawCostMinor * minimumMultiplier());
     const chargedMinor = Math.max(Math.min(billedMinor, hold.heldMinor), floorMinor);
     const overran = chargedMinor > hold.heldMinor;
@@ -513,8 +519,9 @@ export class ACUWallet {
       ...(overran
         ? {
             note:
-              `Charged at the minimum profit floor: the execution cost ${actualRawCostMinor} against an ` +
-              `estimate held at ${hold.heldMinor}. Capping at the hold would have sold below cost.`,
+              `Charged above the estimate: the execution cost ${actualRawCostMinor} against an estimate held ` +
+              `at ${hold.heldMinor}, so ${chargedMinor} was charged rather than the ${hold.heldMinor} quoted. ` +
+              'AI is charged on what a run actually cost, and this one cost more than it was estimated at.',
           }
         : {}),
     }, -chargedMinor);
