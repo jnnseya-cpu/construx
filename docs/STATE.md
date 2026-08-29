@@ -10421,3 +10421,79 @@ bonding is facility committed rather than money at risk — but it is nowhere
 stated, and the headline is a financial figure on a record that already
 verifies. The panel now says which of the two it is showing; the arithmetic is
 untouched.
+
+### The AI reading of an invitation had no door
+
+`ITT_REQUIREMENTS` was built end to end on the platform side and could not be
+reached from the product. The prompt that tells the model to quote the document
+rather than summarise it, the response schema, `POST
+/v1/projects/:projectId/perception/itt`, the confirm branch that runs
+`analyseITT` and then `extractRequirements`, and `ittreading.test.ts` over all
+of it — and no page in `frontend/` ever called the route. The whole of "an ITT
+arrived, read it" existed in the platform and was absent from the console, while
+every invariant passed.
+
+**Why it passed.** The doors invariant treats the generated command catalogue as
+a door for any write, which is right for most writes: `GET /v1/commands`
+publishes the schema and the console renders a form from it, so the door and the
+rule come from one place. It is wrong for perception. Every one of these routes
+takes a single field, `hash` — the sha256 of a file the platform already holds —
+and a generated form asks for it in a text box. Nobody has an evidence hash to
+hand. The catalogue's door was a bricked-up arch.
+
+**The door.** "Read an invitation with AI" on Pipeline & Bids, which is where
+the bid team already works and where the tender board and the compliance
+matrices sit. It lists the invitation documents the project holds, reads one on
+a button, shows what the model read — reference, client, return date, the
+requirement table, its confidence, and what it says it left out and why — and
+then either confirms or rejects it. Confirming asks for the three figures no
+invitation states because none of them is about the buyer: what this business
+expects to price, over how long, at what margin. Every exposure in the matrix is
+computed against them, so they are asked rather than guessed.
+
+Three refusals, each with its own sentence, because collapsing them into one
+"unavailable" is how somebody spends an afternoon fixing the wrong thing:
+
+- **No project open.** A reading is filed against one; the panel says so.
+- **Wrong phase.** Taken from `blockedReason`, which reads the *published*
+  permission matrix and phase gates rather than a rule copied into the browser.
+  The panel then lists the projects the platform will accept a tender analysis
+  on and switches to one through the console's own project switcher.
+- **No multimodal provider.** The deployment's own words. An invitation is not
+  read at all rather than read badly and filed as fact — a fabricated
+  requirement is a bid disqualified.
+
+**A new invariant, in `doors.test.ts`.** Every perception task must be offered
+from a page that knows which files it can read, with no exemption list, and the
+readings must be spread across pages rather than gathered onto one — a drawing
+is read where drawings are managed, a photograph where the field is, an
+invitation where the bid team works, because the person holding the document is
+the person on that screen. All eight tasks pass; ITT was the only one missing.
+Both halves fail under mutation (removing the door, and moving it to another
+page).
+
+**`projectscope.test.ts` caught this work and was right to.** Pipeline & Bids is
+marked tenant-scoped because the bid pipeline exists before any project, and the
+reader is project-scoped. It is admitted as the second named exception, argued in
+the test: it degrades rather than crashes — with no project the panel renders a
+card saying so and makes no call, and every other call on the screen is
+tenant-scoped. The same test's notion of "guarded" was widened from `.catch(`
+alone to also recognise a `try` opened immediately above the call, because that
+is the idiom a *button* uses: there the refusal has to be shown to the person who
+pressed it, and `.catch(() => null)` would swallow the sentence the platform
+wrote for them. It still fails under mutation when a genuine guard is removed.
+
+**What was verified, and what was not.** The panel, both refusal states and the
+project switch were driven in a browser. The available branch — the evidence
+table, the draft, the requirement table and the confirm form — was driven with
+the capability response stubbed in the browser, so the rendering is real and the
+model is not: no key was used and nothing was sent to a provider. The extraction
+itself, and the confirm path through `analyseITT` and `extractRequirements`,
+are covered server-side by `ittreading.test.ts`. **A click against a live
+multimodal provider has not been exercised in this environment** and is not
+claimed.
+
+**The issuing side already exists** and is not part of this gap: `enquiry.ts`
+opens an enquiry against a package, composes and approves revisions, issues to a
+bidder list that refuses anyone unprequalified, and tracks who holds a superseded
+pack — with its door on the Procurement screen.

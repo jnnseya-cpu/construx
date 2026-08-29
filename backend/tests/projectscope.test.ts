@@ -52,8 +52,24 @@ function projectCalls(page: string): { total: number; unguarded: number } {
   const source = readFileSync(join(REPO_ROOT, 'frontend', 'pages', `${page}.js`), 'utf8');
   // `api.get(...)` / `api.post(...)` against a project path, up to the end of
   // that call. A guarded one carries `.catch(` before the statement ends.
-  const calls = [...source.matchAll(/api\.\w+\(\s*`\/v1\/projects\/\$\{[^`]*`[^\n]*/g)].map((m) => m[0]);
-  return { total: calls.length, unguarded: calls.filter((call) => !call.includes('.catch(')).length };
+  const lines = source.split('\n');
+  const calls: Array<{ text: string; index: number }> = [];
+  for (const [index, line] of lines.entries()) {
+    if (/api\.\w+\(\s*`\/v1\/projects\/\$\{/.test(line)) calls.push({ text: line, index });
+  }
+
+  // Two idioms handle a failed call, and both count.
+  //
+  // `.catch(` on the call itself is the one a page load uses, because a panel
+  // that cannot answer degrades to an empty state. A `try` opened immediately
+  // above is the one a button uses, because there the refusal has to be shown
+  // to the person who pressed it — `.catch(() => null)` would swallow the
+  // sentence the platform wrote for them. Recognising only the first would
+  // report the better-handled of the two as unguarded.
+  const guarded = (call: { text: string; index: number }): boolean =>
+    call.text.includes('.catch(') || (lines[call.index - 1] ?? '').trim() === 'try {';
+
+  return { total: calls.length, unguarded: calls.filter((call) => !guarded(call)).length };
 }
 
 describe('the navigation agrees with what the screens actually read', () => {
@@ -94,6 +110,23 @@ describe('the navigation agrees with what the screens actually read', () => {
         // degrades when there is none — that is the one screen that is
         // legitimately both. Named, so a second entry has to be argued for.
         if (entry.id === 'enterprise') return false;
+
+        // The second entry, argued. Pipeline & Bids is where a tender is
+        // worked before there is a project to work it on — that is the whole
+        // reason its commands are tenant-scoped, and it has to keep rendering
+        // for a tenancy with nothing built yet.
+        //
+        // One panel on it is project-scoped and cannot be anywhere else: the AI
+        // reading of an invitation is filed against a project, costs that
+        // project's tenancy, and is gated by that project's lifecycle phase.
+        // Putting it on a project screen instead would put it away from the
+        // people who hold the invitation, which is how it came to have no door
+        // at all for as long as it did.
+        //
+        // It is admitted here because it degrades rather than crashes: with no
+        // project the panel renders a card saying so and makes no call, and
+        // every other call on the screen is tenant-scoped.
+        if (entry.id === 'pipeline') return false;
         return projectCalls(entry.id).total > 0;
       });
 

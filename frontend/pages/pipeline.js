@@ -1,7 +1,7 @@
 import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
-import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, table } from '../lib/ui.js';
-import { blockedReason, can, draw } from '../app.js';
+import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, table, toast } from '../lib/ui.js';
+import { blockedReason, can, draw, openProject, phaseGates, state } from '../app.js';
 
 /**
  * Business development — the pipeline, and the discipline of refusing work.
@@ -73,6 +73,198 @@ const MATRIX_MEANING = {
   GAP: 'Nothing on file satisfies this',
   UNKNOWN: 'Not something the platform can check — somebody must',
 };
+
+/**
+ * The AI reading of an invitation, which had an engine and no door.
+ *
+ * `ITT_REQUIREMENTS` was built end to end on the platform side — the prompt
+ * that tells the model to quote rather than summarise, the response schema, a
+ * route, a confirm branch that runs `analyseITT` and `extractRequirements`, and
+ * tests over all of it. No page in the console called it. It was reachable only
+ * through the generated command catalogue, whose form asks for an evidence
+ * hash in a text box, which is not a door a bid manager can open.
+ *
+ * So the whole of "an ITT arrived, read it" was present in the platform and
+ * absent from the product. This is the door.
+ *
+ * **A reading is a draft, and stays one.** Confirming runs the same commands a
+ * person typing the requirements in by hand would reach — same authorisation,
+ * same ACU cost, same events. Rejecting keeps the reading in the record with
+ * the reason. Neither is a shortcut around the analyst.
+ */
+function ittReadingPanel({ perception, evidence, projectId, projectName, blocked, tenderProjects, invitationOptions }) {
+  // Three separate reasons this cannot run, and they need different sentences.
+  // Collapsing them into one "unavailable" is how somebody spends an afternoon
+  // fixing the wrong thing.
+  if (!projectId) {
+    return html`<div class="card" style="margin-bottom:14px">
+      <h2>Read an invitation with AI</h2>
+      <p class="metric-sub">
+        A reading is filed against a project, and no project is open. Open the one this tender is being bid from and
+        the reader appears here.
+      </p>
+    </div>`;
+  }
+
+  const available = perception?.capability?.available === true;
+  const published = new Map((perception?.capability?.tasks ?? []).map((entry) => [entry.task, entry]));
+  const ittTask = published.get('ITT_REQUIREMENTS');
+  const readable = (evidence?.entries ?? []).filter(
+    (entry) => entry.held && ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'].includes(entry.contentType ?? ''),
+  );
+  const drafts = (perception?.drafts ?? []).filter((d) => d.task === 'ITT_REQUIREMENTS' && d.status === 'DRAFT');
+
+  return html`
+    <div class="card pad0" style="margin-bottom:14px">
+      <div style="padding:15px 17px 0">
+        <h2>Read an invitation with AI</h2>
+        <p class="metric-sub" style="margin-bottom:12px">
+          The invitation as the buyer sent it — a PDF or a scan — read into a compliance matrix, a return register and
+          a commercial assessment. The model is told to quote the document rather than summarise it, to omit anything
+          it does not state rather than infer it, and to list what it left out and why. Nothing it reads reaches the
+          record on its own: a reading is a draft until somebody confirms it, and confirming runs the same commands as
+          typing it in by hand. Filed against <b>${projectName || projectId}</b>.
+        </p>
+
+        ${
+          blocked
+            ? html`<div class="notice warn" style="margin-bottom:12px">
+                <div>
+                  <b>Not here.</b> ${blocked}
+                  ${
+                    tenderProjects.length > 0
+                      ? html`<div style="margin-top:6px">
+                          Open a project the platform will accept a tender analysis on:
+                          ${tenderProjects.map(
+                            (p) => html`<button class="btn quiet sm" data-open-project="${p.id}" style="margin:3px 4px 0 0">${p.name}</button>`,
+                          )}
+                        </div>`
+                      : html`<div style="margin-top:6px">
+                          No project in this tenancy is at a phase where a tender may be analysed.
+                        </div>`
+                  }
+                </div>
+              </div>`
+            : ''
+        }
+
+        ${
+          !blocked && !available
+            ? html`<div class="notice warn" style="margin-bottom:12px">
+                <div>
+                  <b>Not available on this deployment.</b><br />${perception?.capability?.reason ?? ''}
+                  An invitation is not read here at all, rather than read badly and filed as fact — a fabricated
+                  requirement is a bid disqualified.
+                </div>
+              </div>`
+            : ''
+        }
+
+        ${
+          !blocked && available && ittTask && ittTask.available === false
+            ? html`<div class="notice warn" style="margin-bottom:12px">
+                <div><b>The reader is off for invitations on this deployment.</b><br />${ittTask.reason ?? ''}</div>
+              </div>`
+            : ''
+        }
+      </div>
+
+      ${
+        !blocked && available
+          ? table({
+              headers: ['The document', 'Type', 'Held since', ''],
+              rows: readable.slice(0, 12).map((entry) => [
+                entry.description,
+                html`<span style="font-size:11.5px;color:var(--text-3)">${entry.contentType}</span>`,
+                entry.recordedAt ? date(entry.recordedAt) : '—',
+                html`<button class="btn sm" data-read-itt="${entry.hash}">Read this invitation</button>`,
+              ]),
+              empty: evidence?.storeConfigured
+                ? 'No invitation document is held against this project yet. Upload the ITT as evidence and it appears here — a hash on its own cannot be read.'
+                : 'This deployment holds no evidence files, so there is nothing to read.',
+            })
+          : ''
+      }
+
+      ${
+        drafts.length > 0
+          ? html`<div style="padding:0 17px 15px">
+              <h2 style="margin-top:14px">What the AI read, awaiting a person</h2>
+              <p class="metric-sub" style="margin-bottom:10px">
+                Check it against the document before confirming. Confirming produces the compliance matrix and the
+                return register; rejecting keeps the reading and your reason in the record, because a reading that was
+                wrong is evidence about the reader.
+              </p>
+              ${drafts.map((draft) => {
+                const read = draft.extraction ?? {};
+                const requirements = read.requirements ?? [];
+                const deliverables = read.deliverables ?? [];
+                const omitted = read.omitted ?? read.omissions ?? [];
+                return html`<div class="card" style="margin-bottom:10px">
+                  <div class="split-list">
+                    <div class="row">
+                      <span class="lbl">Reference it read</span>
+                      <span class="val">${read.reference ?? html`<i style="color:var(--text-3)">not stated in the document</i>`}</span>
+                    </div>
+                    <div class="row">
+                      <span class="lbl">Client</span>
+                      <span class="val">${read.clientName ?? html`<i style="color:var(--text-3)">not stated</i>`}</span>
+                    </div>
+                    <div class="row">
+                      <span class="lbl">Returns by</span>
+                      <span class="val">${read.returnBy ?? html`<i style="color:var(--text-3)">not stated</i>`}</span>
+                    </div>
+                    <div class="row">
+                      <span class="lbl">Found</span>
+                      <span class="val">${requirements.length} requirement(s), ${deliverables.length} deliverable(s)</span>
+                    </div>
+                    <div class="row">
+                      <span class="lbl">Confidence</span>
+                      <span class="val">
+                        ${draft.confidence === undefined || draft.confidence === null ? '—' : pct(draft.confidence * 100)}
+                        ${draft.model ? badge(draft.model, '') : ''}
+                      </span>
+                    </div>
+                    ${
+                      Array.isArray(omitted) && omitted.length > 0
+                        ? html`<div class="row">
+                            <span class="lbl">It says it left out</span>
+                            <span class="val" style="font-size:12px;color:var(--text-3)">${omitted.map(String).join('; ')}</span>
+                          </div>`
+                        : ''
+                    }
+                  </div>
+                  ${
+                    requirements.length > 0
+                      ? table({
+                          headers: ['Ref', 'Category', 'Requirement', 'Mandatory', 'Weight', 'Evidence demanded'],
+                          align: ['', '', '', '', 'num', ''],
+                          rows: requirements.slice(0, 40).map((r) => [
+                            r.reference ?? '—',
+                            html`<span style="font-size:12px;color:var(--text-3)">${humanise(String(r.category ?? ''))}</span>`,
+                            r.requirement ?? '',
+                            r.mandatory === true ? badge('pass/fail', 'warn') : 'scored',
+                            r.weightingPercent === undefined || r.weightingPercent === null ? '—' : `${r.weightingPercent}%`,
+                            html`<span style="font-size:12px;color:var(--text-3)">${r.evidenceRequired ?? ''}</span>`,
+                          ]),
+                        })
+                      : ''
+                  }
+                  <div class="actions" style="margin-top:11px">
+                    <button class="btn" data-confirm-itt="${draft.id}"
+                      ${raw(invitationOptions.length === 0 ? 'disabled title="Record the invitation first — a reading is filed against one"' : '')}>
+                      Confirm and build the matrix
+                    </button>
+                    <button class="btn quiet" data-reject-itt="${draft.id}">Reject this reading</button>
+                  </div>
+                </div>`;
+              })}
+            </div>`
+          : ''
+      }
+    </div>
+  `;
+}
 
 function matrixDetail(analysis) {
   const gapRefs = new Set(analysis.mandatoryGaps.map((line) => line.reference));
@@ -228,6 +420,27 @@ export async function pipeline(root) {
     api.get('/v1/pipeline/analyses'),
   ]);
 
+  // The reader is project-scoped: a reading is filed against the project the
+  // tender is bid from, and it costs ACUs against that project's tenancy.
+  const projectId = state.session?.projectId;
+  const [perception, evidence] = projectId
+    ? await Promise.all([
+        api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
+        api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
+      ])
+    : [null, null];
+
+  // Why the reader cannot run here, in the platform's own words rather than a
+  // rule copied into the browser: `blockedReason` reads the published
+  // permission matrix and the published phase gates. Not tenant-scoped —
+  // unlike the commands on this screen, an analysis is written to a project and
+  // is gated by that project's lifecycle phase.
+  const readBlocked = blockedReason('ESTIMATE_TENDER', 'C');
+  const tenderPhases = phaseGates().ESTIMATE_TENDER ?? [];
+  const tenderProjects = (state.projects ?? []).filter(
+    (p) => tenderPhases.includes(p.phase) && p.id !== projectId,
+  );
+
   const run = radar?.run ?? null;
   const board = tenders.tenders ?? [];
   // The role list comes from the published matrix rather than a second copy in
@@ -326,6 +539,16 @@ export async function pipeline(root) {
             : ''
         }
       </div>
+
+      ${ittReadingPanel({
+        perception,
+        evidence,
+        projectId,
+        projectName: state.project?.name ?? '',
+        blocked: readBlocked,
+        tenderProjects,
+        invitationOptions,
+      })}
 
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Compliance matrices on file</h2>
@@ -706,6 +929,105 @@ export async function pipeline(root) {
   // Opening a matrix, from either the invitation it belongs to or the list of
   // every matrix on file. One handler, because both buttons are asking for the
   // same thing and a second path to it would be a second thing to keep right.
+  // The AI reading of an invitation: read it, then confirm or reject what it
+  // read. Written out per action rather than assembled from a variable, so each
+  // path is a quotable route the door invariant can see.
+  root.addEventListener('click', async (event) => {
+    const readIt = event.target.closest('[data-read-itt]');
+    if (readIt) {
+      readIt.disabled = true;
+      readIt.textContent = 'Reading…';
+      try {
+        await api.post(`/v1/projects/${projectId}/perception/itt`, { hash: readIt.dataset.readItt });
+        await draw();
+      } catch (error) {
+        // A refusal here is usually a true statement about the file, the
+        // deployment or the wallet, so it is shown as it was given.
+        toast('Not read', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
+        readIt.disabled = false;
+        readIt.textContent = 'Read this invitation';
+      }
+      return;
+    }
+
+    const confirmIt = event.target.closest('[data-confirm-itt]');
+    if (confirmIt) {
+      // Three figures the analyst needs and no invitation states, because none
+      // of them is about the buyer: what this business expects to price, over
+      // how long, and at what margin. Asked here rather than guessed, because
+      // every exposure figure in the matrix is computed against them.
+      const accepted = await command({
+        title: 'Confirm what the AI read',
+        intent:
+          'Confirming files the reading through the same commands as typing the requirements in by hand — the ' +
+          'analyst, its authorisation and its ACU cost are unchanged. The three figures below are not in the ' +
+          'invitation: an ITT states what the buyer wants, not what this business expects to price it at, and ' +
+          'every exposure in the matrix is set against them.',
+        path: () => `/v1/projects/${projectId}/perception/${confirmIt.dataset.confirmItt}/confirm`,
+        submitLabel: 'Confirm and build the matrix',
+        fields: [
+          {
+            name: 'invitationId',
+            label: 'Against which invitation',
+            type: 'select',
+            options: invitationOptions,
+            hint: 'The reading is filed against the invitation it came from.',
+          },
+          {
+            name: 'estimatedValue',
+            label: 'What we expect to price (£)',
+            type: 'number',
+            step: '1',
+            hint: 'The contract value this business is bidding, not the buyer’s published budget.',
+          },
+          { name: 'durationWeeks', label: 'Priced over (weeks)', type: 'number', step: '1' },
+          {
+            name: 'targetMarginPercent',
+            label: 'Target margin (%)',
+            type: 'number',
+            step: '0.1',
+            required: false,
+            hint: 'Left blank, the company profile’s own minimum is used.',
+          },
+        ],
+        transform: (v) => ({
+          invitationId: v.invitationId,
+          // Pounds in the form, minor units on the wire. Asking a bid manager
+          // for pennies is how a value lands two orders of magnitude out.
+          estimatedValueMinor: Math.round(Number(v.estimatedValue) * 100),
+          durationWeeks: Number(v.durationWeeks),
+          ...(v.targetMarginPercent ? { targetMarginPercent: Number(v.targetMarginPercent) } : {}),
+        }),
+      });
+      if (accepted) {
+        toast('Filed', 'The compliance matrix and the return register are on the record', 'ok');
+        await draw();
+      }
+      return;
+    }
+
+    const rejectIt = event.target.closest('[data-reject-itt]');
+    if (rejectIt) {
+      const reason = window.prompt('Why is this reading wrong? It stays in the record either way.');
+      if (!reason) return;
+      try {
+        await api.post(`/v1/projects/${projectId}/perception/${rejectIt.dataset.rejectItt}/discard`, { reason });
+        await draw();
+      } catch (error) {
+        toast('Not rejected', error.message, 'err');
+      }
+      return;
+    }
+
+    // Switching to a project the platform will accept a tender analysis on,
+    // through the console's own project switcher rather than a second one.
+    const openProjectButton = event.target.closest('[data-open-project]');
+    if (openProjectButton) {
+      await openProject(openProjectButton.dataset.openProject);
+      return;
+    }
+  });
+
   const detail = root.querySelector('#matrix-detail');
   root.addEventListener('click', async (event) => {
     const open = event.target.closest('[data-matrix]');

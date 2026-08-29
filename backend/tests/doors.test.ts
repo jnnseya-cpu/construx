@@ -26,7 +26,7 @@ import { ROUTES } from '../src/api/routes.ts';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-function consoleSource(): string {
+function consoleFiles(): string[] {
   const files: string[] = [];
   const walk = (directory: string): void => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -38,7 +38,11 @@ function consoleSource(): string {
     }
   };
   walk(join(REPO_ROOT, 'frontend'));
-  return files.map((file) => readFileSync(file, 'utf8')).join('\n');
+  return files;
+}
+
+function consoleSource(): string {
+  return consoleFiles().map((file) => readFileSync(file, 'utf8')).join('\n');
 }
 
 const writeRoutes = ROUTES.filter((route) => route.method !== 'GET' && route.public !== true);
@@ -198,5 +202,77 @@ describe('every command has a door', () => {
         `${route.pattern} is quotable only if it is project-scoped, or spends the platform's own wallet`,
       );
     }
+  });
+});
+
+/**
+ * A perception task with no curated door.
+ *
+ * The write-door test above is satisfied by the generated command catalogue,
+ * and for most writes that is the right answer: `GET /v1/commands` publishes
+ * the schema and the console renders a form from it, so the door and the rule
+ * come from one place.
+ *
+ * It is the wrong answer for perception. Every one of these routes takes a
+ * single field — `hash` — which is the sha256 of a file the platform already
+ * holds. A generated form asks for it in a text box. Nobody has an evidence
+ * hash to hand, so the catalogue's door is a door in the sense that a bricked-up
+ * arch is a door.
+ *
+ * That is not hypothetical. `ITT_REQUIREMENTS` was built end to end — the
+ * prompt, the response schema, the route, a confirm branch running `analyseITT`
+ * and `extractRequirements`, tests over all of it — and no page in the console
+ * ever called it. The whole of "an ITT arrived, read it" was present in the
+ * platform and absent from the product, and every existing invariant passed.
+ *
+ * So a perception task needs a page that lists the files it can read and offers
+ * a button against each. No exemption list: an entry here would be the drawer
+ * this test exists to empty.
+ */
+describe('every AI reading has a door somebody can open', () => {
+  const perceptionRoutes = ROUTES.filter((route) => /\/perception\/[a-z-]+$/.test(route.pattern));
+
+  it('has a route per published task, so this cannot pass by matching nothing', () => {
+    // The guard on the guard. Were the route shape to change, the filter above
+    // would quietly select zero routes and the assertion below would pass
+    // while every reader was doorless.
+    assert.ok(
+      perceptionRoutes.length >= 8,
+      `only ${perceptionRoutes.length} perception task routes matched — the filter no longer selects them`,
+    );
+  });
+
+  it('offers each one from a page that knows which files it can read', () => {
+    const source = consoleSource();
+    const doorless = perceptionRoutes.filter((route) => !pathPattern(route.pattern).test(source));
+
+    assert.equal(
+      doorless.length,
+      0,
+      `${doorless.length} AI readings can only be reached by pasting an evidence hash into a generated form:\n  ` +
+        doorless.map((r) => r.pattern).join('\n  '),
+    );
+  });
+
+  it('offers the reading beside the work it belongs to, not on one page for all of them', () => {
+    // A single "AI readings" screen would be the tidy answer and the wrong one.
+    // A drawing is read where drawings are managed, a site photograph where the
+    // field is, an invitation where the bid team works — because the person who
+    // has the document is the person on that screen, and a reading filed from
+    // somewhere else is a reading nobody checks against the document.
+    const pages = new Map<string, string[]>();
+    for (const file of consoleFiles()) {
+      const text = readFileSync(file, 'utf8');
+      const hits = perceptionRoutes.filter((route) => pathPattern(route.pattern).test(text));
+      if (hits.length > 0) pages.set(file, hits.map((r) => r.pattern));
+    }
+
+    assert.ok(pages.size >= 3, `AI readings are offered from ${pages.size} page(s); they belong beside their own work`);
+
+    // The invitation reader specifically, because it is the one that was
+    // missing and the one a bid team asks for by name.
+    const ittPage = [...pages.entries()].find(([, patterns]) => patterns.some((p) => p.endsWith('/perception/itt')));
+    assert.ok(ittPage, 'no console page reads an invitation to tender');
+    assert.match(ittPage[0], /pipeline\.js$/, 'the invitation reader belongs on the screen the bid team works from');
   });
 });
