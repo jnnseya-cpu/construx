@@ -10363,3 +10363,61 @@ The compliance matrix is now seeded on Calderdale — twelve requirements read o
 the instructions to tenderers, the full commercial terms, and the six-item
 return register with its internal dates. `sweep()` over the seeded estate
 reports **4 checked, 4 intact, 0 diverged**.
+
+### The compliance matrix has a screen
+
+A read-side gap, found while checking that the seeded matrix was worth seeding:
+`analyseITT` wrote a full compliance matrix into the ledger and returned it in
+the response body, and that was the only time anybody could see it. The record
+was hashed into the chain, woke `AGT-TENDER-INTEL`, and had no screen. A bid
+manager asking on the Monday which mandatory requirement had nothing behind it
+would have had to run the analysis again — spending AI budget to re-derive a
+record the platform already held, and writing a second `ITT_ANALYSED` event
+saying the same thing about the same invitation.
+
+**Two reads, matching the tender board beside them.** `analysisBoard` lists
+every matrix the tenancy holds, worst news on each row — mandatory gaps, bars,
+questions outstanding, quantified exposure and the worst term severity, so the
+list can be read at a glance. `complianceMatrix` returns one whole. Both are
+`ESTIMATE_TENDER` `R` at `COMMERCIAL_L3` and both are tenant-scoped: a matrix
+carries the buyer, the contract value and the exposure arithmetic, and is
+refused across a tenancy as "no such matrix" rather than "not yours", because
+the distinction is itself information about what another contractor is bidding.
+
+**Two fields are re-derived rather than widened into the event.** The stored
+state writes `mandatoryGaps` as references and does not write
+`weightings.declared` at all. Both are rebuilt from the matrix on read, by the
+same `declaredWeightings` helper `analyseITT` now uses on the way in — one rule,
+so the figure a reader sees months later is arrived at the way the analyst's
+was. Widening the event instead would have changed the shape of a record that
+already verifies, and would not have helped a single analysis already written.
+
+**On the Pipeline screen**, "Compliance matrices on file" lists them and the
+invitations table gained a Matrix column, so the analysis is reachable both from
+the list and from the invitation it describes. Opening one renders the whole
+thing: the four headline figures, any bar as a refusal rather than a row, every
+commercial term with its severity and what it means for this business, every
+requirement with an owner and a status, the buyer's marking scheme with whether
+it totals 100%, and the questions to put before the clarification deadline.
+
+`SATISFIED`, `GAP` and `UNKNOWN` are shown as three states with their meanings
+spelled out, not as a tick and a cross. `UNKNOWN` means the platform holds no
+probe for that requirement, which is not the same as holding one that found
+nothing — collapsing them would bury the real gaps under everything nobody
+automated.
+
+Verified in a browser against the seeded Calderdale matrix, not only in tests:
+twelve requirements, four SATISFIED from the company profile, the
+fitness-for-purpose clause named SEVERE with the PI limit it is measured
+against, weightings totalling 100%, and one clarification. Each new control was
+mutation-tested — dropping the authorisation, dropping the tenant check,
+widening the board past the tenancy, reading back every mandatory line instead
+of the gaps, and taking the mildest term as the worst all fail a test.
+
+**One thing was found and not changed.** A performance bond sets
+`exposureMinor` on its term but is not added to `quantifiedExposureMinor`, so
+the exposure column can total more than the headline. That looks deliberate —
+bonding is facility committed rather than money at risk — but it is nowhere
+stated, and the headline is a financial figure on a record that already
+verifies. The panel now says which of the two it is showing; the arithmetic is
+untouched.

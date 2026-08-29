@@ -2180,6 +2180,18 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => tenderintake.tenderPosition(tenantContext(platform, ctx), ctx.params.invitationId as string),
   },
   {
+    method: 'GET',
+    pattern: '/v1/pipeline/analyses',
+    description: 'Every compliance matrix on file, most recently analysed first',
+    handler: (platform, ctx) => itt.analysisBoard(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/pipeline/analyses/:analysisId',
+    description: 'One compliance matrix: every requirement with an owner and a status, and the terms assessed',
+    handler: (platform, ctx) => itt.complianceMatrix(tenantContext(platform, ctx), ctx.params.analysisId as string),
+  },
+  {
     method: 'POST',
     pattern: '/v1/pipeline/opportunities/:opportunityId/tenders',
     description: 'Record an invitation to tender and its deadline, in the zone the deadline is read in',

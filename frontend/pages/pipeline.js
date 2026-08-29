@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
-import { badge, date, html, humanise, money, pct, positionReport, raw, render, table } from '../lib/ui.js';
+import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, table } from '../lib/ui.js';
 import { blockedReason, can, draw } from '../app.js';
 
 /**
@@ -47,11 +47,173 @@ function timeZoneOptions() {
 
 const SEVERITY_TONE = { CRITICAL: 'bad', MAJOR: 'warn', MINOR: '' };
 
+/**
+ * The compliance matrix, read back.
+ *
+ * Producing the analysis wrote it to the ledger and put it in a response body,
+ * and that was the only time anybody saw it. The matrix that says which
+ * mandatory requirement has nothing behind it is the thing a bid manager opens
+ * on the Monday, so it is a screen rather than a return value — and rerunning
+ * the analysis to see it again would spend ACUs re-deriving a record the
+ * platform already holds.
+ */
+const TERM_TONE = { BAR: 'bad', SEVERE: 'bad', MATERIAL: 'warn', ROUTINE: '' };
+const MATRIX_TONE = { SATISFIED: 'ok', GAP: 'bad', UNKNOWN: 'warn' };
+
+/**
+ * A status is not a verdict.
+ *
+ * `UNKNOWN` means the platform holds no probe for this requirement, which is
+ * different from holding a probe that found nothing. Collapsing the two would
+ * bury the real gaps under everything nobody automated, so the distinction is
+ * carried through to the screen rather than flattened into a tick or a cross.
+ */
+const MATRIX_MEANING = {
+  SATISFIED: 'Evidenced from the company record',
+  GAP: 'Nothing on file satisfies this',
+  UNKNOWN: 'Not something the platform can check — somebody must',
+};
+
+function matrixDetail(analysis) {
+  const gapRefs = new Set(analysis.mandatoryGaps.map((line) => line.reference));
+
+  return html`
+    <div class="card pad0">
+      <h2 style="padding:15px 17px 0">
+        ${analysis.reference} · ${analysis.clientName}
+        ${analysis.readyToPrice ? badge('ready to price', 'ok') : badge('not ready to price', 'bad')}
+      </h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        Returns ${date(analysis.returnBy)}. Analysed ${date(analysis.analysedAt)} against
+        ${money(analysis.estimatedValueMinor)} over ${analysis.durationWeeks} weeks — every exposure below is computed
+        against those two figures, so a matrix read months later still shows what it was judged on.
+      </p>
+
+      <div class="grid g4" style="padding:13px 17px 0">
+        <div class="card">
+          <h2>Requirements</h2>
+          <div class="metric">${analysis.matrix.length}</div>
+          <div class="metric-sub">${analysis.matrix.filter((l) => l.mandatory).length} pass/fail, the rest scored.</div>
+        </div>
+        <div class="card">
+          <h2>Mandatory gaps</h2>
+          <div class="metric ${raw(analysis.mandatoryGaps.length === 0 ? 'good' : 'bad')}">${analysis.mandatoryGaps.length}</div>
+          <div class="metric-sub">Requirements that end the bid if they are still open on the day.</div>
+        </div>
+        <div class="card">
+          <h2>Quantified exposure</h2>
+          <div class="metric orange">${money(analysis.quantifiedExposureMinor)}</div>
+          <div class="metric-sub">
+            Money at risk: damages and retention. Bonding is shown per term as facility committed rather than loss, so
+            the column below can total more than this.
+          </div>
+        </div>
+        <div class="card">
+          <h2>To ask the buyer</h2>
+          <div class="metric ${raw(analysis.clarifications.length === 0 ? 'good' : 'warn')}">${analysis.clarifications.length}</div>
+          <div class="metric-sub">Questions that have to go before the clarification deadline, not after.</div>
+        </div>
+      </div>
+
+      ${
+        analysis.bars.length > 0
+          ? html`<div class="notice bad" style="margin:13px 17px 0">
+              <div>
+                <b>This invitation carries a bar, not a negotiation.</b>
+                ${analysis.bars.map((bar) => html`<div style="margin-top:4px">${bar}</div>`)}
+              </div>
+            </div>`
+          : ''
+      }
+
+      <h2 style="padding:15px 17px 0">Commercial terms, assessed against this business</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        Not transcribed. Each term is judged against the company's own margin, cover and balance sheet — which is why
+        the same clause is routine on one tender and severe on another.
+      </p>
+      ${table({
+        headers: ['Term', 'As stated', 'Severity', 'Exposure', 'What it means here'],
+        align: ['', '', '', 'num', ''],
+        rows: analysis.terms.map((t) => [
+          t.term,
+          t.stated,
+          badge(humanise(t.severity), TERM_TONE[t.severity] ?? ''),
+          t.exposureMinor === undefined ? '—' : money(t.exposureMinor),
+          html`<span style="font-size:12px;color:var(--text-3)">${t.assessment}</span>`,
+        ]),
+        empty: 'No commercial term was recorded on this invitation',
+      })}
+
+      <h2 style="padding:15px 17px 0">Every requirement, with an owner</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        A matrix without an owner is a list, and a list is what reaches the day before return with three items nobody
+        claimed. Bids are lost over one missing certificate on a price that was right.
+      </p>
+      ${table({
+        headers: ['Ref', 'Category', 'Requirement', 'Owner', 'Evidence required', 'On file', 'Weight', 'Due', 'Status'],
+        align: ['', '', '', '', '', '', 'num', '', ''],
+        rows: analysis.matrix.map((line) => [
+          html`${line.reference}${line.mandatory ? badge('mandatory', gapRefs.has(line.reference) ? 'bad' : '') : ''}`,
+          html`<span style="font-size:12px;color:var(--text-3)">${humanise(line.category)}</span>`,
+          line.requirement,
+          humanise(line.owner),
+          html`<span style="font-size:12px;color:var(--text-3)">${line.evidenceRequired}</span>`,
+          line.evidenceHeld
+            ? html`<span style="font-size:12px;color:var(--text-3)">${line.evidenceHeld}</span>`
+            : '—',
+          line.weightingPercent === undefined ? '—' : `${line.weightingPercent}%`,
+          line.dueBy ? date(line.dueBy) : '—',
+          html`${badge(humanise(line.status), MATRIX_TONE[line.status] ?? '')}<br><span style="font-size:11px;color:var(--text-3)">${MATRIX_MEANING[line.status] ?? ''}</span>`,
+        ]),
+        empty: 'This analysis carries no requirements',
+      })}
+
+      <div class="grid g2" style="padding:13px 17px 15px">
+        <div>
+          <h2 style="margin-bottom:6px">The buyer's marking scheme</h2>
+          <p style="font-size:12.5px;color:var(--text-3);margin:0 0 8px">
+            ${
+              analysis.weightings.stated === 0
+                ? 'The invitation stated no weightings. Ask for the breakdown before pricing — an evaluation nobody can see is one nobody can bid to.'
+                : analysis.weightings.complete
+                  ? 'The stated weightings total 100%. The full breakdown is published.'
+                  : `The stated weightings total ${analysis.weightings.stated}%, not 100%. Part of how this is being marked has not been disclosed.`
+            }
+          </p>
+          <div class="split-list">
+            ${analysis.weightings.declared.map(
+              (w) => html`<div class="row"><span class="lbl">${humanise(w.category)}</span><span class="val">${w.percent}%</span></div>`,
+            )}
+            <div class="row">
+              <span class="lbl"><b>Stated total</b></span>
+              <span class="val">${badge(`${analysis.weightings.stated}%`, analysis.weightings.complete ? 'ok' : 'warn')}</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <h2 style="margin-bottom:6px">Questions for the buyer</h2>
+          <p style="font-size:12.5px;color:var(--text-3);margin:0 0 8px">
+            Raised by the analysis rather than typed by somebody. These go through the clarification process and are
+            answered to every bidder, so asking late is asking the competition's question for them.
+          </p>
+          ${
+            analysis.clarifications.length === 0
+              ? html`<div class="empty"><b>Nothing to ask</b>The invitation is internally consistent and insurable as written.</div>`
+              : html`<div class="split-list">
+                  ${analysis.clarifications.map((c) => html`<div class="row"><span class="lbl">${c}</span></div>`)}
+                </div>`
+          }
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 /** Every command on this screen runs before a project exists. */
 const TENANT = { tenantScoped: true };
 
 export async function pipeline(root) {
-  const [criteria, summary, discipline, profile, radar, tenders, permissions] = await Promise.all([
+  const [criteria, summary, discipline, profile, radar, tenders, permissions, matrices] = await Promise.all([
     api.get('/v1/pipeline/criteria'),
     api.get('/v1/pipeline'),
     api.get('/v1/pipeline/discipline'),
@@ -62,6 +224,8 @@ export async function pipeline(root) {
     api.get('/v1/radar/latest').catch(() => ({ run: null })),
     api.get('/v1/pipeline/tenders'),
     api.get('/v1/permissions/matrix'),
+    // Every matrix the tenancy holds, not only one produced in this session.
+    api.get('/v1/pipeline/analyses'),
   ]);
 
   const run = radar?.run ?? null;
@@ -114,8 +278,8 @@ export async function pipeline(root) {
           that closes at noon in Dublin has closed an hour before noon here.
         </p>
         ${table({
-          headers: ['Reference', 'Client', 'Closes', 'Zone', 'Left', 'Deliverables', 'Addenda', 'Stage', 'Ready to bid'],
-          align: ['', '', '', '', 'num', 'num', 'num', '', ''],
+          headers: ['Reference', 'Client', 'Closes', 'Zone', 'Left', 'Deliverables', 'Addenda', 'Stage', 'Ready to bid', 'Matrix'],
+          align: ['', '', '', '', 'num', 'num', 'num', '', '', ''],
           rows: board.map((t) => [
             html`${t.reference}<br><span style="font-size:11.5px;color:var(--text-3)">${t.title}</span>`,
             t.clientName,
@@ -132,6 +296,12 @@ export async function pipeline(root) {
               : t.blockers.length > 0
                 ? badge(`${t.blockers.length} blocking`, 'bad')
                 : badge('ready', 'ok'),
+            // The route from the invitation to the analysis of it. Without
+            // this the matrix is a record with nothing pointing at it from the
+            // thing it describes.
+            t.analysisId
+              ? html`<button class="btn sm" data-matrix="${t.analysisId}">Open</button>`
+              : html`<span style="font-size:11.5px;color:var(--text-3)">Not analysed</span>`,
           ]),
           empty: 'No invitation recorded',
         })}
@@ -156,6 +326,37 @@ export async function pipeline(root) {
             : ''
         }
       </div>
+
+      <div class="card pad0" style="margin-bottom:14px">
+        <h2 style="padding:15px 17px 0">Compliance matrices on file</h2>
+        <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+          ${matrices.summary} Every analysis stays readable after the session that produced it — rerunning one to see it
+          again would spend AI budget re-deriving a record the platform already holds, and would write a second analysis
+          of the same invitation into the record.
+        </p>
+        ${table({
+          headers: ['Reference', 'Client', 'Returns', 'Requirements', 'Mandatory gaps', 'Bars', 'To ask', 'Exposure', 'Worst term', 'Verdict', ''],
+          align: ['', '', '', 'num', 'num', 'num', 'num', 'num', '', '', ''],
+          rows: (matrices.analyses ?? []).map((a) => [
+            a.reference,
+            a.clientName,
+            date(a.returnBy),
+            a.requirements,
+            html`<span style="${raw(a.mandatoryGaps > 0 ? 'color:var(--critical)' : '')}">${a.mandatoryGaps}</span>`,
+            html`<span style="${raw(a.bars > 0 ? 'color:var(--critical)' : '')}">${a.bars}</span>`,
+            a.clarifications,
+            money(a.quantifiedExposureMinor),
+            a.worstTerm ? badge(humanise(a.worstTerm), TERM_TONE[a.worstTerm] ?? '') : '—',
+            a.readyToPrice ? badge('ready to price', 'ok') : badge('not ready', 'bad'),
+            html`<button class="btn sm" data-matrix="${a.analysisId}">Open</button>`,
+          ]),
+          empty: 'No invitation has been analysed yet',
+        })}
+      </div>
+
+      <!-- The topbar is 54px and sticky, so scrolling this into view without a
+           margin puts the matrix's own heading underneath it. -->
+      <div id="matrix-detail" style="margin-bottom:14px;scroll-margin-top:68px"></div>
 
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">
@@ -501,6 +702,31 @@ export async function pipeline(root) {
       transform: () => ({}),
     },
   };
+
+  // Opening a matrix, from either the invitation it belongs to or the list of
+  // every matrix on file. One handler, because both buttons are asking for the
+  // same thing and a second path to it would be a second thing to keep right.
+  const detail = root.querySelector('#matrix-detail');
+  root.addEventListener('click', async (event) => {
+    const open = event.target.closest('[data-matrix]');
+    if (!open || !detail) return;
+
+    const analysisId = open.dataset.matrix;
+    open.disabled = true;
+    open.textContent = 'Opening…';
+    try {
+      const analysis = await api.get(`/v1/pipeline/analyses/${analysisId}`);
+      render(detail, matrixDetail(analysis));
+      detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (error) {
+      // Shown as a denial rather than as an empty panel. A matrix that failed
+      // to load and a matrix with nothing in it must not look the same.
+      render(detail, notice(`This compliance matrix could not be opened: ${error.message}`, 'err'));
+    } finally {
+      open.disabled = false;
+      open.textContent = 'Open';
+    }
+  });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

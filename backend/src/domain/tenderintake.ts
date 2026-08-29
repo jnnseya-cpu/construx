@@ -1044,6 +1044,12 @@ export type TenderPosition = {
   addenda: number;
   deliverables: { total: number; mandatory: number };
   requirementsExtracted: boolean;
+  /**
+   * The compliance matrix this invitation was read against, where one is
+   * linked. Carried so the board can open it: without it the analysis is a
+   * record with no route to it from the thing it describes.
+   */
+  analysisId?: string;
   blockers: string[];
   reReviewReasons: string[];
   clarifications: Clarification[];
@@ -1090,6 +1096,7 @@ function readPosition(
     addenda: ((record.state.addenda as Addendum[] | undefined) ?? []).length,
     deliverables: { total: deliverables.length, mandatory: deliverables.filter((d) => d.mandatory).length },
     requirementsExtracted: Boolean(record.state.requirementsExtracted),
+    ...(record.state.analysisId ? { analysisId: String(record.state.analysisId) } : {}),
     blockers: position.blockers,
     reReviewReasons: position.reReviewReasons,
     clarifications: (record.state.clarifications as Clarification[] | undefined) ?? [],

@@ -1,6 +1,7 @@
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
+import type { EntityRecord } from '../goldenthread/ledger.ts';
 import type { Role } from '../identity/roles.ts';
 import { companyProfile, type CompanyProfile } from './radar.ts';
 
@@ -195,6 +196,26 @@ export type ITTAnalysis = {
 const gbp = (minor: number): string => `£${(minor / 100).toLocaleString('en-GB', { maximumFractionDigits: 0 })}`;
 
 /**
+ * The declared evaluation weightings, per category.
+ *
+ * Derived from the matrix lines rather than from the requirements they were
+ * built out of, so the figure a reader is shown weeks later is arrived at the
+ * same way as the figure the analyst was shown on the day. The alternative —
+ * computing it once at analysis and again, differently, on read — is two
+ * sources of truth for whether the buyer's marking scheme adds up.
+ */
+function declaredWeightings(
+  lines: ReadonlyArray<{ category: RequirementCategory; weightingPercent?: number }>,
+): Array<{ category: RequirementCategory; percent: number }> {
+  const declared = new Map<RequirementCategory, number>();
+  for (const line of lines) {
+    if (line.weightingPercent === undefined) continue;
+    declared.set(line.category, (declared.get(line.category) ?? 0) + line.weightingPercent);
+  }
+  return [...declared.entries()].map(([category, percent]) => ({ category, percent }));
+}
+
+/**
  * Analyse an invitation to tender.
  *
  * Reads the company profile so every judgement is against what this business
@@ -249,12 +270,8 @@ export function analyseITT(
   const mandatoryGaps = matrix.filter((line) => line.mandatory && line.status === 'GAP');
 
   // --- Weightings -----------------------------------------------------------
-  const declared = new Map<RequirementCategory, number>();
-  for (const requirement of input.requirements) {
-    if (requirement.weightingPercent === undefined) continue;
-    declared.set(requirement.category, (declared.get(requirement.category) ?? 0) + requirement.weightingPercent);
-  }
-  const statedTotal = [...declared.values()].reduce((sum, v) => sum + v, 0);
+  const declared = declaredWeightings(matrix);
+  const statedTotal = declared.reduce((sum, entry) => sum + entry.percent, 0);
 
   // --- Commercial terms -----------------------------------------------------
   const terms: TermAssessment[] = [];
@@ -419,15 +436,149 @@ export function analyseITT(
     returnBy: input.returnBy,
     matrix,
     mandatoryGaps,
-    weightings: {
-      stated: statedTotal,
-      declared: [...declared.entries()].map(([category, percent]) => ({ category, percent })),
-      complete: statedTotal === 100,
-    },
+    weightings: { stated: statedTotal, declared, complete: statedTotal === 100 },
     terms: orderedTerms,
     bars,
     quantifiedExposureMinor,
     clarifications,
     readyToPrice,
   };
+}
+
+// --- Reading one back --------------------------------------------------------
+
+/**
+ * A matrix produced, and then unreachable.
+ *
+ * `analyseITT` wrote a full compliance matrix to the ledger and handed it back
+ * in the response body, and that was the only time anybody could see it. Close
+ * the tab and the analysis existed, was hashed into the chain, woke the tender
+ * agents — and had no screen. The bid manager who wants to know on the Monday
+ * which mandatory requirement has nothing behind it had to run the analysis
+ * again, which spends ACUs to re-derive a record the platform already holds and
+ * writes a second `ITT_ANALYSED` event saying the same thing.
+ *
+ * So the analysis is readable. Two shapes, matching the tender board it sits
+ * beside: a summary per analysis for the list, and the whole thing for the one
+ * a person opens.
+ */
+
+/** What the stored record carries beyond the analysis itself. */
+export type StoredITTAnalysis = ITTAnalysis & {
+  /** The value and duration the exposure figures were computed against. */
+  estimatedValueMinor: number;
+  durationWeeks: number;
+  analysedAt: string;
+  analysedBy: string;
+  /** The project the analysis was run on, which is the tender's own project. */
+  projectId: string;
+};
+
+export type ITTAnalysisSummary = {
+  analysisId: string;
+  reference: string;
+  clientName: string;
+  returnBy: string;
+  requirements: number;
+  mandatoryGaps: number;
+  bars: number;
+  clarifications: number;
+  quantifiedExposureMinor: number;
+  /** The worst severity anywhere in the terms, so a list can be read at a glance. */
+  worstTerm?: TermAssessment['severity'];
+  readyToPrice: boolean;
+  analysedAt: string;
+  projectId: string;
+};
+
+/**
+ * Rebuild the analysis from what was committed.
+ *
+ * The stored state is not quite the returned shape: `mandatoryGaps` is written
+ * as references rather than whole lines, and `weightings.declared` is not
+ * written at all. Both are re-derived here from the matrix, which is the record
+ * that carries them — rather than widening the event, which would change the
+ * shape of a record that already verifies and would not help the analyses
+ * already written.
+ */
+function readAnalysis(record: EntityRecord): StoredITTAnalysis {
+  const state = record.state as Record<string, unknown>;
+  const matrix = (state.matrix as MatrixLine[] | undefined) ?? [];
+  const declared = declaredWeightings(matrix);
+  const stated = declared.reduce((sum, entry) => sum + entry.percent, 0);
+
+  return {
+    analysisId: String(state.id ?? record.refId),
+    reference: String(state.reference ?? ''),
+    clientName: String(state.clientName ?? ''),
+    returnBy: String(state.returnBy ?? ''),
+    matrix,
+    // Derived from the matrix by the same rule `analyseITT` applies, so a line
+    // that is a mandatory gap on the day is a mandatory gap on the read.
+    mandatoryGaps: matrix.filter((line) => line.mandatory && line.status === 'GAP'),
+    weightings: { stated, declared, complete: stated === 100 },
+    terms: (state.terms as TermAssessment[] | undefined) ?? [],
+    bars: (state.bars as string[] | undefined) ?? [],
+    quantifiedExposureMinor: Number(state.quantifiedExposureMinor ?? 0),
+    clarifications: (state.clarifications as string[] | undefined) ?? [],
+    readyToPrice: Boolean(state.readyToPrice),
+    estimatedValueMinor: Number(state.estimatedValueMinor ?? 0),
+    durationWeeks: Number(state.durationWeeks ?? 0),
+    analysedAt: String(state.analysedAt ?? ''),
+    analysedBy: String(state.analysedBy ?? ''),
+    projectId: record.projectId,
+  };
+}
+
+const SEVERITY_RANK: Record<TermAssessment['severity'], number> = { BAR: 0, SEVERE: 1, MATERIAL: 2, ROUTINE: 3 };
+
+/** Every compliance matrix this tenancy holds, most recent first. */
+export function analysisBoard(ctx: EngineContext): { analyses: ITTAnalysisSummary[]; summary: string } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  // Analyses are written against the tender's own project rather than the
+  // governance scope, so this crosses projects within the tenancy — which is
+  // what a bid manager holding four live tenders is asking for.
+  const analyses = ctx.ledger
+    .listByTenant(ctx.tenantId, 'ITTAnalysis')
+    .map((record) => readAnalysis(record))
+    .map((analysis): ITTAnalysisSummary => {
+      const worst = [...analysis.terms].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])[0];
+      return {
+        analysisId: analysis.analysisId,
+        reference: analysis.reference,
+        clientName: analysis.clientName,
+        returnBy: analysis.returnBy,
+        requirements: analysis.matrix.length,
+        mandatoryGaps: analysis.mandatoryGaps.length,
+        bars: analysis.bars.length,
+        clarifications: analysis.clarifications.length,
+        quantifiedExposureMinor: analysis.quantifiedExposureMinor,
+        ...(worst ? { worstTerm: worst.severity } : {}),
+        readyToPrice: analysis.readyToPrice,
+        analysedAt: analysis.analysedAt,
+        projectId: analysis.projectId,
+      };
+    })
+    .sort((a, b) => b.analysedAt.localeCompare(a.analysedAt));
+
+  const blocked = analyses.filter((a) => !a.readyToPrice).length;
+  const summary =
+    analyses.length === 0
+      ? 'No invitation has been analysed yet. Record an ITT and run the analysis to build a compliance matrix.'
+      : `${analyses.length} compliance matri${analyses.length === 1 ? 'x' : 'ces'} on file` +
+        `${blocked > 0 ? `, ${blocked} not ready to price` : ', all ready to price'}.`;
+
+  return { analyses, summary };
+}
+
+/** One compliance matrix, whole. */
+export function complianceMatrix(ctx: EngineContext, analysisId: string): StoredITTAnalysis {
+  authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = ctx.ledger.get({ refType: 'ITTAnalysis', refId: analysisId });
+  if (!record || record.tenantId !== ctx.tenantId) {
+    throw new DomainError('ITT_ANALYSIS_NOT_FOUND', `No compliance matrix ${analysisId}`, 404);
+  }
+  return readAnalysis(record);
 }

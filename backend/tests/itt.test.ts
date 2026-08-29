@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
+import { issueTokens, verifyToken } from '../src/identity/auth.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import * as itt from '../src/domain/itt.ts';
 import * as costintel from '../src/domain/costintel.ts';
@@ -336,5 +337,195 @@ describe('The cost intelligence database', () => {
         'silence about accuracy has to be explained',
       );
     }
+  });
+});
+
+// ── Reading a matrix back ───────────────────────────────────────────────────
+
+/**
+ * The half that did not exist.
+ *
+ * `analyseITT` wrote a full compliance matrix into the ledger and handed it
+ * back in a response body, and that was the only time anybody could see it.
+ * Close the tab and the analysis was hashed into the chain, woke the tender
+ * agents, and had no screen — so the bid manager asking on the Monday which
+ * mandatory requirement has nothing behind it had to run the analysis again,
+ * spending AI budget to re-derive a record the platform already held and
+ * writing a second `ITT_ANALYSED` event saying the same thing.
+ *
+ * What is asserted here is that the record read back is the same analysis, not
+ * a lookalike: the two fields the stored state does not carry verbatim —
+ * `mandatoryGaps` as whole lines and `weightings.declared` — are re-derived,
+ * and re-derived to the same answer.
+ */
+describe('A compliance matrix stays readable after the session that produced it', () => {
+  const full = () =>
+    analyse({
+      reference: 'ITT-READBACK-01',
+      estimatedValueMinor: 8_000_000_00,
+      durationWeeks: 52,
+      targetMarginPercent: 7,
+      requirements: [
+        requirement({ reference: 'R1', category: 'INSURANCE', weightingPercent: 40 }),
+        requirement({
+          reference: 'R2',
+          category: 'TECHNICAL',
+          requirement: 'A method statement for the deep basement',
+          evidenceRequired: 'Technical submission',
+          weightingPercent: 35,
+        }),
+        requirement({
+          reference: 'R3',
+          category: 'SOCIAL_VALUE',
+          requirement: 'Local labour commitment',
+          mandatory: false,
+          evidenceRequired: 'Social value schedule',
+          weightingPercent: 25,
+        }),
+      ],
+      terms: {
+        contractForm: 'JCT D&B 2016',
+        liquidatedDamages: { perWeekMinor: 20_000_00, capPercent: 8 },
+        retentionPercent: 5,
+        designLiability: 'FITNESS_FOR_PURPOSE',
+      },
+    });
+
+  it('returns the same analysis on read as it did on write', () => {
+    const written = full();
+    const read = itt.complianceMatrix(qs(), written.analysisId);
+
+    assert.equal(read.analysisId, written.analysisId);
+    assert.equal(read.reference, written.reference);
+    assert.equal(read.clientName, written.clientName);
+    assert.equal(read.readyToPrice, written.readyToPrice);
+    assert.equal(read.quantifiedExposureMinor, written.quantifiedExposureMinor);
+    assert.deepEqual(read.matrix, written.matrix);
+    // The order matters and is the reason the terms are sorted before the
+    // write rather than after it: worst first is how the list is read.
+    assert.deepEqual(read.terms.map((t) => t.severity), written.terms.map((t) => t.severity));
+    assert.deepEqual(read.bars, written.bars);
+    assert.deepEqual(read.clarifications, written.clarifications);
+  });
+
+  it('re-derives the two fields the record does not carry verbatim', () => {
+    const written = full();
+    const read = itt.complianceMatrix(qs(), written.analysisId);
+
+    // `mandatoryGaps` is stored as references. Read back as whole lines, and
+    // the same lines — a gap on the day is a gap on the read.
+    assert.deepEqual(read.mandatoryGaps, written.mandatoryGaps);
+    for (const gap of read.mandatoryGaps) {
+      assert.equal(gap.mandatory, true);
+      assert.equal(gap.status, 'GAP');
+    }
+
+    // `weightings.declared` is not stored at all, and comes back identical
+    // because both sides compute it with the same function.
+    assert.deepEqual(read.weightings, written.weightings);
+    assert.equal(read.weightings.stated, 100);
+    assert.equal(read.weightings.complete, true);
+  });
+
+  it('carries what the exposure was computed against, so a later reader can check it', () => {
+    const written = full();
+    const read = itt.complianceMatrix(qs(), written.analysisId);
+
+    // Without these two figures the exposure column is a number with no
+    // denominator — £640,000 of damages means nothing without the contract
+    // value and the programme it was judged against.
+    assert.equal(read.estimatedValueMinor, 8_000_000_00);
+    assert.equal(read.durationWeeks, 52);
+    assert.ok(read.analysedAt.length > 0, 'the analysis carries no date');
+    assert.ok(read.analysedBy.length > 0, 'the analysis carries no author');
+    assert.equal(read.projectId, seed.projectId);
+  });
+
+  it('lists every matrix on file, worst news first on each row', () => {
+    const written = full();
+    const board = itt.analysisBoard(qs());
+
+    const row = board.analyses.find((a) => a.analysisId === written.analysisId);
+    assert.ok(row, 'an analysis that was written is not on the board');
+    assert.equal(row.reference, 'ITT-READBACK-01');
+    assert.equal(row.requirements, written.matrix.length);
+    assert.equal(row.mandatoryGaps, written.mandatoryGaps.length);
+    assert.equal(row.bars, written.bars.length);
+    assert.equal(row.clarifications, written.clarifications.length);
+    // Fitness for purpose is SEVERE, and it must be the severity the row
+    // reports — a list that showed the mildest term would read as reassurance.
+    assert.equal(row.worstTerm, 'SEVERE');
+    assert.equal(row.readyToPrice, written.readyToPrice);
+  });
+
+  it('orders the board most recently analysed first', () => {
+    itt.analyseITT(qs(), {
+      reference: 'ITT-READBACK-02',
+      clientName: 'Second Buyer',
+      returnBy: '2026-07-01',
+      estimatedValueMinor: 1_000_000_00,
+      durationWeeks: 20,
+      requirements: [requirement()],
+      terms: { contractForm: 'NEC4 ECC Option A' },
+    });
+
+    const board = itt.analysisBoard(qs());
+    const dates = board.analyses.map((a) => a.analysedAt);
+    assert.deepEqual(dates, [...dates].sort().reverse(), 'the board is not in reverse date order');
+    assert.match(board.summary, /compliance matri/);
+  });
+
+  it('refuses an analysis that does not exist, rather than returning an empty one', () => {
+    throwsCode(() => itt.complianceMatrix(qs(), 'no-such-analysis'), 'ITT_ANALYSIS_NOT_FOUND');
+  });
+
+  it('will not hand a matrix to another tenancy on the same platform', () => {
+    // A second tenancy in the *same* ledger, which is the only arrangement
+    // that tests anything. A separate `Platform` has a separate ledger, so the
+    // record is simply absent and the read would refuse whether the tenant was
+    // checked or not — that version of this test passed with the isolation
+    // check deleted.
+    const written = full();
+    const other = platform.createTenant({
+      legalName: 'Somebody Else Contracting Ltd',
+      jurisdiction: 'GB',
+      defaultCurrency: 'GBP',
+      tier: 'BUSINESS',
+      enterpriseName: 'Somebody Else Contracting',
+    });
+    const stranger = platform.createUser({
+      tenantId: other.tenant.id,
+      name: 'Their commercial manager',
+      email: 'commercial@somebodyelse.example',
+      roles: ['COMMERCIAL_MANAGER'],
+    });
+    const strangerAuth = verifyToken(
+      issueTokens({ actorId: stranger.id, tenantId: other.tenant.id, roles: stranger.roles, mfaSatisfied: true }).accessToken,
+    );
+
+    // Our analysis id, in their hands, in a ledger that holds both: refused as
+    // "no such matrix" rather than "not yours". The distinction is itself
+    // information about what another contractor is bidding on.
+    throwsCode(
+      () =>
+        itt.complianceMatrix(
+          platform.context(strangerAuth, `${other.tenant.id}-governance`, { source: 'WEB' }),
+          written.analysisId,
+        ),
+      'ITT_ANALYSIS_NOT_FOUND',
+    );
+
+    // And their board is empty rather than showing ours.
+    const theirBoard = itt.analysisBoard(platform.context(strangerAuth, `${other.tenant.id}-governance`, { source: 'WEB' }));
+    assert.deepEqual(theirBoard.analyses, [], 'another tenancy can see our compliance matrices');
+  });
+
+  it('refuses a reader with no commercial rights', () => {
+    // The matrix carries the client, the contract value and every exposure
+    // figure. It is COMMERCIAL_L3, and the read is authorised as such.
+    throwsCode(
+      () => itt.complianceMatrix(platform.context(seed.users.regulator!.auth, seed.projectId, { source: 'WEB' }), full().analysisId),
+      'ACCESS_DENIED',
+    );
   });
 });
