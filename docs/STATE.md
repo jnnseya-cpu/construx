@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 3,903 passing, 0 failing, 0 skipped, across 174 files · plus 18 against a live Postgres 16 |
+| Tests | 3,931 passing, 0 failing, 0 skipped, across 176 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
 | Backend | 214 TypeScript files, 132,384 lines |
 | Application | 70 ES modules, 26,634 lines (including a service worker) |
