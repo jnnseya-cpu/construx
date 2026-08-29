@@ -758,6 +758,27 @@ export const config = {
     acuUnitMinor: num('ACU_UNIT_MINOR', 1),
     acuPerMajorUnit: num('ACU_PER_MAJOR_UNIT', 100),
     /**
+     * The provider cost of one run at each metering class, in minor units.
+     *
+     * The specification's Part H tiers. These are **provider cost**, not price:
+     * what the customer is quoted is this multiplied by the same markup as
+     * every other AI charge, so a tier cannot become a second pricing model
+     * sitting beside the first.
+     *
+     * Configured rather than hardcoded because they are the one thing here that
+     * genuinely moves — vendor prices change, and a tier is a claim about how
+     * expensive a class of thinking is, not a constant of the platform. The
+     * agents that used to carry their own figures (40, 50, 60, 75, chosen by
+     * hand, unrelated to each other) now declare a tier and get their estimate
+     * from here.
+     */
+    acuTierRawCostMinor: {
+      LOW: num('ACU_TIER_LOW_RAW_MINOR', 2),
+      MED: num('ACU_TIER_MED_RAW_MINOR', 10),
+      HIGH: num('ACU_TIER_HIGH_RAW_MINOR', 30),
+      PREMIUM: num('ACU_TIER_PREMIUM_RAW_MINOR', 90),
+    },
+    /**
      * The share of every subscription payment credited to the tenant's AI
      * wallet. The rest carries no provider cost against it.
      */

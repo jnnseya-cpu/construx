@@ -88,7 +88,9 @@ const programmeAgent: AgentDefinition = {
           input: { contractualDurationDays: Number(baseline.state.durationDays ?? 0) },
           effect: 'Re-runs the delay forecast against current progress and re-costs every recovery measure.',
           ifDeclined: 'The programme position on screen continues to reflect a superseded forecast.',
-          estimatedAcuMinor: 40,
+          // Priced from the agent's declared `acuTier` by the runtime, which is
+          // the one place a class of thinking is turned into money.
+          estimatedAcuMinor: 0,
         },
       });
     }
@@ -171,7 +173,9 @@ const commercialAgent: AgentDefinition = {
           input: { period: new Date().toISOString().slice(0, 7) },
           effect: 'Republishes the cost value reconciliation against current actuals, commitments and variations.',
           ifDeclined: 'Margin and cash position continue to be reported from stale costs.',
-          estimatedAcuMinor: 60,
+          // Priced from the agent's declared `acuTier` by the runtime, which is
+          // the one place a class of thinking is turned into money.
+          estimatedAcuMinor: 0,
         },
       });
     }
@@ -289,6 +293,8 @@ const riskAgent: AgentDefinition = {
           input: {},
           effect: 'Recomputes the P80 contingency requirement across the open register.',
           ifDeclined: 'The contingency held continues to be sized against a superseded register.',
+          // Priced from the agent's declared `acuTier` by the runtime, which is
+          // the one place a class of thinking is turned into money.
           estimatedAcuMinor: 0,
         },
       });
@@ -383,7 +389,9 @@ const contractsAgent: AgentDefinition = {
           },
           effect: 'Reassesses the claim across every recorded delay event, including concurrency.',
           ifDeclined: 'The claim position continues to be argued from an incomplete set of events.',
-          estimatedAcuMinor: 75,
+          // Priced from the agent's declared `acuTier` by the runtime, which is
+          // the one place a class of thinking is turned into money.
+          estimatedAcuMinor: 0,
         },
       });
     }
@@ -577,7 +585,9 @@ const handoverAgent: AgentDefinition = {
           input: { horizonYears: 5 },
           effect: 'Produces a reliability-adjusted maintenance forecast across the registered assets.',
           ifDeclined: 'Operating cost stays unbudgeted for the asset life.',
-          estimatedAcuMinor: 50,
+          // Priced from the agent's declared `acuTier` by the runtime, which is
+          // the one place a class of thinking is turned into money.
+          estimatedAcuMinor: 0,
         },
       });
     }

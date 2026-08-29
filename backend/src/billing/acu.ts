@@ -159,6 +159,33 @@ export function effectiveMultiplier(monthlyRawSpendMinor: number, volumeIncentiv
 }
 
 /**
+ * What a run at each metering class costs, and what it is quoted at.
+ *
+ * The specification's Part H tiers, and the reason they belong here rather than
+ * on the agent: a tier is a claim about how expensive a class of thinking is,
+ * and the *price* of that claim is money, which has one source of truth. An
+ * agent declaring `acuTier: 'HIGH'` is saying what kind of work it does; this
+ * says what that costs, priced through the same markup as every other AI
+ * charge, so a tier cannot quietly become a second pricing model.
+ *
+ * Before this, five agents carried hand-written estimates — 40, 50, 60, 75 —
+ * chosen individually, unrelated to each other and to the rate. An approver
+ * comparing two proposals was comparing two guesses.
+ *
+ * `rawCostMinor` is provider cost. `chargeMinor` is what a person sees on the
+ * approval screen, and it moves with the markup by construction.
+ */
+export function tierCost(
+  tier: 'LOW' | 'MED' | 'HIGH' | 'PREMIUM',
+  monthlyRawSpendMinor = 0,
+  volumeIncentiveEnabled = false,
+): { rawCostMinor: number; chargeMinor: number; multiplier: number } {
+  const rawCostMinor = config.billing.acuTierRawCostMinor[tier];
+  const multiplier = effectiveMultiplier(monthlyRawSpendMinor, volumeIncentiveEnabled);
+  return { rawCostMinor, chargeMinor: Math.ceil(rawCostMinor * multiplier), multiplier };
+}
+
+/**
  * The ACU credit a subscription payment buys.
  *
  * A fixed share of what the customer pays for the plan is credited to their AI

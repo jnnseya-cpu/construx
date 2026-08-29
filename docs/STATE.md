@@ -9735,3 +9735,53 @@ So the two numbers stay apart and answer different questions: the **price** is
 what the business charges, the **floor** is what stops an overrun being sold at a
 loss. `economics.test.ts` now asserts the floor stays strictly below the price,
 with the reason, so the collapse cannot be reintroduced as tidying.
+
+### ACU tier metering, and the memory boundary
+
+The last two contract fields that nothing read.
+
+**`acu_tier`.** Five agents carried hand-written estimates — 40, 50, 60, 75 —
+chosen individually, unrelated to each other and unrelated to the rate the
+platform actually charges. An approver comparing two proposals was comparing two
+guesses, and the figure on the approval screen was one nothing else in the
+platform agreed with. It was also a hardcoded business value, which the standing
+rule forbids.
+
+A tier is now a claim about what class of thinking a run is; the price of that
+claim lives in `billing/acu.ts` with the rest of the money model and is
+`tierCost(tier)` — provider cost from configuration, multiplied by the same 5×
+markup as every other AI charge, so a tier cannot become a second pricing model.
+The runtime **overwrites** what an agent wrote rather than defaulting it, because
+an agent that could fill the field in would be quoting an approver a number of
+its own choosing. At the current rate: LOW 10, MED 50, HIGH 150, PREMIUM 450.
+
+Each run now reports what the queue it just built would cost, broken down by
+tier, against the wallet's available balance. **Reported, not charged** —
+evaluating an agent calls no provider and costs nothing, and inventing a charge
+for it would be inventing revenue. What costs money is the command an approved
+proposal runs, and this is that bill before anybody presses it.
+
+**`memory_access`.** The three layers differ in blast radius rather than in
+shape: project memory is this job, organisation memory is every job the business
+has ever run, and what an agent learns from the second it applies to jobs whose
+teams never chose to share anything with it. Crossing between them means leaving
+`projectId` behind, so the boundary is exactly the ledger calls that do —
+`listByTenant`, `entitiesOfType`, and a tenant-wide event read. An agent that has
+not declared `ORGANISATION` now gets a refusal naming what it declared.
+
+**Stated plainly: today this constrains nothing.** No deployed agent reads across
+projects — every one works from `list(ctx.projectId, …)`. The guard is here so
+the first agent that does meets a refusal it has to declare its way past, rather
+than finding the door open. Thirty lines now against a retrofit after an agent
+depends on the access.
+
+Both controls were verified by mutation rather than by watching them pass:
+disabling the memory guard fails three tests, and disabling tier pricing fails
+four.
+
+**What is still not enforced, and why.** `memory.writes` is declared and checked
+for consistency — no agent writes a layer it cannot read, at most three write
+organisation memory — but not enforced at runtime, because **an agent cannot
+write at all**. Rule 1 of the runtime is that an agent returns findings and the
+runtime records them. Enforcing a write scope over a thing that cannot write
+would be building for a requirement that does not exist.

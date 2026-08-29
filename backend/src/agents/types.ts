@@ -442,4 +442,21 @@ export type AgentRunReport = {
    * different fact from "no agent watches that event".
    */
   gated: number;
+  /**
+   * What the proposals this run raised would cost to execute, and whether the
+   * wallet covers it.
+   *
+   * The contract's `acu_tier`, made useful rather than merely declared: a queue
+   * of proposals is a queue of things somebody is going to press, and an
+   * approver offered work the tenancy cannot pay for finds out at the moment
+   * they approve it. Priced from each agent's declared tier through the same
+   * markup as every other AI charge.
+   */
+  cost: {
+    estimatedChargeMinor: number;
+    availableMinor: number;
+    affordable: boolean;
+    /** Per tier, so an expensive queue can be read rather than guessed at. */
+    byTier: Array<{ tier: AcuTier; proposals: number; chargeMinor: number }>;
+  };
 };

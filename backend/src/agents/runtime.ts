@@ -2,9 +2,10 @@ import { ulid } from '../core/ids.ts';
 import { DomainError, ForbiddenError } from '../core/errors.ts';
 import { authorise, currentPhase, write, type EngineContext } from '../engines/context.ts';
 import { rolesAllow } from '../identity/roles.ts';
+import { tierCost } from '../billing/acu.ts';
 import { mayActUnattended } from './mandate.ts';
 import { AGENTS, agentByName, deployedAgents } from './registry.ts';
-import { exceeds, type AgentDefinition, type AgentProposal, type AgentRunReport, type Finding } from './types.ts';
+import { exceeds, type AcuTier, type AgentDefinition, type AgentProposal, type AgentRunReport, type Finding } from './types.ts';
 
 /**
  * The agent runtime.
@@ -99,6 +100,55 @@ function openProposals(ctx: EngineContext): AgentProposal[] {
 }
 
 /**
+ * The ledger an agent sees, narrowed to the memory layers it declared.
+ *
+ * The contract's `memory_access`, and this is the half of it that can be
+ * enforced honestly. Three layers are declared — project, organisation, asset —
+ * and they differ in blast radius rather than in shape: project memory is this
+ * job, organisation memory is *every* job the business has ever run, and what
+ * an agent learns from the second it applies to jobs whose teams never chose to
+ * share anything with it.
+ *
+ * Crossing from one to the other means leaving `projectId` behind, so the
+ * boundary is exactly the ledger calls that do: `listByTenant`,
+ * `entitiesOfType`, and a tenant-wide event read. An agent that has not
+ * declared `ORGANISATION` gets a refusal rather than the estate.
+ *
+ * **Stated plainly: today this constrains nothing.** No deployed agent reads
+ * across projects — every one works from `list(ctx.projectId, …)`. The guard is
+ * here because the first agent that does should meet a refusal it has to
+ * declare its way past, rather than finding the door open and the fleet
+ * quietly reading the estate. It costs thirty lines now; retrofitting it after
+ * an agent depends on the access costs a great deal more.
+ */
+export function scopedLedgerFor(ctx: EngineContext, agent: AgentDefinition): EngineContext['ledger'] {
+  if (agent.memory.reads.includes('ORGANISATION')) return ctx.ledger;
+
+  const refuse = (call: string): never => {
+    throw new ForbiddenError(
+      `Agent ${agent.name} called ${call}, which reads across every project in the tenancy. ` +
+        `It declares memory access to ${agent.memory.reads.join(', ') || 'nothing'} and not ORGANISATION.`,
+    );
+  };
+
+  // A prototype-preserving wrapper rather than a copy: the ledger holds private
+  // state and its methods are bound to it, so anything but delegation would
+  // hand the agent a broken object instead of a narrowed one.
+  const ledger = ctx.ledger;
+  return new Proxy(ledger, {
+    get(target, property, receiver) {
+      if (property === 'listByTenant' || property === 'entitiesOfType') return () => refuse(String(property));
+      if (property === 'events') {
+        return (filter: { projectId?: string } = {}) =>
+          filter.projectId === undefined ? refuse('events across the tenancy') : ledger.events(filter);
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as EngineContext['ledger'];
+}
+
+/**
  * Run the fleet once.
  *
  * Findings already open are suppressed rather than raised again — an autopilot
@@ -141,8 +191,11 @@ export async function runAgents(
     belowFloor: 0,
     because: describe(trigger, options.only),
     gated: 0,
+    cost: { estimatedChargeMinor: 0, availableMinor: 0, affordable: true, byTier: [] },
   };
   let belowFloor = 0;
+  /** What each tier's proposals add up to, filled as proposals are raised. */
+  const byTier = new Map<AcuTier, { proposals: number; chargeMinor: number }>();
 
   const phase = currentPhase(ctx);
 
@@ -168,7 +221,7 @@ export async function runAgents(
         continue;
       }
 
-      const output = await agent.evaluate!(ctx);
+      const output = await agent.evaluate!({ ...ctx, ledger: scopedLedgerFor(ctx, agent) });
       let raised = 0;
       let suppressed = 0;
 
@@ -195,6 +248,22 @@ export async function runAgents(
         }
 
         if (proposed) {
+          // The contract's `acu_tier`, metered.
+          //
+          // The agent declares what class of thinking its work is; the price of
+          // that class is money and lives with the rest of the money model. An
+          // agent that wrote its own figure was quoting an approver a number
+          // nothing else in the platform agreed with — and five of them did,
+          // with values chosen by hand and unrelated to each other or to the
+          // rate. Overwritten rather than defaulted, so an agent cannot price
+          // its own proposal by filling the field in.
+          proposed.command.estimatedAcuMinor = tierCost(agent.acuTier).chargeMinor;
+          const tally = byTier.get(agent.acuTier) ?? { proposals: 0, chargeMinor: 0 };
+          byTier.set(agent.acuTier, {
+            proposals: tally.proposals + 1,
+            chargeMinor: tally.chargeMinor + proposed.command.estimatedAcuMinor,
+          });
+
           // Rule 2: the mandate is the ceiling, checked outside the agent.
           if (!agent.mandate.proposes.includes(proposed.command.area)) {
             throw new DomainError(
@@ -261,6 +330,22 @@ export async function runAgents(
     }
   }
 
+  // What the queue this run just built would cost to work through, priced from
+  // each agent's declared tier. Reported rather than charged: evaluating an
+  // agent calls no provider and costs nothing, and inventing a charge for it
+  // would be inventing revenue. What costs money is the command an approved
+  // proposal runs, and this is that bill before anybody presses it.
+  const estimatedChargeMinor = [...byTier.values()].reduce((sum, t) => sum + t.chargeMinor, 0);
+  const availableMinor = ctx.wallet.availableMinor();
+  report.cost = {
+    estimatedChargeMinor,
+    availableMinor,
+    affordable: estimatedChargeMinor <= availableMinor,
+    byTier: [...byTier.entries()]
+      .map(([tier, tally]) => ({ tier, ...tally }))
+      .sort((a, b) => b.chargeMinor - a.chargeMinor),
+  };
+
   write(ctx, {
     eventType: 'AGENT_RUN_COMPLETED',
     entity: { refType: 'AgentRun', refId: runId },
@@ -275,6 +360,7 @@ export async function runAgents(
       // event that woke the agent that raised it rather than to "the fleet ran".
       because: report.because,
       gated: report.gated,
+      estimatedChargeMinor: report.cost.estimatedChargeMinor,
     },
   });
 
