@@ -357,6 +357,7 @@ const CORRESPONDENCE_PARTIES: string[] = [
 const PERCEPTION_PATHS: Record<perception.PerceptionTask, string> = {
   TITLE_BLOCK: 'title-block',
   DRAWING_TAKEOFF: 'take-off',
+  ITT_REQUIREMENTS: 'itt',
   VOICE_NOTE: 'voice-note',
   PROGRESS_FROM_IMAGES: 'progress',
   PPE_COMPLIANCE: 'ppe',

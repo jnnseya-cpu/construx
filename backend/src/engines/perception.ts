@@ -13,6 +13,8 @@ import { captureSiteObservation } from './planning.ts';
 import { raiseNCR } from './quality.ts';
 import { logSafetyObservation } from './safety.ts';
 import { runTakeoff } from './tender.ts';
+import { analyseITT, type CommercialTerms, type ITTRequirement } from '../domain/itt.ts';
+import { extractRequirements, type SubmissionChannel } from '../domain/tenderintake.ts';
 
 /**
  * Perception ingestion: reading a file the platform holds.
@@ -91,6 +93,7 @@ import { runTakeoff } from './tender.ts';
 export type PerceptionTask =
   | 'TITLE_BLOCK'
   | 'DRAWING_TAKEOFF'
+  | 'ITT_REQUIREMENTS'
   | 'VOICE_NOTE'
   | 'PROGRESS_FROM_IMAGES'
   | 'PPE_COMPLIANCE'
@@ -215,6 +218,134 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       required: ['items'],
     },
     usable: (extraction) => Array.isArray(extraction.items) && extraction.items.length > 0,
+  },
+
+  /**
+   * Read the invitation to tender itself.
+   *
+   * The take-off above measures the drawings that come *with* an ITT. This
+   * reads the document that sent them — and until it existed the platform
+   * could analyse an invitation it had never seen: `analyseITT` takes a
+   * requirement list as an argument, so somebody had to sit and type out
+   * ninety numbered clauses before the compliance matrix could say anything
+   * about them. That is the half-day of work the bid team actually loses, and
+   * it is the half where things get missed, because the requirement nobody
+   * typed is the requirement nobody answers.
+   *
+   * Two properties this keeps, and both are the reason it is a perception task
+   * rather than a new command.
+   *
+   * **The model reads; it does not judge.** Requirements come back as the
+   * document states them — reference, category, mandatory or scored, the
+   * evidence demanded, the date. Whether the business can meet one is
+   * `analyseITT`'s answer, from the company profile, and whether to chase the
+   * job at all is the bid/no-bid algorithm's. Asking one model to do all three
+   * would produce a confident recommendation with no working behind it.
+   *
+   * **What the document does not state is not invented.** An ITT names its
+   * return date and its contract form; it does not name what this business
+   * expects to price the job at, or the margin it needs. Those are commercial
+   * judgement and they are supplied by the person confirming — the same
+   * division `VOICE_NOTE` draws when it refuses to let a transcript name its
+   * own observer.
+   */
+  ITT_REQUIREMENTS: {
+    engine: 'TENDER',
+    taskType: 'itt_requirement_extraction',
+    area: 'ESTIMATE_TENDER',
+    // What `analyseITT` requires.
+    code: 'C',
+    label: 'Read an invitation to tender',
+    accepts: IMAGE_OR_PDF,
+    acceptsLabel: 'the invitation as a PDF or scan',
+    prompt:
+      'Read this invitation to tender. Report its reference, the client, and the return deadline exactly as ' +
+      'stated. List every requirement the bidder must satisfy, each with its own reference from the document, ' +
+      'its category, whether it is mandatory (pass/fail) or scored, its weighting where one is given, the ' +
+      'evidence demanded, and any date earlier than the return. Separately list every deliverable that must be ' +
+      'returned, with its format, page limit, whether a signature or bond is required, and the channel it goes ' +
+      'back through. Report the commercial terms it states — contract form, liquidated damages, bond, ' +
+      'retention, payment period, design liability. Quote the document rather than summarising it, and omit ' +
+      'anything it does not state rather than inferring it; list what you omitted and why.',
+    responseSchema: {
+      type: 'object',
+      properties: {
+        reference: { type: ['string', 'null'] },
+        clientName: { type: ['string', 'null'] },
+        returnBy: { type: ['string', 'null'] },
+        requirements: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              reference: { type: 'string' },
+              category: {
+                type: 'string',
+                enum: [
+                  'QUALIFICATION',
+                  'TECHNICAL',
+                  'COMMERCIAL',
+                  'INSURANCE',
+                  'HEALTH_AND_SAFETY',
+                  'QUALITY',
+                  'ENVIRONMENTAL',
+                  'SOCIAL_VALUE',
+                  'PROGRAMME',
+                  'SUBMISSION',
+                ],
+              },
+              requirement: { type: 'string' },
+              mandatory: { type: 'boolean' },
+              weightingPercent: { type: ['number', 'null'] },
+              evidenceRequired: { type: 'string' },
+              dueBy: { type: ['string', 'null'] },
+            },
+            required: ['reference', 'category', 'requirement', 'mandatory', 'evidenceRequired'],
+          },
+        },
+        deliverables: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              reference: { type: 'string' },
+              title: { type: 'string' },
+              mandatory: { type: 'boolean' },
+              format: { type: ['string', 'null'] },
+              pageLimit: { type: ['number', 'null'] },
+              fileSizeLimitMb: { type: ['number', 'null'] },
+              signatureRequired: { type: ['boolean', 'null'] },
+              bondRequired: { type: ['boolean', 'null'] },
+              channel: { type: ['string', 'null'], enum: ['PORTAL', 'EMAIL', 'PHYSICAL', 'HAND_DELIVERY', null] },
+            },
+            required: ['reference', 'title', 'mandatory'],
+          },
+        },
+        terms: {
+          type: 'object',
+          properties: {
+            contractForm: { type: ['string', 'null'] },
+            liquidatedDamagesPerWeekMinor: { type: ['number', 'null'] },
+            liquidatedDamagesCapPercent: { type: ['number', 'null'] },
+            performanceBondPercent: { type: ['number', 'null'] },
+            parentCompanyGuaranteeRequired: { type: ['boolean', 'null'] },
+            retentionPercent: { type: ['number', 'null'] },
+            paymentDays: { type: ['number', 'null'] },
+            designLiability: {
+              type: ['string', 'null'],
+              enum: ['NONE', 'REASONABLE_SKILL_AND_CARE', 'FITNESS_FOR_PURPOSE', null],
+            },
+            sectionalCompletions: { type: ['number', 'null'] },
+            other: { type: 'array', items: { type: 'string' } },
+          },
+        },
+        omitted: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['requirements'],
+    },
+    // An invitation with no requirements has not been read. The same guard
+    // `analyseITT` applies, applied before anything is shown to anybody.
+    usable: (extraction) => Array.isArray(extraction.requirements) && extraction.requirements.length > 0,
   },
 
   VOICE_NOTE: {
@@ -606,6 +737,14 @@ export type ConfirmInput = {
   /** DRAWING_TAKEOFF. */
   packageId?: string;
   costCodePrefix?: string;
+  /**
+   * ITT_REQUIREMENTS — the invitation this reading belongs to, and the two
+   * commercial figures no invitation states about the bidder.
+   */
+  invitationId?: string;
+  estimatedValueMinor?: number;
+  durationWeeks?: number;
+  targetMarginPercent?: number;
   /** VOICE_NOTE, EQUIPMENT_RECOGNITION. */
   observedBy?: string;
   actionByDate?: string;
@@ -679,6 +818,115 @@ export async function confirm(
       costCodePrefix: input.costCodePrefix,
     });
     result = { takeoffId: takeoff.takeoffId, boqItemIds: takeoff.boqItemIds };
+  } else if (draft.task === 'ITT_REQUIREMENTS') {
+    if (!input.invitationId || input.estimatedValueMinor === undefined || input.durationWeeks === undefined) {
+      throw new DomainError(
+        'PERCEPTION_TARGET_REQUIRED',
+        'A read invitation is filed against the invitation it came from, and needs the value this business ' +
+          'expects to price and the duration it is priced over. Neither is stated in an ITT about the bidder, ' +
+          'so neither is read from one.',
+      );
+    }
+
+    const read = extraction as {
+      reference?: unknown;
+      clientName?: unknown;
+      returnBy?: unknown;
+      requirements?: Array<Record<string, unknown>>;
+      deliverables?: Array<Record<string, unknown>>;
+      terms?: Record<string, unknown>;
+    };
+
+    const requirements = (read.requirements ?? []).map((requirement) => ({
+      reference: String(requirement.reference ?? ''),
+      category: String(requirement.category ?? 'SUBMISSION') as ITTRequirement['category'],
+      requirement: String(requirement.requirement ?? ''),
+      mandatory: requirement.mandatory === true,
+      ...(requirement.weightingPercent != null ? { weightingPercent: Number(requirement.weightingPercent) } : {}),
+      evidenceRequired: String(requirement.evidenceRequired ?? ''),
+      ...(requirement.dueBy ? { dueBy: String(requirement.dueBy) } : {}),
+    }));
+
+    const terms = read.terms ?? {};
+    const commercial: CommercialTerms = {
+      contractForm: String(terms.contractForm ?? 'Not stated in the invitation'),
+      ...(terms.liquidatedDamagesPerWeekMinor != null
+        ? {
+            liquidatedDamages: {
+              perWeekMinor: Number(terms.liquidatedDamagesPerWeekMinor),
+              ...(terms.liquidatedDamagesCapPercent != null
+                ? { capPercent: Number(terms.liquidatedDamagesCapPercent) }
+                : {}),
+            },
+          }
+        : {}),
+      ...(terms.performanceBondPercent != null ? { performanceBondPercent: Number(terms.performanceBondPercent) } : {}),
+      ...(terms.parentCompanyGuaranteeRequired != null
+        ? { parentCompanyGuaranteeRequired: terms.parentCompanyGuaranteeRequired === true }
+        : {}),
+      ...(terms.retentionPercent != null ? { retentionPercent: Number(terms.retentionPercent) } : {}),
+      ...(terms.paymentDays != null ? { paymentDays: Number(terms.paymentDays) } : {}),
+      ...(terms.designLiability ? { designLiability: String(terms.designLiability) as CommercialTerms['designLiability'] } : {}),
+      ...(terms.sectionalCompletions != null ? { sectionalCompletions: Number(terms.sectionalCompletions) } : {}),
+      ...(Array.isArray(terms.other) ? { other: terms.other.map(String) } : {}),
+    };
+
+    // The analyst, exactly as a person typing the requirements in would reach
+    // it — same authorisation, same ACU cost, same tests. The reading is what
+    // changed; nothing about how a matrix is produced did.
+    const analysis = analyseITT(ctx, {
+      // The invitation's own reference when the document did not state one
+      // legibly. It is the same record either way, so the matrix binds to it.
+      reference: String(
+        read.reference ??
+          ctx.ledger.require({ refType: 'TenderInvitation', refId: input.invitationId }).state.reference ??
+          '',
+      ),
+      clientName: String(read.clientName ?? 'Not stated in the invitation'),
+      returnBy: String(read.returnBy ?? ''),
+      estimatedValueMinor: input.estimatedValueMinor,
+      durationWeeks: input.durationWeeks,
+      requirements,
+      terms: commercial,
+      ...(input.targetMarginPercent !== undefined ? { targetMarginPercent: input.targetMarginPercent } : {}),
+    });
+
+    // Bind the deliverables and the matrix to the invitation. `extractRequirements`
+    // is what raises the conflict where a deliverable's own date falls after the
+    // return — which is the kind of thing a reader skims past and a register does
+    // not.
+    const deliverables = (read.deliverables ?? []).map((deliverable) => ({
+      reference: String(deliverable.reference ?? ''),
+      title: String(deliverable.title ?? ''),
+      mandatory: deliverable.mandatory === true,
+      ...(deliverable.format ? { format: String(deliverable.format) } : {}),
+      ...(deliverable.pageLimit != null ? { pageLimit: Number(deliverable.pageLimit) } : {}),
+      ...(deliverable.fileSizeLimitMb != null ? { fileSizeLimitMb: Number(deliverable.fileSizeLimitMb) } : {}),
+      ...(deliverable.signatureRequired != null ? { signatureRequired: deliverable.signatureRequired === true } : {}),
+      ...(deliverable.bondRequired != null ? { bondRequired: deliverable.bondRequired === true } : {}),
+      ...(deliverable.channel ? { channel: String(deliverable.channel) as SubmissionChannel } : {}),
+    }));
+
+    const extracted =
+      deliverables.length > 0
+        ? extractRequirements(ctx, input.invitationId, { deliverables, analysisId: analysis.analysisId })
+        : undefined;
+
+    result = {
+      analysisId: analysis.analysisId,
+      requirements: requirements.length,
+      deliverables: extracted?.deliverables ?? 0,
+      // Named rather than counted. A mandatory requirement with no evidence
+      // behind it ends the bid, and a barred term ends it before pricing
+      // starts — those are the first two things a bid manager asks, so the
+      // confirmation answers them rather than reporting that a matrix exists.
+      mandatoryGaps: analysis.mandatoryGaps.map((line) => line.reference),
+      bars: analysis.bars,
+      quantifiedExposureMinor: analysis.quantifiedExposureMinor,
+      clarifications: analysis.clarifications,
+      readyToPrice: analysis.readyToPrice,
+      blockers: extracted?.blockers ?? [],
+    };
   } else if (draft.task === 'VOICE_NOTE') {
     // The model's category is checked against the platform's own list before it
     // reaches a command that would refuse it. A person confirming a transcript

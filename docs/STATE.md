@@ -10161,3 +10161,57 @@ built (item #116), there is no proof-of-work or CAPTCHA on the public signup
 surface, and the address-keyed limit remains in-process unless a shared store
 is configured. Naming them here rather than letting "enterprise-grade access"
 stand for more than was built.
+
+### Reading the invitation to tender
+
+`analyseITT` could produce a compliance matrix, a term assessment, a quantified
+exposure and the questions worth putting to the buyer — from a requirement list
+handed to it **as an argument**. So the platform could analyse an invitation it
+had never seen, and somebody had to type ninety numbered clauses out of a PDF
+before any of it ran.
+
+That is the half-day the bid team actually loses, and it is the half where
+things get missed. The requirement nobody typed is the requirement nobody
+answers, and it surfaces at the evaluation as a non-compliance.
+
+`ITT_REQUIREMENTS` is a perception task, which puts the boundary in the right
+place rather than adding a second way into the tender register.
+
+**The model reads; it does not judge.** Requirements come back as the document
+states them — reference, category, mandatory or scored, weighting, the evidence
+demanded, any date earlier than the return. Whether the business can meet one
+stays with `analyseITT` and the company profile; whether to chase the job at
+all stays with the bid/no-bid algorithm. One model asked to do all three would
+produce a confident recommendation with no working behind it.
+
+**What the document does not state is not invented.** An ITT names its return
+date and its contract form. It does not name what this business expects to
+price the job at, or over what duration — those are commercial judgement and
+they are supplied by the person confirming. Refusing without them is tested:
+the same division `VOICE_NOTE` draws when it will not let a transcript name its
+own observer.
+
+**A reading is a draft.** Confirming runs `analyseITT` and then
+`extractRequirements`, which is exactly what a person typing the clauses would
+have run — same authorisation, same ACU cost, same events. Machine-read data
+still gets no private door into the register.
+
+The confirmation answers what a bid manager asks first rather than reporting
+that a matrix exists: which mandatory requirements have no evidence behind
+them, which terms are a **bar** rather than a negotiation, the quantified
+exposure, and whether the thing is ready to price at all. On the test
+invitation — NEC4 Option A with fitness-for-purpose design liability and
+unlimited consequential loss under a Z-clause — it comes back `readyToPrice:
+false` with the bars named.
+
+Every control is mutation-tested: dropping the commercial figures, loosening
+the empty-reading guard, or short-circuiting the deliverable register each
+fails a test.
+
+**It refuses where nothing can see the document.** The local adapter declares
+`multimodal = false`, so in a deployment with no vision provider the task is
+refused rather than answered from a hash — a true statement about the
+deployment instead of a false one about the tender. That refusal is tested too.
+The remote adapters are written to both vendors' documented multimodal shapes
+and exercised here against a stub; no call to a live provider has been made
+from this environment, and nothing above should be read as saying one has.
