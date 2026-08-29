@@ -117,6 +117,18 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // paying customer's platform, and "who decided, when, and on what basis"
   // is the first question asked when it turns out to have been wrong.
   def('SUBSCRIPTION_STATUS_CHANGED', 'Subscription', 'UPDATE', 'GOVERNANCE', { requiresEvidence: true }),
+  // The collection cycle. Raised when a period falls due, settled when the
+  // money arrives, and separate events because the gap between them is the
+  // whole subject: it is the window a tenancy is running unpaid in, and
+  // suspension is what closes it.
+  // Not a status change: nothing about the customer's standing moved, the
+  // period simply ended. Reusing SUBSCRIPTION_STATUS_CHANGED would put a
+  // routine monthly tick into the evidenced record of decisions somebody made
+  // about an account, and would need evidence that does not exist for it.
+  def('SUBSCRIPTION_RENEWAL_ADVANCED', 'Subscription', 'UPDATE', 'GOVERNANCE'),
+  def('SUBSCRIPTION_CHARGE_RAISED', 'SubscriptionCharge', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('SUBSCRIPTION_CHARGE_SETTLED', 'SubscriptionCharge', 'UPDATE', 'GOVERNANCE'),
+  def('SUBSCRIPTION_COLLECTION_FAILED', 'SubscriptionCharge', 'UPDATE', 'GOVERNANCE'),
   def('POLICY_UPDATED', 'PermissionPolicy', 'UPDATE', 'GOVERNANCE'),
   def('ACU_CAPS_SET', 'ACUWallet', 'UPDATE', 'GOVERNANCE'),
   // Capacity bought is a commercial fact with money behind it, so it belongs on

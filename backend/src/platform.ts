@@ -1000,6 +1000,35 @@ export class Platform {
    * and on what basis" is the first question asked when it turns out to have
    * been wrong.
    */
+  /**
+   * Move a subscription's renewal date on, once a period has been billed.
+   *
+   * Separate from `setSubscriptionStatus` because it is not a decision about
+   * the customer: the period ends whether or not the money arrived, and a
+   * renewal date that waited for payment would raise the same charge every day
+   * somebody was late until the debt was the number of times the scheduler ran.
+   */
+  advanceRenewal(tenantId: string, renewsAt: string): Subscription | undefined {
+    const subscription = this.#subscriptions.get(tenantId);
+    if (!subscription) return undefined;
+
+    const updated: Subscription = { ...subscription, renewsAt };
+    this.#subscriptions.set(tenantId, updated);
+
+    this.ledger.commit({
+      tenantId,
+      projectId: `${tenantId}-governance`,
+      actor: { refType: 'System', refId: 'billing' },
+      source: 'SYSTEM',
+      correlationId: ulid(),
+      eventType: 'SUBSCRIPTION_RENEWAL_ADVANCED',
+      entity: { refType: 'Subscription', refId: updated.id },
+      nextState: { ...updated, renewalAdvancedFrom: subscription.renewsAt },
+    });
+
+    return updated;
+  }
+
   setSubscriptionStatus(input: {
     tenantId: string;
     status: Subscription['status'];

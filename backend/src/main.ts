@@ -6,6 +6,7 @@ import { Journal, RecordJournal } from './goldenthread/journal.ts';
 import { WriterLock } from './goldenthread/writerlock.ts';
 import type { ACUEntry } from './billing/acu.ts';
 import { startNewsletterSchedule } from './messaging/newsletter.ts';
+import { startCollectionSchedule } from './billing/collection.ts';
 import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.ts';
 import { rehydrateKeys } from './developer/keys.ts';
 import { attachViewJournal, viewJournalPath } from './site/views.ts';
@@ -252,6 +253,23 @@ const assuranceTimer = startAssurance(platform);
 armRepair(() => startOutboxDrain(platform));
 const repairTimer = startRepair(platform);
 
+/**
+ * The subscription collection cycle.
+ *
+ * Off unless armed. A billing timer that starts itself on a laptop, or on a
+ * staging box restored from a production journal, raises charges against real
+ * tenancies — so arming it is a deliberate act on a deployment.
+ */
+const collection = startCollectionSchedule(platform, (report) => {
+  process.stdout.write(
+    `[billing] ${report.raised} charge(s) raised, ${report.settled} settled, ${report.failed} unpaid, ` +
+      `${report.suspended} tenancy(ies) suspended\n`,
+  );
+  for (const stopped of report.suspendedTenants) {
+    process.stdout.write(`[billing] suspended ${stopped.tenantId}: ${stopped.because}\n`);
+  }
+});
+
 const newsletter = startNewsletterSchedule(platform, (report) => {
   process.stdout.write(
     `[newsletter] ${report.campaign.week} issued — ${report.sent} sent, ${report.recorded} recorded, ${report.failed} failed\n`,
@@ -299,6 +317,11 @@ process.stdout.write(
       config.newsletter.enabled
         ? `weekly, day ${config.newsletter.sendDayUtc} at ${config.newsletter.sendHourUtc}:00 UTC via ${config.smtp.host || 'no SMTP host — will record, not send'}`
         : 'disabled (set NEWSLETTER_ENABLED=true to arm the weekly send)'
+    }
+  Billing      ${
+      config.billing.collectionEnabled
+        ? `hourly collection, ${config.billing.subscriptionGraceDays}-day grace, then the tenancy stops`
+        : 'collection disabled (set SUBSCRIPTION_COLLECTION_ENABLED=true — it raises charges against real tenancies)'
     }`,
     '',
   ].join('\n'),
@@ -315,6 +338,7 @@ process.stdout.write(
 const shutdown = (signal: string): void => {
   process.stdout.write(`\nReceived ${signal}, shutting down.\n`);
   newsletter.stop();
+  collection.stop();
   outboxTimer();
   watchTimer();
   server.close(() => {

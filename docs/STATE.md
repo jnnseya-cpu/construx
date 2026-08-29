@@ -9941,3 +9941,61 @@ Reachable on the Enterprise & Portfolio screen, which shows who has been invited
 by whom, from which organisation, and the seat position beside it — assigned,
 held by invitations, and how many are left. The invite button is shut with that
 arithmetic in the reason when the package is full.
+
+### Taking the subscription, and stopping when it does not arrive
+
+`renewsAt` was set thirty days out at signup and moved by nothing. The
+operator's forecast **warned** that a renewal was approaching;
+`monthlySubscriptionCharge` could state what a period was worth; and no code
+anywhere raised the charge, took the money, or noticed it had not arrived. A
+customer could sign up, use the platform for a year, and never be asked for a
+penny — the only signal a warning nobody had to act on. It is the same shape as
+the trial that never ended, one level up.
+
+Four steps, each a separate recorded fact, because collapsing them is what makes
+a billing dispute unanswerable:
+
+1. **Raise.** The period falls due, the charge is written with what is owed and
+   when, and `renewsAt` advances. Idempotent per period — a scheduler that fires
+   twice must not bill twice, and the renewal moves whether or not the money
+   arrives, or the debt would be the number of times the scheduler ran rather
+   than the number of months owed.
+2. **Attempt.** Collection is tried, and the outcome is recorded either way.
+3. **Grace.** Seven days, configurable. Most late payments are not refusals — a
+   card expires, a finance team is on holiday, a bank holds a transfer — and
+   cutting a customer off the hour a payment is late costs more than it saves.
+4. **Stop.** Past grace, the subscription is suspended through the same governed
+   path an operator's decision takes: evidence, a reason, a named decider. A
+   test asserts the suspension actually reaches `standing()` and closes writes,
+   AI and export, rather than trusting the two are wired together.
+
+Paying puts it back automatically — but **only when nothing else is
+outstanding**. A tenancy two periods behind that settles one has not caught up,
+and reinstating it there would let somebody stay live for ever by always paying
+the oldest invoice.
+
+**What is not built, stated rather than implied.** There is no stored payment
+method and no off-session charge: this platform holds no card. `attemptCollection`
+therefore cannot debit anybody and does not pretend to — it asks the configured
+collector, and the default answers *"no payment method is held for this
+tenancy"*, which is the truth and is what lands on the record. What settles a
+charge today is a payment recorded against it, by the Stripe webhook or by an
+operator recording a transfer. Everything after that point is real: the charge is
+raised automatically, the clock runs, and the tenancy stops. Wiring a card is
+replacing one function — the `Collector` port exists for exactly that — not
+building the cycle.
+
+**The platform is not its own customer.** The operator tenancy exists from
+process construction, before any `createTenant`, so it has an in-memory
+subscription and no `Subscription` entity in the ledger. A run iterating every
+tenancy would have raised a charge against the company itself and, seven days
+later, suspended the platform for not paying itself. The ledger record is what
+tells a tenancy somebody signed up for from the one the process was born with.
+
+The timer is **off by default** (`SUBSCRIPTION_COLLECTION_ENABLED`). A billing
+cycle that starts itself on a laptop, or on a staging box restored from a
+production journal, raises charges against real tenancies, so arming it is a
+deliberate act on a deployment. It runs hourly rather than daily because of the
+grace window rather than the billing: a tenancy whose grace ended at 09:00 should
+not keep working until midnight, and a customer who paid at 09:05 should not wait
+a day to get their platform back.

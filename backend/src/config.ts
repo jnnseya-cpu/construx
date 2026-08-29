@@ -780,6 +780,26 @@ export const config = {
      * wallet. The rest carries no provider cost against it.
      */
     subscriptionAcuAllocationPercent: num('ACU_SUBSCRIPTION_ALLOCATION_PERCENT', 20),
+    /**
+     * Days a subscription may run unpaid before the tenancy stops.
+     *
+     * Not zero, and the reason is that most late payments are not refusals. A
+     * card expires, a finance team is on holiday, a bank holds a transfer —
+     * cutting a customer off the hour a payment is late costs more in goodwill
+     * and support than it saves in exposure. Seven days is one working week,
+     * which is long enough for somebody to notice an email and short enough
+     * that a genuine non-payer is not running a platform for a month free.
+     */
+    subscriptionGraceDays: num('SUBSCRIPTION_GRACE_DAYS', 7),
+    /**
+     * Whether the collection timer runs.
+     *
+     * Off by default. A billing cycle that starts itself on a developer's
+     * laptop, or on a staging box restored from a production journal, raises
+     * charges against real tenancies — so arming it is a deliberate act on a
+     * deployment rather than the default everywhere.
+     */
+    collectionEnabled: bool('SUBSCRIPTION_COLLECTION_ENABLED', false),
     freeTrialGrantMinor: num('FREE_TRIAL_GRANT_MINOR', 500),
     /**
      * What one 100 GB block of extra storage costs per month.

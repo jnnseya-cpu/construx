@@ -191,6 +191,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // about the tenancy's billing, and a project person has to be able to see
   // whether the invitation they sent has been taken up.
   ProjectInvitation: { area: 'PROJECT_SETUP' },
+  // What the tenancy owes and whether it has been paid. Under billing, with
+  // the wallet and the invoices, because that is who asks the question.
+  SubscriptionCharge: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   BidProgramme: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   MasterPricing: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   PricingSchedule: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
