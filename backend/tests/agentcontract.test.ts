@@ -153,8 +153,27 @@ describe('the contract fields mean something', () => {
     // Eligibility is still not authority — `agents/mandate.ts` requires a human
     // with governance authority to grant a live envelope before any of this
     // runs — but the list is the ceiling on what could ever be granted.
+    //
+    // The second entry, argued, because that is what this test is for.
+    //
+    // `AGT-ITT-REGISTER` files the return register off an invitation the
+    // platform has already read: what must go back, in what format, by when and
+    // to whom. It is the clerical half of reading an ITT — transcription — and
+    // the judgement half is a different command that no envelope can ever
+    // cover, because `ITT_ANALYSED` is marked in the event catalogue as a
+    // decision a person takes and the ledger refuses an AI author on it.
+    //
+    // It meets the three tests below without amendment: the envelope names one
+    // command, its value ceiling is zero, and every line it writes stays
+    // editable through the commands a person already uses. The worst case if
+    // the reading is wrong is a wrong due date on a screen the bid team opens
+    // daily, against a document they hold.
     const acting = AGENTS.filter((a) => a.mandate.maxUnattended === 'ACT').map((a) => a.agentId).sort();
-    assert.deepEqual(acting, ['CX-PLATFORM-HEALTH'], 'the set of agents eligible to act unattended has changed');
+    assert.deepEqual(
+      acting,
+      ['AGT-ITT-REGISTER', 'CX-PLATFORM-HEALTH'],
+      'the set of agents eligible to act unattended has changed',
+    );
 
     for (const agent of AGENTS) {
       assert.ok(AUTONOMY_LADDER.includes(agent.mandate.maxUnattended), `${agent.agentId} has an unknown ceiling`);

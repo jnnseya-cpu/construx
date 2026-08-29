@@ -3,7 +3,8 @@ import { DomainError, ForbiddenError } from '../core/errors.ts';
 import { authorise, currentPhase, write, type EngineContext } from '../engines/context.ts';
 import { rolesAllow } from '../identity/roles.ts';
 import { tierCost } from '../billing/acu.ts';
-import { mayActUnattended } from './mandate.ts';
+import { liveEnvelope, mayActUnattended } from './mandate.ts';
+import { executeAct } from './acts.ts';
 import { AGENTS, agentByName, deployedAgents } from './registry.ts';
 import { exceeds, type AcuTier, type AgentDefinition, type AgentProposal, type AgentRunReport, type Finding } from './types.ts';
 
@@ -224,6 +225,7 @@ export async function runAgents(
       const output = await agent.evaluate!({ ...ctx, ledger: scopedLedgerFor(ctx, agent) });
       let raised = 0;
       let suppressed = 0;
+      let acted = 0;
 
       for (const finding of output.findings) {
         if (existing.has(finding.key)) {
@@ -312,10 +314,20 @@ export async function runAgents(
         const proposal = raiseProposal(ctx, agent, finding, proposed, runId);
         report.proposals.push(proposal);
         raised += 1;
+
+        // The act, if this one is granted. Raised first and run second, always
+        // in that order: the proposal is the record that the agent wanted this,
+        // and it has to survive the act failing. An act with no proposal behind
+        // it would be a change to a project with no statement of intent
+        // anywhere near it.
+        if (proposal.autonomy === 'ACT' && proposal.command) {
+          const outcome = runAct(ctx, agent, proposal);
+          if (outcome.executed) acted += 1;
+        }
       }
 
       report.suppressed += suppressed;
-      report.agents.push({ agent: agent.name, findings: output.findings.length, proposalsRaised: raised, suppressed, because });
+      report.agents.push({ agent: agent.name, findings: output.findings.length, proposalsRaised: raised, suppressed, acted, because });
     } catch (error) {
       // One agent failing must not stop the fleet, and the failure is recorded
       // rather than swallowed — a silent agent looks identical to a calm project.
@@ -413,6 +425,87 @@ export async function runAgentsForChanges(
 
   const report = await runAgents(ctx, { trigger: { kind: 'EVENT', eventTypes } });
   return { ...report, window: { from, eventTypes } };
+}
+
+/**
+ * Run one act inside a granted envelope, and record what happened either way.
+ *
+ * The rung the ladder was missing. `mayActUnattended` had already said yes by
+ * the time this is reached — an ungranted act was turned back into a proposal
+ * before the proposal was raised — so what is left is to do the thing and write
+ * down that it was done.
+ *
+ * **Attributed to the agent.** `actingAs` changes the author on every event the
+ * command writes, so the return register says the agent filed it rather than
+ * naming whoever happened to run the fleet. Authority is unchanged: `authorise`
+ * still reads the human's roles, so the agent cannot reach past the identity it
+ * ran for, and the ledger refuses an AI author outright on any event type the
+ * catalogue marks as a decision a person takes. That refusal is the real
+ * boundary and it does not depend on anything in this function being right.
+ *
+ * **A failure leaves the proposal open.** If the act throws, the work still
+ * needs doing and a person still needs to see it — so the failure is recorded
+ * against the proposal and the proposal stays `OPEN` for the queue. Marking it
+ * executed would hide a change that never happened.
+ */
+function runAct(
+  ctx: EngineContext,
+  agent: AgentDefinition,
+  proposal: AgentProposal,
+): { executed: boolean; because: string } {
+  const command = proposal.command!;
+  const envelope = liveEnvelope(ctx, agent.name);
+
+  // Belt and braces against a future caller reaching this without the check
+  // above. An act with no envelope behind it is the one thing this whole
+  // module exists to prevent, so it is refused here as well as there.
+  if (!envelope) {
+    return { executed: false, because: 'no live envelope at the moment of the act' };
+  }
+
+  const actingAs: EngineContext = { ...ctx, actingAs: { refType: 'AI', refId: agent.agentId } };
+
+  let effect: string;
+  try {
+    effect = executeAct(actingAs, command.command, command.input);
+  } catch (error) {
+    const because = error instanceof Error ? error.message : String(error);
+    write(ctx, {
+      eventType: 'AGENT_ACT_EXECUTED',
+      entity: { refType: 'AgentProposal', refId: proposal.id },
+      actor: { refType: 'AI', refId: agent.agentId },
+      reason: `Act refused: ${because}`,
+      nextState: {
+        ...(ctx.ledger.require({ refType: 'AgentProposal', refId: proposal.id }).state as Record<string, unknown>),
+        // Deliberately still OPEN. Nothing changed, so somebody has to decide.
+        status: 'OPEN',
+        actAttemptedAt: new Date().toISOString(),
+        actFailedBecause: because,
+        envelopeId: envelope.id,
+      },
+    });
+    return { executed: false, because };
+  }
+
+  write(ctx, {
+    eventType: 'AGENT_ACT_EXECUTED',
+    entity: { refType: 'AgentProposal', refId: proposal.id },
+    actor: { refType: 'AI', refId: agent.agentId },
+    reason: effect,
+    nextState: {
+      ...(ctx.ledger.require({ refType: 'AgentProposal', refId: proposal.id }).state as Record<string, unknown>),
+      status: 'EXECUTED',
+      executedAt: new Date().toISOString(),
+      executedEffect: effect,
+      // Named on the record rather than left to be inferred from dates. The
+      // question asked of an unattended act three years later is *who allowed
+      // this*, and the answer is an envelope with a grantor and a window.
+      envelopeId: envelope.id,
+      grantedBy: envelope.grantedBy,
+    },
+  });
+
+  return { executed: true, because: effect };
 }
 
 function raiseProposal(

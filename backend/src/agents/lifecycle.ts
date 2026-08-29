@@ -640,6 +640,138 @@ const tenderIntelAgent: AgentDefinition = {
   },
 };
 
+/**
+ * The clerical half of reading an invitation, done unattended.
+ *
+ * The first agent on this platform declared eligible to *act* rather than
+ * propose, and the reasoning for where the line falls is the whole of why it
+ * exists.
+ *
+ * Reading an ITT is two jobs wearing one name. One is transcription: forty
+ * return items, each with a format, a page limit, a channel, a signature or
+ * bond requirement and a date, copied out of a document without losing any of
+ * them. It is slow, it is exactly the work a machine is good at, and a mistake
+ * in it is visible and fixable on a screen the bid team opens daily. The other
+ * is judgement: whether a requirement is really pass/fail, whether fitness for
+ * purpose is acceptable against the cover this business holds, whether the job
+ * is worth chasing at all. A mistake in *that* is a bid submitted on terms
+ * nobody checked.
+ *
+ * So the line is drawn between them, and it is drawn in the event catalogue
+ * rather than here: `TENDER_REQUIREMENTS_EXTRACTED` is `aiAllowed`,
+ * `ITT_ANALYSED` is not. This agent can therefore only ever reach the register,
+ * whatever it or a future envelope tries — the ledger refuses the other outright
+ * to an AI author, and `assertCommandMayBeAutomated` refuses it at grant time
+ * before anyone gets that far.
+ *
+ * **Nothing here confers the authority.** `maxUnattended: 'ACT'` says this
+ * agent *may be* trusted; whether it *is* comes from an envelope a person with
+ * governance authority granted, with an end date, revocable, on the record.
+ * Without one this agent behaves exactly like every other: it proposes, and the
+ * runtime says so in the proposal — "queued rather than run".
+ *
+ * **The confidence floor is the second gate.** A reading the model is not sure
+ * about does not become an unattended act; it becomes a finding with no
+ * proposal attached, which is the runtime's ordinary behaviour below the floor.
+ * The floor is high here — higher than the analyst's — because the whole
+ * argument for acting rests on the transcription being reliable.
+ */
+const ittRegisterAgent: AgentDefinition = {
+  name: 'itt-register',
+  agentId: 'AGT-ITT-REGISTER',
+  division: 'BID',
+  purpose:
+    'Files the return register off an invitation the platform has read: what must go back, in what format, by when ' +
+    'and to whom. Never the compliance matrix, which is a judgement a person takes.',
+  activeIn: ['TENDER'],
+  triggers: [{ kind: 'EVENT', eventType: 'PERCEPTION_DRAFT_PRODUCED' }, { kind: 'ON_DEMAND' }],
+  inputs: ['ITT documents', 'Perception drafts'],
+  outputs: ['Return register'],
+  emits: ['TENDER_REQUIREMENTS_EXTRACTED'],
+  // REVIEW rather than APPROVAL, and the distinction is exactly the decision
+  // taken here: a person reads the register afterwards on the screen they work
+  // from daily, rather than being asked to approve each line before it exists.
+  // The judgement half of the same reading still carries APPROVAL, on the
+  // analyst, where it belongs.
+  hitl: 'REVIEW',
+  confidenceFloor: 0.8,
+  acuTier: 'LOW',
+  memory: { reads: ['PROJECT'], writes: ['PROJECT'] },
+  mandate: {
+    reads: ['ESTIMATE_TENDER', 'EVIDENCE_AUDIT'],
+    proposes: ['ESTIMATE_TENDER'],
+    approvers: ['OWNER', 'QS', 'COMMERCIAL_MANAGER', 'PROJECT_DIRECTOR'],
+    maxUnattended: 'ACT',
+    envelope: {
+      commands: ['tenderintake:extractRequirements'],
+      // A return register carries no money. Zero is the honest ceiling, not a
+      // placeholder: filing it commits nobody to a price, a programme or a term.
+      valueCeilingMinor: 0,
+      because:
+        'Files the return items an invitation asks for, off a reading the platform already holds and against an ' +
+        'invitation that already exists. Every line stays editable, nothing is committed commercially, and the ' +
+        'compliance matrix and commercial assessment are outside this envelope and cannot be put inside it.',
+    },
+  },
+  evaluate(ctx) {
+    // An unconfirmed reading of an invitation, and the invitation it belongs to.
+    const drafts = states(ctx, 'PerceptionDraft').filter(
+      (draft) => draft.task === 'ITT_REQUIREMENTS' && draft.status === 'DRAFT',
+    );
+    if (drafts.length === 0) return empty;
+
+    const invitations = states(ctx, 'TenderInvitation');
+    const findings: Finding[] = [];
+    const proposals: AgentOutput['proposals'] = [];
+
+    for (const draft of drafts) {
+      const extraction = (draft.extraction ?? {}) as { deliverables?: Array<Record<string, unknown>>; reference?: unknown };
+      const deliverables = extraction.deliverables ?? [];
+      if (deliverables.length === 0) continue;
+
+      // Matched on the buyer's own reference. Guessing which invitation a
+      // reading belongs to would be the one mistake that cannot be seen on a
+      // screen — a register filed against the wrong tender looks entirely
+      // normal until the wrong deadline is missed.
+      const reference = String(extraction.reference ?? '');
+      const invitation = invitations.find((record) => String(record.reference ?? '') === reference);
+      if (!invitation) continue;
+      if (invitation.requirementsExtracted === true) continue;
+
+      const key = `itt-register:${String(invitation.id)}`;
+      const mandatory = deliverables.filter((deliverable) => deliverable.mandatory === true).length;
+
+      findings.push(
+        finding(
+          key,
+          'ATTENTION',
+          `${reference} was read with ${deliverables.length} return item(s), ${mandatory} of them mandatory, and the register is empty.`,
+          'A return item nobody has written down is a return item nobody owns, and the bids lost this way are lost ' +
+            'with a correct price inside them.',
+          [{ refType: 'PerceptionDraft', refId: String(draft.id), note: 'the reading this came from' }],
+          typeof draft.confidence === 'number' ? draft.confidence : undefined,
+        ),
+      );
+
+      proposals.push({
+        findingKey: key,
+        autonomy: 'ACT',
+        command: {
+          command: 'tenderintake:extractRequirements',
+          area: 'ESTIMATE_TENDER',
+          code: 'U',
+          input: { invitationId: String(invitation.id), deliverables },
+          effect: `Files ${deliverables.length} return item(s) on ${reference}. The compliance matrix is not part of this and still needs a person.`,
+          ifDeclined: 'The register stays empty and each return item is transcribed by hand from the invitation.',
+          estimatedAcuMinor: 0,
+        },
+      });
+    }
+
+    return { findings, proposals };
+  },
+};
+
 const returnIntelAgent: AgentDefinition = {
   name: 'return-intel',
   agentId: 'AGT-RETURN-INTEL',
@@ -1312,6 +1444,7 @@ export const LIFECYCLE_AGENTS: AgentDefinition[] = [
   bimTwinAgent,
   designRiskAgent,
   tenderIntelAgent,
+  ittRegisterAgent,
   returnIntelAgent,
   contractRiskAgent,
   bidProgrammeAgent,

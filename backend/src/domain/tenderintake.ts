@@ -441,8 +441,18 @@ export function extractRequirements(
   invitationId: string,
   input: {
     deliverables: TenderDeliverable[];
-    /** The id of the `analyseITT` run that produced the compliance matrix. */
-    analysisId: string;
+    /**
+     * The id of the `analyseITT` run that produced the compliance matrix,
+     * where one has been produced.
+     *
+     * Optional, because the register can honestly exist before the analysis
+     * does. An agent filing the return items off a reading is doing the
+     * clerical half; the matrix is a judgement a person takes afterwards, and
+     * requiring its id here would have forced the two to happen together —
+     * which is exactly the coupling that would have made the automation
+     * unsafe. When the analysis arrives it is linked by the same command.
+     */
+    analysisId?: string;
   },
 ): { deliverables: number; blockers: string[] } {
   authorise(ctx, 'ESTIMATE_TENDER', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
@@ -483,7 +493,14 @@ export function extractRequirements(
     nextState: {
       ...record.state,
       deliverables: input.deliverables,
-      analysisId: input.analysisId,
+      // Kept when the register is filed ahead of the analysis, rather than
+      // overwritten with undefined — a later analysis links itself, and a
+      // re-filed register must not unlink one already there.
+      ...(input.analysisId
+        ? { analysisId: input.analysisId }
+        : record.state.analysisId
+          ? { analysisId: record.state.analysisId }
+          : {}),
       requirementsExtracted: true,
       clarifications: [...(record.state.clarifications as Clarification[] | undefined ?? []), ...conflicts],
       extractedAt: new Date().toISOString(),

@@ -723,6 +723,24 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // something other than a list nobody has picked up.
   def('AGENT_PROPOSAL_ASSIGNED', 'AgentProposal', 'UPDATE', 'AI_BILLING'),
   def('AGENT_PROPOSAL_EXECUTED', 'AgentProposal', 'UPDATE', 'AI_BILLING'),
+  /**
+   * An agent ran a command itself, inside a granted envelope.
+   *
+   * Distinct from `AGENT_PROPOSAL_EXECUTED`, which is a person carrying out a
+   * proposal they approved. This is the rung above it, and the two must not
+   * share a code: the question a reader asks of an unattended act is *who
+   * allowed this and when did that authority start* — a question that has no
+   * meaning for a proposal a human approved, and the answer to which sits in
+   * an envelope this event names.
+   *
+   * `aiAllowed`, necessarily, because the actor is the agent. The safety does
+   * not come from forbidding the record — that would leave the act unrecorded,
+   * which is worse — it comes from `AUTOMATABLE_COMMANDS`, where every command
+   * an envelope may ever name is listed with the event types it writes, and
+   * from the ledger refusing an AI author on any of those types marked as a
+   * decision a person takes.
+   */
+  def('AGENT_ACT_EXECUTED', 'AgentProposal', 'UPDATE', 'AI_BILLING', { aiAllowed: true }),
   // Granting a machine the authority to act without asking is the single
   // highest-consequence decision anybody makes about this platform, so it is a
   // governed event and no AI actor may author one. That is what stops an agent

@@ -405,6 +405,14 @@ export type AgentRunReport = {
     findings: number;
     proposalsRaised: number;
     suppressed: number;
+    /**
+     * How many of those proposals the agent then ran itself, inside a granted
+     * envelope. Reported separately from `proposalsRaised` rather than folded
+     * into it: a fleet that raised nine proposals and executed one is a very
+     * different day from a fleet that raised nine and executed nine, and a
+     * single number cannot say which happened.
+     */
+    acted?: number;
     error?: string;
     /**
      * Why this agent did not run. Set where the lifecycle state gate declined

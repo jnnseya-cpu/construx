@@ -339,6 +339,40 @@ export const AUTOMATABLE_COMMANDS: Record<string, { writes: string[]; note: stri
     writes: [],
     note: 'Queues the recovery notice for an alert that has cleared. Writes no governed state.',
   },
+  /**
+   * The return register off an invitation the platform has already read.
+   *
+   * The first entry here that writes governed state, and it earns that against
+   * the three tests set for ACT eligibility.
+   *
+   * **Reversible.** The register is a list of what must go back — references,
+   * formats, page limits, internal dates, owners. Every line is editable
+   * afterwards through the same commands a person uses, and the event is an
+   * UPDATE on an invitation that already exists.
+   *
+   * **Bounded in value.** It carries no money. Filing it commits nobody to a
+   * price, a programme or a term.
+   *
+   * **Creates no liability.** This is the clerical half of reading an ITT:
+   * transcribing forty return items with their dates and formats. The half
+   * that carries judgement — is this requirement really mandatory, is fitness
+   * for purpose acceptable, is the job worth chasing — is `ITT_ANALYSED`,
+   * which the catalogue marks as a decision a person takes and which therefore
+   * no envelope can ever cover. The split is the point: the machine does the
+   * transcription, the human keeps the judgement.
+   *
+   * The worst case if the reading is wrong is a register with a wrong due date
+   * in it, on a screen the bid team works from daily, against a document they
+   * hold. That is a bad afternoon. It is not a bid submitted on terms nobody
+   * checked, which is what automating the analysis would risk.
+   */
+  'tenderintake:extractRequirements': {
+    writes: ['TENDER_REQUIREMENTS_EXTRACTED'],
+    note:
+      'Files the return register read off an invitation: what must go back, in what format, by when and to whom. ' +
+      'Carries no value, changes no commercial position, and every line stays editable. The compliance matrix and ' +
+      'the commercial assessment are not part of it and cannot be.',
+  },
 };
 
 /**

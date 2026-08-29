@@ -8,12 +8,15 @@ import {
   mayActUnattended,
   revokeEnvelope,
   AUTOMATABLE_COMMANDS,
+  assertCommandMayBeAutomated,
   MAX_ENVELOPE_DAYS,
 } from '../src/agents/mandate.ts';
 import { AGENTS, deployedAgents } from '../src/agents/registry.ts';
+import { executableCommands, executeAct } from '../src/agents/acts.ts';
 import { fleetManifest } from '../src/agents/runtime.ts';
 import { AGENT_DIVISIONS, AUTONOMY_LADDER, exceeds } from '../src/agents/types.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
+import type { EngineContext } from '../src/engines/context.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
@@ -388,5 +391,228 @@ describe('an ungranted act is queued, not lost', () => {
     const verdict = mayActUnattended(as('owner'), 'defect-triage', { command: 'ops:alert' });
     assert.equal(verdict.permitted, false);
     assert.match(verdict.permitted === false ? verdict.because : '', /ceiling of OBSERVE/);
+  });
+});
+
+// ── The rung that runs ───────────────────────────────────────────────────────
+
+/**
+ * ACT was a declaration with nothing under it.
+ *
+ * Every part of the authority story was built: an agent could be declared
+ * eligible, a person could grant an envelope, the runtime checked the grant and
+ * degraded to a proposal without one. And when there *was* one it raised a
+ * proposal anyway, because nothing anywhere executed a command. An envelope
+ * granted permission to do something the platform had no way to do.
+ *
+ * The first act with governed state behind it is the ITT return register, and
+ * the decision about where the line falls is the point of these tests. Reading
+ * an invitation is two jobs: transcribing forty return items with their dates
+ * and formats, and judging whether the job is worth chasing on those terms. The
+ * first is automated; the second is `ITT_ANALYSED`, which the catalogue marks
+ * as a decision a person takes, so no envelope can reach it and the ledger
+ * refuses an AI author on it. The safety does not rest on this agent behaving.
+ */
+describe('an agent that acts, and the half it can never reach', () => {
+  const REGISTER = 'tenderintake:extractRequirements';
+
+  it('declares the register automatable and the analysis not', () => {
+    // Both directions, because the pair is the whole argument. The register is
+    // an UPDATE the catalogue opens to machines; the analysis is a CREATE it
+    // does not, and `assertCommandMayBeAutomated` refuses it at grant time
+    // rather than leaving the ledger to refuse it at two in the morning.
+    assertCommandMayBeAutomated(REGISTER);
+    assert.equal(lookupEventType('TENDER_REQUIREMENTS_EXTRACTED')?.aiAllowed, true);
+    assert.equal(lookupEventType('ITT_ANALYSED')?.aiAllowed, false);
+  });
+
+  it('cannot be granted the analysis, however the envelope is written', () => {
+    // The agent's declared envelope names one command. A grant naming the
+    // analyst is refused for being outside the declaration; and were it ever
+    // added to the declaration, `assertCommandMayBeAutomated` refuses it for
+    // what it writes. Two independent refusals, checked separately.
+    throwsCode(
+      () =>
+        grantEnvelope(as('admin'), {
+          agent: 'itt-register',
+          commands: ['itt:analyseITT'],
+          ...window_(),
+          note: 'Trying to widen the envelope to the judgement half',
+        }),
+      'AGENT_ENVELOPE_EXCEEDS_DECLARATION',
+    );
+  });
+
+  it('files nothing without a granted envelope, and says why', () => {
+    const verdict = mayActUnattended(as('qs'), 'itt-register', { command: REGISTER });
+    assert.equal(verdict.permitted, false);
+    assert.ok(
+      (verdict.permitted === false ? verdict.because : '').length > 0,
+      'an ungranted act has to say why it is asking rather than acting',
+    );
+  });
+
+  it('permits the act once a person has granted the envelope', () => {
+    const envelope = grantEnvelope(as('admin'), {
+      agent: 'itt-register',
+      commands: [REGISTER],
+      ...window_(),
+      note: 'The bid team accepts the register being filed from a high-confidence reading',
+    });
+    assert.deepEqual(envelope.commands, [REGISTER]);
+    assert.equal(envelope.valueCeilingMinor, 0);
+
+    const verdict = mayActUnattended(as('qs'), 'itt-register', { command: REGISTER });
+    assert.equal(verdict.permitted, true, 'a granted envelope did not permit the act it names');
+
+    // And it still refuses the command it does not name, live envelope or not.
+    const other = mayActUnattended(as('qs'), 'itt-register', { command: 'ops:alert' });
+    assert.equal(other.permitted, false);
+  });
+
+  it('knows how to run exactly what it is allowed to run', () => {
+    // The pair that has to stay in step. A command that can be *granted* and
+    // not *run* is an envelope that promises something the platform cannot do;
+    // a command that can be run and was never declared automatable is the
+    // dangerous half, because nothing checked what it writes.
+    for (const command of executableCommands()) {
+      assert.ok(
+        AUTOMATABLE_COMMANDS[command],
+        `${command} has an executor and is not declared automatable — nothing has checked what it writes`,
+      );
+      assertCommandMayBeAutomated(command);
+    }
+  });
+
+  it('refuses to run a command it has no executor for', () => {
+    // `ops:alert` is declared automatable and is executed elsewhere, so this is
+    // a real state rather than a contrived one: the answer is a refusal the
+    // caller turns back into a proposal, not a silent success.
+    throwsCode(() => executeAct(as('qs'), 'ops:alert', {}), 'AGENT_ACT_NOT_EXECUTABLE');
+  });
+
+  it('refuses to run a command nobody declared automatable', () => {
+    throwsCode(() => executeAct(as('qs'), 'itt:analyseITT', {}), 'AGENT_COMMAND_NOT_AUTOMATABLE');
+  });
+});
+
+/**
+ * The act, end to end, on a real invitation.
+ *
+ * Everything above tests the authority. This tests that the authority is
+ * connected to something: an ITT reading lands, the agent wakes on it, and with
+ * an envelope in force the return register is filled in without anybody
+ * pressing anything — while the compliance matrix, which is the judgement half,
+ * is exactly as absent as it was before.
+ */
+describe('the return register fills itself, and the matrix does not', () => {
+  const REGISTER = 'tenderintake:extractRequirements';
+
+  /** A platform with a tender project, an invitation, and a reading of it. */
+  async function estate(): Promise<{
+    platform: Platform;
+    seed: SeedResult;
+    projectId: string;
+    invitationId: string;
+    qs: () => EngineContext;
+    admin: () => EngineContext;
+  }> {
+    const platform = new Platform();
+    const seed = await seedDemoProject(platform);
+    const project = platform.ledger
+      .listByTenant(seed.tenantId, 'Project')
+      .map((r) => r.state)
+      .find((p) => p.phase === 'TENDER') as { id: string } | undefined;
+    assert.ok(project, 'the demonstration has no project at tender');
+
+    const invitation = platform.ledger
+      .listByTenant(seed.tenantId, 'TenderInvitation')
+      .map((r) => r.state)[0] as { id: string; reference: string } | undefined;
+    assert.ok(invitation, 'the demonstration has no invitation');
+
+    return {
+      platform,
+      seed,
+      projectId: project.id,
+      invitationId: invitation.id,
+      qs: () => platform.context(seed.users.qs!.auth, project.id, { source: 'WEB' }),
+      admin: () => platform.context(seed.users.admin!.auth, project.id, { source: 'WEB' }),
+    };
+  }
+
+  // Driven through the executor rather than a full fleet run. The reading that
+  // wakes the agent needs a multimodal provider this environment does not have,
+  // and a test that stubbed one would be testing the stub. What matters here is
+  // the act itself: that a granted command reaches the domain, writes its
+  // event, is attributed to the agent, and stops where the catalogue stops it.
+  it('runs the command, attributes it to the agent, and leaves the analysis alone', async () => {
+    const { platform, seed, projectId, invitationId, qs, admin } = await estate();
+
+    grantEnvelope(admin(), {
+      agent: 'itt-register',
+      commands: [REGISTER],
+      ...window_(),
+      note: 'The bid team accepts the register being filed from a high-confidence reading',
+    });
+
+    const analysesBefore = platform.ledger.listByTenant(seed.tenantId, 'ITTAnalysis').length;
+
+    // The act, as the runtime takes it: the agent's identity on the context.
+    const acting: EngineContext = {
+      ...qs(),
+      actingAs: { refType: 'AI', refId: 'AGT-ITT-REGISTER' },
+    };
+    const effect = executeAct(acting, REGISTER, {
+      invitationId,
+      deliverables: [
+        { reference: 'AR-01', title: 'Technical submission', mandatory: true, format: 'PDF', internalDueBy: '2026-12-18' },
+        { reference: 'AR-02', title: 'Priced schedule', mandatory: true, format: 'XLSX', internalDueBy: '2027-01-04' },
+      ],
+    });
+    assert.match(effect, /Filed 2 return item\(s\), 2 of them mandatory/);
+
+    // The register is on the invitation.
+    const invitation = platform.ledger.require({ refType: 'TenderInvitation', refId: invitationId }).state;
+    assert.equal((invitation.deliverables as unknown[]).length, 2);
+    assert.equal(invitation.requirementsExtracted, true);
+
+    // The event says the agent did it, not the person whose session ran it.
+    const filing = platform.ledger
+      .eventsForEntity({ refType: 'TenderInvitation', refId: invitationId })
+      .filter((event) => event.eventType === 'TENDER_REQUIREMENTS_EXTRACTED')
+      .at(-1);
+    assert.ok(filing);
+    assert.equal(filing.actor.refType, 'AI');
+    assert.equal(filing.actor.refId, 'AGT-ITT-REGISTER');
+
+    // And the judgement half is untouched: no analysis was produced, and the
+    // one the demonstration already carries is still the only one.
+    assert.equal(
+      platform.ledger.listByTenant(seed.tenantId, 'ITTAnalysis').length,
+      analysesBefore,
+      'filing the register produced a compliance matrix, which is a decision a person takes',
+    );
+  });
+
+  it('refuses the analysis outright when an agent tries to author one', async () => {
+    const { platform, seed, projectId } = await estate();
+
+    // The last line of defence, tested directly: even with the command list,
+    // the executor and the envelope all bypassed, the ledger refuses an AI
+    // author on the event the catalogue closed to machines.
+    throwsCode(
+      () =>
+        platform.ledger.commit({
+          tenantId: seed.tenantId,
+          projectId,
+          actor: { refType: 'AI', refId: 'AGT-ITT-REGISTER' },
+          source: 'AI',
+          eventType: 'ITT_ANALYSED',
+          entity: { refType: 'ITTAnalysis', refId: 'forged-analysis' },
+          nextState: { id: 'forged-analysis' },
+          correlationId: 'test-correlation',
+        }),
+      'AI_NOT_PERMITTED',
+    );
   });
 });

@@ -10497,3 +10497,74 @@ claimed.
 opens an enquiry against a package, composes and approves revisions, issues to a
 bidder list that refuses anyone unprequalified, and tracks who holds a superseded
 pack — with its door on the Procurement screen.
+
+### The ACT rung now runs, and the first thing it runs is a return register
+
+A decision taken by the owner and recorded here as one: **an agent may file the
+ITT return register unattended from a high-confidence reading; the compliance
+matrix and the commercial assessment stay human.**
+
+**What the ladder was.** OBSERVE → DRAFT → PROPOSE → ACT, with the top rung a
+declaration and nothing under it. `registry.ts` could declare an agent eligible,
+`mandate.ts` could grant an envelope with a command list, a value ceiling and an
+end date, and `runtime.ts` checked the grant and degraded to a proposal when
+there was none — and when there *was* one it raised a proposal anyway, because
+nothing anywhere executed a command. An envelope granted an agent permission to
+do something the platform had no way to do. That half is now built.
+
+**Where the line falls, and why there.** Reading an invitation is two jobs under
+one name. Transcription — forty return items with formats, page limits,
+channels, signature and bond requirements and dates — is slow, is what a machine
+is good at, and a mistake in it is visible and fixable on a screen the bid team
+opens daily. Judgement — is this requirement really pass/fail, is fitness for
+purpose acceptable against the cover this business holds, is the job worth
+chasing — is where a mistake becomes a bid submitted on terms nobody checked.
+
+The line is drawn in the event catalogue rather than in the agent:
+`TENDER_REQUIREMENTS_EXTRACTED` is `aiAllowed`, `ITT_ANALYSED` is not. So the
+agent can only ever reach the register, whatever it or a future envelope tries.
+Three independent refusals stand behind that, and each fails a test on its own:
+`assertCommandMayBeAutomated` refuses the analyst at grant time; the agent's
+declared envelope names one command and a grant may only narrow it; and the
+ledger refuses an AI author on the event outright.
+
+**What was built.**
+
+- `AGENT_ACT_EXECUTED` in the catalogue, `aiAllowed`, distinct from
+  `AGENT_PROPOSAL_EXECUTED`. The question asked of an unattended act is *who
+  allowed this and when did that authority start*, which has no meaning for a
+  proposal a person approved; the event names the envelope and its grantor.
+- `agents/acts.ts` — a hand-written map from command to executor. A dispatcher
+  resolving `module:function` by name would be a hole through the safety model:
+  any function that later took that name would become machine-reachable, and
+  whether it was safe would be decided by a naming convention. Every executor
+  must also appear in `AUTOMATABLE_COMMANDS`, and a test fails if one does not.
+- `EngineContext.actingAs`, honoured by the single `write` path. It changes only
+  the *author*: without it the register would read "extracted by Jane" for work
+  Jane never did. Authority is untouched — `authorise` still reads the human's
+  roles, so an agent can never reach past the identity whose session ran it.
+- `AGT-ITT-REGISTER`, the second agent ever eligible to act and the first whose
+  acts write governed state. Confidence floor 0.8, higher than the analyst's,
+  because the whole argument for acting rests on the transcription being
+  reliable. Below it the finding is raised with no proposal attached.
+- `extractRequirements` takes `analysisId` optionally. Requiring it would have
+  coupled the register to the matrix, forcing either both automated or neither —
+  which is the coupling that would have made this unsafe. A later analysis links
+  itself, and a re-filed register never unlinks one already there.
+
+**Still true after all of it.** Eligibility is not authority. Without an envelope
+granted by a person holding governance authority, with an end date and
+revocable, `AGT-ITT-REGISTER` behaves like every other agent: it proposes, and
+the proposal says "queued rather than run". The pinned list of ACT-eligible
+agents in `agentcontract.test.ts` went from one entry to two, and the argument
+for the second is written into the test rather than left to a commit message.
+
+**Verified.** The act runs the real domain command, the register lands on the
+invitation, the event carries the agent as author, and the count of compliance
+matrices is unchanged by it. Three mutations fail a test: dropping the
+`AUTOMATABLE_COMMANDS` check in the executor, falling attribution back to the
+human, and opening `ITT_ANALYSED` to machines. **Not verified here:** the full
+path from a live model reading a PDF through to the agent waking on it, which
+needs a multimodal provider this environment does not have. The act is driven
+through the executor with the agent's identity on the context, which is exactly
+what the runtime does; the fleet-run wiring above it is not separately proven.

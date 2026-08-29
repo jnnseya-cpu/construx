@@ -15,7 +15,7 @@ import type { AuthContext } from '../identity/auth.ts';
 import { assertAccess, type AccessAttributes } from '../identity/abac.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
 import type { GoldenThreadLedger, CommitInput } from '../goldenthread/ledger.ts';
-import type { EntityRef, EventSource, GoldenThreadEvent } from '../goldenthread/types.ts';
+import type { ActorRef, EntityRef, EventSource, GoldenThreadEvent } from '../goldenthread/types.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import { ulid } from '../core/ids.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
@@ -48,6 +48,23 @@ export type EngineContext = {
    * succeed and the second half fail.
    */
   standing: TenancyStanding;
+  /**
+   * The agent this context is acting on behalf of, where one is.
+   *
+   * Set by the agent runtime around an unattended act and nowhere else. It
+   * changes only the *author* recorded on the event: an act taken inside a
+   * granted envelope has to say the agent did it, or the register reads
+   * "extracted by Jane" for work Jane never did and the audit trail is a
+   * polite fiction.
+   *
+   * What it deliberately does not change is authority. `authorise` still reads
+   * `auth`, and `roleAtAction` is still the roles held by the identity whose
+   * session ran the fleet — so an agent can never do more than the person it
+   * ran for, and the ledger still refuses an AI author on any event type the
+   * catalogue marks as a decision a person takes. Attribution and permission
+   * are separate questions and this answers only the first.
+   */
+  actingAs?: ActorRef;
 };
 
 /**
@@ -119,7 +136,7 @@ export function write(
     ...rest,
     tenantId: ctx.tenantId,
     projectId: target,
-    actor: actor ?? { refType: 'User', refId: ctx.auth.actorId },
+    actor: actor ?? ctx.actingAs ?? { refType: 'User', refId: ctx.auth.actorId },
     source: ctx.source,
     correlationId: ctx.correlationId,
     // Filled here rather than at each call site, because "every command
