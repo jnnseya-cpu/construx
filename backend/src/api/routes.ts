@@ -51,6 +51,7 @@ import { CDM_DOCUMENTS } from '../domain/cdm.ts';
 import * as portfolio from '../domain/portfolio.ts';
 import * as commitments from '../domain/commitments.ts';
 import * as invitation from '../domain/invitation.ts';
+import * as cde from '../domain/cde.ts';
 import * as watch from '../ops/watch.ts';
 import * as correspondence from '../domain/correspondence.ts';
 import * as procurement from '../domain/procurement.ts';
@@ -9914,6 +9915,94 @@ export const ROUTES: Route[] = [
       bim.answerRFI(projectContext(platform, ctx), {
         ...body<Omit<Parameters<typeof bim.answerRFI>[1], 'rfiId'>>(ctx),
         rfiId: ctx.params.rfiId as string,
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/cde',
+    readOnly: true,
+    description: 'The common data environment — every container, its state, and what may be built from',
+    handler: (platform, ctx) => cde.register(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/cde/:reference/buildable',
+    readOnly: true,
+    description: 'The current revision of a document, and whether its suitability authorises building from it',
+    handler: (platform, ctx) => cde.buildableFrom(projectContext(platform, ctx), ctx.params.reference as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/cde/containers',
+    description: 'Deposit a file into the environment at work in progress',
+    schema: {
+      type: 'object',
+      required: ['reference', 'revision', 'title', 'kind', 'discipline', 'author', 'fileHash'],
+      properties: {
+        reference: stringField,
+        revision: stringField,
+        title: stringField,
+        kind: { type: 'string', enum: [...cde.CONTAINER_KIND] },
+        discipline: stringField,
+        author: stringField,
+        fileHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => cde.depositContainer(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/cde/containers/:containerId/share',
+    description: 'Share a container — somebody other than the author saying it is fit to be seen',
+    schema: {
+      type: 'object',
+      required: ['checker', 'suitability'],
+      properties: {
+        checker: stringField,
+        suitability: { type: 'string', enum: [...cde.SUITABILITY_CODES] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      cde.shareContainer(projectContext(platform, ctx), {
+        containerId: ctx.params.containerId as string,
+        ...body<{ checker: string; suitability: cde.SuitabilityCode }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/cde/containers/:containerId/publish',
+    description: 'Publish a container, superseding whatever revision it replaces in the same act',
+    schema: {
+      type: 'object',
+      required: ['approver', 'suitability'],
+      properties: {
+        approver: stringField,
+        suitability: { type: 'string', enum: [...cde.SUITABILITY_CODES] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      cde.publishContainer(projectContext(platform, ctx), {
+        containerId: ctx.params.containerId as string,
+        ...body<{ approver: string; suitability: cde.SuitabilityCode }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/cde/containers/:containerId/archive',
+    description: 'Withdraw a container from use without a replacement',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      cde.archiveContainer(projectContext(platform, ctx), {
+        containerId: ctx.params.containerId as string,
+        reason: body<{ reason: string }>(ctx).reason,
       }),
   },
   {

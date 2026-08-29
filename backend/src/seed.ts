@@ -11,6 +11,7 @@ import * as conceptinitiation from './domain/conceptinitiation.ts';
 import * as conceptoptions from './domain/conceptoptions.ts';
 import * as conceptstrategy from './domain/conceptstrategy.ts';
 import * as stagegate from './domain/stagegate.ts';
+import * as cde from './domain/cde.ts';
 import * as control from './domain/control.ts';
 import * as procurement from './domain/procurement.ts';
 import * as radar from './domain/radar.ts';
@@ -1716,6 +1717,73 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
     },
     packageIds: [packageId],
   });
+
+  // --- The common data environment -------------------------------------------
+  //
+  // Three documents, deliberately in three different positions, because a
+  // register where everything is published demonstrates nothing. C-1001 is at
+  // P02 superseded by P03; M-2100 is published at S3, which is the trap the
+  // whole suitability model exists to catch — current, approved, and not
+  // something to build from; S-3000 is still with its checker.
+  const deposit = async (input: {
+    reference: string;
+    revision: string;
+    title: string;
+    kind: cde.ContainerKind;
+    discipline: string;
+  }) =>
+    cde.depositContainer(bimCtx, {
+      ...input,
+      author: bimLead.id,
+      fileHash: hash(`${input.reference}-${input.revision}`),
+    }).containerId;
+
+  // The superseded predecessor, published first so P03 has something to replace.
+  const ga02 = await deposit({
+    reference: 'C-1001',
+    revision: 'P02',
+    title: 'Clarifier No.1 — General Arrangement',
+    kind: 'DRAWING',
+    discipline: 'CIVILS',
+  });
+  cde.shareContainer(pmCtx, { containerId: ga02, checker: pm.id, suitability: 'S4' });
+  cde.publishContainer(designCtx, { containerId: ga02, approver: designLead.id, suitability: 'A1' });
+
+  const ga03 = await deposit({
+    reference: 'C-1001',
+    revision: 'P03',
+    title: 'Clarifier No.1 — General Arrangement',
+    kind: 'DRAWING',
+    discipline: 'CIVILS',
+  });
+  cde.shareContainer(pmCtx, { containerId: ga03, checker: pm.id, suitability: 'S4' });
+  // Supersedes P02 in this same call, which is the rule the whole environment
+  // rests on rather than a tidy-up somebody does afterwards.
+  cde.publishContainer(designCtx, { containerId: ga03, approver: designLead.id, suitability: 'A1' });
+
+  const mep = await deposit({
+    reference: 'M-2100',
+    revision: 'P01',
+    title: 'Filter gallery — pipework layout',
+    kind: 'DRAWING',
+    discipline: 'MECHANICAL',
+  });
+  cde.shareContainer(pmCtx, { containerId: mep, checker: pm.id, suitability: 'S3' });
+  cde.publishContainer(designCtx, { containerId: mep, approver: designLead.id, suitability: 'S3' });
+
+  const struct = await deposit({
+    reference: 'S-3000',
+    revision: 'P01',
+    title: 'Clarifier No.1 — reinforcement arrangement',
+    kind: 'DRAWING',
+    discipline: 'STRUCTURES',
+  });
+  cde.shareContainer(pmCtx, { containerId: struct, checker: pm.id, suitability: 'S2' });
+
+  step(
+    'Common data environment: C-1001 P03 published at A1 and P02 superseded in the same act; M-2100 published at S3, ' +
+      'which is current and still not something to build from; S-3000 shared and awaiting approval',
+  );
 
   const model = await bim.ingestModel(bimCtx, {
     fileHash: hash('ashworth-civils.ifc'),

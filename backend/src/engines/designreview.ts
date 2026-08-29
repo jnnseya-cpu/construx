@@ -2,6 +2,7 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, registerEvidence, write, type EngineContext } from './context.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
+import type { CDEState } from '../domain/designplan.ts';
 
 /**
  * The design review cycle.
@@ -78,17 +79,22 @@ export const REVIEW_DECISION = [
 export type ReviewDecision = (typeof REVIEW_DECISION)[number];
 
 /**
- * ISO 19650 suitability, as far as this stage needs it.
+ * Where a review cycle leaves its deliverable in the common data environment.
  *
- * Recorded on the cycle rather than retrofitted onto every artefact: the cycle
- * is what moves a deliverable between states, so it is the honest place for the
- * state to live until containers carry their own. What is *not* built is a full
- * CDE with per-container states and permission rules — that is D-WF-01, and
- * claiming it here because a subset of the vocabulary appears would be the
- * overstatement this codebase is written against.
+ * This used to declare its own four states, with a note saying they stood in
+ * "until containers carry their own". Containers now do — `domain/cde.ts` holds
+ * the environment and `domain/designplan.ts` names the states — so the local
+ * copy became a second definition of one concept, spelling work in progress
+ * differently from the one the API publishes. Two vocabularies for the same
+ * ladder is the failure a CDE exists to remove; having it inside the CDE would
+ * be a poor joke.
+ *
+ * Re-exported rather than aliased away, because callers of this engine ask it
+ * what state a decision leaves a deliverable in, and that is a question about
+ * the review cycle. The answer now comes from one place.
  */
-export const CDE_STATE = ['WORK_IN_PROGRESS', 'SHARED', 'PUBLISHED', 'ARCHIVED'] as const;
-export type CdeState = (typeof CDE_STATE)[number];
+export { CDE_STATE } from '../domain/designplan.ts';
+export type CdeState = CDEState;
 
 export type ReviewComment = {
   id: string;
@@ -425,7 +431,7 @@ export function decideReview(
   // revision, because a published revision is what everybody downstream builds
   // from.
   const cdeState: CdeState =
-    input.decision === 'ACCEPTED' || input.decision === 'ACCEPTED_WITH_COMMENTS' ? 'PUBLISHED' : 'WORK_IN_PROGRESS';
+    input.decision === 'ACCEPTED' || input.decision === 'ACCEPTED_WITH_COMMENTS' ? 'PUBLISHED' : 'WIP';
 
   const nextState = {
     ...cycle.state,

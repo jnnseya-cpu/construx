@@ -1,7 +1,8 @@
 import { api, entities, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { DISCIPLINE, today } from '../lib/enums.js';
-import { badge, date, drillable, html, humanise, money, pct, positionReport, raw, render, statusTone, table, time, toast } from '../lib/ui.js';
+import { badge, date, drillable, html, humanise, money, pct, positionReport, raw, render, resolveHtml, statusTone, table, time, toast } from '../lib/ui.js';
+import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -93,7 +94,7 @@ export async function design(root) {
   // RFI now names the activity it holds up.
   const readiness = await api.get(`/v1/projects/${projectId}/design/readiness`).catch(() => null);
 
-  const [perception, evidence, packages, constructability, coordination, changes, baselines, gate, infoControl, currentInfo] =
+  const [perception, evidence, packages, constructability, coordination, changes, baselines, gate, infoControl, currentInfo, cde] =
     await Promise.all([
       api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
       api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
@@ -109,7 +110,57 @@ export async function design(root) {
       api.get(`/v1/projects/${projectId}/stages/design/validate`).catch((error) => ({ error })),
       api.get(`/v1/projects/${projectId}/information-control`).catch((error) => ({ error })),
       api.get(`/v1/projects/${projectId}/current-information`).catch((error) => ({ error })),
+      // The common data environment itself — the containers, not the plan for
+      // them and not the record of issuing them. Both of those already had
+      // screens on this page and neither could answer "which revision is
+      // current", because neither holds a revision of a file.
+      api.get(`/v1/projects/${projectId}/cde`).catch((error) => ({ error })),
     ]);
+
+  const containers = cde?.containers ?? [];
+  // Offered by reference rather than by container id, because "which drawing"
+  // is the question somebody asks and the id is an implementation detail.
+  const cdeReferences = [...new Set(containers.map((c) => c.reference))].sort();
+  const wip = containers.filter((c) => c.state === 'WIP');
+  const shared = containers.filter((c) => c.state === 'SHARED');
+  const live = containers.filter((c) => c.state !== 'ARCHIVED');
+  const containerLabel = (c) => `${c.reference} rev ${c.revision} — ${c.title}`;
+
+  // A container records who authored, checked and approved it as a user id,
+  // which is the right thing to store and the wrong thing to read. Resolved
+  // from the ownership map the page already holds — the same map the deposit
+  // form offers names from, so a name shown here and a name chosen there come
+  // from one place. An id with nobody behind it is shown as itself rather than
+  // hidden: somebody who has left the tenancy still signed the drawing.
+  const peopleByArea = ownership.areas ?? [];
+  const nameById = new Map(
+    peopleByArea.flatMap((entry) => [...(entry.create ?? []), ...(entry.approve ?? [])]).map((p) => [p.userId, p.name]),
+  );
+  const who = (userId) => (userId ? (nameById.get(userId) ?? userId) : '—');
+
+  const LOOKUPS = [
+    {
+      id: 'buildable',
+      title: 'May I build from this?',
+      intent:
+        'The question a foreman actually asks, answered as one thing rather than two. "I have the latest drawing" and ' +
+        '"I may build from it" are different sentences: a revision issued for comment is the latest and is not an ' +
+        'instruction to build. The answer names the revision, the state and the suitability code behind it.',
+      empty: 'Nothing has been deposited into the environment, so there is nothing to ask about.',
+      inputs: [
+        { name: 'reference', label: 'Document', options: cdeReferences.map((reference) => ({ value: reference, label: reference })) },
+      ],
+      path: (v) => `/v1/projects/${projectId}/cde/${encodeURIComponent(v.reference)}/buildable`,
+      // Two sections, not three. `because` already names the reference, the
+      // revision, the state and the suitability code in a sentence — rendering
+      // the container record beside it added a column of ULIDs and a file hash
+      // to an answer whose whole value is being readable at a glance.
+      sections: [
+        { key: 'mayBuild', label: 'May be built from' },
+        { key: 'because', label: 'Why' },
+      ],
+    },
+  ];
   const readable = (evidence?.entries ?? []).filter(
     (entry) => entry.held && ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'].includes(entry.contentType ?? ''),
   );
@@ -138,6 +189,31 @@ export async function design(root) {
         <div class="actions cmd-bar">
           ${raw(commandBar([
             { id: 'drawing', label: 'Register drawing', tone: '', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
+            { id: 'deposit', label: 'Deposit into the CDE', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
+            {
+              id: 'share-container',
+              label: 'Check and share',
+              permitted: can('DESIGN_INFORMATION', 'U') && wip.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'U')
+                ? blockedReason('DESIGN_INFORMATION', 'U')
+                : 'Nothing is at work in progress. A container is deposited before it is checked.',
+            },
+            {
+              id: 'publish-container',
+              label: 'Approve and publish',
+              permitted: can('DESIGN_INFORMATION', 'A') && shared.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'A')
+                ? blockedReason('DESIGN_INFORMATION', 'A')
+                : 'Nothing has been shared. A container is checked before it is approved.',
+            },
+            {
+              id: 'archive-container',
+              label: 'Withdraw from the CDE',
+              permitted: can('DESIGN_INFORMATION', 'A') && live.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'A')
+                ? blockedReason('DESIGN_INFORMATION', 'A')
+                : 'Nothing is in the environment to withdraw.',
+            },
             { id: 'submit-review', label: 'Submit for review', permitted: can('DESIGN_INFORMATION', 'C'), reason: blockedReason('DESIGN_INFORMATION', 'C') },
             { id: 'comment', label: 'Raise a review comment', permitted: can('DESIGN_INFORMATION', 'R'), reason: blockedReason('DESIGN_INFORMATION', 'R') },
             { id: 'decide-review', label: 'Decide a review', permitted: can('DESIGN_INFORMATION', 'A'), reason: blockedReason('DESIGN_INFORMATION', 'A') },
@@ -696,6 +772,81 @@ export async function design(root) {
         ],
       })}
 
+      ${
+        cde?.error
+          ? positionReport({ title: 'The common data environment', data: {}, error: cde.error, sections: [] })
+          : html`
+              <div class="card pad0" style="margin-top:14px">
+                <h2 style="padding:15px 17px 0">The common data environment</h2>
+                <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                  ${cde?.summary ?? 'Nothing has been deposited.'}
+                  Every drawing, model, specification and schedule at the revision it is actually at. Publishing a
+                  revision supersedes the one before it in the same act, so there is one current revision of a
+                  reference at any moment rather than four people with four answers.
+                </p>
+                <div class="grid g4" style="padding:14px 17px 0">
+                  <div>
+                    <div class="metric-sub">Published</div>
+                    <div class="metric">${cde?.byState?.PUBLISHED ?? 0}</div>
+                    <div class="metric-sub">approved and current</div>
+                  </div>
+                  <div>
+                    <div class="metric-sub">Shared</div>
+                    <div class="metric">${cde?.byState?.SHARED ?? 0}</div>
+                    <div class="metric-sub">checked, not approved</div>
+                  </div>
+                  <div>
+                    <div class="metric-sub">Nothing to build from</div>
+                    <div class="metric ${raw((cde?.nothingToBuildFrom ?? []).length > 0 ? 'bad' : 'good')}">
+                      ${(cde?.nothingToBuildFrom ?? []).length}
+                    </div>
+                    <div class="metric-sub">no revision authorised for construction</div>
+                  </div>
+                  <div>
+                    <div class="metric-sub">Published, never issued</div>
+                    <div class="metric ${raw((cde?.publishedButNeverIssued ?? []).length > 0 ? 'bad' : 'good')}">
+                      ${(cde?.publishedButNeverIssued ?? []).length}
+                    </div>
+                    <div class="metric-sub">approved here, in nobody's hands</div>
+                  </div>
+                </div>
+                ${
+                  (cde?.publishedButNeverIssued ?? []).length > 0
+                    ? html`<div class="notice warn" style="margin:14px 17px 0">
+                        <b>Approved here and never sent to anybody.</b>
+                        ${cde.publishedButNeverIssued.map((c) => `${c.reference} rev ${c.revision}`).join(', ')}.
+                        Publishing changes this register; a transmittal is what reaches the person in the cabin. Until
+                        one goes out, the site is still building from whatever it was last sent.
+                      </div>`
+                    : ''
+                }
+                ${table({
+                  headers: ['Reference', 'Rev', 'Title', 'Discipline', 'State', 'Suitability', 'Author', 'Checker', 'Approver'],
+                  rows: containers.map((c) => [
+                    c.reference,
+                    c.revision,
+                    c.title,
+                    c.discipline,
+                    badge(humanise(c.state), c.state === 'PUBLISHED' ? 'ok' : c.state === 'ARCHIVED' ? '' : 'info'),
+                    // The substitution that gets work built off a review issue.
+                    // An S code and an A code look identical on a title block,
+                    // so the badge carries the tone the code deserves rather
+                    // than the tone the state does.
+                    badge(c.suitability, c.suitability.startsWith('A') ? 'ok' : 'warn'),
+                    who(c.author),
+                    who(c.checker),
+                    who(c.approver),
+                  ]),
+                  empty:
+                    'Nothing deposited. Until a file is in here, "the current revision" is whatever the last person to ' +
+                    'email one believes it is.',
+                })}
+              </div>
+
+              ${raw(LOOKUPS.map((spec) => resolveHtml(lookupPanel(spec))).join(''))}
+            `
+      }
+
       ${positionReport({
         title: 'Information control',
         intent:
@@ -736,6 +887,117 @@ export async function design(root) {
   );
 
   const COMMANDS = {
+    deposit: {
+      title: 'Deposit into the common data environment',
+      intent:
+        'The file itself, at the revision it is actually at. It arrives at work in progress and suitability S0 — ' +
+        'nothing enters the environment already authorised, and the ladder above this is what makes "published" ' +
+        'mean somebody else looked.',
+      path: `/v1/projects/${projectId}/cde/containers`,
+      submitLabel: 'Deposit',
+      fields: [
+        { name: 'reference', label: 'Document reference', type: 'text', placeholder: 'ABC-XYZ-ZZ-00-DR-A-1001',
+          hint: 'The document’s own reference, which stays the same across every revision of it.' },
+        { name: 'revision', label: 'Revision', type: 'text', placeholder: 'P01',
+          hint: 'Two files claiming to be the same revision is the ambiguity this exists to remove, so the platform refuses the second one.' },
+        { name: 'title', label: 'Title', type: 'text', placeholder: 'General arrangement — level 00' },
+        { name: 'kind', label: 'What it is', type: 'select', options: [
+          { value: 'DRAWING', label: 'Drawing' },
+          { value: 'MODEL', label: 'Model' },
+          { value: 'SPECIFICATION', label: 'Specification' },
+          { value: 'SCHEDULE', label: 'Schedule' },
+          { value: 'REPORT', label: 'Report' },
+          { value: 'CALCULATION', label: 'Calculation' },
+          { value: 'SURVEY', label: 'Survey' },
+        ] },
+        { name: 'discipline', label: 'Discipline', type: 'text', placeholder: 'Architecture' },
+        {
+          name: 'author',
+          label: 'Author',
+          type: 'select',
+          options: [...(designOwners?.create ?? []), ...(designOwners?.approve ?? [])]
+            .filter((owner, index, all) => all.findIndex((other) => other.userId === owner.userId) === index)
+            .map((owner) => ({ value: owner.userId, label: `${owner.name} · ${humanise(owner.role)}` })),
+          hint: 'Named, because the checker and the approver above are refused if either of them is this person.',
+        },
+        // The bytes. A container with no file is a promise, and a deliverable is
+        // already the record for a promise.
+        { name: 'fileHash', label: 'The file', type: 'file', voice: false },
+      ],
+    },
+
+    'share-container': {
+      title: 'Check and share',
+      intent:
+        'Somebody other than the author saying it is fit to be seen by the project. The platform refuses the author, ' +
+        'whoever is chosen — a ladder anybody can climb alone is a folder with extra steps.',
+      path: (collected) => `/v1/projects/${projectId}/cde/containers/${collected.containerId}/share`,
+      submitLabel: 'Share',
+      transform: ({ containerId, ...rest }) => rest,
+      fields: [
+        { name: 'containerId', label: 'Container', type: 'select',
+          options: wip.map((c) => ({ value: c.id, label: containerLabel(c) })) },
+        {
+          name: 'checker',
+          label: 'Checked by',
+          type: 'select',
+          options: [...(designOwners?.approve ?? []), ...(designOwners?.create ?? [])]
+            .filter((owner, index, all) => all.findIndex((other) => other.userId === owner.userId) === index)
+            .map((owner) => ({ value: owner.userId, label: `${owner.name} · ${humanise(owner.role)}` })),
+        },
+        { name: 'suitability', label: 'Issued at', type: 'select', options: [
+          { value: 'S1', label: 'S1 — shared for coordination' },
+          { value: 'S2', label: 'S2 — shared for information' },
+          { value: 'S3', label: 'S3 — shared for review and comment' },
+          { value: 'S4', label: 'S4 — shared for stage approval' },
+        ], hint: 'What it may be used for. None of these authorises construction.' },
+      ],
+    },
+
+    'publish-container': {
+      title: 'Approve and publish',
+      intent:
+        'The approver is a third person: not the author, not the checker. Publishing supersedes whatever revision it ' +
+        'replaces in the same act, so at the instant this returns there is exactly one current revision of this ' +
+        'document and the old one says what replaced it.',
+      path: (collected) => `/v1/projects/${projectId}/cde/containers/${collected.containerId}/publish`,
+      submitLabel: 'Publish',
+      transform: ({ containerId, ...rest }) => rest,
+      fields: [
+        { name: 'containerId', label: 'Container', type: 'select',
+          options: shared.map((c) => ({ value: c.id, label: containerLabel(c) })) },
+        {
+          name: 'approver',
+          label: 'Approved by',
+          type: 'select',
+          options: (designOwners?.approve ?? []).map((owner) => ({ value: owner.userId, label: `${owner.name} · ${humanise(owner.role)}` })),
+        },
+        { name: 'suitability', label: 'Issued at', type: 'select', options: [
+          { value: 'A1', label: 'A1 — authorised for construction' },
+          { value: 'A2', label: 'A2 — authorised for construction with comments' },
+          { value: 'B1', label: 'B1 — partially authorised, comments to resolve' },
+          { value: 'S4', label: 'S4 — shared for stage approval' },
+          { value: 'CR', label: 'CR — as-built record' },
+        ], hint: 'Only A1 and A2 authorise construction. Everything else here is published and still not something to build from.' },
+      ],
+    },
+
+    'archive-container': {
+      title: 'Withdraw from the environment',
+      intent:
+        'Taking a revision out of use with nothing replacing it. Separate from supersession, which happens on its own ' +
+        'when a new revision is published — this is the drawing that was simply wrong.',
+      path: (collected) => `/v1/projects/${projectId}/cde/containers/${collected.containerId}/archive`,
+      submitLabel: 'Withdraw',
+      transform: ({ containerId, ...rest }) => rest,
+      fields: [
+        { name: 'containerId', label: 'Container', type: 'select',
+          options: live.map((c) => ({ value: c.id, label: containerLabel(c) })) },
+        { name: 'reason', label: 'Why it is being withdrawn', type: 'textarea', rows: 3,
+          hint: 'Somebody may be building from it right now. The record has to say what happened, not that something did.' },
+      ],
+    },
+
     submittal: {
       title: 'Raise a submittal',
       intent:
@@ -1107,6 +1369,8 @@ export async function design(root) {
       }
     }
   });
+
+  wireLookups(root, LOOKUPS);
 
   void insightPanel(root.querySelector('#design-insight'), {
     projectId,

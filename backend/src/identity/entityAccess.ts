@@ -190,6 +190,8 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // PROJECT_SETUP because it is a fact about the project's team rather than
   // about the tenancy's billing, and a project person has to be able to see
   // whether the invitation they sent has been taken up.
+  // The common data environment: the file itself, its revision and its state.
+  InformationContainer: { area: 'DESIGN_INFORMATION' },
   ProjectInvitation: { area: 'PROJECT_SETUP' },
   // What the tenancy owes and whether it has been paid. Under billing, with
   // the wallet and the invoices, because that is who asks the question.

@@ -9999,3 +9999,87 @@ deliberate act on a deployment. It runs hourly rather than daily because of the
 grace window rather than the billing: a tenancy whose grace ended at 09:00 should
 not keep working until midnight, and a customer who paid at 09:05 should not wait
 a day to get their platform back.
+
+### The common data environment
+
+The platform could plan information, review it, issue it and store its bytes,
+and it could not say which revision of a drawing was current. Every part
+existed except the thing they were all about:
+
+- a **deliverable** (`domain/designplan.ts`) is a promise that a drawing will
+  exist by a date;
+- a **review cycle** (`engines/designreview.ts`) is a decision about one;
+- a **transmittal** (`domain/informationcontrol.ts`) is a record that documents
+  were sent to named people;
+- the **evidence store** holds the bytes against a hash.
+
+None of them is the drawing. What was missing was the **container** — this
+file, at this revision, at this state, superseding that one — and without it
+"the current revision" was whatever the last person to email one believed.
+
+`domain/cde.ts` is that record. Four rules make it a single source of truth
+rather than a shared folder, and each has a test that fails when the rule is
+removed — verified by mutation, not by watching the suite go green.
+
+**A new revision supersedes the old, in the same act.** Not a tidy-up somebody
+does afterwards. `publishContainer` writes `CONTAINER_PUBLISHED` and
+`CONTAINER_SUPERSEDED` together, so at the instant it returns there is exactly
+one current revision of a reference and every older one says what replaced it.
+There is no window in which two are both current, which is the whole mechanism
+behind everyone working from the same file.
+
+**Three roles, three people.** Nothing is shared without a checker who is not
+the author, and nothing is published without an approver who is neither. A
+ladder one person can climb alone is a folder with extra steps, and "published"
+would then mean only that the author had stopped working on it.
+
+**A container holds a file.** The evidence hash is required at deposit and
+filed through `registerEvidence`. A container with no file is a promise, which
+is what a deliverable already is — two records for the promise and none for the
+document is how a register comes to show a hundred per cent against an empty
+folder.
+
+**Suitability is not state.** ISO 19650 suitability says what a container may
+be *used* for, and it is separate from where the container sits. S3 — issued
+for review and comment — and A1 — authorised for construction — look identical
+on a title block, and a revision published at S3 is current, approved, and not
+something to build from. `buildableFrom` answers the foreman's question as one
+thing rather than two: the current revision *and* whether its code authorises
+building, with the reason in a sentence.
+
+Deposit enters at `WIP` and `S0` whatever anybody asks for; nothing arrives in
+the environment already authorised.
+
+**Published here, and never sent to anybody.** The join that neither register
+could make alone. Publishing changes the environment; a transmittal is what
+reaches the person in the cabin. A revision approved and never issued appears
+in neither register on its own — the transmittal record has no row for a
+document nobody sent — so `register()` reads the transmittals and names them.
+Derived rather than flagged on the container, so it cannot drift from the
+issuing record it is a statement about.
+
+Reachable on Design & BIM, above the issuing and acknowledgement panels so the
+screen reads environment → issue → receipt. Four commands (deposit, check and
+share, approve and publish, withdraw) and one chooser for the buildable
+question. The demonstration project carries four containers in three positions
+deliberately — C-1001 P03 at A1 with P02 superseded beneath it, M-2100
+published at S3, S-3000 still with its checker — because a register where
+everything is published demonstrates nothing.
+
+Three things this closed on the way, each a defect rather than a feature:
+
+- **Two definitions of the CDE states.** `engines/designreview.ts` declared its
+  own `['WORK_IN_PROGRESS', …]` beside `domain/designplan.ts`'s
+  `['WIP', …]`, with a note saying it stood in "until containers carry their
+  own". They now do, so the engine re-exports the canonical one. Two
+  vocabularies for one ladder inside a CDE would be a poor joke.
+- **The Design & BIM screen was gated on `BIM_TWIN` alone.** The CDE, the
+  review cycle, the RFI register, submittals and the drawing register are all
+  `DESIGN_INFORMATION` — so the architect who authors every container on the
+  project could not open the screen holding them, while the BIM coordinator
+  could. Found by opening the console, not by a test.
+- **`positionReport` rendered a string section as nothing.** A string fell
+  through to the table branch, `columnsOf` found no keys on it, and the panel
+  showed a label, a count of one and an empty body. Live on Project Control's
+  reconcile lookup, where the two hashes a person is there to compare were both
+  blank. Handled beside the number and the boolean, where it belonged.

@@ -252,6 +252,17 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // person holding the old one in a site cabin. A transmittal is the controlled
   // issue, and the acknowledgement is what makes "who is still holding
   // superseded information" an answerable question.
+  // The common data environment, at container level.
+  //
+  // Distinct from the transmittal below, and the distinction is the reason both
+  // exist: a transmittal is the act of *issuing* documents to named recipients,
+  // and a container is the document itself moving along the CDE ladder. One is
+  // a letter, the other is what the letter enclosed.
+  def('CONTAINER_DEPOSITED', 'InformationContainer', 'CREATE', 'DESIGN', { requiresEvidence: true, creates: true }),
+  def('CONTAINER_SHARED', 'InformationContainer', 'UPDATE', 'DESIGN'),
+  def('CONTAINER_PUBLISHED', 'InformationContainer', 'APPROVE', 'DESIGN'),
+  def('CONTAINER_SUPERSEDED', 'InformationContainer', 'UPDATE', 'DESIGN'),
+  def('CONTAINER_ARCHIVED', 'InformationContainer', 'UPDATE', 'DESIGN'),
   def('INFORMATION_PUBLISHED', 'Transmittal', 'ISSUE', 'DESIGN', { creates: true }),
   def('INFORMATION_ACKNOWLEDGED', 'Transmittal', 'UPDATE', 'DESIGN'),
   // D-WF-06. A change to *approved design*, which is not the same record as the

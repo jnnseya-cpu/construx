@@ -408,7 +408,7 @@ describe('publication is impossible with a blocking comment open', () => {
     });
 
     const cycle = platform.ledger.require({ refType: 'DesignReviewCycle', refId: cycleId }).state;
-    assert.equal(cycle.cdeState, 'WORK_IN_PROGRESS', 'a rejected deliverable was published');
+    assert.equal(cycle.cdeState, 'WIP', 'a rejected deliverable was published');
     // Frozen at the decision. Reading the register later shows today's comments;
     // this shows what the decision was actually taken against.
     assert.equal(cycle.openBlockingAtDecision, 1);

@@ -166,6 +166,9 @@ const DISPLAY_NAMES = {
   BILLING_ACU: 'Billing and ACU',
   AI_EXECUTION: 'AI execution',
   HANDOVER_OM: 'Handover and O&M',
+  // A CDE state. `humanise` would render it "Wip", which reads as a typo rather
+  // than as the first rung of the ladder every drawing starts on.
+  WIP: 'Work in progress',
   // Event-catalogue groups. `AI_BILLING` rendered as "Ai billing" on the
   // enterprise change panel — the same class of defect as `RMI` becoming "Rmi",
   // and the reason `sectorLabel` exists rather than calling `humanise`.
@@ -376,6 +379,21 @@ export function positionReport({ title, intent, data, error, sections = [] }) {
       if (typeof value === 'number' || typeof value === 'boolean') {
         return html`<div class="metric-sub" style="margin:8px 0">
           <b>${section.label}</b>: ${typeof value === 'boolean' ? (value ? 'yes' : 'no') : String(value)}
+        </div>`;
+      }
+
+      // A string, which used to fall through to the table below and vanish.
+      //
+      // `rows` became `['the sentence']`, `columnsOf` found no keys on a string,
+      // and the table rendered a heading with no body — so every section whose
+      // value is a plain string showed its label, a count of one, and nothing.
+      // Live on the reconcile lookup, where the two hashes a person is there to
+      // compare were both blank, and on any answer whose whole content is a
+      // sentence. Handled beside the number and the boolean, which is where it
+      // always belonged.
+      if (typeof value === 'string') {
+        return html`<div class="metric-sub" style="margin:8px 0">
+          <b>${section.label}</b>: ${value || section.empty || '—'}
         </div>`;
       }
 

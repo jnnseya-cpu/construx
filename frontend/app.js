@@ -90,7 +90,12 @@ export const NAV = [
       // in and the one a site manager is judged on; the quality half of the
       // screen authorises itself separately, panel by panel.
       { id: 'construction', label: 'Construction', area: 'SAFETY_RAMS', alsoArea: ['QUALITY_COMMISSIONING', 'FIELD_EXECUTION'], icon: 'shield' },
-      { id: 'design', label: 'Design & BIM', area: 'BIM_TWIN', icon: 'cube' },
+      // Gated on the model alone until the common data environment landed on
+      // this screen. The CDE, the review cycle, the RFI register, submittals
+      // and the drawing register are all DESIGN_INFORMATION — so the architect
+      // who authors every container on the project could not open the screen
+      // that holds them, while the BIM coordinator could.
+      { id: 'design', label: 'Design & BIM', area: 'BIM_TWIN', alsoArea: ['DESIGN_INFORMATION'], icon: 'cube' },
     ],
   },
   {
