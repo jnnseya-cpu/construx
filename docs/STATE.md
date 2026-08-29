@@ -15,14 +15,14 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 3,778 passing, 0 failing, 0 skipped, across 166 files · plus 18 against a live Postgres 16 |
+| Tests | 3,903 passing, 0 failing, 0 skipped, across 174 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
-| Backend | 190 TypeScript files, 117,084 lines |
-| Application | 43 ES modules, 19,333 lines (including a service worker) |
-| API routes | 709 — 492 writes, 217 reads (34 of them public) |
-| Event types | 492 Golden Thread (closed) · 180 communication events (closed) |
+| Backend | 214 TypeScript files, 132,384 lines |
+| Application | 70 ES modules, 26,634 lines (including a service worker) |
+| API routes | 763 — 521 writes, 242 reads (26 of them public) |
+| Event types | 518 Golden Thread (closed) · 180 communication events (closed) |
 | Entity types | 241, all classified for access |
-| Agents | 32 across 9 divisions — 25 deployed, 7 declared with what each is waiting on |
+| Agents | 57 across 9 divisions — 48 deployed, 9 declared with what each is waiting on |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
