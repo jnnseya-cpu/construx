@@ -63,7 +63,7 @@ describe('the account types on offer', () => {
     assert.equal(reply.status, 200);
 
     const codes = reply.body.accountTypes.map((a: { package: string }) => a.package);
-    assert.deepEqual(codes.sort(), ['CORE_PROJECT', 'ENTERPRISE', 'FREE_TRIAL', 'PROFESSIONAL_DELIVERY']);
+    assert.deepEqual(codes.sort(), ['CORE_PROJECT', 'ENTERPRISE', 'FREE_TRIAL', 'PROFESSIONAL_DELIVERY', 'SOLO']);
   });
 
   it('marks enterprise as not self-serve rather than hiding it', () => {

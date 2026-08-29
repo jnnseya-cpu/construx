@@ -162,7 +162,13 @@ function wire(packages) {
   const describe = () => {
     const p = packages.find((item) => item.package === packageSelect.value);
     if (!p) return;
-    const seats = p.includedSeats === null ? 'Unlimited seats' : `${p.includedSeats} seats`;
+    // Singular where there is one. Both packages aimed at a single person say
+    // "1 seats" otherwise, on the page where somebody decides whether this is a
+    // serious product.
+    const seats =
+      p.includedSeats === null
+        ? 'Unlimited seats'
+        : `${p.includedSeats} seat${p.includedSeats === 1 ? '' : 's'}`;
     packageDetail.textContent =
       `${p.targetCustomer}. ${seats}, ${p.storageGb} GB of evidence storage, ` +
       `${p.export ? 'export enabled' : 'export on a paid package'}.`;

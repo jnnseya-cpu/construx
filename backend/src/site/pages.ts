@@ -585,12 +585,24 @@ export function getStarted(): string {
             : `<b>${esc(formatMoney(t.monthlyPriceMinor, 'GBP'))}</b><span>/month</span>`
         }</div>
         <ul class="plan-list">
-          <li>${t.includedSeats === null ? 'Unlimited identities' : `${t.includedSeats} identities included`}</li>
+          <li>${
+            t.includedSeats === null
+              ? 'Unlimited identities'
+              : `${t.includedSeats} identit${t.includedSeats === 1 ? 'y' : 'ies'} included`
+          }</li>
           <li>${t.storageGb >= 1000 ? `${(t.storageGb / 1000).toFixed(t.storageGb % 1000 === 0 ? 0 : 1)} TB storage` : `${t.storageGb} GB storage`}</li>
           <li>${
             t.aiAllowanceAcus > 0
               ? `<b>${t.aiAllowanceAcus.toLocaleString('en-GB')} ACUs</b> of AI included each month`
               : `${config.billing.freeTrialGrantMinor.toLocaleString('en-GB')} trial ACUs, once`
+          }</li>
+          <li>${
+            t.monthlyPriceMinor === 0
+              // A material term rather than small print: the trial is one per
+              // account and it stops after thirty days. Saying so on the card is
+              // the difference between an expiry and a surprise.
+              ? 'One trial per account, 30 days'
+              : 'Monthly rolling, cancel any time'
           }</li>
           <li class="${t.export ? 'yes' : 'no'}">${t.export ? 'Branded export and print' : 'No export or print'}</li>
           <li class="${t.apiAccess ? 'yes' : 'no'}">${t.apiAccess ? 'API access' : 'No API access'}</li>

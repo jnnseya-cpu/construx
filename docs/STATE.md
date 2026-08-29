@@ -9792,3 +9792,55 @@ organisation memory — but not enforced at runtime, because **an agent cannot
 write at all**. Rule 1 of the runtime is that an agent returns findings and the
 runtime records them. Enforcing a write scope over a thing that cannot write
 would be building for a requirement that does not exist.
+
+### Five packages, and a trial that ends
+
+**Solo, £100 a month.** The entry package between a trial and Core Project: one
+identity, 30 GB, 2,000 ACUs a month, branded export, no API. There was nothing
+between free and £950, which is a long way to ask a sole trader to jump.
+
+Export is on, and that is a judgement rather than something the price dictates: a
+sole trader paying every month whose output cannot leave the platform has bought
+a filing cabinet, because the branded document *is* the product. What separates
+Solo from Core Project is seats, storage and AI — one person against ten, 30 GB
+against 100, 2,000 ACUs against 19,000 — which are the axes a growing business
+actually crosses.
+
+**The trial is one identity and 1 GB**, down from three and 5 GB. A trial is one
+person deciding whether to buy; three seats is a small team working for free, and
+the seat count is what separates the two.
+
+**And it now ends.** *"Once"* was already enforced — one grant per email address,
+at registration — and *"thirty days"* was enforced nowhere. `renewsAt` was set
+thirty days out, the operator's forecast **warned** that a trial was ending, and
+nothing ever ended it: an ACTIVE trial stayed active for ever, so a free tenancy
+could run the platform indefinitely on a warning nobody had to act on.
+
+`standing()` now derives `EXPIRED` for a trial past its renewal date. Derived
+rather than written back onto the subscription, because writing it back needs a
+clock somewhere flipping records, and a scheduled job that fails silently gives
+exactly the behaviour being fixed. The record stays **readable** — the evaluation
+was real work, and taking it away at the moment somebody is deciding whether to
+buy is how they decide not to — while writes, AI and export close. Topping up
+stays open: refusing a customer's money as they decide to buy is the one refusal
+in that file with nothing behind it.
+
+`renewsAt` means different things on a trial and on a paid package, so the gate
+is on `tier === 'FREE_TRIAL'` and a test asserts a paid subscription is untouched
+on its renewal date — reading the field the same way for both would cancel every
+paying customer monthly.
+
+**20% of the price as monthly ACUs, on every package.** Already the rule and now
+asserted per package rather than in general: Solo 2,000 · Core Project 19,000 ·
+Professional Delivery 44,000 · Enterprise 130,000, with the test covering every
+key of `PACKAGES` so a new package cannot arrive without a figure. One ACU is one
+minor unit, so the ACU count is exactly 20% of the price and does not move when
+the markup does — what the markup changes is how much provider work those ACUs
+buy, not how many there are. The trial's 500 is a one-off grant, not an
+allowance: 20% of nothing is nothing, and a monthly allowance on a free package
+is a free platform.
+
+Two figures on the public pricing page said "1 seats" and "1 identities" the
+moment a one-seat package existed. Both fixed — it is the page where somebody
+decides whether this is a serious product — and the trial card now states its own
+material terms: one per account, 30 days.

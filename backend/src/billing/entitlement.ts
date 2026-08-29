@@ -39,7 +39,17 @@ import type { Subscription } from './subscription.ts';
  * kind of inconsistency somebody eventually has to litigate.
  */
 
-export type StandingStatus = Subscription['status'] | 'NONE';
+/**
+ * `EXPIRED` is not one of the subscription's own statuses, and that is right.
+ *
+ * The subscription record is still ACTIVE — nobody cancelled or suspended it —
+ * and the tenancy is nonetheless out of time because the trial ran its thirty
+ * days. Writing EXPIRED back onto the subscription would need a clock somewhere
+ * flipping records, which is a scheduled job that can fail silently. Deriving
+ * it here means the answer is right the first time anybody asks, on a platform
+ * that has just started after a week off as much as on one that has been up.
+ */
+export type StandingStatus = Subscription['status'] | 'NONE' | 'EXPIRED';
 
 export type TenancyStanding = {
   status: StandingStatus;
@@ -76,6 +86,7 @@ const UNGATED: TenancyStanding = {
 export function standing(
   subscription: Subscription | undefined,
   roles: readonly string[] = [],
+  now = new Date(),
 ): TenancyStanding {
   if (roles.some((role) => (UNCHARGED_ROLES as readonly string[]).includes(role))) return UNGATED;
 
@@ -118,6 +129,35 @@ export function standing(
       reason:
         `This subscription is ${ended}, so the record is read-only. ` +
         'Existing data can still be read. Reactivate the subscription to make changes or export.',
+    };
+  }
+
+  // --- a trial that actually ends ------------------------------------------
+  //
+  // The trial is thirty days, once. "Once" was already enforced — one grant per
+  // email address, at registration — and "thirty days" was not enforced
+  // anywhere: `renewsAt` was set thirty days out, the operator's forecast
+  // *warned* that a trial was ending, and nothing ever ended it. An ACTIVE
+  // trial stayed active for ever, so a free tenancy could run the platform
+  // indefinitely and the only signal was a warning nobody had to act on.
+  //
+  // Read-only rather than deleted, and that distinction matters: the evaluation
+  // was real work on real records, and taking it away is how somebody decides
+  // not to buy. What ends is the ability to add to it, spend AI on it, or
+  // produce a client-facing document from it.
+  if (subscription.tier === 'FREE_TRIAL' && now.toISOString() > subscription.renewsAt) {
+    return {
+      status: 'EXPIRED',
+      mayWrite: false,
+      mayRunAI: false,
+      // Topping up stays open. A trial that ended is a customer deciding
+      // whether to buy, and refusing their money at that exact moment is the
+      // one refusal in this file with nothing behind it.
+      mayTopUp: true,
+      mayExport: false,
+      reason:
+        `The thirty-day trial ended on ${subscription.renewsAt.slice(0, 10)}. ` +
+        'Everything recorded during it is still readable. Choose a package to carry on working.',
     };
   }
 

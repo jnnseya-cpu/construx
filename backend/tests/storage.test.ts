@@ -73,11 +73,19 @@ describe('what a plan allows', () => {
     // compression that did not happen is an allowance that trips in month nine.
     const MID = 52, MAJOR = 258, SMALL = 9;
     const yearOne: Record<string, number> = {
-      FREE_TRIAL: 0.25 * SMALL,
+      // The trial is thirty days, not a year, so it is modelled over its own
+      // life. A small job runs 9 GB in six months — 1.5 GB a month — and an
+      // evaluation is a fraction of a job being run in anger.
+      FREE_TRIAL: 0.25 * (SMALL / 6),
+      // A sole trader runs about two small works jobs in a year.
+      SOLO: 2 * SMALL,
       CORE_PROJECT: 2 * SMALL + 1 * MID,
       PROFESSIONAL_DELIVERY: 3 * SMALL + 5 * MID,
       ENTERPRISE: 12 * MID + 8 * MAJOR,
     };
+
+    // Every package is modelled, or a new one gets a figure nobody derived.
+    assert.deepEqual(Object.keys(yearOne).sort(), Object.keys(PACKAGES).sort());
 
     for (const [tier, demand] of Object.entries(yearOne)) {
       const allowance = PACKAGES[tier as keyof typeof PACKAGES].storageGb;

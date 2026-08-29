@@ -133,7 +133,7 @@ export const SEATS: Record<SeatType, SeatDefinition> = {
  * a tenant compares against when deciding whether the package is worth it, and
  * what an over-cap seat is charged at.
  */
-export type PackageTier = 'CORE_PROJECT' | 'PROFESSIONAL_DELIVERY' | 'ENTERPRISE' | 'FREE_TRIAL';
+export type PackageTier = 'FREE_TRIAL' | 'SOLO' | 'CORE_PROJECT' | 'PROFESSIONAL_DELIVERY' | 'ENTERPRISE';
 
 export type PackageDefinition = {
   package: PackageTier;
@@ -177,12 +177,38 @@ export const PACKAGES: Record<PackageTier, PackageDefinition> = {
     package: 'FREE_TRIAL',
     label: 'Trial',
     targetCustomer: 'Evaluation',
-    includedSeats: 3,
+    // One identity, not three. A trial is one person deciding whether this is
+    // worth buying; three seats is a small team working for free, and the seat
+    // count is the thing that makes the difference between the two.
+    includedSeats: 1,
     monthlyPriceMinor: 0,
-    storageGb: 5,
+    // 1 GB. Enough to load a real drawing set and a week of site photographs,
+    // which is what an evaluation needs, and not enough to run a project on.
+    storageGb: 1,
     isolatedTenancy: false,
     apiAccess: false,
     export: false,
+  },
+  SOLO: {
+    package: 'SOLO',
+    label: 'Solo',
+    targetCustomer: 'Sole traders and single-project consultants',
+    includedSeats: 1,
+    monthlyPriceMinor: 10_000,
+    // 30 GB. By the same derivation as every figure here: a sole trader runs
+    // about two small works jobs in a year, a small job accumulates ~9 GB over
+    // six months, and 18 / 0.7 is 26 — so the 70% warning lands after the first
+    // year rather than during it.
+    storageGb: 30,
+    isolatedTenancy: false,
+    apiAccess: false,
+    // Export is on, and this is a judgement rather than something the price
+    // dictates. A sole trader paying every month whose output cannot leave the
+    // platform has bought a filing cabinet: the branded document *is* the
+    // product. What separates this from Core Project is seats, storage and AI —
+    // one person against ten, 25 GB against 100, 2,000 ACUs against 19,000 —
+    // which are the axes a growing business actually crosses.
+    export: true,
   },
   CORE_PROJECT: {
     package: 'CORE_PROJECT',

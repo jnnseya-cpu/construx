@@ -335,6 +335,56 @@ describe('rule 4 — 20% of a subscription buys AI allowance', () => {
   });
 });
 
+describe('every package credits 20% of its price as AI', () => {
+  it('gives each package the allowance its price implies', () => {
+    // The rule in its own terms: a fifth of what the customer pays is credited
+    // to their AI wallet each period. One ACU is one minor unit, so the ACU
+    // figure is just 20% of the price — which is why it does not move when the
+    // markup does. What the markup changes is how much provider work those
+    // ACUs buy, not how many there are.
+    const expected: Record<string, number> = {
+      FREE_TRIAL: 0,
+      SOLO: 2_000,
+      CORE_PROJECT: 19_000,
+      PROFESSIONAL_DELIVERY: 44_000,
+      ENTERPRISE: 130_000,
+    };
+
+    // Every package is covered, so a new one cannot be added without a figure.
+    assert.deepEqual(Object.keys(expected).sort(), Object.keys(PACKAGES).sort());
+
+    for (const [tier, acus] of Object.entries(expected)) {
+      const price = PACKAGES[tier as keyof typeof PACKAGES].monthlyPriceMinor;
+      assert.equal(
+        subscriptionAcuAllocationMinor(price),
+        acus,
+        `${tier} at ${price} minor should credit ${acus} ACUs`,
+      );
+      assert.equal(acusFromMinor(subscriptionAcuAllocationMinor(price)), acus);
+    }
+  });
+
+  it('gives the free trial a one-off grant rather than a monthly allowance', () => {
+    // Nothing is paid, so 20% of nothing is nothing. The 500 ACUs are a grant
+    // made once at signup — a different mechanism, deliberately, because a
+    // monthly allowance on a free package is a free platform.
+    assert.equal(PACKAGES.FREE_TRIAL.monthlyPriceMinor, 0);
+    assert.equal(subscriptionAcuAllocationMinor(PACKAGES.FREE_TRIAL.monthlyPriceMinor), 0);
+    assert.equal(config.billing.freeTrialGrantMinor, 500);
+  });
+
+  it('prices Solo as the entry package a single person can afford', () => {
+    const solo = PACKAGES.SOLO;
+    assert.equal(solo.monthlyPriceMinor, 10_000, 'Solo is £100 a month');
+    assert.equal(solo.includedSeats, 1);
+    assert.equal(solo.apiAccess, false);
+    // Export is the difference between a paid package and the trial: a sole
+    // trader whose output cannot leave the platform has bought a filing cabinet.
+    assert.equal(solo.export, true);
+    assert.equal(PACKAGES.FREE_TRIAL.export, false);
+  });
+});
+
 describe('what the allowance actually buys', () => {
   it('turns a plan into a stated number of provider calls, at the stated rate', () => {
     // The arithmetic a customer would do, done here so the platform and the

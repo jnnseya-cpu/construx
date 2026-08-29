@@ -162,6 +162,73 @@ describe('what the entitlement rules decide', () => {
 
 // --------------------------------------------------------------- leak 1: writes
 
+describe('a trial that has run its thirty days', () => {
+  /** A trial, with the renewal date under the test's control. */
+  const trial = (renewsAt: string) =>
+    ({
+      id: 's',
+      tenantId: 't',
+      tier: 'FREE_TRIAL',
+      package: 'FREE_TRIAL',
+      status: 'ACTIVE',
+      assignedIdentities: [],
+      startedAt: '2026-01-01T00:00:00.000Z',
+      renewsAt,
+    }) as never;
+
+  it('ends, which it previously never did', () => {
+    // The gap this closes. `renewsAt` was set thirty days out, the operator's
+    // forecast warned that a trial was ending, and nothing ended it: an ACTIVE
+    // trial stayed active for ever, so a free tenancy could run the platform
+    // indefinitely on a warning nobody had to act on.
+    const position = standing(trial('2026-02-01T00:00:00.000Z'), ['PM'], new Date('2026-02-02T00:00:00.000Z'));
+
+    assert.equal(position.status, 'EXPIRED');
+    assert.equal(position.mayWrite, false);
+    assert.equal(position.mayRunAI, false);
+    assert.equal(position.mayExport, false);
+    assert.match(String(position.reason), /thirty-day trial ended/i);
+    assert.match(String(position.reason), /2026-02-01/, 'the refusal must say when it ended');
+  });
+
+  it('is untouched on its last day', () => {
+    // Thirty days means thirty days. An off-by-one here takes a day off every
+    // trial the platform ever issues.
+    const position = standing(trial('2026-02-01T00:00:00.000Z'), ['PM'], new Date('2026-01-31T23:59:00.000Z'));
+    assert.equal(position.status, 'ACTIVE');
+    assert.equal(position.mayWrite, true);
+  });
+
+  it('stays readable, because the evaluation was real work', () => {
+    // Read-only rather than gone. Taking somebody's evaluation away at the
+    // moment they are deciding whether to buy is how they decide not to.
+    const position = standing(trial('2026-02-01T00:00:00.000Z'), ['PM'], new Date('2026-03-01T00:00:00.000Z'));
+    assert.equal(position.status, 'EXPIRED');
+    // Nothing in the standing forbids a read; the four gates are write, AI,
+    // top-up and export, and only three of them close.
+    assert.equal(position.mayTopUp, true, 'refusing a customer’s money as they decide to buy is the one refusal with nothing behind it');
+  });
+
+  it('does not expire a paid subscription on its renewal date', () => {
+    // `renewsAt` on a paid package is a renewal, not an end. Reading the same
+    // field the same way for both would cancel every paying customer monthly.
+    const paid = {
+      id: 's',
+      tenantId: 't',
+      tier: 'BUSINESS',
+      package: 'PROFESSIONAL_DELIVERY',
+      status: 'ACTIVE',
+      assignedIdentities: [],
+      startedAt: '2026-01-01T00:00:00.000Z',
+      renewsAt: '2026-02-01T00:00:00.000Z',
+    } as never;
+
+    const position = standing(paid, ['PM'], new Date('2026-06-01T00:00:00.000Z'));
+    assert.equal(position.status, 'ACTIVE');
+    assert.equal(position.mayWrite, true);
+  });
+});
+
 describe('a stopped subscription cannot write', () => {
   it('permits the write while active', () => {
     reactivate();

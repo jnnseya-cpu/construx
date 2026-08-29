@@ -189,7 +189,7 @@ The tenant pays the package, not the sum of seats — the seat prices exist so a
 
 **AI is metered, never bundled**
 
-Prepaid ACU bundles at a 5× markup on provider cost: **Starter £300** (6,000 ACUs), **Growth £1,000** (20,000), **Scale £2,500** (50,000). Hard caps, per-engine attribution, and no provider call on an empty wallet. Sell this as budget control, because that is what a commercial director hears: *"your AI spend cannot surprise you."*
+Five packages, from a 30-day trial through **Solo £100** for a sole trader to **Enterprise £6,500**. Every paid package credits 20% of its price as AI each month — £100 buys 2,000 ACUs, £950 buys 19,000, £6,500 buys 130,000. On top of that, prepaid ACU bundles at a 5× markup on provider cost: **Starter £300** (6,000 ACUs), **Growth £1,000** (20,000), **Scale £2,500** (50,000). Hard caps, per-engine attribution, and no provider call on an empty wallet. Sell this as budget control, because that is what a commercial director hears: *"your AI spend cannot surprise you."*
 
 ### Unit economics at 100 customers
 

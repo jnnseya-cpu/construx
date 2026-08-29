@@ -53,7 +53,7 @@ export const VERIFICATION_TTL_MINUTES = 60 * 24;
  * registers an enterprise *enquiry* instead, which is the honest version of the
  * same button.
  */
-export const SELF_SERVE_PACKAGES: PackageTier[] = ['FREE_TRIAL', 'CORE_PROJECT', 'PROFESSIONAL_DELIVERY'];
+export const SELF_SERVE_PACKAGES: PackageTier[] = ['FREE_TRIAL', 'SOLO', 'CORE_PROJECT', 'PROFESSIONAL_DELIVERY'];
 
 export type AccountType = {
   package: PackageTier;
