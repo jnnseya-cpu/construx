@@ -9885,3 +9885,59 @@ borrowing one that means something else.
 Every bundle is the same value per pound — the multiplier is flat — so a bundle
 is a convenience rather than a discount, and nothing in the product implies
 otherwise.
+
+### Inviting somebody onto a project
+
+A construction project is not staffed by one organisation. The designer, the
+temporary works engineer, the client's representative, a specialist
+subcontractor's own QS — every one of them needs to be on the job, and the
+person who knows they are needed is the project manager working beside them, not
+the enterprise administrator at head office who has never heard of them.
+
+Only `ENTERPRISE_ADMIN` and `OWNER` could create a person at all, so adding a
+designer for two weeks meant a request up the chain. That friction has a known
+workaround and it is the failure this exists to prevent: one login, several
+people, and an audit trail that attributes every act to whoever the account is
+named after. On a platform whose whole claim is that the record says who decided
+what, a shared credential is not an inconvenience — it is the product not
+working.
+
+Three rules, each tested by the case that breaks it.
+
+**Who may invite is "somebody working on this project", not "somebody who can
+see it".** A regulator reads more of the project than most of the delivery team
+and delivers none of it; a supplier answers an enquiry. Neither should be able
+to add people to a contractor's tenancy. The test is whether the inviter holds a
+*write* on any delivery area — derived from the permission matrix rather than a
+second list of "roles that may invite", which would disagree with it the first
+time a role changed.
+
+**A seat is held from the moment the invitation is sent, not when it is
+accepted.** Otherwise ten seats absorb fifty invitations, everybody is told they
+are on the project, and the eleventh person to click the link is refused — by
+which point a person outside the business has been promised something the
+business cannot give them. The cap is checked against assigned identities *plus*
+outstanding invitations, and withdrawing one gives the seat back.
+
+That rule is the reason this section exists, and the first version of the test
+did not prove it: the one-seat case refuses because the seat is already
+*assigned*, which would still refuse if invitations held nothing. Caught by
+mutation — removing the pending count left all seventeen tests passing. The test
+now fills a ten-seat package with one identity and nine invitations and asserts
+the eleventh is refused, which fails the moment the rule is removed.
+
+**An external invitee can never be granted administration of the tenancy.**
+Inviting a subcontractor's engineer onto a job is normal; making them an
+administrator of the main contractor's platform is a takeover, and it is the
+kind of thing that happens by picking the wrong item in a list. `ENTERPRISE_ADMIN`
+and `OWNER` are refused for anyone marked external — the same roles are fine
+internally, because that is an ordinary appointment.
+
+An invitation lapses after fourteen days and gives its seat back. One that stood
+for ever would be a seat nobody can account for and a link that still works a
+year after somebody left.
+
+Reachable on the Enterprise & Portfolio screen, which shows who has been invited,
+by whom, from which organisation, and the seat position beside it — assigned,
+held by invitations, and how many are left. The invite button is shut with that
+arithmetic in the reason when the package is full.

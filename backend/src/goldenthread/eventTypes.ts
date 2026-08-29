@@ -100,6 +100,13 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('USER_ERASURE_REQUESTED', 'User', 'UPDATE', 'GOVERNANCE'),
   def('USER_ERASURE_CANCELLED', 'User', 'UPDATE', 'GOVERNANCE'),
   def('USER_ERASED', 'User', 'UPDATE', 'GOVERNANCE'),
+  // Bringing somebody onto a project, in three events because the states are
+  // three different facts. An invitation *holds a seat* from the moment it is
+  // sent — see `domain/invitation.ts` for why — so withdrawing one has to be
+  // recordable, and an acceptance is the person, not the sender, acting.
+  def('PROJECT_INVITATION_SENT', 'ProjectInvitation', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('PROJECT_INVITATION_ACCEPTED', 'ProjectInvitation', 'UPDATE', 'GOVERNANCE'),
+  def('PROJECT_INVITATION_WITHDRAWN', 'ProjectInvitation', 'UPDATE', 'GOVERNANCE'),
   def('IDENTITY_SEAT_ASSIGNED', 'Subscription', 'UPDATE', 'GOVERNANCE'),
   def('IDENTITY_SEAT_REVOKED', 'Subscription', 'UPDATE', 'GOVERNANCE'),
   def('SUBSCRIPTION_ACTIVATED', 'Subscription', 'CREATE', 'GOVERNANCE'),

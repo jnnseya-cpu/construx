@@ -50,6 +50,7 @@ import * as cdm from '../domain/cdm.ts';
 import { CDM_DOCUMENTS } from '../domain/cdm.ts';
 import * as portfolio from '../domain/portfolio.ts';
 import * as commitments from '../domain/commitments.ts';
+import * as invitation from '../domain/invitation.ts';
 import * as watch from '../ops/watch.ts';
 import * as correspondence from '../domain/correspondence.ts';
 import * as procurement from '../domain/procurement.ts';
@@ -2996,6 +2997,84 @@ export const ROUTES: Route[] = [
         tenantId: actor.tenantId,
       });
     },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/invitations',
+    readOnly: true,
+    description: 'Who has been invited onto this project, and whether they have taken it up',
+    handler: (platform, ctx) => {
+      const context = projectContext(platform, ctx);
+      const subscription = platform.subscription(context.tenantId);
+      const limit = subscription ? PACKAGES[subscription.package].includedSeats : null;
+      const pending = invitation.pendingInvitations(context);
+      return {
+        invitations: context.ledger
+          .listByTenant(context.tenantId, 'ProjectInvitation')
+          .map((record) => record.state),
+        // The seat position, because an invitation is a seat and somebody about
+        // to send one needs to know whether there is one to give.
+        seats: {
+          includedSeats: limit,
+          assigned: subscription?.assignedIdentities.length ?? 0,
+          heldByInvitations: pending.length,
+          remaining: limit === null ? null : limit - (subscription?.assignedIdentities.length ?? 0) - pending.length,
+        },
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/invitations',
+    description: 'Invite somebody onto this project — internal or external, counted as a full identity',
+    schema: {
+      type: 'object',
+      required: ['name', 'email', 'roles', 'external', 'because'],
+      properties: {
+        name: stringField,
+        email: stringField,
+        roles: { type: 'array', minItems: 1, items: { type: 'string', enum: TENANT_GRANTABLE_ROLES } },
+        external: { type: 'boolean' },
+        organisation: { type: 'string' },
+        because: { type: 'string', minLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const input = body<Parameters<typeof invitation.inviteToProject>[2]>(ctx);
+      return invitation.inviteToProject(platform, projectContext(platform, ctx), {
+        ...input,
+        // The same guard the user route has: an array of unconstrained strings
+        // reaching the role model is how somebody mints a platform operator.
+        roles: assertTenantGrantable(input.roles),
+      });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/invitations/:invitationId/withdraw',
+    description: 'Take back an invitation, returning the seat it was holding',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 5 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      invitation.withdrawInvitation(projectContext(platform, ctx), {
+        invitationId: ctx.params.invitationId as string,
+        reason: body<{ reason: string }>(ctx).reason,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/invitations/:invitationId/accept',
+    description: 'Accept an invitation, which is where the identity is created and the seat taken',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      invitation.acceptInvitation(platform, projectContext(platform, ctx), {
+        invitationId: ctx.params.invitationId as string,
+      }),
   },
   {
     method: 'POST',

@@ -123,7 +123,7 @@ export async function enterprise(root) {
   // figure below carries the number of projects it was built from, because a
   // total that treats a missing CVR as zero is the most confident wrong number
   // a portfolio screen can print.
-  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people] = await Promise.all([
+  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations] = await Promise.all([
     // Caught rather than thrown. This was the only unguarded call on the page,
     // and a project-level role is *correctly* refused the estate-wide
     // commercial position — so for every role below enterprise level the
@@ -140,6 +140,10 @@ export async function enterprise(root) {
     // list them makes "change what somebody may do" unusable, because you
     // cannot change the roles of a person you cannot find.
     api.get('/v1/users').catch(() => ({ users: [] })),
+    // Who has been asked onto this project and whether they took it up, with
+    // the seat position beside it — an invitation holds a seat, and somebody
+    // about to send one needs to know whether there is one to give.
+    api.get(`/v1/projects/${state.session.projectId}/invitations`).catch(() => null),
   ]);
 
   // What somebody without enterprise authority can still see: where the
@@ -201,6 +205,20 @@ export async function enterprise(root) {
               reason: portfolios.portfolios.length === 0
                 ? 'A project belongs to a portfolio. Create one first.'
                 : blockedReason('ENTERPRISE_STRUCTURE', 'C'),
+            },
+            {
+              id: 'invite',
+              label: 'Invite to this project',
+              // Not `ENTERPRISE_STRUCTURE:G`, which is the administrator's
+              // grant. Anybody working on the project may bring somebody onto
+              // it — that is the whole point of the command — and the platform
+              // decides whether the caller is working on it or merely reading
+              // it, from the same matrix this screen reads.
+              permitted: can('PROJECT_SETUP', 'R') && (invitations?.seats?.remaining ?? 1) !== 0,
+              reason:
+                invitations?.seats?.remaining === 0
+                  ? `Every identity in this package is taken or invited (${invitations.seats.assigned} assigned, ${invitations.seats.heldByInvitations} invited). Move package, or withdraw an invitation.`
+                  : blockedReason('PROJECT_SETUP', 'R'),
             },
             {
               id: 'person',
@@ -475,6 +493,52 @@ export async function enterprise(root) {
         </div>
       </div>
 
+      <div class="card pad0" style="margin-bottom:14px">
+        <h2 style="padding:15px 17px 0">
+          Invited onto this project
+          ${
+            invitations?.seats
+              ? badge(
+                  invitations.seats.remaining === null
+                    ? 'unlimited identities'
+                    : `${invitations.seats.remaining} identit${invitations.seats.remaining === 1 ? 'y' : 'ies'} left`,
+                  invitations.seats.remaining === 0 ? 'bad' : invitations.seats.remaining === null ? 'neutral' : 'ok',
+                )
+              : ''
+          }
+        </h2>
+        <div class="metric-sub" style="padding:0 17px 10px">
+          Anybody working on this project may bring somebody onto it — the designer, the temporary works engineer, the
+          client's representative, a subcontractor's own QS. Internal or external, each one is a full identity against
+          the package's allowance, and the seat is held from the moment the invitation is sent rather than when it is
+          accepted: promising a place the business cannot give is worse than refusing the person who sent it.
+        </div>
+        ${table({
+          headers: ['Name', 'Email', 'With', 'Roles', 'Invited by', 'Expires', 'Status'],
+          rows: (invitations?.invitations ?? []).map((invite) => [
+            invite.name,
+            invite.email,
+            invite.external
+              ? html`${invite.organisation ?? '—'}${badge('external', 'warn')}`
+              : html`<span class="metric-sub">this organisation</span>`,
+            html`${(invite.roles ?? []).map((role) => badge(humanise(role), 'neutral'))}`,
+            (people.users ?? []).find((u) => u.id === invite.invitedBy)?.name ?? invite.invitedBy,
+            date(invite.expiresAt),
+            badge(humanise(invite.status), statusTone(invite.status)),
+          ]),
+          empty: 'Nobody has been invited to this project yet.',
+        })}
+        ${
+          invitations?.seats && invitations.seats.remaining !== null
+            ? html`<div class="metric-sub" style="padding:10px 17px 15px">
+                ${invitations.seats.assigned} identit${invitations.seats.assigned === 1 ? 'y' : 'ies'} assigned and
+                ${invitations.seats.heldByInvitations} held by outstanding invitations, against
+                ${invitations.seats.includedSeats} in this package.
+              </div>`
+            : ''
+        }
+      </div>
+
       <div class="card">
         <h2>People in this tenancy</h2>
         ${table({
@@ -514,6 +578,55 @@ export async function enterprise(root) {
    * stores.
    */
   const COMMANDS = {
+    invite: {
+      title: 'Invite somebody onto this project',
+      intent:
+        'Internal or external. They become a full identity against this package\u2019s allowance, and the seat is held ' +
+        'from now rather than from when they accept.',
+      path: `/v1/projects/${state.session.projectId}/invitations`,
+      submitLabel: 'Send the invitation',
+      fields: [
+        { name: 'name', label: 'Name' },
+        { name: 'email', label: 'Work email' },
+        {
+          name: 'external',
+          label: 'Which organisation',
+          type: 'select',
+          options: [
+            { value: 'false', label: 'Ours — they work here' },
+            { value: 'true', label: 'External — another company' },
+          ],
+        },
+        {
+          name: 'organisation',
+          label: 'Their organisation',
+          required: false,
+          hint: 'Required for an external invitee. "Who are they with" is the first question anybody asks.',
+        },
+        {
+          name: 'roles',
+          label: 'What they may do',
+          type: 'select',
+          multiple: true,
+          options: tenantGrantableRoles().map((role) => ({ value: role, label: humanise(role) })),
+        },
+        {
+          name: 'because',
+          label: 'Why they are being added',
+          type: 'textarea',
+          rows: 3,
+          hint: 'A sentence somebody reviewing the project team in six months will understand.',
+        },
+      ],
+      // `external` arrives from a select as a string, and `Boolean('false')` is
+      // true — the classic way a safety flag inverts itself in transit.
+      transform: (f) => ({
+        ...f,
+        external: String(f.external) === 'true',
+        roles: Array.isArray(f.roles) ? f.roles : [f.roles].filter(Boolean),
+      }),
+    },
+
     portfolio: {
       title: 'Create a portfolio',
       intent: 'A portfolio is the reporting and governance boundary a project is created inside.',

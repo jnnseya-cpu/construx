@@ -186,6 +186,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // contract wording verbatim, which is the same sensitivity as the contract.
   TenderReview: { area: 'ESTIMATE_TENDER', sensitivity: 'LEGAL_L4' },
   TenderInvitation: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
+  // Who was asked onto the project, by whom, and whether they accepted. Under
+  // PROJECT_SETUP because it is a fact about the project's team rather than
+  // about the tenancy's billing, and a project person has to be able to see
+  // whether the invitation they sent has been taken up.
+  ProjectInvitation: { area: 'PROJECT_SETUP' },
   BidProgramme: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   MasterPricing: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   PricingSchedule: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
