@@ -24,6 +24,97 @@ import { CONTINENT, SECTOR_GROUPED, sectorLabel, today } from '../lib/enums.js';
 /** The region's name, from the shared vocabulary rather than a second list. */
 const regionLabel = (code) => CONTINENT.find((option) => option.value === code)?.label ?? code ?? 'Not stated';
 
+/**
+ * The page for somebody the estate position is refused to.
+ *
+ * A project manager holds read on project setup, so the screen opens; they do
+ * not hold enterprise-level commercial authority, so `/v1/enterprise/command`
+ * refuses them. Both are right. What was wrong was rendering nothing: the
+ * refusal threw before the first element was drawn, and a project manager
+ * opening Enterprise & Portfolio saw an empty page with no explanation.
+ *
+ * This is what is left when the money is taken out — the structure the platform
+ * is built on, which is not sensitive and is the thing a project manager most
+ * needs from this screen: which portfolio their project sits under and where in
+ * the world it operates.
+ */
+function structureOnly(refusal, portfolios, enterprises, gates) {
+  const regions = new Map();
+  for (const portfolio of portfolios.portfolios ?? []) {
+    const code = portfolio.continentCode ?? '';
+    const entry = regions.get(code) ?? { code, portfolios: [], countries: new Set() };
+    entry.portfolios.push(portfolio);
+    if (portfolio.countryCode) entry.countries.add(portfolio.countryCode);
+    regions.set(code, entry);
+  }
+
+  return html`
+    <div class="page-head">
+      <h1>Enterprise &amp; Portfolio</h1>
+      <p>Where the business operates, and the gates every project is held to.</p>
+    </div>
+
+    <div class="notice warn" style="margin-bottom:14px">
+      <div>
+        <b>The estate position is not yours to see</b><br />
+Enterprise-wide cost, margin and risk need enterprise-level authority${
+          refusal?.message ? html` — ${refusal.message}` : ''
+        }. The structure below is not commercial and is shown in full.
+      </div>
+    </div>
+
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">
+        Where you operate
+        ${badge(`${regions.size} region${regions.size === 1 ? '' : 's'}`, regions.size > 1 ? 'ok' : 'neutral')}
+      </h2>
+      <div class="metric-sub" style="padding:0 17px 10px">
+        A portfolio names the region it operates in, and every project is held to its portfolio's region — so a European
+        portfolio refuses a Kenyan project rather than filing it and producing a European rollup that is quietly wrong.
+      </div>
+      ${table({
+        headers: ['Region', 'Countries', 'Portfolios'],
+        align: ['', '', 'num'],
+        rows: [...regions.values()].map((r) => [
+          html`<b>${regionLabel(r.code)}</b>`,
+          r.countries.size > 0 ? [...r.countries].join(', ') : html`<span class="metric-sub">multi-country</span>`,
+          r.portfolios.length,
+        ]),
+        empty: 'No portfolios yet. The first one names the region it operates in.',
+      })}
+    </div>
+
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">Portfolios</h2>
+      ${table({
+        headers: ['Portfolio', 'Enterprise', 'Governance', 'Region'],
+        rows: (portfolios.portfolios ?? []).map((p) => [
+          p.name,
+          (enterprises.enterprises ?? []).find((e) => e.id === p.enterpriseId)?.name ?? '—',
+          p.governanceModel,
+          html`<b>${regionLabel(p.continentCode)}</b><div class="metric-sub">${
+            p.countryCode ? `${p.countryCode} only` : 'multi-country'
+          }</div>`,
+        ]),
+        empty: 'No portfolios',
+      })}
+    </div>
+
+    <div class="card pad0">
+      <h2 style="padding:15px 17px 0">Lifecycle gates — what must be true to advance</h2>
+      ${table({
+        headers: ['Phase', 'Purpose', 'Exit criteria'],
+        rows: (gates.gates ?? []).map((g) => [
+          humanise(g.phase),
+          g.purpose,
+          (g.exitCriteria ?? []).length === 0 ? '—' : g.exitCriteria.map((c) => c.description).join(' · '),
+        ]),
+        empty: 'No gates published',
+      })}
+    </div>
+  `;
+}
+
 export async function enterprise(root) {
   await draw();
 
@@ -33,7 +124,12 @@ export async function enterprise(root) {
   // total that treats a missing CVR as zero is the most confident wrong number
   // a portfolio screen can print.
   const [position, portfolios, enterprises, gates, ownership, changes, forecast, people] = await Promise.all([
-    api.get('/v1/enterprise/command'),
+    // Caught rather than thrown. This was the only unguarded call on the page,
+    // and a project-level role is *correctly* refused the estate-wide
+    // commercial position — so for every role below enterprise level the
+    // refusal took the whole screen down and rendered nothing at all. Not a
+    // permission problem: a blank page where a refusal belonged.
+    api.get('/v1/enterprise/command').catch((error) => ({ refused: error })),
     api.get('/v1/portfolios').catch(() => ({ portfolios: [] })),
     api.get('/v1/enterprises').catch(() => ({ enterprises: [] })),
     api.get('/v1/lifecycle/gates').catch(() => ({ gates: [] })),
@@ -45,6 +141,15 @@ export async function enterprise(root) {
     // cannot change the roles of a person you cannot find.
     api.get('/v1/users').catch(() => ({ users: [] })),
   ]);
+
+  // What somebody without enterprise authority can still see: where the
+  // business operates, what the portfolios are, and the gates every project is
+  // held to. None of it is commercially sensitive, and it is the structure the
+  // platform is built on — enterprise, portfolio, region, project.
+  if (position.refused) {
+    render(root, structureOnly(position.refused, portfolios, enterprises, gates));
+    return;
+  }
 
   const { estate, financial, delivery, risks, projects } = position;
   const currency = estate.currency ?? 'GBP';

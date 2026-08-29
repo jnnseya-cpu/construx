@@ -9615,3 +9615,28 @@ than a list maintained beside them, because a hand-maintained list is what would
 drift back into the bug. The one exemption is named and argued: platform
 operators are barred from customer delivery data by construction, so being
 refused the project Autopilot is the model working.
+
+### One unguarded call, one blank page
+
+Found by the same method: every demonstration role, driven through all
+twenty-five screens in a browser — 325 page loads, zero JavaScript errors.
+
+`enterprise.js` fetched eight things and caught seven of them. The eighth,
+`/v1/enterprise/command`, is *correctly* refused to any role below enterprise
+level, so for a project manager, planner, QS, engineer or supervisor the refusal
+threw before the first element was drawn and the Enterprise & Portfolio screen
+rendered as an empty page. No error, no explanation, nothing — on the screen
+that carries the enterprise → portfolio → region → project structure this
+platform is built on.
+
+It now catches, and renders what the reader can legitimately see: where the
+business operates by region, the portfolios and which enterprise each belongs
+to, and the lifecycle gates every project is held to. None of it is commercial.
+The refusal is shown as a refusal, naming the authority that would open the rest
+— which is what `frontend/lib/command.js` has always done for a write, applied
+at last to a read.
+
+**Verified per role in a browser.** As the project manager the page goes from
+773 characters of nothing to the full structure: two regions, both portfolios
+with their enterprise and country scope, and all seven gates with their exit
+criteria.
