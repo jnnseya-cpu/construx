@@ -10316,27 +10316,50 @@ and the exposure as a figure. Both forms of the original defect — the agent
 going silent, and the agent reading a field that does not exist — now fail a
 test.
 
-**A chain divergence in `analyseITT`, found and not fixed.**
+**The chain divergence in `analyseITT`: found, root-caused and fixed.**
 
-Seeding the compliance matrix put a permanently diverged chain into the
-demonstration, so it is not seeded. The defect is real and reproducible:
+It was recorded here as found and not fixed, with the reproduction. The cause
+was one line, and it was not where the evidence pointed.
 
-- `ITT_ANALYSED` fails `replayProject` with "Chain hash does not match
-  recomputed value", and the assurance sweep reports the project diverged.
-- It reproduces with a full `CommercialTerms` — bond, retention, damages with a
-  cap, design liability — against a contract value in the hundreds of millions.
-  Sparse terms are fine, and every field added on its own is fine.
-- It is not the state: the event body round-trips through JSON to an identical
-  canonical form, and `undefined` values inside nested arrays canonicalise
-  identically.
-- It is not the linkage: the event's `previousChainHash` equals the ledger head
-  it was written against, and the mismatch is present the instant `commit`
-  returns.
-- The ledger's `chainBody` and the replay's body extraction are byte-identical
-  code, which is what makes this worth someone's full attention rather than a
-  patch.
+`analyseITT` built its list of assessed commercial terms, wrote it to the
+ledger, and then sorted the list worst-term-first before returning it:
 
-**Nothing was changed to work around it.** The demonstration carries the
-invitation and not its analysis, because a screen with one fewer panel is a
-smaller untruth than a diverged chain on a platform whose central claim is that
-the chain verifies.
+```js
+terms: terms.sort((a, b) => SEVERITY[a.severity] - SEVERITY[b.severity]),
+```
+
+A patch operation carries its value **by reference**. The array that sort
+reordered was the same array the committed event's own patch pointed at, and the
+event had already been hashed. Every analysis carrying more than one assessed
+term produced a chain that would not verify — which is exactly why sparse terms
+were fine, why each term added on its own was fine, and why the mismatch was
+present the instant `commit` returned. The one honest conclusion in the original
+entry — that the fault was not in the state — was right, and misleading: the
+state at hash time was correct and the state a moment later was not.
+
+Fixed in two places, because the caller was only where it happened to surface:
+
+- **`domain/itt.ts`** builds the ordered list *before* the write, and writes and
+  returns the same ordering. The stored matrix is now the document the analyst
+  was shown, which is the thing argued over later.
+- **`goldenthread/ledger.ts`** takes its own copy of the proposed state, the
+  actor, the entity reference and the evidence, AI and policy blocks before it
+  derives anything from them. A ledger that keeps live references to the
+  contents of an append-only record makes that mistake available to every
+  command in the system, and this would not have been the last one.
+
+`goldenthread.test.ts` pins the rule as a property of the ledger — "a committed
+event is nobody else's to change" — by doing the worst thing a caller plausibly
+can afterwards: sorting the array it submitted, and pushing into the state it
+read back. Both tests fail against the pre-fix ledger.
+
+Found alongside it and fixed in the same pass: `addDeliverable` in
+`domain/tenderintake.ts` appended a clarification **in place** to
+`record.state.clarifications`. That mutates the before-state as well as the
+after-state, so the diff between them showed nothing and the clarification was
+visible in memory and absent on replay.
+
+The compliance matrix is now seeded on Calderdale — twelve requirements read off
+the instructions to tenderers, the full commercial terms, and the six-item
+return register with its internal dates. `sweep()` over the seeded estate
+reports **4 checked, 4 intact, 0 diverged**.

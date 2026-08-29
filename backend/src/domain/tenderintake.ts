@@ -521,7 +521,11 @@ export function addDeliverable(
   }
 
   const returnDeadline = deadlineInForce(record.state);
-  const clarifications = (record.state.clarifications as Clarification[] | undefined) ?? [];
+  // Copied, not appended to in place. `record.state` is the state the last
+  // event produced; pushing into it would change the before-state as well as
+  // the after-state, the diff between them would show nothing, and the
+  // clarification would be visible in memory and absent on replay.
+  const clarifications = [...((record.state.clarifications as Clarification[] | undefined) ?? [])];
   if (deliverable.internalDueBy && `${deliverable.internalDueBy}T00:00:00Z` > returnDeadline.instant) {
     clarifications.push({
       severity: 'CRITICAL',

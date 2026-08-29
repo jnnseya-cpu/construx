@@ -172,7 +172,19 @@ export class GoldenThreadLedger {
       throw new ConflictError('Entity has changed since it was read', 'STALE_STATE');
     }
 
-    const diff: PatchOp[] = orderPatch(diffState(beforeState ?? {}, input.nextState));
+    // Diff against a copy the caller does not hold a reference to.
+    //
+    // A patch operation carries its value by reference. Left aliased to the
+    // caller's object, anything that object does afterwards happens inside an
+    // event that has already been hashed: `analyseITT` sorted its assessed
+    // terms after committing, which reordered the very array the event's patch
+    // pointed at, and the chain hash stopped verifying on replay. Nothing in
+    // the caller was obviously wrong, and nothing in the ledger noticed.
+    //
+    // Committed history cannot be hostage to what a caller does next, so the
+    // ledger takes its own copy before it derives anything from the proposal.
+    const proposed = structuredClone(input.nextState);
+    const diff: PatchOp[] = orderPatch(diffState(beforeState ?? {}, proposed));
     validatePatch(diff);
     if (diff.length === 0 && existing) {
       throw new DomainError('NO_OP_CHANGE', 'Commit produced no state change');
@@ -194,10 +206,14 @@ export class GoldenThreadLedger {
       tenantId: input.tenantId,
       projectId: input.projectId,
       timestamp,
-      actor: input.actor,
+      // Copied, like the state above and for the same reason: an actor or an
+      // entity reference the caller still holds must not be something the
+      // caller can edit after it has been hashed. The event owns everything it
+      // carries, or it owns none of it.
+      actor: structuredClone(input.actor),
       source: input.source,
       eventType: input.eventType,
-      entity: input.entity,
+      entity: structuredClone(input.entity),
       action: definition.action,
       ...(input.roleAtAction ? { roleAtAction: input.roleAtAction } : {}),
       ...(input.lifecyclePhase ? { lifecyclePhase: input.lifecyclePhase } : {}),
@@ -207,9 +223,9 @@ export class GoldenThreadLedger {
       diff,
       correlationId: input.correlationId,
     };
-    if (evidenceRefs.length > 0) event.evidenceRefs = evidenceRefs;
-    if (input.ai) event.ai = input.ai;
-    if (input.policy) event.policy = input.policy;
+    if (evidenceRefs.length > 0) event.evidenceRefs = structuredClone(evidenceRefs);
+    if (input.ai) event.ai = structuredClone(input.ai);
+    if (input.policy) event.policy = structuredClone(input.policy);
     if (input.causationId) event.causationId = input.causationId;
     if (input.deviceTimestamp) event.deviceTimestamp = input.deviceTimestamp;
 

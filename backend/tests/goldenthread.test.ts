@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it, before } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import { GoldenThreadLedger } from '../src/goldenthread/ledger.ts';
+import { canonicalize, sha256 } from '../src/core/canonical.ts';
 import { replayProject } from '../src/goldenthread/replay.ts';
 import { EVENT_TYPES, lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import { Platform } from '../src/platform.ts';
@@ -32,6 +33,76 @@ describe('event catalogue', () => {
     for (const definition of EVENT_TYPES) {
       if (definition.action === 'AI_EXECUTE') assert.ok(definition.aiAllowed, `${definition.code} is contradictory`);
     }
+  });
+});
+
+/**
+ * A committed event stops belonging to whoever wrote it.
+ *
+ * This is not a theoretical property. `analyseITT` built its list of assessed
+ * commercial terms, wrote it to the ledger, and then sorted the list worst-term
+ * first before returning it — one line, obviously harmless, and the array it
+ * sorted was the same array the event's own patch pointed at. The event had
+ * already been hashed. Every ITT analysis carrying more than one term produced
+ * a chain that would not verify on replay, and the platform's assurance sweep
+ * correctly reported the project as diverged with nothing to say why.
+ *
+ * The fault was not in the caller. A ledger that hands out live references to
+ * the contents of an append-only record makes that mistake available to every
+ * command in the system, and it will not be the last one written. So the rule
+ * is stated here as a property of the ledger, and tested by doing the worst
+ * thing a caller can plausibly do afterwards.
+ */
+describe('a committed event is nobody else’s to change', () => {
+  const commitOne = (ledger: GoldenThreadLedger, nextState: Record<string, unknown>) =>
+    ledger.commit({
+      ...baseCommit,
+      eventType: 'TASK_CREATED',
+      entity: { refType: 'Task', refId: 't-alias' },
+      nextState,
+    });
+
+  it('survives the caller mutating the state it submitted', () => {
+    const ledger = newLedger();
+    const tags = ['b', 'a', 'c'];
+    const owner = { name: 'A. Person' };
+    const { event } = commitOne(ledger, { title: 'Alias check', tags, owner });
+    const hashedAs = JSON.stringify(event);
+
+    // Exactly what `analyseITT` did: an in-place sort of an array that has
+    // been committed. Plus the same class by another route.
+    tags.sort();
+    owner.name = 'Someone Else';
+
+    assert.equal(JSON.stringify(event), hashedAs, 'a caller changed a hashed event by sorting its own array');
+    assert.equal(ledger.chainHead(PROJECT), event.chainHash);
+    const tagOp = event.diff.find((op) => op.path === '/tags');
+    assert.ok(tagOp && tagOp.op !== 'remove');
+    assert.deepEqual(tagOp.value, ['b', 'a', 'c'], 'the patch carries the order the caller committed, not the order it sorted to');
+  });
+
+  it('survives a reader mutating the state it read back', () => {
+    const ledger = newLedger();
+    const { event } = commitOne(ledger, { title: 'Read-back check', tags: ['b', 'a'] });
+    const hashedAs = JSON.stringify(event);
+
+    const record = ledger.require({ refType: 'Task', refId: 't-alias' });
+    (record.state.tags as string[]).push('injected');
+
+    assert.equal(JSON.stringify(event), hashedAs, 'a reader changed a hashed event through the entity record');
+  });
+
+  it('leaves the chain verifiable after both', () => {
+    const ledger = newLedger();
+    const tags = ['b', 'a', 'c'];
+    const { event } = commitOne(ledger, { title: 'Replay check', tags });
+    tags.sort();
+    (ledger.require({ refType: 'Task', refId: 't-alias' }).state.tags as string[]).push('injected');
+
+    // The point of all of the above: the chain hash still recomputes from the
+    // event's own body, which is what replay and the assurance sweep do.
+    const { chainHash, previousChainHash, ...body } = event;
+    assert.equal(chainHash, sha256(`${previousChainHash}\n${canonicalize(body)}`));
   });
 });
 

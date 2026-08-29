@@ -379,6 +379,16 @@ export function analyseITT(
   const analysisId = ulid();
   const readyToPrice = mandatoryGaps.length === 0 && bars.length === 0;
 
+  // Worst first, and ordered before the record is written rather than after it.
+  //
+  // A bid manager reads three lines and stops, so the bar and the uninsurable
+  // obligation have to be the three lines. Ordering it here means the record
+  // and the returned assessment are the same document in the same order — the
+  // stored matrix is what the analyst was shown, which is the thing that gets
+  // argued about later.
+  const SEVERITY_ORDER = { BAR: 0, SEVERE: 1, MATERIAL: 2, ROUTINE: 3 } as const;
+  const orderedTerms = [...terms].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+
   write(ctx, {
     eventType: 'ITT_ANALYSED',
     entity: { refType: 'ITTAnalysis', refId: analysisId },
@@ -392,7 +402,7 @@ export function analyseITT(
       matrix,
       mandatoryGaps: mandatoryGaps.map((g) => g.reference),
       weightings: { stated: statedTotal, complete: statedTotal === 100 },
-      terms,
+      terms: orderedTerms,
       bars,
       quantifiedExposureMinor,
       clarifications,
@@ -414,10 +424,7 @@ export function analyseITT(
       declared: [...declared.entries()].map(([category, percent]) => ({ category, percent })),
       complete: statedTotal === 100,
     },
-    terms: terms.sort(
-      (a, b) =>
-        ({ BAR: 0, SEVERE: 1, MATERIAL: 2, ROUTINE: 3 })[a.severity] - ({ BAR: 0, SEVERE: 1, MATERIAL: 2, ROUTINE: 3 })[b.severity],
-    ),
+    terms: orderedTerms,
     bars,
     quantifiedExposureMinor,
     clarifications,

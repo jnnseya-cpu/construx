@@ -224,12 +224,18 @@ describe('an agent reads fields that exist', () => {
       .find((project) => project.phase === 'TENDER') as { id: string; phase: string } | undefined;
     assert.ok(tender, 'the demonstration has no project at tender');
 
-    // The analysis is produced here rather than taken from the seed. The
-    // demonstration deliberately does not carry one — `analyseITT` writes an
-    // event whose chain hash does not verify on replay, so seeding it would put
-    // a diverged chain into the demonstration (see docs/STATE.md). The agent's
-    // behaviour is still testable: the defect is in how the event hashes, not
-    // in the analysis it produces.
+    // The demonstration carries its own analysis, read off the Calderdale
+    // invitation. Assert its shape first: it is the record the agent will
+    // actually meet in front of a customer, and the fields have to be on it.
+    const seeded = platform.ledger.listByTenant(seed.tenantId, 'ITTAnalysis').map((r) => r.state).at(-1);
+    assert.ok(seeded, 'the demonstration carries no compliance matrix for the tender agents to read');
+    for (const field of ['bars', 'mandatoryGaps', 'clarifications', 'readyToPrice', 'quantifiedExposureMinor']) {
+      assert.ok(field in seeded, `the seeded ITTAnalysis carries no "${field}" — the tender analyst reads it`);
+    }
+
+    // A second analysis, with a term the business does not accept at all. The
+    // seeded one is a realistic invitation and so carries no outright bar; this
+    // one exists to prove the agent names a bar when it meets one.
     itt.analyseITT(platform.context(seed.users.qs!.auth, tender.id), {
       reference: 'YW/AMP8/L3/2026/SPW-014',
       clientName: 'Yorkshire Water Services Limited',

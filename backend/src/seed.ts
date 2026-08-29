@@ -4,6 +4,7 @@ import { hashEvidence } from './core/canonical.ts';
 import * as aidisposition from './domain/aidisposition.ts';
 import * as business from './domain/business.ts';
 import * as tenderintake from './domain/tenderintake.ts';
+import * as itt from './domain/itt.ts';
 import * as conceptbrief from './domain/conceptbrief.ts';
 import * as conceptcompliance from './domain/conceptcompliance.ts';
 import * as conceptcontrols from './domain/conceptcontrols.ts';
@@ -343,7 +344,7 @@ export async function ensureDemonstrationExtras(platform: Platform): Promise<{ t
       ],
     });
 
-    tenderintake.recordInvitation(tenderQsCtx, spillway.opportunityId, {
+    const invitation = tenderintake.recordInvitation(tenderQsCtx, spillway.opportunityId, {
       reference: 'YW/AMP8/L3/2026/SPW-014',
       issuedAt: '2026-11-06T09:00:00Z',
       returnLocal: '2027-01-08T12:00',
@@ -362,36 +363,218 @@ export async function ensureDemonstrationExtras(platform: Platform): Promise<{ t
       notes: 'Issued under the AMP8 civils framework. Three bidders invited off lot 3.',
     });
 
-    // The compliance matrix is NOT seeded here, and the reason is a defect
-    // rather than a decision.
+    // The compliance matrix, read off the instructions to tenderers.
     //
-    // `analyseITT` writes an `ITT_ANALYSED` event whose chain hash does not
-    // verify on replay — `sha256(previousChainHash + canonicalize(body))`
-    // recomputed by `replayProject` does not equal the `chainHash` the ledger
-    // wrote, and the assurance sweep reports the project as diverged. It
-    // reproduces deterministically with a full `CommercialTerms` (bond,
-    // retention, damages with a cap, design liability) against a contract value
-    // in the hundreds of millions; it does not reproduce with sparse terms, and
-    // every field added on its own is fine. The event body round-trips through
-    // JSON to an identical canonical form, and the event's own
-    // `previousChainHash` matches the ledger head it was written against — so
-    // the fault is between the ledger's hashing and the replay's, not in the
-    // state.
-    //
-    // Seeding it would put a permanently diverged chain into the demonstration
-    // of a platform whose central claim is that the chain verifies. A screen
-    // with one fewer panel is a smaller lie than that, so the invitation is
-    // seeded and its analysis is not, until the divergence is fixed.
-    //
-    // Recorded in docs/STATE.md under what is not built. Reproduction:
-    // `analyseITT` on any project with the terms above, then `replayProject`.
+    // Every line is one the invitation actually imposes on a Reservoirs Act
+    // job: the panel engineer's supervision, the drawdown consent, the CDM
+    // duty, the social value weighting the framework carries. The analyst
+    // probes the company profile for evidence it already holds, so what comes
+    // back is a genuine mix of SATISFIED, GAP and UNKNOWN rather than a screen
+    // of green ticks.
+    const matrix = itt.analyseITT(tenderQsCtx, {
+      reference: 'YW/AMP8/L3/2026/SPW-014',
+      clientName: 'Yorkshire Water Services Limited',
+      returnBy: '2027-01-08',
+      estimatedValueMinor: 640_000_000,
+      durationWeeks: 86,
+      targetMarginPercent: 6,
+      requirements: [
+        {
+          reference: 'ITT-3.1',
+          category: 'QUALIFICATION',
+          requirement:
+            'Two reservoir or dam projects of comparable value completed in the last six years, each on a live impounding reservoir',
+          mandatory: true,
+          weightingPercent: 15,
+          evidenceRequired: 'Project references with client contact, contract value and completion certificate',
+        },
+        {
+          reference: 'ITT-3.4',
+          category: 'TECHNICAL',
+          requirement:
+            'Method statement for spillway reconstruction under partial drawdown, including the flood contingency during the works',
+          mandatory: true,
+          weightingPercent: 25,
+          evidenceRequired: 'Technical submission, 20 pages, with an outline construction programme',
+        },
+        {
+          reference: 'ITT-3.7',
+          category: 'TECHNICAL',
+          requirement:
+            'Named all-reservoirs panel engineer engaged for the duration, and a construction engineer appointed under the Reservoirs Act 1975',
+          mandatory: true,
+          weightingPercent: 10,
+          evidenceRequired: 'Letter of engagement and panel appointment reference',
+        },
+        {
+          reference: 'ITT-4.2',
+          category: 'INSURANCE',
+          requirement: 'Employers liability insurance of £10m and public liability of £10m for each and every claim',
+          mandatory: true,
+          evidenceRequired: 'Certificate of employers liability insurance',
+        },
+        {
+          reference: 'ITT-4.3',
+          category: 'INSURANCE',
+          requirement: 'Professional indemnity of £5m in the aggregate, held for twelve years from completion',
+          mandatory: true,
+          evidenceRequired: 'Professional indemnity certificate showing limit and basis',
+        },
+        {
+          reference: 'ITT-5.1',
+          category: 'HEALTH_AND_SAFETY',
+          requirement: 'Principal Contractor competence under CDM 2015, with the last three years of RIDDOR statistics',
+          mandatory: true,
+          weightingPercent: 10,
+          evidenceRequired: 'Accident frequency rate and enforcement history, signed by a director',
+        },
+        {
+          reference: 'ITT-5.6',
+          category: 'QUALITY',
+          requirement: 'Certified quality management system covering civil engineering works',
+          mandatory: true,
+          evidenceRequired: 'ISO 9001 certificate with scope covering water infrastructure',
+        },
+        {
+          reference: 'ITT-6.2',
+          category: 'ENVIRONMENTAL',
+          requirement:
+            'Certified environmental management system, and a method for protecting the downstream SSSI watercourse during drawdown',
+          mandatory: true,
+          weightingPercent: 10,
+          evidenceRequired: 'ISO 14001 certificate and an outline environmental management plan',
+        },
+        {
+          reference: 'ITT-6.5',
+          category: 'SOCIAL_VALUE',
+          requirement:
+            'Social value commitment against the framework model: local labour, apprenticeships and spend within the Calderdale travel-to-work area',
+          mandatory: false,
+          weightingPercent: 10,
+          evidenceRequired: 'Completed social value schedule with measurable commitments',
+        },
+        {
+          reference: 'ITT-7.3',
+          category: 'PROGRAMME',
+          requirement:
+            'Programme showing the works completed within the single drawdown window of 1 April to 31 October 2027, with the flood contingency identified',
+          mandatory: true,
+          weightingPercent: 15,
+          evidenceRequired: 'Outline programme to activity level with critical path marked',
+        },
+        {
+          reference: 'ITT-8.1',
+          category: 'COMMERCIAL',
+          requirement: 'Fully priced activity schedule under NEC4 Option A, with no qualifications to the contract data',
+          mandatory: true,
+          weightingPercent: 5,
+          evidenceRequired: 'Completed pricing schedule in the native spreadsheet issued',
+        },
+        {
+          reference: 'ITT-9.4',
+          category: 'SUBMISSION',
+          requirement: 'Submission through the buyer portal only. Late or emailed returns are not opened.',
+          mandatory: true,
+          evidenceRequired: 'Portal submission receipt',
+          dueBy: '2027-01-08',
+        },
+      ],
+      terms: {
+        contractForm: 'NEC4 ECC Option A with Z-clauses, as issued',
+        liquidatedDamages: { perWeekMinor: 4_500_000, capPercent: 10 },
+        performanceBondPercent: 10,
+        parentCompanyGuaranteeRequired: false,
+        retentionPercent: 5,
+        paymentDays: 60,
+        designLiability: 'FITNESS_FOR_PURPOSE',
+        sectionalCompletions: 2,
+        other: [
+          'Collateral warranties to the Environment Agency and to the reservoir undertaker',
+          'Drawdown window is the undertaker’s to grant and may be withdrawn on 28 days’ notice',
+        ],
+      },
+    });
+
+    // What has to go back, and who owns producing it. The internal dates are
+    // the ones that bind — a bond that takes three weeks to broker is a lead
+    // time, not a task, and the register is where that becomes visible.
+    tenderintake.extractRequirements(tenderQsCtx, invitation.invitationId, {
+      analysisId: matrix.analysisId,
+      deliverables: [
+        {
+          reference: 'D-01',
+          title: 'Technical submission — spillway reconstruction under partial drawdown',
+          mandatory: true,
+          format: 'PDF',
+          pageLimit: 20,
+          fileSizeLimitMb: 25,
+          channel: 'PORTAL',
+          owner: 'DESIGNER',
+          internalDueBy: '2026-12-18',
+          source: { document: 'Instructions to tenderers, rev B', clause: '3.4', page: 11 },
+        },
+        {
+          reference: 'D-02',
+          title: 'Priced activity schedule, native spreadsheet as issued',
+          mandatory: true,
+          format: 'XLSX',
+          channel: 'PORTAL',
+          owner: 'COMMERCIAL_MANAGER',
+          internalDueBy: '2027-01-04',
+          source: { document: 'Pricing schedule, native spreadsheet', clause: '8.1' },
+        },
+        {
+          reference: 'D-03',
+          title: 'Outline programme to activity level, critical path marked',
+          mandatory: true,
+          format: 'PDF',
+          channel: 'PORTAL',
+          owner: 'PLANNER',
+          internalDueBy: '2026-12-18',
+          source: { document: 'Instructions to tenderers, rev B', clause: '7.3', page: 19 },
+        },
+        {
+          reference: 'D-04',
+          title: 'Bond agreement in principle from the surety, 10% of contract value',
+          mandatory: true,
+          bondRequired: true,
+          format: 'PDF',
+          channel: 'PORTAL',
+          owner: 'COMMERCIAL_MANAGER',
+          internalDueBy: '2026-12-11',
+          source: { document: 'NEC4 Option A contract data parts one and two', clause: 'Z12' },
+        },
+        {
+          reference: 'D-05',
+          title: 'Form of tender, signed by a director',
+          mandatory: true,
+          signatureRequired: true,
+          format: 'PDF',
+          channel: 'PORTAL',
+          owner: 'COMMERCIAL_MANAGER',
+          internalDueBy: '2027-01-06',
+          source: { document: 'Instructions to tenderers, rev B', clause: '9.1', page: 24 },
+        },
+        {
+          reference: 'D-06',
+          title: 'Social value schedule with measurable local commitments',
+          mandatory: false,
+          format: 'PDF',
+          pageLimit: 8,
+          channel: 'PORTAL',
+          owner: 'QS',
+          internalDueBy: '2026-12-18',
+          source: { document: 'Instructions to tenderers, rev B', clause: '6.5', page: 17 },
+        },
+      ],
+    });
 
     note(
       `Invitation received on Calderdale: ${'YW/AMP8/L3/2026/SPW-014'} from Yorkshire Water, returning 2027-01-08 — ` +
-        `qualified at ${qualification.score}% (${qualification.recommendation}) and a bid decision taken. The ` +
-        'compliance matrix is not seeded — `analyseITT` writes an event whose chain hash does not verify, and a ' +
-        'diverged chain in the demonstration is worse than a missing panel. Measurement and pricing are ' +
-        'deliberately empty.',
+        `qualified at ${qualification.score}% (${qualification.recommendation}), a bid decision taken, and the ` +
+        `compliance matrix read off the instructions: ${matrix.mandatoryGaps.length} mandatory gap(s), ` +
+        `${matrix.clarifications.length} clarification(s) to raise and ${matrix.terms.length} commercial terms ` +
+        `assessed${matrix.readyToPrice ? '' : ' — not ready to price'}. Measurement and pricing are deliberately empty.`,
     );
 
     note(
