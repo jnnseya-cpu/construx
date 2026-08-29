@@ -2647,7 +2647,7 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
   // verification clauses are covered; the mix design submittal and the fair
   // faced trial panel are not, which is the gap the coverage report finds and
   // which neither the ITP nor the specification shows on its own.
-  quality.createInspectionPlan(qaqcCtx, {
+  const inspectionPlan = quality.createInspectionPlan(qaqcCtx, {
     workPackageId: packageId,
     title: 'In situ concrete — clarifier walls',
     discipline: 'CIVILS',
@@ -2677,6 +2677,18 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
     ],
   });
   step('ITP written against E10 — 2 of 4 verification clauses covered, the mix design and trial panel are not');
+
+  // The other side agreeing the criteria. Until this happens nothing can be
+  // inspected against the plan, because an inspection against criteria only one
+  // party has agreed proves nothing at handover.
+  quality.approveInspectionPlan(pmCtx, {
+    planId: inspectionPlan.planId,
+    approvedBy: pm.id,
+    approvingRole: "Employer's Representative",
+    note: 'Approved. Cube sampling rate to be confirmed against the final pour sequence.',
+    evidenceHash: hashEvidence('itp-e10-approval'),
+  });
+  step('ITP approved by the Employer\u2019s Representative — inspections may now be recorded against it');
 
   // A work package somebody typed in, alongside the generated ones. Temporary
   // works never come out of a generator — they come out of the contract and a

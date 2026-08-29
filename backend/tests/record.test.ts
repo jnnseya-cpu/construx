@@ -263,6 +263,99 @@ describe('answering an RFI', () => {
     assert.ok(position.averageDaysToAnswer !== undefined && position.averageDaysToAnswer > 0);
   });
 
+  it('closes an answered RFI, and records what site actually waited', () => {
+    // Time to answer is the design team's performance. Time to close is what
+    // site waited, and only the second one is the delay.
+    const answered = platform.ledger.list(seed.projectId, 'RFI').find((r) => r.state.status === 'ANSWERED')!;
+    const closed = bim.closeRFI(ctx('bim'), {
+      rfiId: answered.refId,
+      outcome: 'ANSWER_ACCEPTED',
+      note: 'Answer received and the revised detail has been issued to the gang.',
+      closedBy: seed.users.pm!.id,
+      evidenceHash: hashEvidence('rfi-closure'),
+    });
+
+    assert.equal(closed.reference, String(answered.state.reference));
+    assert.ok(closed.daysToClose >= 0);
+
+    const record = platform.ledger.require({ refType: 'RFI', refId: answered.refId });
+    assert.equal(record.state.status, 'CLOSED');
+    assert.equal(record.state.closureOutcome, 'ANSWER_ACCEPTED');
+    assert.equal(record.state.closedBy, seed.users.pm!.id);
+    // The answer and everything travelling with it survives closure.
+    assert.ok(record.state.answeredAgainstRevision);
+  });
+
+  it('refuses to let the answerer close their own answer', () => {
+    // The separation of duties. A design team that could close its own answers
+    // could clear the register without anybody agreeing the answers were
+    // usable, and a cleared register is what a delay claim is argued against.
+    const rfi = platform.ledger.list(seed.projectId, 'RFI').find((r) => r.state.status === 'ANSWERED');
+    if (!rfi) return;
+    throwsCode(
+      () =>
+        bim.closeRFI(ctx('bim'), {
+          rfiId: rfi.refId,
+          outcome: 'ANSWER_ACCEPTED',
+          note: 'Closing my own answer because the register looks untidy.',
+          closedBy: String(rfi.state.answeredBy),
+          evidenceHash: hashEvidence('self-closure'),
+        }),
+      'RFI_ANSWERER_CANNOT_CLOSE',
+    );
+  });
+
+  it('refuses to accept an answer that does not exist', () => {
+    const open = platform.ledger.list(seed.projectId, 'RFI').find((r) => String(r.state.status) === 'OPEN');
+    if (!open) return;
+    throwsCode(
+      () =>
+        bim.closeRFI(ctx('bim'), {
+          rfiId: open.refId,
+          outcome: 'ANSWER_ACCEPTED',
+          note: 'Treating this as dealt with even though nobody answered it.',
+          closedBy: seed.users.pm!.id,
+          evidenceHash: hashEvidence('phantom-answer'),
+        }),
+      'RFI_NOT_ANSWERED',
+    );
+  });
+
+  it('closes an unanswered RFI where the question stopped mattering', () => {
+    // A question can be overtaken by an instruction, and a register that could
+    // only close answered questions would keep those open forever.
+    const open = platform.ledger.list(seed.projectId, 'RFI').find((r) => String(r.state.status) === 'OPEN');
+    if (!open) return;
+    const closed = bim.closeRFI(ctx('bim'), {
+      rfiId: open.refId,
+      outcome: 'SUPERSEDED_BY_CHANGE',
+      note: 'Overtaken by the instructed variation to the pipe route; the detail queried no longer exists.',
+      closedBy: seed.users.pm!.id,
+      evidenceHash: hashEvidence('superseded'),
+    });
+    assert.ok(closed.daysToClose >= 0);
+    assert.equal(
+      platform.ledger.require({ refType: 'RFI', refId: open.refId }).state.closureOutcome,
+      'SUPERSEDED_BY_CHANGE',
+    );
+  });
+
+  it('refuses a closure that does not say why', () => {
+    const answered = platform.ledger.list(seed.projectId, 'RFI').find((r) => r.state.status === 'ANSWERED');
+    if (!answered) return;
+    throwsCode(
+      () =>
+        bim.closeRFI(ctx('bim'), {
+          rfiId: answered.refId,
+          outcome: 'ANSWER_ACCEPTED',
+          note: 'ok',
+          closedBy: seed.users.pm!.id,
+          evidenceHash: hashEvidence('unexplained'),
+        }),
+      'RFI_CLOSURE_UNEXPLAINED',
+    );
+  });
+
   it('gives no average where nothing has been answered', () => {
     // An average over nothing is zero, and zero days to answer reads as
     // excellent rather than as no data.

@@ -629,6 +629,52 @@ describe('10 · Quality is assurance, not a defect list', () => {
     assert.match(plan.reference, /^ITP-\d{5}$/);
   });
 
+  it('will not inspect against a plan the other side has not agreed', () => {
+    // An inspection against an unapproved ITP records one party checking its
+    // own work against its own criteria. It is worth nothing at handover, and
+    // it used to be the only kind this platform could produce.
+    throwsCode(
+      () =>
+        quality.recordInspection(ctxFor('qaqc'), {
+          planId,
+          stageReference: 'S1',
+          outcome: 'PASS',
+          inspectedBy: 'Site engineer',
+          comments: 'Within tolerance.',
+          evidenceHash: hashEvidence('insp-premature'),
+        }),
+      'ITP_NOT_APPROVED',
+    );
+  });
+
+  it('refuses to let the author approve their own inspection plan', () => {
+    throwsCode(
+      () =>
+        quality.approveInspectionPlan(ctxFor('qaqc'), {
+          planId,
+          approvedBy: seed.users.qaqc!.id,
+          approvingRole: 'QA/QC engineer',
+          evidenceHash: hashEvidence('itp-self-approval'),
+        }),
+      'ITP_AUTHOR_CANNOT_APPROVE',
+    );
+  });
+
+  it('approves the plan, which is the other side agreeing the criteria', () => {
+    const approved = quality.approveInspectionPlan(ctxFor('pm'), {
+      planId,
+      approvedBy: seed.users.pm!.id,
+      approvingRole: "Employer's Representative",
+      note: 'Approved. Cube results to be issued within two working days of the 28-day break.',
+      evidenceHash: hashEvidence('itp-clarifier-approval'),
+    });
+
+    assert.equal(approved.holdPoints, 2);
+    const record = platform.ledger.require({ refType: 'InspectionPlan', refId: planId });
+    assert.equal(record.state.approvalStatus, 'APPROVED');
+    assert.equal(record.state.approvingRole, "Employer's Representative");
+  });
+
   it('stops the work while a hold point is outstanding, and says which', () => {
     const ctx = ctxFor('qaqc');
     // Scoped to this package. The project also carries the seeded concrete ITP,

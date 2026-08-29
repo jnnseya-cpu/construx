@@ -45,7 +45,7 @@ function planWithHoldPoint(): string {
     title: `Clarifier wall pour ${sequence}`,
     indicativeDurationDays: 15,
   });
-  return quality.createInspectionPlan(asQAQC(), {
+  const planId = quality.createInspectionPlan(asQAQC(), {
     workPackageId,
     title: `ITP for pour ${sequence}`,
     discipline: 'CIVIL',
@@ -66,6 +66,17 @@ function planWithHoldPoint(): string {
       },
     ],
   }).planId;
+
+  // An ITP has to be agreed before anything can be inspected against it, so
+  // the helper approves as the PM — a different identity from the QAQC
+  // engineer who wrote it, which the engine requires.
+  quality.approveInspectionPlan(asPM(), {
+    planId,
+    approvedBy: seed.users.pm!.id,
+    approvingRole: "Employer's Representative",
+    evidenceHash: hash(`itp-approval-${planId}`),
+  });
+  return planId;
 }
 
 function passStage(planId: string, stageReference: string): void {

@@ -868,6 +868,115 @@ export function answerRFI(
   };
 }
 
+/** Why an RFI stopped being open. */
+export const RFI_CLOSURE_OUTCOMES = ['ANSWER_ACCEPTED', 'NO_LONGER_REQUIRED', 'SUPERSEDED_BY_CHANGE'] as const;
+export type RfiClosureOutcome = (typeof RFI_CLOSURE_OUTCOMES)[number];
+
+/**
+ * Close an RFI, which only the person who raised it can do.
+ *
+ * `answerRFI` moved an RFI to ANSWERED and there it stopped, so the register
+ * could say a question had been answered and never whether the asker got what
+ * they needed. Those are different facts and the gap between them is where the
+ * argument lives: an answer that referred the site back to a drawing it had
+ * already queried sat in exactly the same state as one that resolved the
+ * problem, and the register showed both as dealt with.
+ *
+ * **The closer may not be the answerer.** A design team that could close its
+ * own answers could clear the register without anybody agreeing the answers
+ * were usable, which is the same separation of duties the rest of the platform
+ * enforces and the same reason it exists here.
+ *
+ * `daysToClose` is recorded beside `daysOpen` deliberately. Time-to-answer is
+ * the design team's performance; time-to-close is what site actually waited,
+ * and only the second one is the delay.
+ */
+export function closeRFI(
+  ctx: EngineContext,
+  input: {
+    rfiId: string;
+    outcome: RfiClosureOutcome;
+    /** Why this closes it. An accepted answer still needs a sentence saying so. */
+    note: string;
+    closedBy: string;
+    evidenceHash: string;
+  },
+  now = new Date(),
+): { rfiId: string; reference: string; daysToClose: number; answeredLate: boolean } {
+  // `U` rather than `A`, and deliberately the same capability that answering
+  // needs. Approve on design information is held by the designers — the people
+  // who answer — so requiring it here would have meant only the answering
+  // discipline could close, which is the opposite of what closure is for. The
+  // separation is done by identity below: whoever answered may not close.
+  authorise(ctx, 'DESIGN_INFORMATION', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const rfi = ctx.ledger.require({ refType: 'RFI', refId: input.rfiId });
+  const status = String(rfi.state.status);
+
+  if (status === 'CLOSED') {
+    throw new DomainError('RFI_ALREADY_CLOSED', `${String(rfi.state.reference)} is already closed`);
+  }
+
+  // An unanswered RFI can still be closed — the question can stop mattering, or
+  // be overtaken by an instruction — but only for a reason that says so. Closing
+  // an unanswered question as "answer accepted" would record an answer that
+  // does not exist.
+  if (status !== 'ANSWERED' && input.outcome === 'ANSWER_ACCEPTED') {
+    throw new DomainError(
+      'RFI_NOT_ANSWERED',
+      `${String(rfi.state.reference)} has not been answered, so there is no answer to accept`,
+      422,
+      [{ field: 'outcome', message: 'Close it as no longer required or superseded, or wait for the answer' }],
+    );
+  }
+
+  if (String(rfi.state.answeredBy ?? '') === input.closedBy) {
+    throw new DomainError(
+      'RFI_ANSWERER_CANNOT_CLOSE',
+      'The person who answered an RFI cannot also close it. Closure is the asker agreeing the answer is usable.',
+      403,
+      [{ field: 'closedBy', message: 'This is the identity that answered the RFI' }],
+    );
+  }
+
+  if (input.note.trim().length < 10) {
+    throw new DomainError('RFI_CLOSURE_UNEXPLAINED', 'Say why this RFI is closed, in a sentence a reader will understand later');
+  }
+
+  const raisedAt = String(rfi.state.raisedAt);
+  const daysToClose = Math.max(0, Math.round((now.getTime() - Date.parse(raisedAt)) / 86_400_000));
+
+  const evidence = registerEvidence(ctx, {
+    type: 'RFI_CLOSURE',
+    hash: input.evidenceHash,
+    description: `Closure of ${String(rfi.state.reference)}: ${input.outcome}`,
+    linkedEntities: [{ refType: 'RFI', refId: input.rfiId }],
+  });
+
+  write(ctx, {
+    eventType: 'RFI_CLOSED',
+    entity: { refType: 'RFI', refId: input.rfiId },
+    nextState: {
+      ...rfi.state,
+      status: 'CLOSED',
+      closureOutcome: input.outcome,
+      closureNote: input.note,
+      closedBy: input.closedBy,
+      closedAt: now.toISOString(),
+      // What site waited, as opposed to what the design team took to answer.
+      daysToClose,
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return {
+    rfiId: input.rfiId,
+    reference: String(rfi.state.reference),
+    daysToClose,
+    answeredLate: rfi.state.answeredLate === true,
+  };
+}
+
 /**
  * The RFI register as a delay exhibit rather than a list.
  *
@@ -882,16 +991,24 @@ export function rfiPosition(
 ): {
   total: number;
   open: number;
+  /** Answered and not yet accepted by whoever asked. This is what site is waiting on. */
+  awaitingClosure: number;
+  closed: number;
   overdue: Array<{ reference: string; question: string; daysOpen: number; dueDate?: string }>;
   answeredLate: number;
   averageDaysToAnswer?: number;
+  averageDaysToClose?: number;
   designChanges: number;
   summary: string;
 } {
   authorise(ctx, 'DESIGN_INFORMATION', 'R');
 
   const rfis = ctx.ledger.list(ctx.projectId, 'RFI').map((record) => record.state);
-  const open = rfis.filter((r) => r.status !== 'ANSWERED');
+  // Open means nobody has answered it. A closed RFI is not open, and this used
+  // to say `status !== 'ANSWERED'`, which counted every closed one as still
+  // outstanding the moment closure existed.
+  const open = rfis.filter((r) => r.status !== 'ANSWERED' && r.status !== 'CLOSED');
+  const closed = rfis.filter((r) => r.status === 'CLOSED');
 
   const overdue = open
     .filter((r) => typeof r.dueDate === 'string' && today > String(r.dueDate))
@@ -903,7 +1020,9 @@ export function rfiPosition(
     }))
     .sort((a, b) => b.daysOpen - a.daysOpen);
 
-  const answered = rfis.filter((r) => r.status === 'ANSWERED');
+  // Answered, whether or not it has since been closed — the design team's
+  // response time does not stop counting because somebody accepted the answer.
+  const answered = rfis.filter((r) => r.answeredAt !== undefined);
   const answeredLate = answered.filter((r) => r.answeredLate === true).length;
   // Stated only where something has been answered. An average over nothing is
   // zero, and zero days to answer reads as excellent rather than as no data.
@@ -914,6 +1033,12 @@ export function rfiPosition(
 
   const designChanges = answered.filter((r) => r.changesDesign === true).length;
 
+  // What site actually waited, as distinct from what the design team took.
+  const averageDaysToClose =
+    closed.length === 0
+      ? undefined
+      : Number((closed.reduce((sum, r) => sum + Number(r.daysToClose ?? 0), 0) / closed.length).toFixed(1));
+
   const summary =
     rfis.length === 0
       ? 'No RFIs raised.'
@@ -921,7 +1046,18 @@ export function rfiPosition(
         ? `${open.length} open, none overdue.`
         : `${overdue.length} overdue, the oldest ${overdue[0]!.daysOpen} days. Unanswered information is the most common ground for a design-delay claim.`;
 
-  return { total: rfis.length, open: open.length, overdue, answeredLate, averageDaysToAnswer, designChanges, summary };
+  return {
+    total: rfis.length,
+    open: open.length,
+    awaitingClosure: rfis.filter((r) => r.status === 'ANSWERED').length,
+    closed: closed.length,
+    overdue,
+    answeredLate,
+    averageDaysToAnswer,
+    averageDaysToClose,
+    designChanges,
+    summary,
+  };
 }
 
 // --- Specification -----------------------------------------------------------

@@ -218,6 +218,12 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SUBMITTAL_ORDERED', 'MaterialSubmittal', 'UPDATE', 'DESIGN'),
   def('RFI_RAISED', 'RFI', 'CREATE', 'DESIGN', { aiAllowed: true }),
   def('RFI_ANSWERED', 'RFI', 'UPDATE', 'DESIGN', { requiresEvidence: true }),
+  // An answered RFI is not a closed one. The register could show that a
+  // question had been answered and never that the asker got what they needed,
+  // so an answer nobody could build to sat in the same state as one that
+  // resolved the problem — and that is exactly the RFI a design-delay claim
+  // turns on.
+  def('RFI_CLOSED', 'RFI', 'APPROVE', 'DESIGN', { requiresEvidence: true }),
   def('CORRESPONDENCE_ISSUED', 'Correspondence', 'ISSUE', 'DESIGN', { aiAllowed: true, creates: true }),
   // A reply is a distinct fact with its own author and its own date, and on the
   // letters where silence is acceptance the date is the whole point. Recording
@@ -628,6 +634,12 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // original closure is kept in full on the record.
   def('NCR_REOPENED', 'NCR', 'UPDATE', 'DELIVERY'),
   def('ITP_STAGE_UPDATED', 'InspectionPlan', 'UPDATE', 'DELIVERY'),
+  // An ITP is the agreement about what will be inspected and against what.
+  // Until the other side has agreed it, an inspection recorded against it
+  // proves nothing: the acceptance criteria were one party's opinion. The plan
+  // could be written and inspected against in the same minute, which is how a
+  // quality record ends up being disputed at handover.
+  def('ITP_APPROVED', 'InspectionPlan', 'APPROVE', 'DELIVERY', { requiresEvidence: true }),
   def('INSPECTION_COMPLETED', 'QualityInspection', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
   def('SNAG_RAISED', 'Snag', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
   def('SNAG_DISPATCHED', 'Snag', 'UPDATE', 'DELIVERY'),

@@ -116,6 +116,80 @@ function requirePlan(ctx: EngineContext, planId: string) {
 
 type StoredStage = ITPStageInput & { status: string; inspectionId?: string };
 
+/**
+ * Approve an inspection and test plan, which the person who wrote it cannot do.
+ *
+ * An ITP is an *agreement*: this is what will be inspected, at these stages,
+ * against these criteria, and these ones stop the work. Until the other side
+ * has agreed it, an inspection recorded against it proves nothing — the
+ * acceptance criteria were one party's opinion, and the argument about whether
+ * they were the right ones happens at handover, with the work covered up.
+ *
+ * The platform let a plan be written and inspected against in the same minute.
+ * `recordInspection` now refuses until this has happened, because an approval
+ * nothing enforces is decoration.
+ */
+export function approveInspectionPlan(
+  ctx: EngineContext,
+  input: {
+    planId: string;
+    /** The identity approving, which must not be the identity that wrote it. */
+    approvedBy: string;
+    /** Whose approval this is — "Employer's Representative", "Client CA". */
+    approvingRole: string;
+    /** Any qualification on the approval. Approving with comments is normal. */
+    note?: string;
+    evidenceHash: string;
+  },
+  now = new Date(),
+): { planId: string; reference: string; holdPoints: number } {
+  authorise(ctx, 'QUALITY_COMMISSIONING', 'A', { lifecyclePhase: currentPhase(ctx) });
+
+  const plan = requirePlan(ctx, input.planId);
+  if (plan.state.approvalStatus === 'APPROVED') {
+    throw new DomainError('ITP_ALREADY_APPROVED', `${String(plan.state.reference)} has already been approved`);
+  }
+
+  // The separation that makes the approval mean something. A contractor who
+  // could approve its own inspection plan has agreed with itself about what
+  // counts as acceptable work.
+  if (String(plan.state.createdBy) === input.approvedBy) {
+    throw new DomainError(
+      'ITP_AUTHOR_CANNOT_APPROVE',
+      'The person who wrote an inspection plan cannot approve it. Approval is the other side agreeing the criteria.',
+      403,
+      [{ field: 'approvedBy', message: 'This is the identity that created the plan' }],
+    );
+  }
+
+  const evidence = registerEvidence(ctx, {
+    type: 'ITP_APPROVAL',
+    hash: input.evidenceHash,
+    description: `Approval of ${String(plan.state.reference)} by ${input.approvingRole}`,
+    linkedEntities: [{ refType: 'InspectionPlan', refId: input.planId }],
+  });
+
+  write(ctx, {
+    eventType: 'ITP_APPROVED',
+    entity: { refType: 'InspectionPlan', refId: input.planId },
+    nextState: {
+      ...plan.state,
+      approvalStatus: 'APPROVED',
+      approvedBy: input.approvedBy,
+      approvingRole: input.approvingRole,
+      approvalNote: input.note,
+      approvedAt: now.toISOString(),
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return {
+    planId: input.planId,
+    reference: String(plan.state.reference),
+    holdPoints: Number(plan.state.holdPoints ?? 0),
+  };
+}
+
 // --- Inspection ---------------------------------------------------------------
 
 /**
@@ -142,6 +216,19 @@ export function recordInspection(
   authorise(ctx, 'QUALITY_COMMISSIONING', 'C', { lifecyclePhase: currentPhase(ctx) });
 
   const plan = requirePlan(ctx, input.planId);
+
+  // The refusal that makes approval real. An inspection against an unapproved
+  // plan is a record of one party checking its own work against its own
+  // criteria, and it is worth nothing at handover.
+  if (plan.state.approvalStatus !== 'APPROVED') {
+    throw new DomainError(
+      'ITP_NOT_APPROVED',
+      `${String(plan.state.reference)} has not been approved, so there is no agreed criterion to inspect against`,
+      409,
+      [{ field: 'planId', message: 'Approve the inspection and test plan before recording inspections against it' }],
+    );
+  }
+
   const stages = plan.state.stages as StoredStage[];
   const stage = stages.find((s) => s.reference === input.stageReference);
 

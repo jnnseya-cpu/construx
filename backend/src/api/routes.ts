@@ -2313,6 +2313,27 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/quality/plans/:planId/approve',
+    description: 'Approve an inspection and test plan — the other side agreeing the criteria, which its author cannot do',
+    schema: {
+      type: 'object',
+      required: ['approvedBy', 'approvingRole', 'evidenceHash'],
+      properties: {
+        approvedBy: stringField,
+        approvingRole: stringField,
+        note: { type: 'string' },
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      quality.approveInspectionPlan(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof quality.approveInspectionPlan>[1], 'planId'>>(ctx),
+        planId: ctx.params.planId as string,
+      }),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/quality/inspections',
     description: 'Record an inspection against an ITP stage; a failure raises an NCR',
     schema: {
@@ -9813,6 +9834,27 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) =>
       bim.answerRFI(projectContext(platform, ctx), {
         ...body<Omit<Parameters<typeof bim.answerRFI>[1], 'rfiId'>>(ctx),
+        rfiId: ctx.params.rfiId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/rfi/:rfiId/close',
+    description: 'Close an RFI — the asker agreeing the answer is usable, which the answerer cannot do',
+    schema: {
+      type: 'object',
+      required: ['outcome', 'note', 'closedBy', 'evidenceHash'],
+      properties: {
+        outcome: { type: 'string', enum: [...bim.RFI_CLOSURE_OUTCOMES] },
+        note: { type: 'string', minLength: 10 },
+        closedBy: stringField,
+        evidenceHash: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bim.closeRFI(projectContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof bim.closeRFI>[1], 'rfiId'>>(ctx),
         rfiId: ctx.params.rfiId as string,
       }),
   },

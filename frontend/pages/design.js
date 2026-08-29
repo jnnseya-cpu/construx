@@ -594,12 +594,20 @@ export async function design(root) {
                         ? html`<div class="row"><span class="lbl">Average days to answer</span><span class="val">${rfi.averageDaysToAnswer}</span></div>`
                         : html`<div class="row"><span class="lbl">Average days to answer</span><span class="val">nothing answered yet</span></div>`
                     }
+                    ${
+                      rfi.averageDaysToClose !== undefined
+                        ? html`<div class="row"><span class="lbl">Average days to close</span><span class="val">${rfi.averageDaysToClose}</span></div>`
+                        : ''
+                    }
+                    <div class="row"><span class="lbl">Answered, awaiting the asker</span><span class="val">${rfi.awaitingClosure ?? 0}</span></div>
+                    <div class="row"><span class="lbl">Closed</span><span class="val">${rfi.closed ?? 0}</span></div>
                     <div class="row"><span class="lbl">Answered after the return date</span><span class="val">${rfi.answeredLate}</span></div>
                     <div class="row"><span class="lbl">Answers that changed the design</span><span class="val">${rfi.designChanges}</span></div>
                   </div>
                   <div class="metric-sub" style="margin-top:9px">
                     Each RFI records the drawing revision it was raised against, and the answer records the revision it was given against —
-                    answering the wrong revision is how RFI answers become disputes.
+                    answering the wrong revision is how RFI answers become disputes. Days to answer is the design team's response time;
+                    days to close is what site actually waited, and only the second one is the delay.
                   </div>
                 </div>`
               : ''

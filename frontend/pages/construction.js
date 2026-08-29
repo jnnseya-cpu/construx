@@ -343,8 +343,8 @@ export async function construction(root) {
             : ` ${quality.conformancePercent}% of stages have passed.`}
         </p>
         ${table({
-          headers: ['Plan', 'Title', 'Discipline', 'Spec', 'Stages', 'Hold points', 'Status'],
-          align: ['', '', '', '', 'num', 'num', ''],
+          headers: ['Plan', 'Title', 'Discipline', 'Spec', 'Stages', 'Hold points', 'Agreed', 'Status'],
+          align: ['', '', '', '', 'num', 'num', '', ''],
           rows: b.InspectionPlan.map((p) => [
             p.reference,
             p.title,
@@ -352,6 +352,12 @@ export async function construction(root) {
             p.specificationRef ?? '—',
             (p.stages ?? []).length,
             (p.stages ?? []).filter((s) => s.type === 'HOLD').length,
+            // Nothing can be inspected against a plan the other side has not
+            // agreed, so an unapproved plan is a blocked package rather than a
+            // tidiness problem, and it belongs on the row.
+            p.approvalStatus === 'APPROVED'
+              ? badge(p.approvingRole ?? 'approved', 'good')
+              : badge('not agreed', 'warn'),
             badge(humanise(p.status), statusTone(p.status)),
           ]),
           empty: 'No inspection plan — nothing states what is inspected or against what',
