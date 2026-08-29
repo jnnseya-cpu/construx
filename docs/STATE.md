@@ -10559,12 +10559,42 @@ the proposal says "queued rather than run". The pinned list of ACT-eligible
 agents in `agentcontract.test.ts` went from one entry to two, and the argument
 for the second is written into the test rather than left to a commit message.
 
-**Verified.** The act runs the real domain command, the register lands on the
-invitation, the event carries the agent as author, and the count of compliance
-matrices is unchanged by it. Three mutations fail a test: dropping the
-`AUTOMATABLE_COMMANDS` check in the executor, falling attribution back to the
-human, and opening `ITT_ANALYSED` to machines. **Not verified here:** the full
-path from a live model reading a PDF through to the agent waking on it, which
-needs a multimodal provider this environment does not have. The act is driven
-through the executor with the agent's identity on the context, which is exactly
-what the runtime does; the fleet-run wiring above it is not separately proven.
+**Verified, and the caveat withdrawn.** The fleet wiring was first left unproven
+on the reasoning that the reading needed a multimodal provider and stubbing one
+would be testing the stub. That reasoning was wrong: a stubbed *provider* stands
+in for one thing only, the words a model returns, and everything between that and
+the register is the platform's own. `ittreading.test.ts` now drives the whole
+path — a real file into a real `extract`, a real `PERCEPTION_DRAFT_PRODUCED`, the
+trigger routing that wakes the agent, the mandate check, the envelope lookup, the
+executor, the attribution, and the catalogue's refusal — against the multimodal
+stub that file already had.
+
+Two defects came out of doing it, both of which had made the feature
+non-functional and neither of which any existing test could have caught:
+
+- **The agent looked for the invitation on the project.** An invitation is
+  recorded against the opportunity, in the tenancy scope the bid pipeline lives
+  in, because a tender exists before the job does. The agent read the project
+  scope, found nothing, and reported no findings while a good reading sat
+  waiting — the exact shape of the dead-agent defect `agentcontract.test.ts` was
+  written about. It now reads through `tenderBoard`, the domain's own reader,
+  so moving an invitation cannot silently strand it again.
+- **The value ceiling measured the price of thinking.** The runtime passed
+  `estimatedAcuMinor` — what the agent's *run* cost — as the value of the act.
+  Every declared ceiling is zero and no ACU tier is free, so the top rung was
+  unreachable for any agent: this one was refused permission to file a document
+  because thinking about it had cost ten minor units. `ProposedCommand` now
+  carries `valueMinor`, what the act *commits*, and the ceiling is measured
+  against that. It still bites — an act declaring any value at all is refused
+  under a zero ceiling, and automating one would mean raising a ceiling, which
+  fails `agentcontract.test.ts`.
+
+Six mutations fail a test: dropping the `AUTOMATABLE_COMMANDS` check in the
+executor, falling attribution back to the human, opening `ITT_ANALYSED` to
+machines, pointing the agent back at the project scope, stopping the runtime
+executing a granted act, and removing the guard against re-filing a register
+that is already there.
+
+**What is still not claimed:** whether a particular model reads a particular PDF
+correctly. That is a question about a model, not about this platform, and no
+test here answers it.

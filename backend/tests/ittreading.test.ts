@@ -11,6 +11,8 @@ import * as tenderintake from '../src/domain/tenderintake.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import * as perception from '../src/engines/perception.ts';
 import type { EngineContext } from '../src/engines/context.ts';
+import { grantEnvelope } from '../src/agents/mandate.ts';
+import { runAgents, runAgentsForChanges } from '../src/agents/runtime.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
@@ -339,6 +341,151 @@ describe('a provider that cannot see the document', () => {
 });
 
 /** Evidence committed directly, as the perception fixture does. */
+// ── The fleet, on a reading it has just been given ──────────────────────────
+
+/**
+ * The path that was built and not proven: reading, waking, acting.
+ *
+ * The act itself was tested by calling the executor with the agent's identity
+ * on the context — which is what the runtime does — and the fleet wiring above
+ * it was left unproven on the reasoning that the reading needed a multimodal
+ * provider and stubbing one would be testing the stub.
+ *
+ * That reasoning was wrong, and this is the correction. A stubbed *provider*
+ * stands in for one thing only: the words a model returns. Everything between
+ * that and the register is the platform's own — the draft event, the trigger
+ * routing, the confidence floor, the mandate check, the envelope lookup, the
+ * executor, the attribution and the catalogue's refusal. All of it is real
+ * here, and none of it was covered before.
+ *
+ * What genuinely cannot be tested in this repository is whether a particular
+ * model reads a particular PDF correctly. That is a question about a model, not
+ * about this platform, and no test here should pretend to answer it.
+ */
+const actWindow = (): { from: string; until: string } => ({
+  from: new Date(Date.now() - 86_400_000).toISOString().slice(0, 10),
+  until: new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10),
+});
+
+const REGISTER_COMMAND = 'tenderintake:extractRequirements';
+
+/** A fresh estate with one unconfirmed reading of the invitation waiting. */
+async function estateWithReading(): Promise<void> {
+  await buildFixture(multimodalStub(ITT_READING));
+  registerEvidenceFor(ctx('qs'), ITT_HASH, 'TENDER_DOCUMENT');
+  await store.put(seed.tenantId, ITT_HASH, ITT_FILE, 'application/pdf');
+  await perception.extract(ctx('qs'), store, { hash: ITT_HASH, task: 'ITT_REQUIREMENTS' });
+}
+
+describe('a reading wakes the fleet, and nothing acts without a grant', () => {
+  before(estateWithReading);
+
+  it('raises the finding and says why it is asking rather than doing', async () => {
+    const report = await runAgentsForChanges(ctx('qs'), new Date());
+    const entry = report.agents.find((a) => a.agent === 'itt-register');
+
+    assert.ok(entry, 'the register agent was not woken by the reading');
+    assert.equal(entry.because, 'woken by PERCEPTION_DRAFT_PRODUCED', 'the agent ran for the wrong reason');
+    assert.ok(entry.findings > 0, 'the register agent saw a reading with three return items and said nothing');
+    assert.equal(entry.acted ?? 0, 0, 'an agent acted with no envelope granted');
+
+    // Degraded rather than lost: the proposal is there, carrying the reason.
+    const proposal = report.proposals.find((p) => p.agent === 'itt-register');
+    assert.ok(proposal, 'the finding was raised with no proposal to act on it');
+    assert.equal(proposal.autonomy, 'PROPOSE', 'an ungranted act stayed at ACT');
+    assert.match(String(proposal.command?.effect ?? ''), /queued rather than run/);
+
+    const invitation = platform.ledger.require({ refType: 'TenderInvitation', refId: invitationId }).state;
+    assert.notEqual(invitation.requirementsExtracted, true, 'the register was filed without an envelope');
+  });
+});
+
+describe('a reading wakes the fleet, and the register fills itself', () => {
+  before(estateWithReading);
+
+  it('files the register itself once a person has granted the envelope', async () => {
+    grantEnvelope(platform.context(seed.users.admin!.auth, projectId), {
+      agent: 'itt-register',
+      commands: [REGISTER_COMMAND],
+      ...actWindow(),
+      note: 'The bid team accepts the return register being filed from a high-confidence reading',
+    });
+
+    const analysesBefore = platform.ledger.list(projectId, 'ITTAnalysis').length;
+    const report = await runAgentsForChanges(ctx('qs'), new Date());
+
+    const entry = report.agents.find((a) => a.agent === 'itt-register');
+    assert.ok(entry, 'the register agent was not woken by the reading');
+    assert.equal(entry.acted, 1, 'the agent had an envelope and still did not act');
+
+    // The register is on the invitation, carrying the items the model read.
+    const invitation = platform.ledger.require({ refType: 'TenderInvitation', refId: invitationId }).state;
+    assert.equal(invitation.requirementsExtracted, true, 'the register was not filed');
+    const deliverables = invitation.deliverables as Array<{ reference: string }>;
+    assert.deepEqual(
+      deliverables.map((d) => d.reference).sort(),
+      ['RD-01', 'RD-02', 'RD-03'],
+      'the return items the model read did not reach the register',
+    );
+
+    // Attributed to the agent, not to the QS whose session ran the fleet.
+    const filing = platform.ledger
+      .eventsForEntity({ refType: 'TenderInvitation', refId: invitationId })
+      .filter((event) => event.eventType === 'TENDER_REQUIREMENTS_EXTRACTED')
+      .at(-1);
+    assert.ok(filing);
+    assert.equal(filing.actor.refType, 'AI');
+    assert.equal(filing.actor.refId, 'AGT-ITT-REGISTER');
+
+    // The proposal is closed as executed and names the authority it ran under.
+    const proposal = platform.ledger
+      .list(projectId, 'AgentProposal')
+      .map((record) => record.state)
+      .find((state) => state.agent === 'itt-register' && state.status === 'EXECUTED');
+    assert.ok(proposal, 'the act left no executed proposal behind it');
+    assert.ok(proposal.envelopeId, 'an unattended act recorded no envelope');
+    assert.ok(proposal.grantedBy, 'an unattended act recorded nobody who allowed it');
+
+    // And the judgement half is exactly as absent as it was.
+    assert.equal(
+      platform.ledger.list(projectId, 'ITTAnalysis').length,
+      analysesBefore,
+      'filing the register produced a compliance matrix, which is a decision a person takes',
+    );
+  });
+
+  it('is not woken again when no new reading has landed', async () => {
+    // The window is what stops this, not the agent: `runAgentsForChanges` looks
+    // at events since the last run, and no reading has landed since. Asserted
+    // separately from the guard below because the two would otherwise cover for
+    // each other — this test passed with the duplicate guard deleted.
+    const report = await runAgentsForChanges(ctx('qs'), new Date());
+    const entry = report.agents.find((a) => a.agent === 'itt-register');
+    assert.equal(entry, undefined, 'the agent ran on a window carrying no reading');
+  });
+
+  it('files nothing on a full sweep, because the register is already there', async () => {
+    // A sweep runs the whole fleet regardless of triggers, which is what a
+    // person pressing "look at everything" does — so this is the path where a
+    // missing duplicate guard would show up as the same register filed again
+    // and again, each time as a fresh event on a chain nobody can tidy.
+    const before_ = platform.ledger
+      .eventsForEntity({ refType: 'TenderInvitation', refId: invitationId })
+      .filter((event) => event.eventType === 'TENDER_REQUIREMENTS_EXTRACTED').length;
+
+    const report = await runAgents(ctx('qs'), { trigger: { kind: 'SWEEP' } });
+    const entry = report.agents.find((a) => a.agent === 'itt-register');
+    assert.ok(entry, 'a sweep did not run the register agent');
+    assert.equal(entry.acted ?? 0, 0, 'the register was filed a second time');
+    assert.equal(entry.findings, 0, 'the agent reported a register that is already filed');
+
+    const after = platform.ledger
+      .eventsForEntity({ refType: 'TenderInvitation', refId: invitationId })
+      .filter((event) => event.eventType === 'TENDER_REQUIREMENTS_EXTRACTED').length;
+    assert.equal(after, before_, 'a sweep wrote the same register again');
+  });
+});
+
 function registerEvidenceFor(ctx: EngineContext, hash: string, type: string): void {
   ctx.ledger.commit({
     tenantId: ctx.tenantId,

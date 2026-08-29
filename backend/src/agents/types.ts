@@ -223,6 +223,25 @@ export type ProposedCommand = {
   ifDeclined: string;
   /** Estimated ACU cost, so approval is a commercial decision as well. */
   estimatedAcuMinor: number;
+  /**
+   * What running this act would commit the business to, in minor units.
+   *
+   * Distinct from `estimatedAcuMinor`, and the distinction is load-bearing.
+   * That field is what the *thinking* costs; this is what the *act* costs the
+   * customer — a bond, a price, an order. An envelope's `valueCeilingMinor` is
+   * measured against this one.
+   *
+   * They were the same field, and the effect was that the value ceiling
+   * measured how expensive an agent's own run had been. Every declared ceiling
+   * is zero and no ACU tier is free, so the top rung of the ladder could never
+   * be reached by anything: an agent was refused permission to file a document
+   * because thinking about it had cost ten minor units.
+   *
+   * Absent means zero, which is the honest default: an act that commits the
+   * business to money has to say so, and saying so is what makes it ungrantable
+   * under a zero ceiling.
+   */
+  valueMinor?: number;
 };
 
 export type AgentProposal = {

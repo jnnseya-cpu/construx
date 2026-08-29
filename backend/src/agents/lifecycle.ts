@@ -1,3 +1,4 @@
+import * as tenderintake from '../domain/tenderintake.ts';
 import type { EngineContext } from '../engines/context.ts';
 import type { AgentDefinition, AgentOutput, Finding } from './types.ts';
 
@@ -720,7 +721,16 @@ const ittRegisterAgent: AgentDefinition = {
     );
     if (drafts.length === 0) return empty;
 
-    const invitations = states(ctx, 'TenderInvitation');
+    // Through the domain's own reader rather than a second query.
+    //
+    // An invitation is not held on the project: it is recorded against the
+    // opportunity, in the tenancy scope the bid pipeline lives in, because a
+    // tender exists before the job does. `tenderBoard` is where that scope is
+    // decided, and reading it here means moving an invitation cannot silently
+    // stop this agent finding one. It did exactly that before this comment
+    // existed — the agent looked on the project, found nothing, and reported no
+    // findings while a perfectly good reading sat waiting.
+    const invitations = tenderintake.tenderBoard(ctx).tenders;
     const findings: Finding[] = [];
     const proposals: AgentOutput['proposals'] = [];
 
@@ -734,11 +744,11 @@ const ittRegisterAgent: AgentDefinition = {
       // screen — a register filed against the wrong tender looks entirely
       // normal until the wrong deadline is missed.
       const reference = String(extraction.reference ?? '');
-      const invitation = invitations.find((record) => String(record.reference ?? '') === reference);
+      const invitation = invitations.find((position) => position.reference === reference);
       if (!invitation) continue;
-      if (invitation.requirementsExtracted === true) continue;
+      if (invitation.requirementsExtracted) continue;
 
-      const key = `itt-register:${String(invitation.id)}`;
+      const key = `itt-register:${invitation.invitationId}`;
       const mandatory = deliverables.filter((deliverable) => deliverable.mandatory === true).length;
 
       findings.push(
@@ -760,10 +770,15 @@ const ittRegisterAgent: AgentDefinition = {
           command: 'tenderintake:extractRequirements',
           area: 'ESTIMATE_TENDER',
           code: 'U',
-          input: { invitationId: String(invitation.id), deliverables },
+          input: { invitationId: invitation.invitationId, deliverables },
           effect: `Files ${deliverables.length} return item(s) on ${reference}. The compliance matrix is not part of this and still needs a person.`,
           ifDeclined: 'The register stays empty and each return item is transcribed by hand from the invitation.',
           estimatedAcuMinor: 0,
+          // Filing a register commits the business to nothing. Stated rather
+          // than left to default, because this is the figure the envelope's
+          // ceiling is measured against and a silent zero is worth less than a
+          // declared one.
+          valueMinor: 0,
         },
       });
     }

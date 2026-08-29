@@ -470,6 +470,27 @@ describe('an agent that acts, and the half it can never reach', () => {
     assert.equal(other.permitted, false);
   });
 
+  it('still refuses an act that would commit money, ceiling of zero', () => {
+    // The ceiling has to keep biting after being pointed at the right figure.
+    // It was measured against the agent's own ACU cost, which made the top rung
+    // unreachable for any agent — no tier is free — and meant the ceiling was
+    // policing the price of thinking rather than what an act commits.
+    //
+    // Now it is measured against what the act commits. Every declared ceiling
+    // is zero and `agentcontract.test.ts` keeps them there, so an act carrying
+    // any value at all is refused, and automating one would require raising a
+    // ceiling, which fails that test.
+    // Against the envelope granted above: two live grants for one agent are
+    // refused outright, because nobody could then say what it is authorised to
+    // do.
+    const free = mayActUnattended(as('qs'), 'itt-register', { command: REGISTER, valueMinor: 0 });
+    assert.equal(free.permitted, true, 'an act committing nothing was refused under a zero ceiling');
+
+    const costly = mayActUnattended(as('qs'), 'itt-register', { command: REGISTER, valueMinor: 1 });
+    assert.equal(costly.permitted, false, 'an act committing money passed a ceiling of zero');
+    assert.match(costly.permitted === false ? costly.because : '', /grant stops at 0/);
+  });
+
   it('knows how to run exactly what it is allowed to run', () => {
     // The pair that has to stay in step. A command that can be *granted* and
     // not *run* is an envelope that promises something the platform cannot do;

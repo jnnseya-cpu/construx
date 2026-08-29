@@ -290,7 +290,11 @@ export async function runAgents(
             // gain for the loss of the finding entirely.
             const permitted = mayActUnattended(ctx, agent.name, {
               command: proposed.command.command,
-              valueMinor: proposed.command.estimatedAcuMinor,
+              // What the act commits, not what the run cost. Passing the ACU
+              // figure here measured the ceiling against the price of thinking,
+              // and since every ceiling is zero and no tier is free, nothing
+              // could ever act.
+              valueMinor: proposed.command.valueMinor ?? 0,
             });
             if (!permitted.permitted) {
               proposed.autonomy = 'PROPOSE';
