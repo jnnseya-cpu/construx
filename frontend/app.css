@@ -32,6 +32,19 @@
    =========================================================================== */
 
 :root {
+  /* Tell the browser this is a dark interface.
+
+     Without this the page is dark and the browser does not know it, so every
+     control the browser draws itself — the `<select>` popup, the date and
+     datetime pickers the forms are full of, scrollbars, autofill — is painted
+     from the *light* system palette while the option text inherits our
+     near-white `--text`. The result is white on white: an open dropdown whose
+     choices could not be read at all, which is not a contrast problem but an
+     unusable control on every form that has a select in it.
+
+     One declaration, and it fixes the class rather than the instance. */
+  color-scheme: dark;
+
   /* Surfaces, darkest to lightest. `--core-black` and `--carbon` keep their
      names: every component and both stylesheets already reference them. */
   --core-black: rgb(9, 10, 13);
@@ -617,6 +630,20 @@ input[type=text], input[type=search], input[type=number], select, textarea {
   transition: border-color .13s ease, box-shadow .13s ease;
 }
 input::placeholder, textarea::placeholder { color: var(--text-3); }
+
+/* The options inside an open dropdown.
+   `color-scheme: dark` on the root is what actually fixes this on Chrome and
+   Edge, where the popup is drawn by the operating system. These two rules are
+   for the engines that draw it themselves and take the colours from the
+   document — without them the popup there inherits the near-white text of the
+   closed control onto whatever ground the engine picked. Stated explicitly so
+   the control is readable on every platform rather than on the one it was
+   last looked at on. */
+select option, select optgroup {
+  background: var(--carbon);
+  color: var(--text);
+}
+select option:checked { background: var(--elevated, var(--carbon)); }
 input:hover, select:hover, textarea:hover { border-color: rgba(255,255,255,.18); }
 input:focus, select:focus, textarea:focus {
   outline: none; border-color: var(--orange);

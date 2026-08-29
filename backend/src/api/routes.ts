@@ -1,4 +1,4 @@
-import { CHANGE_ORIGIN, CONTINENT, CONTRACT_FORM, DELAY_CAUSE, NOTICE_TYPE, SECTOR, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
+import { CHANGE_ORIGIN, CONTINENT, CONTRACT_FORM, COUNTRY, DELAY_CAUSE, NOTICE_TYPE, SECTOR, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
 import { ask } from '../ai/conversation.ts';
 import * as storage from '../billing/storage.ts';
 import * as stripe from '../billing/stripe.ts';
@@ -3922,7 +3922,7 @@ export const ROUTES: Route[] = [
         enterpriseId: stringField,
         governanceModel: stringField,
         continentCode: { type: 'string', enum: values(CONTINENT) },
-        countryCode: { type: 'string', minLength: 2, maxLength: 2, pattern: '^[A-Z]{2}$' },
+        countryCode: { type: 'string', enum: values(COUNTRY) },
         city: { type: 'string' },
         targets: { type: 'object' },
         riskAppetite: { type: 'object' },
@@ -3998,7 +3998,7 @@ export const ROUTES: Route[] = [
           required: ['continentCode', 'countryCode', 'city'],
           properties: {
             continentCode: { type: 'string', enum: values(CONTINENT) },
-            countryCode: { type: 'string', minLength: 2, maxLength: 2 },
+            countryCode: { type: 'string', enum: values(COUNTRY) },
             city: stringField,
             coordinates: {
               type: 'object',

@@ -1,3 +1,4 @@
+import { COUNTRY, values } from '../../../shared/vocabulary.js';
 import { hashEvidence } from '../core/canonical.ts';
 import { assertOrder } from './dates.ts';
 import { DomainError } from '../core/errors.ts';
@@ -50,8 +51,19 @@ export type ContinentCode = 'EU' | 'AM' | 'AF' | 'AS' | 'OC' | 'AN';
 
 const CONTINENT_CODES = new Set<string>(['EU', 'AM', 'AF', 'AS', 'OC', 'AN']);
 
-/** ISO 3166-1 alpha-2, checked by shape. A list of every country is not ours to hold. */
-const COUNTRY_CODE = /^[A-Z]{2}$/;
+/**
+ * ISO 3166-1 alpha-2, checked against the standard rather than against a shape.
+ *
+ * This used to be `/^[A-Z]{2}$/` with a note saying a list of every country was
+ * not ours to hold. The shape check accepts `ZZ`, `XX` and `QQ` — so a
+ * portfolio could be created in a jurisdiction that does not exist, and the
+ * console asked a person to type a code they had to already know.
+ *
+ * The list is now held once, in `shared/vocabulary.js`, which the gateway
+ * serves to the browser byte for byte. So the picker offers exactly what this
+ * accepts, and neither is a copy of the other.
+ */
+const COUNTRY_CODES = new Set<string>(values(COUNTRY));
 
 /**
  * A portfolio must say where in the world it is.
@@ -98,12 +110,12 @@ export function createPortfolio(
       [{ field: 'continentCode', message: 'Choose the region this portfolio operates in' }],
     );
   }
-  if (input.countryCode !== undefined && !COUNTRY_CODE.test(input.countryCode)) {
+  if (input.countryCode !== undefined && input.countryCode !== '' && !COUNTRY_CODES.has(input.countryCode)) {
     throw new DomainError(
       'COUNTRY_CODE_INVALID',
-      `"${input.countryCode}" is not an ISO 3166-1 alpha-2 country code. Use two capital letters, such as GB or KE.`,
+      `"${input.countryCode}" is not an ISO 3166-1 alpha-2 country code.`,
       422,
-      [{ field: 'countryCode', message: 'Two capital letters, or leave it blank for a multi-country portfolio' }],
+      [{ field: 'countryCode', message: 'Choose a country, or leave it blank for a multi-country portfolio' }],
     );
   }
 

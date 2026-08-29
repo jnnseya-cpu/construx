@@ -55,6 +55,20 @@ export const NAV = [
   {
     group: 'Command',
     items: [
+      // First, because it is where a project comes from.
+      //
+      // Everything below it is about a project, and a new tenancy has none —
+      // so the four screens a customer met first were the four that could not
+      // answer anything yet, and the one that creates the project they were
+      // waiting for was fifth. The signed-in landing already sends a tenancy
+      // with no project here; the menu now agrees with that instead of
+      // offering four dead ends above it.
+      //
+      // It stays first for a tenancy that has projects, because this is also
+      // where the estate is: enterprise, portfolios, people, invitations and
+      // seats. Ordering a menu by what a first-time customer needs and what a
+      // daily user needs gives the same answer here.
+      { id: 'enterprise', label: 'Enterprise & Portfolio', area: 'PROJECT_SETUP', icon: 'layers', tenantScoped: true },
       { id: 'overview', label: 'Project Command Centre', area: 'PROJECT_SETUP', icon: 'grid' },
       // Assembled per person from seven functions over four questions. Under
       // PROJECT_SETUP read because that is the narrowest thing every seat
@@ -63,7 +77,6 @@ export const NAV = [
       { id: 'centre', label: 'Command Centre', area: 'PROJECT_SETUP', icon: 'grid' },
       { id: 'copilot', label: 'Copilot', area: 'PROJECT_SETUP', icon: 'chat' },
       { id: 'autopilot', label: 'Autopilot', area: 'AI_EXECUTION', icon: 'radar' },
-      { id: 'enterprise', label: 'Enterprise & Portfolio', area: 'PROJECT_SETUP', icon: 'layers' },
     ],
   },
   {
@@ -101,7 +114,7 @@ export const NAV = [
   {
     group: 'Commercial',
     items: [
-      { id: 'pipeline', label: 'Pipeline & Bids', area: 'BUSINESS_DEVELOPMENT', icon: 'target' },
+      { id: 'pipeline', label: 'Pipeline & Bids', area: 'BUSINESS_DEVELOPMENT', icon: 'target', tenantScoped: true },
       { id: 'commercial', label: 'Cost & Value', area: 'BUDGET_COST', icon: 'coins' },
       // Measurement and the supplier's own return sit on this screen. The
       // BIM manager takes off quantities from the model and a supplier answers
@@ -130,13 +143,13 @@ export const NAV = [
       // schema. Under EVIDENCE_AUDIT read because the catalogue is a statement
       // about what the platform accepts, not an authority to run any of it —
       // each command still authorises itself when it is pressed.
-      { id: 'commands', label: 'All commands', area: 'EVIDENCE_AUDIT', icon: 'checklist' },
+      { id: 'commands', label: 'All commands', area: 'EVIDENCE_AUDIT', icon: 'checklist', tenantScoped: true },
     ],
   },
   {
     group: 'Platform',
     items: [
-      { id: 'billing', label: 'ACU & Billing', area: 'BILLING_ACU', icon: 'meter' },
+      { id: 'billing', label: 'ACU & Billing', area: 'BILLING_ACU', icon: 'meter', tenantScoped: true },
       // Under ENTERPRISE_STRUCTURE read, which is what the key register needs.
       // Issuing a credential needs G on the same area and the command bar reads
       // that separately, so the screen is visible to somebody who can see what
@@ -147,17 +160,17 @@ export const NAV = [
       // enterprise administrator holds it, so in the first group it was the
       // most prominent thing on the screen for the eleven delivery roles who
       // cannot open it. It belongs beside the other administration items.
-      { id: 'developer', label: 'Developer', area: 'ENTERPRISE_STRUCTURE', icon: 'layers' },
-      { id: 'admin', label: 'Platform Admin', area: 'PLATFORM_ADMINISTRATION', icon: 'cog' },
+      { id: 'developer', label: 'Developer', area: 'ENTERPRISE_STRUCTURE', icon: 'layers', tenantScoped: true },
+      { id: 'admin', label: 'Platform Admin', area: 'PLATFORM_ADMINISTRATION', icon: 'cog', tenantScoped: true },
       // The self-managing layer, the telemetry egress and the agent fleet. All
       // of it ran for weeks with no door: an operator saw five items, three of
       // them locked, and two screens. Operator-only because every read behind
       // it is `operatorOnly` on the server.
-      { id: 'operations', label: 'Platform Operations', area: 'PLATFORM_ADMINISTRATION', icon: 'shield' },
-      { id: 'newsletter', label: 'Newsletter', area: 'PLATFORM_ADMINISTRATION', icon: 'mail' },
+      { id: 'operations', label: 'Platform Operations', area: 'PLATFORM_ADMINISTRATION', icon: 'shield', tenantScoped: true },
+      { id: 'newsletter', label: 'Newsletter', area: 'PLATFORM_ADMINISTRATION', icon: 'mail', tenantScoped: true },
       // The public blog. Beside the newsletter because both are the platform
       // talking outward under its own name, and neither is a customer's.
-      { id: 'blog', label: 'Blog', area: 'PLATFORM_ADMINISTRATION', icon: 'clipboard' },
+      { id: 'blog', label: 'Blog', area: 'PLATFORM_ADMINISTRATION', icon: 'clipboard', tenantScoped: true },
       // Platform administration, not a customer screen.
       //
       // I moved this to PROJECT_SETUP on the argument that
@@ -172,11 +185,11 @@ export const NAV = [
       // A customer who wants to know what the platform may send them reads their
       // own notification preferences on the Account screen, which is where that
       // question belongs.
-      { id: 'communications', label: 'Communications', area: 'PLATFORM_ADMINISTRATION', icon: 'radar' },
+      { id: 'communications', label: 'Communications', area: 'PLATFORM_ADMINISTRATION', icon: 'radar', tenantScoped: true },
       // Outside the capability matrix — see `visible()`. Asking to be erased is
       // not a permission somebody else grants you, and the mobile stores
       // require the route to exist for every account.
-      { id: 'account', label: 'Account', area: 'PROJECT_SETUP', icon: 'cog' },
+      { id: 'account', label: 'Account', area: 'PROJECT_SETUP', icon: 'cog', tenantScoped: true },
     ],
   },
 ];
@@ -999,6 +1012,52 @@ async function draw() {
         document.getElementById('view'),
         html`<div class="notice err"><div><b>Not authorised</b><br>${lockReason(navEntry)}.</div></div>`,
       );
+      return;
+    }
+
+    // A screen about a project, and no project to be about.
+    //
+    // Every screen not marked `tenantScoped` reads this project's records, and
+    // reaches for `state.project` to do it. A brand new tenancy has no project,
+    // and the sign-in path knows that — it sends them to Enterprise & Portfolio
+    // instead. What it could not cover is arriving any other way: a reload, a
+    // bookmark, a link, a browser restoring the tab. The router then rendered
+    // the project screen anyway, the page dereferenced a null project, and the
+    // first thing a customer saw on their own platform was
+    //
+    //     Error
+    //     TypeError: Cannot read properties of null (reading 'phase')
+    //
+    // A stack trace, on the landing screen, on the live site.
+    //
+    // Guarded once here rather than with a null check on each of twenty
+    // screens: the condition is a fact about the session, not about any one
+    // page, and twenty guards is nineteen chances to forget the twentieth. The
+    // default is "needs a project" because that is true of the large majority,
+    // and because the failure mode of the default is an empty state rather
+    // than a crash.
+    //
+    // Operators are exempt: they hold no project by construction, and every
+    // screen in their navigation is about the estate rather than a job.
+    if (navEntry && !navEntry.tenantScoped && !isOperator() && !state.project) {
+      render(
+        document.getElementById('view'),
+        html`<div class="card">
+          <h2>${state.session?.projectId ? 'That project could not be opened' : 'No project on this workspace yet'}</h2>
+          <p class="metric-sub" style="margin:8px 0 14px">
+            ${state.session?.projectId
+              ? html`<b>${navEntry.label}</b> reads a project, and this one could not be loaded. It may have been
+                  removed, or your access to it withdrawn.`
+              : html`<b>${navEntry.label}</b> reads a project, and there is not one here yet. A project is created
+                  under an enterprise and a portfolio, and <b>Enterprise &amp; Portfolio</b> takes all three in
+                  order.`}
+          </p>
+          <button class="btn" data-go="enterprise">Go to Enterprise &amp; Portfolio</button>
+        </div>`,
+      );
+      document
+        .querySelector('[data-go="enterprise"]')
+        ?.addEventListener('click', () => navigate('enterprise'));
       return;
     }
 

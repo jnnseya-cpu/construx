@@ -2,7 +2,7 @@ import { api } from '../lib/api.js';
 import { badge, date, html, humanise, money, pct, raw, render, statusTone, table } from '../lib/ui.js';
 import { blockedReason, can, state, tenantGrantableRoles } from '../app.js';
 import { command, commandBar } from '../lib/command.js';
-import { CONTINENT, SECTOR_GROUPED, sectorLabel, today } from '../lib/enums.js';
+import { CONTINENT, COUNTRY, SECTOR_GROUPED, sectorLabel, today } from '../lib/enums.js';
 
 /**
  * Enterprise & Portfolio.
@@ -651,7 +651,13 @@ export async function enterprise(root) {
           ],
         },
         { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT },
-        { name: 'countryCode', label: 'Country code', hint: 'Two letters, ISO 3166-1 — GB, US, AE' },
+        // A list of countries, not a box for a code. The stored value is
+        // still the two-letter code — that is the standard and every reader
+        // downstream expects it — but nobody has to know their own country's
+        // code to fill the form in, and the picker cannot produce a
+        // jurisdiction that does not exist.
+        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY,
+          hint: 'Stored as its ISO 3166-1 alpha-2 code. Leave as it is for a multi-country portfolio.' },
         { name: 'city', label: 'City' },
         {
           name: 'reportingCadence',
@@ -664,7 +670,6 @@ export async function enterprise(root) {
           ],
         },
       ],
-      transform: (f) => ({ ...f, countryCode: String(f.countryCode ?? '').toUpperCase() }),
     },
 
     project: {
@@ -685,7 +690,7 @@ export async function enterprise(root) {
         { name: 'sectorType', label: 'Sector', type: 'select', options: SECTOR_GROUPED },
         { name: 'assetType', label: 'Asset type', hint: 'What is being built — "Reservoir spillway", "Distribution centre"' },
         { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT },
-        { name: 'countryCode', label: 'Country code', hint: 'Two letters, ISO 3166-1' },
+        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY, hint: 'Where the works are. Stored as its ISO 3166-1 alpha-2 code.' },
         { name: 'city', label: 'City' },
         { name: 'contractValueMinor', label: 'Contract value', type: 'number', hint: 'In minor units — pence for GBP' },
         {
