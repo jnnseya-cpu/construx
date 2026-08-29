@@ -10083,3 +10083,81 @@ Three things this closed on the way, each a defect rather than a feature:
   showed a label, a count of one and an empty body. Live on Project Control's
   reconcile lookup, where the two hashes a person is there to compare were both
   blank. Handled beside the number and the boolean, where it belonged.
+
+### Counting failed sign-ins against the identity, not the connection
+
+Between an attacker and an account there was one control: a rate limit of
+twenty auth requests a minute, keyed by remote address for anybody not yet
+holding a token. Against one machine hammering the door that is a real control
+— it caught a single-host run when this was tried against a live server.
+Against the thing it is usually facing it is none at all, because rotating
+addresses is not an evasion of an address-keyed limit; it is the entire design
+of the equipment being used.
+
+Underneath it, worse, and measured rather than assumed:
+
+```
+wrong codes accepted without the challenge dying: 100000
+the real code still works afterwards: true
+```
+
+A one-time code is six hex characters — sixteen million of them — and its
+challenge accepted unlimited free guesses for its whole five-minute life.
+Sixteen million codes with unlimited free attempts is not sixteen million
+codes.
+
+`identity/lockout.ts` and the attempt cap in `verifyMfaChallenge` close it.
+
+**A challenge dies after five wrong codes.** Past what a person mistyping will
+do, short of anything useful to a machine. The honest answer for the sixth is
+a fresh code: one click for the person, the whole run for the attacker.
+
+**The identity is counted, not the connection.** A per-challenge cap alone is
+beaten by asking for a new challenge, so the count is keyed to the account and
+survives across challenges — and across addresses, which is the point. A run
+spread over a thousand addresses is a thousand unremarkable rate-limit keys and
+one account being attacked, and only the second of those is worth counting.
+Ten failures in fifteen minutes and the account stops answering, correct code
+included. Through the gateway, the whole run now gets ten guesses out of
+sixteen million.
+
+**The lock is silent.** `identity/signup.ts` returns an identical receipt
+whether or not an address is in use, and login answers an unknown address with
+a decoy challenge, both so nobody can sort a leaked address list into customers
+and strangers by asking. A refusal that said "locked" would hand that back,
+because only a real account can be locked — so a locked identity fails with the
+same `MFA_FAILED` body a wrong code produces, asserted field by field against
+a stranger's address. The person who owns the account is told through the one
+channel that reaches them and nobody else: `account.locked`, which had been in
+the notification catalogue since the engine was built with nothing raising it.
+Once, on the transition — otherwise the lock becomes a way of posting a
+thousand emails at the person it is protecting.
+
+**The lock lifts by itself, and lifts clean.** A lock somebody has to clear is
+a denial of service anybody can perform on anybody by failing their sign-in ten
+times, and a locked project manager cannot approve a payment. Fifteen minutes
+takes a sixteen-million-code space from days to centuries. It lifts with the
+count at zero rather than at the threshold, which would otherwise re-lock on
+the next single mistake — a permanent lock with extra steps. A successful
+sign-in clears the count too, since proving you hold the account is the
+strongest evidence the failures before it were your own typing.
+
+Every one of these was mutation-tested: removing the attempt cap, the lock
+check, the clear-on-success, the expiry, the window, the once-only transition,
+or the identical refusal each fails a test.
+
+Operator-visible on Audit logs, above the security stream: who is locked right
+now, how many attempts, and how long until it lifts — because "somebody rings
+up unable to sign in" is the question actually asked, and reading it backwards
+out of a scrolling stream means hoping nothing expired in between. Locks are
+process memory, like the rate limiter's buckets: operational state about the
+last few minutes, not a fact about the business, so a restart forgives
+everybody. Stated rather than hidden — what a restart must never forgive is a
+ledger entry, and none of this is one.
+
+**What this is not.** It is credential-stuffing and brute-force defence at the
+sign-in step. Device binding, risk-based step-up and passkeys are still not
+built (item #116), there is no proof-of-work or CAPTCHA on the public signup
+surface, and the address-keyed limit remains in-process unless a shared store
+is configured. Naming them here rather than letting "enterprise-grade access"
+stand for more than was built.

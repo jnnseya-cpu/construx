@@ -143,7 +143,8 @@ import {
 } from '../messaging/newsletter.ts';
 import { unsubscribePage, verificationPage } from '../messaging/render.ts';
 import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
-import { createMfaChallenge, decoyMfaResponse, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
+import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
+import { lockedSubjects } from '../identity/lockout.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
 import { FIELD_FORBIDDEN_EVENTS } from '../field/sync.ts';
 import { estateBurn } from '../billing/burn.ts';
@@ -170,7 +171,7 @@ import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import type { Platform } from '../platform.ts';
 import type { ExportAudience, ExportFormat } from '../export/exporter.ts';
 import { metrics, recentLogs, type HtmlPolicy, type RequestContext } from './middleware.ts';
-import { gatewayMetrics, securityEvents, securitySummary, type SecurityEventKind } from './telemetry.ts';
+import { gatewayMetrics, recordSecurityEvent, securityEvents, securitySummary, type SecurityEventKind } from './telemetry.ts';
 import { readiness } from './readiness.ts';
 
 /**
@@ -802,11 +803,82 @@ export const ROUTES: Route[] = [
       properties: { actorId: stringField, challengeId: stringField, code: stringField },
       additionalProperties: false,
     },
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
       const { actorId, challengeId, code } = body<{ actorId: string; challengeId: string; code: string }>(ctx);
-      if (!verifyMfaChallenge(actorId, challengeId, code)) {
+
+      // Read before and after, which is how the route learns that *this*
+      // attempt was the one that crossed the threshold. The alternative — a
+      // richer return from `verifyMfaChallenge` — would put "should somebody be
+      // emailed" inside a function whose job is to say whether a code is right.
+      const wasLocked = identityLock(actorId).locked;
+      const verified = verifyMfaChallenge(actorId, challengeId, code);
+
+      if (!verified) {
+        const lock = identityLock(actorId);
+
+        // One notice, on the transition. An attacker who keeps going after the
+        // lock must not be able to use it to post a thousand emails at the
+        // person whose account they are attacking — the lock would then be a
+        // way of harassing exactly the people it protects.
+        if (lock.locked && !wasLocked) {
+          // A decoy actorId belongs to nobody, and `platform.user` throws for
+          // one. It cannot reach here — a decoy gets a fresh random id on every
+          // login, so no run accumulates against it — but a lookup that threw
+          // inside a refusal path would turn "wrong code" into a 500, which is
+          // itself the enumeration answer.
+          let user: ReturnType<typeof platform.user> | undefined;
+          try {
+            user = platform.user(actorId);
+          } catch {
+            user = undefined;
+          }
+
+          recordSecurityEvent({
+            kind: 'AUTH_FAILURE',
+            reason: 'IDENTITY_LOCKED',
+            method: ctx.method,
+            path: ctx.routeId ?? ctx.path,
+            traceId: ctx.traceId,
+            correlationId: ctx.correlationId,
+            tenantId: user?.tenantId,
+            actorId,
+            remote: ctx.remote,
+            status: 401,
+          });
+
+          // The one channel that reaches the account holder and nobody else,
+          // which is why the refusal itself can stay silent. `account.locked`
+          // has been in the catalogue since the notification engine was built,
+          // with nothing raising it.
+          if (user) {
+            await notifyEngine
+              .notify(platform, {
+                code: 'account.locked',
+                recipients: [{ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }],
+                payload: {
+                  detail:
+                    `Repeated failed sign-in attempts on your CONSTRUX account have locked it for ` +
+                    `${Math.ceil(lock.retryAfterSeconds / 60)} minutes. It will unlock by itself. ` +
+                    'If this was not you, somebody is trying your address — nothing has been accessed.',
+                },
+                channels: ['EMAIL'],
+                branding: platform.exports.brandingIfConfigured(user.tenantId) ?? PLATFORM_BRANDING,
+                actorId: user.id,
+                correlationId: ctx.correlationId,
+              })
+              // A mail that will not send must not turn a refusal into a 500,
+              // which would tell an attacker they had found a real account.
+              .catch(() => undefined);
+          }
+        }
+
+        // The same refusal either way — wrong code, dead challenge, locked
+        // identity. Distinguishing them would rebuild the account-enumeration
+        // oracle the login route above goes to such lengths to close, because
+        // only a real account can be locked.
         throw new DomainError('MFA_FAILED', 'Verification failed', 401);
       }
+
       const user = platform.user(actorId);
       return { user: { id: user.id, name: user.name, roles: user.roles }, ...platform.login(user.email).tokens };
     },
@@ -1664,6 +1736,16 @@ export const ROUTES: Route[] = [
       if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Operator access required');
       return {
         summary: securitySummary(),
+        // Who is shut out *now*, rather than who was shut out at some point in
+        // a scrolling stream. It is the question an operator is actually asked
+        // — somebody rings up unable to sign in — and answering it from the
+        // event history means reading backwards and hoping nothing has
+        // expired since.
+        lockedIdentities: lockedSubjects().map((entry) => ({
+          actorId: entry.subject,
+          failures: entry.failures,
+          unlocksInSeconds: entry.retryAfterSeconds,
+        })),
         events: securityEvents({
           limit: Number(ctx.query.get('limit') ?? 100),
           ...(ctx.query.get('kind') ? { kind: ctx.query.get('kind') as SecurityEventKind } : {}),

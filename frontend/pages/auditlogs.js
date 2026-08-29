@@ -119,6 +119,37 @@ export async function auditlogs(root) {
         </div>
       </div>
 
+      ${
+        // Who is shut out right now, above the history of who was refused
+        // when. It is the question an operator is actually asked — somebody
+        // rings up unable to sign in — and reading it backwards out of a
+        // scrolling stream means hoping nothing expired in between.
+        //
+        // Shown only when somebody is locked. A permanent panel reading zero
+        // is furniture; this appearing means something is happening.
+        security.error || (security.lockedIdentities ?? []).length === 0
+          ? ''
+          : html`<div class="card" style="margin-bottom:14px">
+              <h2>Identities locked right now</h2>
+              <div class="metric-sub" style="margin-bottom:10px">
+                Repeated failed verifications against one account. The lock is counted against the identity rather than
+                the address it came from, because a run spread over a thousand addresses is a thousand unremarkable
+                rate-limit keys and one account being attacked. Each lifts by itself, and the account holder has been
+                emailed.
+              </div>
+              ${table({
+                headers: ['Identity', 'Failed attempts', 'Unlocks in'],
+                align: ['', 'num', 'num'],
+                rows: security.lockedIdentities.map((entry) => [
+                  html`<span class="mono" style="font-size:10.5px">${entry.actorId}</span>`,
+                  entry.failures,
+                  `${Math.ceil(entry.unlocksInSeconds / 60)} min`,
+                ]),
+                empty: 'Nobody is locked out.',
+              })}
+            </div>`
+      }
+
       ${security.error
         ? refusal('The security stream', security.error)
         : html`<div class="card pad0" style="margin-bottom:14px">

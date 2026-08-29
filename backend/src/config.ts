@@ -548,6 +548,40 @@ export const config = {
     accessTtlMinutes: num('GATEWAY_AUTH_ACCESS_TTL_MINUTES', 15),
     refreshTtlDays: num('GATEWAY_AUTH_REFRESH_TTL_DAYS', 7),
     jwtSecret: str('GATEWAY_JWT_SECRET', 'construx-development-secret'),
+
+    /**
+     * How many wrong codes one challenge accepts before it dies.
+     *
+     * A one-time code is six hex characters — sixteen million of them — and
+     * until this existed a challenge accepted wrong guesses without limit for
+     * its whole five-minute life. The only thing in the way was a per-address
+     * rate limit, which is the one control a botnet defeats by definition,
+     * because rotating addresses is what a botnet is for.
+     *
+     * Five, because a person who has mistyped a six-character code five times
+     * is not going to get it right on the sixth; they need a new code, which
+     * costs them one click and costs an attacker the whole guessing run.
+     */
+    maxChallengeAttempts: num('GATEWAY_AUTH_MAX_CHALLENGE_ATTEMPTS', 5),
+
+    /**
+     * Failed verifications against one identity before it stops accepting any,
+     * and for how long.
+     *
+     * Counted against the **identity**, not the connection. That is the whole
+     * point: an attack spread over a thousand addresses is a thousand
+     * unremarkable rate-limit keys and one account being attacked, and only the
+     * second of those is worth counting.
+     *
+     * The lock lifts by itself. A permanent one is a denial-of-service anybody
+     * can perform on anybody by failing their sign-in enough times, so the
+     * cooling period is short enough to be survivable and long enough to make
+     * a sustained run pointless — fifteen minutes takes a sixteen-million-code
+     * space from days to centuries.
+     */
+    maxIdentityFailures: num('GATEWAY_AUTH_MAX_IDENTITY_FAILURES', 10),
+    failureWindowMinutes: num('GATEWAY_AUTH_FAILURE_WINDOW_MINUTES', 15),
+    lockoutMinutes: num('GATEWAY_AUTH_LOCKOUT_MINUTES', 15),
   },
 
   authz: {

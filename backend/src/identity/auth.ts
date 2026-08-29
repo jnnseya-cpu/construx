@@ -3,6 +3,7 @@ import { config } from '../config.ts';
 import { AuthError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { Role } from './roles.ts';
+import { clearFailures, lockState, recordFailure } from './lockout.ts';
 import { scopesForRoles } from './scopes.ts';
 
 /**
@@ -223,7 +224,14 @@ export function refreshTokens(refreshToken: string, now = Date.now()): TokenPair
 
 // --- Multi-factor challenge -------------------------------------------------
 
-export type MfaChallenge = { challengeId: string; methods: string[]; code: string; expiresAt: number };
+export type MfaChallenge = {
+  challengeId: string;
+  methods: string[];
+  code: string;
+  expiresAt: number;
+  /** Wrong codes offered against this challenge. */
+  attempts: number;
+};
 
 const challenges = new Map<string, MfaChallenge>();
 
@@ -233,22 +241,84 @@ export function createMfaChallenge(actorId: string, methods = ['TOTP', 'SMS']): 
     methods,
     code: randomBytes(3).toString('hex').toUpperCase(),
     expiresAt: Date.now() + 5 * 60 * 1000,
+    attempts: 0,
   };
   challenges.set(`${actorId}:${challenge.challengeId}`, challenge);
   return challenge;
 }
 
+/**
+ * Offer a code against a challenge.
+ *
+ * Three things stop a guessing run, and until this was written the code had
+ * none of them. A challenge accepted wrong codes without limit for its whole
+ * five-minute life — a hundred thousand of them, measured, with the real code
+ * still working afterwards — so the only thing between an attacker and an
+ * account was a per-address rate limit, which is precisely the control a
+ * distributed run is built to walk around.
+ *
+ * **The challenge dies after five wrong codes.** Six hex characters is sixteen
+ * million, which is a lot of guesses and no protection at all when guesses are
+ * free. Five is past what a person mistyping will do and short of anything
+ * useful to a machine; the honest answer for the sixth is a fresh code, which
+ * costs the person one click and costs the attacker the entire run.
+ *
+ * **The identity is counted separately**, in `identity/lockout.ts`, because a
+ * per-challenge cap alone is beaten by asking for a new challenge — the run
+ * simply restarts. That count is keyed to the account rather than the
+ * connection, so a thousand addresses attacking one account is one number
+ * going up rather than a thousand unremarkable ones.
+ *
+ * **Every refusal looks identical.** Wrong code, dead challenge, expired
+ * challenge, locked identity, challenge that never existed: one `false`. The
+ * login route already refuses to tell a stranger whether an address has an
+ * account behind it, and a verification step that distinguished "wrong" from
+ * "locked" would hand that answer straight back — only a real account can be
+ * locked.
+ */
 export function verifyMfaChallenge(actorId: string, challengeId: string, code: string): boolean {
+  // Asked before the challenge is even looked up, so a locked identity cannot
+  // burn through a stock of live challenges while it waits.
+  if (lockState(actorId).locked) return false;
+
   const key = `${actorId}:${challengeId}`;
   const challenge = challenges.get(key);
-  if (!challenge) return false;
-  if (challenge.expiresAt < Date.now()) {
-    challenges.delete(key);
+  if (!challenge) {
+    recordFailure(actorId);
     return false;
   }
-  const matched = challenge.code === code.toUpperCase();
-  if (matched) challenges.delete(key);
-  return matched;
+  if (challenge.expiresAt < Date.now()) {
+    challenges.delete(key);
+    recordFailure(actorId);
+    return false;
+  }
+
+  if (challenge.code === code.toUpperCase()) {
+    challenges.delete(key);
+    // Proving you hold the account is the strongest evidence that the failures
+    // before it were your own typing.
+    clearFailures(actorId);
+    return true;
+  }
+
+  challenge.attempts += 1;
+  if (challenge.attempts >= config.auth.maxChallengeAttempts) challenges.delete(key);
+  recordFailure(actorId);
+  return false;
+}
+
+/**
+ * Whether this identity is currently refused, and for how long.
+ *
+ * Exported for the route, which raises `account.locked` to the address that
+ * owns the account — the one channel that reaches the person being attacked
+ * and nobody else — and for the operator's security view. It is never in a
+ * response body: see the note above on why the refusal has to look the same
+ * either way.
+ */
+export function identityLock(actorId: string): { locked: boolean; retryAfterSeconds: number } {
+  const state = lockState(actorId);
+  return { locked: state.locked, retryAfterSeconds: state.retryAfterSeconds };
 }
 
 /**
@@ -285,6 +355,7 @@ export function decoyMfaResponse(): Record<string, unknown> {
     methods: ['TOTP', 'SMS'],
     code: '',
     expiresAt: Date.now() + 5 * 60 * 1000,
+    attempts: 0,
   };
   return { ...shapeMfaResponse(decoy), actorId: ulid() };
 }
