@@ -9844,3 +9844,44 @@ Two figures on the public pricing page said "1 seats" and "1 identities" the
 moment a one-seat package existed. Both fixed — it is the page where somebody
 decides whether this is a serious product — and the trial card now states its own
 material terms: one per account, 30 days.
+
+### Four top-ups, and a published figure that was wrong
+
+**A fourth bundle, at £50.** The ladder started at £300 and was built when the
+cheapest package was £950. With the cheapest now £100, a Solo customer who ran
+out of AI in week three had to spend three times their monthly subscription to
+carry on — which is not a top-up, it is a reason to stop using the product. £50
+credits 5,000 ACUs, two and a half times a Solo month's allowance.
+
+**And the figure the bundles published was measuring the wrong thing.** A
+package advertises "19,000 ACUs of AI included each month", which is the wallet
+credit: 20% of £950 is £190, and one ACU is one minor unit. A bundle advertised
+"£300 (6,000 ACUs)" — which was the *provider work* that credit funds, price
+divided by the markup. Both were called ACUs, on the same site, next to each
+other.
+
+So a £300 bundle credits **30,000** ACUs and said 6,000, understating itself
+fivefold against the package beside it. A customer comparing the two would
+conclude a £300 top-up buys less than a third of a Core Project month when it
+actually buys more.
+
+The two only ever looked consistent because the allocation is 20% and the markup
+is 5×, so both worked out at price ÷ 5 — the coincidence is what hid it, and it
+survived the 3×→4× correction and the 4×→5× move untouched because deriving the
+*wrong quantity* correctly still gives the wrong answer.
+
+`usableAcus` is now the credit, on the same basis as every other ACU figure the
+platform publishes. What the credit funds in provider work is a real number and
+is kept as `providerCostMinor`, under a name that says what it is rather than
+borrowing one that means something else.
+
+| Top-up | Price | Credits | Funds |
+|---|---|---|---|
+| Solo | £50 | 5,000 ACUs | £10 of provider work |
+| Starter | £300 | 30,000 ACUs | £60 |
+| Growth | £1,000 | 100,000 ACUs | £200 |
+| Scale | £2,500 | 250,000 ACUs | £500 |
+
+Every bundle is the same value per pound — the multiplier is flat — so a bundle
+is a convenience rather than a discount, and nothing in the product implies
+otherwise.

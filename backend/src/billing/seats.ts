@@ -1,4 +1,4 @@
-import { minimumMultiplier } from './acu.ts';
+import { acusFromMinor, minimumMultiplier } from './acu.ts';
 import { config } from '../config.ts';
 import type { Role } from '../identity/roles.ts';
 
@@ -248,18 +248,37 @@ export const PACKAGES: Record<PackageTier, PackageDefinition> = {
 };
 
 /**
- * Prepaid ACU bundles. AI is never included in a package — the bundle is a
- * separate purchase, and the usable figure is what remains after the markup
- * that funds the platform's own provider spend.
+ * Prepaid ACU bundles, for when a package's monthly allowance runs out.
+ *
+ * **`usableAcus` was published on a different scale from the package figure,
+ * and the two sit next to each other on the same site.** A package advertises
+ * "19,000 ACUs of AI included each month", which is the wallet credit — 20% of
+ * £950 is £190, and one ACU is one minor unit. A bundle advertised
+ * "£300 (6,000 ACUs)", which was the *provider work* that credit funds, price
+ * divided by the markup. Both were called ACUs.
+ *
+ * So the bundle understated itself fivefold against the package it sits beside:
+ * £300 credits 30,000 ACUs, not 6,000, and a customer comparing the two would
+ * conclude a £300 bundle buys less than a third of a Core Project month when it
+ * actually buys more. The figures only ever agreed by coincidence — the
+ * allocation is 20% and the markup is 5×, so both worked out at price ÷ 5 — and
+ * the coincidence hid the fact that they measure different things.
+ *
+ * `usableAcus` is now the credit, on the same basis as every other ACU figure
+ * the platform publishes. What that credit funds in provider work is a real and
+ * useful number, so it is kept as `providerCostMinor` under a name that says
+ * what it is rather than borrowing one that means something else.
  */
-export type BundleName = 'STARTER' | 'GROWTH' | 'SCALE';
+export type BundleName = 'SOLO' | 'STARTER' | 'GROWTH' | 'SCALE';
 
 export type BundleDefinition = {
   bundle: BundleName;
   priceMinor: number;
+  /** What the credit buys in provider cost, in minor units, at the headline markup. */
+  providerCostMinor: number;
   /**
-   * ACUs the bundle yields at the headline multiplier, **derived** from the
-   * price rather than stated.
+   * ACUs the bundle credits to the wallet, **derived** from the price rather
+   * than stated.
    *
    * It was a hardcoded figure and it had gone stale: the three bundles
    * advertised 10,000 / 40,000 / 110,000 ACUs, which are the numbers a 3×
@@ -307,6 +326,12 @@ export type BundleDefinition = {
  * discount. Nothing in the product should imply otherwise.
  */
 const BUNDLE_PRICES: Record<BundleName, number> = {
+  // £50. Added because the ladder was built when the cheapest package was £950
+  // and the cheapest is now £100: a Solo customer who ran out of AI in week
+  // three had to spend three times their monthly subscription to carry on, which
+  // is not a top-up, it is a reason to stop using the product. This credits two
+  // and a half times a Solo month's allowance.
+  SOLO: 5_000,
   STARTER: 30_000,
   GROWTH: 100_000,
   SCALE: 250_000,
@@ -323,9 +348,14 @@ export const ACU_BUNDLES: Record<BundleName, BundleDefinition> = Object.fromEntr
         bundle,
         priceMinor: BUNDLE_PRICES[bundle],
         multiplier,
-        // Floor down: a bundle advertising one ACU more than it delivers is the
-        // same defect in miniature.
-        usableAcus: Math.floor(BUNDLE_PRICES[bundle] / multiplier),
+        // The credit the wallet receives, which is the price: `topUp` credits
+        // the amount paid, and one ACU is one minor unit. Same basis as a
+        // package's monthly allowance, so the two are comparable on a page.
+        usableAcus: acusFromMinor(BUNDLE_PRICES[bundle]),
+        // What that credit buys in provider work, at the headline markup.
+        // Floored: a bundle claiming a penny more than it delivers is the same
+        // defect in miniature.
+        providerCostMinor: Math.floor(BUNDLE_PRICES[bundle] / multiplier),
       },
     ];
   }),

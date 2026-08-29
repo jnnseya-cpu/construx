@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import { ALL_ROLES, OPERATOR_ONLY_ROLES } from '../src/identity/roles.ts';
-import { ACUWallet, effectiveMultiplier, minimumMultiplier, profitPercent } from '../src/billing/acu.ts';
+import { ACUWallet, effectiveMultiplier, minimumMultiplier, profitPercent, subscriptionAcuAllocationMinor } from '../src/billing/acu.ts';
 import { assignIdentity, revokeIdentity, SeatLimitError, TIERS, type Subscription } from '../src/billing/subscription.ts';
 import { buildInvoice, formatContractValue } from '../src/billing/invoice.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS, UNCHARGED_ROLES, seatForRole } from '../src/billing/seats.ts';
@@ -333,18 +333,55 @@ describe('seat pricing', () => {
     assert.equal(rate(ACU_BUNDLES.SCALE), rate(ACU_BUNDLES.GROWTH));
   });
 
+  it('offers a top-up a Solo customer can actually buy', () => {
+    // The ladder was built when the cheapest package was £950. With the
+    // cheapest now £100, a customer who ran out in week three had to spend
+    // three times their monthly subscription to carry on — which is not a
+    // top-up, it is a reason to stop using the product.
+    const solo = ACU_BUNDLES.SOLO;
+    assert.equal(solo.priceMinor, 5_000, 'the smallest top-up is £50');
+    assert.ok(
+      solo.priceMinor < PACKAGES.SOLO.monthlyPriceMinor,
+      'the smallest top-up costs more than a month of the package it is for',
+    );
+    // Worth buying: more than the monthly allowance it tops up.
+    assert.ok(
+      solo.usableAcus > subscriptionAcuAllocationMinor(PACKAGES.SOLO.monthlyPriceMinor),
+      'the smallest top-up credits less than a Solo month, so it barely helps',
+    );
+  });
+
+  it('publishes four top-ups, in price order', () => {
+    const prices = Object.values(ACU_BUNDLES).map((b) => b.priceMinor);
+    assert.equal(prices.length, 4);
+    assert.deepEqual(prices, [...prices].sort((a, b) => a - b), 'the catalogue is not in price order');
+  });
+
   it('publishes a yield derived from the multiplier, not a stale number', () => {
-    // The defect this replaces: 10,000 / 40,000 / 110,000 ACUs were advertised
-    // — the figures a 3x markup produces — while billing ran at 4x, so the
-    // catalogue promised a third more than the engine would ever deliver. The
-    // rate has since moved to 5x and the catalogue followed it without an edit,
-    // which is what deriving the yield bought.
+    // Two defects, and the second is the one that survived longest.
+    //
+    // First: 10,000 / 40,000 / 110,000 ACUs were advertised — the figures a 3x
+    // markup produces — while billing ran at 4x, so the catalogue promised a
+    // third more than the engine would ever deliver. Deriving the figure fixed
+    // that, and the move to 5x then needed no edit at all.
+    //
+    // Second: what was derived was the wrong quantity. `usableAcus` was
+    // price ÷ markup, which is the *provider work* the credit funds, while a
+    // package advertises its wallet credit — and both were called ACUs on the
+    // same site. A £300 bundle credits 30,000 ACUs and said 6,000, understating
+    // itself fivefold against the package beside it. The two only ever looked
+    // consistent because the allocation is 20% and the markup is 5×, so both
+    // happened to work out at price ÷ 5.
     const rate = config.billing.markupMultiplier;
     for (const bundle of Object.values(ACU_BUNDLES)) {
       assert.equal(bundle.multiplier, rate);
-      assert.equal(bundle.usableAcus, Math.floor(bundle.priceMinor / rate));
+      // The credit, on the same basis as a package's monthly allowance.
+      assert.equal(bundle.usableAcus, bundle.priceMinor, `${bundle.bundle} does not credit what it costs`);
+      // And what that credit buys, under a name that says what it is.
+      assert.equal(bundle.providerCostMinor, Math.floor(bundle.priceMinor / rate));
     }
-    assert.equal(ACU_BUNDLES.STARTER.usableAcus, 6_000, '£300 buys 6,000 ACUs at 5x');
+    assert.equal(ACU_BUNDLES.STARTER.usableAcus, 30_000, '£300 credits 30,000 ACUs');
+    assert.equal(ACU_BUNDLES.STARTER.providerCostMinor, 6_000, 'which funds £60 of provider work at 5x');
   });
 
   it('keeps AI out of the package, whatever the package', () => {
