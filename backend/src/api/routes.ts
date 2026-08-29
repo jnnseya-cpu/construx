@@ -11770,10 +11770,32 @@ export const ROUTES: Route[] = [
     description: 'Run the agent fleet over current project state and raise proposals',
     schema: {
       type: 'object',
-      properties: { only: { type: 'array', items: { type: 'string' } } },
+      properties: {
+        only: { type: 'array', items: { type: 'string' } },
+        // Trigger routing. Omitted, this is a sweep — a person asking to look
+        // at everything now — which is what this route has always done.
+        trigger: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['SWEEP', 'EVENT', 'SCHEDULE'] },
+            eventTypes: { type: 'array', items: { type: 'string' } },
+            at: { type: 'string', pattern: '^\\d{2}:\\d{2}$' },
+            day: { type: 'integer', minimum: 0, maximum: 6 },
+          },
+          required: ['kind'],
+          additionalProperties: false,
+        },
+      },
       additionalProperties: false,
     },
     handler: (platform, ctx) => agents.runAgents(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/agents/run-changes',
+    description: 'Wake only the agents the events since the last run actually trigger',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => agents.runAgentsForChanges(projectContext(platform, ctx)),
   },
   {
     method: 'GET',

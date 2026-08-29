@@ -89,11 +89,11 @@ export type ACUAlert = {
 };
 
 /**
- * Volume bands. **Every band is 4×.**
+ * Volume bands. **Every band is 5×.**
  *
  * These previously stepped 4.0 → 3.6 → 3.3, so a large consumer paid below the
  * headline rate. That was a deliberate volume incentive and it has been
- * removed by decision: the price is 4× and there is no rate below it anywhere
+ * removed by decision: the price is 5× and there is no rate below it anywhere
  * in the platform. A tenant spending a million a month is charged at exactly
  * the same multiplier as one spending ten pounds.
  *
@@ -109,16 +109,16 @@ export type ACUAlert = {
  * charge below the company's profit rule, whatever the bands say.
  */
 export const VOLUME_BANDS: Array<{ upToRawMinor: number; multiplier: number }> = [
-  { upToRawMinor: 200_000, multiplier: 4.0 },
-  { upToRawMinor: 1_000_000, multiplier: 4.0 },
-  { upToRawMinor: Number.POSITIVE_INFINITY, multiplier: 4.0 },
+  { upToRawMinor: 200_000, multiplier: 5.0 },
+  { upToRawMinor: 1_000_000, multiplier: 5.0 },
+  { upToRawMinor: Number.POSITIVE_INFINITY, multiplier: 5.0 },
 ];
 
 /**
  * What a unit of provider cost is charged at, for this tenant, this month.
  *
  * Two rules, and the second is a guard rather than a policy: the headline rate
- * is 4x, the volume incentive may discount it, and nothing may take it below
+ * is 5x, the volume incentive may discount it, and nothing may take it below
  * `minimumMultiplier`. That floor is what makes "the platform never sells AI
  * at a loss" a property of the code rather than a property of whoever last
  * edited the bands — a band table is exactly the kind of constant somebody

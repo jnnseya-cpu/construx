@@ -412,6 +412,14 @@ export type AgentRunReport = {
      * fleet says so instead of looking like a fleet half this size.
      */
     skipped?: string;
+    /**
+     * Why this agent was in this run.
+     *
+     * A routed run selects a handful of agents out of forty-eight, and without
+     * this the report is a list of names with no way to tell a deliberate
+     * selection from a fleet that mostly failed to appear.
+     */
+    because?: string;
   }>;
   proposals: AgentProposal[];
   /** Findings that were already open, so nothing was raised twice. */
@@ -421,4 +429,17 @@ export type AgentRunReport = {
    * was kept and its proposal was not raised.
    */
   belowFloor: number;
+  /**
+   * What put this run together — a sweep, the events that landed, a clock tick,
+   * or a person naming agents. Recorded on the run so a proposal can be traced
+   * back to the thing that woke the agent that raised it.
+   */
+  because: string;
+  /**
+   * Agents that declare a trigger for this run and were then declined by the
+   * lifecycle state gate. Counted separately from the fleet that never matched:
+   * "the event happened and the agent for it cannot run in this phase" is a
+   * different fact from "no agent watches that event".
+   */
+  gated: number;
 };

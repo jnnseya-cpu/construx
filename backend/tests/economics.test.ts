@@ -94,31 +94,34 @@ describe('rule 2 — £1 buys 100 ACUs', () => {
   });
 });
 
-describe('rule 3 — provider cost is charged at 4x', () => {
-  it('charges four times the raw cost', () => {
+describe('rule 3 — provider cost is charged at 5x', () => {
+  it('charges five times the raw cost', () => {
     const wallet = new ACUWallet('tenant-1');
     wallet.topUp(10_000);
     const hold = wallet.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 250 });
     const entry = wallet.settle(hold.holdId, 250, 'OPENAI');
 
     assert.equal(entry.rawCostMinor, 250);
-    assert.equal(entry.billedMinor, 1_000, '250 of provider cost must bill at 1,000');
-    assert.equal(entry.effectiveMultiplier, 4);
+    assert.equal(entry.billedMinor, 1_250, '250 of provider cost must bill at 1,250');
+    assert.equal(entry.effectiveMultiplier, 5);
   });
 
-  it('states the rate as 4 in configuration, so nothing infers it', () => {
-    assert.equal(config.billing.markupMultiplier, 4);
+  it('states the rate as 5 in configuration, so nothing infers it', () => {
+    // The rate the business states: five times provider cost. Pinned as a
+    // literal here on purpose — everything else in the platform derives from
+    // `config.billing.markupMultiplier`, so this is the one assertion that
+    // would fail if the number itself were changed without a decision.
+    assert.equal(config.billing.markupMultiplier, 5);
   });
 
-  it('satisfies the 100% profit rule, and exceeds it', () => {
-    // The rule is a floor on profit, and the price sits above it. At 4x the
-    // company keeps £3 for every £1 it paid a provider — 300% profit against a
-    // 100% requirement.
+  it('meets the rule that every £1 of provider cost produces £5', () => {
+    // The business rule in its own terms. £1 spent with a provider must return
+    // £5, which is 400% profit on what was paid out.
     const rawCost = 100;
     const billed = rawCost * config.billing.markupMultiplier;
 
-    assert.equal(billed, 400);
-    assert.equal(profitPercent(rawCost, billed), 300);
+    assert.equal(billed, 500, '£1 of provider cost must produce £5');
+    assert.equal(profitPercent(rawCost, billed), 400);
     assert.ok(
       profitPercent(rawCost, billed) >= config.billing.minimumProfitPercent,
       'the price fell below the required profit',
@@ -133,6 +136,20 @@ describe('rule 3 — provider cost is charged at 4x', () => {
     assert.equal(profitPercent(100, 100 * minimumMultiplier()), config.billing.minimumProfitPercent);
   });
 
+  it('keeps the floor below the price, because the two answer different questions', () => {
+    // The price is what the business charges: 5×, £1 of provider cost produces
+    // £5. The floor is what stops an overrun being sold at a loss. Raising the
+    // floor to meet the price looks tidy and deletes a customer protection —
+    // an overrun is capped at the disclosed hold *unless* honouring the cap
+    // would sell below the floor, so with floor === price the floor equals the
+    // charge on every overrun, the cap never bites, and a customer shown £5 can
+    // be billed £7.50 with no ceiling.
+    assert.ok(
+      minimumMultiplier() < config.billing.markupMultiplier,
+      'the loss floor has been raised to the price, which removes the estimate cap',
+    );
+  });
+
   it('reports the profit it actually made on an account', () => {
     // Stated on the record rather than left to be recomputed by hand, so
     // "are we hitting the rule" is a read rather than an exercise.
@@ -143,9 +160,9 @@ describe('rule 3 — provider cost is charged at 4x', () => {
 
     const snapshot = wallet.snapshot();
     assert.equal(snapshot.lifetimeRawCostMinor, 200);
-    assert.equal(snapshot.lifetimeBilledMinor, 800);
-    assert.equal(snapshot.lifetimeProfitMinor, 600);
-    assert.equal(snapshot.lifetimeProfitPercent, 300);
+    assert.equal(snapshot.lifetimeBilledMinor, 1_000);
+    assert.equal(snapshot.lifetimeProfitMinor, 800);
+    assert.equal(snapshot.lifetimeProfitPercent, 400);
     assert.ok(snapshot.lifetimeProfitPercent >= config.billing.minimumProfitPercent);
   });
 
@@ -162,16 +179,16 @@ describe('rule 3 — provider cost is charged at 4x', () => {
     }
   });
 
-  it('charges 4x at every level of spend, and never less', () => {
+  it('charges 5x at every level of spend, and never less', () => {
     // This asserted the opposite — that a large consumer was discounted below
-    // the headline. The bands were flattened by decision: 4x is the price and
+    // the headline. The bands were flattened by decision: 5x is the price and
     // no rate below it exists anywhere in the platform.
     for (const spend of [0, 100_000, 5_000_000, Number.MAX_SAFE_INTEGER]) {
       for (const incentive of [true, false]) {
         assert.equal(
           effectiveMultiplier(spend, incentive),
-          4,
-          `spend ${spend} with incentive ${incentive} was not charged at 4x`,
+          5,
+          `spend ${spend} with incentive ${incentive} was not charged at 5x`,
         );
       }
     }
@@ -312,11 +329,11 @@ describe('what the allowance actually buys', () => {
     assert.equal(plan, 95_000, '£950/month');
     assert.equal(allowanceMinor, 19_000, '£190 of AI allowance at 20%');
     assert.equal(acusFromMinor(allowanceMinor), 19_000, '19,000 ACUs');
-    assert.equal(providerSpend, 4_750, '£47.50 of provider cost');
+    assert.equal(providerSpend, 3_800, '£38 of provider cost');
 
     // The worst case for the platform is the customer spending the allowance
-    // to the last ACU: it takes £950 and pays a provider £47.50.
-    assert.equal(plan - providerSpend, 90_250, '£902.50 retained if the allowance is fully consumed');
+    // to the last ACU: it takes £950 and pays a provider £38.
+    assert.equal(plan - providerSpend, 91_200, '£912 retained if the allowance is fully consumed');
     assert.ok(
       profitPercent(providerSpend, plan) >= config.billing.minimumProfitPercent,
       'the plan itself fell below the required profit',

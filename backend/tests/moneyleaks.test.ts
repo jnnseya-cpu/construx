@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { config } from '../src/config.ts';
 import type { Server } from 'node:http';
 import { after, before, describe, it } from 'node:test';
 import { rejectsCode, throwsCode } from './helpers.ts';
@@ -370,9 +371,13 @@ describe('the money paths that must keep working', () => {
     const wallet = platform.wallet(tenant.id);
     const available = wallet.snapshot().availableMinor;
 
-    // Spend it all, then ask for more.
-    const hold = wallet.reserve({ aiRequestId: 'drain', estimatedRawCostMinor: Math.floor(available / 4) });
-    wallet.settle(hold.holdId, Math.floor(available / 4), 'OPENAI');
+    // Spend it all, then ask for more. The raw cost that exhausts the balance is
+    // derived from the rate rather than written as `/ 4`: a fixture pinned to
+    // an old multiplier stops testing the refusal and starts failing on the
+    // price.
+    const drain = Math.floor(available / config.billing.markupMultiplier);
+    const hold = wallet.reserve({ aiRequestId: 'drain', estimatedRawCostMinor: drain });
+    wallet.settle(hold.holdId, drain, 'OPENAI');
 
     await rejectsCode(
       async () => wallet.reserve({ aiRequestId: 'after', estimatedRawCostMinor: available }),

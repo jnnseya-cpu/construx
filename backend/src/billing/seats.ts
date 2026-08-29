@@ -237,7 +237,7 @@ export type BundleDefinition = {
    *
    * It was a hardcoded figure and it had gone stale: the three bundles
    * advertised 10,000 / 40,000 / 110,000 ACUs, which are the numbers a 3×
-   * markup produces. The platform charges at 4×, so £300 buys 7,500 ACUs and
+   * markup produces. The platform charges at 5×, so £300 buys 6,000 ACUs and
    * the published figure overstated every bundle by a third.
    *
    * No money was misposted — a top-up credits the price and spend is billed at
@@ -258,24 +258,24 @@ export type BundleDefinition = {
 
 /**
  * The price of each bundle. What it buys is computed from the headline
- * multiplier — **4×, flat, for every bundle**.
+ * multiplier — **5×, flat, for every bundle**.
  *
  * Two earlier versions of this were wrong in opposite directions and both are
  * worth recording.
  *
  * The original hardcoded 10,000 / 40,000 / 110,000 ACUs. Those are the numbers
  * a 3× markup produces, and they had gone stale when the multiplier moved to
- * 4×: the catalogue promised a third more than the billing engine would ever
+ * 4×, and again when it moved to 5×: the catalogue promised more than the billing engine would ever
  * deliver. No money was misposted — a top-up credits the price and spend is
  * billed at the effective multiplier, so the figure only ever appeared on the
  * pricing page — but it was a promise to a customer that could not be kept.
  *
  * The second version derived the yield from `VOLUME_BANDS`, which then stepped
  * down to 3.6 and 3.3 so a larger bundle stayed better value. That
- * reintroduced the sub-4× rates the pricing decision exists to rule out; the
- * bands are now flat at 4× too.
+ * reintroduced rates below the headline that the pricing decision exists to rule
+ * out; the bands are now flat at 5× too.
  *
- * The rate is 4×. A consequence follows and is stated rather than hidden: with
+ * The rate is 5×. A consequence follows and is stated rather than hidden: with
  * a flat multiplier every bundle yields exactly the same ACUs per pound, so a
  * bundle is a convenience — fewer transactions, one purchase order — and not a
  * discount. Nothing in the product should imply otherwise.

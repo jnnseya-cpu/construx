@@ -708,20 +708,41 @@ export const config = {
 
   billing: {
     /**
-     * Hard economic rule: 1 unit of provider cost is charged at 4.
+     * Hard economic rule: 1 unit of provider cost is charged at 5.
      *
-     * The company keeps £3 of every £4 it takes — 300% profit on what it paid
-     * the provider, against a required minimum of 100%.
+     * The company keeps £4 of every £5 it takes — 400% profit on what it paid
+     * the provider. Stated by the business as two halves of one rule: the
+     * price is five times provider cost, and every £1 the platform spends with
+     * a provider has to produce £5 of revenue.
+     *
+     * Everything downstream derives from this number — the wallet's charge, the
+     * quote a screen shows before spending, what an ACU bundle is worth, the
+     * invoice line — so this is the only place the rate is set. It was 4×.
      */
-    markupMultiplier: num('ACU_MARKUP_MULTIPLIER', 4),
+    markupMultiplier: num('ACU_MARKUP_MULTIPLIER', 5),
     /**
      * The company's required profit on every AI transaction, as a percentage
      * of what the provider charged.
      *
      * 100 means the platform keeps at least as much as it paid out — it never
      * takes less than double what a call cost it. This is a floor and a
-     * business rule, not the price: the price is `markupMultiplier`, and at 4x
-     * the realised profit is 300% of cost, comfortably above the requirement.
+     * business rule, not the price: the price is `markupMultiplier`, and at 5x
+     * the realised profit is 400% of cost, well above the requirement.
+     *
+     * **Kept below the price on purpose, and this is not a rounding of the
+     * business rule.** When the rate moved to 5× the obvious move was to raise
+     * this to 400 so the floor and the price coincided. That silently deletes
+     * a customer protection: an execution that overruns its estimate is capped
+     * at the amount that was reserved and disclosed, *unless* honouring the cap
+     * would sell below this floor — see `settle` in `billing/acu.ts`. With the
+     * floor at the price, `floor === billed` on every overrun, the cap can
+     * never bite, and a customer shown £5 can be charged £7.50 with no ceiling.
+     *
+     * So the two numbers answer different questions. The price is what the
+     * business charges: five times provider cost, £1 in produces £5. The floor
+     * is what stops an overrun being sold at a loss. Collapsing them costs the
+     * estimate cap and buys nothing, because nothing in the platform prices
+     * below 5× anyway — the bands are flat and `effectiveMultiplier` clamps.
      *
      * Expressed as a profit requirement rather than as a bare multiplier so
      * the rule reads as the rule. A number called `minimumMultiplier` invites

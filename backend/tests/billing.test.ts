@@ -60,9 +60,9 @@ describe('ACU wallet', () => {
   });
 
   it('caps a mild overrun at the amount reserved', () => {
-    // Estimate 100 raw, held at 4x = 400. Actual 150 raw would bill 600, so the
-    // cap bites and the customer pays the 400 they were shown. The platform
-    // still made 250 on a 150 cost, comfortably above the floor.
+    // Estimate 100 raw, held at 5x = 500. Actual 150 raw would bill 750, so the
+    // cap bites and the customer pays the 500 they were shown. The platform
+    // still made 350 on a 150 cost, above what it paid out.
     const w = wallet();
     const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
     const entry = w.settle(hold.holdId, 150, 'OPENAI');
@@ -114,7 +114,10 @@ describe('ACU wallet', () => {
 
   it('enforces per-project caps independently', () => {
     const w = wallet(100_000);
-    w.setCaps({ perProjectMinor: { 'project-a': 400 } });
+    // One call's worth at the current rate, so the second breaches. Derived
+    // rather than written as a figure: a cap fixture pinned to the old
+    // multiplier stops testing the cap and starts testing the rate.
+    w.setCaps({ perProjectMinor: { 'project-a': 100 * config.billing.markupMultiplier } });
     const first = w.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 100, projectId: 'project-a' });
     w.settle(first.holdId, 100, 'OPENAI');
     assert.throws(() => w.reserve({ aiRequestId: 'r2', estimatedRawCostMinor: 100, projectId: 'project-a' }), /Project AI cap/);
@@ -161,18 +164,18 @@ describe('ACU wallet', () => {
 
 describe('volume incentive', () => {
   it('holds the full multiplier at low monthly spend', () => {
-    assert.equal(effectiveMultiplier(100_000, true), 4.0);
+    assert.equal(effectiveMultiplier(100_000, true), 5.0);
   });
 
-  it('charges 4x at every level of spend, with no step down', () => {
+  it('charges 5x at every level of spend, with no step down', () => {
     // The bands stepped 4.0 → 3.6 → 3.3 and were flattened by decision: the
-    // price is 4x and there is no rate below it anywhere in the platform. A
+    // price is 5x and there is no rate below it anywhere in the platform. A
     // tenant spending a million a month pays the same multiplier as one
     // spending ten pounds.
     for (const spend of [0, 100_000, 500_000, 5_000_000, Number.MAX_SAFE_INTEGER]) {
       assert.equal(
         effectiveMultiplier(spend, true),
-        4.0,
+        config.billing.markupMultiplier,
         `a monthly spend of ${spend} was not charged at the headline rate`,
       );
     }
@@ -182,7 +185,7 @@ describe('volume incentive', () => {
     // The mechanism is retained and audited so a band could be reintroduced
     // deliberately. Until one is, the switch changes nothing — which is the
     // property worth asserting, because a flag that silently discounts is how
-    // a sub-4x rate would come back without anyone deciding it should.
+    // a rate below the headline would come back without anyone deciding it.
     for (const spend of [0, 500_000, 5_000_000]) {
       assert.equal(effectiveMultiplier(spend, true), effectiveMultiplier(spend, false));
     }
@@ -321,12 +324,15 @@ describe('seat pricing', () => {
   it('publishes a yield derived from the multiplier, not a stale number', () => {
     // The defect this replaces: 10,000 / 40,000 / 110,000 ACUs were advertised
     // — the figures a 3x markup produces — while billing ran at 4x, so the
-    // catalogue promised a third more than the engine would ever deliver.
+    // catalogue promised a third more than the engine would ever deliver. The
+    // rate has since moved to 5x and the catalogue followed it without an edit,
+    // which is what deriving the yield bought.
+    const rate = config.billing.markupMultiplier;
     for (const bundle of Object.values(ACU_BUNDLES)) {
-      assert.equal(bundle.multiplier, 4);
-      assert.equal(bundle.usableAcus, Math.floor(bundle.priceMinor / 4));
+      assert.equal(bundle.multiplier, rate);
+      assert.equal(bundle.usableAcus, Math.floor(bundle.priceMinor / rate));
     }
-    assert.equal(ACU_BUNDLES.STARTER.usableAcus, 7_500);
+    assert.equal(ACU_BUNDLES.STARTER.usableAcus, 6_000, '£300 buys 6,000 ACUs at 5x');
   });
 
   it('keeps AI out of the package, whatever the package', () => {

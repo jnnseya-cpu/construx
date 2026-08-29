@@ -12,7 +12,7 @@ import type { AIProviderAdapter, ProviderCapability, ProviderRequest, ProviderRe
  *     accepted as state; it can only ever be narrative attached to a record.
  *   - Cost is read back from the provider's own usage accounting and converted
  *     to minor units. That figure — not an estimate — is what the ACU ledger
- *     debits, so the 4x rule stays anchored to real spend.
+ *     debits, so the 5x rule stays anchored to real spend.
  */
 
 type PricingTable = { inputPerMillion: number; outputPerMillion: number };

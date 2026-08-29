@@ -275,10 +275,10 @@ describe('the estimate says where it came from', () => {
     // so if the rate ever moves the history reprices with it.
     //
     // This used to prove that by switching the volume incentive on and watching
-    // the rate drop. The bands are now flat at 4x by decision, so the
-    // demonstration inverts: flipping the switch must change nothing at all.
+    // the rate drop. The bands are now flat at the headline rate by decision, so
+    // the demonstration inverts: flipping the switch must change nothing at all.
     // That is the stronger assertion — a flag that silently discounted would be
-    // how a sub-4x rate came back without anyone deciding it should.
+    // how a rate below the headline came back without anyone deciding it.
     const w = wallet(10_000_000);
     const hold = w.reserve({
       aiRequestId: 'req-1',
@@ -301,13 +301,13 @@ describe('the estimate says where it came from', () => {
     const after = ask();
 
     assert.equal(before.estimatedRawCostMinor, after.estimatedRawCostMinor, 'the same measurement');
-    assert.equal(after.multiplier, 4, 'the incentive produced a rate below the headline');
+    assert.equal(after.multiplier, config.billing.markupMultiplier, 'the incentive produced a rate below the headline');
     assert.equal(after.multiplier, before.multiplier, 'the rate moved when nothing should move it');
     assert.equal(after.estimatedChargeMinor, before.estimatedChargeMinor);
 
     // And the charge really is derived from the raw figure, not carried over
     // from the settled entry.
-    assert.equal(after.estimatedChargeMinor, Math.ceil(after.estimatedRawCostMinor * 4));
+    assert.equal(after.estimatedChargeMinor, Math.ceil(after.estimatedRawCostMinor * config.billing.markupMultiplier));
   });
 
   it('shows what the balance would be afterwards, and refuses to show a negative one', () => {

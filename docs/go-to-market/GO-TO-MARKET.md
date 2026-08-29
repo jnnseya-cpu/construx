@@ -189,7 +189,7 @@ The tenant pays the package, not the sum of seats — the seat prices exist so a
 
 **AI is metered, never bundled**
 
-Prepaid ACU bundles at a 4× markup on provider cost: **Starter £300** (7,500 ACUs), **Growth £1,000** (25,000), **Scale £2,500** (62,500). Hard caps, per-engine attribution, and no provider call on an empty wallet. Sell this as budget control, because that is what a commercial director hears: *"your AI spend cannot surprise you."*
+Prepaid ACU bundles at a 5× markup on provider cost: **Starter £300** (6,000 ACUs), **Growth £1,000** (20,000), **Scale £2,500** (50,000). Hard caps, per-engine attribution, and no provider call on an empty wallet. Sell this as budget control, because that is what a commercial director hears: *"your AI spend cannot surprise you."*
 
 ### Unit economics at 100 customers
 
@@ -510,7 +510,7 @@ Every figure is sourced from published 2026 UK pricing or salary benchmarks rath
 | **Incumbent adds a credible ledger** | A major CDE announces immutability at a trade show | Move fast to depth — payment cycle, delay attribution, Autopilot. The ledger is the wedge, not the moat. |
 | **Sales cycles longer than modelled** | Median above 120 days at Gate 2 | Shift weight to the consultancy channel and Core Project entry pricing; extend the runway assumption. |
 | **Security review failures** | Two deals lost on ISO 27001 | Accelerate certification and pre-empt with the pen test report and SOA in the first meeting. |
-| **AI cost exceeds the 4× markup** | Gross margin below 75% | The ACU model already caps exposure per tenant. Reprice bundles, do not absorb it. |
+| **AI cost exceeds the 5× markup** | Gross margin below 80% | The ACU model already caps exposure per tenant. Reprice bundles, do not absorb it. |
 | **Regulatory timetable slips** | Enforcement deferred | Pivot the lead message to the payment wedge, which has no regulatory dependency. Keep the compliance proof as the differentiator. |
 | **Manchester is too small** | Fewer than 40 qualified in-region accounts after list build | Extend to the North West — Liverpool, Leeds — before extending nationally. Keep the density principle. |
 | **Design partners never convert** | Fewer than 5 paying at day 60 | The problem is value, not price. Stop selling and go and watch three of them work for a day each. |

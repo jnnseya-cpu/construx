@@ -26,6 +26,71 @@ import { exceeds, type AgentDefinition, type AgentProposal, type AgentRunReport,
 /** How long a proposal stays open before it is treated as stale. */
 const PROPOSAL_TTL_HOURS = 72;
 
+/**
+ * What put this run together — the contract's `triggers`, enforced.
+ *
+ * Until now the fleet had exactly one mode: run all forty-eight agents and see
+ * what they say. Every agent declared what wakes it and nothing read the
+ * declaration, so an agent whose whole purpose is to answer
+ * `DELAYEVENT_RECORDED` woke on the same schedule as one watching the market,
+ * and the only way to ask "something just happened, who cares about it" was to
+ * ask everybody.
+ *
+ * Three modes, and the distinction between the first two is the point:
+ *
+ * - **`SWEEP`** is a person, or the morning briefing, saying *look at
+ *   everything now*. It runs the whole deployed fleet, which is what it has
+ *   always done and what that request means. Routing does not narrow it, and
+ *   narrowing it to `CONTINUOUS` agents would silently switch eighteen agents
+ *   off the one path everything already uses.
+ * - **`EVENT`** is the new capability: something landed in the ledger, and only
+ *   the agents that declared they wake on it run. A tender return arrives and
+ *   the return-intelligence agent runs; the forty-seven others are not asked,
+ *   not charged, and not given the chance to repeat yesterday's finding.
+ * - **`SCHEDULE`** is a clock tick, matched against the hour each agent named
+ *   and the days it named, where it named any.
+ *
+ * A person naming agents (`only`) is always allowed and is not routed. The
+ * contract lists `ON_DEMAND` so the declaration is complete, not so the runtime
+ * can refuse a human who asked.
+ */
+export type RunTrigger =
+  | { kind: 'SWEEP' }
+  /** Domain event codes that have just landed. */
+  | { kind: 'EVENT'; eventTypes: string[] }
+  /** A clock tick. `at` is 24-hour local time; `day` is 0–6, Sunday first. */
+  | { kind: 'SCHEDULE'; at: string; day?: number };
+
+/** Does this agent declare a trigger that matches? */
+function wakesOn(agent: AgentDefinition, trigger: RunTrigger): string | undefined {
+  if (trigger.kind === 'SWEEP') return 'sweep';
+
+  for (const declared of agent.triggers) {
+    if (trigger.kind === 'EVENT') {
+      if (declared.kind === 'EVENT' && trigger.eventTypes.includes(declared.eventType)) {
+        return `woken by ${declared.eventType}`;
+      }
+      continue;
+    }
+    if (declared.kind !== 'SCHEDULE' || declared.at !== trigger.at) continue;
+    // Days omitted means every day. Named days are matched only when the caller
+    // says which day it is; a tick with no day runs every scheduled agent for
+    // that hour rather than guessing, because guessing here means a Monday
+    // agent silently never running.
+    if (declared.days && trigger.day !== undefined && !declared.days.includes(trigger.day)) continue;
+    return `scheduled at ${declared.at}`;
+  }
+  return undefined;
+}
+
+/** One line describing the run, for the report and the ledger record. */
+function describe(trigger: RunTrigger, only?: string[]): string {
+  if (only?.length) return `asked for: ${only.join(', ')}`;
+  if (trigger.kind === 'SWEEP') return 'full sweep';
+  if (trigger.kind === 'EVENT') return `events: ${trigger.eventTypes.join(', ')}`;
+  return `schedule ${trigger.at}${trigger.day === undefined ? '' : ` on day ${trigger.day}`}`;
+}
+
 function openProposals(ctx: EngineContext): AgentProposal[] {
   return ctx.ledger
     .list(ctx.projectId, 'AgentProposal')
@@ -42,29 +107,46 @@ function openProposals(ctx: EngineContext): AgentProposal[] {
  */
 export async function runAgents(
   ctx: EngineContext,
-  options: { only?: string[] } = {},
+  options: { only?: string[]; trigger?: RunTrigger } = {},
 ): Promise<AgentRunReport> {
   authorise(ctx, 'AI_EXECUTION', 'X');
 
   const runId = ulid();
   const ranAt = new Date().toISOString();
   const existing = new Set(openProposals(ctx).map((p) => p.finding.key));
+  const trigger: RunTrigger = options.trigger ?? { kind: 'SWEEP' };
 
   // Declared agents are in the manifest and not in the fleet: they carry a
   // mandate so the org chart is inspectable, and no `evaluate`, so there is
   // nothing to run. Naming one explicitly does not conjure one either.
-  const fleet = options.only?.length
+  const named = options.only?.length
     ? options.only
         .map((name) => agentByName(name))
         .filter((a): a is AgentDefinition => Boolean(a) && typeof a?.evaluate === 'function')
-    : deployedAgents();
+    : undefined;
 
-  const report: AgentRunReport = { runId, ranAt, agents: [], proposals: [], suppressed: 0, belowFloor: 0 };
+  // Trigger routing. A person naming agents is not routed — they asked.
+  const fleet: Array<{ agent: AgentDefinition; because: string }> = named
+    ? named.map((agent) => ({ agent, because: 'asked for by name' }))
+    : deployedAgents()
+        .map((agent) => ({ agent, because: wakesOn(agent, trigger) }))
+        .filter((entry): entry is { agent: AgentDefinition; because: string } => entry.because !== undefined);
+
+  const report: AgentRunReport = {
+    runId,
+    ranAt,
+    agents: [],
+    proposals: [],
+    suppressed: 0,
+    belowFloor: 0,
+    because: describe(trigger, options.only),
+    gated: 0,
+  };
   let belowFloor = 0;
 
   const phase = currentPhase(ctx);
 
-  for (const agent of fleet) {
+  for (const { agent, because } of fleet) {
     try {
       // The contract's `active_in_states`, enforced rather than declared.
       //
@@ -74,11 +156,13 @@ export async function runAgents(
       // outside your states is not an error in the agent, it is the runtime
       // correctly declining to ask a question that has no meaning here.
       if (agent.activeIn !== 'ANY' && phase !== undefined && !agent.activeIn.includes(phase)) {
+        report.gated += 1;
         report.agents.push({
           agent: agent.name,
           findings: 0,
           proposalsRaised: 0,
           suppressed: 0,
+          because,
           skipped: `not active in ${phase} — declared for ${agent.activeIn.join(', ')}`,
         });
         continue;
@@ -162,7 +246,7 @@ export async function runAgents(
       }
 
       report.suppressed += suppressed;
-      report.agents.push({ agent: agent.name, findings: output.findings.length, proposalsRaised: raised, suppressed });
+      report.agents.push({ agent: agent.name, findings: output.findings.length, proposalsRaised: raised, suppressed, because });
     } catch (error) {
       // One agent failing must not stop the fleet, and the failure is recorded
       // rather than swallowed — a silent agent looks identical to a calm project.
@@ -171,6 +255,7 @@ export async function runAgents(
         findings: 0,
         proposalsRaised: 0,
         suppressed: 0,
+        because,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -186,11 +271,62 @@ export async function runAgents(
       agents: report.agents,
       proposalsRaised: report.proposals.length,
       suppressed: report.suppressed,
+      // On the record, so a proposal raised at 03:00 can be traced back to the
+      // event that woke the agent that raised it rather than to "the fleet ran".
+      because: report.because,
+      gated: report.gated,
     },
   });
 
   report.belowFloor = belowFloor;
   return report;
+}
+
+/**
+ * Run the agents that the events since the last run actually woke.
+ *
+ * This is what makes trigger routing a behaviour rather than a parameter
+ * nobody passes. The ledger is the record of what happened; the contract says
+ * which agent answers each thing that can happen; so the fleet for "what has
+ * changed since we last looked" is derivable rather than a judgement.
+ *
+ * **Re-entrancy is the danger and it is closed by construction.** A run writes
+ * `AGENT_RUN_COMPLETED` and one `AGENT_PROPOSAL_RAISED` per finding. If those
+ * counted as changes, every run would wake the fleet again on its own output,
+ * for ever. Every `AGENT_*` code is excluded from the window, and no agent
+ * declares a trigger on one — asserted in `triggerrouting.test.ts`, because a
+ * comment saying "don't do that" is not a control.
+ *
+ * The window is from the last agent run on this project. Where there has never
+ * been one, the last day: replaying three years of history through the router
+ * on first use would select almost every agent and quietly become a sweep
+ * wearing a router's name.
+ */
+export async function runAgentsForChanges(
+  ctx: EngineContext,
+  now = new Date(),
+): Promise<AgentRunReport & { window: { from: string; eventTypes: string[] } }> {
+  const lastRun = ctx.ledger
+    .list(ctx.projectId, 'AgentRun')
+    .map((record) => String(record.state.ranAt ?? ''))
+    .filter((at) => at !== '')
+    .sort()
+    .at(-1);
+
+  const from = lastRun ?? new Date(now.getTime() - 86_400_000).toISOString();
+
+  const eventTypes = [
+    ...new Set(
+      ctx.ledger
+        .events({ projectId: ctx.projectId, from })
+        .map((event) => event.eventType)
+        // The re-entrancy cut. Everything the runtime itself writes.
+        .filter((code) => !code.startsWith('AGENT_')),
+    ),
+  ].sort();
+
+  const report = await runAgents(ctx, { trigger: { kind: 'EVENT', eventTypes } });
+  return { ...report, window: { from, eventTypes } };
 }
 
 function raiseProposal(

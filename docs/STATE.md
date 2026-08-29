@@ -66,7 +66,8 @@ application. Do not rebuild them.
 2. **£1 buys 100 ACUs.** One ACU is one minor unit. Stated as its own value
    rather than assumed, because a currency with a different exponent would
    otherwise silently change what an ACU is worth.
-3. **Provider cost is charged at 4×.** Revenue 4, cost 1.
+3. **Provider cost is charged at 5×.** Revenue 5, cost 1 — every £1 the
+   platform spends with a provider produces £5.
 4. **20% of every subscription payment is credited as AI allowance.** Credited
    at activation and again when each period is invoiced, once per period —
    invoices get corrected and reissued, and each reissue handing out another
@@ -77,8 +78,18 @@ The rule under all of them: **the company takes at least 100% profit on every
 AI transaction** — it never keeps less than it paid the provider.
 `minimumProfitPercent` states it, and the multiplier floor is *derived* from it
 (`1 + pct/100 = 2×`) rather than configured beside it, so the rule and the
-arithmetic cannot drift apart. At the 4× price the realised profit is 300%,
+arithmetic cannot drift apart. At the 5× price the realised profit is 400%,
 well clear of the floor.
+
+**The floor is kept below the price on purpose.** When the rate moved from 4× to
+5× the tidy-looking move was to raise the floor to 400% so the two coincided.
+That silently deletes a customer protection: an execution that overruns its
+estimate is capped at the amount reserved and disclosed, *unless* honouring the
+cap would sell below the floor. With the floor at the price, `floor === billed`
+on every overrun, the cap can never bite, and a customer shown £5 can be charged
+£7.50 with no ceiling. The two numbers answer different questions — the price is
+what the business charges, the floor is what stops an overrun being sold at a
+loss — and `economics.test.ts` now asserts they stay apart.
 
 The realised figure is reported rather than assumed: every wallet snapshot
 carries `lifetimeProfitMinor` and `lifetimeProfitPercent`, so "are we hitting
@@ -3142,8 +3153,9 @@ ever appeared on the pricing catalogue. That is exactly what made it worth
 fixing — a promise to a customer the billing engine was never going to keep, and
 the customer would have found out when the bundle ran out a third early. The
 yield is now derived from the multiplier, floored at the profit rule, so the two
-cannot disagree again: £300 buys 7,500 ACUs, £1,000 buys 25,000, £2,500 buys
-62,500.
+cannot disagree again. (At the 4× rate that was £300 for 7,500 ACUs; the rate
+has since moved to 5× and the catalogue followed it without an edit, which is
+what deriving the yield bought — see the rate change recorded below.)
 
 A consequence follows and is stated rather than hidden: with a flat multiplier
 every bundle is the same value per pound, so a bundle is a convenience — fewer
@@ -7121,15 +7133,22 @@ Re-opening these is what caused churn before.
    packages so existing contracts resolve.
 5. **Money is in minor units everywhere.** No floating point in the billing
    path. One ACU is one minor unit, so £1 buys 100 ACUs. Provider cost is
-   charged at 4x. **The company takes at least 100% profit on every AI
+   charged at 5x — every £1 of provider cost produces £5. **The company takes
+   at least 100% profit on every AI
    transaction** — the multiplier floor is derived from that rule, not
    configured beside it. 20% of every subscription payment is credited as AI
    allowance. No AI work runs without available ACUs.
 
-   The 4x is confirmed and deliberate. Several specification documents state
-   3x; the instruction given directly, and reaffirmed when queried, is 4x. It
-   is one value, `ACU_MARKUP_MULTIPLIER`, and every test fixture derives its
+   The 5x is confirmed and deliberate. Several specification documents state
+   3x and the rate ran at 4x for a period; the instruction given directly is
+   **5x — every £1 the platform spends with a provider must produce £5**. It is
+   one value, `ACU_MARKUP_MULTIPLIER`, and every test fixture derives its
    arithmetic from it, so the suite follows whichever number is set.
+
+   The **loss floor is separate and stays below the price**, at 100% profit.
+   It is not the price; it is what stops an execution that overruns its
+   estimate being sold at a loss, and raising it to meet the price would delete
+   the disclosed-hold cap that protects a customer from an overrun.
 6. **The interface never holds a rule the API does not publish.** Permission
    matrix and phase gates are fetched, not duplicated.
 7. **A denial is displayed as a denial.** Never as zero, never as empty.
@@ -9640,3 +9659,79 @@ at last to a read.
 773 characters of nothing to the full structure: two regions, both portfolios
 with their enterprise and country scope, and all seven gates with their exit
 criteria.
+
+### Trigger routing, enforced
+
+The Agent Contract's `triggers` was the last of the twelve fields that was
+declared and read by nothing. Every agent said what wakes it, and the fleet had
+exactly one mode: run all forty-eight and see what they say. An agent whose
+whole purpose is to answer `DELAYEVENT_RECORDED` woke on the same schedule as
+one watching the market, and the only way to ask *something just happened, who
+cares about it* was to ask everybody.
+
+Three modes now, and the distinction between the first two is the whole design:
+
+- **`SWEEP` still runs the entire deployed fleet.** It is a person, or the
+  morning briefing, saying *look at everything now*, and that is what the
+  request means. Narrowing a sweep to `CONTINUOUS` agents was the obvious
+  implementation and would have silently switched eighteen agents off the one
+  path the console and the briefing both use — a regression dressed as a
+  feature. A test pins it.
+- **`EVENT` is the new capability.** Only agents that declared the code run.
+  Measured on the demonstration estate: a delay event wakes 2 agents of 48, a
+  CVR publication wakes 1, a submitted application wakes 1. An event nobody
+  declared wakes nothing at all, and costs nothing.
+- **`SCHEDULE`** matches the hour an agent named, and the days where it named
+  any. A tick that does not say which day it is runs every agent for that hour
+  rather than guessing — guessing there means a Monday agent that silently never
+  runs.
+
+A person naming agents is never routed. The contract lists `ON_DEMAND` so the
+declaration is complete, not so the runtime can refuse somebody who asked.
+
+**`runAgentsForChanges` is what makes it a behaviour rather than a parameter
+nobody passes.** It reads the events since the last agent run on the project and
+routes on them, so "what has changed, and who cares" is derivable rather than a
+judgement. The re-entrancy risk is real and closed twice: a run writes
+`AGENT_RUN_COMPLETED` and one `AGENT_PROPOSAL_RAISED` per finding, so every
+`AGENT_*` code is excluded from the window, **and** a test asserts no agent
+anywhere declares a trigger on one — a filter is easier to relax than a test is
+to delete. Proved rather than asserted: a second pass immediately after a first
+finds an empty window and runs nothing.
+
+Every agent in a report now says *why* it is there. A run listing four names out
+of forty-eight has to read as a deliberate selection rather than a fleet that
+mostly failed to appear, and an agent the event woke that the lifecycle gate
+then declined is counted separately — "the event happened and the agent for it
+cannot run in this phase" is a gap somebody may need to close; "no agent watches
+that event" is not.
+
+Reachable at `POST /v1/projects/:projectId/agents/run` with an optional
+`trigger`, and `POST /v1/projects/:projectId/agents/run-changes`.
+
+### The AI rate is 5×
+
+Stated by the business as two halves of one rule: **provider cost is charged at
+five times, and every £1 the platform spends with a provider must produce £5.**
+It was 4×.
+
+One value moved — `ACU_MARKUP_MULTIPLIER` — and everything downstream followed
+without an edit, which is what deriving rather than hardcoding bought: the
+wallet's charge, the quote a screen shows before spending, the invoice line, and
+the ACU bundle catalogue (£300 now buys 6,000 ACUs, £1,000 buys 20,000, £2,500
+buys 50,000). The volume band table is flat at 5× for the same reason it was
+flat at 4×: there is no rate below the headline anywhere in the platform.
+
+**One thing was nearly got wrong and is worth recording.** The tidy move was to
+raise `minimumProfitPercent` to 400 so the loss floor and the price coincided —
+"every £1 must produce £5" reads like a floor. It is not one, and setting it
+there deletes a customer protection. An execution that overruns its estimate is
+capped at the amount reserved and disclosed, *unless* honouring that cap would
+sell below the floor. With the floor at the price, `floor === billed` on every
+overrun, the cap can never bite, and a customer shown £5 can be charged £7.50
+with no ceiling. `billing.test.ts` caught it as a failing overrun cap.
+
+So the two numbers stay apart and answer different questions: the **price** is
+what the business charges, the **floor** is what stops an overrun being sold at a
+loss. `economics.test.ts` now asserts the floor stays strictly below the price,
+with the reason, so the collapse cannot be reintroduced as tidying.
