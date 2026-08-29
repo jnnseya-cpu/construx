@@ -9,7 +9,7 @@ function localNow() {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 import { command, commandBar } from '../lib/command.js';
-import { badge, days, drillable, html, humanise, money, pct, positionReport, raw, render, resolveHtml, table, toast } from '../lib/ui.js';
+import { badge, date, days, drillable, html, humanise, money, pct, positionReport, raw, render, resolveHtml, table, toast } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, state } from '../app.js';
 import { insightPanel } from '../lib/insight.js';
@@ -54,10 +54,103 @@ const CHAIN_CHECKS = new Set([
   'CVR from the contract',
 ]);
 
+/**
+ * The division of responsibility, between the client and every firm on the job.
+ *
+ * The table is the smaller half. What a project manager opens this for on a
+ * Monday is the list underneath it: the four ways a project argues with itself
+ * about who was supposed to do something.
+ *
+ * A package nobody holds was priced by nobody. A package two firms hold was
+ * priced twice and one of them has a claim. A design responsibility recorded as
+ * "shared" and never split is an answer to who pays and not to who draws it.
+ * And a client obligation past its date is the most common root of a delay
+ * claim there is — usually with the notice clock already running.
+ */
+const PARTY_TONE = { CLIENT: 'info', PRINCIPAL_CONTRACTOR: 'ok', SUBCONTRACTOR: '' };
+const CONCERN_TONE = {
+  SCOPE_UNASSIGNED: 'bad',
+  SCOPE_DOUBLE_ASSIGNED: 'bad',
+  SHARED_DESIGN_UNSPLIT: 'warn',
+  OBLIGATION_UNDATED: 'warn',
+};
+
+function responsibilityPanel(matrix) {
+  if (matrix?.error) {
+    return html`<div class="card" style="margin-bottom:14px">
+      <h2>Division of responsibility</h2>
+      <p class="metric-sub">This could not be read: ${matrix.error.message}</p>
+    </div>`;
+  }
+
+  const items = matrix?.items ?? [];
+  const concerns = matrix?.concerns ?? [];
+
+  return html`
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">Division of responsibility</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        ${matrix?.summary ?? ''} Who carries each obligation, between the client, this business and every firm working
+        under it. The client is not a contractor with another name: nothing is awarded to them, and their obligations
+        are the ones claimed against rather than managed.
+      </p>
+
+      ${
+        concerns.length > 0
+          ? html`<div class="split-list" style="padding:11px 17px 0">
+              ${concerns.map(
+                (concern) => html`<div class="row">
+                  <span class="lbl">
+                    ${badge(humanise(concern.kind), CONCERN_TONE[concern.kind] ?? 'warn')} ${concern.subject}
+                  </span>
+                  <span class="val" style="font-size:12px;color:var(--text-3)">${concern.consequence}</span>
+                </div>`,
+              )}
+            </div>`
+          : html`<div style="padding:11px 17px 0">
+              <div class="notice ok"><div>Every package has a party against it, every shared design responsibility is
+              split, and no obligation is past its date.</div></div>
+            </div>`
+      }
+
+      ${
+        (matrix?.parties ?? []).length > 0
+          ? table({
+              headers: ['Party', 'Kind', 'Obligations', 'Dated', 'Past its date or undated'],
+              align: ['', '', 'num', 'num', 'num'],
+              rows: matrix.parties.map((party) => [
+                party.name,
+                badge(humanise(party.kind), PARTY_TONE[party.kind] ?? ''),
+                party.items,
+                party.dated,
+                html`<span style="${raw(party.overdueOrUndated > 0 ? 'color:var(--critical)' : '')}">${party.overdueOrUndated}</span>`,
+              ]),
+            })
+          : ''
+      }
+
+      ${table({
+        headers: ['Ref', 'Obligation', 'Category', 'Carried by', 'Due', 'Source', ''],
+        align: ['', '', '', '', '', '', ''],
+        rows: items.map((item) => [
+          item.reference,
+          item.description,
+          html`<span style="font-size:12px;color:var(--text-3)">${humanise(item.category)}</span>`,
+          html`${item.party.name}${badge(humanise(item.party.kind), PARTY_TONE[item.party.kind] ?? '')}`,
+          item.dueBy ? date(item.dueBy) : '—',
+          html`<span style="font-size:12px;color:var(--text-3)">${item.source ?? '—'}</span>`,
+          html`<button class="btn quiet sm" data-reassign="${item.id}">Move it</button>`,
+        ]),
+        empty: 'Nothing is recorded against a party yet.',
+      })}
+    </div>
+  `;
+}
+
 export async function control(root) {
   const projectId = state.session.projectId;
 
-  const [project, estate, lessons, gate, gateDecisions, standard, stages, decisions, actions, reusable] = await Promise.all([
+  const [project, estate, lessons, gate, gateDecisions, standard, stages, decisions, actions, reusable, responsibility] = await Promise.all([
     api.get(`/v1/projects/${projectId}/control`),
     api.get('/v1/control/estate').catch(() => null),
     api.get('/v1/lessons').catch(() => null),
@@ -74,7 +167,20 @@ export async function control(root) {
     api.get(`/v1/projects/${projectId}/decisions`).catch((error) => ({ error })),
     api.get(`/v1/projects/${projectId}/actions`).catch((error) => ({ error })),
     api.get(`/v1/projects/${projectId}/lessons/reusable`).catch((error) => ({ error })),
+    // Who is responsible for what, between the client and every firm on the
+    // job. On this screen because the two roles that own it — the project
+    // manager and the construction manager — already work from here.
+    api.get(`/v1/projects/${projectId}/responsibility`).catch((error) => ({ error })),
   ]);
+
+  // The choosers for the responsibility form. A package named from the project's
+  // own list and a firm named from the register, because a typed party name is
+  // how one firm becomes two rows on a matrix.
+  const scopePackages = await entities(projectId, 'ScopePackage').catch(() => []);
+  const suppliers = await api
+    .get('/v1/supply-chain/suppliers')
+    .then((result) => result.suppliers ?? [])
+    .catch(() => []);
 
   // Meetings and the actions out of them. On this screen rather than its own,
   // because a meeting action nobody closed and a control item nobody evidenced
@@ -190,6 +296,12 @@ export async function control(root) {
         <div class="actions cmd-bar">
           ${raw(commandBar([
             { id: 'gate', label: 'Decide the stage gate', tone: '', permitted: can('PROJECT_SETUP', 'A'), reason: blockedReason('PROJECT_SETUP', 'A') },
+            {
+              id: 'responsibility',
+              label: 'Record a responsibility',
+              permitted: can('WORKPACKAGES_TASKS', 'C'),
+              reason: blockedReason('WORKPACKAGES_TASKS', 'C'),
+            },
             { id: 'meeting', label: 'Minute a meeting', permitted: can('LOOKAHEAD_CONSTRAINTS', 'C'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C') },
             {
               id: 'item',
@@ -591,6 +703,8 @@ export async function control(root) {
 
       ${raw(LOOKUPS.map((spec) => resolveHtml(lookupPanel(spec))).join(''))}
 
+      ${responsibilityPanel(responsibility)}
+
       ${positionReport({
         title: 'The corporate control standard',
         intent:
@@ -702,7 +816,81 @@ export async function control(root) {
         : { decision, rationale },
   };
 
+  const RESPONSIBILITY_COMMAND = {
+    title: 'Record who carries an obligation',
+    intent:
+      'One line of the matrix. The party is named from the register rather than typed, because two spellings of one ' +
+      'firm are two parties here and one firm on the job. Free issue, access, permits, existing services and ' +
+      'decisions need the date they fall due — an obligation nobody can be late on cannot be chased and cannot be ' +
+      'claimed against.',
+    path: () => `/v1/projects/${projectId}/responsibility`,
+    submitLabel: 'Record it',
+    fields: [
+      { name: 'reference', label: 'Reference', type: 'text', placeholder: 'RM-014' },
+      { name: 'description', label: 'The obligation', type: 'textarea', rows: 2 },
+      {
+        name: 'category',
+        label: 'Kind',
+        type: 'select',
+        options: [
+          { value: 'WORKS', label: 'Works' },
+          { value: 'DESIGN', label: 'Design' },
+          { value: 'TEMPORARY_WORKS', label: 'Temporary works' },
+          { value: 'FREE_ISSUE', label: 'Free issue' },
+          { value: 'ACCESS', label: 'Access' },
+          { value: 'PERMIT_OR_CONSENT', label: 'Permit or consent' },
+          { value: 'EXISTING_SERVICES', label: 'Existing services' },
+          { value: 'TESTING_AND_COMMISSIONING', label: 'Testing and commissioning' },
+          { value: 'INSURANCE', label: 'Insurance' },
+          { value: 'DECISION', label: 'Decision' },
+        ],
+        hint: 'The five client-side kinds carry a date. Works and design carry a package.',
+      },
+      {
+        name: 'partyKind',
+        label: 'Carried by',
+        type: 'select',
+        options: [
+          { value: 'CLIENT', label: 'The client' },
+          { value: 'PRINCIPAL_CONTRACTOR', label: 'This business' },
+          { value: 'SUBCONTRACTOR', label: 'A subcontractor' },
+        ],
+      },
+      { name: 'partyName', label: 'Named as', type: 'text', placeholder: 'Yorkshire Water Services Limited' },
+      {
+        name: 'supplierId',
+        label: 'Which firm on the register',
+        type: 'select',
+        required: false,
+        options: suppliers.map((supplier) => ({ value: supplier.id, label: supplier.legalName ?? supplier.name })),
+        hint: suppliers.length === 0 ? 'No supplier is registered yet' : 'Required when the party is a subcontractor',
+      },
+      {
+        name: 'packageId',
+        label: 'Scope package',
+        type: 'select',
+        required: false,
+        options: scopePackages.map((p) => ({ value: p.id, label: `${p.name} · ${p.discipline}` })),
+        hint: scopePackages.length === 0 ? 'No scope package is defined yet' : 'Where the obligation sits in one',
+      },
+      { name: 'dueBy', label: 'Due by', type: 'date', required: false },
+      { name: 'source', label: 'Where it comes from', type: 'text', required: false, placeholder: 'Contract cl. 2.3' },
+    ],
+    transform: (v) => ({
+      reference: v.reference,
+      description: v.description,
+      category: v.category,
+      partyKind: v.partyKind,
+      partyName: v.partyName,
+      ...(v.supplierId ? { supplierId: v.supplierId } : {}),
+      ...(v.packageId ? { packageId: v.packageId } : {}),
+      ...(v.dueBy ? { dueBy: v.dueBy } : {}),
+      ...(v.source ? { source: v.source } : {}),
+    }),
+  };
+
   const COMMANDS = {
+    responsibility: RESPONSIBILITY_COMMAND,
     gate: GATE_COMMAND,
     meeting: {
       title: 'Minute a meeting',
@@ -829,6 +1017,50 @@ export async function control(root) {
     const spec = COMMANDS[button.dataset.command];
     if (!spec) return;
     if (await command(spec)) await draw();
+  });
+
+  // Moving an obligation to another party. A separate command from recording
+  // one, because this is the act somebody will be asked to justify: "it was
+  // always theirs" and "we moved it to them in March" are different positions.
+  root.addEventListener('click', async (event) => {
+    const move = event.target.closest('[data-reassign]');
+    if (!move) return;
+    const accepted = await command({
+      title: 'Move this obligation to another party',
+      intent:
+        'The line stays, its history stays, and the move is recorded with your reason against it. A matrix that ' +
+        'overwrote the old party could not tell "it was always theirs" from "we moved it".',
+      path: () => `/v1/projects/${projectId}/responsibility/${move.dataset.reassign}/reassign`,
+      submitLabel: 'Move it',
+      fields: [
+        {
+          name: 'partyKind',
+          label: 'Now carried by',
+          type: 'select',
+          options: [
+            { value: 'CLIENT', label: 'The client' },
+            { value: 'PRINCIPAL_CONTRACTOR', label: 'This business' },
+            { value: 'SUBCONTRACTOR', label: 'A subcontractor' },
+          ],
+        },
+        { name: 'partyName', label: 'Named as', type: 'text' },
+        {
+          name: 'supplierId',
+          label: 'Which firm on the register',
+          type: 'select',
+          required: false,
+          options: suppliers.map((supplier) => ({ value: supplier.id, label: supplier.legalName ?? supplier.name })),
+        },
+        { name: 'reason', label: 'Why it moved', type: 'textarea', rows: 2, hint: 'Recorded with the change.' },
+      ],
+      transform: (v) => ({
+        partyKind: v.partyKind,
+        partyName: v.partyName,
+        ...(v.supplierId ? { supplierId: v.supplierId } : {}),
+        reason: v.reason,
+      }),
+    });
+    if (accepted) await draw();
   });
 
   root.querySelector('#raise-chain')?.addEventListener('click', async (event) => {

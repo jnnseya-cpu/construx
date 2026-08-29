@@ -10648,3 +10648,66 @@ explain how to recompute the chain and name no address. A test fixture had put
 this platform's domain there, which was the only reason a rendered document ever
 mentioned it; the fixture now carries the wording the exporter actually
 produces.
+
+
+### The division of responsibility, between the client and every contractor
+
+The platform knew which firm held which package — an award records that. It
+could not answer the question actually argued about on site, which is not
+*whose package is this* but **whose duty is this**, and the two come apart in
+exactly the places that cost money.
+
+`domain/responsibility.ts` records who carries each obligation across three
+kinds of party. The client is not a contractor with another name: nothing is
+awarded to them, no subcontract binds them, and their obligations are the ones
+this business claims *against* rather than manages. A subcontractor is named
+from the supply chain register by id, never typed — two spellings of one firm
+are two parties on a matrix and one firm on the job.
+
+**The table is the smaller half.** What the module exists for is the four ways a
+project argues with itself, each reported with what goes wrong if it stays:
+
+- **Scope in nobody's package.** Between the piling and the substructure there
+  is a pile trim in neither. Both firms priced without it, both are right, and
+  the argument happens with the excavation open. Derived from the project's own
+  packages, so a matrix that simply omitted one still cannot look complete.
+- **Scope in two packages.** Worse commercially: two firms priced the same
+  works, one will be paid for doing it and the other has a claim for being
+  prevented from it.
+- **A design responsibility marked SHARED and never split.** `SHARED` is a real
+  answer to who pays and never one to who draws it. Somebody has to produce
+  each drawing, and the gap is found at the point the drawing is needed.
+- **A client obligation past its date.** Free issue, access, permits, existing
+  services, a decision — the most common root of a contractor delay claim there
+  is, usually with the notice clock already running. The consequence is written
+  differently for a party this business answers for, because that one is this
+  business's own delay rather than a claim it makes.
+
+**It refuses a line that would protect nobody.** A client-side obligation with
+no date is rejected outright: nobody can be late on it, so it cannot be chased
+and cannot be claimed against, and recording it undated produces a matrix that
+looks complete.
+
+**Moving a duty is a separate command and a separate event.** "It was always
+theirs" and "we moved it to them in March" are different positions, and a matrix
+that overwrote the first with the second could not tell them apart. The
+reassignment carries the party it moved from and the reason, and both stay on
+the record.
+
+**Owned by the project manager and the construction manager.** Both hold `C`,
+`U` and `A` on `WORKPACKAGES_TASKS` and between them answer for the interface —
+the PM to the client and the contract, the construction manager to the sequence
+and the site. `ResponsibilityItem` is classified `COMMERCIAL_L3`: the matrix
+states what this business has and has not accepted, and a subcontractor reading
+the line that says a duty is theirs is reading a negotiating position on a claim
+they have not made yet.
+
+The panel is on Project Control, where both roles already work. Five mutations
+fail a test — suppressing each of the four concerns, and dropping the date
+requirement. Driven in a browser against the seeded estate, where it immediately
+reported two real things about Ashworth: a scope package with no party against
+it, and a shared design responsibility never split.
+
+`identity.test.ts` caught the new entity type before it shipped unclassified,
+which is the guard working: an entity the catalogue can produce and the access
+model has never heard of has no rules at all.

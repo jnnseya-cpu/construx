@@ -129,6 +129,17 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
 
   // Work breakdown and programme
   WorkPackage: { area: 'WORKPACKAGES_TASKS' },
+  /**
+   * Who carries which obligation, between the client and every firm on the job.
+   *
+   * `WORKPACKAGES_TASKS` because that is the area the project manager and the
+   * construction manager both hold `C`, `U` and `A` on, and they are the two
+   * who answer for the interface. `COMMERCIAL_L3` because the matrix states
+   * what this business has and has not accepted: a subcontractor reading the
+   * line that says a duty is theirs is reading this business's negotiating
+   * position on a claim they have not made yet.
+   */
+  ResponsibilityItem: { area: 'WORKPACKAGES_TASKS', sensitivity: 'COMMERCIAL_L3' },
   Task: { area: 'WORKPACKAGES_TASKS' },
   Dependency: { area: 'PROGRAMME_BASELINES' },
   ProgrammeBaseline: { area: 'PROGRAMME_BASELINES' },

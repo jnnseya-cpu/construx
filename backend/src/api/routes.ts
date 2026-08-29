@@ -61,6 +61,7 @@ import * as progressverification from '../domain/progressverification.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
+import * as responsibility from '../domain/responsibility.ts';
 import * as regulatorycompletion from '../domain/regulatorycompletion.ts';
 import * as reliability from '../domain/reliability.ts';
 import * as informationcontrol from '../domain/informationcontrol.ts';
@@ -4215,6 +4216,54 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => structure.createScopePackage(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/responsibility',
+    description: 'The division of responsibility between the client and every contractor, and what it has not settled',
+    handler: (platform, ctx) => responsibility.responsibilityMatrix(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/responsibility',
+    description: 'Record that one obligation belongs to one party',
+    schema: {
+      type: 'object',
+      required: ['reference', 'description', 'category', 'partyKind', 'partyName'],
+      properties: {
+        reference: stringField,
+        description: { type: 'string', minLength: 4 },
+        category: { type: 'string', enum: [...responsibility.RESPONSIBILITY_CATEGORY] },
+        partyKind: { type: 'string', enum: [...responsibility.PARTY_KIND] },
+        partyName: stringField,
+        // Named from the register rather than typed: two spellings of one firm
+        // are two parties on the matrix and one firm on the job.
+        supplierId: { type: 'string' },
+        packageId: { type: 'string' },
+        dueBy: { type: 'string' },
+        source: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => responsibility.assignResponsibility(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/responsibility/:itemId/reassign',
+    description: 'Move an obligation to another party, with the reason on the record',
+    schema: {
+      type: 'object',
+      required: ['partyKind', 'partyName', 'reason'],
+      properties: {
+        partyKind: { type: 'string', enum: [...responsibility.PARTY_KIND] },
+        partyName: stringField,
+        supplierId: { type: 'string' },
+        reason: { type: 'string', minLength: 8 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      responsibility.reassignResponsibility(projectContext(platform, ctx), ctx.params.itemId as string, body(ctx)),
   },
   {
     method: 'POST',

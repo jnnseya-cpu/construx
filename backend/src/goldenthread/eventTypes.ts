@@ -329,6 +329,22 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // would mean an empty review that means nothing.
   def('TENDER_DOCUMENT_VALIDATED', 'TenderReview', 'UPDATE', 'PROCUREMENT', { creates: true, aiAllowed: true }),
   def('SCOPE_GAP_IDENTIFIED', 'TenderReview', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  /**
+   * Who is responsible for one thing, between the client, this contractor and
+   * the firms working under it.
+   *
+   * `PROJECT_CONTROL` rather than `PROCUREMENT`: an award says which firm holds
+   * a package, and this says who carries an obligation — which is a different
+   * question with a different answer. The client's own duties are the clearest
+   * case. Nobody awards the client anything, and free issue arriving late is
+   * the most common delay claim on any job.
+   *
+   * Not `aiAllowed`. Stating that a duty is somebody else's is a position this
+   * business would have to defend, and the machine that suggested it would not
+   * be the one in the room.
+   */
+  def('RESPONSIBILITY_ASSIGNED', 'ResponsibilityItem', 'CREATE', 'PROJECT_CONTROL'),
+  def('RESPONSIBILITY_REASSIGNED', 'ResponsibilityItem', 'UPDATE', 'PROJECT_CONTROL'),
   def('CONTRACT_INTERPRETED', 'TenderReview', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
   // The freeze is not. It declares the information the price is built on, and
   // an agent that could declare it could declare a pack complete.
