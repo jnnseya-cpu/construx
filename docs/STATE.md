@@ -9588,3 +9588,30 @@ not a role reason. Switching to Rossendale, which is in Construction, opens
 stays shut and says why: nothing can be inspected against a plan the other side
 has not agreed. That is the whole point of the ITP approval built above, and it
 is now the difference between a locked button and an explained one.
+
+**Six more of the same, found by sweeping rather than by looking.** Once the
+Construction case was understood it became checkable, so every role was run
+against every screen, reading the areas each screen actually gates its panels on
+out of the screen's own source. Six more screens refused one of their own
+writers:
+
+| Who | Could not open | Holds writes on |
+|---|---|---|
+| Site supervisor | Programme | Work packages and the lookahead — Last Planner is their tool |
+| Principal designer | Field Execution | RAMS. CDM duties do not stop at the design |
+| Principal designer · designer · BIM | Change & Claims | Design information — the half of that screen that *starts* a change |
+| BIM manager | Tender & Procurement | Take-off. Measuring quantities from the model is the job |
+| Supplier | Tender & Procurement | Their own submission — the screen that takes their return |
+
+All six now declare the areas they serve. **Reachability is a floor, not an
+authority**: every panel and every action still authorises itself against the
+matrix, which is what makes widening a gate safe rather than a way round the
+permission model.
+
+`navreach.test.ts` holds it closed. For every role and every screen: if the
+reader holds a write on an area the screen offers actions in, the gate must let
+them in. The areas are read from each screen's own `can('AREA'` calls rather
+than a list maintained beside them, because a hand-maintained list is what would
+drift back into the bug. The one exemption is named and argued: platform
+operators are barred from customer delivery data by construction, so being
+refused the project Autopilot is the model working.

@@ -75,8 +75,15 @@ export const NAV = [
       // authorise themselves separately from BUDGET_COST and
       // PROGRAMME_BASELINES, panel by panel.
       { id: 'concept', label: 'Concept', area: 'PROJECT_SETUP', icon: 'target' },
-      { id: 'programme', label: 'Programme', area: 'PROGRAMME_BASELINES', icon: 'chart' },
-      { id: 'field', label: 'Field Execution', area: 'FIELD_EXECUTION', icon: 'clipboard' },
+      // Also the lookahead and the work packages, which is the site
+      // supervisor's own tool: the weekly work plan and the constraints against
+      // it are theirs to keep, and gating this on the baseline alone shut the
+      // person who runs Last Planner out of the screen that holds it.
+      { id: 'programme', label: 'Programme', area: 'PROGRAMME_BASELINES', alsoArea: ['WORKPACKAGES_TASKS', 'LOOKAHEAD_CONSTRAINTS'], icon: 'chart' },
+      // The safety half of the field screen belongs to whoever holds RAMS,
+      // including the principal designer, whose CDM duties do not stop at the
+      // design.
+      { id: 'field', label: 'Field Execution', area: 'FIELD_EXECUTION', alsoArea: ['SAFETY_RAMS'], icon: 'clipboard' },
       // The five registers a site runs on: permits, method statements,
       // inductions, inspection plans and non-conformances. Under SAFETY_RAMS
       // read because that is the area the permit and the method statement live
@@ -91,8 +98,15 @@ export const NAV = [
     items: [
       { id: 'pipeline', label: 'Pipeline & Bids', area: 'BUSINESS_DEVELOPMENT', icon: 'target' },
       { id: 'commercial', label: 'Cost & Value', area: 'BUDGET_COST', icon: 'coins' },
-      { id: 'procurement', label: 'Tender & Procurement', area: 'PROCUREMENT_AWARD', icon: 'gavel' },
-      { id: 'contracts', label: 'Change & Claims', area: 'CONTRACTS_CLAIMS', icon: 'scale' },
+      // Measurement and the supplier's own return sit on this screen. The
+      // BIM manager takes off quantities from the model and a supplier answers
+      // an enquiry; neither holds procurement award, and neither could reach
+      // the screen that takes their work.
+      { id: 'procurement', label: 'Tender & Procurement', area: 'PROCUREMENT_AWARD', alsoArea: ['BOQ_TAKEOFF', 'ESTIMATE_TENDER', 'SUPPLIER_SUBMISSION'], icon: 'gavel' },
+      // A design change is raised by the design team and valued by the
+      // commercial one. Gating on contracts alone meant the half of the screen
+      // that starts the process was unreachable by the people who start it.
+      { id: 'contracts', label: 'Change & Claims', area: 'CONTRACTS_CLAIMS', alsoArea: ['CHANGE_VARIATION', 'DESIGN_INFORMATION'], icon: 'scale' },
     ],
   },
   {
