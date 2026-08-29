@@ -38,6 +38,18 @@ export const state = {
  * Each entry declares the capability area it reads. The sidebar checks that
  * against the live permission matrix, so navigation and enforcement can never
  * drift apart.
+ *
+ * Some screens serve more than one area, and those declare `alsoArea`. The rule
+ * is *any*, not *all*: a screen is reachable by anybody who can read any part
+ * of it, and each panel inside then authorises itself as it already does.
+ *
+ * The single-area gate had a consequence nobody would defend if it were stated
+ * out loud. The Construction screen holds the five site registers — permits,
+ * method statements, inductions, inspection plans, non-conformances — and was
+ * gated on SAFETY_RAMS alone, so the QA/QC engineer, who *owns* the quality
+ * half of it and holds create, update and approve on QUALITY_COMMISSIONING, was
+ * refused the entire page. The person whose registers those are could not see
+ * them, and the reason on screen was an area they have no business holding.
  */
 export const NAV = [
   {
@@ -70,7 +82,7 @@ export const NAV = [
       // read because that is the area the permit and the method statement live
       // in and the one a site manager is judged on; the quality half of the
       // screen authorises itself separately, panel by panel.
-      { id: 'construction', label: 'Construction', area: 'SAFETY_RAMS', icon: 'shield' },
+      { id: 'construction', label: 'Construction', area: 'SAFETY_RAMS', alsoArea: ['QUALITY_COMMISSIONING', 'FIELD_EXECUTION'], icon: 'shield' },
       { id: 'design', label: 'Design & BIM', area: 'BIM_TWIN', icon: 'cube' },
     ],
   },
@@ -665,7 +677,13 @@ function reachable(item) {
   // none", which is how the sidebar came to be mostly locks.
   if (isOperator()) return OPERATOR_NAV.some((group) => group.items.some((entry) => entry.id === item.id));
   if (item.area === 'PLATFORM_ADMINISTRATION') return false;
-  return can(item.area, 'R') || item.id === 'overview' || item.id === 'copilot';
+  if (item.id === 'overview' || item.id === 'copilot') return true;
+  return readableAreas(item).some((area) => can(area, 'R'));
+}
+
+/** Every area a screen serves — its own, plus any it also carries. */
+function readableAreas(item) {
+  return [item.area, ...(item.alsoArea ?? [])];
 }
 
 /**
@@ -718,7 +736,13 @@ function lockReason(item) {
       : 'Platform operators are barred from customer delivery data';
   }
   if (item.area === 'PLATFORM_ADMINISTRATION') return 'Platform administration is not visible to customer accounts';
-  return `Your role has no read access to ${item.area}`;
+  // Names every area that would have opened it, not just the first. "No read
+  // access to SAFETY_RAMS" sends somebody to ask for the wrong thing when what
+  // they actually needed was quality.
+  const areas = readableAreas(item);
+  return areas.length === 1
+    ? `Your role has no read access to ${areas[0]}`
+    : `Your role has no read access to any of ${areas.join(', ')}`;
 }
 
 function walletPercent() {

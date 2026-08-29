@@ -9557,3 +9557,34 @@ both had the same shape — a register that could be added to and never closed.
 
 This is recorded as a table rather than a sentence so the question is settled.
 Re-deriving it costs half a day and produces the same answer.
+
+### The screen that refused the person whose registers it holds
+
+Found by signing in as each demonstration role in turn and walking the product,
+which is the only way this class of defect surfaces — every test passed, and
+still does.
+
+A navigation entry declared **one** capability area, and the shell refused the
+whole screen to anybody without read on it. The Construction screen holds the
+five registers a site runs on — permits, method statements, inductions,
+inspection plans, non-conformances — and was gated on `SAFETY_RAMS` alone. So
+the **QA/QC engineer**, who owns the quality half of that screen and holds
+create, update *and approve* on `QUALITY_COMMISSIONING`, was refused the entire
+page, with a reason naming an area they have no business holding. The comment
+above the entry already said "the quality half of the screen authorises itself
+separately, panel by panel" — the panels did; the door did not.
+
+A nav entry may now declare `alsoArea`, and the rule is **any, not all**: a
+screen is reachable by anybody who can read any part of it, and each panel
+inside authorises itself as it already did. The lock reason names every area
+that would have opened the screen rather than only the first, because "no read
+access to SAFETY_RAMS" sends somebody to ask for the wrong thing.
+
+**Verified in a browser, per role, on two projects.** As the QA/QC engineer on
+the Operations flagship every quality action is locked and says *"Quality
+commissioning cannot be written during the Operations phase"* — a phase reason,
+not a role reason. Switching to Rossendale, which is in Construction, opens
+"Create an ITP" and "Raise a non-conformance", while "Record an inspection"
+stays shut and says why: nothing can be inspected against a plan the other side
+has not agreed. That is the whole point of the ITP approval built above, and it
+is now the difference between a locked button and an explained one.

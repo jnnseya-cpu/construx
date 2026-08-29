@@ -133,6 +133,15 @@ export async function construction(root) {
     'No method statement is approved on this project. A permit is issued against one, and the platform refuses a permit ' +
     'that cites a draft.';
   const noOpenPlan = 'No inspection and test plan is open. An inspection is recorded against a stage of one.';
+  // An inspection can only be recorded against a plan the other side has
+  // agreed, so an unapproved plan is not an available one. Offering the action
+  // and letting the platform refuse it would be a lock in the wrong place.
+  const agreedPlans = openPlans.filter((p) => p.approvalStatus === 'APPROVED');
+  const unagreedPlans = openPlans.filter((p) => p.approvalStatus !== 'APPROVED');
+  const noAgreedPlan =
+    unagreedPlans.length > 0
+      ? `${unagreedPlans.length} plan(s) are written and not yet agreed. Nothing can be inspected against a plan the other side has not approved.`
+      : noOpenPlan;
   const noOpenNcr = 'No non-conformance is open.';
 
   render(
@@ -178,8 +187,16 @@ export async function construction(root) {
               label: 'Record an inspection',
               // `C`, matching `recordInspection`. Asking for `U` would have
               // locked out a role that holds create and not update.
-              permitted: can('QUALITY_COMMISSIONING', 'C') && openPlans.length > 0,
-              reason: !can('QUALITY_COMMISSIONING', 'C') ? blockedReason('QUALITY_COMMISSIONING', 'C') : noOpenPlan,
+              permitted: can('QUALITY_COMMISSIONING', 'C') && agreedPlans.length > 0,
+              reason: !can('QUALITY_COMMISSIONING', 'C') ? blockedReason('QUALITY_COMMISSIONING', 'C') : noAgreedPlan,
+            },
+            {
+              id: 'approve-itp',
+              label: 'Agree an ITP',
+              permitted: can('QUALITY_COMMISSIONING', 'A') && unagreedPlans.length > 0,
+              reason: !can('QUALITY_COMMISSIONING', 'A')
+                ? blockedReason('QUALITY_COMMISSIONING', 'A')
+                : 'Every inspection plan on this project has been agreed.',
             },
             { id: 'ncr', label: 'Raise a non-conformance', permitted: can('QUALITY_COMMISSIONING', 'C'), reason: blockedReason('QUALITY_COMMISSIONING', 'C') },
             {
@@ -686,6 +703,42 @@ export async function construction(root) {
             status: 'PENDING',
           })),
       }),
+    },
+    'approve-itp': {
+      title: 'Agree an inspection and test plan',
+      intent:
+        'Approval is the other side agreeing what will be inspected and against what. Nothing can be inspected against a ' +
+        'plan until it happens, and the person who wrote the plan cannot approve it.',
+      path: ({ planId }) => `/v1/projects/${projectId}/quality/plans/${planId}/approve`,
+      submitLabel: 'Agree the plan',
+      fields: [
+        {
+          name: 'planId',
+          label: 'Inspection plan',
+          type: 'select',
+          options: unagreedPlans.map((plan) => ({
+            value: plan._refId,
+            label: `${plan.reference} · ${String(plan.title).slice(0, 50)}`,
+          })),
+        },
+        { name: 'approvedBy', label: 'Approving identity', type: 'text', hint: 'Not the identity that wrote the plan.' },
+        {
+          name: 'approvingRole',
+          label: 'Approving as',
+          type: 'text',
+          placeholder: "Employer's Representative",
+          hint: 'Whose approval this is. It goes on the record beside the plan.',
+        },
+        {
+          name: 'note',
+          label: 'Qualification',
+          type: 'textarea',
+          rows: 3,
+          required: false,
+          hint: 'Approving with comments is normal. Say what they are.',
+        },
+        { name: 'evidenceHash', label: 'Evidence of the approval', type: 'file' },
+      ],
     },
     inspection: {
       title: 'Record an inspection',
