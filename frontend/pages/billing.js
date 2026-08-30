@@ -171,21 +171,33 @@ export async function billing(root) {
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
-          <h2 style="padding:15px 17px 0">Cost attribution by engine</h2>
+          <h2 style="padding:15px 17px 0">Where the spend went</h2>
           ${table({
-            headers: ['Engine', 'Executions', 'Provider cost', 'Billed', 'Share'],
-            align: ['', 'num', 'num', 'num', ''],
+            headers: ['Module', 'Ran on', 'Runs', 'Provider cost', 'Billed', 'Share'],
+            align: ['', '', 'num', 'num', 'num', ''],
             rows: attribution.attribution.map((a) => [
               humanise(a.module),
+              // Not every line here is a model, and saying so is the point.
+              // A document render and a site reconstruction are arithmetic this
+              // platform performs; billed the same way, but nothing was sent to
+              // a vendor and nobody was charged for a model thinking. Labelling
+              // them all "engine" told the customer their site data had been
+              // through one.
+              a.basis === 'LOCAL'
+                ? badge('This platform', 'ok')
+                : a.basis === 'MIXED'
+                  ? badge('Both', 'warn')
+                  : badge('A model', ''),
               a.calls,
               exact(a.rawCostMinor),
               exact(a.billedMinor),
               track(totalBilled === 0 ? 0 : (a.billedMinor / totalBilled) * 100),
             ]),
-            empty: 'No AI usage recorded yet',
+            empty: 'Nothing has been charged yet',
           })}
           <div style="padding:0 17px 15px"><div class="metric-sub">
-            Every line traces to tenant, project, user, engine and feature — which is what makes an AI bill explainable rather than a lump sum.
+            Every line traces to tenant, project, user, module and feature — which is what makes the bill explainable
+            rather than a lump sum. "Ran on" says whether a vendor's model was called or the work was done here.
           </div></div>
         </div>
 

@@ -14628,7 +14628,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/billing/attribution',
-    description: 'AI cost attribution by engine',
+    description: 'Where the ACU spend went, by module, and whether each was a model or local compute',
     handler: (platform, ctx) => ({
       attribution: platform
         .wallet(authoriseTenant(ctx, 'BILLING_ACU', 'R').tenantId)

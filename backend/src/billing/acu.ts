@@ -630,19 +630,40 @@ export class ACUWallet {
   }
 
   /** Cost attribution per engine — the "explainable AI billing" audit view. */
-  attributionByModule(month?: string): Array<{ module: string; rawCostMinor: number; billedMinor: number; calls: number }> {
-    const grouped = new Map<string, { rawCostMinor: number; billedMinor: number; calls: number }>();
+  attributionByModule(
+    month?: string,
+  ): Array<{ module: string; rawCostMinor: number; billedMinor: number; calls: number; basis: 'MODEL' | 'LOCAL' | 'MIXED' }> {
+    const grouped = new Map<string, { rawCostMinor: number; billedMinor: number; calls: number; local: number }>();
     for (const entry of this.entries({ month })) {
       if (entry.type !== 'DEBIT') continue;
       const key = entry.module ?? 'UNATTRIBUTED';
-      const bucket = grouped.get(key) ?? { rawCostMinor: 0, billedMinor: 0, calls: 0 };
+      const bucket = grouped.get(key) ?? { rawCostMinor: 0, billedMinor: 0, calls: 0, local: 0 };
       bucket.rawCostMinor += entry.rawCostMinor;
       bucket.billedMinor += entry.billedMinor;
       bucket.calls += 1;
+      // `LOCAL` is what the wallet is handed for compute this platform performs
+      // itself — a document render, a reconstruction, a segmentation. Everything
+      // else settled against a named vendor.
+      if (entry.provider === 'LOCAL') bucket.local += 1;
       grouped.set(key, bucket);
     }
     return [...grouped.entries()]
-      .map(([module, totals]) => ({ module, ...totals }))
+      .map(([module, totals]) => ({
+        module,
+        rawCostMinor: totals.rawCostMinor,
+        billedMinor: totals.billedMinor,
+        calls: totals.calls,
+        // Carried out rather than left to the screen to infer.
+        //
+        // This list is not what it was. It used to be AI engines and nothing
+        // else, and it is now billed either way — a document render and a site
+        // reconstruction sit in it, and both are arithmetic this platform runs
+        // rather than a model somebody was charged for thinking. A customer
+        // reading "Site capture, 5 executions" beside "BIM twin" would
+        // reasonably conclude a model had been run over their site, which is a
+        // statement about where their data went and not merely a label.
+        basis: totals.local === totals.calls ? ('LOCAL' as const) : totals.local === 0 ? ('MODEL' as const) : ('MIXED' as const),
+      }))
       .sort((a, b) => b.billedMinor - a.billedMinor);
   }
 

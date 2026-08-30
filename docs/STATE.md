@@ -11291,6 +11291,32 @@ ring it is. Nothing in the platform now depends on that behaviour — the one
 caller that did has been changed — but it is a trap for the next caller, and
 changing a function eleven things already use is not in scope for this work.
 
+**A defect the metering created, found by driving the console.** The ACU
+attribution panel was headed "Cost attribution by engine", its column was
+"Engine", and its empty state read "No AI usage recorded yet". That was true
+when every line in it was an AI engine. It stopped being true when document
+rendering started billing through the same wallet, and adding the spatial stages
+made it worse and more visible: a customer reading "Engine: Site capture, 5
+executions" beside "Engine: BIM twin" would reasonably conclude a model had been
+run over their site capture. That is a statement about where their data went,
+not a caption.
+
+`attributionByModule` now returns `basis` — `MODEL`, `LOCAL` or `MIXED`, derived
+from whether the debits settled against a named vendor or against `LOCAL` — and
+the panel is "Where the spend went", with a "Ran on" column reading *A model* or
+*This platform*. A module that did both is `MIXED` rather than rounded to
+either: rounding to `MODEL` overstates where the data went, and rounding to
+`LOCAL` understates it, which is worse. The route description said "AI cost
+attribution by engine" and now says what it does.
+
+Verified on the running console, not only in a test: `SITE_CAPTURE` appears on
+the owner's statement at 4 runs and £2.00 billed, marked *This platform*, beside
+seven AI modules marked *A model*.
+
+**Recorded, not fixed (cosmetic).** `humanise` renders an underscore as " and ",
+which is right for `RISK_SAFETY` and `HANDOVER_OM` and gives "BIM and twin" for
+`BIM_TWIN`. Pre-existing and P4.
+
 **Still not built.** A dense-stereo provider and a material-classification
 provider, both declared and both unserved: they need hardware and a trained
 model, and the registry says so rather than pretending otherwise.

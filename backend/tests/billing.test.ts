@@ -166,6 +166,34 @@ describe('ACU wallet', () => {
     assert.equal(attribution.find((a) => a.module === 'TENDER')?.calls, 1);
   });
 
+  it('says whether each module ran on a model or on this platform', () => {
+    // This list used to be AI engines and nothing else. It is now billed either
+    // way — a document render and a site reconstruction are in it, and both are
+    // arithmetic this platform performs rather than a model somebody was
+    // charged for thinking. The screen labelled every row "Engine", so a
+    // customer reading "Site capture, 5 executions" beside "BIM twin" would
+    // conclude their site data had been through a model. That is a statement
+    // about where their data went, not a caption.
+    const w = wallet(100_000);
+    const spend = (module: string, provider: string, request: string) => {
+      const hold = w.reserve({ aiRequestId: request, estimatedRawCostMinor: 100, module });
+      w.settle(hold.holdId, 100, provider);
+    };
+    spend('TENDER', 'OPENAI', 'r1');
+    spend('SITE_CAPTURE', 'LOCAL', 'r2');
+    spend('SITE_CAPTURE', 'LOCAL', 'r3');
+    spend('BIM_TWIN', 'OPENAI', 'r4');
+    spend('BIM_TWIN', 'LOCAL', 'r5');
+
+    const by = new Map(w.attributionByModule().map((row) => [row.module, row.basis]));
+    assert.equal(by.get('TENDER'), 'MODEL');
+    assert.equal(by.get('SITE_CAPTURE'), 'LOCAL', 'compute this platform performed was presented as a model call');
+    // A module that did both must not claim to be either. Rounding it to
+    // "MODEL" overstates where the data went; rounding it to "LOCAL"
+    // understates it, which is worse.
+    assert.equal(by.get('BIM_TWIN'), 'MIXED');
+  });
+
   it('grants the free trial credit without a payment method', () => {
     const w = new ACUWallet('tenant-trial');
     w.grantTrialCredit();
