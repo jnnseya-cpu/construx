@@ -325,6 +325,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // is walked before construction starts, and FIELD_EXECUTION is phase-gated to
   // CONSTRUCTION and COMMISSIONING. Its output is constraints, and that is the
   // area that already owns them.
+  // The walk and the constraints it produced. Same area as the site visit
+  // because it is the same register reached from a phone, and no more sensitive
+  // than the findings it sits beside — the raw imagery is a separate concern
+  // and does not live on this entity.
+  CaptureMission: { area: 'LOOKAHEAD_CONSTRAINTS' },
   SiteVisit: { area: 'LOOKAHEAD_CONSTRAINTS' },
   SiteFinding: { area: 'LOOKAHEAD_CONSTRAINTS' },
   SiteLogisticsPlan: { area: 'LOOKAHEAD_CONSTRAINTS' },

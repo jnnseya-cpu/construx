@@ -63,6 +63,7 @@ import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
 import * as integrator from '../domain/integrator.ts';
 import * as responsibility from '../domain/responsibility.ts';
+import * as sitecapture from '../domain/sitecapture.ts';
 import * as regulatorycompletion from '../domain/regulatorycompletion.ts';
 import * as reliability from '../domain/reliability.ts';
 import * as informationcontrol from '../domain/informationcontrol.ts';
@@ -4313,6 +4314,112 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => integrator.drawContingency(projectContext(platform, ctx), body(ctx)),
+  },
+  // ---------------------------------------------- the three-minute site capture
+  {
+    method: 'GET',
+    pattern: '/v1/site-capture/protocol',
+    description: 'The three-minute capture protocol: stages, what each is for, and the directions the coach gives',
+    // Published rather than held in the app, on the same argument as the
+    // permission matrix and the phase gates: the browser holds no rule the API
+    // does not publish, and a device carrying its own copy of the protocol
+    // would drift from the one the brief is scored against.
+    handler: () => sitecapture.captureProtocol(),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-capture',
+    description: 'Capture missions on this project, with what each may honestly be called',
+    handler: (platform, ctx) => ({ missions: sitecapture.missionBoard(projectContext(platform, ctx)) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-capture',
+    description: 'Open a three-minute guided capture mission',
+    schema: {
+      type: 'object',
+      required: ['purpose', 'deviceTier'],
+      properties: {
+        purpose: { type: 'string', enum: sitecapture.MISSION_PURPOSE },
+        // Declared once, here, and never again. It is a fact about the hardware
+        // rather than a quality anybody may improve later by asserting it, and
+        // it is half of what decides the accuracy class.
+        deviceTier: { type: 'string', enum: Object.keys(sitecapture.DEVICE_TIER) },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => sitecapture.startMission(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-capture/:missionId/constraints',
+    description: 'Record a constraint spoken or marked during the capture, and get the practical responses to it',
+    schema: {
+      type: 'object',
+      required: ['type', 'description', 'severity', 'source'],
+      properties: {
+        type: { type: 'string', enum: Object.keys(sitecapture.CONSTRAINT_TYPE) },
+        description: { type: 'string', minLength: 8, maxLength: 2000 },
+        severity: { type: 'string', enum: ['HARD', 'OPTIMISABLE'] },
+        source: { type: 'string', enum: ['SPOKEN', 'MARKED', 'DRAWING', 'CONSENT', 'THIRD_PARTY'] },
+        locationNote: { type: 'string', maxLength: 500 },
+        effectiveFrom: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        effectiveTo: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        requiredVerification: { type: 'string', maxLength: 500 },
+        responsibleParty: { type: 'string', maxLength: 200 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      sitecapture.recordConstraint(projectContext(platform, ctx), {
+        missionId: String(ctx.params.missionId),
+        ...body<Omit<Parameters<typeof sitecapture.recordConstraint>[1], 'missionId'>>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-capture/:missionId/complete',
+    description: 'Close the capture, declaring which stages were actually covered',
+    schema: {
+      type: 'object',
+      required: ['stagesCovered', 'capturedSeconds'],
+      properties: {
+        stagesCovered: {
+          type: 'array',
+          minItems: 1,
+          items: { type: 'string', enum: sitecapture.CAPTURE_PROTOCOL.map((stage) => stage.key) },
+        },
+        capturedSeconds: { type: 'integer', minimum: 1, maximum: 180 },
+        controlPoints: { type: 'integer', minimum: 0, maximum: 100 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      sitecapture.completeMission(projectContext(platform, ctx), {
+        missionId: String(ctx.params.missionId),
+        ...body<Omit<Parameters<typeof sitecapture.completeMission>[1], 'missionId'>>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-capture/:missionId/baseline',
+    description: 'Authorise a controlled capture as the site baseline later scans are compared against',
+    schema: {
+      type: 'object',
+      properties: { conditions: { type: 'string', maxLength: 1000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      sitecapture.approveAsBaseline(projectContext(platform, ctx), {
+        missionId: String(ctx.params.missionId),
+        ...body<{ conditions?: string }>(ctx),
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-capture/:missionId',
+    description: 'The capture brief: what may be claimed, every constraint with its response, and what the three minutes could not settle',
+    handler: (platform, ctx) => sitecapture.captureBrief(projectContext(platform, ctx), String(ctx.params.missionId)),
   },
   {
     method: 'GET',

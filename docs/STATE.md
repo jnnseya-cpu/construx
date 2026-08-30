@@ -10857,3 +10857,77 @@ costs nothing extra on a package with ten included seats, but it means the
 audit trail shows two people where there is one, and stacking those roles is
 what defeats the certification separation above. The seat model already prices
 a sole trader; the permission model does not yet describe one.
+
+
+### SiteCapture: three minutes on site, and what may honestly be claimed
+
+Two specifications describe one module — CX-SCAP and the Site Spatial Twin —
+and both target a stack this repository settled against: NestJS, Kafka, PostGIS,
+GCS, Vertex AI GPU pools, COLMAP/OpenMVS, CesiumJS, Expo React Native.
+Photogrammetry, 3D Tiles, orthomosaics and GPU segmentation cannot live here;
+that follows from the zero-runtime-dependency decision, not from a preference.
+
+What the two documents agree on is the part that never needed pixels, and it is
+the part with the commercial proposition in it: *scan for three minutes, and the
+platform tells the construction manager what the constraints are and what to do
+about each.* The constraints come from the person standing there in the last
+thirty seconds, not from reconstruction. The responses are ordinary practice.
+Neither needs a GPU.
+
+`domain/sitecapture.ts` builds that, around the rule both specifications call
+non-negotiable.
+
+**The class is derived, never declared.** Four classes — conceptual, measured
+reconnaissance, project controlled, approved baseline — computed from the device
+tier and the control points on the record. A video-only walk is `CONCEPTUAL`
+however it is labelled, and six control points observed on video do not promote
+it, because a device that cannot measure did not measure them. Three control
+points is the floor for `PROJECT_CONTROLLED`: two fit a transform with nothing
+left to check it against. Every brief leads with what may and may not be claimed
+— *"nothing here may be scaled or built to"* — because a report that buries its
+accuracy class is read as a survey, and somebody sets a compound out against it.
+
+**Every constraint carries a response.** Twenty-one constraint types, each with
+at least two practical answers in the manager's own idiom: a narrow gate gets
+widening, timed deliveries or smaller vehicles; weak ground gets geotextile and
+a stone platform, a load restriction, or a different laydown. A rulepack rather
+than a prompt, because the answer to a narrow entrance does not vary by site and
+a model asked to invent one would sometimes invent a wrong one. The responses
+come back at the moment the constraint is recorded, not in a report later — the
+cheapest moment to act on it is while somebody is still on the ground.
+
+**A stage not walked is not a lower-confidence answer.** The brief names each
+uncovered stage, what is therefore unanswerable, and the directions to close it
+on the next burst. A hard constraint with nothing that would verify it is
+refused outright: "the ground is weak" with no trial hole named is an opinion
+that gets treated as a fact later.
+
+**What it does not do, said in the brief rather than left out.** No 3D model, no
+orthomosaic, no dimensioned drawing, no positioned layout. `sitevisit.ts`
+already refuses to draw a logistics plan without the geometry behind it, and
+that decision stands; SiteCapture is the missing input to it, not a replacement.
+A brief that simply omitted the site model would be read as "there wasn't one
+worth showing" rather than "the platform does not make one".
+
+**Reuse rather than a parallel model.** The constraints are `LOOKAHEAD_CONSTRAINTS`
+— the same register, reached from a phone. The authority split falls out of the
+existing role matrix and matches the specification's own: the construction
+manager opens the mission on `FIELD_EXECUTION`, records constraints on
+`LOOKAHEAD_CONSTRAINTS` `C`, and setting the baseline needs `A`. The protocol
+and the constraint catalogue are published from `/v1/site-capture/protocol`, on
+the same argument as the permission matrix: the browser holds no list the API
+does not publish.
+
+Panel and four commands on Field Execution. Fourteen mutations fail a test.
+Driven in a browser as the construction manager: a video-only walk with four
+control points came back `CONCEPTUAL`, the baseline was refused with *"a
+comparison with a guess"*, a hard constraint with no verification was refused,
+and the brief listed both constraints with their responses, the one unreached
+stage with its next-burst directions, and the verification schedule.
+
+**What is not built.** Reconstruction, semantic segmentation, vectorisation, the
+2D/3D deliverables, change detection and the layout optimiser. The provider
+interface for reconstruction is *not* built either — deliberately, so nothing
+declares a seam before there is something to put behind it. The Zone Taxonomy
+overlaps `LOGISTICS_ELEMENT` nine ways and must extend it rather than sit beside
+it; that merge is not done.

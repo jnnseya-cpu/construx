@@ -52,6 +52,143 @@ const VISION_TASKS = [
   { task: 'DEFECT_DETECTION', label: 'Defects', lands: 'one NCR per defect, each closed on its own' },
 ];
 
+const ACCURACY_TONE = {
+  CONCEPTUAL: 'warn',
+  MEASURED_RECON: '',
+  PROJECT_CONTROLLED: 'ok',
+  APPROVED_BASELINE: 'ok',
+};
+
+/**
+ * The three-minute capture, and what it is honestly worth.
+ *
+ * The class leads, before any finding. A brief that opened with constraints and
+ * mentioned its accuracy at the bottom would be read as a survey — which is the
+ * one thing this must never be taken for, because somebody sets a compound out
+ * against it.
+ *
+ * Everything below is either something the manager said on site or a response
+ * that is ordinary practice against it. Nothing here was measured from geometry,
+ * and the panel says so rather than leaving the absence to be read as a result.
+ */
+function capturePanel(missions, brief) {
+  if (missions?.error) {
+    return html`<div class="card" style="margin-bottom:14px">
+      <h2>Three-minute site capture</h2>
+      <p class="metric-sub">This could not be read: ${missions.error.message}</p>
+    </div>`;
+  }
+
+  const rows = missions?.missions ?? [];
+
+  return html`
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">Three-minute site capture</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        A guided walk in four stages: the entrance and boundary, then what is already there, then the ground the
+        compound would occupy, then the constraints only the person standing there knows.
+      </p>
+
+      ${
+        rows.length === 0
+          ? html`<div style="padding:11px 17px 15px">
+              <div class="notice"><div>No capture has been run on this project. The walk takes three minutes and
+              produces the constraints register, the responses to each, and a list of what it could not settle.</div></div>
+            </div>`
+          : html`${table({
+              headers: ['Mission', 'Purpose', 'What it may be called', 'Constraints', 'Started'],
+              align: ['', '', '', 'num', ''],
+              rows: rows.map((mission) => [
+                html`<button class="btn quiet" data-brief="${mission.missionId}">${mission.missionId.slice(-6)}</button>`,
+                humanise(mission.purpose),
+                badge(humanise(mission.accuracyClass), ACCURACY_TONE[mission.accuracyClass] ?? 'warn'),
+                String(mission.constraints),
+                date(mission.startedAt),
+              ]),
+            })}`
+      }
+
+      ${brief ? briefDetail(brief) : ''}
+    </div>
+  `;
+}
+
+/** The brief itself: class first, then constraints with responses, then the gaps. */
+function briefDetail(brief) {
+  return html`
+    <div id="capture-brief" style="padding:13px 17px 16px;scroll-margin-top:68px;border-top:1px solid var(--line)">
+      <div class="notice ${raw(brief.accuracyClass === 'CONCEPTUAL' ? 'warn' : 'ok')}">
+        <div>
+          <b>${humanise(brief.accuracyClass)}</b> — ${brief.classBasis}<br>
+          <b>May be relied on for:</b> ${brief.mayClaim}<br>
+          <b>May not be used for:</b> ${brief.mayNotClaim}
+        </div>
+      </div>
+
+      <p style="font-size:12.5px;color:var(--text-3);margin:11px 0 0">${brief.summary}</p>
+
+      <h2 style="margin-top:14px">Constraints, and what to do about each</h2>
+      ${
+        brief.constraints.length === 0
+          ? html`<p class="metric-sub">Nothing was recorded in the last thirty seconds of the walk. That is the stage
+            that captures what no scan can see, so an empty list here usually means it was skipped rather than that
+            the site has no constraints.</p>`
+          : html`<div class="split-list">
+              ${brief.constraints.map(
+                (item) => html`<div class="row" style="display:block">
+                  <div class="lbl">
+                    ${badge(item.constraint.severity === 'HARD' ? 'Hard' : 'Optimisable', item.constraint.severity === 'HARD' ? 'err' : 'warn')}
+                    <b>${item.typeLabel}</b> — ${item.constraint.description}
+                    ${item.constraint.locationNote ? html`<span style="color:var(--text-3)"> (${item.constraint.locationNote})</span>` : ''}
+                  </div>
+                  <ul style="margin:6px 0 0 18px;font-size:12.5px;color:var(--text-2)">
+                    ${item.responses.map((response) => html`<li>${response}</li>`)}
+                  </ul>
+                </div>`,
+              )}
+            </div>`
+      }
+
+      ${
+        brief.verificationSchedule.length > 0
+          ? html`<h2 style="margin-top:14px">Before any of this is relied on</h2>
+            ${table({
+              headers: ['What', 'What would settle it', 'Who', ''],
+              rows: brief.verificationSchedule.map((item) => [
+                item.subject,
+                item.verification,
+                item.responsibleParty,
+                badge(item.severity === 'HARD' ? 'Hard' : 'Optimisable', item.severity === 'HARD' ? 'err' : 'warn'),
+              ]),
+            })}`
+          : ''
+      }
+
+      ${
+        brief.gaps.length > 0
+          ? html`<h2 style="margin-top:14px">What the three minutes did not reach</h2>
+            <div class="split-list">
+              ${brief.gaps.map(
+                (gap) => html`<div class="row" style="display:block">
+                  <div class="lbl"><b>${humanise(gap.stage)}</b> — ${gap.purpose}</div>
+                  <div style="font-size:12px;color:var(--text-3);margin-top:3px">${gap.unanswered}</div>
+                  <div style="font-size:12px;color:var(--text-2);margin-top:5px">
+                    <b>Next burst:</b> ${gap.nextBurstDirections.join(' · ')}
+                  </div>
+                </div>`,
+              )}
+            </div>`
+          : ''
+      }
+
+      <h2 style="margin-top:14px">Not produced here</h2>
+      <ul style="margin:4px 0 0 18px;font-size:12.5px;color:var(--text-3)">
+        ${brief.notProduced.map((line) => html`<li>${line}</li>`)}
+      </ul>
+    </div>
+  `;
+}
+
 /**
  * Reading a site photograph.
  *
@@ -297,6 +434,22 @@ export async function field(root) {
   // losing side, and until these were recorded the only trace of a discarded
   // site record was a line in a response the handset may never have received.
   const conflicts = await api.get(`/v1/projects/${projectId}/sync/conflicts`).catch(() => null);
+
+  // The three-minute capture. The board is cheap; the brief is only fetched for
+  // the mission a person actually opened, because it carries every constraint
+  // with its full response set and a project with twenty walks would otherwise
+  // ship all of them to a screen showing one.
+  const missions = await api.get(`/v1/projects/${projectId}/site-capture`).catch((error) => ({ error }));
+  // The protocol and the constraint catalogue come from the server, on the same
+  // argument as the permission matrix: the browser holds no list the API does
+  // not publish, so the picker and the rulepack behind it cannot drift apart.
+  const protocol = await api.get('/v1/site-capture/protocol').catch(() => null);
+  const CONSTRAINT_TYPES = (protocol?.constraintTypes ?? []).map((type) => ({ value: type.code, label: type.label }));
+  const openMission = state.captureMission ?? null;
+  const brief = openMission
+    ? await api.get(`/v1/projects/${projectId}/site-capture/${openMission}`).catch(() => null)
+    : null;
+
   const openObservations = b.SiteObservation.filter((o) => o.status === 'OPEN');
 
   const measured = b.Task.filter((t) => Number(t.percentComplete ?? 0) > 0);
@@ -337,6 +490,14 @@ export async function field(root) {
               // calls voice-first an adoption requirement rather than a
               // convenience, and a button placed fifth is a convenience.
               { id: 'dictate', label: 'Walk and record', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
+              // The three-minute capture. Opening a mission is field work;
+              // recording what it found is a constraint, and setting the result
+              // as the baseline is an approval — three different authorities on
+              // one walk, which is the specification's own authority matrix.
+              { id: 'capture', label: 'Start a 3-minute capture', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
+              { id: 'constraint', label: 'Record a constraint', permitted: can('LOOKAHEAD_CONSTRAINTS', 'C'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C') },
+              { id: 'capture-complete', label: 'Close the capture', permitted: can('FIELD_EXECUTION', 'U'), reason: blockedReason('FIELD_EXECUTION', 'U') },
+              { id: 'baseline', label: 'Set as site baseline', permitted: can('LOOKAHEAD_CONSTRAINTS', 'A'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'A') },
               { id: 'progress', label: 'Record progress', tone: '', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
               { id: 'observation', label: 'Log safety observation', permitted: can('SAFETY_RAMS', 'C'), reason: blockedReason('SAFETY_RAMS', 'C') },
               { id: 'work-order', label: 'Raise work order', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
@@ -382,6 +543,8 @@ export async function field(root) {
               })}
             </div>`
       }
+
+      ${capturePanel(missions, brief)}
 
       ${conflictPanel(conflicts)}
 
@@ -1070,12 +1233,152 @@ export async function field(root) {
         { name: 'evidenceHash', label: 'Closeout evidence', type: 'file', required: false },
       ],
     },
+
+    // ── The three-minute capture ─────────────────────────────────────────────
+    capture: {
+      title: 'Start a three-minute capture',
+      intent:
+        'Four stages in three minutes: the entrance and boundary, what is already there, the ground the compound ' +
+        'would occupy, and the constraints only you know. The device tier is declared once and decides what the ' +
+        'result may honestly be called \u2014 a phone with no depth sensor produces a conceptual record however it is labelled.',
+      path: `/v1/projects/${projectId}/site-capture`,
+      submitLabel: 'Start',
+      fields: [
+        {
+          name: 'purpose',
+          label: 'Why this walk',
+          type: 'select',
+          options: [
+            { value: 'RECON', label: 'Reconnaissance \u2014 an unfamiliar site' },
+            { value: 'TENDER_LOGISTICS', label: 'Tender logistics \u2014 evidence for the bid' },
+            { value: 'BASELINE', label: 'Baseline \u2014 the record later scans compare against' },
+            { value: 'PROGRESS_DELTA', label: 'Progress \u2014 what has changed' },
+            { value: 'INCIDENT_REPLAN', label: 'Incident re-plan \u2014 access or an area is lost' },
+          ],
+        },
+        {
+          name: 'deviceTier',
+          label: 'What this device can do',
+          type: 'select',
+          options: [
+            { value: 'VIDEO_ONLY', label: 'Video and location only' },
+            { value: 'VISUAL_INERTIAL', label: 'Camera with tracked pose' },
+            { value: 'LIDAR', label: 'Depth or LiDAR capable' },
+            { value: 'SURVEY_ASSISTED', label: 'Depth or pose, plus imported survey control' },
+          ],
+          hint: 'Declared once. Nothing later can raise it, because it is a fact about the hardware.',
+        },
+      ],
+    },
+
+    constraint: {
+      title: 'Record a constraint',
+      intent:
+        'The last thirty seconds, and the most valuable part of the walk. A constraint is what you already know and ' +
+        'nothing can infer \u2014 one entrance, deliveries after nine, the ground goes soft by the gate. Each one comes ' +
+        'back with the practical responses to it.',
+      path: () => `/v1/projects/${projectId}/site-capture/${state.captureMission}/constraints`,
+      submitLabel: 'Record',
+      fields: [
+        {
+          name: 'type',
+          label: 'What kind',
+          type: 'select',
+          options: CONSTRAINT_TYPES,
+        },
+        { name: 'description', label: 'In your words', type: 'textarea', rows: 2,
+          hint: 'Enough for somebody who was not there to act on it' },
+        {
+          name: 'severity',
+          label: 'Hard or optimisable',
+          type: 'select',
+          options: [
+            { value: 'HARD', label: 'Hard \u2014 no layout may trade this away' },
+            { value: 'OPTIMISABLE', label: 'Optimisable \u2014 a preference to score against' },
+          ],
+          hint: 'A preference recorded as hard makes every option look infeasible.',
+        },
+        {
+          name: 'source',
+          label: 'Where this came from',
+          type: 'select',
+          options: [
+            { value: 'SPOKEN', label: 'Spoken on the walk' },
+            { value: 'MARKED', label: 'Marked on the map' },
+            { value: 'DRAWING', label: 'From a drawing' },
+            { value: 'CONSENT', label: 'From a consent or condition' },
+            { value: 'THIRD_PARTY', label: 'From a third party' },
+          ],
+        },
+        { name: 'locationNote', label: 'Where on site', type: 'text', required: false,
+          placeholder: 'North-east corner, by the existing gate' },
+        { name: 'requiredVerification', label: 'What would settle it', type: 'text', required: false,
+          hint: 'Required for a hard constraint. A trial hole, a service drawing, the DNO\u2019s stated clearance.' },
+        { name: 'responsibleParty', label: 'Who owns it', type: 'text', required: false },
+        { name: 'effectiveFrom', label: 'From', type: 'date', required: false },
+        { name: 'effectiveTo', label: 'Until', type: 'date', required: false },
+      ],
+    },
+
+    'capture-complete': {
+      title: 'Close the capture',
+      intent:
+        'Declare which stages you actually covered. A stage you did not reach is not a lower-confidence answer \u2014 ' +
+        'the brief names it as unreached and gives you the directions to close it on the next burst.',
+      path: () => `/v1/projects/${projectId}/site-capture/${state.captureMission}/complete`,
+      submitLabel: 'Close',
+      fields: [
+        {
+          name: 'stagesCovered',
+          label: 'Stages actually covered',
+          type: 'multiselect',
+          options: [
+            { value: 'ORIENTATION', label: '0\u201330s \u2014 entrance, orientation, boundary' },
+            { value: 'SITE_CONTEXT', label: '30\u201390s \u2014 access, terrain, structures, obstructions' },
+            { value: 'PROPOSED_AREAS', label: '90\u2013150s \u2014 compound, laydown, plant and delivery areas' },
+            { value: 'CONSTRAINTS', label: '150\u2013180s \u2014 the constraints you named' },
+          ],
+        },
+        { name: 'capturedSeconds', label: 'Seconds captured', type: 'number', step: '1', value: '180' },
+        { name: 'controlPoints', label: 'Survey control points observed', type: 'number', step: '1', required: false,
+          hint: 'Three or more, on a device that measures, is what makes the result project controlled.' },
+      ],
+      transform: (v) => ({
+        stagesCovered: Array.isArray(v.stagesCovered) ? v.stagesCovered : [v.stagesCovered].filter(Boolean),
+        capturedSeconds: Number(v.capturedSeconds),
+        ...(v.controlPoints ? { controlPoints: Number(v.controlPoints) } : {}),
+      }),
+    },
+
+    baseline: {
+      title: 'Set as the site baseline',
+      intent:
+        'The record every later scan is compared against. Refused unless the capture is project controlled, because ' +
+        'a baseline built on an uncontrolled walk makes every future change report a comparison with a guess.',
+      path: () => `/v1/projects/${projectId}/site-capture/${state.captureMission}/baseline`,
+      submitLabel: 'Set baseline',
+      fields: [
+        { name: 'conditions', label: 'Conditions of approval', type: 'textarea', rows: 2, required: false,
+          hint: 'Anything the approval is expressly conditioned against.' },
+      ],
+    },
   };
 
   // Giving up on a capture is a decision, so it is confirmed and it names what
   // is being lost. The bytes exist nowhere else — that is the whole reason this
   // panel had to be built.
   root.addEventListener('click', async (event) => {
+    // Opening a capture. Held on `state` rather than in the URL because the
+    // brief is a panel on this page, not a route of its own, and a reload
+    // should land on Field Execution rather than on one walk.
+    const openBrief = event.target.closest('[data-brief]');
+    if (openBrief) {
+      state.captureMission = openBrief.dataset.brief;
+      await draw();
+      root.querySelector('#capture-brief')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+
     // The site visit report. Rendered from the ledger every time rather than
     // stored, so a report pulled today reflects what has been discharged since
     // the walk — which is the point of the register outliving the visit.

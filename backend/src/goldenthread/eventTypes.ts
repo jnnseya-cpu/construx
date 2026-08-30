@@ -628,6 +628,19 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // observation is about the state of the work, a finding is about the state of
   // the site, and the second one governs the job for years rather than closing
   // next week.
+  // The three-minute guided capture. A mission is a record of a walk, not of a
+  // model: no event here asserts geometry, because nothing in this platform
+  // reconstructs any. `SPATIAL_BASELINE_SET` is the one that binds — it is what
+  // every later scan is compared against — so it is an APPROVE and, like every
+  // other decision event, no agent may author it.
+  def('CAPTURE_MISSION_STARTED', 'CaptureMission', 'CREATE', 'DELIVERY', { creates: true }),
+  // Spoken or marked by the person standing there. AI may propose one from a
+  // voice note through the perception pipeline, which is why this is the one
+  // event of the four an agent may write — it is an observation, and it still
+  // reaches the register as a draft a person confirms.
+  def('SITE_CONSTRAINT_RECORDED', 'CaptureMission', 'UPDATE', 'DELIVERY', { aiAllowed: true }),
+  def('CAPTURE_MISSION_COMPLETED', 'CaptureMission', 'UPDATE', 'DELIVERY'),
+  def('SPATIAL_BASELINE_SET', 'CaptureMission', 'APPROVE', 'DELIVERY'),
   def('SITE_VISIT_RECORDED', 'SiteVisit', 'CREATE', 'DELIVERY', { creates: true }),
   // A finding observed on site carries its photograph. One read from a document
   // carries its source instead, which is why evidence is required by the engine
