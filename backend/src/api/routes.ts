@@ -4542,6 +4542,63 @@ export const ROUTES: Route[] = [
       }),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-model/:modelId/reconstruct-depth',
+    description: 'Build a surface from one depth image the device measured, for a handset with a depth sensor',
+    schema: {
+      type: 'object',
+      required: ['pose', 'depth'],
+      properties: {
+        pose: {
+          type: 'object',
+          required: ['frameId', 'position', 'rotation', 'intrinsics'],
+          properties: {
+            frameId: { type: 'string', minLength: 1, maxLength: 80 },
+            position: {
+              type: 'object',
+              required: ['x', 'y', 'z'],
+              properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } },
+              additionalProperties: false,
+            },
+            rotation: { type: 'array', minItems: 9, maxItems: 9, items: { type: 'number' } },
+            intrinsics: {
+              type: 'object',
+              required: ['fx', 'fy', 'cx', 'cy'],
+              properties: {
+                fx: { type: 'number', exclusiveMinimum: 0 },
+                fy: { type: 'number', exclusiveMinimum: 0 },
+                cx: { type: 'number' },
+                cy: { type: 'number' },
+              },
+              additionalProperties: false,
+            },
+          },
+          additionalProperties: false,
+        },
+        depth: {
+          type: 'object',
+          required: ['frameId', 'width', 'height', 'samples'],
+          properties: {
+            frameId: { type: 'string', minLength: 1, maxLength: 80 },
+            // A depth image is small by design — ARKit's is 256 × 192. The cap is
+            // an order of magnitude above that and two below a colour frame,
+            // which is the size of thing that would arrive by mistake.
+            width: { type: 'integer', minimum: 2, maximum: 1024 },
+            height: { type: 'integer', minimum: 2, maximum: 1024 },
+            samples: { type: 'array', minItems: 4, maxItems: 262144, items: { type: 'number' } },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      sitemodel.reconstructFromDepth(projectContext(platform, ctx), {
+        modelId: String(ctx.params.modelId),
+        ...body<Omit<Parameters<typeof sitemodel.reconstructFromDepth>[1], 'modelId'>>(ctx),
+      }),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/site-model/:modelId/segmentation',
     description: 'The captured ground segmented into regions by form, with what each would take',

@@ -677,3 +677,42 @@ describe('the level under a point', () => {
     assert.equal(geo.heightAt(ramp, { x: 100, y: 100 }), undefined);
   });
 });
+
+describe('the smallest and largest of a great many numbers', () => {
+  /**
+   * The crash a small test mesh cannot find.
+   *
+   * `Math.min(...values)` passes one argument per element, and past a few tens
+   * of thousands of them the engine's stack is gone: `RangeError: Maximum call
+   * stack size exceeded`, surfacing as a 500 rather than as a slow answer. Three
+   * call sites in the segmenter and two in the reconstruction solver were
+   * written that way, and every one was correct on the ten-triangle fixtures
+   * they were tested against.
+   *
+   * It took a real depth image to find. A 256 × 192 frame — what ARKit's
+   * `sceneDepth` actually hands over — is 92,900 triangles and 278,700 levels,
+   * and segmenting one failed outright.
+   */
+  it('handles more values than a spread call could pass', () => {
+    const many = Array.from({ length: 300_000 }, (_, index) => index - 150_000);
+    // Proof that the array really is past the limit: written the old way, this
+    // is the failure. If a future engine raises the cap this assertion is what
+    // says the test no longer covers what it was written for.
+    assert.throws(() => Math.min(...many), RangeError);
+
+    const { min, max } = geo.extent(many);
+    assert.equal(min, -150_000);
+    assert.equal(max, 149_999);
+  });
+
+  it('answers as Math.min and Math.max do on nothing at all', () => {
+    // A caller testing Number.isFinite reads the same result either way, which
+    // is what the segmenter's ponding check does with an unreachable boundary.
+    assert.deepEqual(geo.extent([]), { min: Infinity, max: -Infinity });
+  });
+
+  it('finds both ends in one pass over the same values', () => {
+    assert.deepEqual(geo.extent([3, -1, 7, 7, 0]), { min: -1, max: 7 });
+    assert.deepEqual(geo.extent([2.5]), { min: 2.5, max: 2.5 });
+  });
+});

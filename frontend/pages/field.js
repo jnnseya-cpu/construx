@@ -245,9 +245,10 @@ function geometryDetail(view, allModels, comparison, segmentation, reconstructio
 
       ${
         reconstruction
-          ? html`<h2 style="margin-top:14px">Reconstruction from a device with no depth sensor</h2>
+          ? html`<h2 style="margin-top:14px">What this platform can reconstruct, and from what</h2>
             <p style="font-size:12.5px;color:var(--text-3);margin:0 0 7px">
-              An ordinary phone tracks its own position and its own feature points, and those are enough to solve the
+              A phone with a depth sensor measures the ground and the platform unprojects what it measured. A phone
+              without one tracks its own position and its own feature points, and those are enough to solve the
               geometry exactly. What the platform cannot do is listed here too, rather than left out — it is what
               decides whether a walk is worth making with the handset somebody actually has.
             </p>

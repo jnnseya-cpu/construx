@@ -223,9 +223,8 @@ export function segment(surface: geo.Surface, options: { minimumRegionSquareMetr
     if (ring.length < 3) continue;
 
     const levels = members.flatMap((member) => member.triangle.map((point) => point.z));
-    const lowest = Math.min(...levels);
-    const highest = Math.max(...levels);
-    const boundaryLowest = Math.min(...ring.map((point) => geo.heightAt(surface, point) ?? Number.POSITIVE_INFINITY));
+    const { min: lowest, max: highest } = geo.extent(levels);
+    const boundaryLowest = geo.extent(ring.map((point) => geo.heightAt(surface, point) ?? Number.POSITIVE_INFINITY)).min;
 
     // A hollow: the ground inside sits below every way out of it. Half of a
     // capture's vertical noise is a few centimetres, so the depth has to be

@@ -11575,3 +11575,75 @@ One design fix fell out of it: the "two camera positions minimum" guard lived on
 the general `reconstruct` path, where it refused a perfectly valid one-frame
 depth-map job. It is a requirement of *solving* depth from parallax, not of
 reconstruction, and it now sits on the provider that needs it.
+
+
+### A capability with a provider and no door, and the crash behind it
+
+The section above left `DEVICE_DEPTH_MAP` implemented, mutation-tested and
+registered as available. Driving the running console found it was reachable from
+nowhere: no route called the provider. A capability register advertising a
+capability nothing can invoke is worse than an empty slot, because the empty
+slot at least tells the truth.
+
+**`POST /v1/projects/:projectId/site-model/:modelId/reconstruct-depth`** now
+serves it, through `sitemodel.reconstructFromDepth`. It writes
+`SITE_SURFACE_RECONSTRUCTED` beside the mesh exactly as the feature-track path
+does, so slope, segmentation, volumes, the drawing and the viewer read a
+depth-sensor capture and a solved one identically. It is metered on the samples
+through `meterSpatialStage`, and the charge lands on the ACU statement under
+`SITE_CAPTURE` with basis `LOCAL`.
+
+It is a **separate entry point** rather than an optional field on
+`reconstructSurface`. One frame is enough here because the distances were
+measured; the two-frame minimum that protects the feature-track solve would be
+wrong on this path, and relaxing it there would let a one-frame photogrammetry
+job succeed at inventing a site.
+
+`noReturnSamples` is reported under its own name rather than as the provider's
+`rejected.degenerate`. On this path that counter holds pixels the sensor got
+nothing back from, which is not the degeneracy the feature-track solve means by
+the word.
+
+#### The defect the small fixtures could never have shown
+
+The first real capture through the new route — a 256 × 192 frame, which is what
+ARKit's `sceneDepth` actually produces — built its 92,900 triangles correctly
+and then **segmentation returned a 500**.
+
+`Math.min(...levels)` passes one argument per element. At 278,700 levels the
+engine's stack is exhausted and the call throws `RangeError: Maximum call stack
+size exceeded`. Not slow — dead. Five call sites were written that way: three in
+`segmentation.ts` and two in `reconstruction.ts`, and every one was correct on
+the two-to-thirty-triangle fixtures they were tested against.
+
+Root cause fixed once, in `geometry.extent`, which finds both ends in one pass
+over an iterable of any size. `geometry.bounds` already did this for rings; the
+number case had no equivalent and so was rewritten by hand each time, wrongly.
+
+The regression tests pin it at both levels. `geometry.test.ts` asserts that the
+array is genuinely past the spread limit — `assert.throws(() =>
+Math.min(...many), RangeError)` — before asserting `extent` handles it, so if a
+future engine raises the cap the test says it no longer covers what it was
+written for. `segmentation.test.ts` segments a 50,562-triangle mesh end to end
+and checks the figures by hand, because the unit test alone would not have
+noticed the segmenter reverting to a spread.
+
+This is the second time this session that reading real output caught something
+the whole test suite was blind to, and the pattern is the same both times: every
+fixture was small enough to be checked by hand, which is exactly what made them
+unable to find it.
+
+#### One console correction
+
+The field page's capability panel was headed "Reconstruction from a device with
+no depth sensor". True when the only provider was the feature-track solve; with
+`DEVICE_DEPTH_MAP` in the same table the heading contradicted a row beneath it.
+It now names both.
+
+**Verified over HTTP**, not inferred: 201 with 92,900 triangles and 2,255
+no-return samples held as holes, `chargedMinor` 555; segmentation 200 reading
+95.59m² of workable ground off it; the charge on the QS's bill under
+`SITE_CAPTURE`/`LOCAL`; the door present in `GET /v1/commands`; and a frame the
+sensor reached nothing on refused 422 `RECONSTRUCTION_EMPTY` with no surface
+written. The construction manager is refused the bill — 403 — which is the
+commercial scope working, not a fault.

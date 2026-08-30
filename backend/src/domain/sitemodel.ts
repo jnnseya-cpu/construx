@@ -291,6 +291,93 @@ export function reconstructSurface(
 }
 
 /**
+ * Build a surface from a depth image the device measured, and store it.
+ *
+ * The third way geometry arrives, and the one the capability register said this
+ * platform could do while nothing could reach it. A handset with a depth sensor
+ * that hands over its *mesh* uses `ingestSurface`; one that hands over the raw
+ * depth image — which is what ARKit's `sceneDepth` and the ARCore Depth API
+ * actually expose — had nowhere to send it, and the pixels were being thrown
+ * away in favour of the sparse feature-track solve on the same walk.
+ *
+ * One frame is enough, because the distances were measured and not solved. That
+ * is the whole difference from `reconstructSurface`, and it is why this is a
+ * separate entry point rather than an optional field on that one: the refusal
+ * that protects a feature-track job — two frames minimum, or the depth of
+ * everything is unknown — would be wrong here, and relaxing it there would have
+ * made a one-frame photogrammetry job silently succeed at inventing a site.
+ *
+ * Charged on the samples, which are the work: every returning pixel is
+ * unprojected and every complete cell of four becomes two triangles.
+ */
+export function reconstructFromDepth(
+  ctx: EngineContext,
+  input: { modelId: string; pose: recon.CameraPose; depth: recon.DepthFrame },
+): {
+  triangles: number;
+  points: number;
+  noReturnSamples: number;
+  limitation: string;
+  steepestPercent?: number;
+  chargedMinor: number;
+} {
+  authorise(ctx, 'LOOKAHEAD_CONSTRAINTS', 'U');
+  const record = requireModel(ctx, input.modelId);
+
+  const metered = meterSpatialStage(
+    ctx.wallet,
+    {
+      stage: 'RECONSTRUCTION',
+      primitives: input.depth.samples.length,
+      projectId: ctx.projectId,
+      userId: ctx.auth.actorId,
+    },
+    () => recon.reconstruct('DEVICE_DEPTH_MAP', { poses: [input.pose], observations: [], depth: input.depth }),
+  );
+  const result = metered.result;
+
+  if (result.surface.triangles.length === 0) {
+    throw new DomainError(
+      'RECONSTRUCTION_EMPTY',
+      `Nothing survived: ${result.rejected.degenerate} of ${input.depth.samples.length} samples were no-return, and ` +
+        'no group of four neighbouring pixels all came back. The sensor reached nothing at this range — it is ' +
+        'defeated by daylight, by distance, and by dark or wet surfaces. Move closer and capture again.',
+    );
+  }
+
+  write(ctx, {
+    eventType: 'SITE_SURFACE_RECONSTRUCTED',
+    entity: { refType: 'SiteModel', refId: input.modelId },
+    reason: `${result.surface.triangles.length} triangle(s) from a ${input.depth.width} × ${input.depth.height} depth image on frame ${input.depth.frameId}`,
+    nextState: {
+      ...record.state,
+      surface: result.surface,
+      reconstruction: {
+        provider: result.provider,
+        capability: result.capability,
+        points: result.points.length,
+        meanResidualPixels: result.meanResidualPixels,
+        worstResidualPixels: result.worstResidualPixels,
+        rejected: result.rejected,
+        limitation: result.limitation,
+      },
+    },
+  });
+
+  return {
+    triangles: result.surface.triangles.length,
+    points: result.points.length,
+    // Named for what it is. On this path `rejected.degenerate` counts pixels the
+    // sensor got nothing back from, which is not the degeneracy the feature-track
+    // solve means by the word, and a caller reading it as one would be misled.
+    noReturnSamples: result.rejected.degenerate,
+    limitation: result.limitation,
+    steepestPercent: geo.steepestSlope(result.surface)?.percent,
+    chargedMinor: metered.chargedMinor,
+  };
+}
+
+/**
  * Segment the captured ground into regions of like form.
  *
  * Derived on every read rather than stored, for the same reason the findings

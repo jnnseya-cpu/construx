@@ -6,7 +6,7 @@ import { meterSpatialStage, spatialStageRawCostMinor, SPATIAL_STAGE_LABEL } from
 import { config } from '../src/config.ts';
 import * as geo from '../src/domain/geometry.ts';
 import * as model from '../src/domain/sitemodel.ts';
-import type { CameraPose, FeatureObservation } from '../src/domain/reconstruction.ts';
+import type { CameraPose, DepthFrame, FeatureObservation } from '../src/domain/reconstruction.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject } from '../src/seed.ts';
 
@@ -204,6 +204,114 @@ describe('the stages charge when they run', () => {
     const view = model.siteModel(s.ctx(), s.modelId);
     assert.equal(view.surface?.triangles, result.triangles);
     assert.ok(model.segmentGround(s.ctx(), s.modelId).regions.length > 0);
+  });
+});
+
+// ── The depth image the device measured ─────────────────────────────────────
+
+/**
+ * The third way geometry arrives, and until now the one with no way in.
+ *
+ * `DEVICE_DEPTH_MAP` was registered, implemented and tested, and a walkthrough
+ * of the running console found no route reached it: a capability with a provider
+ * and no door. These tests are through the domain function the route calls, so
+ * what the register advertises and what a device can actually do are the same
+ * thing.
+ */
+const DOWN: CameraPose['rotation'] = [1, 0, 0, 0, 1, 0, 0, 0, -1];
+const LENS = { fx: 1000, fy: 1000, cx: 640, cy: 360 };
+
+/** Camera 10m up looking straight down, so every sample lands on z = 0. */
+const DEPTH_POSE: CameraPose = { frameId: 'd1', position: { x: 20, y: 20, z: 10 }, rotation: DOWN, intrinsics: LENS };
+
+const depthImage = (samples: number[]): DepthFrame => ({ frameId: 'd1', width: 8, height: 6, samples });
+
+describe('a surface from the depth image the device measured', () => {
+  it('builds one from a single frame, which the feature-track solve refuses', async () => {
+    const s = await site();
+    const result = model.reconstructFromDepth(s.ctx(), {
+      modelId: s.modelId,
+      pose: DEPTH_POSE,
+      depth: depthImage(new Array(48).fill(10)),
+    });
+
+    // Every pixel returned, so every cell of four is two triangles: 7 × 5 × 2.
+    assert.equal(result.points, 48);
+    assert.equal(result.triangles, 70);
+    assert.equal(result.noReturnSamples, 0);
+    assert.ok(result.chargedMinor > 0, 'a depth reconstruction was free');
+    assert.match(result.limitation, /depth sensor rather than solved/);
+    // Uniform depth from a camera pointing straight down is level ground, and
+    // that is the check that the unprojection and the rotation transpose are
+    // both right — get either wrong and this comes out tilted.
+    assert.equal(result.steepestPercent, 0);
+
+    // One frame. The same input through the feature-track path is refused,
+    // because there depth is solved from parallax and one frame has none.
+    throwsCode(
+      () => model.reconstructSurface(s.ctx(), { modelId: s.modelId, poses: [DEPTH_POSE], observations: [] }),
+      'RECONSTRUCTION_TOO_FEW_POSES',
+    );
+
+    // And the surface is the model's now, so everything downstream reads it.
+    const view = model.siteModel(s.ctx(), s.modelId);
+    assert.equal(view.surface?.triangles, 70);
+    assert.ok(model.segmentGround(s.ctx(), s.modelId).regions.length > 0);
+  });
+
+  it('leaves a hole where the sensor got nothing back, rather than filling it', async () => {
+    // A no-return is not a distance of zero. Interpolating across one puts
+    // measured-looking ground where nothing was measured, which is the failure
+    // that matters: it is indistinguishable from a good reading on a drawing.
+    const s = await site();
+    const samples = new Array(48).fill(10);
+    samples[2 * 8 + 3] = 0; // one interior pixel, a corner of four cells
+    const result = model.reconstructFromDepth(s.ctx(), { modelId: s.modelId, pose: DEPTH_POSE, depth: depthImage(samples) });
+
+    assert.equal(result.points, 47);
+    assert.equal(result.noReturnSamples, 1);
+    assert.equal(result.triangles, 70 - 8, 'the four cells around a dead pixel were not dropped');
+  });
+
+  it('refuses a frame the sensor reached nothing on, rather than storing an empty surface', async () => {
+    const s = await site();
+    throwsCode(
+      () => model.reconstructFromDepth(s.ctx(), { modelId: s.modelId, pose: DEPTH_POSE, depth: depthImage(new Array(48).fill(0)) }),
+      'RECONSTRUCTION_EMPTY',
+    );
+    assert.equal(model.siteModel(s.ctx(), s.modelId).surface, undefined, 'a refused reconstruction still wrote a surface');
+  });
+
+  it('refuses a depth image whose pose belongs to another frame', async () => {
+    // The distances are real and the position they were measured from is
+    // unknown. Placing them from whatever pose was to hand puts a correct
+    // surface in the wrong part of the site.
+    const s = await site();
+    throwsCode(
+      () =>
+        model.reconstructFromDepth(s.ctx(), {
+          modelId: s.modelId,
+          pose: { ...DEPTH_POSE, frameId: 'somewhere-else' },
+          depth: depthImage(new Array(48).fill(10)),
+        }),
+      'RECONSTRUCTION_DEPTH_POSE_MISSING',
+    );
+  });
+
+  it('charges on the samples, so a bigger depth image costs more', async () => {
+    const small = await site('MISSION-SMALL');
+    const cheap = model.reconstructFromDepth(small.ctx(), {
+      modelId: small.modelId,
+      pose: DEPTH_POSE,
+      depth: depthImage(new Array(48).fill(10)),
+    });
+    const big = await site('MISSION-BIG');
+    const dear = model.reconstructFromDepth(big.ctx(), {
+      modelId: big.modelId,
+      pose: DEPTH_POSE,
+      depth: { frameId: 'd1', width: 256, height: 192, samples: new Array(256 * 192).fill(10) },
+    });
+    assert.ok(dear.chargedMinor > cheap.chargedMinor, `${dear.chargedMinor} was not more than ${cheap.chargedMinor}`);
   });
 });
 

@@ -1,5 +1,5 @@
 import { DomainError } from '../core/errors.ts';
-import type { Point3, Surface, Triangle3 } from './geometry.ts';
+import { extent, type Point3, type Surface, type Triangle3 } from './geometry.ts';
 
 /**
  * Turning what a device recorded into geometry the platform can measure.
@@ -295,7 +295,7 @@ const LOCAL_TRIANGULATION: ReconstructionProvider = {
       surface,
       rejected,
       meanResidualPixels: residuals.length === 0 ? 0 : Math.round((residuals.reduce((sum, r) => sum + r, 0) / residuals.length) * 100) / 100,
-      worstResidualPixels: residuals.length === 0 ? 0 : Math.max(...residuals),
+      worstResidualPixels: residuals.length === 0 ? 0 : extent(residuals).max,
       limitation:
         'Solved from tracked features, so the surface is interpolated between them and is only as dense as the ' +
         'tracking was. It carries no material classification and is measured reconnaissance at best — not set-out.',
@@ -635,12 +635,8 @@ function meshThrough(points: Point3[]): Triangle3[] {
   // A super-triangle enclosing everything, removed at the end. Sized from the
   // extent rather than from a constant, so a site in national grid coordinates
   // is enclosed as surely as one at the origin.
-  const xs = vertices.map((p) => p.x);
-  const ys = vertices.map((p) => p.y);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
+  const { min: minX, max: maxX } = extent(vertices.map((p) => p.x));
+  const { min: minY, max: maxY } = extent(vertices.map((p) => p.y));
   const span = Math.max(maxX - minX, maxY - minY, 1) * 10;
   const midX = (minX + maxX) / 2;
   const midY = (minY + maxY) / 2;

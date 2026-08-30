@@ -705,6 +705,35 @@ export function bounds(ring: Ring): { minX: number; minY: number; maxX: number; 
   );
 }
 
+/**
+ * The smallest and largest of however many numbers there are.
+ *
+ * `Math.min(...values)` is the obvious way to write this and it is a latent
+ * crash: the spread becomes one argument per element, and a call with a few
+ * tens of thousands of arguments exceeds the engine's stack and throws
+ * `RangeError: Maximum call stack size exceeded`. Not a slow path — a 500.
+ *
+ * It went unseen because every test mesh was small. A 256 × 192 depth image
+ * from an ordinary handset — the size ARKit actually produces — is 92,900
+ * triangles and 278,700 levels, and segmenting one crashed the route outright
+ * the first time a real capture went through it.
+ *
+ * Both ends in one pass, because the callers want both and iterating twice over
+ * a quarter of a million levels for no reason is its own answer to the wrong
+ * question. Empty in gives `Infinity` / `-Infinity`, matching `Math.min()` and
+ * `Math.max()` on no arguments, so a caller testing `Number.isFinite` reads the
+ * same result either way.
+ */
+export function extent(values: Iterable<number>): { min: number; max: number } {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const value of values) {
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  return { min, max };
+}
+
 // --- Routing -----------------------------------------------------------------
 
 export type RouteNode = { id: string; point: Point };

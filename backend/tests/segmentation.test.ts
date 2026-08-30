@@ -296,3 +296,47 @@ describe('keeping the answer usable', () => {
     assert.match(result.summary, /without regrading/);
   });
 });
+
+describe('a capture the size a real device produces', () => {
+  /**
+   * Every fixture above is two to thirty triangles, and on those the segmenter
+   * was correct and looked finished. The first capture that came off an actual
+   * handset — a 256 × 192 ARKit depth frame, 92,900 triangles — returned a 500.
+   *
+   * `Math.min(...levels)` passes one argument per level. Past roughly a hundred
+   * thousand the engine's stack is exhausted and the call throws `RangeError`,
+   * so the whole route failed on exactly the input it exists to handle, and no
+   * test of a small mesh could ever have shown it.
+   *
+   * The size below is chosen so the spread genuinely fails — asserted here
+   * rather than assumed, because the limit is the engine's and could move.
+   */
+  it('segments a mesh far larger than a spread call could measure', () => {
+    const n = 160;
+    const at = (i: number, j: number): geo.Point3 => ({ x: i * 0.5, y: j * 0.5, z: i * 0.005 });
+    const triangles: geo.Triangle3[] = [];
+    for (let i = 0; i + 1 < n; i += 1) {
+      for (let j = 0; j + 1 < n; j += 1) {
+        triangles.push([at(i, j), at(i + 1, j), at(i, j + 1)]);
+        triangles.push([at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)]);
+      }
+    }
+    assert.throws(() => Math.min(...new Array(triangles.length * 3).fill(1)), RangeError, 'the mesh is no longer big enough to cover the failure');
+
+    const result = seg.segment({ triangles });
+
+    // A 79.5 × 79.5m sheet falling 1% throughout: one region, level throughout
+    // (1% is inside the LEVEL class), and the figures are the ones the geometry
+    // gives rather than whatever came back.
+    assert.equal(result.regions.length, 1);
+    const region = result.regions[0]!;
+    assert.equal(region.form, 'LEVEL');
+    assert.equal(region.triangles, triangles.length);
+    assert.equal(region.lowestLevelMetres, 0);
+    assert.equal(region.highestLevelMetres, round2((n - 1) * 0.005));
+    assert.ok(Math.abs(result.coveredSquareMetres - ((n - 1) * 0.5) ** 2) < 0.5, `covered ${result.coveredSquareMetres}m²`);
+    assert.equal(region.ponds, false);
+  });
+});
+
+const round2 = (value: number): number => Math.round(value * 100) / 100;
