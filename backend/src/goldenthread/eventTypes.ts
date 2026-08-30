@@ -645,6 +645,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // every measurement, overlap and volume on the platform is computed from.
   def('SITE_MODEL_RECORDED', 'SiteModel', 'CREATE', 'DELIVERY', { creates: true }),
   def('SITE_SURFACE_INGESTED', 'SiteModel', 'UPDATE', 'DELIVERY'),
+  // A surface solved from feature tracks rather than received from a depth
+  // sensor. A separate event from the one above and deliberately so: the two
+  // carry different evidence and support different claims, and a reader of the
+  // chain must be able to tell which kind of surface a volume was measured on.
+  def('SITE_SURFACE_RECONSTRUCTED', 'SiteModel', 'UPDATE', 'DELIVERY'),
   // A zone may be proposed by an extraction and is still confirmed by a person
   // before it means anything, which is why an agent may author it.
   def('SITE_ZONE_PLACED', 'SiteModel', 'UPDATE', 'DELIVERY', { aiAllowed: true }),

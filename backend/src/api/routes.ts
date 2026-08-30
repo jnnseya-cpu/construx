@@ -66,6 +66,7 @@ import * as responsibility from '../domain/responsibility.ts';
 import * as sitecapture from '../domain/sitecapture.ts';
 import * as sitelayout from '../domain/sitelayout.ts';
 import * as siteplan from '../export/siteplan.ts';
+import * as reconstruction from '../domain/reconstruction.ts';
 import * as sitemodel from '../domain/sitemodel.ts';
 import * as regulatorycompletion from '../domain/regulatorycompletion.ts';
 import * as reliability from '../domain/reliability.ts';
@@ -4379,6 +4380,85 @@ export const ROUTES: Route[] = [
         modelId: String(ctx.params.modelId),
         ...body<{ triangles: never }>(ctx),
       }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/site-reconstruction/capabilities',
+    description: 'Which kinds of reconstruction this platform provides, and which it does not',
+    handler: () => ({ capabilities: reconstruction.reconstructionCapabilities() }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-model/:modelId/reconstruct',
+    description: 'Solve a surface from camera poses and feature tracks, for a device with no depth sensor',
+    schema: {
+      type: 'object',
+      required: ['poses', 'observations'],
+      properties: {
+        poses: {
+          type: 'array',
+          minItems: 2,
+          maxItems: 2000,
+          items: {
+            type: 'object',
+            required: ['frameId', 'position', 'rotation', 'intrinsics'],
+            properties: {
+              frameId: { type: 'string', minLength: 1, maxLength: 80 },
+              position: {
+                type: 'object',
+                required: ['x', 'y', 'z'],
+                properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } },
+                additionalProperties: false,
+              },
+              // Row-major 3×3, camera-from-world. Nine numbers exactly: eight or
+              // ten is a device sending something else, and guessing which
+              // would rotate the whole site.
+              rotation: { type: 'array', minItems: 9, maxItems: 9, items: { type: 'number' } },
+              intrinsics: {
+                type: 'object',
+                required: ['fx', 'fy', 'cx', 'cy'],
+                properties: {
+                  fx: { type: 'number', exclusiveMinimum: 0 },
+                  fy: { type: 'number', exclusiveMinimum: 0 },
+                  cx: { type: 'number' },
+                  cy: { type: 'number' },
+                },
+                additionalProperties: false,
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+        observations: {
+          type: 'array',
+          minItems: 2,
+          maxItems: 200000,
+          items: {
+            type: 'object',
+            required: ['trackId', 'frameId', 'u', 'v'],
+            properties: {
+              trackId: { type: 'string', minLength: 1, maxLength: 80 },
+              frameId: { type: 'string', minLength: 1, maxLength: 80 },
+              u: { type: 'number' },
+              v: { type: 'number' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      sitemodel.reconstructSurface(projectContext(platform, ctx), {
+        modelId: String(ctx.params.modelId),
+        ...body<Omit<Parameters<typeof sitemodel.reconstructSurface>[1], 'modelId'>>(ctx),
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-model/:modelId/segmentation',
+    description: 'The captured ground segmented into regions by form, with what each would take',
+    handler: (platform, ctx) => sitemodel.segmentGround(projectContext(platform, ctx), String(ctx.params.modelId)),
   },
   {
     method: 'POST',

@@ -1,8 +1,11 @@
+import { meterSpatialStage } from '../billing/spatial.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
 import { LOGISTICS_ELEMENT, type LogisticsElement } from '../engines/sitevisit.ts';
 import * as geo from './geometry.ts';
+import * as recon from './reconstruction.ts';
+import * as segmentation from './segmentation.ts';
 
 /**
  * The site as geometry, and what the geometry says is wrong with it.
@@ -18,12 +21,20 @@ import * as geo from './geometry.ts';
  *
  * ## Where the geometry comes from
  *
- * The device. ARKit and ARCore already produce tracked poses and a depth mesh
- * on the handset, so nothing here reconstructs anything: a survey arrives as a
- * boundary ring, an optional triangulated surface, and the zones a person
- * traced or an extraction proposed. That is the whole reason this is buildable
- * without a GPU, and it is what both specifications actually describe once the
- * pipeline diagrams are set aside.
+ * The device, in two different ways depending on what the device is.
+ *
+ * A handset with depth produces a mesh on its own, and `ingestSurface` simply
+ * receives it. A handset without depth produces tracked poses and feature
+ * points instead, and `reconstructSurface` solves the geometry from those —
+ * exactly, by least squares, in `reconstruction.ts`. Either way a survey
+ * arrives as a boundary ring, a triangulated surface and the zones a person
+ * traced or an extraction proposed.
+ *
+ * What is *not* done anywhere is dense reconstruction from raw pixels. That is
+ * declared on the reconstruction registry as a capability with no provider, and
+ * asked for it the platform refuses rather than approximating. This is the whole
+ * reason the module is buildable without a GPU, and it is what both
+ * specifications actually describe once the pipeline diagrams are set aside.
  *
  * Coordinates are **projected metres on a local site grid**. The georeferencing
  * — which grid, and what it was registered against — lives on the capture
@@ -65,6 +76,23 @@ type ModelState = {
   missionId: string;
   boundary?: geo.Ring;
   surface?: geo.Surface;
+  /**
+   * Present only where the surface was solved rather than received.
+   *
+   * A LiDAR mesh arrives already measured and this is absent; a reconstructed
+   * one carries the error it was solved to. Keeping the two distinguishable on
+   * the record is the point — "how good is this surface" must be answerable
+   * later from the ledger rather than from whoever ran it.
+   */
+  reconstruction?: {
+    provider: string;
+    capability: recon.ReconstructionCapability;
+    points: number;
+    meanResidualPixels: number;
+    worstResidualPixels: number;
+    rejected: recon.ReconstructionResult['rejected'];
+    limitation: string;
+  };
   zones: SiteZone[];
   createdBy: string;
   createdAt: string;
@@ -170,6 +198,129 @@ export function ingestSurface(
   });
 
   return { triangles: input.triangles.length, steepestPercent: geo.steepestSlope(surface)?.percent };
+}
+
+/**
+ * Reconstruct a surface from what a device without depth recorded, and store it.
+ *
+ * The path for the `VISUAL_INERTIAL` tier, which until now had none: an ordinary
+ * phone tracks its own pose and its own feature points, and those are enough to
+ * recover geometry exactly. `reconstruction.ts` does the arithmetic; this puts
+ * the answer where `ingestSurface` puts a LiDAR mesh, so everything downstream —
+ * slope, volume, segmentation, the viewer — works identically whichever kind of
+ * device walked the site.
+ *
+ * Charged, because it is real compute. Reserved before the solve and settled
+ * after, so a tenancy with an empty wallet is refused before the work rather
+ * than after it.
+ *
+ * The residuals are stored beside the mesh rather than discarded. A
+ * reconstruction with no stated error is a drawing with no scale, and the
+ * question "how good is this surface" has to be answerable later from the
+ * record rather than from whoever happened to run it.
+ */
+export function reconstructSurface(
+  ctx: EngineContext,
+  input: { modelId: string; poses: recon.CameraPose[]; observations: recon.FeatureObservation[] },
+): {
+  triangles: number;
+  points: number;
+  meanResidualPixels: number;
+  worstResidualPixels: number;
+  rejected: recon.ReconstructionResult['rejected'];
+  limitation: string;
+  steepestPercent?: number;
+  chargedMinor: number;
+} {
+  authorise(ctx, 'LOOKAHEAD_CONSTRAINTS', 'U');
+  const record = requireModel(ctx, input.modelId);
+
+  const metered = meterSpatialStage(
+    ctx.wallet,
+    {
+      stage: 'RECONSTRUCTION',
+      // The observations are the work: every one contributes a ray to a solve.
+      primitives: input.observations.length,
+      projectId: ctx.projectId,
+      userId: ctx.auth.actorId,
+    },
+    () => recon.reconstruct('POSED_FEATURE_TRACKS', { poses: input.poses, observations: input.observations }),
+  );
+  const result = metered.result;
+
+  if (result.surface.triangles.length === 0) {
+    throw new DomainError(
+      'RECONSTRUCTION_EMPTY',
+      `Nothing survived the solve: ${result.rejected.tooFewViews} feature(s) seen in only one frame, ` +
+        `${result.rejected.degenerate} with no baseline between the frames that saw them, ` +
+        `${result.rejected.behindCamera} solving behind a camera, and ` +
+        `${result.rejected.residualTooLarge} that did not reproject. Walk the site again taking a wider path — ` +
+        'the camera has to move between frames for depth to be recoverable at all.',
+    );
+  }
+
+  write(ctx, {
+    eventType: 'SITE_SURFACE_RECONSTRUCTED',
+    entity: { refType: 'SiteModel', refId: input.modelId },
+    reason: `${result.points.length} point(s) from ${input.poses.length} frame(s), worst residual ${result.worstResidualPixels}px`,
+    nextState: {
+      ...record.state,
+      surface: result.surface,
+      reconstruction: {
+        provider: result.provider,
+        capability: result.capability,
+        points: result.points.length,
+        meanResidualPixels: result.meanResidualPixels,
+        worstResidualPixels: result.worstResidualPixels,
+        rejected: result.rejected,
+        limitation: result.limitation,
+      },
+    },
+  });
+
+  return {
+    triangles: result.surface.triangles.length,
+    points: result.points.length,
+    meanResidualPixels: result.meanResidualPixels,
+    worstResidualPixels: result.worstResidualPixels,
+    rejected: result.rejected,
+    limitation: result.limitation,
+    steepestPercent: geo.steepestSlope(result.surface)?.percent,
+    chargedMinor: metered.chargedMinor,
+  };
+}
+
+/**
+ * Segment the captured ground into regions of like form.
+ *
+ * Derived on every read rather than stored, for the same reason the findings
+ * are: a segmentation is a fact about the current surface, and a stored one
+ * would go on saying a hollow is there after a recapture filled it.
+ *
+ * Charged on the triangles it actually processed.
+ */
+export function segmentGround(
+  ctx: EngineContext,
+  modelId: string,
+): segmentation.Segmentation & { chargedMinor: number } {
+  authorise(ctx, 'LOOKAHEAD_CONSTRAINTS', 'R');
+  const record = requireModel(ctx, modelId);
+  const surface = record.state.surface;
+  if (!surface) {
+    throw new DomainError(
+      'NO_SURFACE_TO_SEGMENT',
+      'This capture has no ground surface, so there is nothing to classify. A device with depth produces one on ' +
+        'the walk; one without can have its frames reconstructed instead.',
+      409,
+    );
+  }
+
+  const metered = meterSpatialStage(
+    ctx.wallet,
+    { stage: 'SEGMENTATION', primitives: surface.triangles.length, projectId: ctx.projectId, userId: ctx.auth.actorId },
+    () => segmentation.segment(surface),
+  );
+  return { ...metered.result, chargedMinor: metered.chargedMinor };
 }
 
 /**
@@ -499,15 +650,31 @@ export type SiteChange = {
   movedMetres?: number;
 };
 
+/**
+ * How much material moved between two captures, and over what ground.
+ *
+ * The zone comparison above answers what changed on the *layout*. This answers
+ * what changed in the *earth*, which is the question a progress claim and a
+ * muck-away invoice both turn on. Absent rather than zero where either capture
+ * has no surface: a device without depth cannot answer it, and zero would read
+ * as "nothing moved".
+ */
+export type SiteVolumeChange = geo.VolumeChange & {
+  /** What the figures may be used for, given how they were captured. */
+  basis: string;
+};
+
 export function compareModels(
   ctx: EngineContext,
   fromModelId: string,
   toModelId: string,
-): { changes: SiteChange[]; summary: string } {
+): { changes: SiteChange[]; volume?: SiteVolumeChange; volumeAbsent?: string; chargedMinor?: number; summary: string } {
   authorise(ctx, 'LOOKAHEAD_CONSTRAINTS', 'R');
 
-  const before = requireModel(ctx, fromModelId).state.zones;
-  const after = requireModel(ctx, toModelId).state.zones;
+  const fromModel = requireModel(ctx, fromModelId).state;
+  const toModel = requireModel(ctx, toModelId).state;
+  const before = fromModel.zones;
+  const after = toModel.zones;
   const key = (zone: SiteZone): string => `${zone.code}::${zone.instanceName.toLowerCase()}`;
 
   const beforeByKey = new Map(before.map((zone) => [key(zone), zone]));
@@ -557,10 +724,62 @@ export function compareModels(
     changes.push({ kind: 'REMOVED', code: zone.code, instanceName: zone.instanceName, fromSquareMetres: round(geo.area(zone.ring)) });
   }
 
+  // ── What moved in the ground, not on the drawing ─────────────────────────
+  //
+  // Only where both captures have a surface. A single-sided comparison is not
+  // a volume, and reporting zero would say the site is untouched.
+  let volume: SiteVolumeChange | undefined;
+  let volumeAbsent: string | undefined;
+  let chargedMinor: number | undefined;
+
+  if (!fromModel.surface || !toModel.surface) {
+    const missing =
+      !fromModel.surface && !toModel.surface
+        ? 'Neither capture recorded a ground surface'
+        : !fromModel.surface
+          ? 'The earlier capture did not record a ground surface'
+          : 'The later capture did not record a ground surface';
+    volumeAbsent =
+      `${missing}, so no volume can be measured between them. This is absent rather than zero — zero would say ` +
+      'the ground is exactly as it was.';
+  } else {
+    const from = fromModel.surface;
+    const to = toModel.surface;
+    const metered = meterSpatialStage(
+      ctx.wallet,
+      {
+        stage: 'CHANGE_VOLUME',
+        // The clip is every later triangle against every earlier one, so the
+        // work is the product rather than the sum.
+        primitives: from.triangles.length * to.triangles.length,
+        projectId: ctx.projectId,
+        userId: ctx.auth.actorId,
+      },
+      () => geo.volumeBetween(from, to),
+    );
+    chargedMinor = metered.chargedMinor;
+    volume = {
+      ...metered.result,
+      basis:
+        'Measured between two handheld captures. The figure is exact over the ground both of them covered, and ' +
+        'carries whatever error those captures carried — it is a check against the haulage records, not a ' +
+        'substitute for a measured survey.',
+    };
+  }
+
   const moved = changes.filter((change) => change.kind !== 'UNCHANGED').length;
+  const layout =
+    moved === 0 ? 'Nothing on the layout changed between these two captures.' : `${moved} of ${changes.length} zone(s) changed.`;
+  const earth = volume
+    ? ` ${volume.cutCubicMetres}m³ out and ${volume.fillCubicMetres}m³ in, over the ${volume.comparedSquareMetres}m² both captures covered.`
+    : '';
+
   return {
     changes,
-    summary: moved === 0 ? 'Nothing on the layout changed between these two captures.' : `${moved} of ${changes.length} zone(s) changed.`,
+    ...(volume ? { volume } : {}),
+    ...(volumeAbsent ? { volumeAbsent } : {}),
+    ...(chargedMinor === undefined ? {} : { chargedMinor }),
+    summary: `${layout}${earth}`,
   };
 }
 

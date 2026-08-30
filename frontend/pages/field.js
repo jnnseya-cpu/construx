@@ -69,7 +69,7 @@ const FINDING_TONE = {
  * are computed on every read from the zones themselves, so a layout cannot be
  * edited into correctness on paper while a stored finding says otherwise.
  */
-function geometryPanel(models, view, comparison) {
+function geometryPanel(models, view, comparison, segmentation, reconstruction) {
   if (models?.error) {
     return html`<div class="card" style="margin-bottom:14px">
       <h2>Site geometry</h2>
@@ -104,12 +104,12 @@ function geometryPanel(models, view, comparison) {
             })}`
       }
 
-      ${view ? geometryDetail(view, models?.models ?? [], comparison) : ''}
+      ${view ? geometryDetail(view, models?.models ?? [], comparison, segmentation, reconstruction) : ''}
     </div>
   `;
 }
 
-function geometryDetail(view, allModels, comparison) {
+function geometryDetail(view, allModels, comparison, segmentation, reconstruction) {
   // Earlier records of the same site, which is what a delta is measured
   // against. Only ones recorded before this one: comparing forwards would
   // report every change with its sign inverted.
@@ -199,6 +199,59 @@ function geometryDetail(view, allModels, comparison) {
                   })}`
                 : ''
             }`
+      }
+
+      <h2 style="margin-top:14px">What the ground is</h2>
+      <p style="font-size:12.5px;color:var(--text-3);margin:0 0 7px">
+        The captured surface segmented into regions of like form — level yard, workable slope, batter face — with
+        what each would take, and which of it holds water. This reads the <b>shape</b> of the ground and not what it
+        is made of, so nothing here distinguishes hardstanding from soft clay.
+      </p>
+      ${
+        !view.surface
+          ? html`<div class="notice"><div>
+              No ground surface was captured, so there is nothing to classify. A device with depth produces one on the
+              walk; one without can have its frames reconstructed instead.
+            </div></div>`
+          : !segmentation
+            ? html`<div class="actions"><button class="btn ghost" data-segment="${view.modelId}">Classify the ground</button></div>`
+            : segmentation.error
+              ? html`<div class="notice err"><div>${segmentation.error.detail ?? 'The ground could not be classified.'}</div></div>`
+              : html`<p style="font-size:12.5px;color:var(--text-2);margin:0 0 8px">${segmentation.summary}</p>
+                ${table({
+                  headers: ['Region', 'Form', 'Area', 'Mean fall', 'Steepest', 'Water', 'Would take'],
+                  align: ['', '', 'num', 'num', 'num', '', ''],
+                  rows: (segmentation.regions ?? []).map((r) => [
+                    r.regionId,
+                    r.label,
+                    `${r.areaSquareMetres.toLocaleString()} m²`,
+                    `${r.meanSlopePercent}%`,
+                    `${r.maxSlopePercent}%`,
+                    r.ponds ? badge(`Ponds ${r.pondingDepthMetres}m`, 'err') : '—',
+                    (r.suits ?? []).map(humanise).join(', ') || '—',
+                  ]),
+                })}
+                <p style="font-size:12px;color:var(--text-3);margin:8px 0 0">${segmentation.notClassified}</p>`
+      }
+
+      ${
+        reconstruction
+          ? html`<h2 style="margin-top:14px">Reconstruction from a device with no depth sensor</h2>
+            <p style="font-size:12.5px;color:var(--text-3);margin:0 0 7px">
+              An ordinary phone tracks its own position and its own feature points, and those are enough to solve the
+              geometry exactly. What the platform cannot do is listed here too, rather than left out — it is what
+              decides whether a walk is worth making with the handset somebody actually has.
+            </p>
+            ${table({
+              headers: ['Capability', 'Available', 'What it needs', 'What it gives'],
+              rows: (reconstruction.capabilities ?? []).map((c) => [
+                c.label,
+                c.available ? badge(c.provider, 'ok') : badge('Not provided', 'warn'),
+                c.needs,
+                c.gives,
+              ]),
+            })}`
+          : ''
       }
 
       ${
@@ -638,6 +691,17 @@ export async function field(root) {
   const modelView = openModel
     ? await api.get(`/v1/projects/${projectId}/site-model/${openModel}`).catch(() => null)
     : null;
+  // The ground segmented into regions of like form. Charged compute, so it is
+  // fetched only for a record somebody opened and only when they asked for it —
+  // a segmentation on every render would bill a tenancy for scrolling.
+  const segmentation =
+    openModel && state.siteSegment === openModel
+      ? await api.get(`/v1/projects/${projectId}/site-model/${openModel}/segmentation`).catch((error) => ({ error }))
+      : null;
+  // What kinds of reconstruction exist and which have nothing behind them.
+  // Published so somebody deciding what to walk a site with can find out before
+  // the walk rather than after it.
+  const reconstruction = await api.get('/v1/site-reconstruction/capabilities').catch(() => null);
   const compareFrom = state.siteModelCompare ?? null;
   const comparison =
     openModel && compareFrom
@@ -745,7 +809,7 @@ export async function field(root) {
 
       ${capturePanel(missions, brief)}
 
-      ${geometryPanel(models, modelView, comparison)}
+      ${geometryPanel(models, modelView, comparison, segmentation, reconstruction)}
 
       ${conflictPanel(conflicts)}
 
@@ -1614,12 +1678,24 @@ export async function field(root) {
       return;
     }
 
+    const segmentBtn = event.target.closest('[data-segment]');
+    if (segmentBtn) {
+      // Asked for, not automatic. Segmenting is charged compute, and running it
+      // on every render would bill a tenancy for scrolling past the panel.
+      state.siteSegment = segmentBtn.dataset.segment;
+      await draw();
+      root.querySelector('#site-model')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+
     const openModelBtn = event.target.closest('[data-model]');
     if (openModelBtn) {
       state.siteModel = openModelBtn.dataset.model;
       // A comparison against a record nobody is looking at any more is a table
-      // of numbers about two other things.
+      // of numbers about two other things. The same for a segmentation: it
+      // would be the previous site's ground under this site's heading.
       state.siteModelCompare = null;
+      state.siteSegment = null;
       await draw();
       root.querySelector('#site-model')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;

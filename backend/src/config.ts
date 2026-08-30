@@ -840,6 +840,28 @@ export const config = {
      */
     documentRenderRawCostMinor: num('DOCUMENT_RENDER_RAW_COST_MINOR', 4),
     /**
+     * What a spatial stage costs to run, before markup.
+     *
+     * The site-capture stages are compute the platform performs rather than
+     * compute it buys — a reconstruction, a segmentation, a volume between two
+     * meshes. That makes them exactly like a document render and unlike an AI
+     * call: the cost is real, it is ours, and it is charged through the same
+     * markup so a customer reads one statement rather than two.
+     *
+     * A fixed cost per stage would be a lie about the work. Reconstructing four
+     * hundred feature tracks and reconstructing forty thousand are not the same
+     * job, and a flat fee either overcharges the small site or subsidises the
+     * large one out of the small one's money. So each stage carries a base and
+     * a rate per thousand primitives it actually processed.
+     */
+    spatialStageRawCostMinor: {
+      RECONSTRUCTION: num('SPATIAL_RECONSTRUCTION_RAW_COST_MINOR', 12),
+      SEGMENTATION: num('SPATIAL_SEGMENTATION_RAW_COST_MINOR', 6),
+      CHANGE_VOLUME: num('SPATIAL_CHANGE_VOLUME_RAW_COST_MINOR', 4),
+    },
+    /** Added per thousand primitives, so a large mesh costs more than a small one. */
+    spatialRawCostMinorPerThousandPrimitives: num('SPATIAL_RAW_COST_MINOR_PER_THOUSAND', 2),
+    /**
      * The integrator's commercial build-up, as four named components.
      *
      * A single "overhead" percentage is the industry habit and it is the thing

@@ -11142,3 +11142,155 @@ smallest things on any site — and it now sorts by the shape's area.
 reconstruction-provider interface (deliberately deferred rather than stubbed),
 change-detection *volumes* as opposed to areas, and ACU metering for the spatial
 stages.
+
+
+### The four that were listed as not built
+
+The section above closed with a list: semantic segmentation, the
+reconstruction-provider interface, change-detection *volumes* as opposed to
+areas, and ACU metering for the spatial stages. All four are built. None needed
+a runtime dependency, and the reason is the same in each case — the hard part
+was already done on the handset or was arithmetic nobody had written down.
+
+**Semantic segmentation** — `domain/segmentation.ts`. The captured surface is
+classified triangle by triangle into six ground forms whose thresholds are the
+ones that actually govern site work (1 in 12 is the limit for a route people and
+plant share; 1 in 4 is roughly where tracked plant stops working across a face),
+then triangles of the same class sharing an edge are grown into regions, and
+each region's outline is the set of edges belonging to exactly one of its
+triangles. That outline is a real polygon in site metres and goes to the
+drawing, the DXF and the viewer through the same taxonomy as everything else.
+
+Ponding is found separately and by the thing that defines it: a region whose
+lowest point sits below the lowest point on its own outline has nowhere for
+water to leave. That is a genuine hydrological test rather than a threshold on
+steepness, and it is why standing water is reported on ground every slope rule
+calls good. The discriminating test in the suite is a ramp and a bowl with
+identical gradients reaching identical low levels — one drains, one does not, and
+anything keying off steepness reports them the same.
+
+**It classifies form, not material**, and says so on every region rather than
+only in the summary: `classifies: 'FORM'` is on the record, because a consumer
+reading regions through the API never sees the summary. A 2% plane is level
+ground whether it is tarmac or wet clay, and no bearing capacity may be inferred
+from any of it.
+
+**The reconstruction-provider interface** — `domain/reconstruction.ts`, and it
+is a real interface with a working implementation rather than a seam with
+nothing behind it. The insight is that the hard part of photogrammetry —
+matching features between frames and knowing where the camera was — is already
+done by the AR session: ARKit and ARCore expose a tracked camera transform and
+tracked feature points per frame as a normal part of running. What arrives is
+therefore poses and 2D tracks, not pixels, and recovering the 3D point from
+those is a least-squares problem in three unknowns with a closed form. It is
+solved exactly: `(Σ (I − dᵢdᵢᵀ)) X = Σ (I − dᵢdᵢᵀ)oᵢ`, a 3×3 system by Cramer's
+rule, with no optimiser and no iteration. The points are then meshed by
+Bowyer–Watson Delaunay in plan with heights carried through — Delaunay rather
+than any triangulation because slivers between distant points produce gradients
+that are artefacts of the meshing, and gradient is what the segmentation
+classifies on.
+
+Every point carries the reprojection residual it was solved to, and points that
+do not converge are **dropped rather than kept with a large error** — a bad
+point in a surface is worse than a missing one, because the surface interpolates
+through it and a volume is computed over the result. Four rejection paths are
+counted separately: too few views, no baseline between the frames that saw it,
+a solve behind a camera, and a residual too large.
+
+The registry publishes all three capabilities including the two nothing serves —
+dense stereo and material classification — with what each needs and what each
+would give. Asked for one of those the platform **refuses**, naming what is
+absent, rather than returning a coarser answer that is indistinguishable from a
+good one once it reaches a drawing. An empty slot stated plainly is more useful
+than a capability list that only names what happens to work: somebody deciding
+what to walk a site with needs to know before the walk.
+
+**Change-detection volumes** — `geo.volumeBetween`. `volumeAboveLevel` answers
+cut and fill against a datum, which is all one capture supports. This answers it
+against an *earlier capture*, which is the question a progress claim and a
+muck-away invoice both turn on. Exact: each triangle of the later surface is
+clipped against each triangle of the earlier one, so over every resulting piece
+both surfaces are planar, their difference is a plane, and the exact mean of a
+plane over a polygon is its value at that polygon's area centroid. Nothing is
+sampled, so nothing changes when a grid moves — which matters because the figure
+is paid against.
+
+It reports the footprint the two captures actually shared and the footprint they
+did not, separately. A volume over 900m² of a 2,400m² site is a different number
+from a volume over the whole site, and a report that does not say which invites
+the reader to assume the second. Where either capture has no surface the volume
+is **absent with a reason naming which capture is missing it**, never zero —
+zero says the ground is exactly as it was, which nobody measured.
+
+**ACU metering for the spatial stages** — `billing/spatial.ts`. Charged like a
+document render and not like an AI call, because that is what they are: compute
+the platform performs rather than compute it buys. Reserve, work, settle, with
+`LOCAL` as the provider and the same markup, so a spatial stage appears on the
+statement beside an AI call in units the customer already reads. A base per
+stage plus a rate per thousand primitives, because four hundred feature tracks
+and forty thousand are not the same job and a flat fee makes the small site pay
+for the large one. The reservation happens **before** the compute — a balance
+checked afterwards has already spent it — and a stage that throws releases its
+hold without charge.
+
+**What the tests caught, and what only reading the output caught.** Thirty-three
+mutations were run across the four verticals and all thirty-three now fail a
+test, but six of them survived the first pass and two pieces of dead code were
+found by chasing survivors that turned out to be equivalent mutants:
+
+- **Every test camera had a *symmetric* rotation matrix**, and a symmetric
+  matrix is its own transpose — so whether the code used R or Rᵀ to turn a pixel
+  into a world ray was invisible to all of them. Get it the wrong way round and
+  a site reconstructs mirrored about a diagonal. Two yawed cameras now cover it.
+- **A point above two downward-looking cameras reprojects onto both perfectly**,
+  because the projection is symmetric about the focal point. Residual zero, and
+  nothing but an explicit check on which side of the lens it landed rejects it.
+  It has its own rejection counter now rather than being filed as a large
+  residual, which it was not.
+- **The mesh test checked total area**, which any triangulation of those points
+  satisfies. It now checks the empty-circumcircle property, which is what
+  Delaunay actually means.
+- **The winding branch in the in-circle predicate was unreachable.** Measured
+  rather than assumed: 49 counter-clockwise triangles and zero clockwise, and
+  the induction is in the comment — the super-triangle is counter-clockwise and
+  every replacement takes a hole-boundary edge in its counter-clockwise
+  direction plus an interior point. The branch has been removed and the
+  invariant is asserted by a test instead, because code that cannot run asserts
+  a robustness it does not have.
+- **The `Number.isFinite` guard on slope was unreachable too**, for the same
+  kind of reason: infinite gradient and zero plan area are the same condition,
+  and the plan-area filter already dropped those. Established empirically —
+  200,000 random triangles produced 303 with infinite gradient and none with a
+  footprint. The ordering is now structural, and the case that made it
+  load-bearing is tested: a vertical panel adjacent to a steep face merges into
+  its region and turns an area-weighted mean into `Infinity × 0`, which is NaN.
+- **Two of the new tests were wrong and passed anyway.** One placed its zones at
+  a shared *corner* rather than a shared *centre*, so the ladder was never
+  contested; one hung its strips off a vertex rather than an edge, so region
+  growing never joined them and the area-weighting was never exercised.
+
+Two defects that only reading the output could find, both while every test
+passed:
+
+- **`volumeBetween` silently lost most of its footprint.** Sutherland–Hodgman
+  returns a ring with a repeated vertex whenever the subject and the clip share
+  a corner — which adjacent mesh triangles do constantly — and `triangulate`
+  rejects such a ring and returns nothing. A 40m² comparison came back as 8m².
+  The fix removed the triangulation entirely in favour of the centroid identity,
+  which is both simpler and exact. `intersectionArea` never hit this because it
+  calls `area()` on the piece rather than triangulating it.
+- **The absent-volume message said the opposite of the truth**: "The later
+  capture *recorded* a ground surface, so no volume can be measured." The test
+  matched the fragment "The later capture" and passed. It now asserts the whole
+  sentence, and a second test checks that each of the three cases names the
+  right capture — the reader's next action is to go and re-walk one of them.
+
+**Recorded, not fixed.** `geo.triangulate` returns an empty array for a ring
+whose first and last vertices coincide, rather than treating it as the closed
+ring it is. Nothing in the platform now depends on that behaviour — the one
+caller that did has been changed — but it is a trap for the next caller, and
+changing a function eleven things already use is not in scope for this work.
+
+**Still not built.** A dense-stereo provider and a material-classification
+provider, both declared and both unserved: they need hardware and a trained
+model, and the registry says so rather than pretending otherwise.

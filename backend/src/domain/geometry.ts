@@ -391,6 +391,152 @@ export function volumeAboveLevel(
   };
 }
 
+/**
+ * The height of a triangle's own plane at a point, without asking whether the
+ * point is inside it.
+ *
+ * Unchecked on purpose. Every caller below evaluates it at points that are
+ * inside by construction — clipped out of the triangle's own footprint — and a
+ * containment test at each of those would be work done to confirm what the
+ * clipper already guaranteed.
+ */
+function planeHeight(triangle: Triangle3, p: Point): number | undefined {
+  const [a, b, c] = triangle;
+  const denominator = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
+  // Zero for a triangle with no plan area: vertical, or degenerate. It has no
+  // single height at a point and must not contribute one.
+  if (denominator === 0) return undefined;
+  const u = ((b.y - c.y) * (p.x - c.x) + (c.x - b.x) * (p.y - c.y)) / denominator;
+  const v = ((c.y - a.y) * (p.x - c.x) + (a.x - c.x) * (p.y - c.y)) / denominator;
+  return u * a.z + v * b.z + (1 - u - v) * c.z;
+}
+
+/**
+ * The captured level under a point, or `undefined` where nothing was captured.
+ *
+ * Undefined rather than zero, and that is the whole design of it. A surface
+ * covers what the walk reached; asked about ground the walk did not reach, the
+ * only true answer is that there is no measurement — and zero would be a level,
+ * which is a measurement nobody made.
+ */
+export function heightAt(surface: Surface, p: Point): number | undefined {
+  for (const triangle of surface.triangles) {
+    const [a, b, c] = triangle;
+    if (!pointInTriangle(p, a, b, c)) continue;
+    const height = planeHeight(triangle, p);
+    if (height !== undefined) return height;
+  }
+  return undefined;
+}
+
+export type VolumeChange = {
+  /** Material gone: the later surface is lower than the earlier one. */
+  cutCubicMetres: number;
+  /** Material placed: the later surface is higher. */
+  fillCubicMetres: number;
+  netCubicMetres: number;
+  /** Ground both captures actually covered, which is all the volume is over. */
+  comparedSquareMetres: number;
+  /**
+   * Ground the later capture covered and the earlier one did not.
+   *
+   * Reported rather than absorbed. A volume over 900m² of a 2,400m² site is a
+   * different number from a volume over the whole site, and a report that does
+   * not say which is being quoted invites the reader to assume the second.
+   */
+  uncomparedSquareMetres: number;
+};
+
+/**
+ * The volume between two captured surfaces — what was moved, exactly.
+ *
+ * `volumeAboveLevel` answers cut and fill against a **datum**, which is what a
+ * single capture can support. This answers it against an **earlier capture**,
+ * which is the question a progress claim actually asks: how much material has
+ * gone since the last scan, and is it what the muck-away tickets say.
+ *
+ * Exact, and by the same argument as `volumeAboveLevel`. Each triangle of the
+ * later surface is clipped against each triangle of the earlier one, so over
+ * every resulting piece **both** surfaces are planar. The difference of two
+ * planes is itself a plane, so the mean of its values at a triangle's three
+ * corners is its exact mean over that triangle, and mean height times footprint
+ * is the exact prism volume. Nothing is sampled, so nothing changes when a grid
+ * moves — which matters because this figure is what a payment is made against.
+ *
+ * Quadratic in triangle count, like `intersectionArea` and for the same reason.
+ * Site meshes are thousands of triangles, not millions, and an exact answer at
+ * that size is worth more than a fast approximate one.
+ */
+export function volumeBetween(from: Surface, to: Surface): VolumeChange {
+  let cut = 0;
+  let fill = 0;
+  let compared = 0;
+  let footprintOfLater = 0;
+
+  const earlier = from.triangles
+    .map((triangle) => ({ triangle, footprint: footprintOf(triangle) }))
+    .filter((entry) => area(entry.footprint) > 0);
+
+  for (const laterTriangle of to.triangles) {
+    const laterFootprint = footprintOf(laterTriangle);
+    const laterArea = area(laterFootprint);
+    if (laterArea <= 0) continue;
+    footprintOfLater += laterArea;
+
+    for (const { triangle: earlierTriangle, footprint: earlierFootprint } of earlier) {
+      const piece = clipByConvex(laterFootprint, earlierFootprint);
+      if (piece.length < 3) continue;
+      const pieceArea = area(piece);
+      if (pieceArea <= 0) continue;
+
+      // Over this piece both surfaces are planar, so their difference is a
+      // plane too — and the exact mean of a plane over a polygon is its value
+      // at that polygon's area centroid. That is what a centroid *is*. So one
+      // evaluation gives the exact prism volume, with nothing sampled and
+      // nothing approximated.
+      //
+      // Evaluating at the centroid rather than triangulating the piece and
+      // averaging corners is not merely tidier, it is the difference between
+      // right and wrong here. Sutherland–Hodgman returns a repeated vertex
+      // whenever the subject and the clip share a corner — which two adjacent
+      // mesh triangles do constantly — and `triangulate` rejects a ring like
+      // that and returns nothing. Volumes computed that way silently lost most
+      // of their footprint: a 40m² comparison came back as 8m².
+      const middle = centroid(piece);
+      const later = planeHeight(laterTriangle, middle);
+      const earlierHeight = planeHeight(earlierTriangle, middle);
+      if (later === undefined || earlierHeight === undefined) continue;
+
+      const volume = (later - earlierHeight) * pieceArea;
+      if (volume >= 0) fill += volume;
+      else cut -= volume;
+      compared += pieceArea;
+    }
+  }
+
+  const round = (value: number): number => zero(Math.round(value * 100) / 100);
+  return {
+    cutCubicMetres: round(cut),
+    fillCubicMetres: round(fill),
+    netCubicMetres: round(fill - cut),
+    comparedSquareMetres: round(compared),
+    uncomparedSquareMetres: round(Math.max(0, footprintOfLater - compared)),
+  };
+}
+
+/** A surface triangle's shadow on the ground, oriented so the clipper accepts it. */
+function footprintOf(triangle: Triangle3): Ring {
+  const ring: Ring = [
+    { x: triangle[0].x, y: triangle[0].y },
+    { x: triangle[1].x, y: triangle[1].y },
+    { x: triangle[2].x, y: triangle[2].y },
+  ];
+  // Counter-clockwise, because `clipByConvex` treats the left of each clip edge
+  // as inside. A clockwise triangle clips everything away and reports no
+  // overlap, which reads as two captures of different ground.
+  return shoelace(ring) < 0 ? [ring[0]!, ring[2]!, ring[1]!] : ring;
+}
+
 /** Slope of a triangle as a percentage, and its aspect in degrees from north. */
 export function slopeOf(triangle: Triangle3): { percent: number; aspectDegrees: number } {
   const [a, b, c] = triangle;

@@ -426,3 +426,203 @@ describe('routing on the site road graph', () => {
     throwsCode(() => geo.shortestRoute(nodes, edges, 'GATE', 'NOWHERE'), 'ROUTE_NODE_UNKNOWN');
   });
 });
+
+/**
+ * The volume between two captures.
+ *
+ * `volumeAboveLevel` measures against a datum, which is all one capture can
+ * support. This measures against an *earlier capture*, which is the question a
+ * progress claim actually asks: how much has gone since the last scan, and does
+ * it agree with the muck-away tickets.
+ *
+ * Every figure is worked out by hand and written into the comment. A volume is
+ * paid against, so a test that only checks the code agrees with itself is worth
+ * nothing here.
+ */
+describe('volume between two surfaces', () => {
+  /** A level plane over a square, as two triangles. */
+  const plane = (size: number, level: number): geo.Surface => ({
+    triangles: [
+      [{ x: 0, y: 0, z: level }, { x: size, y: 0, z: level }, { x: 0, y: size, z: level }],
+      [{ x: size, y: 0, z: level }, { x: size, y: size, z: level }, { x: 0, y: size, z: level }],
+    ],
+  });
+
+  it('measures material placed', () => {
+    // 10 × 10m raised by 1m: 100m³ of fill and no cut.
+    const change = geo.volumeBetween(plane(10, 0), plane(10, 1));
+    assert.equal(change.fillCubicMetres, 100);
+    assert.equal(change.cutCubicMetres, 0);
+    assert.equal(change.netCubicMetres, 100);
+    assert.equal(change.comparedSquareMetres, 100);
+    assert.equal(change.uncomparedSquareMetres, 0);
+  });
+
+  it('measures material taken away', () => {
+    // The same ground dug down 1.5m: 150m³ of cut, and the net is negative
+    // because the site is lower than it was.
+    const change = geo.volumeBetween(plane(10, 0), plane(10, -1.5));
+    assert.equal(change.cutCubicMetres, 150);
+    assert.equal(change.fillCubicMetres, 0);
+    assert.equal(change.netCubicMetres, -150);
+  });
+
+  it('reports cut and fill separately when both happened', () => {
+    // 20 × 10m. The western half is dug 2m down, the eastern half raised 1m.
+    // Cut is 10 × 10 × 2 = 200m³ and fill is 10 × 10 × 1 = 100m³. A net figure
+    // alone would say 100m³ of fill and hide the 200m³ that left the site,
+    // which is the number the haulage was invoiced against.
+    const before: geo.Surface = {
+      triangles: [
+        [{ x: 0, y: 0, z: 0 }, { x: 20, y: 0, z: 0 }, { x: 0, y: 10, z: 0 }],
+        [{ x: 20, y: 0, z: 0 }, { x: 20, y: 10, z: 0 }, { x: 0, y: 10, z: 0 }],
+      ],
+    };
+    const after: geo.Surface = {
+      triangles: [
+        [{ x: 0, y: 0, z: -2 }, { x: 10, y: 0, z: -2 }, { x: 0, y: 10, z: -2 }],
+        [{ x: 10, y: 0, z: -2 }, { x: 10, y: 10, z: -2 }, { x: 0, y: 10, z: -2 }],
+        [{ x: 10, y: 0, z: 1 }, { x: 20, y: 0, z: 1 }, { x: 10, y: 10, z: 1 }],
+        [{ x: 20, y: 0, z: 1 }, { x: 20, y: 10, z: 1 }, { x: 10, y: 10, z: 1 }],
+      ],
+    };
+    const change = geo.volumeBetween(before, after);
+    assert.equal(change.cutCubicMetres, 200);
+    assert.equal(change.fillCubicMetres, 100);
+    assert.equal(change.netCubicMetres, -100);
+    assert.equal(change.comparedSquareMetres, 200);
+  });
+
+  it('measures a wedge exactly, not by sampling it', () => {
+    // A spoil heap as a wedge: flat at one edge, 3m at the other, over a
+    // 10 × 10m footprint. Its mean height is 1.5m, so the volume is exactly
+    // 150m³. A grid method gives a different answer every time the grid moves,
+    // and this figure is what gets invoiced.
+    const after: geo.Surface = {
+      triangles: [
+        [{ x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 3 }, { x: 0, y: 10, z: 0 }],
+        [{ x: 10, y: 0, z: 3 }, { x: 10, y: 10, z: 3 }, { x: 0, y: 10, z: 0 }],
+      ],
+    };
+    const change = geo.volumeBetween(plane(10, 0), after);
+    assert.equal(change.fillCubicMetres, 150);
+    assert.equal(change.cutCubicMetres, 0);
+  });
+
+  it('says how much ground the two captures did not share', () => {
+    // The second walk covered 10 × 10m; the first only reached the western
+    // 4 × 10m of it. 40m² can be compared and 60m² cannot, and the volume is
+    // over the 40m² alone: 1m of rise there is 40m³, not 100m³.
+    //
+    // Absorbing the difference silently is the failure this guards. A reader
+    // handed "40m³" over an unstated footprint assumes it covers the site.
+    const before: geo.Surface = {
+      triangles: [
+        [{ x: 0, y: 0, z: 0 }, { x: 4, y: 0, z: 0 }, { x: 0, y: 10, z: 0 }],
+        [{ x: 4, y: 0, z: 0 }, { x: 4, y: 10, z: 0 }, { x: 0, y: 10, z: 0 }],
+      ],
+    };
+    const change = geo.volumeBetween(before, plane(10, 1));
+    assert.equal(change.comparedSquareMetres, 40);
+    assert.equal(change.uncomparedSquareMetres, 60);
+    assert.equal(change.fillCubicMetres, 40);
+  });
+
+  it('takes the mean over each piece, not the value at one of its corners', () => {
+    // One sloping triangle over one flat one, same footprint, so the whole
+    // comparison is a single piece and there is nowhere for an error to average
+    // itself out.
+    //
+    // 12 × 12m right triangle: footprint 72m². The later surface is 0 at two
+    // corners and 3m at the third, so its mean height over the piece is
+    // (0 + 3 + 0) ÷ 3 = 1m and the volume is exactly 72m³.
+    //
+    // Sampling at a corner instead gives 0 × 72 = 0m³ or 3 × 72 = 216m³ —
+    // never 72 — so this fails for any corner the code might pick.
+    const before: geo.Surface = {
+      triangles: [[{ x: 0, y: 0, z: 0 }, { x: 12, y: 0, z: 0 }, { x: 0, y: 12, z: 0 }]],
+    };
+    const after: geo.Surface = {
+      triangles: [[{ x: 0, y: 0, z: 0 }, { x: 12, y: 0, z: 3 }, { x: 0, y: 12, z: 0 }]],
+    };
+    const change = geo.volumeBetween(before, after);
+    assert.equal(change.comparedSquareMetres, 72);
+    assert.equal(change.fillCubicMetres, 72);
+    assert.equal(change.cutCubicMetres, 0);
+  });
+
+  it('reports nothing moved when nothing moved', () => {
+    const change = geo.volumeBetween(plane(10, 2), plane(10, 2));
+    assert.equal(change.cutCubicMetres, 0);
+    assert.equal(change.fillCubicMetres, 0);
+    assert.equal(change.netCubicMetres, 0);
+    assert.equal(change.comparedSquareMetres, 100);
+  });
+
+  it('compares the same ground however the device wound its triangles', () => {
+    // A mesh from a handset carries no promise about vertex order. Clipping
+    // treats one winding as inside-out and finds no overlap at all, so a real
+    // 100m³ of fill is reported as nothing moved over no shared ground — which
+    // reads exactly like a site nobody has touched.
+    const clockwise: geo.Surface = {
+      triangles: [
+        [{ x: 0, y: 0, z: 0 }, { x: 0, y: 10, z: 0 }, { x: 10, y: 0, z: 0 }],
+        [{ x: 10, y: 0, z: 0 }, { x: 0, y: 10, z: 0 }, { x: 10, y: 10, z: 0 }],
+      ],
+    };
+    const change = geo.volumeBetween(clockwise, plane(10, 1));
+    assert.equal(change.comparedSquareMetres, 100, 'the two captures were treated as different ground');
+    assert.equal(change.fillCubicMetres, 100);
+  });
+
+  it('ignores a vertical triangle rather than dividing by its zero footprint', () => {
+    // A wall face in the mesh has no plan area and no single height at a point.
+    // It must contribute nothing rather than a NaN that propagates into the
+    // total.
+    const after: geo.Surface = {
+      triangles: [
+        ...plane(10, 1).triangles,
+        [{ x: 3, y: 3, z: 0 }, { x: 3, y: 7, z: 0 }, { x: 3, y: 5, z: 4 }],
+      ],
+    };
+    const change = geo.volumeBetween(plane(10, 0), after);
+    assert.equal(change.fillCubicMetres, 100);
+    assert.ok(Number.isFinite(change.netCubicMetres));
+  });
+});
+
+describe('the level under a point', () => {
+  const ramp: geo.Surface = {
+    triangles: [
+      [{ x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 5 }, { x: 0, y: 10, z: 0 }],
+      [{ x: 10, y: 0, z: 5 }, { x: 10, y: 10, z: 5 }, { x: 0, y: 10, z: 0 }],
+    ],
+  };
+
+  it('interpolates across the triangle rather than stepping at its edges', () => {
+    // 5m of rise over 10m, so halfway across is 2.5m and a quarter across is
+    // 1.25m. A stepped answer would give the same level over a whole triangle
+    // and read as terracing.
+    assert.equal(geo.heightAt(ramp, { x: 5, y: 5 }), 2.5);
+    assert.equal(geo.heightAt(ramp, { x: 2.5, y: 5 }), 1.25);
+    assert.equal(geo.heightAt(ramp, { x: 0, y: 5 }), 0);
+  });
+
+  it('has no level at all on a triangle standing on its edge', () => {
+    // A vertical face projects to a line, so a point on that line has no single
+    // level: the face spans every height from 0 to 4 directly above it. The
+    // only true answer is that there is no measurement. Returning zero would
+    // put a level on the record that the plane never had, and it would be used
+    // as ground.
+    const wall: geo.Surface = {
+      triangles: [[{ x: 3, y: 0, z: 0 }, { x: 3, y: 10, z: 0 }, { x: 3, y: 5, z: 4 }]],
+    };
+    assert.equal(geo.heightAt(wall, { x: 3, y: 5 }), undefined);
+  });
+
+  it('says there is no measurement rather than saying zero', () => {
+    // Ground the walk did not reach. Zero is a level, and a level is a
+    // measurement nobody made — it would sit in a volume as real material.
+    assert.equal(geo.heightAt(ramp, { x: 100, y: 100 }), undefined);
+  });
+});
