@@ -396,6 +396,7 @@ const PERCEPTION_PATHS: Record<perception.PerceptionTask, string> = {
   PPE_COMPLIANCE: 'ppe',
   EQUIPMENT_RECOGNITION: 'equipment',
   DEFECT_DETECTION: 'defects',
+  GROUND_MATERIAL: 'ground-material',
 };
 
 /**

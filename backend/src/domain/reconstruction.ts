@@ -29,11 +29,17 @@ import type { Point3, Surface, Triangle3 } from './geometry.ts';
  * unknowns with a closed-form normal equation, and it is solved exactly below.
  * No optimiser, no iteration, no dependency.
  *
- * What is *not* solved here is dense stereo — a height for every pixel rather
- * than for every tracked feature. That genuinely needs a GPU and a model, it is
- * declared on the registry as a capability with no provider, and asking for it
- * gets a refusal that names what is missing rather than a coarse answer
- * presented as a fine one.
+ * ## And where the device measured depth directly
+ *
+ * A phone with a depth sensor hands over a depth *image*, not just features, and
+ * there is nothing to solve at all: each pixel already carries a distance. That
+ * is unprojected through the lens and the pose and meshed by image adjacency —
+ * O(n), and it keeps the sensor's own topology instead of approximating it.
+ *
+ * What is *not* done anywhere is dense stereo **computed** from imagery, for a
+ * device with no depth sensor at all. That genuinely needs a GPU, it stays
+ * declared on the registry with no provider, and asking for it gets a refusal
+ * naming what is missing rather than a coarse answer presented as a fine one.
  *
  * ## Why the residual is the point
  *
@@ -77,9 +83,34 @@ export type FeatureObservation = {
   v: number;
 };
 
+/**
+ * A depth image the device produced, and the pose of the camera that took it.
+ *
+ * ARKit's `sceneDepth` and the ARCore Depth API both hand over exactly this on
+ * a phone with a depth sensor, usually at a fraction of the colour resolution.
+ * Samples are row-major, in metres, and a sample at or below zero is "no
+ * return" — the sensor saw nothing there, which is not the same as a distance
+ * of zero.
+ */
+export type DepthFrame = {
+  frameId: string;
+  width: number;
+  height: number;
+  /** Row-major, `width × height`, in metres. Zero or less means no return. */
+  samples: number[];
+};
+
 export type ReconstructionJob = {
   poses: CameraPose[];
   observations: FeatureObservation[];
+  /**
+   * Present for a depth-map job and absent for a feature-track one.
+   *
+   * One job shape rather than a union keyed on capability, because the registry
+   * and the refusal path are the same for both and a union would have doubled
+   * them. Each provider takes what it needs and refuses what it is not given.
+   */
+  depth?: DepthFrame;
   /**
    * How far a solved point may sit from where the device saw it before it is
    * thrown away, in pixels. Two is about the noise floor of a tracked feature
@@ -143,14 +174,22 @@ export const RECONSTRUCTION_CAPABILITY = {
     gives: 'A sparse point cloud and a surface through it, with a stated reprojection residual.',
   },
   DENSE_STEREO: {
-    label: 'Dense depth from imagery',
-    needs: 'The frames themselves, and hardware that can run stereo matching over them.',
-    gives: 'A height for every pixel rather than for every tracked feature.',
+    label: 'Dense depth computed from imagery',
+    needs:
+      'The frames themselves and hardware that can run stereo matching over them — a GPU this platform does not ' +
+      'have and would not be the right place for. Where the device has a depth sensor, DEVICE_DEPTH_MAP is the ' +
+      'answer instead and needs no such thing.',
+    gives: 'A height for every pixel on a device with no depth sensor at all.',
   },
   MATERIAL_CLASSIFICATION: {
     label: 'Surface material from imagery',
-    needs: 'The frames, and a model trained to tell hardstanding from clay from vegetation.',
+    needs: 'A site photograph and a multimodal provider. Both exist: this is the ordinary perception pipeline.',
     gives: 'What the ground is made of, which geometry alone cannot say.',
+  },
+  DEVICE_DEPTH_MAP: {
+    label: 'Dense depth from the device',
+    needs: 'A per-pixel depth image and the pose of the camera that took it — ARKit sceneDepth, or the ARCore Depth API.',
+    gives: 'A height for every pixel the sensor reached, rather than for every tracked feature.',
   },
 } as const;
 
@@ -168,6 +207,14 @@ const LOCAL_TRIANGULATION: ReconstructionProvider = {
   name: 'LOCAL_MULTIVIEW',
   capability: 'POSED_FEATURE_TRACKS',
   reconstruct(job) {
+    if (job.poses.length < 2) {
+      throw new DomainError(
+        'RECONSTRUCTION_TOO_FEW_POSES',
+        'Two camera positions are the minimum for solving depth from feature tracks. From one the depth of ' +
+          'everything seen is unknown, and a surface built from it would be invented rather than measured. A device ' +
+          'that measured depth directly needs only one frame — that is a DEVICE_DEPTH_MAP job.',
+      );
+    }
     const maximumResidual = job.maximumResidualPixels ?? 2;
     const posesById = new Map(job.poses.map((pose) => [pose.frameId, pose]));
 
@@ -256,7 +303,140 @@ const LOCAL_TRIANGULATION: ReconstructionProvider = {
   },
 };
 
-const PROVIDERS: ReconstructionProvider[] = [LOCAL_TRIANGULATION];
+/**
+ * Depth image in, surface out.
+ *
+ * No stereo matching, no optimiser, and no GPU — because there is nothing to
+ * solve. The sensor already measured the distance to every pixel; this
+ * unprojects each one through the lens and the pose, and connects them the way
+ * the sensor arranged them.
+ *
+ * **Meshed by image adjacency rather than by Delaunay**, and that is the whole
+ * trick. A depth image is already a grid, so each cell is two triangles and the
+ * mesh is O(n) — where running the general triangulator over fifty thousand
+ * points would be quadratic and take minutes. It also preserves the sensor's
+ * own topology, which a re-triangulation would throw away and approximate.
+ *
+ * A cell with a missing return at any corner is **left out**, not interpolated
+ * across. A hole in a depth image is a place the sensor could not see, and
+ * bridging it invents ground.
+ */
+const DEVICE_DEPTH: ReconstructionProvider = {
+  name: 'DEVICE_DEPTH_UNPROJECT',
+  capability: 'DEVICE_DEPTH_MAP',
+  reconstruct(job) {
+    const depth = job.depth;
+    if (!depth) {
+      throw new DomainError(
+        'RECONSTRUCTION_DEPTH_MISSING',
+        'A depth-map reconstruction needs a depth image. Feature tracks alone are a POSED_FEATURE_TRACKS job.',
+      );
+    }
+    const pose = job.poses.find((candidate) => candidate.frameId === depth.frameId);
+    if (!pose) {
+      throw new DomainError(
+        'RECONSTRUCTION_DEPTH_POSE_MISSING',
+        `No pose for frame ${depth.frameId}. A depth image without the pose of the camera that took it places ` +
+          'nothing: the distances are real and the position they are measured from is unknown.',
+      );
+    }
+    if (depth.samples.length !== depth.width * depth.height) {
+      throw new DomainError(
+        'RECONSTRUCTION_DEPTH_MALFORMED',
+        `A ${depth.width} × ${depth.height} depth image has ${depth.width * depth.height} samples; ${depth.samples.length} were sent.`,
+      );
+    }
+
+    const { fx, fy, cx, cy } = pose.intrinsics;
+    const r = pose.rotation;
+    // The depth image is usually smaller than the colour frame the intrinsics
+    // were measured on, so the principal point and focal length scale with it.
+    // Skipping this puts the whole surface at the wrong angle and nothing about
+    // the result looks wrong.
+    const scaleX = depth.width / (cx * 2);
+    const scaleY = depth.height / (cy * 2);
+
+    const grid: Array<Point3 | undefined> = new Array(depth.samples.length);
+    let noReturn = 0;
+    for (let row = 0; row < depth.height; row += 1) {
+      for (let column = 0; column < depth.width; column += 1) {
+        const index = row * depth.width + column;
+        const d = depth.samples[index]!;
+        if (!(d > 0) || !Number.isFinite(d)) {
+          noReturn += 1;
+          continue;
+        }
+        // Pixel to camera space, then camera to world. The rotation is
+        // camera-from-world and orthonormal, so its inverse is its transpose.
+        const camera = {
+          x: ((column / scaleX - cx) / fx) * d,
+          y: ((row / scaleY - cy) / fy) * d,
+          z: d,
+        };
+        grid[index] = {
+          x: round(pose.position.x + r[0] * camera.x + r[3] * camera.y + r[6] * camera.z),
+          y: round(pose.position.y + r[1] * camera.x + r[4] * camera.y + r[7] * camera.z),
+          z: round(pose.position.z + r[2] * camera.x + r[5] * camera.y + r[8] * camera.z),
+        };
+      }
+    }
+
+    const triangles: Triangle3[] = [];
+    for (let row = 0; row + 1 < depth.height; row += 1) {
+      for (let column = 0; column + 1 < depth.width; column += 1) {
+        const topLeft = grid[row * depth.width + column];
+        const topRight = grid[row * depth.width + column + 1];
+        const bottomLeft = grid[(row + 1) * depth.width + column];
+        const bottomRight = grid[(row + 1) * depth.width + column + 1];
+        // All four corners, or the cell is a hole and stays one.
+        if (!topLeft || !topRight || !bottomLeft || !bottomRight) continue;
+        triangles.push([topLeft, topRight, bottomLeft]);
+        triangles.push([topRight, bottomRight, bottomLeft]);
+      }
+    }
+
+    const points: ReconstructedPoint[] = grid
+      .map((point, index) => ({ point, index }))
+      .filter((entry): entry is { point: Point3; index: number } => entry.point !== undefined)
+      .map((entry) => ({ trackId: `d${entry.index}`, point: entry.point, views: 1, residualPixels: 0 }));
+
+    return {
+      provider: DEVICE_DEPTH.name,
+      capability: 'DEVICE_DEPTH_MAP',
+      points,
+      surface: { triangles },
+      // A depth sample is measured rather than solved, so none of the
+      // feature-track rejection reasons can arise. The one thing that does is a
+      // pixel the sensor got nothing back from, and it is counted as its own
+      // thing rather than folded into a reason it is not.
+      rejected: { tooFewViews: 0, degenerate: noReturn, residualTooLarge: 0, behindCamera: 0 },
+      meanResidualPixels: 0,
+      worstResidualPixels: 0,
+      limitation:
+        'Measured by the device’s depth sensor rather than solved, so it carries that sensor’s error and not a ' +
+        'reprojection residual — typically centimetres at a few metres and worse with range, in daylight, and on ' +
+        'dark or wet surfaces. Measured reconnaissance, not set-out.',
+    };
+  },
+};
+
+const PROVIDERS: ReconstructionProvider[] = [LOCAL_TRIANGULATION, DEVICE_DEPTH];
+
+/**
+ * Capabilities this platform serves somewhere other than through a
+ * reconstruction provider.
+ *
+ * Material classification is a vision task, and the platform already has a
+ * vision pipeline: `perception.ts` runs it against a multimodal provider,
+ * charges it, stamps the provenance and holds the answer as a draft somebody
+ * confirms. Registering a second path here would have been a parallel
+ * implementation of a mechanism that exists — and it would have skipped the
+ * draft-then-confirm discipline, which is the part that matters when a model is
+ * saying what the ground is made of.
+ */
+const SERVED_ELSEWHERE: Partial<Record<ReconstructionCapability, string>> = {
+  MATERIAL_CLASSIFICATION: 'PERCEPTION_PIPELINE',
+};
 
 /**
  * Every capability, and what serves it — including the ones nothing serves.
@@ -275,11 +455,11 @@ export function reconstructionCapabilities(): Array<{
   available: boolean;
 }> {
   return (Object.keys(RECONSTRUCTION_CAPABILITY) as ReconstructionCapability[]).map((capability) => {
-    const provider = PROVIDERS.find((candidate) => candidate.capability === capability);
+    const provider = PROVIDERS.find((candidate) => candidate.capability === capability)?.name ?? SERVED_ELSEWHERE[capability];
     return {
       capability,
       ...RECONSTRUCTION_CAPABILITY[capability],
-      ...(provider ? { provider: provider.name } : {}),
+      ...(provider ? { provider } : {}),
       available: provider !== undefined,
     };
   });
@@ -296,6 +476,15 @@ export function reconstructionCapabilities(): Array<{
 export function providerFor(capability: ReconstructionCapability): ReconstructionProvider {
   const provider = PROVIDERS.find((candidate) => candidate.capability === capability);
   if (!provider) {
+    const elsewhere = SERVED_ELSEWHERE[capability];
+    if (elsewhere) {
+      throw new DomainError(
+        'RECONSTRUCTION_WRONG_PIPELINE',
+        `${RECONSTRUCTION_CAPABILITY[capability].label} is served by the ${elsewhere.toLowerCase().replace(/_/g, ' ')}, ` +
+          'not by a reconstruction provider. Send the photograph to the perception route instead.',
+        409,
+      );
+    }
     const entry = RECONSTRUCTION_CAPABILITY[capability];
     throw new DomainError(
       'RECONSTRUCTION_UNAVAILABLE',
@@ -309,13 +498,11 @@ export function providerFor(capability: ReconstructionCapability): Reconstructio
 
 /** Run a job through the provider for its capability. */
 export function reconstruct(capability: ReconstructionCapability, job: ReconstructionJob): ReconstructionResult {
-  if (job.poses.length < 2) {
-    throw new DomainError(
-      'RECONSTRUCTION_TOO_FEW_POSES',
-      'Two camera positions are the minimum. From one the depth of everything seen is unknown, and a surface ' +
-        'built from it would be invented rather than measured.',
-    );
-  }
+  // Each provider states its own minimum. Two poses is a requirement of
+  // *solving* depth from parallax, not of reconstruction in general — a depth
+  // image measured the distances and needs exactly one frame. Enforcing it here
+  // made the general path carry one provider's rule and refuse the other's
+  // perfectly valid job.
   return providerFor(capability).reconstruct(job);
 }
 

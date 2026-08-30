@@ -11512,3 +11512,66 @@ void. What it does is tell the bidder something about the buyer, and stop them
 pricing a cash risk they do not carry — which is the expensive mistake, because
 the money goes in the price and the competitor who read the Act does not put it
 there.
+
+
+### The two unserved capability slots, resolved
+
+The reconstruction registry declared three capabilities and served one. Both
+gaps are now closed, and closed differently — which is the honest answer rather
+than a tidy one.
+
+**Material classification is served by the pipeline that already existed.** It
+is a vision task, and `engines/perception.ts` is the platform's vision pipeline:
+it routes to a multimodal provider, refuses outright when none is configured
+rather than letting a text model answer confidently and fictionally, charges the
+call, stamps the provenance, and holds the answer as a draft somebody confirms.
+Registering a second path under the reconstruction registry would have been a
+parallel implementation of that — and it would have skipped draft-then-confirm,
+which is exactly the discipline that matters when a model is saying what the
+ground is made of.
+
+So `GROUND_MATERIAL` is a ninth perception task, and the routes derive from the
+task table, so it got its endpoint from one line. It reports the material, the
+share of frame, and whether the ground looks trafficable by tracked plant, by
+wheeled plant, or by neither — and it is told not to estimate bearing capacity
+and to answer `UNCERTAIN` rather than guess. It carries `conditionsLimiting`,
+said by the model rather than assumed by the platform: a photograph taken into
+the sun is not a classification, and the model is better placed to say so.
+
+The registry now reports it as available, served by `PERCEPTION_PIPELINE`, and a
+caller who asks the reconstruction registry for it is redirected by name to the
+route that actually serves it.
+
+**Dense depth is served for the device that measured it, and refused for the
+device that did not.** The original slot said "dense depth from imagery", which
+conflated two different things. A phone with a depth sensor hands over a depth
+*image* — ARKit's `sceneDepth`, the ARCore Depth API — and there is nothing to
+solve: every pixel already carries a distance. That is now `DEVICE_DEPTH_MAP`,
+and it is real arithmetic: unproject each sample through the lens and the pose,
+and mesh by **image adjacency** rather than by Delaunay. That last part is the
+whole trick — a depth image is already a grid, so the mesh is O(n) where running
+the general triangulator over fifty thousand points would be quadratic, and it
+keeps the sensor's own topology instead of approximating it.
+
+A cell with a missing return at any corner is left out. A hole in a depth image
+is a place the sensor could not see, and bridging it invents ground.
+
+`DENSE_STEREO` — depth *computed* from imagery, for a device with no depth
+sensor at all — stays declared and unserved. It needs a GPU, the register says
+so, and it does not quietly redirect to the depth-map provider, which answers a
+different question.
+
+**Two mutations survived the first pass and both were the same blind spot
+again**: every camera in the suite looked straight down with a *symmetric*
+rotation matrix and a flat floor at uniform depth, so neither the intrinsic
+scaling nor the R-versus-Rᵀ question changed anything asserted. A site
+unprojected with the wrong transpose is mirrored about a diagonal at the right
+height with the right extent; a site unprojected without scaling the depth grid
+onto the colour intrinsics collapses to a patch the size of a hand, also at the
+right height. Both are now caught by asserting the ground footprint — worked out
+by hand — from a yawed camera.
+
+One design fix fell out of it: the "two camera positions minimum" guard lived on
+the general `reconstruct` path, where it refused a perfectly valid one-frame
+depth-map job. It is a requirement of *solving* depth from parallax, not of
+reconstruction, and it now sits on the provider that needs it.

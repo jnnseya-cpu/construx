@@ -51,6 +51,15 @@ const VISION_TASKS = [
     lands: 'a site observation naming the plant and whether it was standing',
   },
   { task: 'DEFECT_DETECTION', label: 'Defects', lands: 'one NCR per defect, each closed on its own' },
+  {
+    task: 'GROUND_MATERIAL',
+    label: 'Ground',
+    // The half the geometry cannot answer. `segmentation` classifies the shape
+    // of the ground exactly and says on every region that it read form and not
+    // material; this reads the material, which is what decides whether a crane
+    // can stand on it.
+    lands: 'what the ground is made of, which the shape of it cannot tell you',
+  },
 ];
 
 const FINDING_TONE = {
@@ -527,6 +536,17 @@ function visionSummary(draft) {
   if (draft.task === 'EQUIPMENT_RECOGNITION') {
     const items = extraction.items ?? [];
     return items.map((item) => `${item.count} × ${item.description} (${humanise(item.state)})`).join('; ');
+  }
+  if (draft.task === 'GROUND_MATERIAL') {
+    const surfaces = extraction.surfaces ?? [];
+    if (surfaces.length === 0) return 'no surface classified';
+    const named = surfaces
+      .map((surface) => `${humanise(surface.material)} ${Math.round(surface.sharePercent)}% (${humanise(surface.trafficable)})`)
+      .join('; ');
+    // The conditions the model itself said limited it. A classification off a
+    // photograph taken into the sun is not one, and the model is better placed
+    // to say so than the platform is.
+    return extraction.conditionsLimiting ? `${named} — ${extraction.conditionsLimiting}` : named;
   }
   const defects = extraction.defects ?? [];
   return defects.map((defect) => `${defect.severity}: ${defect.description}`).join(' · ');
@@ -2237,6 +2257,7 @@ export async function field(root) {
         PPE_COMPLIANCE: () => api.post(`/v1/projects/${projectId}/perception/ppe`, { hash }),
         EQUIPMENT_RECOGNITION: () => api.post(`/v1/projects/${projectId}/perception/equipment`, { hash }),
         DEFECT_DETECTION: () => api.post(`/v1/projects/${projectId}/perception/defects`, { hash }),
+        GROUND_MATERIAL: () => api.post(`/v1/projects/${projectId}/perception/ground-material`, { hash }),
       };
       let draft;
       try {

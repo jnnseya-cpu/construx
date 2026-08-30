@@ -199,13 +199,6 @@ describe('what it refuses to reconstruct', () => {
     assert.equal(result.rejected.residualTooLarge, 0);
   });
 
-  it('refuses the whole job from a single camera position', () => {
-    assert.throws(
-      () => recon.reconstruct('POSED_FEATURE_TRACKS', { poses: [camera('f1', 0, 0)], observations: [] }),
-      /RECONSTRUCTION_TOO_FEW_POSES|Two camera positions/,
-    );
-  });
-
   it('ignores an observation from a frame with no pose', () => {
     // A device that sent feature tracks and dropped a pose. Trusting the
     // observation would mean triangulating against a camera position of zero.
@@ -222,14 +215,17 @@ describe('what it refuses to reconstruct', () => {
 describe('the capability register', () => {
   it('says plainly which kinds of reconstruction have nothing behind them', () => {
     const capabilities = recon.reconstructionCapabilities();
-    const available = capabilities.filter((entry) => entry.available);
-    assert.deepEqual(available.map((entry) => entry.capability), ['POSED_FEATURE_TRACKS']);
+    const available = capabilities.filter((entry) => entry.available).map((entry) => entry.capability);
+    assert.deepEqual(
+      available.sort(),
+      ['DEVICE_DEPTH_MAP', 'MATERIAL_CLASSIFICATION', 'POSED_FEATURE_TRACKS'],
+    );
 
-    // The two that are not built are named rather than absent — the whole
-    // point of publishing the register. Somebody deciding what to walk a site
-    // with needs to know before the walk, not after.
+    // The one that is not built is named rather than absent — the whole point
+    // of publishing the register. Somebody deciding what to walk a site with
+    // needs to know before the walk, not after.
     const missing = capabilities.filter((entry) => !entry.available).map((entry) => entry.capability);
-    assert.deepEqual(missing.sort(), ['DENSE_STEREO', 'MATERIAL_CLASSIFICATION']);
+    assert.deepEqual(missing, ['DENSE_STEREO']);
     for (const entry of capabilities) {
       assert.ok(entry.needs.length > 20, `${entry.capability} does not say what it needs`);
       assert.ok(entry.gives.length > 20, `${entry.capability} does not say what it gives`);
@@ -240,6 +236,16 @@ describe('the capability register', () => {
     assert.throws(
       () => recon.providerFor('DENSE_STEREO'),
       (error: Error) => /Nothing on this platform provides/.test(error.message) && /stereo matching/.test(error.message),
+    );
+  });
+
+  it('keeps the two-camera minimum on the path that actually needs it', () => {
+    // It is a requirement of solving depth from parallax, not of reconstruction
+    // in general. Enforced on the general path it refused a depth-map job that
+    // was perfectly valid with one frame.
+    assert.throws(
+      () => recon.reconstruct('POSED_FEATURE_TRACKS', { poses: [camera('f1', 0, 0)], observations: [] }),
+      /Two camera positions are the minimum for solving depth from feature tracks/,
     );
   });
 });
@@ -392,5 +398,182 @@ describe('the surface through the points', () => {
     });
     assert.match(result.limitation, /not set-out/);
     assert.match(result.limitation, /no material classification/);
+  });
+});
+
+describe('depth the device measured rather than depth solved', () => {
+  /**
+   * A flat floor 5m below a camera looking straight down. Every pixel of a
+   * depth image of it reads 5m, so the unprojected surface must come back at
+   * z = 0 and cover the ground the lens saw.
+   */
+  const flatFloor = (width: number, height: number, metres = 5) => ({
+    frameId: 'f1',
+    width,
+    height,
+    samples: new Array(width * height).fill(metres),
+  });
+
+  it('unprojects a depth image onto the ground it measured', () => {
+    // Camera 5m up, looking down, 640×360 principal point with the depth image
+    // at 8×8 — which is what a device does: depth is a fraction of the colour
+    // resolution, and the intrinsics scale with it.
+    const pose = camera('f1', 0, 0, 5);
+    const result = recon.reconstruct('DEVICE_DEPTH_MAP', {
+      poses: [pose],
+      observations: [],
+      depth: flatFloor(8, 8),
+    });
+
+    assert.equal(result.points.length, 64);
+    // Every point on the floor, not somewhere between the camera and it.
+    for (const point of result.points) {
+      assert.ok(Math.abs(point.point.z) < 1e-6, `a floor point came back at z = ${point.point.z}`);
+    }
+    // 7 × 7 cells, two triangles each.
+    assert.equal(result.surface.triangles.length, 7 * 7 * 2);
+  });
+
+  it('covers the ground the lens actually saw, at the depth image’s own resolution', () => {
+    // The depth image is a fraction of the colour resolution the intrinsics were
+    // measured on — 8 × 8 against a 1280 × 720 frame here — so the pixel grid
+    // has to be scaled onto those intrinsics before unprojecting. Skip it and
+    // every point lands within a few centimetres of the principal ray: the
+    // whole site collapses to a patch the size of a hand, at the right height,
+    // and nothing about the surface looks wrong.
+    //
+    // Worked out: column c maps to u = c × 1280 ÷ 8 = 160c, so camera x is
+    // (u − 640) ÷ 1000 × 5. Column 0 is −3.2m and column 7 is +2.4m — 5.6m of
+    // ground. Rows map to v = 90r, giving −1.8m to +1.35m, or 3.15m.
+    const result = recon.reconstruct('DEVICE_DEPTH_MAP', {
+      poses: [camera('f1', 0, 0, 5)],
+      observations: [],
+      depth: flatFloor(8, 8),
+    });
+
+    const xs = result.points.map((p) => p.point.x);
+    const ys = result.points.map((p) => p.point.y);
+    assert.ok(Math.abs(Math.min(...xs) - -3.2) < 1e-6, `west edge at ${Math.min(...xs)}`);
+    assert.ok(Math.abs(Math.max(...xs) - 2.4) < 1e-6, `east edge at ${Math.max(...xs)}`);
+    assert.ok(Math.abs(Math.min(...ys) - -1.8) < 1e-6, `south edge at ${Math.min(...ys)}`);
+    assert.ok(Math.abs(Math.max(...ys) - 1.35) < 1e-6, `north edge at ${Math.max(...ys)}`);
+  });
+
+  it('places the ground by the camera’s bearing, not mirrored about a diagonal', () => {
+    // Every other camera in this file looks straight down with a *symmetric*
+    // rotation, and a symmetric matrix is its own transpose — so whether the
+    // code uses R or Rᵀ to take a camera-space point into the world is
+    // invisible to all of them. A site unprojected the wrong way round is
+    // mirrored, at the right height, with the right extent.
+    //
+    // Yawed 90°, the 5.6m of ground that ran east–west runs north–south.
+    const yawed: recon.CameraPose = {
+      frameId: 'f1',
+      position: { x: 0, y: 0, z: 5 },
+      rotation: [0, 1, 0, -1, 0, 0, 0, 0, -1],
+      intrinsics: LENS,
+    };
+    const result = recon.reconstruct('DEVICE_DEPTH_MAP', {
+      poses: [yawed],
+      observations: [],
+      depth: flatFloor(8, 8),
+    });
+
+    const xs = result.points.map((p) => p.point.x);
+    const ys = result.points.map((p) => p.point.y);
+    // The image's x range (5.6m) is now the world's y range, and its y range
+    // (3.15m) is the world's x. Applying R instead of Rᵀ flips the signs, so
+    // the edges land on the wrong side.
+    assert.ok(Math.abs(Math.min(...ys) - -3.2) < 1e-6, `south edge at ${Math.min(...ys)}`);
+    assert.ok(Math.abs(Math.max(...ys) - 2.4) < 1e-6, `north edge at ${Math.max(...ys)}`);
+    assert.ok(Math.abs(Math.min(...xs) - -1.35) < 1e-6, `west edge at ${Math.min(...xs)}`);
+    assert.ok(Math.abs(Math.max(...xs) - 1.8) < 1e-6, `east edge at ${Math.max(...xs)}`);
+  });
+
+  it('leaves a hole where the sensor got nothing back', () => {
+    // A depth image has holes: dark surfaces, wet surfaces, anything beyond
+    // range. Bridging one invents ground that was never measured.
+    const depth = flatFloor(4, 4);
+    depth.samples[5] = 0; // no return, one pixel in from the corner
+    const result = recon.reconstruct('DEVICE_DEPTH_MAP', {
+      poses: [camera('f1', 0, 0, 5)],
+      observations: [],
+      depth,
+    });
+
+    assert.equal(result.points.length, 15);
+    assert.equal(result.rejected.degenerate, 1, 'the missing sample was not counted');
+    // The four cells touching that pixel are gone: 3 × 3 cells, minus 4, at two
+    // triangles each.
+    assert.equal(result.surface.triangles.length, (9 - 4) * 2);
+  });
+
+  it('refuses a depth image with no pose for the frame that took it', () => {
+    // The distances are real and the position they were measured from is
+    // unknown. There is no defensible surface to build from that.
+    assert.throws(
+      () =>
+        recon.reconstruct('DEVICE_DEPTH_MAP', {
+          poses: [camera('other', 0, 0, 5), camera('another', 1, 0, 5)],
+          observations: [],
+          depth: flatFloor(4, 4),
+        }),
+      /No pose for frame f1/,
+    );
+  });
+
+  it('refuses a depth image whose size and sample count disagree', () => {
+    assert.throws(
+      () =>
+        recon.reconstruct('DEVICE_DEPTH_MAP', {
+          poses: [camera('f1', 0, 0, 5), camera('f2', 1, 0, 5)],
+          observations: [],
+          depth: { frameId: 'f1', width: 4, height: 4, samples: new Array(12).fill(5) },
+        }),
+      /has 16 samples; 12 were sent/,
+    );
+  });
+
+  it('states that it carries a sensor error and not a residual', () => {
+    const result = recon.reconstruct('DEVICE_DEPTH_MAP', {
+      poses: [camera('f1', 0, 0, 5)],
+      observations: [],
+      depth: flatFloor(4, 4),
+    });
+    assert.match(result.limitation, /Measured by the device’s depth sensor rather than solved/);
+    assert.match(result.limitation, /not set-out/);
+    // Zero residual is not a claim of perfection — it is the absence of a
+    // reprojection, and the limitation says so rather than leaving the zero to
+    // be read as accuracy.
+    assert.equal(result.worstResidualPixels, 0);
+  });
+});
+
+describe('a capability served somewhere else', () => {
+  it('reports material classification as available, through the perception pipeline', () => {
+    // It is not a reconstruction provider and never will be — it is a vision
+    // task, and the platform already has a vision pipeline that charges it,
+    // stamps the provenance and holds the answer as a draft somebody confirms.
+    const entry = recon.reconstructionCapabilities().find((c) => c.capability === 'MATERIAL_CLASSIFICATION')!;
+    assert.equal(entry.available, true);
+    assert.equal(entry.provider, 'PERCEPTION_PIPELINE');
+  });
+
+  it('sends a caller asking the wrong pipeline to the right one', () => {
+    assert.throws(
+      () => recon.providerFor('MATERIAL_CLASSIFICATION'),
+      (error: Error) => /perception pipeline/.test(error.message) && /perception route instead/.test(error.message),
+    );
+  });
+
+  it('still refuses the one thing nothing serves', () => {
+    // Dense stereo computed from imagery, for a device with no depth sensor at
+    // all. It needs a GPU, and the register says so rather than quietly
+    // redirecting to the depth-map provider, which answers a different question.
+    assert.throws(
+      () => recon.providerFor('DENSE_STEREO'),
+      (error: Error) => /Nothing on this platform provides/.test(error.message) && /GPU/.test(error.message),
+    );
+    assert.equal(recon.reconstructionCapabilities().find((c) => c.capability === 'DENSE_STEREO')!.available, false);
   });
 });

@@ -98,7 +98,8 @@ export type PerceptionTask =
   | 'PROGRESS_FROM_IMAGES'
   | 'PPE_COMPLIANCE'
   | 'EQUIPMENT_RECOGNITION'
-  | 'DEFECT_DETECTION';
+  | 'DEFECT_DETECTION'
+  | 'GROUND_MATERIAL';
 
 type TaskDefinition = {
   engine: Engine;
@@ -179,6 +180,70 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
     // would create a drawing nobody can supersede, because supersession keys on
     // the number.
     usable: (extraction) => typeof extraction.drawingNumber === 'string' && extraction.drawingNumber.trim() !== '',
+  },
+
+  GROUND_MATERIAL: {
+    engine: 'BIM_TWIN',
+    taskType: 'ground_material_from_photograph',
+    area: 'LOOKAHEAD_CONSTRAINTS',
+    // What placing a zone on the site model requires. Classifying the ground is
+    // an input to that decision, so it takes the same authority.
+    code: 'C',
+    label: 'Read what the ground is made of',
+    accepts: SITE_IMAGE,
+    acceptsLabel: 'a site photograph',
+    // The half of the site-capture specification that geometry cannot answer.
+    // `domain/segmentation.ts` classifies the *shape* of the ground exactly and
+    // says on every region that it read form and not material. This is the
+    // other half, and it is genuinely a vision problem: a 2% plane is level
+    // ground whether it is tarmac, hardcore or wet clay, and what it is made of
+    // decides whether a crane can stand on it.
+    prompt:
+      'Report what the ground surface in this photograph is made of. For each distinct surface visible, give ' +
+      'the material, roughly what share of the frame it occupies, and whether it appears trafficable by ' +
+      'tracked plant, by wheeled plant, or by neither. Report standing water, soft or rutted ground, and ' +
+      'vegetation separately where present. Do not estimate bearing capacity, and do not report a material ' +
+      'you cannot see — an area you are unsure of is reported as UNCERTAIN rather than guessed.',
+    responseSchema: {
+      type: 'object',
+      properties: {
+        surfaces: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              material: {
+                type: 'string',
+                enum: [
+                  'HARDSTANDING',
+                  'COMPACTED_GRANULAR',
+                  'ASPHALT',
+                  'CONCRETE',
+                  'SOFT_GROUND',
+                  'CLAY',
+                  'TOPSOIL',
+                  'VEGETATION',
+                  'STANDING_WATER',
+                  'RUTTED_OR_CHURNED',
+                  'UNCERTAIN',
+                ],
+              },
+              sharePercent: { type: 'number' },
+              trafficable: { type: 'string', enum: ['TRACKED', 'WHEELED', 'NEITHER', 'UNCERTAIN'] },
+              note: { type: ['string', 'null'] },
+            },
+            required: ['material', 'sharePercent', 'trafficable'],
+          },
+        },
+        // Said by the model rather than assumed by the platform: a photograph
+        // taken into the sun or at dusk is not a classification.
+        conditionsLimiting: { type: ['string', 'null'] },
+      },
+      required: ['surfaces'],
+    },
+    // A classification with no surface in it is not one. It stays on the record
+    // as a draft — it was paid for — and cannot be confirmed.
+    usable: (extraction) => Array.isArray(extraction.surfaces) && extraction.surfaces.length > 0,
   },
 
   DRAWING_TAKEOFF: {
