@@ -68,6 +68,7 @@ import * as sitelayout from '../domain/sitelayout.ts';
 import * as siteplan from '../export/siteplan.ts';
 import * as cis from '../domain/cis.ts';
 import * as reconstruction from '../domain/reconstruction.ts';
+import * as retention from '../domain/retention.ts';
 import * as sitemodel from '../domain/sitemodel.ts';
 import * as regulatorycompletion from '../domain/regulatorycompletion.ts';
 import * as reliability from '../domain/reliability.ts';
@@ -4319,6 +4320,35 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => integrator.drawContingency(projectContext(platform, ctx), body(ctx)),
+  },
+  // ------------------------------------------------------------------ retention
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/contracts/:contractId/retention',
+    description: 'Retention held, released, and what has fallen due but not been claimed',
+    handler: (platform, ctx) =>
+      retention.retentionPosition(projectContext(platform, ctx), String(ctx.params.contractId), ctx.query.get('asAt') ?? undefined),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contracts/:contractId/retention/release',
+    description: 'Release a tranche of retention that has fallen due',
+    schema: {
+      type: 'object',
+      required: ['tranche', 'amountMinor', 'releasedOn'],
+      properties: {
+        tranche: { type: 'string', enum: ['PRACTICAL_COMPLETION', 'DEFECTS_EXPIRY'] },
+        amountMinor: { type: 'integer', minimum: 1 },
+        releasedOn: { type: 'string', format: 'date' },
+        reason: { type: 'string', maxLength: 400 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      retention.releaseRetention(projectContext(platform, ctx), {
+        contractId: String(ctx.params.contractId),
+        ...body<Omit<Parameters<typeof retention.releaseRetention>[1], 'contractId'>>(ctx),
+      }),
   },
   // --------------------------------------------- the Construction Industry Scheme
   {

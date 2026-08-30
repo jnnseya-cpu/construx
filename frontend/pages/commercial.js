@@ -48,6 +48,56 @@ const INTEGRATOR_TONE = {
  * than for the arithmetic. So the months are listed with their due dates
  * whether or not anything was paid in them.
  */
+/**
+ * Retention held, and what has fallen due.
+ *
+ * The platform withheld this on every certificate and had no way to give it
+ * back. The number that matters is the one at the top: money that has fallen
+ * due and nobody has claimed, because retention is lost by nobody watching a
+ * date a year out rather than by anybody disputing it.
+ */
+function retentionPanel(position) {
+  if (!position) return '';
+  return html`
+    <div class="card pad0" id="retention" style="margin-bottom:14px;scroll-margin-top:68px">
+      <h2 style="padding:15px 17px 0">Retention</h2>
+      <p style="padding:0 17px;font-size:12.5px;color:var(--text-3);margin:6px 0 10px">${position.summary}</p>
+      ${
+        position.overdueMinor > 0
+          ? html`<div style="padding:0 17px 11px"><div class="notice warn"><div>
+              <b>${exact(position.overdueMinor)} has fallen due and is unclaimed.</b><br>
+              Retention is lost by nobody watching a date, not by anybody disputing it.
+            </div></div></div>`
+          : ''
+      }
+      ${table({
+        headers: ['Tranche', 'Falls due', 'Under', 'Entitlement', 'Released', 'Outstanding', ''],
+        align: ['', '', '', 'num', 'num', 'num', ''],
+        rows: position.tranches.map((t) => [
+          t.label,
+          t.dueOn ? date(t.dueOn) : '—',
+          t.ruleSource ?? '—',
+          exact(t.entitlementMinor),
+          exact(t.releasedMinor),
+          exact(t.outstandingMinor),
+          t.releasable
+            ? badge('Releasable', 'ok')
+            : t.outstandingMinor === 0
+              ? badge('Released', '')
+              : html`<span title="${t.blockedBy ?? ''}">${badge('Held', 'warn')}</span>`,
+        ]),
+      })}
+      ${
+        position.tranches.some((t) => t.blockedBy)
+          ? html`<div style="padding:0 17px 15px"><div class="metric-sub">
+              ${position.tranches.filter((t) => t.blockedBy).map((t) => html`<div>${t.label}: ${t.blockedBy}</div>`)}
+            </div></div>`
+          : ''
+      }
+    </div>
+  `;
+}
+
 function cisPanel(board, monthly) {
   const months = board?.months ?? [];
   return html`
@@ -261,6 +311,8 @@ export async function commercial(root) {
       // and the pay less notices that can give effect to one.
       'Subcontract',
       'PayLessNotice',
+      // For the retention position: the contract the retention is held under.
+      'Contract',
     ]),
     api.get(`/v1/projects/${projectId}/cost/ledger`).catch(() => null),
     // Cash as the record now says it will be, rather than as the tender assumed.
@@ -278,6 +330,13 @@ export async function commercial(root) {
     // return itself is fetched only for the month somebody opened.
     api.get(`/v1/projects/${projectId}/cis/returns`).catch(() => null),
   ]);
+
+  // Retention held against the main contract, and what has fallen due. Fetched
+  // after the bundle because it needs the contract the bundle carries.
+  const mainContract = bundle.Contract?.at(-1);
+  const retention = mainContract
+    ? await api.get(`/v1/projects/${projectId}/contracts/${mainContract._refId}/retention`).catch(() => null)
+    : null;
 
   const openCisMonth = state.cisMonth ?? null;
   const cisReturn = openCisMonth
@@ -379,6 +438,8 @@ export async function commercial(root) {
       </div>
 
       ${integrationPanel(integration)}
+
+      ${retentionPanel(retention)}
 
       ${cisPanel(cisMonths, cisReturn)}
 

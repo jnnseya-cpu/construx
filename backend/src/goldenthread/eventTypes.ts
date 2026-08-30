@@ -643,6 +643,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SPATIAL_BASELINE_SET', 'CaptureMission', 'APPROVE', 'DELIVERY'),
   // The geometric record. Zones carry real polygons, so these events are what
   // every measurement, overlap and volume on the platform is computed from.
+  // Retention released. An approval rather than an update: it is the moment
+  // money the contractor already earned stops being the buyer's to hold, and
+  // no agent authors it.
+  def('RETENTION_RELEASED', 'RetentionRelease', 'APPROVE', 'COMMERCIAL', { creates: true }),
   // The Construction Industry Scheme. Verification is what a deduction is
   // defended with at an inspection, so it is its own record rather than a field
   // on the supplier — a rate that changed has to be readable as of the payment

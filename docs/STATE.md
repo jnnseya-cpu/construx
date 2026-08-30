@@ -11458,3 +11458,57 @@ verified by re-introducing the exact defects.
 
 Neither replaces driving the page. The array hole rendered a page that looked
 fine and was wrong, and only reading the output caught it.
+
+
+### Retention released, and pay-when-paid named as void
+
+Two more items from the case-study assessment's "not built" list.
+
+**Retention.** The platform has always *withheld* it — every certificate carries
+a retention figure and the commercial position sums them — and there was no way
+to ever get it back. That is 3 to 5% of the contract sum: cash the contractor
+already earned and funded, whose second half is often years away, and which for
+a small business is frequently the difference between the job having been worth
+doing and not.
+
+**The dates are not computed here, and that is the point.** The first draft of
+this module derived them from the contract's defects period, which would have
+been a second answer to a question the platform already answers. The completion
+certificate *already* sets `RETENTION_FIRST_RELEASE` and
+`RETENTION_FINAL_RELEASE`, derived from the contract's clause register, each
+carrying the clause it came from, frozen under a hash, and gated on a human
+having reviewed the register — the command refuses outright while the clauses
+are "awaiting legal review", on the grounds that a defects period nobody checked
+is not a date to start a liability running from. This module reads that
+certificate and does the money. A parallel derivation would have disagreed with
+the certificate the moment a reviewer corrected a clause, and it would have been
+computed from unvalidated data.
+
+Finding that out cost three failed test runs against gates that turned out to be
+right, and every one of them was the platform refusing to let a shortcut
+through. The `addMonths` clamping code that first draft needed is gone.
+
+**What is held is what was withheld**, certificate by certificate — not a
+percentage of the contract sum, because the two differ the moment the final
+account differs from the contract, which is most of the time. Releasing before
+the date is refused, releasing more than the tranche holds is refused, and a
+part-release reduces what the next one is measured against. A **sectional**
+completion does not start the clock: a car park handed over early is not the
+contract complete, and taking it would release the balance of the whole
+contract's retention on the strength of it.
+
+The number the module exists for is on the panel first: money that has fallen
+due and nobody has claimed. Retention is lost by nobody watching a date a year
+out, not by anybody disputing it.
+
+Seven mutations, all caught.
+
+**Pay when paid.** Section 113 of the Construction Act makes a clause
+conditioning payment on the payer being paid by a third party ineffective,
+except on that party's insolvency. The ITT term assessment now flags it — as a
+`MATERIAL` term and deliberately **not** a bar, because the clause does not stop
+the bid and does not need negotiating out to make the job safe. It is already
+void. What it does is tell the bidder something about the buyer, and stop them
+pricing a cash risk they do not carry — which is the expensive mistake, because
+the money goes in the price and the competitor who read the Act does not put it
+there.

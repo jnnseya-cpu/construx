@@ -332,6 +332,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   CaptureMission: { area: 'LOOKAHEAD_CONSTRAINTS' },
   // The geometry and the layout adopted from it. Same area as the site visit
   // they belong to; a site plan is not more sensitive than the walk that made it.
+  RetentionRelease: { area: 'PAYMENT_APPLICATIONS' },
   CISVerification: { area: 'PAYMENT_APPLICATIONS' },
   CISPayment: { area: 'PAYMENT_APPLICATIONS' },
   SiteModel: { area: 'LOOKAHEAD_CONSTRAINTS' },

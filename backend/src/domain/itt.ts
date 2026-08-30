@@ -158,6 +158,17 @@ export type CommercialTerms = {
   designLiability?: DesignLiability;
   /** Sectional completion dates the contractor is tied to. */
   sectionalCompletions?: number;
+  /**
+   * A clause making payment conditional on the payer being paid by somebody
+   * else — "pay when paid", "pay if paid", or the same idea written round the
+   * houses as a condition precedent on an upstream certificate.
+   *
+   * Worth a flag of its own rather than a line in `other` because the law has
+   * already decided it: section 113 of the Construction Act makes it
+   * ineffective, and a bidder who prices for the risk is pricing for a risk
+   * they do not carry.
+   */
+  paymentConditionalOnThirdParty?: boolean;
   /** Anything else stated, carried verbatim rather than interpreted. */
   other?: string[];
 };
@@ -383,6 +394,34 @@ export function analyseITT(
       exposureMinor: retentionMinor,
       exposureKind: 'CASH',
     });
+  }
+
+  if (input.terms.paymentConditionalOnThirdParty) {
+    // Section 113 of the Housing Grants, Construction and Regeneration Act
+    // 1996. A clause making payment conditional on the payer receiving payment
+    // from a third party is ineffective — with one exception, which is that
+    // third party's insolvency.
+    //
+    // This is stated as a *term assessment* rather than a bar, and deliberately.
+    // The clause does not stop the bid and does not need negotiating out to
+    // make the job safe: it is already void. What it does is tell the bidder
+    // something about the buyer, and stop them pricing a cash risk they do not
+    // carry — which is the expensive mistake, because the money is priced in
+    // and the competitor who read the Act does not price it.
+    terms.push({
+      term: 'Payment conditional on the buyer being paid',
+      stated: 'Pay when paid',
+      assessment:
+        'Ineffective under section 113 of the Construction Act, except where the third party is insolvent. The ' +
+        'obligation to pay does not depend on the buyer being paid, whatever the clause says, and it is not a cash ' +
+        'risk to price for. It is worth asking why it is in the document.',
+      severity: 'MATERIAL',
+    });
+    clarifications.push(
+      'The payment clause is conditional on the buyer receiving payment from a third party. Section 113 of the ' +
+        'Construction Act makes that ineffective except on that party’s insolvency — will the buyer confirm the ' +
+        'clause is not relied on, or delete it?',
+    );
   }
 
   if (input.terms.paymentDays !== undefined) {
