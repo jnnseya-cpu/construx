@@ -605,3 +605,151 @@ describe('inbound trace headers', () => {
     assert.match(echoed, /^[0-9a-f-]{36}$/);
   });
 });
+
+/**
+ * A route schema that disagrees with the command behind it.
+ *
+ * This was found by running a real business through the platform rather than
+ * by a test: `enforcementNotices` was declared `integer` on the prequalify
+ * route while `assessPrequalification` reads each notice's type, date and
+ * whether it was resolved. So a caller who sent the field as the schema
+ * documented it got `500 INTERNAL_ERROR`, and one who sent what the command
+ * actually reads was refused at the door. Either way an unresolved HSE
+ * prohibition notice — which is a bar, and the most serious thing on the whole
+ * assessment — could not be recorded at all.
+ *
+ * Both directions are asserted, because fixing only the crash would leave the
+ * bar unreachable and the route would still look like it worked.
+ */
+describe('the prequalification schema and the assessment agree', () => {
+  const supplier = async (partyId: string): Promise<string> => {
+    const created = await call('POST', '/v1/supply-chain/suppliers', {
+      token: tokenFor('pm'),
+      body: {
+        partyId,
+        legalName: 'Katanga Power Services SARL',
+        trades: ['ELECTRICAL'],
+        contactName: 'Chef de site',
+        contactEmail: 'ops@katangapower.example',
+        countryCode: 'CD',
+      },
+    });
+    assert.equal(created.status, 201, created.text);
+    return created.body.supplierId;
+  };
+
+  const assessment = (over: Record<string, unknown>) => ({
+    identity: { companyNumber: 'CD-99231', cisStatus: 'NET_20' },
+    insurances: [
+      { type: 'PUBLIC_LIABILITY', insurer: 'SONAS', limitMinor: 500_000_00, expiresOn: '2027-06-30' },
+      { type: 'EMPLOYERS_LIABILITY', insurer: 'SONAS', limitMinor: 1_000_000_00, expiresOn: '2027-06-30' },
+    ],
+    safetyAccreditations: ['CHAS'],
+    qualityAccreditations: ['ISO 9001'],
+    riddorLastThreeYears: 0,
+    capacity: { concurrentProjects: 3, turnoverMinor: 2_000_000_00 },
+    complianceConfirmed: true,
+    evidenceHash: 'a'.repeat(64),
+    packageValueMinor: 15_000_00,
+    ...over,
+  });
+
+  it('bars a supplier carrying an unresolved prohibition notice', async () => {
+    // The regulator stopped them working. Nothing else on the assessment
+    // matters, and the platform has to be able to hear it.
+    const reply = await call('POST', `/v1/supply-chain/suppliers/${await supplier('SUP-PROHIBITED')}/prequalify`, {
+      token: tokenFor('pm'),
+      body: assessment({
+        enforcementNotices: [{ type: 'PROHIBITION', issuedOn: '2026-03-04', resolved: false }],
+      }),
+    });
+
+    assert.equal(reply.status, 201, reply.text);
+    assert.equal(reply.body.status, 'DO_NOT_USE');
+    assert.ok(
+      (reply.body.bars as string[]).some((bar) => /prohibition notice/i.test(bar)),
+      `the prohibition notice was accepted and then ignored: ${JSON.stringify(reply.body.bars)}`,
+    );
+  });
+
+  it('does not turn a resolved notice into a bar', async () => {
+    const reply = await call('POST', `/v1/supply-chain/suppliers/${await supplier('SUP-RESOLVED')}/prequalify`, {
+      token: tokenFor('pm'),
+      body: assessment({
+        enforcementNotices: [{ type: 'PROHIBITION', issuedOn: '2024-01-09', resolved: true }],
+      }),
+    });
+
+    assert.equal(reply.status, 201, reply.text);
+    assert.ok(
+      !(reply.body.bars as string[]).some((bar) => /prohibition notice/i.test(bar)),
+      'a notice the regulator has closed was still treated as a bar',
+    );
+  });
+
+  it('refuses a count where notices belong, rather than failing inside the command', async () => {
+    // The shape that used to produce a 500. A refusal at the door is the
+    // contract; an internal error tells the caller nothing and pages somebody.
+    const reply = await call('POST', `/v1/supply-chain/suppliers/${await supplier('SUP-COUNTED')}/prequalify`, {
+      token: tokenFor('pm'),
+      body: assessment({ enforcementNotices: 2 }),
+    });
+
+    assert.equal(reply.status, 400, reply.text);
+    assert.equal(reply.body.title, 'VALIDATION_FAILED');
+  });
+});
+
+/**
+ * A path naming a project that is not a project.
+ *
+ * Found by running a business through the platform: a client interpolated
+ * `undefined` into the URL and `POST /v1/projects/undefined/integration`
+ * returned **201**, writing a priced commercial account — contract sum, margin,
+ * contingency — into a ledger scope no project owns. The ledger is append-only,
+ * so a record filed that way cannot afterwards be removed. It is invisible to
+ * every project listing and readable only by repeating the same wrong URL, so
+ * nobody would find it either.
+ *
+ * `projectContext` checked that the path *had* a project segment, never that it
+ * named one. Handlers that happened to call `ledger.require` themselves were
+ * safe; the rest were not, and which was which was invisible from the outside.
+ * The check belongs at the funnel all 565 project-scoped routes pass through.
+ */
+describe('a project-scoped path has to name a real project', () => {
+  it('refuses a write against a project that does not exist', async () => {
+    const reply = await call('POST', '/v1/projects/NO-SUCH-PROJECT/integration', {
+      token: tokenFor('qs'),
+      body: { directSupplierCostMinor: 500_000_00, model: 'ADVISORY' },
+    });
+
+    assert.equal(reply.status, 404, `a commercial account was written to a phantom project: ${reply.text}`);
+  });
+
+  it('refuses the literal string a broken client interpolates', async () => {
+    // The exact shape that produced the record. Worth its own case: `undefined`
+    // is what a template writes when the id it was given was missing, and it is
+    // the one wrong value a real client actually sends.
+    const reply = await call('POST', '/v1/projects/undefined/integration', {
+      token: tokenFor('qs'),
+      body: { directSupplierCostMinor: 500_000_00, model: 'ADVISORY' },
+    });
+
+    assert.equal(reply.status, 404, reply.text);
+  });
+
+  it('refuses a read against one too, rather than answering emptily', async () => {
+    // An empty answer for a project that does not exist is indistinguishable
+    // from an empty answer for one that does, which is how a mistyped id gets
+    // read as "nothing has happened yet".
+    const reply = await call('GET', '/v1/projects/NO-SUCH-PROJECT/integration', { token: tokenFor('qs') });
+    assert.equal(reply.status, 404, reply.text);
+  });
+
+  it('still serves a project that does exist', async () => {
+    // The guard must not be a wall. Without this the other three would pass on
+    // a `projectContext` that refused everything.
+    const reply = await call('GET', `/v1/projects/${seed.projectId}/integration`, { token: tokenFor('qs') });
+    assert.equal(reply.status, 200, reply.text);
+  });
+});

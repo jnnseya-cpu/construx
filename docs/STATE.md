@@ -10792,3 +10792,68 @@ verification and monthly returns are not built; nor is the retention release
 model (a half at practical completion, a half after the defects period); nor a
 service taxonomy for site services or workforce accommodation. Those are named
 here so the absence is not mistaken for coverage.
+
+
+### Running a real business through the platform, and what it found
+
+The Groupe Nseya case study — a business taking every site service under one
+appointment — was walked end to end over HTTP as a new tenant: public signup,
+enterprise and portfolio, the appointment as a project, the price build-up, the
+mobilisation advance, a scope package, the design gate, the supply chain
+register, prequalification, RFQ, award, subcontract, and the payment cycle in
+both directions. Not a test fixture; the same routes a customer hits.
+
+Most of it works, and several refusals were exactly right: an enquiry to a
+supplier who is registered but not prequalified is refused with that reason; a
+supplier with no employers liability cover is barred; procurement during
+`CONCEPT` is refused by the phase gate; an identity cannot change its own roles.
+The trade catalogue already carries the case study's own service taxonomy —
+`WELFARE` (welfare and site accommodation), `SECURITY`, `LOGISTICS`, `CLEANING`,
+`TEMPORARY_WORKS_SUPPLY` under `PLANT_AND_SITE`.
+
+Three defects came out of it that no amount of reading the code had produced.
+
+**A project-scoped path never had to name a project.** `projectContext` checked
+that the path carried a project segment, never that it named one. So
+`POST /v1/projects/undefined/integration` returned **201** and wrote a priced
+commercial account — contract sum, margin, contingency — into a ledger scope no
+project owns. The ledger is append-only, so such a record cannot afterwards be
+removed; it is invisible to every project listing and readable only by repeating
+the same wrong URL. Handlers that happened to call `ledger.require` themselves
+were safe and the rest were not, which is not a property anything could rely on.
+The check now sits at the funnel all 565 project-scoped routes pass through, and
+verifies tenancy in the same breath — naming another tenant's project id would
+otherwise have opened a scope under this tenant carrying their identifier.
+
+**A route schema disagreed with the command behind it.** `enforcementNotices`
+was declared `integer` on the prequalification route while
+`assessPrequalification` reads each notice's type, date and whether it was
+resolved. Sending the field as documented produced `500 INTERNAL_ERROR`; sending
+what the command reads was refused at the door. Either way an unresolved HSE
+prohibition notice — a bar, and the most serious thing on the assessment — could
+not be recorded at all. Both directions are now tested, because fixing only the
+crash would have left the bar unreachable and the route would still have looked
+like it worked.
+
+**Separation of duties is enforced between roles, not between people.**
+`certifyApplication` checks `A` on `PAYMENT_APPLICATIONS` and never that the
+certifying actor differs from the applying one. One identity holding `QS` and
+`OWNER` submitted a payment application and certified it, in sequence, with
+nothing on the record to show it. The pattern exists elsewhere in the codebase —
+`assignRoles` refuses `SELF_ROLE_CHANGE` — so the absence here is an omission
+rather than a decision. **Not fixed**, because it is a change to a settled
+control model rather than a defect in a path: it needs a decision about whether
+a single-operator business is permitted to self-certify with the fact recorded,
+or refused outright. Recorded here so it is not mistaken for coverage.
+
+**And the platform cannot be operated by one person.** Public signup grants the
+founder `ENTERPRISE_ADMIN`, which holds no `C` or `U` on `BUDGET_COST`,
+`WORKPACKAGES_TASKS` or `DESIGN_INFORMATION` — so the person who just created
+the company can create projects and nothing else. They cannot promote themselves
+(`SELF_ROLE_CHANGE`, correctly), so the only route is to create a second
+identity and sign in as it. Running one appointment took the founder plus one
+operator holding `QS`, `PM`, `OWNER` and `DESIGNER` together. That works and
+costs nothing extra on a package with ten included seats, but it means the
+audit trail shows two people where there is one, and stacking those roles is
+what defeats the certification separation above. The seat model already prices
+a sole trader; the permission model does not yet describe one.

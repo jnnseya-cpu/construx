@@ -318,6 +318,29 @@ function projectContext(platform: Platform, ctx: RequestContext, overrideProject
   if (auth(ctx).roles.includes('PLATFORM_ADMIN')) {
     throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
   }
+
+  // The project in the path has to be a project.
+  //
+  // Every project-scoped route funnels through here, and this checked only that
+  // the segment was *present*. A path naming a project that does not exist —
+  // a typo, a stale link, a client that interpolated `undefined` — was accepted
+  // and the command wrote against it: `POST /v1/projects/undefined/integration`
+  // returned 201 and put a priced commercial account into a ledger scope no
+  // project owns. The ledger is append-only, so those records cannot afterwards
+  // be removed; they are invisible to every project listing and readable only
+  // by repeating the same wrong URL. Handlers that call `ledger.require`
+  // themselves were safe and the rest were not, which is not a property anybody
+  // could rely on.
+  //
+  // Tenancy is checked in the same breath. Naming another tenant's project id
+  // would otherwise open a ledger scope under *this* tenant carrying *their*
+  // identifier — not a disclosure, because reads are tenant-filtered, but a
+  // permanent record filed under somebody else's reference.
+  const project = platform.ledger.get({ refType: 'Project', refId: projectId });
+  if (!project || project.tenantId !== auth(ctx).tenantId) {
+    throw new NotFoundError(`Project ${projectId} not found`);
+  }
+
   return platform.context(auth(ctx), projectId, { correlationId: ctx.correlationId, source: sourceOf(ctx) });
 }
 
@@ -2576,7 +2599,25 @@ export const ROUTES: Route[] = [
         qualityAccreditations: { type: 'array', items: { type: 'string' } },
         accidentFrequencyRate: { type: 'number', minimum: 0 },
         riddorLastThreeYears: { type: 'integer', minimum: 0 },
-        enforcementNotices: { type: 'integer', minimum: 0 },
+        // Notices, not a count of them. The schema said `integer` while
+        // `assessPrequalification` reads each notice's type, date and whether it
+        // was resolved — so a caller who supplied the field as documented got a
+        // 500 rather than a refusal, and one who supplied it correctly was
+        // refused at the door. An unresolved prohibition notice is a bar and a
+        // count cannot express one.
+        enforcementNotices: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['type', 'issuedOn', 'resolved'],
+            properties: {
+              type: { type: 'string', enum: ['IMPROVEMENT', 'PROHIBITION'] },
+              issuedOn: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+              resolved: { type: 'boolean' },
+            },
+            additionalProperties: false,
+          },
+        },
         ramsCapability: { type: 'object' },
         competenceCards: { type: 'array', items: { type: 'object' } },
         training: { type: 'object' },
