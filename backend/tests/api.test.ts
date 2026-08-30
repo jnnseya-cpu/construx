@@ -835,3 +835,71 @@ describe('an invitation to tender is validated at the boundary, on both routes',
     assert.match(reply.text, /paymentTermsDays/);
   });
 });
+
+describe('the separation-of-duties control survives the gateway', () => {
+  /**
+   * The one case the permission matrix cannot see.
+   *
+   * `payments.test.ts` proves the domain refuses an identity certifying its own
+   * application. This proves the refusal is what a caller actually gets over
+   * HTTP, which is a different question: the gateway runs authentication, then
+   * RBAC, then the handler, and a plain QS never reaches the handler at all —
+   * it has no approve verb on payment applications, so it is stopped by the
+   * matrix with `ACCESS_DENIED` and the control below is never consulted.
+   *
+   * That is why the token here stacks both roles. A small business puts the
+   * commercial and the client-side hat on one person as a matter of course, and
+   * separation between *roles* is not separation between *people*.
+   */
+  it('refuses over HTTP when one identity applies and then certifies', async () => {
+    const { hashEvidence } = await import('../src/core/canonical.ts');
+    const { scopesForRoles } = await import('../src/identity/scopes.ts');
+
+    const qs = platform.user(seed.users.qs!.id);
+    const roles = [...new Set([...seed.users.qs!.auth.roles, ...seed.users.owner!.auth.roles])];
+    const stacked = issueTokens({
+      actorId: qs.id,
+      tenantId: qs.tenantId,
+      partyId: qs.partyId,
+      roles,
+      scopes: scopesForRoles(roles),
+      mfaSatisfied: true,
+    }).accessToken;
+
+    const cycle = platform.ledger.list(seed.projectId, 'PaymentCycle')[0]!;
+    const applied = await call('POST', `/v1/projects/${seed.projectId}/cost/application`, {
+      token: stacked,
+      body: {
+        cycleId: cycle.refId,
+        cycleNumber: 9,
+        grossValuationMinor: 50_000_000,
+        variationsIncludedMinor: 0,
+        previouslyCertifiedMinor: 0,
+        retentionMinor: 0,
+        supportingEvidenceHash: hashEvidence('http-self-cert-application'),
+      },
+    });
+    assert.equal(applied.status, 201, applied.text);
+
+    const certified = await call(
+      'POST',
+      `/v1/projects/${seed.projectId}/cost/application/${applied.body.applicationId}/certify`,
+      {
+        token: stacked,
+        body: {
+          certifiedMinor: applied.body.netAppliedMinor,
+          retentionMinor: 0,
+          issuedDate: '2026-12-01',
+          certificateHash: hashEvidence('http-self-certificate'),
+        },
+      },
+    );
+
+    assert.equal(certified.status, 409, `one identity turned its own application into a debt: ${certified.text}`);
+    // The specific refusal, not merely a refusal. `ACCESS_DENIED` here would
+    // mean RBAC stopped it and the control was never reached — which is what
+    // happens for an unstacked QS, and would make this test prove nothing.
+    assert.equal(certified.body.title, 'CERTIFICATION_SELF_APPROVAL', certified.text);
+    assert.match(certified.body.detail, /may not certify it/);
+  });
+});

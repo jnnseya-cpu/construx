@@ -11687,3 +11687,24 @@ it does not. With the schema closed, silence now genuinely means the buyer said
 nothing, which is the precondition for reporting it — but which absences are
 worth raising is a product judgement, not a defect, so the false claim is
 removed rather than a feature invented to justify it.
+
+
+### The self-certification refusal, proved through the socket
+
+The control that stops one identity certifying its own payment application was
+built and unit-tested. What had not been shown was that it is the refusal a
+caller actually *gets*, and the earlier HTTP probe could not show it: a plain QS
+is stopped by the permission matrix with `ACCESS_DENIED` before the handler runs,
+because it has no approve verb on payment applications. A test that saw only
+that would prove RBAC works and say nothing about the control.
+
+`api.test.ts` now applies and then certifies over real HTTP with a **role-stacked
+token** — QS and Owner on one identity, which is what a small business does as a
+matter of course, and the exact case separation between *roles* cannot see. The
+gateway returns **409 `CERTIFICATION_SELF_APPROVAL`**, and the test asserts that
+title specifically: `ACCESS_DENIED` there would mean the matrix stopped it and
+the control was never consulted.
+
+Two mutations confirm the test is load-bearing. Removing the control fails it;
+so does dropping the second role, which is the failure that documents why the
+stack is there.
