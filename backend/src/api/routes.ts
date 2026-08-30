@@ -65,6 +65,7 @@ import * as integrator from '../domain/integrator.ts';
 import * as responsibility from '../domain/responsibility.ts';
 import * as sitecapture from '../domain/sitecapture.ts';
 import * as sitelayout from '../domain/sitelayout.ts';
+import * as siteplan from '../export/siteplan.ts';
 import * as sitemodel from '../domain/sitemodel.ts';
 import * as regulatorycompletion from '../domain/regulatorycompletion.ts';
 import * as reliability from '../domain/reliability.ts';
@@ -4512,6 +4513,16 @@ export const ROUTES: Route[] = [
       }),
   },
   // ---------------------------------------------- the three-minute site capture
+  {
+    method: 'GET',
+    pattern: '/v1/site-elements',
+    description: 'The site element catalogue and how each is drawn, so a plan, a DXF and the 3D view share one palette',
+    // Published for the same reason the permission matrix is: the browser holds
+    // no rule the API does not. A viewer with its own colour table would drift
+    // from the legend on the drawing, and the two would disagree on the same
+    // site.
+    handler: () => ({ elements: siteplan.elementStyles() }),
+  },
   {
     method: 'GET',
     pattern: '/v1/site-capture/protocol',
@@ -12870,6 +12881,79 @@ export const ROUTES: Route[] = [
         { format: chosen, projectId, userId: actor.actorId, resolveImage },
         { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
       );
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-model/:modelId/plan.pdf',
+    binary: true,
+    description: 'The controlled 2D site layout: a scale drawing with north arrow, scale bar, legend and zone schedule',
+    schema: {
+      type: 'object',
+      properties: {
+        audience: { type: 'string', enum: ['INTERNAL', 'CLIENT', 'SUPPLIER', 'REGULATOR', 'INSURER', 'ADJUDICATOR', 'COURT'] },
+        format: { type: 'string', enum: ['PDF', 'DOCX'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const projectId = ctx.params.projectId as string;
+      const engineCtx = projectContext(platform, ctx);
+      const view = sitemodel.siteModel(engineCtx, String(ctx.params.modelId));
+      const sheet = siteplan.sitePlanBlocks(view, { title: 'Site layout' });
+      if (!sheet) {
+        throw new DomainError(
+          'PLAN_NOT_PLOTTABLE',
+          view.boundary
+            ? 'This site does not fit on A4 at any standard scale. A drawing plotted at a ratio nobody can measure ' +
+              'against is not a drawing, so none has been issued.'
+            : 'There is no site boundary to plot. Everything on a layout is positioned against it.',
+          422,
+        );
+      }
+
+      const actor = auth(ctx);
+      const asked = body<{ audience?: ExportAudience; format?: RenderableFormat }>(ctx);
+      const chosen: RenderableFormat = asked.format ?? 'PDF';
+      const document = platform.exports.document(actor, projectId, {
+        title: 'Site layout',
+        subtitle: `Plotted at 1:${sheet.scaleDenominator} on A4 — derived from a handheld capture, not a survey`,
+        blocks: sheet.blocks,
+        audience: actor.roles.includes('REGULATOR') ? 'REGULATOR' : (asked.audience ?? 'INTERNAL'),
+        correlationId: ctx.correlationId,
+      });
+
+      return renderAndCharge(
+        platform.wallet(actor.tenantId),
+        document,
+        { format: chosen, projectId, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
+  },
+  {
+    // POST like every other download on this platform: the console's download
+    // helper mints an idempotency key and posts, and a GET here would need a
+    // second path through the client for one route.
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-model/:modelId/plan.dxf',
+    binary: true,
+    description: 'The same geometry as a layered DXF, which a client drawing office can overlay on their own',
+    // Takes nothing, and says so. A POST with no schema accepts whatever it is
+    // sent, which is how a route that ignores its body today starts reading one
+    // tomorrow without anybody deciding to.
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const view = sitemodel.siteModel(projectContext(platform, ctx), String(ctx.params.modelId));
+      // No wallet charge and no audience: this is the geometry the tenant
+      // already holds, in a second file format. Charging for a format
+      // conversion of a record somebody owns would be charging twice for one
+      // thing.
+      return {
+        contentType: 'application/dxf',
+        filename: `site-layout-${String(ctx.params.modelId).slice(-6)}.dxf`,
+        bytes: Buffer.from(siteplan.sitePlanDxf(view), 'utf8'),
+      };
     },
   },
   // --------------------------------------------- reading the tender documents (T-WF-02)

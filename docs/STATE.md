@@ -11066,3 +11066,79 @@ overhead-line corridor and a laydown breaching it by 375m².
 anything this repository lacks — the PDF renderer and the geometry both exist —
 and the taxonomy merge with `LOGISTICS_ELEMENT` is done, so a drawing has one
 legend to render from.
+
+
+### The drawing and the view, which were the last two things missing
+
+The section above ended: *"Still not built. The 2D drawing output and the 3D
+view."* Both are built now, and both are honest about what they are.
+
+**The drawing is a drawing, not a picture of one.** The difference is whether a
+scale rule laid on the paper reads true. `export/siteplan.ts` chooses a scale
+from the ordinary drawing scales — 1:50 through 1:2500 — and refuses a site too
+large for A4 at any of them rather than inventing a ratio like 1:173 that nobody
+can measure against. The renderer then applies exactly that ratio and nothing
+else, so the plotted geometry and the printed "1:500" cannot disagree. Verified
+by reading the PDF's own content stream: a 60m × 40m site plots at 120.00mm ×
+80.00mm, the scale bar measures 40.00mm and is labelled 20m, and every zone's
+plotted rectangle reproduces the area its schedule row quotes — the laydown at
+44 × 28mm is the 308m² the table states.
+
+The sheet carries a north arrow, a scale bar, a zone schedule and a legend drawn
+from the element catalogue. Colour comes from the element code and never from
+draw order, so a laydown is the same colour on every sheet the business issues.
+The DXF is the same geometry as R12 ASCII, one layer per element code, in real
+site coordinates — which is what a client's drawing office can overlay on their
+own, and a PDF is not. It goes through the ordinary exporter, so it inherits the
+branding, the audience redaction, the content hash and the attestation; a
+parallel renderer would have been a second document engine with none of that.
+
+The sheet says on its own face that it is not a survey and may not be used for
+setting out without verification. A drawing leaves the platform, and whoever
+opens it cannot see the accuracy class beside it.
+
+**The 3D view is WebGL with no library** — `frontend/lib/sitetwin.js`, a few
+hundred lines of matrix arithmetic and two shaders, because a 3D dependency to
+draw a mesh and some extruded polygons would break the one decision this
+platform has kept throughout. Where no surface was captured it draws **no
+ground at all**, rather than a flat plane: a plane is a measurement nobody made,
+and on a screen it reads as a level site that nobody would question.
+
+**Three defects that only rendering the output could find.** All of the
+arithmetic above was already correct and every test passed when each of these
+was present.
+
+- **Zone names printed on top of each other.** "Walkway" over "Muster point",
+  and "Perimeter hoarding" struck through by the boundary line it crossed. Names
+  are now placed on a ladder of positions, masked behind, and a name that still
+  cannot be placed is dropped rather than overprinted — two names on top of each
+  other read as neither, and the schedule names every zone regardless. Ordering
+  is by the zone's own area, so when a name gives way it is the sliver's.
+- **The north arrow sat inside the frame**, printed over whatever occupied the
+  corner — which on the first real site was the overhead-line exclusion, the one
+  thing on the sheet nobody should read through an arrow. It now goes in the
+  gutter, or on the scale-bar row when there is no gutter.
+- **Seven of nine zones were invisible in the 3D view.** The ground rose three
+  metres across the site and every zone was extruded from a fixed zero, so the
+  terrain buried them. Every triangle was present and correct and simply behind
+  the ground — which is why the vertex-count tests could not see it. Zones and
+  the boundary wall are now draped on the captured surface, interpolated
+  barycentrically so the ground reads as a slope rather than as terracing.
+
+The tests that now hold these were written after the defects, and each was
+mutation-checked: eleven mutations across the label placement, the north arrow
+and the draping, all eleven caught. Two of those tests were wrong on the first
+attempt and said so — one placed its zones at a shared *corner* rather than a
+shared *centre*, which left the collision ladder enough room that nothing was
+ever contested; the other checked only the highest point of the boundary wall,
+which passes while any individual corner still sits at a fixed level.
+
+One false claim was removed from the source on the way: the label ordering
+sorted by the *label's* width while its comment claimed it protected the larger
+*zone*. Those are different things — "Gate 1" is a long name on one of the
+smallest things on any site — and it now sorts by the shape's area.
+
+**Still not built**, and unchanged by this: semantic segmentation, the
+reconstruction-provider interface (deliberately deferred rather than stubbed),
+change-detection *volumes* as opposed to areas, and ACU metering for the spatial
+stages.

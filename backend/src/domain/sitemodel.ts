@@ -245,6 +245,15 @@ export type ZoneMeasurement = {
   code: LogisticsElement;
   instanceName: string;
   source: ZoneSource;
+  /**
+   * The ground itself, in site metres.
+   *
+   * Carried on the measurement rather than left on the record, because
+   * everything that draws the site — the plan sheet, the DXF, the viewer —
+   * needs the shape and the figures together, and fetching them from two places
+   * is how a drawing and its schedule come to disagree.
+   */
+  ring: geo.Ring;
   areaSquareMetres: number;
   perimeterMetres: number;
   /** A point guaranteed to be inside the zone, for a label or a placement. */
@@ -276,6 +285,15 @@ export type SiteModelView = {
   boundary?: { ring: geo.Ring; areaSquareMetres: number; perimeterMetres: number };
   surface?: {
     triangles: number;
+    /**
+     * The mesh itself, for anything that draws the ground.
+     *
+     * Carried on the view rather than fetched separately for the same reason
+     * the zone rings are: the figures and the shape they were computed from
+     * belong together, and two fetches is how a screen comes to show one and
+     * quote the other.
+     */
+    mesh: geo.Triangle3[];
     steepestPercent: number;
     steepestAspectDegrees: number;
     /** Against the mean level of the site, which is the only datum a capture has. */
@@ -309,6 +327,7 @@ export function siteModel(ctx: EngineContext, modelId: string): SiteModelView {
     code: zone.code,
     instanceName: zone.instanceName,
     source: zone.source,
+    ring: zone.ring,
     areaSquareMetres: round(geo.area(zone.ring)),
     perimeterMetres: round(geo.perimeter(zone.ring)),
     labelPoint: interiorPoint(zone.ring),
@@ -398,6 +417,7 @@ export function siteModel(ctx: EngineContext, modelId: string): SiteModelView {
     const volumes = geo.volumeAboveLevel(state.surface, meanLevel);
     surfaceView = {
       triangles: state.surface.triangles.length,
+      mesh: state.surface.triangles,
       steepestPercent: steepest?.percent ?? 0,
       steepestAspectDegrees: steepest?.aspectDegrees ?? 0,
       cutCubicMetres: volumes.cutCubicMetres,

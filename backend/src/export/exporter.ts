@@ -138,7 +138,36 @@ export type DocumentBlock =
    * which image was on the page. The PDF renderer resolves the bytes; the JSON
    * and HTML forms state the hash, which is the honest thing they can show.
    */
-  | { kind: 'PHOTOGRAPH'; caption: string; evidenceHash: string; takenOn?: string };
+  | { kind: 'PHOTOGRAPH'; caption: string; evidenceHash: string; takenOn?: string }
+  /**
+   * A scale drawing: the site, its zones, a north arrow and a scale bar.
+   *
+   * Coordinates stay in **site metres**, not page units. The renderer applies
+   * the stated scale, so the drawing and the `1:200` printed beside it cannot
+   * disagree — and the JSON and HTML forms of the document carry real
+   * coordinates somebody can check rather than a picture they cannot.
+   *
+   * `scaleDenominator` is chosen by the caller from the ordinary drawing scales
+   * and is what the sheet is plotted at. A drawing that fitted the page at some
+   * arbitrary ratio would be a diagram; a drawing at 1:200 can be measured with
+   * a scale rule.
+   */
+  | {
+      kind: 'DRAWING';
+      caption: string;
+      scaleDenominator: number;
+      /** The extent drawn, in site metres, so the renderer can centre it. */
+      extent: { minX: number; minY: number; maxX: number; maxY: number };
+      shapes: Array<{
+        label: string;
+        ring: Array<{ x: number; y: number }>;
+        /** Hex, from the legend. */
+        colour: string;
+        /** Drawn as an outline only — an exclusion, a boundary, a corridor. */
+        outlineOnly?: boolean;
+      }>;
+      legend: Array<{ label: string; colour: string }>;
+    };
 
 export type ExportDocument = {
   id: string;

@@ -1,3 +1,4 @@
+import * as geo from '../domain/geometry.ts';
 import { decodeImage, decodeLogo, UnsupportedImageError, type DecodedImage } from './image.ts';
 import { documentOrigin, type DocumentBlock, type ExportDocument } from './exporter.ts';
 
@@ -274,6 +275,62 @@ class Sheet {
     this.#y = y;
   }
 
+  /**
+   * Draw a closed polygon, in absolute page points.
+   *
+   * The one primitive a scale drawing needs that a flowing document does not.
+   * Everything else on a sheet is text, rules and rectangles; a site plan is
+   * arbitrary rings, and drawing them as a run of `re` rectangles would be a
+   * plan of rectangles rather than a plan of the site.
+   *
+   * Fill and stroke are separate because a zone wants both — a wash to read at
+   * a glance and a line to measure to — and an exclusion wants a hatch, which
+   * is the same path stroked without a fill.
+   */
+  polygon(
+    points: Array<{ x: number; y: number }>,
+    options: { fill?: [number, number, number]; stroke?: [number, number, number]; width?: number; dashed?: boolean } = {},
+  ): void {
+    if (points.length < 2) return;
+    const first = points[0]!;
+    this.#ops.push('q');
+    if (options.dashed) this.#ops.push('[3 2] 0 d');
+    if (options.fill) this.#ops.push(`${options.fill[0]} ${options.fill[1]} ${options.fill[2]} rg`);
+    if (options.stroke) this.#ops.push(`${options.stroke[0]} ${options.stroke[1]} ${options.stroke[2]} RG`);
+    this.#ops.push(`${(options.width ?? 0.8).toFixed(2)} w`, `${first.x.toFixed(2)} ${first.y.toFixed(2)} m`);
+    for (const point of points.slice(1)) this.#ops.push(`${point.x.toFixed(2)} ${point.y.toFixed(2)} l`);
+    this.#ops.push('h');
+    // `B` fills and strokes in one operation, which keeps the fill exactly
+    // inside its own outline. Filling and stroking as two paths leaves a
+    // half-line-width gap at every vertex on a scaled drawing.
+    this.#ops.push(options.fill && options.stroke ? 'B' : options.fill ? 'f' : 'S');
+    this.#ops.push('Q');
+  }
+
+  /** A single segment, for a north arrow, a scale bar or a leader line. */
+  segment(from: { x: number; y: number }, to: { x: number; y: number }, colour: [number, number, number], width = 0.8): void {
+    this.#ops.push(
+      'q',
+      `${colour[0]} ${colour[1]} ${colour[2]} RG`,
+      `${width.toFixed(2)} w`,
+      `${from.x.toFixed(2)} ${from.y.toFixed(2)} m ${to.x.toFixed(2)} ${to.y.toFixed(2)} l S`,
+      'Q',
+    );
+  }
+
+  /** Text at an absolute position, for a label on a drawing. */
+  textAt(value: string, x: number, y: number, options: { font?: FontName; size?: number; colour?: [number, number, number] } = {}): void {
+    const [r, g, b] = options.colour ?? [0, 0, 0];
+    this.#ops.push(
+      'BT',
+      `${r} ${g} ${b} rg`,
+      `/${FONT_KEY[options.font ?? 'Helvetica']} ${options.size ?? 7} Tf`,
+      `1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm`,
+      `${pdfString(value)} Tj`,
+      'ET',
+    );
+  }
+
   fill(x: number, y: number, width: number, height: number, colour: [number, number, number]): void {
     const [r, g, b] = colour;
     this.#ops.push(`${r} ${g} ${b} rg`, `${x.toFixed(2)} ${y.toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re f`);
@@ -409,6 +466,11 @@ function renderBlock(
       return;
     }
 
+    case 'DRAWING': {
+      renderDrawing(sheet, block, accent);
+      return;
+    }
+
     case 'PHOTOGRAPH': {
       const placed = photos.get(block.evidenceHash);
       const caption = block.takenOn ? `${block.caption} — ${block.takenOn}` : block.caption;
@@ -474,6 +536,190 @@ function renderBlock(
       return;
     }
   }
+}
+
+/** Millimetres to PDF points. A point is 1/72 inch, a millimetre is 1/25.4. */
+const MM = 72 / 25.4;
+
+/**
+ * Render a scale drawing.
+ *
+ * The transform is the whole of it: a site metre becomes `1000 / scale`
+ * millimetres on the sheet, and that is the only place the scale is applied. So
+ * the drawing is plotted at exactly the ratio printed beside it, and a scale
+ * rule laid on the paper reads true — which is the difference between a drawing
+ * and a picture of one.
+ *
+ * The plan is centred in the space it is given and clipped to it. A site too
+ * large for the sheet at the stated scale is not silently squeezed to fit,
+ * because that would break the ratio; the caller chooses the scale, and
+ * `siteplan.ts` chooses it from the extent so it fits.
+ */
+function renderDrawing(sheet: Sheet, block: Extract<DocumentBlock, { kind: 'DRAWING' }>, accent: [number, number, number]): void {
+  const metresToPoints = (1000 / block.scaleDenominator) * MM;
+  const widthMetres = block.extent.maxX - block.extent.minX;
+  const heightMetres = block.extent.maxY - block.extent.minY;
+  const plotWidth = widthMetres * metresToPoints;
+  const plotHeight = heightMetres * metresToPoints;
+
+  sheet.reserve(plotHeight + 74);
+  sheet.advance(12);
+  sheet.text(block.caption, { font: 'Helvetica-Bold', size: 10 });
+  sheet.advance(10);
+
+  // Centred horizontally in the content column; the cursor is the top edge.
+  const originX = MARGIN.left + Math.max(0, (CONTENT_WIDTH - plotWidth) / 2);
+  const originY = sheet.y - plotHeight;
+  // Site y increases northward and so does the page, so the only shift is the
+  // extent's own origin. Flipping y here would mirror the site.
+  const toSheet = (p: { x: number; y: number }) => ({
+    x: originX + (p.x - block.extent.minX) * metresToPoints,
+    y: originY + (p.y - block.extent.minY) * metresToPoints,
+  });
+
+  const pending: Array<{ text: string; x: number; y: number; area: number }> = [];
+  for (const shape of block.shapes) {
+    const points = shape.ring.map(toSheet);
+    const colour = hexToRgb(shape.colour);
+    sheet.polygon(points, {
+      ...(shape.outlineOnly ? {} : { fill: wash(colour) }),
+      stroke: colour,
+      width: shape.outlineOnly ? 1.2 : 0.7,
+      ...(shape.outlineOnly ? { dashed: true } : {}),
+    });
+
+    // Held back rather than drawn here: a zone drawn later would print its
+    // wash straight over an earlier zone's label.
+    if (shape.label) pending.push({ text: shape.label, ...labelPointOf(points), area: geo.area(shape.ring) });
+  }
+
+  drawLabels(sheet, pending);
+
+  // Scale bar: a round number of metres, drawn at the stated scale so it can be
+  // checked against the drawing with a rule.
+  const barMetres = niceBarLength(widthMetres);
+  const barPoints = barMetres * metresToPoints;
+  const barY = originY - 16;
+
+  // North arrow — beside the plot, never on it. Drawn inside the frame it
+  // prints over whatever zone occupies the corner, and on the first site this
+  // rendered that was the overhead-line exclusion: the one thing on the sheet
+  // nobody should have to read through an arrow. It goes in the right-hand
+  // gutter when the plot leaves one, and otherwise on the scale-bar row, which
+  // is always clear. Site north is +y, which is up the page.
+  const gutter = MARGIN.left + CONTENT_WIDTH - (originX + plotWidth);
+  const north =
+    gutter >= 22
+      ? { x: originX + plotWidth + gutter / 2, y: originY + plotHeight - 4 }
+      : { x: MARGIN.left + CONTENT_WIDTH - 8, y: barY + 12 };
+  sheet.segment({ x: north.x, y: north.y - 22 }, { x: north.x, y: north.y }, [0.2, 0.2, 0.2], 1);
+  sheet.polygon(
+    [
+      { x: north.x, y: north.y + 4 },
+      { x: north.x - 3.5, y: north.y - 4 },
+      { x: north.x + 3.5, y: north.y - 4 },
+    ],
+    { fill: [0.2, 0.2, 0.2] },
+  );
+  sheet.textAt('N', north.x - 2.5, north.y - 32, { size: 7, font: 'Helvetica-Bold' });
+
+  sheet.segment({ x: originX, y: barY }, { x: originX + barPoints, y: barY }, [0.2, 0.2, 0.2], 1.4);
+  sheet.segment({ x: originX, y: barY - 3 }, { x: originX, y: barY + 3 }, [0.2, 0.2, 0.2], 1.4);
+  sheet.segment({ x: originX + barPoints, y: barY - 3 }, { x: originX + barPoints, y: barY + 3 }, [0.2, 0.2, 0.2], 1.4);
+  sheet.textAt(`0`, originX - 2, barY - 11, { size: 6.5 });
+  sheet.textAt(`${barMetres}m`, originX + barPoints - 8, barY - 11, { size: 6.5 });
+  sheet.textAt(`Scale 1:${block.scaleDenominator} at A4`, originX + barPoints + 14, barY - 2, { size: 7, font: 'Helvetica-Bold' });
+
+  sheet.moveTo(barY - 24);
+
+  // Legend, from the taxonomy the zones are coded against.
+  if (block.legend.length > 0) {
+    sheet.advance(10);
+    sheet.text('Legend', { font: 'Helvetica-Bold', size: 8 });
+    sheet.advance(11);
+    let column = MARGIN.left;
+    for (const entry of block.legend) {
+      if (column > MARGIN.left + CONTENT_WIDTH - 130) {
+        column = MARGIN.left;
+        sheet.advance(11);
+      }
+      sheet.fill(column, sheet.y - 1, 7, 7, wash(hexToRgb(entry.colour)));
+      sheet.textAt(entry.label, column + 11, sheet.y, { size: 6.5 });
+      column += 132;
+    }
+    sheet.advance(12);
+  }
+  void accent;
+}
+
+/** A pale wash of the line colour, so a label stays readable over it. */
+function wash([r, g, b]: [number, number, number]): [number, number, number] {
+  return [r + (1 - r) * 0.78, g + (1 - g) * 0.78, b + (1 - b) * 0.78];
+}
+
+/** The mean of the ring's corners: where a zone's name wants to sit. */
+function labelPointOf(points: Array<{ x: number; y: number }>): { x: number; y: number } {
+  const sum = points.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+  return { x: sum.x / points.length, y: sum.y / points.length };
+}
+
+/** Text size for a zone name on the plan, and the masked box it sits in. */
+const LABEL_SIZE = 6.5;
+const LABEL_BOX_HEIGHT = LABEL_SIZE + 3;
+
+/**
+ * Place the zone names so they can actually be read.
+ *
+ * Two things make a label useless on a plan, and both appeared the first time
+ * this rendered: it prints on top of another label, and it prints on top of a
+ * line. A masked box behind the text answers the second — it is what a CAD
+ * package's text mask does, and it is why a hoarding's name is legible where it
+ * crosses the boundary. The first is answered by trying a short ladder of
+ * positions above and below the wanted point.
+ *
+ * A label that still cannot be placed is **dropped, not overprinted**. Two
+ * names on top of each other read as neither, and the zone schedule beside the
+ * drawing names every zone regardless — so the clutter is all that is lost.
+ */
+function drawLabels(sheet: Sheet, labels: Array<{ text: string; x: number; y: number; area: number }>): void {
+  type Box = { x0: number; y0: number; x1: number; y1: number };
+  const taken: Box[] = [];
+  const hits = (a: Box, b: Box): boolean => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+
+  // Largest zone first. On a plan the big areas are what a reader orients by,
+  // so when a name has to give way it should be the sliver's, not the
+  // compound's — and the order has to come from the shape's own area, because
+  // the name's length says nothing about it: "Gate 1" is a long label on one of
+  // the smallest things on any site.
+  for (const label of [...labels].sort((a, b) => b.area - a.area)) {
+    const width = widthOf(label.text, 'Helvetica-Bold', LABEL_SIZE);
+    const left = label.x - width / 2;
+    let placed: Box | undefined;
+    // The rungs are a whole box apart. A shorter step leaves consecutive rungs
+    // overlapping each other, so the ladder rejects its own positions and runs
+    // out having placed a fraction of what it could.
+    for (const dy of [0, LABEL_BOX_HEIGHT, -LABEL_BOX_HEIGHT, LABEL_BOX_HEIGHT * 2, -LABEL_BOX_HEIGHT * 2]) {
+      const box = { x0: left - 1.5, y0: label.y + dy - 2, x1: left + width + 1.5, y1: label.y + dy - 2 + LABEL_BOX_HEIGHT };
+      if (!taken.some((other) => hits(other, box))) {
+        placed = box;
+        break;
+      }
+    }
+    if (!placed) continue;
+    taken.push(placed);
+    sheet.fill(placed.x0, placed.y0, placed.x1 - placed.x0, placed.y1 - placed.y0, [1, 1, 1]);
+    sheet.textAt(label.text, placed.x0 + 1.5, placed.y0 + 2, { size: LABEL_SIZE, font: 'Helvetica-Bold', colour: [0.15, 0.15, 0.15] });
+  }
+}
+
+/** 1, 2, 5, 10, 20, 50… metres — whichever is closest to a quarter of the plot. */
+function niceBarLength(widthMetres: number): number {
+  const target = widthMetres / 4;
+  const magnitude = 10 ** Math.floor(Math.log10(Math.max(target, 1)));
+  for (const step of [1, 2, 5, 10]) {
+    if (magnitude * step >= target) return magnitude * step;
+  }
+  return magnitude * 10;
 }
 
 function renderTable(sheet: Sheet, block: Extract<DocumentBlock, { kind: 'TABLE' }>, accent: [number, number, number]): void {

@@ -5,6 +5,7 @@ import { badge, date, days, drillable, html, humanise, pct, raw, render, statusT
 import { insightPanel } from '../lib/insight.js';
 import * as outbox from '../lib/outbox.js';
 import { recordVoice, recordingDescription, voiceSupport } from '../lib/voice.js';
+import { mountSiteTwin } from '../lib/sitetwin.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -116,6 +117,12 @@ function geometryDetail(view, allModels, comparison) {
 
   return html`
     <div id="site-model" style="padding:13px 17px 16px;scroll-margin-top:68px;border-top:1px solid var(--line)">
+      <h2 style="margin-bottom:7px">The site in three dimensions</h2>
+      <div style="position:relative;margin-bottom:13px">
+        <canvas id="site-twin" style="width:100%;height:340px;display:block;border:1px solid var(--line);border-radius:6px;background:#fafafa;touch-action:none;cursor:grab"></canvas>
+        <div id="site-twin-note" style="position:absolute;left:10px;bottom:8px;font-size:11.5px;color:var(--text-3);background:rgba(255,255,255,.86);padding:3px 7px;border-radius:4px"></div>
+      </div>
+
       <div class="grid g4">
         <div class="card">
           <h2>Site area</h2>
@@ -192,6 +199,21 @@ function geometryDetail(view, allModels, comparison) {
                   })}`
                 : ''
             }`
+      }
+
+      ${
+        view.boundary
+          ? html`<h2 style="margin-top:14px">Issue the drawing</h2>
+            <p style="font-size:12.5px;color:var(--text-3);margin:0 0 7px">
+              A scale drawing with a north arrow, a scale bar and a legend from the element catalogue, so a scale rule
+              laid on the paper reads true. The DXF is the same geometry layered by element code, which a client's own
+              drawing office can overlay.
+            </p>
+            <div class="actions" style="gap:6px">
+              <button class="btn ghost" data-plan-pdf="${view.modelId}">Site layout (PDF)</button>
+              <button class="btn quiet" data-plan-dxf="${view.modelId}">Layered DXF</button>
+            </div>`
+          : ''
       }
 
       <h2 style="margin-top:14px">What the geometry found</h2>
@@ -606,6 +628,8 @@ export async function field(root) {
   // argument as the permission matrix: the browser holds no list the API does
   // not publish, so the picker and the rulepack behind it cannot drift apart.
   const protocol = await api.get('/v1/site-capture/protocol').catch(() => null);
+  // One palette behind the drawing, the DXF and the viewer.
+  const elements = await api.get('/v1/site-elements').catch(() => null);
 
   // The geometric record. Same shape as the capture above: the board is cheap,
   // the measured view is fetched only for the record somebody opened.
@@ -1548,6 +1572,39 @@ export async function field(root) {
     // Opening a capture. Held on `state` rather than in the URL because the
     // brief is a panel on this page, not a route of its own, and a reload
     // should land on Field Execution rather than on one walk.
+    // The drawing. Both go through the ordinary download path, so the PDF is
+    // charged and branded like every other issued document and the DXF is not.
+    const planPdf = event.target.closest('[data-plan-pdf]');
+    if (planPdf) {
+      planPdf.disabled = true;
+      try {
+        const { filename } = await api.download(
+          `/v1/projects/${projectId}/site-model/${planPdf.dataset.planPdf}/plan.pdf`,
+          { audience: 'INTERNAL' },
+        );
+        toast('Drawing issued', `${filename} — plotted at a standard scale, with the zone schedule and the findings.`, 'ok');
+      } catch (error) {
+        toast('Not issued', error.message, 'err');
+      } finally {
+        planPdf.disabled = false;
+      }
+      return;
+    }
+
+    const planDxf = event.target.closest('[data-plan-dxf]');
+    if (planDxf) {
+      planDxf.disabled = true;
+      try {
+        const { filename } = await api.download(`/v1/projects/${projectId}/site-model/${planDxf.dataset.planDxf}/plan.dxf`);
+        toast('DXF downloaded', `${filename} — one layer per element code.`, 'ok');
+      } catch (error) {
+        toast('Not downloaded', error.message, 'err');
+      } finally {
+        planDxf.disabled = false;
+      }
+      return;
+    }
+
     const compareBtn = event.target.closest('[data-compare]');
     if (compareBtn) {
       state.siteModelCompare = compareBtn.dataset.compare;
@@ -1646,6 +1703,32 @@ export async function field(root) {
       button.textContent = original;
     }
   });
+
+  // The three-dimensional view. Mounted after render because it needs the
+  // canvas in the document to size itself, and disposed on the way out — the
+  // console re-renders whole pages, and a viewer left holding a detached canvas
+  // would leak one per visit.
+  window.__siteTwin?.dispose?.();
+  window.__siteTwin = undefined;
+  const canvas = root.querySelector('#site-twin');
+  if (canvas && modelView) {
+    const palette = new Map((elements?.elements ?? []).map((e) => [e.code, e.colour]));
+    const result = mountSiteTwin(canvas, {
+      surface: modelView.surface ? { triangles: modelView.surface.mesh ?? [] } : undefined,
+      boundary: modelView.boundary?.ring,
+      zones: (modelView.zones ?? []).map((z) => ({ ring: z.ring, colour: palette.get(z.code) ?? '#8a8a8a' })),
+    });
+    const note = root.querySelector('#site-twin-note');
+    if (note) {
+      note.textContent = result.ok
+        ? modelView.surface
+          ? 'Drag to orbit, scroll to zoom. Ground as captured; zones shown as areas, not as buildings.'
+          : 'Drag to orbit, scroll to zoom. No ground was captured, so no terrain is drawn — the site is not flat, it is unmeasured.'
+        : result.reason;
+    }
+    if (result.ok) window.__siteTwin = result;
+    else canvas.style.display = 'none';
+  }
 
   void insightPanel(root.querySelector('#field-insight'), {
     projectId,

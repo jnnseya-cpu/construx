@@ -322,3 +322,135 @@ describe('the file says whose it is', () => {
     assert.ok(!/construx/i.test(pdf), 'the rendered PDF carries this platform name');
   });
 });
+
+/**
+ * Zone names on a scale drawing.
+ *
+ * These exist because the arithmetic was right and the sheet was still wrong.
+ * The plan plotted at exactly 1:500 — boundary 120.00mm × 80.00mm for a
+ * 60m × 40m site, scale bar 40.00mm for 20m — and every zone's rectangle
+ * reproduced the area its schedule row quoted. Then the page was rendered and
+ * looked at, and "Walkway" and "Muster point" were printed on top of each
+ * other. No assertion about scale could have caught that.
+ */
+describe('zone names on a plan', () => {
+  const drawing = (
+    shapes: Array<{ label: string; ring: Array<{ x: number; y: number }>; colour: string }>,
+  ): ExportDocument =>
+    sampleDocument({
+      blocks: [
+        {
+          kind: 'DRAWING',
+          caption: 'Site layout',
+          scaleDenominator: 500,
+          extent: { minX: 0, minY: 0, maxX: 60, maxY: 40 },
+          shapes,
+          legend: [],
+        },
+      ],
+    });
+
+  const box = (x: number, y: number, w: number, h: number) => [
+    { x, y },
+    { x: x + w, y },
+    { x: x + w, y: y + h },
+    { x, y: y + h },
+  ];
+
+  /** How many times a piece of text is actually drawn in the content stream. */
+  const drawn = (bytes: Uint8Array, value: string): number =>
+    latin1(bytes).split(`(${value}) Tj`).length - 1;
+
+  it('draws both names when they are far enough apart to read', () => {
+    const bytes = renderPdf(drawing([
+      { label: 'Walkway', ring: box(2, 2, 10, 10), colour: '#15803d' },
+      { label: 'Muster point', ring: box(40, 30, 8, 8), colour: '#047857' },
+    ]));
+    assert.equal(drawn(bytes, 'Walkway'), 1);
+    assert.equal(drawn(bytes, 'Muster point'), 1);
+  });
+
+  it('steps a name clear of its neighbour rather than printing over it', () => {
+    // Two zones whose centres are 3m apart vertically. At 1:500 that is 6pt —
+    // less than a line — so on the wanted point the labels would collide, and
+    // the ladder has to move one of them.
+    const bytes = renderPdf(drawing([
+      { label: 'Walkway', ring: box(20, 18, 4, 4), colour: '#15803d' },
+      { label: 'Muster point', ring: box(20, 21, 4, 4), colour: '#047857' },
+    ]));
+    assert.equal(drawn(bytes, 'Walkway'), 1, 'a name that fits was dropped');
+    assert.equal(drawn(bytes, 'Muster point'), 1, 'a name that fits was dropped');
+
+    // And they are on different lines. Both names are centred on x ≈ the same
+    // place, so if the y values matched they would be one on top of the other.
+    const text = latin1(bytes);
+    const yOf = (label: string): number => {
+      const at = text.indexOf(`(${label}) Tj`);
+      const tm = text.lastIndexOf('1 0 0 1 ', at);
+      return Number(text.slice(tm + 8, text.indexOf(' Tm', tm)).split(' ')[1]);
+    };
+    assert.ok(Math.abs(yOf('Walkway') - yOf('Muster point')) >= 8, 'two names were placed on the same line');
+  });
+
+  it('drops a name it cannot place rather than overprinting one', () => {
+    // Five zones stacked on one point. The ladder has five rungs, so the sixth
+    // has nowhere to go — and an unreadable name is worse than an absent one,
+    // because the schedule names every zone anyway.
+    const bytes = renderPdf(drawing(
+      ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot'].map((label) => ({
+        label,
+        ring: box(20, 20, 6, 6),
+        colour: '#ca8a04',
+      })),
+    ));
+    const placed = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot'].filter((l) => drawn(bytes, l) === 1);
+    assert.equal(placed.length, 5, `placed ${placed.length}: ${placed.join(', ')}`);
+  });
+
+  it('gives the ground to the larger zone, not to the longer name', () => {
+    // Six zones on one point again, but now sized. The compound keeps its name
+    // and the sliver loses it — which is the way round a reader needs, and the
+    // opposite of what ordering by label length would have produced: "Gate 1"
+    // is a long name on one of the smallest things on any site.
+    // Concentric, so every name wants the same point and the ladder has to
+    // choose. Boxes sharing a corner would have different centres, and there
+    // would be room for all six.
+    const centred = (size: number) => box(30 - size / 2, 20 - size / 2, size, size);
+    const bytes = renderPdf(drawing([
+      { label: 'Gate 1', ring: centred(1), colour: '#0b6e4f' },
+      ...['Two', 'Three', 'Four', 'Five', 'Six'].map((label, i) => ({
+        label,
+        ring: centred(8 + i),
+        colour: '#ca8a04',
+      })),
+    ]));
+    assert.equal(drawn(bytes, 'Six'), 1, 'the largest zone lost its name');
+    assert.equal(drawn(bytes, 'Gate 1'), 0, 'the smallest zone kept its name over a larger one');
+  });
+
+  it('masks behind a name, so it stays legible where it crosses a line', () => {
+    // A hoarding is a strip a metre and a half wide: its own outline runs
+    // through the middle of its label. Without a mask the text reads as
+    // struck through.
+    const text = latin1(renderPdf(drawing([
+      { label: 'Perimeter hoarding', ring: box(0, 0, 60, 1.5), colour: '#1f2933' },
+    ])));
+    const at = text.indexOf('(Perimeter hoarding) Tj');
+    const before = text.slice(0, at);
+    assert.match(before.slice(-260), /1 1 1 rg\n[-\d\. ]+ re f/, 'no mask was drawn behind the name');
+  });
+
+  it('keeps the north arrow off the drawing', () => {
+    // It was inside the frame, printed over the corner zone — which on the
+    // first real site was the overhead-line exclusion.
+    const text = latin1(renderPdf(drawing([
+      { label: 'Overhead line', ring: box(50, 20, 8, 20), colour: '#dc2626' },
+    ])));
+    const at = text.indexOf('(N) Tj');
+    const tm = text.lastIndexOf('1 0 0 1 ', at);
+    const [x] = text.slice(tm + 8, text.indexOf(' Tm', tm)).split(' ').map(Number);
+    // The plot is 60m at 1:500 = 120mm = 340.16pt, centred in a 483.28pt
+    // column starting at x=56: it runs to x=467.7. The arrow must be beyond it.
+    assert.ok(x! > 467, `the north arrow was drawn at x=${x}, which is on the plan`);
+  });
+});
