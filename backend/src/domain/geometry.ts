@@ -181,7 +181,7 @@ export function containsPoint(ring: Ring, p: Point): boolean {
  * problem is solved exactly rather than approximately.
  */
 export function triangulate(ring: Ring): Array<[Point, Point, Point]> {
-  const working = orient(ring);
+  const working = orient(closeOnce(ring));
   if (working.length < 3) throw new DomainError('GEOMETRY_DEGENERATE', 'A ring needs at least three vertices');
   if (working.length === 3) return [[working[0]!, working[1]!, working[2]!]];
 
@@ -218,6 +218,44 @@ export function triangulate(ring: Ring): Array<[Point, Point, Point]> {
 
   if (indices.length === 3) {
     out.push([working[indices[0]!]!, working[indices[1]!]!, working[indices[2]!]!]);
+  }
+  return out;
+}
+
+/**
+ * The same ring with the vertices it does not need.
+ *
+ * Every ring in this module is *implicitly* closed — the last vertex joins the
+ * first — so a ring that also states the closure explicitly, `[a, b, c, a]`, is
+ * the same three-sided shape written a different way. Ear clipping could not see
+ * that: it compared candidate vertices by reference, so the repeated `a` was a
+ * different object at the same coordinates, sat on the boundary of every
+ * candidate ear, and rejected all of them. The function returned an empty array
+ * for a perfectly good triangle.
+ *
+ * That is not a hypothetical. Sutherland–Hodgman produces exactly this shape
+ * whenever a subject and a clip share a corner, which adjacent mesh triangles do
+ * constantly, and it silently cost `volumeBetween` most of its footprint before
+ * that caller was changed to avoid triangulating at all.
+ *
+ * Consecutive duplicates anywhere in the ring go for the same reason — they are
+ * a zero-length edge, which is not a side of anything and breaks the same
+ * comparison.
+ */
+function closeOnce(ring: Ring): Ring {
+  if (!Array.isArray(ring)) return ring;
+  const out: Point[] = [];
+  for (const point of ring) {
+    const previous = out[out.length - 1];
+    if (previous && previous.x === point.x && previous.y === point.y) continue;
+    out.push(point);
+  }
+  // Then the wrap-around, which may itself expose another repeat behind it.
+  while (out.length > 1) {
+    const first = out[0]!;
+    const last = out[out.length - 1]!;
+    if (first.x !== last.x || first.y !== last.y) break;
+    out.pop();
   }
   return out;
 }

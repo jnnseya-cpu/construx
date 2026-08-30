@@ -176,6 +176,24 @@ describe('Commercial terms, assessed rather than transcribed', () => {
     assert.match(retention.assessment, /cash the business funds, not a discount/);
 
     assert.equal(result.quantifiedExposureMinor, 100_000_00, 'only retention is exposure; a bond is capacity');
+
+    // And the bond is not simply dropped for being the wrong kind. It is
+    // finite, it is shared across every live job, and a bid decision needs it —
+    // so it is reported as its own quantity beside the cash rather than
+    // vanishing from the headline.
+    assert.equal(result.committedCapacityMinor, 200_000_00);
+
+    // The rule now lives on the term, which is what makes the two totals
+    // impossible to confuse and impossible to forget. Before this, the totals
+    // were accumulated by hand at two of the three places a term carries a
+    // figure, and a reader could not tell whether the third was excluded
+    // deliberately or missed.
+    assert.equal(bond.exposureKind, 'CAPACITY');
+    assert.equal(retention.exposureKind, 'CASH');
+    for (const term of result.terms) {
+      if (term.exposureMinor === undefined) continue;
+      assert.ok(term.exposureKind, `${term.term} carries a figure and does not say which kind it is`);
+    }
   });
 
   it('orders terms by what they will actually do to the business', () => {

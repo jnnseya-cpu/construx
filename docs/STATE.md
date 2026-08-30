@@ -11320,3 +11320,67 @@ which is right for `RISK_SAFETY` and `HANDOVER_OM` and gives "BIM and twin" for
 **Still not built.** A dense-stereo provider and a material-classification
 provider, both declared and both unserved: they need hardware and a trained
 model, and the registry says so rather than pretending otherwise.
+
+
+### Clearing the recorded-but-not-fixed list
+
+Four things carried forward as recorded and unfixed. Two were real and are now
+fixed; two were **not defects at all**, and the notes calling them defects were
+wrong. Stating that plainly, because a wrong entry on this list costs somebody a
+day finding out.
+
+**Fixed: `triangulate` on a ring that states its own closure.** Every ring in
+`geometry.ts` is implicitly closed, so `[a, b, c, a]` is the same three-sided
+shape written a different way. Ear clipping could not see that — it compared
+vertices by reference, so the repeated `a` was a different object at the same
+coordinates, sat on the boundary of every candidate ear, and rejected all of
+them. The function returned nothing for a perfectly good triangle. Rings are now
+normalised on entry: the trailing repeat goes, and so does any consecutive
+duplicate, which is a zero-length edge and breaks the same comparison. A ring
+that is only a repeated point now refuses as degenerate rather than returning a
+triangle of zero area, which is what it used to do and is worse.
+
+**Fixed: certification could be self-approved.** `certifyApplication`'s own
+comment has always claimed it "is separated from whoever submitted the
+application". Nothing enforced it. The application recorded `submittedBy` and
+certification never read it, so one identity could apply for a payment and turn
+it into a debt with nobody else in the loop.
+
+The permission matrix does not close this and cannot: a plain QS has no approve
+verb and is stopped, but separation between *roles* is not separation between
+*people*, and a small business stacks roles on one person as a matter of course
+— which is the business this platform is built for, and exactly why the control
+has to sit on the identity. It is a hard refusal matching `REVIEW_SELF_APPROVAL`
+on design deliverables, which is the platform's settled convention. No disclosed
+override: an override on a money control would be taken every time by the person
+the control exists to stop.
+
+**Not a defect: the performance bond is absent from `quantifiedExposureMinor`
+on purpose.** A bond is bonding *capacity* committed — finite, shared across
+every live job, and not cash going anywhere. Retention is cash the business
+funds. Adding them produces a number that is neither, and there was already a
+test saying so: *"only retention is exposure; a bond is capacity"*.
+
+What was genuinely wrong was the shape rather than the answer. `exposureMinor`
+meant two different things depending on the term, and the totals were
+accumulated by hand at two of the three places a term carries a figure — so a
+reader could not tell whether the third was excluded deliberately or forgotten.
+Terms now declare `exposureKind: 'CASH' | 'CAPACITY'`, both totals are derived
+from that, and `committedCapacityMinor` is reported beside the cash so the bond
+reaches the headline as its own quantity instead of vanishing. A fourth term
+carrying a figure has to say which kind it is; it cannot land in one total or
+neither by accident. The settled decision is unchanged and now enforced by
+construction rather than by two `+=` lines somebody has to remember.
+
+**Not a defect: the console's 403 prefetches are the mechanism, not a fault.**
+The shell asks for `CVR`, `Claim`, `Variation` and the rest and is refused for a
+role that may not see them. That is deliberate and load-bearing: `entityBundle`
+catches the 403 and records the type as *withheld*, and the overview then says
+"commercial position is not visible to your role" rather than "no CVR
+published". Predicting the answer client-side instead of asking would replace a
+truthful denial with a false statement about the project. A 403 in the network
+log is the expected signal here, not an error to design away.
+
+**Also corrected: "BIM and twin".** Not a `humanise` bug — an explicit entry in
+the display-name table, which is where `RISK_SAFETY` and `HANDOVER_OM` are
+handled too. The engine is BIM and the digital twin, and the label now says so.

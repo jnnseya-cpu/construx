@@ -386,6 +386,29 @@ export function certifyApplication(
     throw new DomainError('APPLICATION_NOT_SUBMITTED', 'Only a submitted application can be certified');
   }
 
+  // The separation this function's own comment has always claimed, now enforced.
+  //
+  // It was not. The application recorded `submittedBy` and certification never
+  // looked at it, so one identity holding both QS and OWNER could apply for a
+  // payment and certify it — turning a valuation into a debt with nobody else
+  // in the loop. The permission matrix does not close this: separation between
+  // *roles* is not separation between *people*, and a small business stacks
+  // roles on one person as a matter of course.
+  //
+  // A hard refusal rather than a disclosed override, matching
+  // `REVIEW_SELF_APPROVAL` on design deliverables. That is the platform's
+  // settled convention for separation of duties, and money is not the place to
+  // start softening it: an override would be taken every time by exactly the
+  // person the control exists to stop.
+  if (application.state.submittedBy === ctx.auth.actorId) {
+    throw new DomainError(
+      'CERTIFICATION_SELF_APPROVAL',
+      'The person who submitted an application may not certify it. Certification turns a valuation into a debt, ' +
+        'and a second party decides. Assign the certificate to another identity with payment authority.',
+      409,
+    );
+  }
+
   const applied = Number(application.state.netAppliedMinor);
   if (input.certifiedMinor > applied) {
     throw new DomainError(

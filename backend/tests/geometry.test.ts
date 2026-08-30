@@ -591,6 +591,57 @@ describe('volume between two surfaces', () => {
   });
 });
 
+describe('a ring that states its own closure', () => {
+  it('triangulates a triangle written with its first vertex repeated', () => {
+    // Every ring here is implicitly closed, so [a, b, c, a] is the same
+    // three-sided shape written a different way. Ear clipping could not see
+    // that: it compared vertices by reference, so the repeated `a` was a
+    // different object at the same coordinates, sat on the boundary of every
+    // candidate ear, and rejected all of them. The function returned nothing
+    // for a perfectly good triangle.
+    const open = geo.triangulate([{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 0, y: 10 }]);
+    const closed = geo.triangulate([{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 0, y: 10 }, { x: 0, y: 0 }]);
+    assert.equal(closed.length, 1, 'a closed triangle triangulated to nothing');
+    assert.deepEqual(closed, open, 'the two spellings of one shape gave different answers');
+  });
+
+  it('triangulates a closed square, covering all of it', () => {
+    const square = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+    const closed = geo.triangulate([...square, { x: 0, y: 0 }]);
+    assert.equal(closed.length, 2);
+    assert.equal(closed.reduce((sum, t) => sum + geo.area(t), 0), 100);
+  });
+
+  it('drops a zero-length edge, which is not a side of anything', () => {
+    // A vertex repeated mid-ring is an edge of no length. It breaks the same
+    // comparison and it is not a corner of the shape.
+    const doubled = geo.triangulate([
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 10 },
+      { x: 0, y: 10 },
+    ]);
+    assert.equal(doubled.length, 2);
+    assert.equal(doubled.reduce((sum, t) => sum + geo.area(t), 0), 100);
+  });
+
+  it('still refuses something that is not a ring once the repeats are gone', () => {
+    // [a, a, a] is one point written three times, not a triangle. It used to
+    // come back as a triangle of zero area, which is worse than a refusal
+    // because everything downstream treats it as ground.
+    throwsCode(() => geo.triangulate([{ x: 1, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 1 }]), 'GEOMETRY_DEGENERATE');
+    throwsCode(() => geo.triangulate([{ x: 0, y: 0 }, { x: 5, y: 5 }, { x: 0, y: 0 }]), 'GEOMETRY_DEGENERATE');
+  });
+
+  it('leaves an ordinary ring exactly as it was', () => {
+    const ring = [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 8, y: 6 }, { x: 0, y: 6 }];
+    const triangles = geo.triangulate(ring);
+    assert.equal(triangles.length, 2);
+    assert.equal(triangles.reduce((sum, t) => sum + geo.area(t), 0), 48);
+  });
+});
+
 describe('the level under a point', () => {
   const ramp: geo.Surface = {
     triangles: [

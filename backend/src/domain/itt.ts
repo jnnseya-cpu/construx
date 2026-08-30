@@ -170,6 +170,24 @@ export type TermAssessment = {
   severity: 'BAR' | 'SEVERE' | 'MATERIAL' | 'ROUTINE';
   /** Exposure in money, where it can be computed. */
   exposureMinor?: number;
+  /**
+   * Which kind of exposure that figure is, and it is required wherever there is
+   * one.
+   *
+   * Retention is `CASH`: money the business funds and gets back later, or does
+   * not. A performance bond is `CAPACITY`: bonding facility committed, finite
+   * and shared across every live job, and not cash going anywhere. They are
+   * different quantities and adding them together produces a number that is
+   * neither.
+   *
+   * This exists because the totals used to be accumulated by hand as the terms
+   * were built, at two of the three places a term carries an exposure — and a
+   * reader could not tell whether the third was excluded on purpose or
+   * forgotten. It was on purpose. Now the rule is on the term, the totals are
+   * derived from it, and a fourth term that carries a figure has to say which
+   * kind it is rather than silently landing in one total or neither.
+   */
+  exposureKind?: 'CASH' | 'CAPACITY';
 };
 
 export type ITTAnalysis = {
@@ -186,8 +204,14 @@ export type ITTAnalysis = {
   terms: TermAssessment[];
   /** Terms that are a bar rather than a negotiation. */
   bars: string[];
-  /** Total quantified exposure across the terms that carry a number. */
+  /** Cash the business funds across the terms that carry a figure. */
   quantifiedExposureMinor: number;
+  /**
+   * Bonding and guarantee capacity committed, which is not cash and is not
+   * added to it. Reported separately rather than dropped: it is finite, it is
+   * shared across every live job, and a bid decision needs it.
+   */
+  committedCapacityMinor: number;
   /** Questions that should go to the buyer before the return date. */
   clarifications: string[];
   readyToPrice: boolean;
@@ -277,7 +301,6 @@ export function analyseITT(
   const terms: TermAssessment[] = [];
   const bars: string[] = [];
   const clarifications: string[] = [];
-  let quantifiedExposureMinor = 0;
 
   const { liquidatedDamages: lads } = input.terms;
   if (lads) {
@@ -286,7 +309,6 @@ export function analyseITT(
     const cappedMinor = lads.capPercent !== undefined ? Math.round(input.estimatedValueMinor * (lads.capPercent / 100)) : undefined;
     const uncappedOverRun = lads.perWeekMinor * input.durationWeeks;
     const exposure = cappedMinor ?? uncappedOverRun;
-    quantifiedExposureMinor += exposure;
 
     terms.push({
       term: 'Liquidated damages',
@@ -297,6 +319,7 @@ export function analyseITT(
           : `Capped at ${gbp(cappedMinor!)}, which is ${(marginMinor > 0 ? cappedMinor! / marginMinor : 0).toFixed(1)}× the expected margin of ${gbp(marginMinor)}.`,
       severity: lads.capPercent === undefined ? 'SEVERE' : cappedMinor! > marginMinor ? 'MATERIAL' : 'ROUTINE',
       exposureMinor: exposure,
+      exposureKind: 'CASH',
     });
     if (lads.capPercent === undefined) {
       clarifications.push('Will the buyer accept a cap on liquidated damages, expressed as a percentage of the contract sum?');
@@ -345,18 +368,20 @@ export function analyseITT(
       assessment: `${gbp(bondMinor)} of bonding facility committed for the contract period and usually beyond it. Bonding capacity is finite and shared across every live job, so this is capacity taken from the next bid as well as this one.`,
       severity: bondMinor > profile.netAssetsMinor * 0.5 ? 'SEVERE' : 'MATERIAL',
       exposureMinor: bondMinor,
+      // Facility committed, not money spent.
+      exposureKind: 'CAPACITY',
     });
   }
 
   if (input.terms.retentionPercent !== undefined) {
     const retentionMinor = Math.round(input.estimatedValueMinor * (input.terms.retentionPercent / 100));
-    quantifiedExposureMinor += retentionMinor;
     terms.push({
       term: 'Retention',
       stated: `${input.terms.retentionPercent}%`,
       assessment: `${gbp(retentionMinor)} withheld, typically half released at completion and half after the defects period. This is cash the business funds, not a discount, and the second half is often years away.`,
       severity: retentionMinor > marginMinor ? 'MATERIAL' : 'ROUTINE',
       exposureMinor: retentionMinor,
+      exposureKind: 'CASH',
     });
   }
 
@@ -406,6 +431,15 @@ export function analyseITT(
   const SEVERITY_ORDER = { BAR: 0, SEVERE: 1, MATERIAL: 2, ROUTINE: 3 } as const;
   const orderedTerms = [...terms].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 
+  // Both totals derived from the terms rather than accumulated as they are
+  // built. Cash and capacity stay apart — a bond is not money leaving the
+  // business — and neither can be silently forgotten, because the term itself
+  // states which it is.
+  const sumOf = (kind: 'CASH' | 'CAPACITY'): number =>
+    orderedTerms.reduce((total, term) => total + (term.exposureKind === kind ? (term.exposureMinor ?? 0) : 0), 0);
+  const quantifiedExposureMinor = sumOf('CASH');
+  const committedCapacityMinor = sumOf('CAPACITY');
+
   write(ctx, {
     eventType: 'ITT_ANALYSED',
     entity: { refType: 'ITTAnalysis', refId: analysisId },
@@ -422,6 +456,7 @@ export function analyseITT(
       terms: orderedTerms,
       bars,
       quantifiedExposureMinor,
+      committedCapacityMinor,
       clarifications,
       readyToPrice,
       analysedAt: new Date().toISOString(),
@@ -440,6 +475,7 @@ export function analyseITT(
     terms: orderedTerms,
     bars,
     quantifiedExposureMinor,
+    committedCapacityMinor,
     clarifications,
     readyToPrice,
   };
@@ -520,6 +556,17 @@ function readAnalysis(record: EntityRecord): StoredITTAnalysis {
     terms: (state.terms as TermAssessment[] | undefined) ?? [],
     bars: (state.bars as string[] | undefined) ?? [],
     quantifiedExposureMinor: Number(state.quantifiedExposureMinor ?? 0),
+    // Re-derived for an analysis written before capacity was reported
+    // separately, rather than defaulting to zero — a stored record from that
+    // era carries the bond on its term and would otherwise read as no bonding
+    // committed at all.
+    committedCapacityMinor:
+      state.committedCapacityMinor === undefined
+        ? ((state.terms as TermAssessment[] | undefined) ?? []).reduce(
+            (total, term) => total + (term.exposureKind === 'CAPACITY' ? (term.exposureMinor ?? 0) : 0),
+            0,
+          )
+        : Number(state.committedCapacityMinor),
     clarifications: (state.clarifications as string[] | undefined) ?? [],
     readyToPrice: Boolean(state.readyToPrice),
     estimatedValueMinor: Number(state.estimatedValueMinor ?? 0),

@@ -157,7 +157,7 @@ const DISPLAY_NAMES = {
   ACUWallet: 'ACU wallet',
   AIExecution: 'AI execution',
   AIRequest: 'AI request',
-  BIM_TWIN: 'BIM and twin',
+  BIM_TWIN: 'BIM and digital twin',
   RISK_SAFETY: 'Risk and safety',
   CONTRACTS_CLAIMS: 'Contracts and claims',
   RESOURCE_COST: 'Resource and cost',
