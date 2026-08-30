@@ -66,6 +66,7 @@ import * as responsibility from '../domain/responsibility.ts';
 import * as sitecapture from '../domain/sitecapture.ts';
 import * as sitelayout from '../domain/sitelayout.ts';
 import * as siteplan from '../export/siteplan.ts';
+import * as cis from '../domain/cis.ts';
 import * as reconstruction from '../domain/reconstruction.ts';
 import * as sitemodel from '../domain/sitemodel.ts';
 import * as regulatorycompletion from '../domain/regulatorycompletion.ts';
@@ -4318,6 +4319,61 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => integrator.drawContingency(projectContext(platform, ctx), body(ctx)),
+  },
+  // --------------------------------------------- the Construction Industry Scheme
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/cis/verifications',
+    description: 'Record what HMRC returned when a subcontractor was verified',
+    schema: {
+      type: 'object',
+      required: ['supplierId', 'supplierName', 'verificationNumber', 'status', 'verifiedOn'],
+      properties: {
+        supplierId: stringField,
+        supplierName: { type: 'string', minLength: 1, maxLength: 200 },
+        verificationNumber: { type: 'string', minLength: 8, maxLength: 20 },
+        status: { type: 'string', enum: [...cis.VERIFIED_STATUS] },
+        verifiedOn: { type: 'string', format: 'date' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => cis.recordVerification(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/cis/payments',
+    description: 'Record a payment to a subcontractor, with the deduction it carries at the verified rate',
+    schema: {
+      type: 'object',
+      required: ['supplierId', 'supplierName', 'grossMinor', 'paidOn'],
+      properties: {
+        supplierId: stringField,
+        supplierName: { type: 'string', minLength: 1, maxLength: 200 },
+        grossMinor: { type: 'integer', minimum: 0 },
+        materialsMinor: { type: 'integer', minimum: 0 },
+        vatMinor: { type: 'integer', minimum: 0 },
+        paidOn: { type: 'string', format: 'date' },
+        certificateId: { type: 'string', maxLength: 64 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => cis.recordPayment(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/cis/returns',
+    description: 'Tax months with CIS payments on this project, newest first',
+    handler: (platform, ctx) => ({ months: cis.returnsBoard(projectContext(platform, ctx)) }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/cis/returns/:taxMonthEndsOn',
+    description: 'The monthly return for a tax month, with the nil case and the late-filing penalty',
+    handler: (platform, ctx) =>
+      cis.monthlyReturn(projectContext(platform, ctx), {
+        taxMonthEndsOn: String(ctx.params.taxMonthEndsOn),
+        ...(ctx.query.get('asAt') ? { asAt: String(ctx.query.get('asAt')) } : {}),
+      }),
   },
   // ------------------------------------------------------ the site as geometry
   {

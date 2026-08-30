@@ -643,6 +643,13 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SPATIAL_BASELINE_SET', 'CaptureMission', 'APPROVE', 'DELIVERY'),
   // The geometric record. Zones carry real polygons, so these events are what
   // every measurement, overlap and volume on the platform is computed from.
+  // The Construction Industry Scheme. Verification is what a deduction is
+  // defended with at an inspection, so it is its own record rather than a field
+  // on the supplier — a rate that changed has to be readable as of the payment
+  // date, not as of now. No agent authors either: withholding tax from somebody
+  // is not a proposal.
+  def('CIS_SUBCONTRACTOR_VERIFIED', 'CISVerification', 'CREATE', 'COMMERCIAL', { creates: true }),
+  def('CIS_PAYMENT_RECORDED', 'CISPayment', 'CREATE', 'COMMERCIAL', { creates: true }),
   def('SITE_MODEL_RECORDED', 'SiteModel', 'CREATE', 'DELIVERY', { creates: true }),
   def('SITE_SURFACE_INGESTED', 'SiteModel', 'UPDATE', 'DELIVERY'),
   // A surface solved from feature tracks rather than received from a depth

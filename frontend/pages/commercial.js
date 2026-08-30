@@ -40,6 +40,81 @@ const INTEGRATOR_TONE = {
   NOT_PRICED: 'warn',
 };
 
+/**
+ * The Construction Industry Scheme.
+ *
+ * Every contractor paying a subcontractor for construction work operates CIS,
+ * at every size, and the penalties are for the month nobody remembered rather
+ * than for the arithmetic. So the months are listed with their due dates
+ * whether or not anything was paid in them.
+ */
+function cisPanel(board, monthly) {
+  const months = board?.months ?? [];
+  return html`
+    <div class="card pad0" id="cis" style="margin-bottom:14px;scroll-margin-top:68px">
+      <h2 style="padding:15px 17px 0">CIS deductions and monthly returns</h2>
+      <p style="padding:0 17px;font-size:12.5px;color:var(--text-3);margin:6px 0 10px">
+        The deduction is on the labour element only — materials the subcontractor bought and VAT come out first. An
+        unverified subcontractor is 30%, and the shortfall from paying 20% on an assumption is the contractor's
+        liability rather than theirs. A month with nothing in it still has a return.
+      </p>
+      ${
+        months.length === 0
+          ? html`<div style="padding:0 17px 15px"><div class="notice"><div>
+              No subcontractor payments have been recorded under CIS on this project yet. Record one and the tax month
+              it falls in appears here with its due date.
+            </div></div></div>`
+          : table({
+              headers: ['Tax month', 'Subcontractors', 'Withheld', 'Return due', ''],
+              align: ['', 'num', 'num', '', ''],
+              rows: months.map((m) => [
+                m.label,
+                m.subcontractors,
+                exact(m.deductionMinor),
+                date(m.returnDueBy),
+                html`<button class="btn quiet" data-cis-month="${m.taxMonthEndsOn}">Open the return</button>`,
+              ]),
+            })
+      }
+      ${
+        !monthly
+          ? ''
+          : html`<div style="padding:12px 17px 16px;border-top:1px solid var(--line)">
+              <h2 style="margin-bottom:6px">${monthly.taxMonth.label}</h2>
+              <p style="font-size:12.5px;color:var(--text-2);margin:0 0 9px">${monthly.summary}</p>
+              ${
+                monthly.lateness
+                  ? html`<div class="notice err"><div>
+                      <b>${monthly.lateness.daysLate} day(s) late — ${exact(monthly.lateness.penaltyMinor)}.</b><br>
+                      ${monthly.lateness.basis}
+                    </div></div>`
+                  : ''
+              }
+              ${
+                monthly.nil
+                  ? ''
+                  : table({
+                      headers: ['Subcontractor', 'Verification', 'Rate', 'Payments', 'Gross', 'Materials', 'Labour', 'Withheld'],
+                      align: ['', '', '', 'num', 'num', 'num', 'num', 'num'],
+                      rows: monthly.lines.map((line) => [
+                        line.instanceName ?? line.supplierName,
+                        line.verificationNumber ?? badge('Not verified', 'err'),
+                        `${line.status === 'GROSS' ? 0 : line.status === 'NET_20' ? 20 : 30}%`,
+                        line.payments,
+                        exact(line.grossMinor),
+                        exact(line.materialsMinor),
+                        exact(line.labourMinor),
+                        exact(line.deductionMinor),
+                      ]),
+                    })
+              }
+              <div class="metric-sub" style="margin-top:10px">${monthly.status}</div>
+            </div>`
+      }
+    </div>
+  `;
+}
+
 function integrationPanel(position) {
   if (position?.error) {
     return html`<div class="card" style="margin-bottom:14px">
@@ -169,7 +244,7 @@ function integrationPanel(position) {
 export async function commercial(root) {
   const projectId = state.session.projectId;
 
-  const [bundle, ledger, forward, commercialControl, settlements, integration] = await Promise.all([
+  const [bundle, ledger, forward, commercialControl, settlements, integration, cisMonths] = await Promise.all([
     entityBundle(projectId, [
       'CVR',
       'EarnedValueSnapshot',
@@ -198,8 +273,16 @@ export async function commercial(root) {
     api.get(`/v1/projects/${projectId}/settlements`).catch((error) => ({ error })),
     // Running an integrated appointment: what the price is made of, and whether
     // the money will be in the account when the suppliers are due.
-    api.get(`/v1/projects/${projectId}/integration`).catch((error) => ({ error }))
+    api.get(`/v1/projects/${projectId}/integration`).catch((error) => ({ error })),
+    // Tax months with CIS payments on this project. The board is cheap; the
+    // return itself is fetched only for the month somebody opened.
+    api.get(`/v1/projects/${projectId}/cis/returns`).catch(() => null),
   ]);
+
+  const openCisMonth = state.cisMonth ?? null;
+  const cisReturn = openCisMonth
+    ? await api.get(`/v1/projects/${projectId}/cis/returns/${openCisMonth}?asAt=${today()}`).catch(() => null)
+    : null;
 
   const cvr = bundle.CVR.at(-1);
   const evm = bundle.EarnedValueSnapshot.at(-1);
@@ -296,6 +379,8 @@ export async function commercial(root) {
       </div>
 
       ${integrationPanel(integration)}
+
+      ${cisPanel(cisMonths, cisReturn)}
 
       ${
         cvr && (cvr.alerts ?? []).length > 0
@@ -679,6 +764,14 @@ export async function commercial(root) {
    * before the button is pressed — which is what the confirmation dialog this
    * replaces was there for.
    */
+  root.addEventListener('click', async (event) => {
+    const openMonth = event.target.closest('[data-cis-month]');
+    if (!openMonth) return;
+    state.cisMonth = openMonth.dataset.cisMonth;
+    await draw();
+    document.getElementById('cis')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
   document.getElementById('publish-cvr')?.addEventListener('click', async () => {
     const published = await command({
       title: 'Publish CVR',

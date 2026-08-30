@@ -11384,3 +11384,77 @@ log is the expected signal here, not an error to design away.
 **Also corrected: "BIM and twin".** Not a `humanise` bug — an explicit entry in
 the display-name table, which is where `RISK_SAFETY` and `HANDOVER_OM` are
 handled too. The engine is BIM and the digital twin, and the label now says so.
+
+
+### CIS: verification, deduction and the monthly return
+
+Named as absent when the Groupe Nseya case study was assessed, and the largest
+remaining gap in the payment chain: the platform ran the Construction Act cycle,
+paid subcontractors, and said nothing about the tax it was legally required to
+withhold from them.
+
+Every contractor paying a subcontractor for construction work in the UK operates
+CIS, at every size. A sole trader with one labour-only subcontractor has the same
+obligations as a national contractor — verify before the first payment, deduct at
+the right rate, give the subcontractor a statement, and file a return every
+month including the months with nothing in them. That is exactly the burden this
+platform exists to carry for a business with no finance department.
+
+**The three rules that cost people money, each with its own test.**
+
+*The deduction is on labour only.* Materials the subcontractor bought, and VAT,
+come out of the gross before the rate applies. On £10,000 with £3,000 of
+materials and £1,400 of VAT, 20% of the £5,600 labour is £1,120 — deducting from
+the whole invoice takes £2,000, and £880 of that is somebody else's money.
+
+*An unverified subcontractor is 30%, not 20%.* The rate is derived from the
+verification on file and never accepted from the caller, because a contractor
+who assumes 20% and is wrong pays the difference themselves. Where nothing is on
+file the higher rate applies and the record says whose liability the shortfall
+would have been. `UNVERIFIED` and `UNREGISTERED` are kept apart despite sharing
+a rate: one is a subcontractor HMRC does not hold, the other is one nobody has
+asked about, and the second is a job for this afternoon.
+
+*A nil month still has a return.* Filing nothing because nothing was paid is the
+most common penalty under the scheme — £100 the day after the 19th, and it
+compounds to £200 at two months and the higher of £300 and 5% at six. A month
+with no payments produces a return that says so.
+
+**The tax month is the 6th to the 5th**, which is the trap underneath all of it.
+A payment on 3 June belongs to the month that began on 6 May; on the wrong return
+that is an amendment and a penalty rather than a rounding difference. Verification
+validity runs from the April tax-year start plus two years, so a verification on
+1 March 2026 expires a year earlier than a calendar reading gives.
+
+**Rated as at the payment date, not as at now.** A subcontractor who gains gross
+status in August does not retrospectively re-rate a June payment on a return that
+has already been filed.
+
+**It does not talk to HMRC, and says so on the return.** Verification is
+*recorded* — the number and rate HMRC gave, with the date — rather than obtained,
+and the return is *prepared* rather than filed. The Government Gateway is a
+credential and an integration, not arithmetic, and a prepared return that read as
+a filed one would be the worst thing in the module to fake.
+
+Eight mutations, all caught. Driven end to end through the API and the console.
+
+### Every console module parses, and has no array holes
+
+Two invariants, because the same `Promise.all` broke a page twice in one working
+session and nothing in the suite could see either.
+
+Once with a **missing** comma, which is a syntax error: the module failed to
+load, the view stayed empty, and the only trace was a line in a browser console
+nobody was reading. Once with a **doubled** comma, which leaves an array hole —
+valid JavaScript that shifts every destructured result after it by one, so a page
+renders another endpoint's answer under this endpoint's heading.
+
+`node --check` on every console module catches the first: the same parser the
+browser uses, with real module semantics, so a multi-line import or a re-export
+is not a false positive, and it parses without executing. It cannot catch the
+second, because `[a, , b]` is legal — that one is a text check for a doubled
+comma, stated as a text check rather than dressed up as analysis. Both were
+verified by re-introducing the exact defects.
+
+Neither replaces driving the page. The array hole rendered a page that looked
+fine and was wrong, and only reading the output caught it.

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -153,4 +154,74 @@ describe('a console page binds every shared name it calls', () => {
   // and then neither half is covered. So this file does the one thing it can do
   // exactly, and the scope question waits for a real parser or stays a review
   // habit. Saying that is better than shipping a check that looks like cover.
+});
+
+/**
+ * Every console module parses.
+ *
+ * This exists because the same call has now broken a page twice in one working
+ * session, both times invisibly to every other check. Once with a *missing*
+ * comma in a `Promise.all`, which is a syntax error — the module failed to
+ * load, the view stayed empty, and the only trace was one line in a browser
+ * console nobody was reading. Once with a *doubled* comma in the same call,
+ * which leaves an array hole.
+ *
+ * Neither is reachable from the rest of the suite. The doors invariant greps
+ * the console as text, the type checker never sees it, and the pages are only
+ * exercised by driving a browser — which is exactly what gets skipped when the
+ * change looked like adding one line to a fetch list.
+ *
+ * `node --check` rather than a regex and `new Function`: it is the same parser
+ * the browser uses, with real module semantics, so a multi-line import or a
+ * re-export is not a false positive. It parses and does not execute, so no
+ * module runs and no import has to resolve.
+ *
+ * **It catches the first defect and not the second**, and the difference is
+ * worth stating rather than glossing. `[a, , b]` is valid JavaScript, so no
+ * parser will ever object to it; the hole is caught by the separate text check
+ * below, and by driving the page — which is why the browser walkthrough is not
+ * optional however green this file is.
+ */
+describe('the console is loadable', () => {
+  it('parses every module the browser will be asked to load', () => {
+    const broken: string[] = [];
+    for (const file of pageFiles()) {
+      const check = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
+      if (check.status !== 0) {
+        const reason = (check.stderr ?? '').split('\n').find((line) => /Error|error/.test(line)) ?? 'did not parse';
+        broken.push(`${file.replace(FRONTEND, 'frontend')}: ${reason.trim()}`);
+      }
+    }
+    assert.deepEqual(broken, [], `console modules that will not load in a browser:\n  ${broken.join('\n  ')}`);
+  });
+});
+
+/**
+ * A hole in an array literal, which no parser will object to.
+ *
+ * `[a, , b]` is legal and evaluates to a three-element array whose middle
+ * element is `undefined`. In a `Promise.all` destructured into named results
+ * that shifts everything after it by one, so a page renders another endpoint's
+ * answer under this endpoint's heading — or, as happened here, its own defaults
+ * under both. It fails silently, in the output, at run time.
+ *
+ * A text check rather than a parse, because a parse cannot see it. The false
+ * positive it risks is a deliberate sparse array, which this console has none
+ * of and has no reason to have.
+ */
+describe('no array holes in the console', () => {
+  it('leaves no doubled comma in an array or an argument list', () => {
+    const found: string[] = [];
+    for (const file of pageFiles()) {
+      const source = readFileSync(file, 'utf8');
+      source.split('\n').forEach((line, index) => {
+        // A comma, then only whitespace, then another comma or a closing
+        // bracket. Both forms are a hole.
+        if (/,\s*,/.test(line) || /,\s*\]/.test(line)) {
+          found.push(`${file.replace(FRONTEND, 'frontend')}:${index + 1}: ${line.trim()}`);
+        }
+      });
+    }
+    assert.deepEqual(found, [], `array holes, which are valid JavaScript and shift every element after them:\n  ${found.join('\n  ')}`);
+  });
 });
