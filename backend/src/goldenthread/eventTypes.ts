@@ -343,6 +343,19 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
    * business would have to defend, and the machine that suggested it would not
    * be the one in the room.
    */
+  /**
+   * The integrator's own commercial account: what was priced, what the client
+   * has advanced, and every draw against contingency.
+   *
+   * `COMMERCIAL` rather than `PROJECT_CONTROL`: this is the money, and a draw
+   * on contingency is the act a director answers for. None is `aiAllowed` —
+   * pricing a contract and deciding that a risk has materialised are both
+   * positions the business defends, and the machine that suggested one would
+   * not be in the room.
+   */
+  def('INTEGRATION_PRICED', 'IntegrationAccount', 'CREATE', 'COMMERCIAL'),
+  def('ADVANCE_RECEIVED', 'IntegrationAccount', 'UPDATE', 'COMMERCIAL'),
+  def('CONTINGENCY_DRAWN', 'IntegrationAccount', 'APPROVE', 'COMMERCIAL'),
   def('RESPONSIBILITY_ASSIGNED', 'ResponsibilityItem', 'CREATE', 'PROJECT_CONTROL'),
   def('RESPONSIBILITY_REASSIGNED', 'ResponsibilityItem', 'UPDATE', 'PROJECT_CONTROL'),
   def('CONTRACT_INTERPRETED', 'TenderReview', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),

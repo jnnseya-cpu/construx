@@ -10711,3 +10711,84 @@ it, and a shared design responsibility never split.
 `identity.test.ts` caught the new entity type before it shipped unclassified,
 which is the guard working: an entity the catalogue can produce and the access
 model has never heard of has no rules at all.
+
+
+### Running an integrated appointment without a finance team
+
+A business that takes every site service under one appointment — the temporary
+offices, the power, the roads, the security, the accommodation — is not doing
+harder work than a specialist. It is doing the same work with a different
+exposure: it pays fifteen suppliers monthly and is paid by one client monthly,
+and nothing synchronises those two facts. A large firm answers that with a
+finance function and a credit line. A new entrant, or a small business taking
+its first integrated appointment, has neither, and everything else on this
+platform is useless to them if they are wound up in month four.
+
+`domain/integrator.ts` answers the two questions that decide it, and refuses to
+answer either vaguely.
+
+**What the price is made of.** The industry habit is a single "overhead and
+profit" percentage, and it is the number clients push back on hardest because it
+cannot be argued with: twenty per cent of what, for what? Split into its parts
+each one is defensible on its own — the cost of managing the interface, what the
+business costs to keep open, the return for carrying the risk, and money held
+against things going wrong. Each component carries the sentence it would be
+defended in; a component with no basis is the single "overhead" figure again
+with more rows, and a test fails if one is dropped. The four rates live in
+`config.ts`, because a business bidding against a framework rate has to move
+them without a code change.
+
+**Contingency is not profit, and the module will not let it become profit
+quietly.** It is priced separately and excluded from `marginMinor` by
+construction; drawing it needs `A` on `BUDGET_COST` — the authority that
+approves a budget, not the quantity surveyor who maintains it — and a draw that
+names no risk is refused, because money spent on something nobody identified is
+an underestimate or a scope change and both have their own route. A draw beyond
+what was priced is refused rather than allowed to eat the margin silently. A
+business that treats unused contingency as margin has mispriced every job after
+the first one.
+
+**Whether the money will be there.** The client advance is not a deposit but a
+rolling reserve, replenished at each valuation so the business always holds the
+next period's committed spend. The mobilisation advance and every top-up take
+one command, because recording them separately would produce two numbers and no
+answer to how much is held. The position states cover in **days**, against the
+outflow rate measured from certificates issued down the chain — not as a
+balance, which means nothing without knowing what it is against.
+
+**Where it refuses to answer.** With nothing certified down the chain there is
+no outflow to cover, so `coverDays` is `undefined` with a sentence saying why,
+rather than a large number. "Infinite cover" is the most dangerous possible
+answer on a project that has not started paying anybody — it says *safe* at
+exactly the point there is still time to act. The summary and the panel's
+all-clear notice carry the same restraint: an empty concern list is the absence
+of a measurement, not an assurance, and both say so.
+
+Four concerns, each a specific way an integrator fails, each stated with what
+happens if it is left: the reserve short of one payment cycle; more certified
+down the chain than is owed up it and held, which is the business funding the
+client; a contingency draw naming no risk; and nothing priced at all. Everything
+is read from what the platform already holds — `forwardCashflow` and
+`ledgerPosition` — rather than from a second set of figures.
+
+Panel and three commands on Cost & Value, under the roles that already work
+there. `IntegrationAccount` is classified `COMMERCIAL_L3`. Sixteen mutations
+fail a test, including suppressing either cash concern, folding contingency back
+into margin, dropping the approval authority on a draw, reporting cover against
+an outflow of zero, and swapping the receivable and payable sides. Driven in a
+browser across two identities: the QS priced the appointment and recorded the
+advance, found `Draw contingency` locked, and the owner drew £8.0K against
+RR-014 with the contingency falling from £50.0K to £42.0K on the panel.
+
+Two defects were found by driving it rather than by the tests. A stray double
+comma in the page's `Promise.all` left an array hole, so the panel rendered its
+own defaults instead of the API's answer; and the summary reported money as a
+count of minor units, on the one screen written to be read at eleven at night.
+Both are fixed and both now have a test.
+
+**What this does not do.** The Construction Act payment cycle, its notices and
+its dates are the platform's own and are not restated here. CIS deduction,
+verification and monthly returns are not built; nor is the retention release
+model (a half at practical completion, a half after the defects period); nor a
+service taxonomy for site services or workforce accommodation. Those are named
+here so the absence is not mistaken for coverage.

@@ -839,6 +839,32 @@ export const config = {
      * AI call in the units the customer already reads.
      */
     documentRenderRawCostMinor: num('DOCUMENT_RENDER_RAW_COST_MINOR', 4),
+    /**
+     * The integrator's commercial build-up, as four named components.
+     *
+     * A single "overhead" percentage is the industry habit and it is the thing
+     * a client refuses to accept, because it cannot be argued with — 20% of
+     * what, for what? Named separately, each part is defensible on its own:
+     * this is what it costs to manage the interface, this is what the business
+     * costs to keep open, this is the return for carrying the risk, and this is
+     * money held against things going wrong that is not ours until they do not.
+     *
+     * Configuration rather than constants because the split is a commercial
+     * position, and a business bidding against a framework rate has to be able
+     * to move it without a code change.
+     */
+    integrationContingencyPercent: num('INTEGRATION_CONTINGENCY_PERCENT', 5),
+    integrationManagementPercent: num('INTEGRATION_MANAGEMENT_PERCENT', 8),
+    integrationOverheadPercent: num('INTEGRATION_OVERHEAD_PERCENT', 5),
+    integrationProfitPercent: num('INTEGRATION_PROFIT_PERCENT', 7),
+    /**
+     * How many days of committed supplier spend the client advance must cover.
+     *
+     * The number that decides whether an integrator survives a client paying
+     * late. Thirty days is one payment cycle: enough to pay everybody once
+     * without the client's money having arrived.
+     */
+    integrationReserveCoverDays: num('INTEGRATION_RESERVE_COVER_DAYS', 30),
 
     subscriptionGraceDays: num('SUBSCRIPTION_GRACE_DAYS', 7),
     /**

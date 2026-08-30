@@ -140,6 +140,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
    * position on a claim they have not made yet.
    */
   ResponsibilityItem: { area: 'WORKPACKAGES_TASKS', sensitivity: 'COMMERCIAL_L3' },
+  /**
+   * The integrator's commercial account — the price build-up, the client
+   * advance and every contingency draw. `BUDGET_COST` and `COMMERCIAL_L3`: it
+   * states this business's margin, and a supplier or a client reading it is
+   * reading the negotiating position rather than the contract.
+   */
+  IntegrationAccount: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
   Task: { area: 'WORKPACKAGES_TASKS' },
   Dependency: { area: 'PROGRAMME_BASELINES' },
   ProgrammeBaseline: { area: 'PROGRAMME_BASELINES' },

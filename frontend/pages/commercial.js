@@ -20,10 +20,156 @@ const SOURCE_LABEL = {
   NOT_YET_DETERMINED: 'Not yet determined',
 };
 
+/**
+ * Running an integrated appointment without a finance team.
+ *
+ * A business that takes every site service under one contract pays fifteen
+ * suppliers monthly and is paid by one client monthly, and nothing synchronises
+ * those two facts. What decides whether it survives is not the contract value —
+ * it is whether there is money in the account on the day the suppliers are due,
+ * when the client has not paid.
+ *
+ * A large firm answers that with a finance function. This is the answer for a
+ * business that has one person doing the commercial job, and it is deliberately
+ * four lines rather than a dashboard.
+ */
+const INTEGRATOR_TONE = {
+  RESERVE_SHORT: 'bad',
+  PAYING_OUT_FASTER: 'bad',
+  CONTINGENCY_UNDRAWN_RISK: 'warn',
+  NOT_PRICED: 'warn',
+};
+
+function integrationPanel(position) {
+  if (position?.error) {
+    return html`<div class="card" style="margin-bottom:14px">
+      <h2>Integrated appointment</h2>
+      <p class="metric-sub">This could not be read: ${position.error.message}</p>
+    </div>`;
+  }
+
+  const price = position?.price;
+  const reserve = position?.reserve ?? {};
+  const contingency = position?.contingency ?? {};
+
+  return html`
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">Integrated appointment</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        ${position?.summary ?? ''}
+      </p>
+
+      ${
+        (position?.concerns ?? []).length > 0
+          ? html`<div class="split-list" style="padding:11px 17px 0">
+              ${position.concerns.map(
+                (concern) => html`<div class="row">
+                  <span class="lbl">${badge(humanise(concern.kind), INTEGRATOR_TONE[concern.kind] ?? 'warn')} ${concern.subject}</span>
+                  <span class="val" style="font-size:12px;color:var(--text-3)">${concern.consequence}</span>
+                </div>`,
+              )}
+            </div>`
+          : html`<div style="padding:11px 17px 0">
+              ${
+                // No concern is not the same answer as a good one. Until
+                // something has been certified down the chain there is no
+                // outflow to cover, so saying the reserve covers it would tell a
+                // business it was safe at the point it has not started paying
+                // anybody — which is the point it can still act.
+                reserve.coverDays === undefined
+                  ? html`<div class="notice"><div>Nothing needs attention yet, but the reserve has not been tested:
+                    ${reserve.unmeasured ?? ''}</div></div>`
+                  : html`<div class="notice ok"><div>The reserve covers ${reserve.coverDays} day(s) of committed
+                    supplier spend, and nothing is being funded out of this business's own money.</div></div>`
+              }
+            </div>`
+      }
+
+      ${
+        price
+          ? html`
+            <div class="grid g4" style="padding:13px 17px 0">
+              <div class="card">
+                <h2>Contract price</h2>
+                <div class="metric">${money(price.contractPriceMinor)}</div>
+                <div class="metric-sub">${money(price.directSupplierCostMinor)} of supplier cost, plus ${price.additionPercent}%.</div>
+              </div>
+              <div class="card">
+                <h2>Margin</h2>
+                <div class="metric">${money(price.marginMinor)}</div>
+                <div class="metric-sub">Management, overhead and profit. Contingency is not in this figure.</div>
+              </div>
+              <div class="card">
+                <h2>Reserve held</h2>
+                <div class="metric ${raw(reserve.coverDays !== undefined && reserve.coverDays < 30 ? 'bad' : 'good')}">
+                  ${money(reserve.advanceHeldMinor ?? 0)}
+                </div>
+                <div class="metric-sub">
+                  ${
+                    reserve.coverDays === undefined
+                      ? (reserve.unmeasured ?? '')
+                      : `${reserve.coverDays} day(s) of committed supplier spend.`
+                  }
+                </div>
+              </div>
+              <div class="card">
+                <h2>Contingency left</h2>
+                <div class="metric ${raw((contingency.remainingMinor ?? 0) > 0 ? '' : 'warn')}">${money(contingency.remainingMinor ?? 0)}</div>
+                <div class="metric-sub">${money(contingency.drawnMinor ?? 0)} drawn of ${money(contingency.pricedMinor ?? 0)} held against risk.</div>
+              </div>
+            </div>
+
+            <h2 style="padding:15px 17px 0">What the price is made of</h2>
+            <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+              Named separately rather than as one percentage. A single "overhead and profit" figure is the number a
+              client pushes back on hardest, because it cannot be argued with — twenty per cent of what, for what?
+            </p>
+            ${table({
+              headers: ['Component', 'Rate', 'Amount', 'What it is for'],
+              align: ['', 'num', 'num', ''],
+              rows: [
+                [
+                  html`<b>Direct supplier cost</b>`,
+                  '—',
+                  money(price.directSupplierCostMinor),
+                  html`<span style="font-size:12px;color:var(--text-3)">What the suppliers are paid. Everything below sits on top of it.</span>`,
+                ],
+                ...price.components.map((component) => [
+                  component.label,
+                  `${component.percent}%`,
+                  money(component.amountMinor),
+                  html`<span style="font-size:12px;color:var(--text-3)">${component.basis}</span>`,
+                ]),
+                [
+                  html`<b>Contract price</b>`,
+                  html`<b>${price.additionPercent}%</b>`,
+                  html`<b>${money(price.contractPriceMinor)}</b>`,
+                  '',
+                ],
+              ],
+            })}
+
+            <div class="split-list" style="padding:0 17px 15px">
+              <div class="row">
+                <span class="lbl">Owed by the client, uncertified or unpaid</span>
+                <span class="val">${money(reserve.owedByClientMinor ?? 0)}</span>
+              </div>
+              <div class="row">
+                <span class="lbl">Certified to suppliers and unpaid</span>
+                <span class="val">${money(reserve.owedToSuppliersMinor ?? 0)}</span>
+              </div>
+            </div>
+          `
+          : ''
+      }
+    </div>
+  `;
+}
+
 export async function commercial(root) {
   const projectId = state.session.projectId;
 
-  const [bundle, ledger, forward, commercialControl, settlements] = await Promise.all([
+  const [bundle, ledger, forward, commercialControl, settlements, integration] = await Promise.all([
     entityBundle(projectId, [
       'CVR',
       'EarnedValueSnapshot',
@@ -50,6 +196,9 @@ export async function commercial(root) {
     // dispute later; it becomes money that was never recoverable.
     api.get(`/v1/projects/${projectId}/commercial-control`).catch((error) => ({ error })),
     api.get(`/v1/projects/${projectId}/settlements`).catch((error) => ({ error })),
+    // Running an integrated appointment: what the price is made of, and whether
+    // the money will be in the account when the suppliers are due.
+    api.get(`/v1/projects/${projectId}/integration`).catch((error) => ({ error }))
   ]);
 
   const cvr = bundle.CVR.at(-1);
@@ -131,6 +280,12 @@ export async function commercial(root) {
         <div class="actions cmd-bar">
           ${raw(commandBar([
             { id: 'actual', label: 'Post actual cost', tone: '', permitted: can('BUDGET_COST', 'C'), reason: blockedReason('BUDGET_COST', 'C') },
+            { id: 'price', label: 'Price the appointment', permitted: can('BUDGET_COST', 'C'), reason: blockedReason('BUDGET_COST', 'C') },
+            { id: 'advance', label: 'Record client advance', permitted: can('BUDGET_COST', 'U'), reason: blockedReason('BUDGET_COST', 'U') },
+            // Approval authority rather than the QS who maintains the budget. A
+            // business where the person spending the contingency is the person
+            // recording it has no contingency, it has a slower profit.
+            { id: 'contingency', label: 'Draw contingency', permitted: can('BUDGET_COST', 'A'), reason: blockedReason('BUDGET_COST', 'A') },
             { id: 'application', label: 'Submit application', permitted: can('PAYMENT_APPLICATIONS', 'C'), reason: blockedReason('PAYMENT_APPLICATIONS', 'C') },
             { id: 'payless', label: 'Issue pay less notice', permitted: can('PAYMENT_APPLICATIONS', 'A'), reason: blockedReason('PAYMENT_APPLICATIONS', 'A') },
             { id: 'contra', label: 'Raise contra charge', permitted: can('PAYMENT_APPLICATIONS', 'C'), reason: blockedReason('PAYMENT_APPLICATIONS', 'C') },
@@ -139,6 +294,8 @@ export async function commercial(root) {
           ${can('BUDGET_COST', 'R') ? html`<button class="btn quiet" id="evm">Take EVM snapshot</button>` : ''}
         </div>
       </div>
+
+      ${integrationPanel(integration)}
 
       ${
         cvr && (cvr.alerts ?? []).length > 0
@@ -595,6 +752,82 @@ export async function commercial(root) {
   });
 
   const COMMANDS = {
+    price: {
+      title: 'Price the appointment',
+      intent:
+        'The build-up a client is shown, with each part named. A single "overhead and profit" percentage is the ' +
+        'number a client pushes back on hardest, because it cannot be argued with. Contingency is priced here and ' +
+        'is not margin — it is drawn only against a risk that has materialised, and by somebody with approval ' +
+        'authority.',
+      path: () => `/v1/projects/${projectId}/integration`,
+      submitLabel: 'Price it',
+      fields: [
+        {
+          name: 'directSupplierCost',
+          label: 'Forecast supplier cost (£)',
+          type: 'number',
+          step: '1',
+          hint: 'What the suppliers will be paid. Everything above it is the build-up.',
+        },
+        {
+          name: 'model',
+          label: 'Delivery model',
+          type: 'select',
+          options: [
+            { value: 'MANAGEMENT_INTEGRATOR', label: 'Management integrator — the client contracts the suppliers' },
+            { value: 'ADVISORY', label: 'Advisory — strategy, requirements and procurement only' },
+            { value: 'PRINCIPAL_SERVICE_CONTRACTOR', label: 'Principal service contractor — we contract every supplier' },
+          ],
+          hint: 'The third carries supplier default, cash-flow gaps and interface liability. It needs working capital behind it.',
+        },
+        { name: 'note', label: 'Note', type: 'textarea', rows: 2, required: false },
+      ],
+      transform: (v) => ({
+        directSupplierCostMinor: Math.round(Number(v.directSupplierCost) * 100),
+        model: v.model,
+        ...(v.note ? { note: v.note } : {}),
+      }),
+    },
+    advance: {
+      title: 'Record the client advance',
+      intent:
+        'The mobilisation advance and every monthly replenishment take this same command, because they are the same ' +
+        'thing: the client funding the reserve the suppliers are paid out of. The reserve should always hold the ' +
+        'next period’s committed spend, so that a client paying late is an inconvenience rather than an insolvency.',
+      path: () => `/v1/projects/${projectId}/integration/advance`,
+      submitLabel: 'Record it',
+      fields: [
+        { name: 'amount', label: 'Amount received (£)', type: 'number', step: '0.01' },
+        { name: 'receivedOn', label: 'Received on', type: 'date' },
+        { name: 'reference', label: 'Their reference', type: 'text' },
+        { name: 'covers', label: 'What it covers', type: 'text', required: false, placeholder: 'Month 1 committed supplier spend' },
+      ],
+      transform: (v) => ({
+        amountMinor: Math.round(Number(v.amount) * 100),
+        receivedOn: v.receivedOn,
+        reference: v.reference,
+        ...(v.covers ? { covers: v.covers } : {}),
+      }),
+    },
+    contingency: {
+      title: 'Draw against contingency',
+      intent:
+        'For a risk that has actually materialised, named. Money spent on something nobody identified as a risk is ' +
+        'an underestimate or a scope change, and both have their own route — recorded here it looks like neither, ' +
+        'and the next job is priced on the same wrong figure.',
+      path: () => `/v1/projects/${projectId}/integration/contingency`,
+      submitLabel: 'Draw it',
+      fields: [
+        { name: 'amount', label: 'Amount (£)', type: 'number', step: '0.01' },
+        { name: 'riskReference', label: 'Which risk', type: 'text', placeholder: 'RR-014' },
+        { name: 'reason', label: 'What happened', type: 'textarea', rows: 2 },
+      ],
+      transform: (v) => ({
+        amountMinor: Math.round(Number(v.amount) * 100),
+        riskReference: v.riskReference,
+        reason: v.reason,
+      }),
+    },
     contra: {
       title: 'Raise a contra charge',
       intent:

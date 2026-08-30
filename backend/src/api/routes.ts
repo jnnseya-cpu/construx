@@ -61,6 +61,7 @@ import * as progressverification from '../domain/progressverification.ts';
 import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
+import * as integrator from '../domain/integrator.ts';
 import * as responsibility from '../domain/responsibility.ts';
 import * as regulatorycompletion from '../domain/regulatorycompletion.ts';
 import * as reliability from '../domain/reliability.ts';
@@ -4216,6 +4217,61 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => structure.createScopePackage(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/integration',
+    description: 'The integrator commercial position: what the price is made of, and whether the reserve covers what is committed',
+    handler: (platform, ctx) => integrator.integratorPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/integration',
+    description: 'Price an integrated appointment and open its commercial account',
+    schema: {
+      type: 'object',
+      required: ['directSupplierCostMinor', 'model'],
+      properties: {
+        directSupplierCostMinor: { type: 'integer', minimum: 1 },
+        model: { type: 'string', enum: ['ADVISORY', 'MANAGEMENT_INTEGRATOR', 'PRINCIPAL_SERVICE_CONTRACTOR'] },
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => integrator.priceIntegration(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/integration/advance',
+    description: 'Record the client advance, or a replenishment of it',
+    schema: {
+      type: 'object',
+      required: ['amountMinor', 'receivedOn', 'reference'],
+      properties: {
+        amountMinor: { type: 'integer', minimum: 1 },
+        receivedOn: stringField,
+        reference: stringField,
+        covers: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => integrator.recordAdvance(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/integration/contingency',
+    description: 'Draw against contingency for a risk that has materialised (approval authority)',
+    schema: {
+      type: 'object',
+      required: ['amountMinor', 'riskReference', 'reason'],
+      properties: {
+        amountMinor: { type: 'integer', minimum: 1 },
+        riskReference: stringField,
+        reason: { type: 'string', minLength: 8 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => integrator.drawContingency(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'GET',
