@@ -753,3 +753,85 @@ describe('a project-scoped path has to name a real project', () => {
     assert.equal(reply.status, 200, reply.text);
   });
 });
+
+describe('an invitation to tender is validated at the boundary, on both routes', () => {
+  /**
+   * A mistyped commercial term used to be accepted, ignored and reported as
+   * priceable.
+   *
+   * The `terms` object was `{ type: 'object' }` — open — on the reasoning that
+   * an absent field is meaningful, which it is: no stated bond is not a bond of
+   * zero. But optional properties already carry that, and openness meant a
+   * payload sending `paymentTermsDays` instead of `paymentDays` came back 201
+   * with `readyToPrice: true` and the payment period never assessed. Silence
+   * from a typo and silence from a buyer who said nothing are opposite facts,
+   * and the analysis could not tell them apart.
+   *
+   * The second route was worse: `/v1/pipeline/tenders/:id/requirements` passed
+   * the analyser's *entire* input as `{ type: 'object' }`, with a comment saying
+   * the shape had its own schema on the other route — true, and worth nothing,
+   * because a schema on one route validates nothing on another.
+   */
+  const invitation = (terms: Record<string, unknown>) => ({
+    reference: 'ITT-VALIDATION-1',
+    clientName: 'Northgate Developments Ltd',
+    returnBy: '2026-10-15T12:00:00.000Z',
+    estimatedValueMinor: 480_000_000,
+    durationWeeks: 62,
+    requirements: [
+      { reference: 'R1', category: 'Health & safety', requirement: 'CHAS or equivalent', mandatory: true, evidenceRequired: 'Certificate' },
+    ],
+    terms: { contractForm: 'JCT Design and Build 2016', ...terms },
+  });
+
+  it('refuses a commercial term nobody spelled correctly', async () => {
+    const reply = await call('POST', `/v1/projects/${seed.projectId}/tender/itt`, {
+      token: tokenFor('qs'),
+      body: invitation({ paymentTermsDays: 60 }),
+    });
+    assert.equal(reply.status, 400, `a misspelled payment term was accepted: ${reply.text}`);
+    // Named, not just refused. The caller has to be able to see which field.
+    assert.match(reply.text, /paymentTermsDays/);
+  });
+
+  it('accepts the term spelled as the analyser reads it', async () => {
+    const reply = await call('POST', `/v1/projects/${seed.projectId}/tender/itt`, {
+      token: tokenFor('qs'),
+      body: invitation({ paymentDays: 60, retentionPercent: 5, paymentConditionalOnThirdParty: true }),
+    });
+    assert.equal(reply.status, 201, reply.text);
+
+    // And the analysis is the real one: retention is cash the business funds,
+    // a pay-when-paid clause is material and carries no exposure figure because
+    // section 113 has already made it ineffective, and the clarification asks
+    // the buyer about it rather than pricing round it.
+    const terms: Array<{ term: string; severity: string; exposureMinor?: number; exposureKind?: string }> = reply.body.terms;
+    const payWhenPaid = terms.find((entry) => /conditional on the buyer/i.test(entry.term));
+    assert.ok(payWhenPaid, `no pay-when-paid finding: ${JSON.stringify(terms)}`);
+    assert.equal(payWhenPaid.severity, 'MATERIAL');
+    assert.equal(payWhenPaid.exposureMinor, undefined, 'a void clause was priced as a cash risk');
+    assert.equal(reply.body.bars.length, 0, 'a clause the Act already voids was treated as a bar to bidding');
+    assert.ok(
+      (reply.body.clarifications as string[]).some((line) => /section 113/i.test(line)),
+      'nothing asks the buyer about a clause the Act makes ineffective',
+    );
+    assert.equal(reply.body.quantifiedExposureMinor, 24_000_000, 'retention on £4.8m at 5% is £240,000');
+  });
+
+  it('validates the same shape on the pipeline route, which used to check nothing', async () => {
+    // Any invitation id will do: the shape is refused before the id is looked
+    // up, which is precisely the point — this route used to accept any object
+    // at all and only then go looking for the invitation.
+    const reply = await call('POST', '/v1/pipeline/tenders/01JZZZZZZZZZZZZZZZZZZZZZZZ/requirements', {
+      token: tokenFor('qs'),
+      body: {
+        deliverables: [{ reference: 'D1', title: 'Method statement', mandatory: true }],
+        analysis: invitation({ paymentTermsDays: 60 }),
+      },
+    });
+    // 400 for the shape, before the invitation id is ever looked up — which is
+    // the point: this route accepted any object at all.
+    assert.equal(reply.status, 400, `the pipeline route still accepts an unchecked analysis: ${reply.text}`);
+    assert.match(reply.text, /paymentTermsDays/);
+  });
+});

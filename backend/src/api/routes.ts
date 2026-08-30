@@ -419,6 +419,90 @@ function storagePositionFor(platform: Platform, tenantId: string): storage.Stora
 const stringField = { type: 'string', minLength: 1 } as const;
 
 /**
+ * What an invitation to tender has to say before it can be analysed.
+ *
+ * One schema, referenced by both routes that reach `analyseITT`. It used to be
+ * written out on `/v1/projects/:projectId/tender/itt` and *omitted entirely* on
+ * `/v1/pipeline/tenders/:invitationId/requirements`, whose comment said the
+ * shape had "its own schema on the other route" — which is true and does
+ * nothing, because a schema on one route validates nothing on another. The
+ * analyser's whole input reached the domain unchecked through the pipeline
+ * route.
+ *
+ * ## Why the terms are a closed object now
+ *
+ * They were `{ type: 'object' }`, open, on the reasoning that an absent field is
+ * meaningful — no stated bond is not a bond of zero — and that is right. But
+ * optional properties already give exactly that, and openness bought nothing
+ * while costing the failure that found this: a payload sending
+ * `paymentTermsDays` instead of `paymentDays` was accepted, analysed, and came
+ * back `readyToPrice: true` with the payment period never assessed. Silence from
+ * a mistyped field is indistinguishable from silence from a buyer who said
+ * nothing, and on a multi-million pound invitation those are opposite facts.
+ *
+ * Closed, a typo is a 400 naming the field. Absence is still absence.
+ */
+const ITT_ANALYSIS_SCHEMA = {
+  type: 'object',
+  required: ['reference', 'clientName', 'returnBy', 'estimatedValueMinor', 'durationWeeks', 'requirements', 'terms'],
+  properties: {
+    reference: stringField,
+    clientName: stringField,
+    returnBy: stringField,
+    estimatedValueMinor: { type: 'integer', minimum: 0 },
+    durationWeeks: { type: 'integer', minimum: 1 },
+    requirements: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        required: ['reference', 'category', 'requirement', 'mandatory', 'evidenceRequired'],
+        properties: {
+          reference: stringField,
+          category: stringField,
+          requirement: { type: 'string' },
+          mandatory: { type: 'boolean' },
+          weightingPercent: { type: 'number', minimum: 0, maximum: 100 },
+          evidenceRequired: { type: 'string' },
+          dueBy: stringField,
+        },
+        additionalProperties: false,
+      },
+    },
+    terms: {
+      type: 'object',
+      // The one term the analyser's own type declares required. Everything else
+      // is genuinely optional, and its absence is reported as the buyer having
+      // said nothing about it.
+      required: ['contractForm'],
+      properties: {
+        contractForm: stringField,
+        liquidatedDamages: {
+          type: 'object',
+          required: ['perWeekMinor'],
+          properties: {
+            perWeekMinor: { type: 'integer', minimum: 0 },
+            capPercent: { type: 'number', minimum: 0, maximum: 100 },
+          },
+          additionalProperties: false,
+        },
+        performanceBondPercent: { type: 'number', minimum: 0, maximum: 100 },
+        parentCompanyGuaranteeRequired: { type: 'boolean' },
+        retentionPercent: { type: 'number', minimum: 0, maximum: 100 },
+        paymentDays: { type: 'integer', minimum: 0 },
+        designLiability: { type: 'string', enum: ['NONE', 'REASONABLE_SKILL_AND_CARE', 'FITNESS_FOR_PURPOSE'] },
+        sectionalCompletions: { type: 'integer', minimum: 0 },
+        paymentConditionalOnThirdParty: { type: 'boolean' },
+        other: { type: 'array', items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    targetMarginPercent: { type: 'number' },
+  },
+  additionalProperties: false,
+} as const;
+
+/**
  * Store an image that is part of a tenancy's identity rather than a project's
  * evidence.
  *
@@ -2286,10 +2370,12 @@ export const ROUTES: Route[] = [
             additionalProperties: false,
           },
         },
-        // The analyser's own input, passed through unchanged. It has its own
-        // schema on /v1/projects/:id/itt and its own tests; restating the shape
-        // here would give the platform two opinions about a requirement.
-        analysis: { type: 'object' },
+        // The analyser's own input, governed by the same schema the direct
+        // route uses — referenced, not restated, so there is one opinion about
+        // the shape rather than two. It used to be `{ type: 'object' }` with a
+        // comment pointing at the other route's schema, which validated
+        // precisely nothing here.
+        analysis: ITT_ANALYSIS_SCHEMA,
       },
       additionalProperties: false,
     },
@@ -5098,41 +5184,7 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/itt',
     description: 'Analyse an invitation to tender: compliance matrix and commercial terms',
-    schema: {
-      type: 'object',
-      required: ['reference', 'clientName', 'returnBy', 'estimatedValueMinor', 'durationWeeks', 'requirements', 'terms'],
-      properties: {
-        reference: stringField,
-        clientName: stringField,
-        returnBy: stringField,
-        estimatedValueMinor: { type: 'integer', minimum: 0 },
-        durationWeeks: { type: 'integer', minimum: 1 },
-        requirements: {
-          type: 'array',
-          minItems: 1,
-          items: {
-            type: 'object',
-            required: ['reference', 'category', 'requirement', 'mandatory', 'evidenceRequired'],
-            properties: {
-              reference: stringField,
-              category: stringField,
-              requirement: { type: 'string' },
-              mandatory: { type: 'boolean' },
-              weightingPercent: { type: 'number', minimum: 0, maximum: 100 },
-              evidenceRequired: { type: 'string' },
-              dueBy: stringField,
-            },
-            additionalProperties: false,
-          },
-        },
-        // The commercial terms carry optional fields whose absence is meaningful —
-        // no stated bond is different from a bond of zero — so the shape is open
-        // and the analyser reports what was not stated.
-        terms: { type: 'object' },
-        targetMarginPercent: { type: 'number' },
-      },
-      additionalProperties: false,
-    },
+    schema: ITT_ANALYSIS_SCHEMA,
     handler: (platform, ctx) => itt.analyseITT(projectContext(platform, ctx), body(ctx)),
   },
   {

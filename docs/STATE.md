@@ -11647,3 +11647,43 @@ no-return samples held as holes, `chargedMinor` 555; segmentation 200 reading
 sensor reached nothing on refused 422 `RECONSTRUCTION_EMPTY` with no surface
 written. The construction manager is refused the bill — 403 — which is the
 commercial scope working, not a fault.
+
+
+### The invitation-to-tender input, validated at the boundary on both routes
+
+Probing the s.113 pay-when-paid finding over HTTP found the term working exactly
+as designed — MATERIAL, no exposure figure because the Act has already voided
+it, not a bar, and a clarification asking the buyer to confirm or delete the
+clause. It also found that the probe's *other* terms had been silently ignored,
+because they were spelled wrong.
+
+**`terms` was `{ type: 'object' }`.** Open, on the reasoning that an absent field
+is meaningful — no stated bond is not a bond of zero — which is right. But
+optional properties already carry that, and openness bought nothing while
+costing this: a payload sending `paymentTermsDays` instead of `paymentDays`
+returned 201, `readyToPrice: true`, and the payment period never assessed.
+Silence from a mistyped field and silence from a buyer who said nothing are
+opposite facts, and on a £4.8m invitation the analysis could not tell them apart.
+
+**`/v1/pipeline/tenders/:invitationId/requirements` was worse.** It passed the
+analyser's *entire* input as `{ type: 'object' }`, with a comment saying the
+shape "has its own schema on `/v1/projects/:id/itt`" — true, and worth nothing,
+because a schema on one route validates nothing on another. That route accepted
+any object at all.
+
+Both now reference one `ITT_ANALYSIS_SCHEMA`, with the commercial terms closed
+against `CommercialTerms`. A mistyped field is a 400 naming it —
+`terms.paymentTermsDays — is not a permitted property` — and absence is still
+absence.
+
+**Verified over HTTP**: the typo refused by name; the same invitation spelled
+correctly returning six term assessments including the 60-day payment finding
+that had been missing, £1,790,000 of cash exposure and £480,000 of bonding
+capacity kept apart, no bars, and three clarifications.
+
+**Considered and not built**: a register of terms the invitation was silent on.
+The route comment used to claim the analyser "reports what was not stated" and
+it does not. With the schema closed, silence now genuinely means the buyer said
+nothing, which is the precondition for reporting it — but which absences are
+worth raising is a product judgement, not a defect, so the false claim is
+removed rather than a feature invented to justify it.
