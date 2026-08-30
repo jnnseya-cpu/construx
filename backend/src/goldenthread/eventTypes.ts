@@ -641,6 +641,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SITE_CONSTRAINT_RECORDED', 'CaptureMission', 'UPDATE', 'DELIVERY', { aiAllowed: true }),
   def('CAPTURE_MISSION_COMPLETED', 'CaptureMission', 'UPDATE', 'DELIVERY'),
   def('SPATIAL_BASELINE_SET', 'CaptureMission', 'APPROVE', 'DELIVERY'),
+  // The geometric record. Zones carry real polygons, so these events are what
+  // every measurement, overlap and volume on the platform is computed from.
+  def('SITE_MODEL_RECORDED', 'SiteModel', 'CREATE', 'DELIVERY', { creates: true }),
+  def('SITE_SURFACE_INGESTED', 'SiteModel', 'UPDATE', 'DELIVERY'),
+  // A zone may be proposed by an extraction and is still confirmed by a person
+  // before it means anything, which is why an agent may author it.
+  def('SITE_ZONE_PLACED', 'SiteModel', 'UPDATE', 'DELIVERY', { aiAllowed: true }),
+  // Adopting a layout decides what the site is. No agent authors that.
+  def('SITE_LAYOUT_ADOPTED', 'SiteLayout', 'CREATE', 'DELIVERY', { creates: true }),
   def('SITE_VISIT_RECORDED', 'SiteVisit', 'CREATE', 'DELIVERY', { creates: true }),
   // A finding observed on site carries its photograph. One read from a document
   // carries its source instead, which is why evidence is required by the engine

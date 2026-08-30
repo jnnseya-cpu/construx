@@ -10999,3 +10999,70 @@ the two are not yet joined. Zones still carry no polygons, so the capture brief
 still reports no areas. The layout planner, the scenario scoring, the 2D drawing
 output, change detection and the ingestion of a device mesh are all still to
 build. None of them now needs anything this repository does not have.
+
+
+### The site as geometry, and the layout designed on it
+
+The geometry core had nothing above it using it. Now it does, and the sentence
+`sitevisit.ts` has carried since it was written — that it will not draw a
+logistics plan without the geometry behind it — is no longer a limit the
+platform has to live with.
+
+**`domain/sitemodel.ts`** holds the site as shapes. A boundary, an optional
+triangulated surface taken from the device rather than reconstructed here, and
+zones carrying the ground they actually occupy. Everything is measured from the
+polygon: areas, perimeters, slope, cut and fill, and a label point guaranteed to
+be *inside* its zone, which the centroid is not for a concave one.
+
+Conflicts are computed on every read rather than stored, so a layout cannot be
+edited into correctness on paper while a stored finding says otherwise. Six
+kinds, and the distinctions matter: a laydown inside an exclusion is `CRITICAL`
+and reported as a keep-clear breach, not as an ordinary overlap; a gate inside
+the hoarding line is not reported at all, because some things belong inside
+others and a rule that flagged every nesting would bury the breach. A zone that
+leaves the site is **refused rather than clipped** — trimming it would decide
+whether the boundary or the zone was wrong, without telling anybody.
+
+Where there is no surface it says so rather than reporting a flat one, because
+zero slope and zero cut are measurements nobody made.
+
+**`domain/sitelayout.ts`** designs the setup. Three strategies — welfare near
+the work, shortest delivery run, compact compound — each producing a genuinely
+different layout by search over real candidate positions, not by asking a model
+to imagine a compound. Areas are sized from the workforce at published rates, so
+a manager states people and gets a compound. Every placement carries the reason
+it is where it is, and nothing overlaps anything by construction.
+
+A scenario that could not place everything is `INFEASIBLE` and names what would
+not fit. Nothing is shrunk to make it fit, and an infeasible scenario cannot be
+adopted: a compound sized to the space rather than the workforce fails its first
+inspection, and leaving an area out ought to be a decision on the record.
+
+Eighteen mutations were run against both modules; all eighteen fail a test.
+Three needed real work to catch:
+
+- **Placing areas smallest first** survived until a site was found where the
+  order changes the answer. A 40×40 site with a 560m² laydown fits all three
+  strategies placing biggest first, and only two placing smallest first — the
+  small areas land in the middle of the only ground large enough to take the
+  laydown.
+- **Ranking infeasible layouts alongside feasible ones** survived because the
+  first version of that test compared a sorted array against itself and asserted
+  nothing. A 60×50 site produces a genuine mix, and the test now uses it.
+- **A defect in the scoring, found by reading the output rather than by a test.**
+  Free ground was credited at a tenth of a metre per square and the comment
+  called it a tie-breaker. On a two-hectare site that term is about 1,840
+  against distance differences of around 16 — it outweighed what it was meant to
+  break ties in by a hundred to one, and the score printed as an unreadable
+  negative number. The score is now metres of daily travel, which a person can
+  check by pacing it, and free ground breaks a tie and only a tie.
+
+Panel on Field Execution: the measured model, the conflicts, and the change
+between any two captures of the same site. Driven in a browser as the
+construction manager, with a 200×100m site, a wedge surface rising 12m, an
+overhead-line corridor and a laydown breaching it by 375m².
+
+**Still not built.** The 2D drawing output and the 3D view. Neither needs
+anything this repository lacks — the PDF renderer and the geometry both exist —
+and the taxonomy merge with `LOGISTICS_ELEMENT` is done, so a drawing has one
+legend to render from.

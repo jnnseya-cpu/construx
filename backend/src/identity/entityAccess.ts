@@ -330,6 +330,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // than the findings it sits beside — the raw imagery is a separate concern
   // and does not live on this entity.
   CaptureMission: { area: 'LOOKAHEAD_CONSTRAINTS' },
+  // The geometry and the layout adopted from it. Same area as the site visit
+  // they belong to; a site plan is not more sensitive than the walk that made it.
+  SiteModel: { area: 'LOOKAHEAD_CONSTRAINTS' },
+  SiteLayout: { area: 'LOOKAHEAD_CONSTRAINTS' },
   SiteVisit: { area: 'LOOKAHEAD_CONSTRAINTS' },
   SiteFinding: { area: 'LOOKAHEAD_CONSTRAINTS' },
   SiteLogisticsPlan: { area: 'LOOKAHEAD_CONSTRAINTS' },

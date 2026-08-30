@@ -64,6 +64,8 @@ import * as radar from '../domain/radar.ts';
 import * as integrator from '../domain/integrator.ts';
 import * as responsibility from '../domain/responsibility.ts';
 import * as sitecapture from '../domain/sitecapture.ts';
+import * as sitelayout from '../domain/sitelayout.ts';
+import * as sitemodel from '../domain/sitemodel.ts';
 import * as regulatorycompletion from '../domain/regulatorycompletion.ts';
 import * as reliability from '../domain/reliability.ts';
 import * as informationcontrol from '../domain/informationcontrol.ts';
@@ -4314,6 +4316,200 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => integrator.drawContingency(projectContext(platform, ctx), body(ctx)),
+  },
+  // ------------------------------------------------------ the site as geometry
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-model',
+    description: 'Geometric records on this project, newest first',
+    handler: (platform, ctx) => ({ models: sitemodel.modelBoard(projectContext(platform, ctx)) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-model',
+    description: 'Open the geometric record for a capture, with the boundary everything is measured against',
+    schema: {
+      type: 'object',
+      required: ['missionId', 'ring'],
+      properties: { missionId: stringField, ring: {
+          type: 'array',
+          minItems: 3,
+          maxItems: 2000,
+          items: {
+            type: 'object',
+            required: ['x', 'y'],
+            properties: { x: { type: 'number' }, y: { type: 'number' } },
+            additionalProperties: false,
+          },
+        } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => sitemodel.recordBoundary(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-model/:modelId/surface',
+    description: 'Take the triangulated surface the device produced. Nothing is reconstructed here',
+    schema: {
+      type: 'object',
+      required: ['triangles'],
+      properties: {
+        triangles: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 20000,
+          items: {
+            type: 'array',
+            minItems: 3,
+            maxItems: 3,
+            items: {
+              type: 'object',
+              required: ['x', 'y', 'z'],
+              properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } },
+              additionalProperties: false,
+            },
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      sitemodel.ingestSurface(projectContext(platform, ctx), {
+        modelId: String(ctx.params.modelId),
+        ...body<{ triangles: never }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-model/:modelId/zones',
+    description: 'Put a zone on the site, with the ground it actually occupies',
+    schema: {
+      type: 'object',
+      required: ['code', 'instanceName', 'ring', 'source'],
+      properties: {
+        code: { type: 'string', enum: [...sitevisit.LOGISTICS_ELEMENT] },
+        instanceName: { type: 'string', minLength: 1, maxLength: 120 },
+        ring: {
+          type: 'array',
+          minItems: 3,
+          maxItems: 2000,
+          items: {
+            type: 'object',
+            required: ['x', 'y'],
+            properties: { x: { type: 'number' }, y: { type: 'number' } },
+            additionalProperties: false,
+          },
+        },
+        source: { type: 'string', enum: ['OBSERVED', 'PLANNED'] },
+        attrs: { type: 'object' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      sitemodel.placeZone(projectContext(platform, ctx), {
+        modelId: String(ctx.params.modelId),
+        ...body<Omit<Parameters<typeof sitemodel.placeZone>[1], 'modelId'>>(ctx),
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-model/:modelId',
+    description: 'The model measured, with every conflict the geometry finds',
+    handler: (platform, ctx) => sitemodel.siteModel(projectContext(platform, ctx), String(ctx.params.modelId)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-model/:modelId/changes/:toModelId',
+    description: 'What changed on the layout between two captures of the same site',
+    handler: (platform, ctx) =>
+      sitemodel.compareModels(projectContext(platform, ctx), String(ctx.params.modelId), String(ctx.params.toModelId)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-model/:modelId/layout',
+    description: 'Design the site setup: ranked layout scenarios, each scored and explained',
+    schema: {
+      type: 'object',
+      required: ['gate', 'workFace'],
+      properties: {
+        gate: {
+          type: 'object',
+          required: ['x', 'y'],
+          properties: { x: { type: 'number' }, y: { type: 'number' } },
+          additionalProperties: false,
+        },
+        workFace: {
+          type: 'object',
+          required: ['x', 'y'],
+          properties: { x: { type: 'number' }, y: { type: 'number' } },
+          additionalProperties: false,
+        },
+        // Stated as people, and the areas follow from the published rates.
+        peakWorkforce: { type: 'integer', minimum: 1, maximum: 10000 },
+        staff: { type: 'integer', minimum: 0, maximum: 2000 },
+        requirements: {
+          type: 'array',
+          maxItems: 40,
+          items: {
+            type: 'object',
+            required: ['code', 'instanceName', 'squareMetres'],
+            properties: {
+              code: { type: 'string', enum: [...sitevisit.LOGISTICS_ELEMENT] },
+              instanceName: { type: 'string', minLength: 1, maxLength: 120 },
+              squareMetres: { type: 'number', minimum: 1, maximum: 1000000 },
+              maxAspect: { type: 'number', minimum: 1, maximum: 10 },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      const input = body<{
+        gate: { x: number; y: number };
+        workFace: { x: number; y: number };
+        peakWorkforce?: number;
+        staff?: number;
+        requirements?: sitelayout.AreaRequirement[];
+      }>(ctx);
+      const view = sitemodel.siteModel(engineCtx, String(ctx.params.modelId));
+      if (!view.boundary) {
+        throw new DomainError('NO_BOUNDARY', 'A layout needs a site boundary to be planned inside', 422);
+      }
+      // What the workforce implies, plus anything asked for by name. Stated
+      // this way so a manager gives people and gets a compound rather than
+      // having to size welfare themselves.
+      const derived = input.peakWorkforce
+        ? sitelayout.welfareRequirements({ peakWorkforce: input.peakWorkforce, staff: input.staff ?? 0 })
+        : [];
+      // Zones already on the ground are obstacles, not proposals.
+      const obstacles = sitemodel.zonesOf(engineCtx, String(ctx.params.modelId));
+      return sitelayout.planLayout(engineCtx, {
+        boundary: view.boundary.ring,
+        gate: input.gate,
+        workFace: input.workFace,
+        obstacles,
+        requirements: [...derived, ...(input.requirements ?? [])],
+      });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-model/:modelId/layout/adopt',
+    description: 'Adopt one scenario as the site layout',
+    schema: {
+      type: 'object',
+      required: ['scenario', 'reason'],
+      properties: { scenario: { type: 'object' }, reason: { type: 'string', minLength: 10, maxLength: 1000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      sitelayout.adoptScenario(projectContext(platform, ctx), {
+        modelId: String(ctx.params.modelId),
+        ...body<{ scenario: sitelayout.LayoutScenario; reason: string }>(ctx),
+      }),
   },
   // ---------------------------------------------- the three-minute site capture
   {

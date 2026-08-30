@@ -52,6 +52,168 @@ const VISION_TASKS = [
   { task: 'DEFECT_DETECTION', label: 'Defects', lands: 'one NCR per defect, each closed on its own' },
 ];
 
+const FINDING_TONE = {
+  ZONE_OVERLAP: 'warn',
+  KEEP_CLEAR_BREACHED: 'err',
+  BUILT_ON_UNSUITABLE_GROUND: 'warn',
+  MISSING_ESSENTIAL: 'warn',
+  NO_SURFACE: 'warn',
+  SLOPE_TOO_STEEP: 'warn',
+};
+
+/**
+ * The site as geometry: what is on it, measured, and what conflicts.
+ *
+ * Areas are metres a person can go and re-measure, not estimates. The findings
+ * are computed on every read from the zones themselves, so a layout cannot be
+ * edited into correctness on paper while a stored finding says otherwise.
+ */
+function geometryPanel(models, view, comparison) {
+  if (models?.error) {
+    return html`<div class="card" style="margin-bottom:14px">
+      <h2>Site geometry</h2>
+      <p class="metric-sub">This could not be read: ${models.error.message}</p>
+    </div>`;
+  }
+
+  const rows = models?.models ?? [];
+  return html`
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">Site geometry</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        Zones with the ground they actually occupy. Every area below is computed from the polygon, and every conflict
+        was found by measuring rather than by somebody noticing it.
+      </p>
+
+      ${
+        rows.length === 0
+          ? html`<div style="padding:11px 17px 15px">
+              <div class="notice"><div>No geometric record on this project yet. A capture with a boundary opens one,
+              and everything measured hangs off it.</div></div>
+            </div>`
+          : html`${table({
+              headers: ['Record', 'From capture', 'Zones', 'Recorded'],
+              align: ['', '', 'num', ''],
+              rows: rows.map((m) => [
+                html`<button class="btn quiet" data-model="${m.modelId}">${m.modelId.slice(-6)}</button>`,
+                m.missionId.slice(-6),
+                String(m.zones),
+                date(m.createdAt),
+              ]),
+            })}`
+      }
+
+      ${view ? geometryDetail(view, models?.models ?? [], comparison) : ''}
+    </div>
+  `;
+}
+
+function geometryDetail(view, allModels, comparison) {
+  // Earlier records of the same site, which is what a delta is measured
+  // against. Only ones recorded before this one: comparing forwards would
+  // report every change with its sign inverted.
+  const earlier = allModels.filter((m) => m.modelId !== view.modelId);
+
+  return html`
+    <div id="site-model" style="padding:13px 17px 16px;scroll-margin-top:68px;border-top:1px solid var(--line)">
+      <div class="grid g4">
+        <div class="card">
+          <h2>Site area</h2>
+          <div class="metric">${view.boundary ? `${view.boundary.areaSquareMetres.toLocaleString()} m²` : '—'}</div>
+          <div class="metric-sub">${view.boundary ? `${view.boundary.perimeterMetres}m of boundary` : 'No boundary recorded'}</div>
+        </div>
+        <div class="card">
+          <h2>Unallocated</h2>
+          <div class="metric">${view.unallocatedSquareMetres === undefined ? '—' : `${view.unallocatedSquareMetres.toLocaleString()} m²`}</div>
+          <div class="metric-sub">Ground no zone occupies. Overlaps make this read low.</div>
+        </div>
+        <div class="card">
+          <h2>Steepest ground</h2>
+          <div class="metric ${raw(view.surface && view.surface.steepestPercent > 8.33 ? 'bad' : '')}">
+            ${view.surface ? `${view.surface.steepestPercent}%` : '—'}
+          </div>
+          <div class="metric-sub">${view.surface ? `Falling towards ${view.surface.steepestAspectDegrees}°` : 'No surface captured'}</div>
+        </div>
+        <div class="card">
+          <h2>Cut and fill</h2>
+          <div class="metric">${view.surface ? `${view.surface.cutCubicMetres.toLocaleString()} m³` : '—'}</div>
+          <div class="metric-sub">
+            ${view.surface ? `${view.surface.fillCubicMetres.toLocaleString()}m³ fill, against mean level ${view.surface.meanLevelMetres}m` : 'Needs a device with depth'}
+          </div>
+        </div>
+      </div>
+
+      ${
+        view.zones.length > 0
+          ? html`<h2 style="margin-top:14px">Zones, measured</h2>
+            ${table({
+              headers: ['Zone', 'Type', 'Source', 'Area', 'Perimeter'],
+              align: ['', '', '', 'num', 'num'],
+              rows: view.zones.map((z) => [
+                z.instanceName,
+                humanise(z.code),
+                badge(humanise(z.source), z.source === 'OBSERVED' ? 'ok' : ''),
+                `${z.areaSquareMetres.toLocaleString()} m²`,
+                `${z.perimeterMetres.toLocaleString()} m`,
+              ]),
+            })}`
+          : ''
+      }
+
+      ${
+        earlier.length === 0
+          ? ''
+          : html`<h2 style="margin-top:14px">What changed since an earlier walk</h2>
+            <p style="font-size:12.5px;color:var(--text-3);margin:0 0 7px">
+              Matched by name, so a zone that moved reads as moved rather than as one removed and another added.
+              Movement under a metre is below what a handheld capture resolves and is reported as unchanged.
+            </p>
+            <div class="actions" style="gap:6px;flex-wrap:wrap">
+              ${earlier.map(
+                (m) => html`<button class="btn quiet" data-compare="${m.modelId}" data-against="${view.modelId}">
+                  Compare with ${m.modelId.slice(-6)}
+                </button>`,
+              )}
+            </div>
+            ${
+              comparison
+                ? html`<p style="font-size:12.5px;color:var(--text-2);margin:9px 0 0">${comparison.summary}</p>
+                  ${table({
+                    headers: ['Zone', 'Type', 'Change', 'Was', 'Now', 'Moved'],
+                    align: ['', '', '', 'num', 'num', 'num'],
+                    rows: comparison.changes.map((c) => [
+                      c.instanceName,
+                      humanise(c.code),
+                      badge(humanise(c.kind), c.kind === 'UNCHANGED' ? '' : c.kind === 'REMOVED' ? 'err' : 'warn'),
+                      c.fromSquareMetres === undefined ? '—' : `${c.fromSquareMetres.toLocaleString()} m²`,
+                      c.toSquareMetres === undefined ? '—' : `${c.toSquareMetres.toLocaleString()} m²`,
+                      c.movedMetres === undefined ? '—' : `${c.movedMetres} m`,
+                    ]),
+                  })}`
+                : ''
+            }`
+      }
+
+      <h2 style="margin-top:14px">What the geometry found</h2>
+      ${
+        view.findings.length === 0
+          ? html`<div class="notice ok"><div>Nothing on this layout conflicts with anything else on it.</div></div>`
+          : html`<div class="split-list">
+              ${view.findings.map(
+                (f) => html`<div class="row" style="display:block">
+                  <div class="lbl">
+                    ${badge(f.severity === 'CRITICAL' ? 'Critical' : 'Major', FINDING_TONE[f.kind] ?? 'warn')}
+                    <b>${f.subject}</b>
+                  </div>
+                  <div style="font-size:12px;color:var(--text-3);margin-top:3px">${f.detail}</div>
+                </div>`,
+              )}
+            </div>`
+      }
+    </div>
+  `;
+}
+
 const ACCURACY_TONE = {
   CONCEPTUAL: 'warn',
   MEASURED_RECON: '',
@@ -444,6 +606,19 @@ export async function field(root) {
   // argument as the permission matrix: the browser holds no list the API does
   // not publish, so the picker and the rulepack behind it cannot drift apart.
   const protocol = await api.get('/v1/site-capture/protocol').catch(() => null);
+
+  // The geometric record. Same shape as the capture above: the board is cheap,
+  // the measured view is fetched only for the record somebody opened.
+  const models = await api.get(`/v1/projects/${projectId}/site-model`).catch((error) => ({ error }));
+  const openModel = state.siteModel ?? null;
+  const modelView = openModel
+    ? await api.get(`/v1/projects/${projectId}/site-model/${openModel}`).catch(() => null)
+    : null;
+  const compareFrom = state.siteModelCompare ?? null;
+  const comparison =
+    openModel && compareFrom
+      ? await api.get(`/v1/projects/${projectId}/site-model/${compareFrom}/changes/${openModel}`).catch(() => null)
+      : null;
   const CONSTRAINT_TYPES = (protocol?.constraintTypes ?? []).map((type) => ({ value: type.code, label: type.label }));
   const openMission = state.captureMission ?? null;
   const brief = openMission
@@ -545,6 +720,8 @@ export async function field(root) {
       }
 
       ${capturePanel(missions, brief)}
+
+      ${geometryPanel(models, modelView, comparison)}
 
       ${conflictPanel(conflicts)}
 
@@ -1371,6 +1548,26 @@ export async function field(root) {
     // Opening a capture. Held on `state` rather than in the URL because the
     // brief is a panel on this page, not a route of its own, and a reload
     // should land on Field Execution rather than on one walk.
+    const compareBtn = event.target.closest('[data-compare]');
+    if (compareBtn) {
+      state.siteModelCompare = compareBtn.dataset.compare;
+      state.siteModel = compareBtn.dataset.against;
+      await draw();
+      root.querySelector('#site-model')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+
+    const openModelBtn = event.target.closest('[data-model]');
+    if (openModelBtn) {
+      state.siteModel = openModelBtn.dataset.model;
+      // A comparison against a record nobody is looking at any more is a table
+      // of numbers about two other things.
+      state.siteModelCompare = null;
+      await draw();
+      root.querySelector('#site-model')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+
     const openBrief = event.target.closest('[data-brief]');
     if (openBrief) {
       state.captureMission = openBrief.dataset.brief;

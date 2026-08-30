@@ -513,6 +513,20 @@ export function closeFinding(
 
 // --- Logistics ---------------------------------------------------------------
 
+/**
+ * Everything that can appear on a site layout.
+ *
+ * Extended rather than duplicated. The SiteCapture specification arrives with
+ * its own twenty-code zone taxonomy that overlaps these eleven about nine ways —
+ * its `Z-OFF` is `SITE_OFFICE`, its `Z-GTE` is `GATE` — and standing a second
+ * vocabulary next to this one would give the platform two names for one thing
+ * and no way to reconcile a plan drawn under each. So the codes it genuinely
+ * adds are added here, and there is still one list.
+ *
+ * The additions are the ones a capture sees and a compound-only list has no
+ * word for: what the ground is doing, what is already in it, and what may not
+ * be built on.
+ */
 export const LOGISTICS_ELEMENT = [
   'GATE',
   'HOARDING',
@@ -525,6 +539,21 @@ export const LOGISTICS_ELEMENT = [
   'WASTE',
   'TEMPORARY_SUPPLY',
   'PEDESTRIAN_ROUTE',
+  // --- from the capture taxonomy ---
+  'HAUL_ROAD',
+  'SPOIL_HEAP',
+  'EXCAVATION',
+  'CRANE_POSITION',
+  'SCAFFOLD',
+  'EXCLUSION_ZONE',
+  'MUSTER_POINT',
+  'EXISTING_SERVICES',
+  'STANDING_WATER',
+  'VEGETATION',
+  'PERMANENT_WORKS',
+  'TEMPORARY_WORKS',
+  'DELIVERY_HOLDING',
+  'FIRE_POINT',
 ] as const;
 export type LogisticsElement = (typeof LOGISTICS_ELEMENT)[number];
 
