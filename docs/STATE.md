@@ -10931,3 +10931,71 @@ interface for reconstruction is *not* built either — deliberately, so nothing
 declares a seam before there is something to put behind it. The Zone Taxonomy
 overlaps `LOGISTICS_ELEMENT` nine ways and must extend it rather than sit beside
 it; that merge is not done.
+
+
+### Site geometry, computed rather than described
+
+A correction to what this file said one section earlier. It claimed the spatial
+specifications "cannot live here". That was too broad, and the narrower
+statement is the true one: **two** things need compute this platform does not
+have — reconstructing geometry from raw video pixels, and classifying a region
+as "road" from imagery. Everything downstream of geometry is deterministic
+arithmetic with no dependency at all, and the specifications themselves say the
+device does the reconstruction: ARKit and ARCore already produce depth, per-frame
+poses and mesh anchors on the handset. The platform does not need to run
+structure-from-motion. It needs to receive what the phone computed.
+
+`domain/geometry.ts` is the arithmetic everything above it was faking without:
+
+- area, perimeter and the **area** centroid — not the vertex mean, which is
+  wrong for any ring a person traces because they put more points on the
+  interesting side
+- point-in-polygon, distance to a segment rather than to the line it lies on
+- ear-clipping triangulation for any simple polygon, convex or not
+- **exact** intersection area, by triangulating both polygons and clipping
+  triangle against triangle — correct for concave shapes, where the ordinary
+  Sutherland–Hodgman answer is wrong
+- mitred buffers, which is what a crane exclusion, a root protection area and an
+  excavation setback all are
+- cut and fill between a triangulated surface and a level, in closed form rather
+  than sampled — a spoil heap measured by sampling gives a different figure every
+  time the grid moves, and that figure is invoiced
+- slope and aspect, and the steepest triangle, which is what decides access
+- swept paths for six design vehicles, and whether a manoeuvring area is the
+  right **shape** rather than merely large enough
+- shortest route on the site road graph, refusing an edge narrower than the
+  vehicle rather than routing an artic down a two-metre gap
+
+Every test checks against a figure worked out by hand and written into the
+comment, because a geometry suite that only checks a function against itself
+proves consistency rather than correctness.
+
+Sixteen mutations were run; fifteen fail a test. Three survived the first pass
+and each taught something:
+
+- **Winding normalisation** was untested. A boundary traced clockwise on a phone
+  buffered *inward* — an exclusion zone that shrinks instead of growing, which is
+  the most dangerous possible direction for that error.
+- **The reflex-vertex check in ear clipping** was untested, and the obvious
+  shape did not expose it: for an L, the bad ears happen to contain another
+  vertex and get rejected anyway. It takes a notch whose reflex ear is empty —
+  and the ring listed starting at that apex — to show it. Then 125m² of
+  triangles cover a 75m² shape, two of them in the notch. The vertex somebody
+  started tracing from decided whether the answer was right.
+- **The ray-casting rule** is an *equivalent* mutant, established rather than
+  assumed: 200,000 differential point/polygon pairs, with the point's y landing
+  on vertex lines, found `>` and `>=` disagreeing only where the point sits on
+  the boundary and never where the answer is defined. The comment in the source
+  claimed more than that and has been corrected; the absent test is recorded in
+  the suite as a finding rather than a gap.
+
+One naming defect fixed on the way: the volume result used `cutMinor` /
+`fillMinor`, and `Minor` means minor currency units everywhere else in this
+codebase. They are cubic metres and now say so.
+
+**What this unblocks and what is still not built.** `sitevisit.ts` refuses to
+draw a logistics plan without geometry behind it; that geometry now exists, but
+the two are not yet joined. Zones still carry no polygons, so the capture brief
+still reports no areas. The layout planner, the scenario scoring, the 2D drawing
+output, change detection and the ingestion of a device mesh are all still to
+build. None of them now needs anything this repository does not have.
