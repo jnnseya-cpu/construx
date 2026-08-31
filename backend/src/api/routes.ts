@@ -4477,6 +4477,36 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) => intermediation.recordDirectApproach(projectContext(platform, ctx), body(ctx)),
   },
+  {
+    method: 'GET',
+    pattern: '/v1/supplier-exposure',
+    description: 'Every supplier across every appointment — the concentration one project at a time cannot show',
+    handler: (platform, ctx) => intermediation.supplierExposure(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/intermediation/client-contact',
+    description: 'Record somebody at the client, their part in the decision, and who here holds the relationship',
+    schema: {
+      type: 'object',
+      required: ['name', 'role', 'ownedBy'],
+      properties: {
+        name: stringField,
+        role: {
+          type: 'string',
+          enum: ['DECISION_MAKER', 'BUDGET_HOLDER', 'OPERATIONAL', 'TECHNICAL', 'PROCUREMENT'],
+        },
+        ownedBy: stringField,
+        departed: { type: 'boolean' },
+        // Supplied to correct an existing row rather than add a second one for
+        // the same person — the commonest edit here is marking somebody as
+        // having left.
+        contactId: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => intermediation.recordClientContact(projectContext(platform, ctx), body(ctx)),
+  },
   // ------------------------------------------------------------------ retention
   {
     method: 'GET',

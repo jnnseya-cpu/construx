@@ -353,7 +353,10 @@ export type IntermediationConcern = {
     | 'CONCENTRATED_AND_APPROACHING'
     | 'DIRECT_APPROACHES'
     | 'FRAMEWORK_EXPIRING'
-    | 'RELYING_ON_THE_WEAKEST';
+    | 'RELYING_ON_THE_WEAKEST'
+    | 'NOBODY_WHO_DECIDES'
+    | 'RELATIONSHIP_HELD_BY_ONE_PERSON'
+    | 'COUNTERPART_HAS_GONE';
   subject: string;
   consequence: string;
 };
@@ -379,6 +382,8 @@ export type IntermediationPosition = {
   approaches: Array<{ supplierName: string; occurredOn: string; what: string; outcome: ApproachOutcome; outcomeLabel: string }>;
   /** A framework term with a date, where one has been set up. */
   framework?: { reference: string; name: string; endsOn: string; daysRemaining: number };
+  /** Who at the client this business knows, and who here holds each one. */
+  relationship: ClientRelationship;
   concerns: IntermediationConcern[];
   summary: string;
 };
@@ -480,6 +485,59 @@ export function intermediationPosition(ctx: EngineContext, today?: string): Inte
   const threshold = concentrationThreshold(ctx);
   const framework = activeFramework(ctx, asAt);
 
+  // --- The relationship -----------------------------------------------------
+  const contactState = ((record?.state.contacts as ContactState[] | undefined) ?? []);
+  const standing = contactState.filter((entry) => !entry.departed);
+  const relationship: ClientRelationship = {
+    contacts: contactState.map((entry) => ({
+      contactId: entry.id,
+      name: entry.name,
+      role: entry.role,
+      roleLabel: CLIENT_ROLE[entry.role]?.label ?? entry.role,
+      ownedBy: entry.ownedBy,
+      departed: entry.departed,
+    })),
+    // Only people still in post can decide anything. Counting a departed
+    // sponsor here would report the relationship as reaching the renewal on the
+    // strength of somebody who has left.
+    decisionMakers: standing.filter((entry) => CLIENT_ROLE[entry.role]?.decides === true).length,
+    ownerCount: new Set(standing.map((entry) => entry.ownedBy)).size,
+    departedCount: contactState.filter((entry) => entry.departed).length,
+  };
+
+  if (standing.length > 0 && relationship.decisionMakers === 0) {
+    concerns.push({
+      kind: 'NOBODY_WHO_DECIDES',
+      subject: `${standing.length} contact(s) at the client, and none of them signs off the next appointment`,
+      consequence:
+        'Knowing the people who run the current job and nobody who decides the next one feels like a strong ' +
+        'relationship right up to the renewal, which is the point at which it turns out to have been a delivery ' +
+        'relationship rather than a commercial one.',
+    });
+  }
+
+  if (standing.length > 1 && relationship.ownerCount === 1) {
+    concerns.push({
+      kind: 'RELATIONSHIP_HELD_BY_ONE_PERSON',
+      subject: `Every contact at the client is held by ${standing[0]!.ownedBy}`,
+      consequence:
+        'The relationship belongs to that employee rather than to this business, and it leaves when they do — ' +
+        'usually to a competitor, and usually taking the renewal with it.',
+    });
+  }
+
+  if (relationship.departedCount > 0) {
+    const gone = contactState.filter((entry) => entry.departed);
+    concerns.push({
+      kind: 'COUNTERPART_HAS_GONE',
+      subject: `${gone.length} contact(s) have left the client, including ${gone.map((entry) => entry.name).join(', ')}`,
+      consequence:
+        'Whatever this business had built with them is gone with them, and their replacement has no reason to ' +
+        'prefer an incumbent they did not choose. This is the specific reason the next conversation starts colder ' +
+        'than the last one.',
+    });
+  }
+
   if (assessedCount === 0) {
     concerns.push({
       kind: 'NOT_ASSESSED',
@@ -573,6 +631,7 @@ export function intermediationPosition(ctx: EngineContext, today?: string): Inte
         outcomeLabel: OUTCOME_LABEL[entry.outcome],
       })),
     ...(framework ? { framework } : {}),
+    relationship,
     concerns,
     summary: summarise({ inPlaceCount, assessedCount, largest, committedMinor, concerns: concerns.length }),
   };
@@ -648,4 +707,418 @@ function activeFramework(
     endsOn,
     daysRemaining: Math.round((Date.parse(endsOn) - Date.parse(asAt)) / 86_400_000),
   };
+}
+
+// --- Who at the client this business actually knows ---------------------------
+
+/**
+ * The relationship, and who is holding it.
+ *
+ * The defence register asks whether the specification is ours and whether the
+ * invoice is single. Neither survives the only person at the client who rates
+ * us moving on, and neither survives the only person here who knows them
+ * leaving either. That is not a soft risk: on a renewal it is usually the
+ * deciding one, and it is knowable a year in advance and almost never written
+ * down.
+ *
+ * ## What it holds, and what it deliberately does not
+ *
+ * A name, a role, and who here owns the relationship. That is business-contact
+ * data with an obvious purpose, and it is the minimum that answers the
+ * question. There is no field for a personal telephone number, a private email,
+ * or a note about what somebody is like — this is not a place to build a file
+ * on a person, and a schema with nowhere to put that is a better control than a
+ * policy saying not to.
+ *
+ * ## The three things it is looking for
+ *
+ * **Nobody who decides.** Knowing the four people who run the current job and
+ * nobody who signs the next appointment is the commonest version of this, and
+ * it feels like a strong relationship right up to the renewal.
+ *
+ * **One person here holding everything.** If every contact is owned by one
+ * employee, the relationship is theirs rather than the business's, and it
+ * leaves with them — to a competitor, usually.
+ *
+ * **A counterpart who has gone.** A contact marked as having left is worth more
+ * on the record than off it: it is the specific reason the next conversation
+ * starts colder than the last one, and deleting the row loses that.
+ */
+export const CLIENT_ROLE = {
+  DECISION_MAKER: {
+    label: 'Signs off the next appointment',
+    /** Without one of these, the relationship does not reach the renewal. */
+    decides: true,
+  },
+  BUDGET_HOLDER: { label: 'Holds the budget this is paid from', decides: true },
+  OPERATIONAL: { label: 'Runs the current job day to day', decides: false },
+  TECHNICAL: { label: 'Sets or approves the requirement', decides: false },
+  PROCUREMENT: { label: 'Runs the buying process', decides: false },
+} as const;
+
+export type ClientRole = keyof typeof CLIENT_ROLE;
+
+type ContactState = {
+  id: string;
+  name: string;
+  role: ClientRole;
+  /** The employee here who holds this relationship. */
+  ownedBy: string;
+  /** True where this person has left the client, or the post. */
+  departed: boolean;
+  recordedBy: string;
+  recordedAt: string;
+};
+
+/**
+ * Record somebody at the client, and who here knows them.
+ *
+ * Marking a contact as departed rather than deleting them: the fact that the
+ * person who rated this business has gone is the single most useful thing on
+ * this register at a renewal, and a delete would take it away at exactly the
+ * moment it started to matter.
+ */
+export function recordClientContact(
+  ctx: EngineContext,
+  input: { name: string; role: ClientRole; ownedBy: string; departed?: boolean; contactId?: string },
+): { contactId: string; contacts: number } {
+  authorise(ctx, 'BUDGET_COST', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  if (!(input.role in CLIENT_ROLE)) {
+    throw new DomainError('CLIENT_ROLE_UNKNOWN', `${input.role} is not one of the client roles this platform recognises.`);
+  }
+  if (!input.name.trim()) {
+    throw new DomainError('CONTACT_NAME_REQUIRED', 'A relationship is with a person. Name them.');
+  }
+  if (!input.ownedBy.trim()) {
+    throw new DomainError(
+      'CONTACT_OWNER_REQUIRED',
+      'Say who here holds this relationship. A contact nobody owns is a name in a list, and the whole point of the ' +
+        'register is to find out how much of the relationship rests on one person.',
+    );
+  }
+
+  const record = ctx.ledger.list(ctx.projectId, 'IntermediationPosition')[0];
+  const positionId = record?.refId ?? ulid();
+  const state = (record?.state as Record<string, unknown> | undefined) ?? {
+    id: positionId,
+    projectId: ctx.projectId,
+    defences: [],
+    approaches: [],
+    contacts: [],
+  };
+
+  const existing = ((state.contacts as ContactState[] | undefined) ?? []);
+  const contactId = input.contactId ?? ulid();
+
+  // The same person, twice.
+  //
+  // Recording a contact is the kind of command somebody runs again because they
+  // are not sure it took the first time, and two rows for one person is not a
+  // cosmetic duplicate here: the contact count and the owner count both drive
+  // findings, so a register that quietly accumulates duplicates reports a
+  // business as knowing six people at a client when it knows three.
+  //
+  // Two people at one client can share a name, so this is a refusal rather than
+  // a silent merge, and it names the way to correct the existing row.
+  const clash = existing.find(
+    (entry) => entry.id !== contactId && entry.name.toLowerCase() === input.name.trim().toLowerCase(),
+  );
+  if (clash) {
+    throw new DomainError(
+      'CONTACT_ALREADY_RECORDED',
+      `${clash.name} is already on this register, held by ${clash.ownedBy}. To change their part in the decision, ` +
+        'who holds them, or to mark them as having left, update that entry rather than adding a second one — two ' +
+        'rows for one person overstate how many people this business actually knows.',
+      409,
+    );
+  }
+  const contact: ContactState = {
+    id: contactId,
+    name: input.name.trim(),
+    role: input.role,
+    ownedBy: input.ownedBy.trim(),
+    departed: input.departed === true,
+    recordedBy: ctx.auth.actorId,
+    recordedAt: new Date().toISOString(),
+  };
+
+  const contacts = [...existing.filter((entry) => entry.id !== contactId), contact];
+
+  write(ctx, {
+    eventType: 'CLIENT_CONTACT_RECORDED',
+    entity: { refType: 'IntermediationPosition', refId: positionId },
+    reason: `${contact.name}, ${CLIENT_ROLE[input.role].label.toLowerCase()}${contact.departed ? ' (departed)' : ''}`,
+    nextState: { ...state, id: positionId, projectId: ctx.projectId, contacts },
+  });
+
+  return { contactId, contacts: contacts.length };
+}
+
+export type ClientRelationship = {
+  contacts: Array<{ contactId: string; name: string; role: ClientRole; roleLabel: string; ownedBy: string; departed: boolean }>;
+  /** People still in post who can decide or fund the next appointment. */
+  decisionMakers: number;
+  /** How many employees here hold the relationship between them. */
+  ownerCount: number;
+  departedCount: number;
+};
+
+// --- The same supplier, seen across every job ---------------------------------
+
+/**
+ * What one supplier is worth to this business, rather than to one appointment.
+ *
+ * `intermediationPosition` measures concentration on the job it is asked about,
+ * and that is the wrong denominator for the question a director actually has.
+ * A supplier holding twenty per cent of five appointments is under every
+ * project-level threshold on every one of them, and is the largest single
+ * dependency the business has. Read one project at a time it is invisible;
+ * there is no reading order that makes it appear.
+ *
+ * So this uses the tenancy as the denominator, and reports both numbers side by
+ * side. The pair is the point: a supplier whose tenancy share is over the
+ * threshold while its largest project share is under it is the case that only
+ * exists across projects, and it is named as its own finding rather than left
+ * for somebody to spot.
+ *
+ * Two more things only this scope can see. **How many projects** a supplier is
+ * on — one at eighty per cent is a package, five at twenty per cent is the
+ * business. And **approaches on more than one job**: a supplier that has gone to
+ * two different clients directly is telling you something about the supplier,
+ * which no single project's register can say.
+ */
+export type SupplierExposure = {
+  supplierPartyId: string;
+  supplierName: string;
+  committedMinor: number;
+  /** Share of everything this business has committed to anybody. */
+  tenantSharePercent: number;
+  /** The largest share this supplier holds on any single appointment. */
+  largestProjectSharePercent: number;
+  projects: Array<{ projectId: string; projectName: string; committedMinor: number; projectSharePercent: number }>;
+  /** Projects on which this supplier has been recorded approaching the client. */
+  approachedOnProjects: number;
+  /**
+   * The largest counterparty this business has, on more than one appointment,
+   * and under the project threshold on every one of them.
+   *
+   * The finding the per-project view cannot produce — not because the numbers
+   * are hidden but because no single project's review has anything to compare
+   * against. Every job says "twenty per cent, unremarkable"; nobody is asked
+   * whether the same firm said that five times.
+   *
+   * The first attempt at this defined it as a tenancy share above the threshold
+   * with every project share below it, which is impossible: a tenancy share is
+   * the value-weighted mean of the project shares, and a mean is never above
+   * the maximum. That condition could not fire, and a mutation that switched
+   * the whole finding off passed every test — which is what a dead branch looks
+   * like from the outside.
+   */
+  hiddenByProjectView: boolean;
+};
+
+export type ExposureConcern = {
+  kind: 'HIDDEN_CONCENTRATION' | 'TENANT_CONCENTRATION' | 'ON_EVERY_PROJECT' | 'APPROACHING_MORE_THAN_ONE_CLIENT';
+  supplierName: string;
+  subject: string;
+  consequence: string;
+};
+
+export type SupplierExposureView = {
+  committedMinor: number;
+  projectCount: number;
+  suppliers: SupplierExposure[];
+  threshold: { percent: number; source: string };
+  concerns: ExposureConcern[];
+  summary: string;
+};
+
+/**
+ * Every supplier this business buys from, across every appointment.
+ *
+ * Tenant-scoped, so it reads `listByTenant` rather than one project. That is
+ * the whole reason it exists and it is also the reason it is authorised the
+ * same way as the commercial position: this is the shape of the business's
+ * dependency on its supply chain, and it is not a project team's to read.
+ */
+export function supplierExposure(ctx: EngineContext): SupplierExposureView {
+  authorise(ctx, 'BUDGET_COST', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const projectNames = new Map(
+    ctx.ledger.listByTenant(ctx.tenantId, 'Project').map((record) => [record.refId, String(record.state.name ?? record.refId)]),
+  );
+
+  // Approaches are recorded per project, so the set of (supplier, project)
+  // pairs has to be built across all of them before any supplier is counted.
+  const approachedOn = new Map<string, Set<string>>();
+  for (const record of ctx.ledger.listByTenant(ctx.tenantId, 'IntermediationPosition')) {
+    for (const approach of (record.state.approaches as Array<{ supplierPartyId: string }> | undefined) ?? []) {
+      const seen = approachedOn.get(approach.supplierPartyId) ?? new Set<string>();
+      seen.add(record.projectId);
+      approachedOn.set(approach.supplierPartyId, seen);
+    }
+  }
+
+  return exposureOf({
+    subcontracts: ctx.ledger
+      .listByTenant(ctx.tenantId, 'Subcontract')
+      .map((record) => ({ projectId: record.projectId, state: record.state })),
+    projectNames,
+    approachedOn,
+    threshold: concentrationThreshold(ctx),
+  });
+}
+
+/**
+ * The exposure arithmetic, separated from the ledger read.
+ *
+ * For the same reason `sharesOf` is: the demonstration seed lets one package on
+ * one project, so nothing built from it can exercise the case this whole view
+ * exists for — a supplier under the threshold on every job and over it across
+ * the business. Three mutations proved it, including one that switched off the
+ * headline finding entirely and passed.
+ *
+ * A test that cannot construct the case it is about is not testing it.
+ */
+export function exposureOf(input: {
+  subcontracts: Array<{ projectId: string; state: Record<string, unknown> }>;
+  projectNames: ReadonlyMap<string, string>;
+  approachedOn: ReadonlyMap<string, ReadonlySet<string>>;
+  threshold: { percent: number; source: string };
+}): SupplierExposureView {
+  const { projectNames, approachedOn, threshold } = input;
+
+  const byProject = new Map<string, Array<Record<string, unknown>>>();
+  for (const record of input.subcontracts) {
+    byProject.set(record.projectId, [...(byProject.get(record.projectId) ?? []), record.state]);
+  }
+
+  // Each project's own shares, computed by the same function the per-project
+  // view uses. Two ways of working out a share would be two answers.
+  const projectShares = new Map<string, SupplierShare[]>();
+  for (const [projectId, states] of byProject) {
+    projectShares.set(projectId, sharesOf(states).shares);
+  }
+
+  const tenant = sharesOf(input.subcontracts.map((record) => record.state));
+
+  const suppliers: SupplierExposure[] = tenant.shares.map((share) => {
+    const projects = [...projectShares.entries()]
+      .map(([projectId, shares]) => ({ projectId, entry: shares.find((s) => s.supplierPartyId === share.supplierPartyId) }))
+      .filter((row): row is { projectId: string; entry: SupplierShare } => row.entry !== undefined)
+      .map((row) => ({
+        projectId: row.projectId,
+        projectName: projectNames.get(row.projectId) ?? row.projectId,
+        committedMinor: row.entry.committedMinor,
+        projectSharePercent: row.entry.sharePercent,
+      }))
+      .sort((a, b) => b.committedMinor - a.committedMinor);
+
+    const largestProjectSharePercent = projects.reduce((worst, entry) => Math.max(worst, entry.projectSharePercent), 0);
+
+    return {
+      supplierPartyId: share.supplierPartyId,
+      supplierName: share.supplierName,
+      committedMinor: share.committedMinor,
+      tenantSharePercent: share.sharePercent,
+      largestProjectSharePercent,
+      projects,
+      approachedOnProjects: approachedOn.get(share.supplierPartyId)?.size ?? 0,
+      // Filled in below: it needs every supplier's tenancy share to know which
+      // one is largest, so it cannot be decided while building the list.
+      hiddenByProjectView: false,
+    };
+  });
+
+  // The largest counterparty in the business. `sharesOf` returns largest first,
+  // so it is the head of the list — and it is only *hidden* if it spans more
+  // than one appointment and breaches nothing on any of them. On one job it is
+  // not hidden at all: that job's own review sees it.
+  const biggest = suppliers[0];
+  if (biggest && biggest.projects.length > 1 && biggest.largestProjectSharePercent <= threshold.percent) {
+    biggest.hiddenByProjectView = true;
+  }
+
+  const projectCount = byProject.size;
+  const concerns: ExposureConcern[] = [];
+
+  for (const supplier of suppliers) {
+    if (supplier.hiddenByProjectView) {
+      concerns.push({
+        kind: 'HIDDEN_CONCENTRATION',
+        supplierName: supplier.supplierName,
+        subject:
+          `${supplier.supplierName} is the largest counterparty this business has — ${supplier.tenantSharePercent}% ` +
+          `across ${supplier.projects.length} appointments — and breaches nothing on any of them, at no more than ` +
+          `${supplier.largestProjectSharePercent}% of a single job`,
+        consequence:
+          'Every project review says "unremarkable" and none of them is asked whether the same firm said that five ' +
+          'times. Losing this supplier disrupts every one of those appointments on the same day, which is a bigger ' +
+          'event than losing a larger share of one job.',
+      });
+    }
+    if (!supplier.hiddenByProjectView && supplier.tenantSharePercent > threshold.percent) {
+      concerns.push({
+        kind: 'TENANT_CONCENTRATION',
+        supplierName: supplier.supplierName,
+        subject: `${supplier.supplierName} is ${supplier.tenantSharePercent}% of everything this business has committed`,
+        consequence:
+          'At this share the supply chain is one firm. Their insolvency, their price rise and their decision to work ' +
+          'for somebody else are all the same event for this business.',
+      });
+    }
+
+    // On every job the business is running. A different fact from a large
+    // share: it is about how replaceable the relationship is rather than how
+    // much of it there is.
+    if (projectCount > 1 && supplier.projects.length === projectCount) {
+      concerns.push({
+        kind: 'ON_EVERY_PROJECT',
+        supplierName: supplier.supplierName,
+        subject: `${supplier.supplierName} is on all ${projectCount} appointments`,
+        consequence:
+          'Every client this business has now knows this supplier. That is a reference the supplier can use, and it ' +
+          'is a single point of failure across the whole book rather than on one job.',
+      });
+    }
+
+    if (supplier.approachedOnProjects > 1) {
+      concerns.push({
+        kind: 'APPROACHING_MORE_THAN_ONE_CLIENT',
+        supplierName: supplier.supplierName,
+        subject: `${supplier.supplierName} has approached the client directly on ${supplier.approachedOnProjects} different appointments`,
+        consequence:
+          'Twice with two different clients is not a misunderstanding about one job. It is how this supplier ' +
+          'intends to grow, and the next approach is already priced into their planning if not into this ' +
+          'business’s.',
+      });
+    }
+  }
+
+  return {
+    committedMinor: tenant.committedMinor,
+    projectCount,
+    suppliers,
+    threshold,
+    concerns,
+    summary: exposureSummary(suppliers, tenant.committedMinor, projectCount, concerns.length),
+  };
+}
+
+function exposureSummary(
+  suppliers: SupplierExposure[],
+  committedMinor: number,
+  projectCount: number,
+  concerns: number,
+): string {
+  if (suppliers.length === 0) {
+    return 'Nothing has been committed to a supplier on any appointment, so there is no exposure to measure yet.';
+  }
+  const largest = suppliers[0]!;
+  return (
+    `${suppliers.length} supplier(s) across ${projectCount} appointment(s), ${abbreviateMoney(committedMinor)} committed. ` +
+    `The largest is ${largest.supplierName} at ${largest.tenantSharePercent}%.` +
+    (concerns > 0 ? ` ${concerns} thing(s) need attention.` : '')
+  );
 }

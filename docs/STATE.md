@@ -11882,3 +11882,72 @@ term with an own supplier accepted 201; a defence claimed with no evidence
 refused 422; `RELYING_ON_THE_WEAKEST` raised when the clause was the only one in
 place and cleared by a second defence; and a direct approach by the 100% supplier
 raising `CONCENTRATED_AND_APPROACHING`.
+
+
+### The same supplier across every job, and who at the client we know
+
+Two gaps recorded as not built at the end of the margin-defence work, now built.
+
+#### Cross-project exposure, and a finding that could not fire
+
+`supplierExposure` is tenant-scoped: every supplier, across every appointment,
+with the share of the business beside the largest share on any single job.
+
+**The first definition of the headline finding was arithmetically impossible.**
+It flagged a supplier whose tenancy share was above the threshold while every
+project share was below it — and a tenancy share is the value-weighted *mean* of
+the project shares, so it can never exceed the largest of them. The condition
+could not fire; a mutation switching the whole finding off passed every test.
+
+The real phenomenon is the one the question described: a supplier at a fifth of
+five jobs is unremarkable on each and is the largest single thing the business
+depends on. `hiddenByProjectView` now means **the largest counterparty in the
+business, on more than one appointment, breaching nothing on any of them** —
+every project review says "unremarkable" and none of them is asked whether the
+same firm said it five times. The impossible shape is pinned as an arithmetic
+invariant, because the next person to tighten this rule will reach for it again.
+
+Two more findings only this scope can produce: a supplier **on every appointment**
+(a different fact from a large share — it is about how replaceable the
+relationship is), and one that has **approached the client on more than one job**,
+which says something about the supplier rather than about a job.
+
+`exposureOf` is separated from the ledger read for the same reason `sharesOf`
+was: the demonstration seed lets one package on one project, so nothing built
+from it can exercise the case the view exists for.
+
+#### Who at the client this business actually knows
+
+A name, their part in the decision, and who here holds the relationship. Three
+findings: **nobody who decides** (knowing four people who run the job and none
+who signs the next appointment feels like a strong relationship right up to the
+renewal), **the whole relationship held by one employee** (it belongs to them
+rather than to the business, and leaves when they do), and **a counterpart who
+has gone** — marked rather than deleted, because at a renewal that is the single
+most useful row on the register.
+
+A departed contact stops counting as able to decide. Data minimisation is the
+schema rather than a policy: there is nowhere to put a personal number, a private
+address or a note about what somebody is like, and `additionalProperties: false`
+refuses one at the boundary — `personalMobile` comes back 400 *is not a permitted
+property*.
+
+#### Found by running the walkthrough twice
+
+The contacts table showed six rows for three people. Not a rendering bug — two
+runs — but it exposed a real defect: nothing stopped the same person being
+recorded twice, and both the contact count and the owner count drive findings, so
+duplicates report a business as knowing six people when it knows three. Recording
+a contact is exactly the command somebody runs again because they are unsure it
+took. It is now refused with a 409 naming who holds the existing entry and
+pointing at the update path; correcting a row by its own id is unaffected.
+
+**Fourteen mutations run across this work; all fourteen caught.** Three survived
+the first pass and each was a hollow test written against seed happenstance —
+one project, one supplier, no framework — which is the same failure mode as the
+two found in the previous section.
+
+**Verified over HTTP**: the exposure view at 200 with the threshold and its
+source; the relationship raising `NOBODY_WHO_DECIDES` on two operational
+contacts, clearing on a sponsor and returning when she leaves; and the three
+refusals — no owner 422, an invented role 400, a personal mobile 400.

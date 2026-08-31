@@ -195,6 +195,91 @@ const INTERMEDIATION_TONE = {
  * whether there is money in the account; this answers whether there will be an
  * appointment next year.
  */
+const EXPOSURE_TONE = {
+  HIDDEN_CONCENTRATION: 'bad',
+  TENANT_CONCENTRATION: 'bad',
+  ON_EVERY_PROJECT: 'warn',
+  APPROACHING_MORE_THAN_ONE_CLIENT: 'bad',
+};
+
+/**
+ * The same supplier, across every appointment.
+ *
+ * The per-project panel above is answering about one job. A supplier holding a
+ * fifth of five jobs is unremarkable on each of them and is the largest single
+ * thing this business depends on, and no reading order over the per-project
+ * view makes that appear.
+ */
+function exposurePanel(view) {
+  if (view?.error) {
+    return html`<div class="card" style="margin-bottom:14px">
+      <h2>Every supplier, across every appointment</h2>
+      <p class="metric-sub">This could not be read: ${view.error.message}</p>
+    </div>`;
+  }
+  if (!view) return '';
+
+  const threshold = view.threshold ?? {};
+  return html`
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">Every supplier, across every appointment</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        ${view.summary ?? ''}
+      </p>
+
+      ${
+        (view.concerns ?? []).length > 0
+          ? html`<div class="split-list" style="padding:11px 17px 0">
+              ${view.concerns.map(
+                (concern) => html`<div class="row">
+                  <span class="lbl">${badge(humanise(concern.kind), EXPOSURE_TONE[concern.kind] ?? 'warn')} ${concern.subject}</span>
+                  <span class="val" style="font-size:12px;color:var(--text-3)">${concern.consequence}</span>
+                </div>`,
+              )}
+            </div>`
+          : ''
+      }
+
+      ${
+        (view.suppliers ?? []).length > 0
+          ? html`${table({
+              headers: ['Supplier', 'Committed', 'Share of the business', 'Largest single job', 'Appointments'],
+              align: ['', 'num', 'num', 'num', ''],
+              rows: view.suppliers.map((supplier) => [
+                html`${supplier.supplierName}${
+                  supplier.approachedOnProjects > 0
+                    ? html` ${badge(`Approached ${supplier.approachedOnProjects} client(s)`, 'bad')}`
+                    : ''
+                }`,
+                money(supplier.committedMinor),
+                // The two figures side by side are the point of the whole
+                // table: a share of the business that nothing on any single job
+                // would have raised.
+                html`<span class="${raw(supplier.hiddenByProjectView ? 'bad' : supplier.tenantSharePercent > (threshold.percent ?? 100) ? 'bad' : '')}">
+                  ${supplier.tenantSharePercent}%
+                </span>`,
+                html`<span class="${raw(supplier.largestProjectSharePercent > (threshold.percent ?? 100) ? 'bad' : '')}">
+                  ${supplier.largestProjectSharePercent}%
+                </span>`,
+                html`<span style="font-size:12px;color:var(--text-3)">${supplier.projects
+                  .map((project) => `${project.projectName} (${project.projectSharePercent}%)`)
+                  .join(' · ')}</span>`,
+              ]),
+            })}
+            <p style="padding:0 17px 15px;font-size:12px;color:var(--text-3);margin:8px 0 0">
+              Judged against ${threshold.percent}% — ${threshold.source ?? ''}. A share of the business above the
+              share of any single job is arithmetically impossible: the first is the value-weighted mean of the
+              second. What this table finds instead is the firm that is largest overall while breaching nothing
+              anywhere.
+            </p>`
+          : html`<div style="padding:11px 17px 15px">
+              <div class="notice"><div>Nothing has been committed to a supplier on any appointment, so there is no
+                exposure to measure yet.</div></div>
+            </div>`
+      }
+    </div>`;
+}
+
 function intermediationPanel(position) {
   if (position?.error) {
     return html`<div class="card" style="margin-bottom:14px">
@@ -272,6 +357,30 @@ function intermediationPanel(position) {
           : html`<div style="padding:11px 17px 15px">
               <div class="notice"><div>Nothing has been committed to a supplier yet, so there is no concentration to
                 measure. It becomes measurable with the first subcontract.</div></div>
+            </div>`
+      }
+
+      <h2 style="padding:15px 17px 0">Who at the client this business knows</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        Nothing above survives the only person at the client who rates us moving on, and nothing survives the only
+        person here who knows them leaving either. Names, their part in the decision, and who here holds the
+        relationship — nothing else, because this is not a place to build a file on a person.
+      </p>
+      ${
+        (position.relationship?.contacts ?? []).length > 0
+          ? table({
+              headers: ['Name', 'Their part in it', 'Held here by', 'Still in post'],
+              rows: position.relationship.contacts.map((contact) => [
+                contact.name,
+                contact.roleLabel,
+                contact.ownedBy,
+                contact.departed ? badge('Has left', 'bad') : badge('Yes', 'ok'),
+              ]),
+            })
+          : html`<div style="padding:11px 17px 15px">
+              <div class="notice"><div>Nobody at the client has been recorded. On a renewal the question is whether
+                this business knows the person who signs, and it is answerable now and not in the month it
+                matters.</div></div>
             </div>`
       }
 
@@ -501,7 +610,7 @@ function integrationPanel(position) {
 export async function commercial(root) {
   const projectId = state.session.projectId;
 
-  const [bundle, ledger, forward, commercialControl, settlements, integration, intermediation, cisMonths] = await Promise.all([
+  const [bundle, ledger, forward, commercialControl, settlements, integration, intermediation, exposure, cisMonths] = await Promise.all([
     entityBundle(projectId, [
       'CVR',
       'EarnedValueSnapshot',
@@ -534,6 +643,7 @@ export async function commercial(root) {
     // the money will be in the account when the suppliers are due.
     api.get(`/v1/projects/${projectId}/integration`).catch((error) => ({ error })),
     api.get(`/v1/projects/${projectId}/intermediation`).catch((error) => ({ error })),
+    api.get('/v1/supplier-exposure').catch((error) => ({ error })),
     // Tax months with CIS payments on this project. The board is cheap; the
     // return itself is fetched only for the month somebody opened.
     api.get(`/v1/projects/${projectId}/cis/returns`).catch(() => null),
@@ -635,6 +745,7 @@ export async function commercial(root) {
             { id: 'tradingTerms', label: 'Record payment periods', permitted: can('BUDGET_COST', 'U'), reason: blockedReason('BUDGET_COST', 'U') },
             { id: 'defence', label: 'Record a margin defence', permitted: can('BUDGET_COST', 'U'), reason: blockedReason('BUDGET_COST', 'U') },
             { id: 'directApproach', label: 'Log a direct approach', permitted: can('BUDGET_COST', 'U'), reason: blockedReason('BUDGET_COST', 'U') },
+            { id: 'clientContact', label: 'Record a client contact', permitted: can('BUDGET_COST', 'U'), reason: blockedReason('BUDGET_COST', 'U') },
             // Approval authority rather than the QS who maintains the budget. A
             // business where the person spending the contingency is the person
             // recording it has no contingency, it has a slower profit.
@@ -650,6 +761,7 @@ export async function commercial(root) {
 
       ${integrationPanel(integration)}
       ${intermediationPanel(intermediation)}
+      ${exposurePanel(exposure)}
 
       ${retentionPanel(retention)}
 
@@ -1355,6 +1467,68 @@ export async function commercial(root) {
         occurredOn: v.occurredOn,
         what: v.what,
         outcome: v.outcome,
+      }),
+    },
+    clientContact: {
+      title: 'Record a client contact',
+      intent:
+        'Who at the client this business actually knows, their part in the decision, and who here holds the ' +
+        'relationship. The two things it is looking for are a set of contacts with nobody in it who signs off the ' +
+        'next appointment, and a relationship where every name is held by one employee — which means it belongs to ' +
+        'them rather than to the business, and leaves when they do.',
+      path: () => `/v1/projects/${projectId}/intermediation/client-contact`,
+      submitLabel: 'Record them',
+      fields: [
+        { name: 'name', label: 'Their name', type: 'text' },
+        {
+          name: 'role',
+          label: 'Their part in the decision',
+          type: 'select',
+          options: [
+            { value: 'DECISION_MAKER', label: 'Signs off the next appointment' },
+            { value: 'BUDGET_HOLDER', label: 'Holds the budget this is paid from' },
+            { value: 'OPERATIONAL', label: 'Runs the current job day to day' },
+            { value: 'TECHNICAL', label: 'Sets or approves the requirement' },
+            { value: 'PROCUREMENT', label: 'Runs the buying process' },
+          ],
+          hint: 'Knowing four people who run the job and nobody who decides the next one is the commonest version of this.',
+        },
+        {
+          name: 'ownedBy',
+          label: 'Who here holds this relationship',
+          type: 'text',
+          hint: 'A contact nobody owns is a name in a list. The point is to find out how much rests on one person.',
+        },
+        {
+          name: 'departed',
+          label: 'Are they still in post?',
+          type: 'select',
+          options: [
+            { value: 'no', label: 'Yes, still there' },
+            { value: 'yes', label: 'No — they have left' },
+          ],
+          hint: 'Marked rather than deleted. That the person who rated this business has gone is the most useful thing on this register at a renewal.',
+        },
+        {
+          name: 'contactId',
+          label: 'Correcting an existing entry?',
+          type: 'select',
+          required: false,
+          options: [
+            { value: '', label: 'No — a new person' },
+            ...(intermediation?.relationship?.contacts ?? []).map((contact) => ({
+              value: contact.contactId,
+              label: `Update ${contact.name}`,
+            })),
+          ],
+        },
+      ],
+      transform: (v) => ({
+        name: v.name,
+        role: v.role,
+        ownedBy: v.ownedBy,
+        departed: v.departed === 'yes',
+        ...(v.contactId ? { contactId: v.contactId } : {}),
       }),
     },
     contra: {
