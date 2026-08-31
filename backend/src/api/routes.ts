@@ -4408,6 +4408,25 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) => integrator.drawContingency(projectContext(platform, ctx), body(ctx)),
   },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/integration/trading-terms',
+    description: 'Record when the client pays and when the suppliers are paid, and derive the funding gap between them',
+    schema: {
+      type: 'object',
+      required: ['clientPaymentDays', 'supplierPaymentDays', 'conditionalOnClientPayment', 'publicSectorClient'],
+      properties: {
+        // A year of credit is not a payment period, and a negative one is not a
+        // period at all. The domain refuses the shape; this refuses the absurd.
+        clientPaymentDays: { type: 'integer', minimum: 0, maximum: 365 },
+        supplierPaymentDays: { type: 'integer', minimum: 0, maximum: 365 },
+        conditionalOnClientPayment: { type: 'boolean' },
+        publicSectorClient: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => integrator.recordTradingTerms(projectContext(platform, ctx), body(ctx)),
+  },
   // ------------------------------------------------------------------ retention
   {
     method: 'GET',

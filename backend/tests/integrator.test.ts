@@ -233,6 +233,14 @@ describe('the reserve answers the question that decides whether the business sur
     const asQs = () => fresh.context(freshSeed.users.qs!.auth, projectId, { source: 'WEB' });
     integrator.priceIntegration(asQs(), { directSupplierCostMinor: 1_000_000_00, model: 'PRINCIPAL_SERVICE_CONTRACTOR' });
     integrator.recordAdvance(asQs(), { amountMinor: 100_000_00, receivedOn: '2026-09-01', reference: 'ADV-001' });
+    // Terms that raise nothing, so this test is about the reserve alone: the
+    // client's money arrives fifteen days before the suppliers have to be paid.
+    integrator.recordTradingTerms(asQs(), {
+      clientPaymentDays: 30,
+      supplierPaymentDays: 45,
+      conditionalOnClientPayment: false,
+      publicSectorClient: false,
+    });
 
     const position = integrator.integratorPosition(asQs());
     assert.equal(position.reserve.coverDays, undefined, 'cover was reported against an outflow of zero');
@@ -241,9 +249,24 @@ describe('the reserve answers the question that decides whether the business sur
     // And the summary must not undo it. Raising no concern is the absence of a
     // measurement, not an assurance, and "the reserve covers what is committed"
     // read off an empty concern list is the same false comfort by another route.
-    assert.equal(position.concerns.length, 0);
+    assert.equal(position.concerns.length, 0, `unexpected concerns: ${position.concerns.map((c) => c.kind).join(', ')}`);
     assert.match(position.summary, /cannot be answered yet/);
     assert.doesNotMatch(position.summary, /The reserve covers \d/);
+  });
+
+  it('states the reserve position even when other things need attention', async () => {
+    // The concern count used to replace the reserve sentence outright, so the
+    // moment anything else was wrong the reader lost the answer to the question
+    // this screen exists for. "1 thing needs attention" says nothing about
+    // whether there is money in the account on the day the suppliers are due.
+    const { platform: fresh, seed: freshSeed, projectId } = await estate();
+    const asQs = () => fresh.context(freshSeed.users.qs!.auth, projectId, { source: 'WEB' });
+    integrator.priceIntegration(asQs(), { directSupplierCostMinor: 1_000_000_00, model: 'PRINCIPAL_SERVICE_CONTRACTOR' });
+
+    const position = integrator.integratorPosition(asQs());
+    assert.ok(position.concerns.length > 0);
+    assert.match(position.summary, /thing\(s\) need attention/);
+    assert.match(position.summary, /cannot be answered yet/, 'the concern count swallowed the reserve position');
   });
 
   it('states money as money, not as a count of minor units', async () => {
@@ -395,5 +418,262 @@ describe('the reserve answers the question that decides whether the business sur
     // The summary states the contingency separately, because a reader who takes
     // the addition as margin is the reader this whole module is written for.
     assert.match(position.summary, /is contingency and not margin/);
+  });
+});
+
+describe('which of the three ways of trading this is', () => {
+  /**
+   * The model was a label that changed nothing.
+   *
+   * `ADVISORY`, `MANAGEMENT_INTEGRATOR` and `PRINCIPAL_SERVICE_CONTRACTOR` were
+   * stored on the account and never read, so a pure fee appointment was priced
+   * as a percentage on top of supplier cost — reporting a contract price that
+   * included five million pounds of turnover the business would never see —
+   * and then measured against a reserve for supplier payments it does not make.
+   *
+   * Both answers were wrong in the same direction: they described a business
+   * carrying an exposure it had deliberately arranged not to carry.
+   */
+  it('prices a fee appointment as the fee, not as cost plus the fee', async () => {
+    const { platform: fresh, seed: freshSeed, projectId } = await estate();
+    const asQs = () => fresh.context(freshSeed.users.qs!.auth, projectId, { source: 'WEB' });
+
+    const { price } = integrator.priceIntegration(asQs(), {
+      directSupplierCostMinor: 5_000_000_00,
+      model: 'ADVISORY',
+    });
+
+    // The suppliers invoice the client. Nothing passes through this business.
+    assert.equal(price.passThroughMinor, 0);
+    assert.equal(price.contractPriceMinor, price.additionMinor);
+    assert.ok(
+      price.contractPriceMinor < 5_000_000_00,
+      `a fee appointment reported ${price.contractPriceMinor} of turnover against £5m of somebody else's cost`,
+    );
+
+    // And no contingency: the supplier contracts are the client's, so the risk
+    // allowance against them is the client's too.
+    assert.equal(price.contingencyMinor, 0);
+    assert.equal(price.marginMinor, price.additionMinor);
+    assert.match(price.components[0]!.basis, /Nil on a fee appointment/);
+  });
+
+  it('prices a principal appointment as cost plus the addition, as before', async () => {
+    const { platform: fresh, seed: freshSeed, projectId } = await estate();
+    const asQs = () => fresh.context(freshSeed.users.qs!.auth, projectId, { source: 'WEB' });
+
+    const { price } = integrator.priceIntegration(asQs(), {
+      directSupplierCostMinor: 5_000_000_00,
+      model: 'PRINCIPAL_SERVICE_CONTRACTOR',
+    });
+
+    assert.equal(price.passThroughMinor, 5_000_000_00);
+    assert.equal(price.contractPriceMinor, 5_000_000_00 + price.additionMinor);
+    // Contingency is priced, and it is still not margin.
+    assert.ok(price.contingencyMinor > 0);
+    assert.equal(price.marginMinor, price.additionMinor - price.contingencyMinor);
+  });
+
+  it('raises no supplier-payment concern against a business that pays no suppliers', async () => {
+    // The failure this guards is a false alarm, which costs the same as a
+    // missed one: a screen that warns about an outflow the business does not
+    // have teaches whoever reads it to ignore the warning on the appointment
+    // where the outflow is real.
+    const { platform: fresh, seed: freshSeed, projectId } = await estate();
+    const asQs = () => fresh.context(freshSeed.users.qs!.auth, projectId, { source: 'WEB' });
+    integrator.priceIntegration(asQs(), { directSupplierCostMinor: 5_000_000_00, model: 'ADVISORY' });
+
+    const position = integrator.integratorPosition(asQs());
+    assert.equal(position.trading?.fundsSupplierCost, false);
+    assert.deepEqual(
+      position.concerns.filter((c) => ['RESERVE_SHORT', 'PAYING_OUT_FASTER', 'FUNDING_GAP', 'TERMS_NOT_RECORDED'].includes(c.kind)),
+      [],
+      'a fee appointment was warned about supplier cash it does not carry',
+    );
+    assert.match(position.summary, /no supplier payment gap to hold a reserve against/);
+    assert.match(position.summary, /^A fee of /);
+  });
+
+  it('says the fee model trades cash risk for margin risk, rather than removing risk', async () => {
+    // The honest half of the answer. Never funding supplier cost is a real
+    // mitigation and it has a price: every supplier holds its own contract and
+    // its own invoice line with the client, which is the position a supplier
+    // needs to be in to take the appointment next time.
+    assert.match(integrator.TRADING_MODEL.ADVISORY.cashRisk, /no supplier cost in this business’s account/);
+    assert.match(integrator.TRADING_MODEL.ADVISORY.marginRisk, /highest of the three/);
+    assert.match(integrator.TRADING_MODEL.PRINCIPAL_SERVICE_CONTRACTOR.marginRisk, /lowest of the three/);
+  });
+});
+
+describe('back-to-back terms, and which half of the phrase works', () => {
+  /**
+   * The phrase covers two arrangements that behave completely differently.
+   *
+   * **Conditional** — pay the supplier when the client pays — is of no effect
+   * under HGCRA 1996 s.113 except on the third party's insolvency. A business
+   * relying on it has no mitigation at all, and the platform already said so
+   * about *incoming* invitations in `itt.ts` while saying nothing about the
+   * subcontracts this business issues, which is the one place it would matter.
+   *
+   * **Timing** — pay the supplier later than the client pays this business — is
+   * a payment period, which s.110 requires the contract to state and nothing
+   * prohibits. That is the mitigation, and it is arithmetic.
+   */
+  const terms = (over: Partial<Parameters<typeof integrator.assessTerms>[0]> = {}) =>
+    integrator.assessTerms({
+      clientPaymentDays: 30,
+      supplierPaymentDays: 45,
+      conditionalOnClientPayment: false,
+      publicSectorClient: false,
+      recordedBy: 'test',
+      recordedAt: '2026-09-01T00:00:00.000Z',
+      ...over,
+    });
+
+  it('closes the gap by the payment period, which is the lawful half', () => {
+    const gap = terms();
+    // Paid at 30, pays at 45: the money is in the account fifteen days before
+    // it has to leave. That is the position the whole arrangement is for.
+    assert.equal(gap.gapDays, -15);
+    assert.equal(gap.lawful, true);
+    assert.ok(gap.findings.some((f) => /arrives 15 day\(s\) before/.test(f.finding)));
+  });
+
+  it('refuses to treat a pay-when-paid clause as protection', () => {
+    const gap = terms({ conditionalOnClientPayment: true });
+    assert.equal(gap.lawful, false, 'a void clause was reported as a lawful arrangement');
+
+    const finding = gap.findings.find((f) => f.authority === 'HGCRA 1996 s.113');
+    assert.ok(finding, 'nothing said the conditional term is ineffective');
+    assert.equal(finding.severity, 'BAR');
+    assert.match(finding.finding, /no effect except on the client’s insolvency/);
+    // And it points at the thing that does work, rather than only refusing.
+    assert.match(finding.finding, /payment period/);
+  });
+
+  it('names the funding gap in days, and prices it where there is a rate to price it against', () => {
+    // Paid at 60, pays at 14: this business funds the chain for 46 days on
+    // every cycle. At £300,000 of supplier spend a month that is £460,000
+    // standing out — 46 × (300,000 / 30).
+    const gap = terms({ clientPaymentDays: 60, supplierPaymentDays: 14 });
+    assert.equal(gap.gapDays, 46);
+
+    const priced = integrator.assessTerms(
+      { clientPaymentDays: 60, supplierPaymentDays: 14, conditionalOnClientPayment: false, publicSectorClient: false, recordedBy: 't', recordedAt: 'x' },
+      300_000_00,
+    );
+    assert.equal(priced.exposureMinor, 460_000_00);
+    assert.equal(priced.unmeasured, undefined);
+    // With no rate of spend it says so rather than reporting an exposure of nil.
+    assert.equal(gap.exposureMinor, undefined);
+    assert.match(String(gap.unmeasured), /no rate of supplier spend/);
+  });
+
+  it('prices no gap as nil rather than as unmeasured', () => {
+    // The three cases are not two. No gap at all *is* a measurement — the money
+    // arrives before it leaves, so there is nothing to price whatever the rate
+    // of spend turns out to be. Reporting it as "not yet priced" put a caveat
+    // on the one arrangement that does not need one, and the rendered panel
+    // showed a business that had got its terms right being told the answer was
+    // still pending.
+    const covered = terms({ clientPaymentDays: 30, supplierPaymentDays: 45 });
+    assert.equal(covered.gapDays, -15);
+    assert.equal(covered.exposureMinor, 0);
+    assert.equal(covered.unmeasured, undefined, 'a covered position was reported as unmeasured');
+
+    // Exactly level is the same answer, not a boundary case that slips through.
+    const level = terms({ clientPaymentDays: 30, supplierPaymentDays: 30 });
+    assert.equal(level.gapDays, 0);
+    assert.equal(level.exposureMinor, 0);
+    assert.equal(level.unmeasured, undefined);
+  });
+
+  it('will not let a public contract buy a gap the regulations forbid', () => {
+    // Regulation 113 requires 30-day terms to be passed down the whole chain.
+    // Ninety-day subcontract terms on public work are not a commercial choice.
+    const gap = terms({ publicSectorClient: true, clientPaymentDays: 30, supplierPaymentDays: 90 });
+    const finding = gap.findings.find((f) => f.authority.startsWith('Public Contracts Regulations'));
+    assert.ok(finding, 'a 90-day subcontract on public work raised nothing');
+    assert.equal(finding.severity, 'BAR');
+    assert.equal(gap.lawful, false);
+
+    // The same terms on a private client are lawful, and still flagged as
+    // open to challenge rather than waved through.
+    const priv = terms({ publicSectorClient: false, clientPaymentDays: 30, supplierPaymentDays: 90 });
+    assert.equal(priv.lawful, true);
+    assert.ok(priv.findings.some((f) => f.authority.startsWith('Late Payment')));
+  });
+
+  it('leaves an ordinary period alone', () => {
+    // A rule that fires on everything is a rule nobody reads.
+    const gap = terms({ clientPaymentDays: 30, supplierPaymentDays: 45 });
+    assert.equal(gap.findings.filter((f) => f.severity === 'BAR').length, 0);
+    assert.equal(gap.findings.filter((f) => f.authority.startsWith('Late Payment')).length, 0);
+  });
+});
+
+describe('the trading terms on the record', () => {
+  it('records them, derives the gap and raises it on the position', async () => {
+    const { platform: fresh, seed: freshSeed, projectId } = await estate();
+    const asQs = () => fresh.context(freshSeed.users.qs!.auth, projectId, { source: 'WEB' });
+    integrator.priceIntegration(asQs(), { directSupplierCostMinor: 1_000_000_00, model: 'PRINCIPAL_SERVICE_CONTRACTOR' });
+
+    const { gap } = integrator.recordTradingTerms(asQs(), {
+      clientPaymentDays: 60,
+      supplierPaymentDays: 30,
+      conditionalOnClientPayment: true,
+      publicSectorClient: false,
+    });
+    assert.equal(gap.gapDays, 30);
+    assert.equal(gap.lawful, false);
+
+    const position = integrator.integratorPosition(asQs());
+    assert.equal(position.fundingGap?.gapDays, 30);
+    const kinds = position.concerns.map((c) => c.kind);
+    assert.ok(kinds.includes('VOID_PAYMENT_CONDITION'), `expected the void clause to be raised, got ${kinds.join(', ')}`);
+    assert.ok(kinds.includes('FUNDING_GAP'), `expected the funding gap to be raised, got ${kinds.join(', ')}`);
+    assert.ok(!kinds.includes('TERMS_NOT_RECORDED'));
+  });
+
+  it('asks for the terms when a business carrying supplier cash has not stated them', async () => {
+    const { platform: fresh, seed: freshSeed, projectId } = await estate();
+    const asQs = () => fresh.context(freshSeed.users.qs!.auth, projectId, { source: 'WEB' });
+    integrator.priceIntegration(asQs(), { directSupplierCostMinor: 1_000_000_00, model: 'MANAGEMENT_INTEGRATOR' });
+
+    const position = integrator.integratorPosition(asQs());
+    assert.ok(position.concerns.some((c) => c.kind === 'TERMS_NOT_RECORDED'));
+    assert.equal(position.fundingGap, undefined);
+  });
+
+  it('refuses a payment period that is not a whole number of days', async () => {
+    const { platform: fresh, seed: freshSeed, projectId } = await estate();
+    const asQs = () => fresh.context(freshSeed.users.qs!.auth, projectId, { source: 'WEB' });
+    integrator.priceIntegration(asQs(), { directSupplierCostMinor: 1_000_000_00, model: 'MANAGEMENT_INTEGRATOR' });
+
+    throwsCode(
+      () =>
+        integrator.recordTradingTerms(asQs(), {
+          clientPaymentDays: -5,
+          supplierPaymentDays: 30,
+          conditionalOnClientPayment: false,
+          publicSectorClient: false,
+        }),
+      'PAYMENT_DAYS_INVALID',
+    );
+  });
+
+  it('refuses to record terms against an appointment nobody has priced', async () => {
+    const { platform: fresh, seed: freshSeed, projectId } = await estate();
+    const asQs = () => fresh.context(freshSeed.users.qs!.auth, projectId, { source: 'WEB' });
+    throwsCode(
+      () =>
+        integrator.recordTradingTerms(asQs(), {
+          clientPaymentDays: 30,
+          supplierPaymentDays: 45,
+          conditionalOnClientPayment: false,
+          publicSectorClient: false,
+        }),
+      'INTEGRATION_ACCOUNT_NOT_FOUND',
+    );
   });
 });

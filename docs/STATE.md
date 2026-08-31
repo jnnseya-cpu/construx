@@ -11708,3 +11708,90 @@ the control was never consulted.
 Two mutations confirm the test is load-bearing. Removing the control fails it;
 so does dropping the second role, which is the failure that documents why the
 stack is there.
+
+
+### The two commercial risks of standing between a client and a panel
+
+A question about whether the platform supports coordinating suppliers at every
+business size, and it exposed a stored label that changed nothing plus a legal
+point the platform already knew and was not applying where it mattered.
+
+#### "Back-to-back terms" is two arrangements, and only one of them works
+
+The mitigation usually proposed for the cash trap is back-to-back payment terms.
+The phrase covers two things that behave completely differently.
+
+**Conditional** — pay the supplier when the client pays — is of no effect under
+**HGCRA 1996 s.113**, except on the third party's insolvency. A business relying
+on it has no mitigation: the supplier's money falls due on the contract date
+regardless, and an adjudicator says so in weeks.
+
+`itt.ts` has always said exactly this to a bidder reading somebody *else's*
+invitation. Nothing said it about the subcontracts this business issues, which
+is the one place the business would be relying on the clause.
+
+**Timing** — pay the supplier later than the client pays this business — is a
+payment period, which s.110 requires the contract to state and nothing
+prohibits. It is the mitigation, and it is arithmetic rather than a clause that
+will not survive contact with an adjudicator.
+
+`recordTradingTerms` holds both payment periods and `assessTerms` derives the
+gap in days, prices it at the current rate of supplier spend, and states what
+the law says about how it was arrived at: the s.113 finding as a **BAR**, the
+**PCR 2015 reg 113** 30-day flow-down on public work as a **BAR**, and a period
+beyond `grosslyUnfairPaymentDays` as **MATERIAL** under the Late Payment of
+Commercial Debts (Interest) Act 1998. The conditional clause is *recorded* rather
+than refused — it is void, not criminal, it is in standard documents across the
+industry, and a business needs to know it is there and worthless.
+
+#### The trading model was a label that changed nothing
+
+`ADVISORY | MANAGEMENT_INTEGRATOR | PRINCIPAL_SERVICE_CONTRACTOR` was stored on
+the account and never read. A pure fee appointment was priced as a percentage on
+top of supplier cost — reporting £6.25M of contract value where the business
+will only ever invoice £1.25M — and then measured against a reserve for supplier
+payments it does not make. Both answers were wrong in the same direction: they
+described a business carrying an exposure it had deliberately arranged not to
+carry.
+
+`TRADING_MODEL` now turns on one question — **whose money pays the supplier** —
+and the rest follows. On a fee model the contract price is the fee alone,
+contingency is nil because the supplier contracts are the client's, and the
+reserve, funding-gap and paying-out-faster concerns do not arise. The catalogue
+is **published on the position** so the console's model picker renders from it;
+two of the three descriptions the console carried had drifted into saying the
+opposite of what the platform now does.
+
+It also names what the fee model *costs*: never funding supplier cost is a real
+mitigation with a real price, which is that every supplier holds its own contract
+and its own invoice line with the client — the position a supplier needs to be in
+to take the appointment itself next time.
+
+#### Two things reading the rendered panel caught
+
+**The concern count was swallowing the reserve position.** `reserveVerdict`
+returned the count *instead of* the reserve sentence, so the moment anything
+needed attention the reader lost the answer this screen exists for. "3 things
+need attention" says nothing about whether there is money in the account.
+
+**No gap was being reported as unmeasured.** Three cases, not two: a gap with no
+rate of spend to price it is genuinely unmeasured; a gap of zero or less is a
+*measurement* of nil, because the money arrives before it leaves whatever the
+rate turns out to be. The panel was showing a business that had got its terms
+right and telling it the answer was still pending.
+
+**Verified over HTTP**: the model catalogue; a fee appointment on £5m returning
+£1M of fee, £0 passing through and £0 contingency with no supplier-cash concerns;
+the same £5m as principal at £6.25M with £250K contingency; pay-when-paid on a
+public contract returning `lawful: false` with the s.113 finding; and the
+corrected 30/45-day terms returning a −15 day position and no concerns at all.
+
+#### Still not built: protecting the client relationship
+
+The second half of the question — panel suppliers approaching the client
+directly — has **nothing behind it**. `framework.ts` builds frameworks, lots and
+call-offs, but there is no record of who owns the client specification, whether
+the relationship is single-invoice, what share of contract value sits with one
+supplier, or any non-circumvention term. `TRADING_MODEL` now states the margin
+exposure of each model in words; nothing measures it. Recorded here rather than
+implied by the section above, which is about cash.

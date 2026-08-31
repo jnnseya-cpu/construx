@@ -887,6 +887,26 @@ export const config = {
      * without the client's money having arrived.
      */
     integrationReserveCoverDays: num('INTEGRATION_RESERVE_COVER_DAYS', 30),
+    /**
+     * The payment period a public body must impose on itself and flow down the
+     * whole chain — Public Contracts Regulations 2015, regulation 113.
+     *
+     * Configurable because the platform is not only used on public work and the
+     * figure is a rule rather than a law of nature, but it is not a preference:
+     * on a public contract, 30 days is the number and a subcontract stating
+     * longer is in breach of a term the regulations require to be there.
+     */
+    publicSectorFlowDownDays: num('PUBLIC_SECTOR_FLOW_DOWN_DAYS', 30),
+    /**
+     * Beyond this, a business-to-business payment period is in the territory the
+     * Late Payment of Commercial Debts (Interest) Act 1998 calls grossly unfair
+     * to the supplier, and a term imposing it can be struck out.
+     *
+     * Sixty days is not a hard prohibition and this is not legal advice — it is
+     * the point at which the platform stops treating a long period as a
+     * commercial choice and starts saying it may not survive challenge.
+     */
+    grosslyUnfairPaymentDays: num('GROSSLY_UNFAIR_PAYMENT_DAYS', 60),
 
     subscriptionGraceDays: num('SUBSCRIPTION_GRACE_DAYS', 7),
     /**

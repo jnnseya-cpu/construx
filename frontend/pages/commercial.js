@@ -38,7 +38,16 @@ const INTEGRATOR_TONE = {
   PAYING_OUT_FASTER: 'bad',
   CONTINGENCY_UNDRAWN_RISK: 'warn',
   NOT_PRICED: 'warn',
+  // A term with no legal effect is not a warning, it is a hole where the
+  // business believes it has cover.
+  VOID_PAYMENT_CONDITION: 'bad',
+  FLOW_DOWN_BREACH: 'bad',
+  FUNDING_GAP: 'warn',
+  TERMS_NOT_RECORDED: 'warn',
 };
+
+/** Severity as the funding-gap findings state it, in the design system's tones. */
+const FINDING_TONE = { BAR: 'bad', MATERIAL: 'warn', ROUTINE: 'ok' };
 
 /**
  * The Construction Industry Scheme.
@@ -176,6 +185,7 @@ function integrationPanel(position) {
   const price = position?.price;
   const reserve = position?.reserve ?? {};
   const contingency = position?.contingency ?? {};
+  const gap = position?.fundingGap;
 
   return html`
     <div class="card pad0" style="margin-bottom:14px">
@@ -215,9 +225,18 @@ function integrationPanel(position) {
           ? html`
             <div class="grid g4" style="padding:13px 17px 0">
               <div class="card">
-                <h2>Contract price</h2>
+                <h2>${price.passThroughMinor === 0 ? 'Fee income' : 'Contract price'}</h2>
                 <div class="metric">${money(price.contractPriceMinor)}</div>
-                <div class="metric-sub">${money(price.directSupplierCostMinor)} of supplier cost, plus ${price.additionPercent}%.</div>
+                <div class="metric-sub">
+                  ${
+                    // On a fee appointment the supplier cost never reaches this
+                    // business's books, so quoting it as part of the contract
+                    // price would state a turnover that will never exist.
+                    price.passThroughMinor === 0
+                      ? `${price.additionPercent}% of ${money(price.directSupplierCostMinor)} coordinated. The client contracts and pays the suppliers directly.`
+                      : `${money(price.directSupplierCostMinor)} of supplier cost, plus ${price.additionPercent}%.`
+                  }
+                </div>
               </div>
               <div class="card">
                 <h2>Margin</h2>
@@ -283,7 +302,73 @@ function integrationPanel(position) {
                 <span class="lbl">Certified to suppliers and unpaid</span>
                 <span class="val">${money(reserve.owedToSuppliersMinor ?? 0)}</span>
               </div>
+              ${
+                position?.trading
+                  ? html`<div class="row">
+                      <span class="lbl">${position.trading.label}</span>
+                      <span class="val" style="font-size:12px;color:var(--text-3)">${position.trading.cashRisk}</span>
+                    </div>
+                    <div class="row">
+                      <span class="lbl">What this model costs on margin</span>
+                      <span class="val" style="font-size:12px;color:var(--text-3)">${position.trading.marginRisk}</span>
+                    </div>`
+                  : ''
+              }
             </div>
+
+            <h2 style="padding:0 17px 0">When the client pays, and when the suppliers are paid</h2>
+            <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+              The usual answer to a cash trap is "back-to-back terms", and the phrase covers two arrangements that
+              behave completely differently. Making payment <b>conditional</b> on the client having paid is of no
+              effect under section 113 of the Construction Act, so it protects nothing. Setting the subcontract
+              payment <b>period</b> so the money arrives before it has to leave is a payment period, which nothing
+              prohibits, and it is the one that works.
+            </p>
+            ${
+              gap
+                ? html`
+                  <div class="split-list" style="padding:11px 17px 0">
+                    <div class="row">
+                      <span class="lbl">Client pays</span>
+                      <span class="val">${gap.clientPaymentDays} day(s) from application</span>
+                    </div>
+                    <div class="row">
+                      <span class="lbl">Suppliers are paid</span>
+                      <span class="val">${gap.supplierPaymentDays} day(s) from application</span>
+                    </div>
+                    <div class="row">
+                      <span class="lbl">${gap.gapDays > 0 ? 'Funded by this business' : 'Held before it is paid out'}</span>
+                      <span class="val ${raw(gap.gapDays > 0 ? 'bad' : 'good')}">
+                        ${Math.abs(gap.gapDays)} day(s)${gap.exposureMinor ? ` · ${money(gap.exposureMinor)}` : ''}
+                      </span>
+                    </div>
+                    ${
+                      // Absent is not zero. With nothing certified down the
+                      // chain there is no rate of spend to price the gap at,
+                      // and "£0 exposed" would be read as safety.
+                      gap.exposureMinor === undefined
+                        ? html`<div class="row">
+                            <span class="lbl">Not yet priced</span>
+                            <span class="val" style="font-size:12px;color:var(--text-3)">${gap.unmeasured ?? ''}</span>
+                          </div>`
+                        : ''
+                    }
+                  </div>
+                  ${table({
+                    headers: ['Authority', 'What it means here'],
+                    rows: gap.findings.map((finding) => [
+                      badge(finding.authority, FINDING_TONE[finding.severity] ?? 'warn'),
+                      html`<span style="font-size:12px;color:var(--text-3)">${finding.finding}</span>`,
+                    ]),
+                  })}`
+                : html`<div style="padding:11px 17px 15px">
+                    <div class="notice"><div>
+                      Nobody has recorded the two payment periods yet, so the platform cannot say which happens first.
+                      That difference is the whole cash exposure of the model, and it is the one number that can be
+                      fixed before the contracts are signed rather than argued about afterwards.
+                    </div></div>
+                  </div>`
+            }
           `
           : ''
       }
@@ -424,6 +509,7 @@ export async function commercial(root) {
             { id: 'actual', label: 'Post actual cost', tone: '', permitted: can('BUDGET_COST', 'C'), reason: blockedReason('BUDGET_COST', 'C') },
             { id: 'price', label: 'Price the appointment', permitted: can('BUDGET_COST', 'C'), reason: blockedReason('BUDGET_COST', 'C') },
             { id: 'advance', label: 'Record client advance', permitted: can('BUDGET_COST', 'U'), reason: blockedReason('BUDGET_COST', 'U') },
+            { id: 'tradingTerms', label: 'Record payment periods', permitted: can('BUDGET_COST', 'U'), reason: blockedReason('BUDGET_COST', 'U') },
             // Approval authority rather than the QS who maintains the budget. A
             // business where the person spending the contingency is the person
             // recording it has no contingency, it has a slower profit.
@@ -927,12 +1013,14 @@ export async function commercial(root) {
           name: 'model',
           label: 'Delivery model',
           type: 'select',
-          options: [
-            { value: 'MANAGEMENT_INTEGRATOR', label: 'Management integrator — the client contracts the suppliers' },
-            { value: 'ADVISORY', label: 'Advisory — strategy, requirements and procurement only' },
-            { value: 'PRINCIPAL_SERVICE_CONTRACTOR', label: 'Principal service contractor — we contract every supplier' },
-          ],
-          hint: 'The third carries supplier default, cash-flow gaps and interface liability. It needs working capital behind it.',
+          // From the catalogue the position publishes, not from three lines
+          // written here. These are commercial rules — which model funds
+          // supplier cost, and what each costs in cash and in margin — and a
+          // screen that names them itself is a second source of truth for them.
+          // Two of the three descriptions written here had already drifted into
+          // saying the opposite of what the platform does with them.
+          options: (integration?.models ?? []).map((entry) => ({ value: entry.model, label: entry.label })),
+          hint: 'Whose money pays the supplier is the question. Everything else — the reserve, the price build-up, the margin exposure — follows from the answer.',
         },
         { name: 'note', label: 'Note', type: 'textarea', rows: 2, required: false },
       ],
@@ -980,6 +1068,59 @@ export async function commercial(root) {
         amountMinor: Math.round(Number(v.amount) * 100),
         riskReference: v.riskReference,
         reason: v.reason,
+      }),
+    },
+    tradingTerms: {
+      title: 'Record the payment periods',
+      intent:
+        'When the client pays, and when the suppliers are paid. The gap between them is funded by this business on ' +
+        'every cycle, it scales with the job rather than with the fee, and it is the one number that can be fixed ' +
+        'before the contracts are signed. A clause making payment conditional on the client having paid is recorded ' +
+        'here too — not because it helps, but because it is of no effect under section 113 and the business needs to ' +
+        'know it is relying on nothing.',
+      path: () => `/v1/projects/${projectId}/integration/trading-terms`,
+      submitLabel: 'Record them',
+      fields: [
+        {
+          name: 'clientPaymentDays',
+          label: 'Client pays, in days from application',
+          type: 'number',
+          step: '1',
+          hint: 'The final date for payment under the main contract.',
+        },
+        {
+          name: 'supplierPaymentDays',
+          label: 'Suppliers are paid, in days from their application',
+          type: 'number',
+          step: '1',
+          hint: 'Longer than the line above and the money is in the account before it leaves. That is the mitigation that works.',
+        },
+        {
+          name: 'conditionalOnClientPayment',
+          label: 'Does the subcontract pay only when this business is paid?',
+          type: 'select',
+          options: [
+            { value: 'no', label: 'No' },
+            { value: 'yes', label: 'Yes — there is a pay-when-paid clause' },
+          ],
+          hint: 'Section 113 makes that term ineffective except on the client’s insolvency. Recorded so the exposure is counted as if it were not there.',
+        },
+        {
+          name: 'publicSectorClient',
+          label: 'Is the client a contracting authority?',
+          type: 'select',
+          options: [
+            { value: 'no', label: 'No — private client' },
+            { value: 'yes', label: 'Yes — public body' },
+          ],
+          hint: 'On public work, regulation 113 requires 30-day terms to be passed down the whole chain.',
+        },
+      ],
+      transform: (v) => ({
+        clientPaymentDays: Math.round(Number(v.clientPaymentDays)),
+        supplierPaymentDays: Math.round(Number(v.supplierPaymentDays)),
+        conditionalOnClientPayment: v.conditionalOnClientPayment === 'yes',
+        publicSectorClient: v.publicSectorClient === 'yes',
       }),
     },
     contra: {
