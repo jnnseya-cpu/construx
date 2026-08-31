@@ -43,8 +43,29 @@ export type CPMResult = {
   cycles: string[][];
 };
 
-/** Topological order, or the cycle that prevents one. */
-function topologicalOrder(
+/**
+ * Topological order, or the cycle that prevents one.
+ *
+ * Exported because `schedule.ts` needs exactly this and a second copy of a
+ * cycle detector is a second answer to "is this network schedulable".
+ *
+ * ## Which engine owns what
+ *
+ * This file schedules in **abstract working-day indices**: no dates, no
+ * calendars, every activity on the same notional timeline. That is the right
+ * shape for the Monte Carlo simulation, which samples durations thousands of
+ * times and cares about topology rather than about which Tuesday a bank holiday
+ * falls on.
+ *
+ * `schedule.ts` schedules in **calendar dates**, with a calendar per activity, a
+ * data date, the nine P6 constraint types and out-of-sequence progress. That is
+ * the source of truth for *the programme*. This one is the source of truth for
+ * *the network arithmetic on abstract durations*. They are not two answers to
+ * one question — a per-activity calendar cannot be represented on a shared
+ * abstract timeline at all, because how many real days three working days spans
+ * depends on when it starts, which is what the pass is solving for.
+ */
+export function topologicalOrder(
   activityIds: string[],
   dependencies: Dependency[],
 ): { order: string[]; cycles: string[][] } {

@@ -11951,3 +11951,69 @@ two found in the previous section.
 source; the relationship raising `NOBODY_WHO_DECIDES` on two operational
 contacts, clearing on a sponsor and returning when she leaves; and the three
 refusals — no owner 422, an invented role 400, a personal mobile 400.
+
+
+### The programme in dates: a calendar-aware scheduler
+
+The platform had a correct CPM engine — FS/SS/FF/SF, lag, total and free float,
+cycle detection — that schedules in **abstract working-day indices**. That is the
+right shape for the Monte Carlo simulation and it is not a programme: it has no
+dates, no calendars, no data date and one constraint type.
+
+`engines/maths/calendar.ts` and `engines/maths/schedule.ts` are the programme.
+
+**A calendar per activity.** Working weekdays plus exceptions in both directions
+— a bank holiday out, a Saturday pour in. Compiled once into an ordered list of
+working dates plus a date-to-ordinal map, so every question is an index lookup
+rather than a day-by-day loop; on a three-year programme with six hundred
+activities and two passes, the loop version is tens of millions of date
+constructions per reschedule. A date outside the compiled span is refused rather
+than answered, because answering means guessing which days were working days.
+
+**A data date**, with the three states derived rather than asserted: nothing
+unstarted is forecast before it, completed work is pinned to its actual dates
+whatever the logic says, and running work is forecast from the data date on its
+*remaining* duration rather than on the duration it was planned at.
+
+**Out-of-sequence progress, both ways.** Retained logic holds an out-of-sequence
+activity's remainder behind its unfinished predecessor; progress override lets it
+run. On the worked example they differ by a week, and the result carries which
+setting produced it — a tool that silently picks one is hiding the assumption
+that moved the date.
+
+**Nine constraint types**, and a constraint that contradicts the logic is *not*
+refused: it is scheduled and reported as negative float, which is what a planner
+needs to see. **Longest path** is traced back through driving relationships from
+whatever finishes last, kept separate from float ≤ 0 because with multiple
+calendars and constraints they are not the same set.
+
+**WBS roll-up** weights progress by duration. Counting activities makes a two-day
+snagging item worth as much as a forty-day pour, and a branch is reported as
+half done when a tenth of the work is.
+
+#### Three defects, all caught by hand-worked dates
+
+**The finish-to-start step was conflated with the lag.** A successor may begin
+the *calendar* day after its predecessor finishes — a turn of the calendar, not a
+day of anybody's work — and the lag on top of that is working days. Taken as one
+working-day step on the predecessor's calendar, a concrete cure running through
+the weekend waited until Monday for a pour that finished on Friday: two invented
+days on every such pair.
+
+**Running work was pinned to the data date unconditionally**, discarding the
+retained-logic hold. That made retained logic and progress override give the same
+answer, silently, on the one case they exist to distinguish.
+
+**A cycle crashed instead of being reported.** Activities inside one never reach
+the topological order, so the pass read `undefined` out of the date maps. They are
+now scheduled after everything reachable and the cycle is the finding.
+
+Eight mutations run; one survived because every backward move in the suite
+started from a working day, where the roll direction cannot matter. The case that
+discriminates — one working day back from a Saturday — is now asserted.
+
+#### Not yet built, so it is not mistaken for done
+
+Resources and resource levelling, activity codes, multiple float paths, and the
+domain, routes and console door for any of this: the engine exists and nothing
+reaches it yet.
