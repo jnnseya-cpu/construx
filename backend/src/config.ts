@@ -907,6 +907,26 @@ export const config = {
      * commercial choice and starts saying it may not survive challenge.
      */
     grosslyUnfairPaymentDays: num('GROSSLY_UNFAIR_PAYMENT_DAYS', 60),
+    /**
+     * The share of committed value above which one supplier is the service
+     * rather than part of it.
+     *
+     * A default, and the weakest kind of answer: a business that has set its
+     * own maximum share on a framework has answered this with more care than a
+     * platform constant can, and `intermediation.ts` uses that instead where it
+     * exists. Forty per cent is the point at which replacing the coordinator is
+     * one appointment rather than a re-procurement.
+     */
+    supplierConcentrationPercent: num('SUPPLIER_CONCENTRATION_PERCENT', 40),
+    /**
+     * How long before a framework ends that its expiry stops being a diary
+     * entry and becomes something to act on.
+     *
+     * Six months, because re-procuring a framework takes longer than that and
+     * the alternative is the client buying at will while the replacement is
+     * still in procurement.
+     */
+    frameworkExpiryNoticeDays: num('FRAMEWORK_EXPIRY_NOTICE_DAYS', 180),
 
     subscriptionGraceDays: num('SUBSCRIPTION_GRACE_DAYS', 7),
     /**

@@ -11795,3 +11795,90 @@ the relationship is single-invoice, what share of contract value sits with one
 supplier, or any non-circumvention term. `TRADING_MODEL` now states the margin
 exposure of each model in words; nothing measures it. Recorded here rather than
 implied by the section above, which is about cash.
+
+
+### Protecting the position: panel suppliers going direct
+
+The half of the integrator's exposure that had nothing behind it. `TRADING_MODEL`
+states each model's margin risk in words; `domain/intermediation.ts` measures it.
+
+#### Five defences, and what each one does not do
+
+`DEFENCE` holds specification ownership, the single invoice, a framework term, a
+non-circumvention clause and the performance record. Each carries **`holds` and
+`doesNotHold`**, and the second is the more useful half. A business with three of
+these that believes it therefore cannot be displaced has stopped doing the thing
+that keeps it there. The register says in as many words that a non-circumvention
+term **binds the supplier and not the client** — a client that appoints the
+supplier directly is not a party to it — and that this is the defence most often
+relied on and the weakest of the five.
+
+**Never assessed and assessed as absent are kept apart.** Only one of them is
+somebody's decision, and collapsing them reports a business that has not looked
+at this as one that has looked and found nothing.
+
+A defence claimed as in place with no evidence is refused: that is the belief the
+register exists to test, written down as a fact.
+
+#### The refusal that matters
+
+This is the one place a margin-defence feature can do real harm, so the
+distinction is in the command rather than in a note.
+
+A non-circumvention term between this business and **its own subcontractor** is a
+vertical restraint and ordinarily lawful. An arrangement with a **competitor** not
+to approach each other's clients — or the **panel agreeing among itself** not to
+bid, which is the same cartel with this business in the middle — is customer
+allocation: a *by object* infringement of the Chapter I prohibition of the
+Competition Act 1998, with no effects analysis, no small-agreements exclusion,
+and director disqualification and the cartel offence behind it.
+
+`recordDefence` asks what the counterparty is, refuses the horizontal case by
+name with a **409**, says what *is* recordable instead of only refusing, and
+records the declared answer. It cannot stop somebody describing a competitor as a
+supplier; the record then shows what was declared, by whom and when.
+
+#### Concentration, measured off the subcontracts
+
+`sharesOf` groups committed value by supplier, largest first, and marks the ones
+recorded approaching the client. Judged against the business's **own framework
+target** where it has set one — a firm that has said "no supplier above 30% of
+this framework" has answered with more care than a platform default can, and
+measuring against 40% would tell it it was fine while it breached its own policy.
+
+The acute case has its own concern: a supplier over the threshold **that has
+already approached the client**. That is where the appointment is lost, and it is
+lost between two renewals rather than at one.
+
+#### Two hollow tests, found by mutation
+
+Both were written against the demonstration seed and both were vacuous:
+
+- The seed lets **exactly one package**, so the ordering assertion looped over a
+  list of one. Reversing the sort and deleting it entirely both survived. The
+  share arithmetic is now `sharesOf`, tested against three suppliers with
+  hand-checked figures — 50/30/20 on £10m — plus packages summed per supplier, a
+  subcontract with nobody on it, and a total of zero.
+- The seed creates **no framework**, so both clock tests were `if (!framework)
+  return` — a guard that reports success for the absence of its own subject. A
+  mutation counting an expired framework as still running survived. The tests
+  now build a real framework and assert the days remaining, the notice boundary
+  in both directions, and the threshold coming from the framework's own target.
+
+Eleven mutations run; all eleven now caught.
+
+#### Two defects reading the rendered panel caught
+
+`It binds the supplier, not the client` was written with markdown emphasis and
+printed **as literal asterisks** — the console does not render markdown and
+should not have to. An invariant now refuses markdown in any of these strings.
+And the evidence was appended to the sentence before it, so the panel read
+"…the easiest line on the account to question. One consolidated application per
+month". It has its own line now.
+
+**Verified over HTTP**: the competitor and panel-to-panel restraints refused 409
+`RESTRAINT_UNLAWFUL` naming the Act; a missing relation refused 422; the same
+term with an own supplier accepted 201; a defence claimed with no evidence
+refused 422; `RELYING_ON_THE_WEAKEST` raised when the clause was the only one in
+place and cleared by a second defence; and a direct approach by the 100% supplier
+raising `CONCENTRATED_AND_APPROACHING`.

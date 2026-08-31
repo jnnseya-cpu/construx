@@ -147,6 +147,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
    * reading the negotiating position rather than the contract.
    */
   IntegrationAccount: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
+  // Which suppliers have approached the client, and what share each holds.
+  // The most damaging thing on the project to leak into the supply chain, and
+  // every supplier is an identity on this platform.
+  IntermediationPosition: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
   Task: { area: 'WORKPACKAGES_TASKS' },
   Dependency: { area: 'PROGRAMME_BASELINES' },
   ProgrammeBaseline: { area: 'PROGRAMME_BASELINES' },

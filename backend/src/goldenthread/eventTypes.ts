@@ -356,6 +356,8 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('INTEGRATION_PRICED', 'IntegrationAccount', 'CREATE', 'COMMERCIAL'),
   def('ADVANCE_RECEIVED', 'IntegrationAccount', 'UPDATE', 'COMMERCIAL'),
   def('TRADING_TERMS_RECORDED', 'IntegrationAccount', 'UPDATE', 'COMMERCIAL'),
+  def('INTERMEDIATION_DEFENCE_RECORDED', 'IntermediationPosition', 'UPDATE', 'COMMERCIAL', { creates: true }),
+  def('DIRECT_APPROACH_RECORDED', 'IntermediationPosition', 'UPDATE', 'COMMERCIAL', { creates: true }),
   def('CONTINGENCY_DRAWN', 'IntegrationAccount', 'APPROVE', 'COMMERCIAL'),
   def('RESPONSIBILITY_ASSIGNED', 'ResponsibilityItem', 'CREATE', 'PROJECT_CONTROL'),
   def('RESPONSIBILITY_REASSIGNED', 'ResponsibilityItem', 'UPDATE', 'PROJECT_CONTROL'),

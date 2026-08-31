@@ -174,6 +174,128 @@ function cisPanel(board, monthly) {
   `;
 }
 
+const DEFENCE_TONE = { true: 'ok', false: 'warn' };
+
+const INTERMEDIATION_TONE = {
+  NOT_ASSESSED: 'warn',
+  SPECIFICATION_NOT_OWNED: 'bad',
+  SUPPLIER_CONCENTRATION: 'warn',
+  // Large enough to be the service, and already talking to the client. This is
+  // where the appointment is lost.
+  CONCENTRATED_AND_APPROACHING: 'bad',
+  DIRECT_APPROACHES: 'warn',
+  FRAMEWORK_EXPIRING: 'bad',
+  RELYING_ON_THE_WEAKEST: 'bad',
+};
+
+/**
+ * Staying between the client and the panel.
+ *
+ * The other half of the integrator's exposure. `integrationPanel` answers
+ * whether there is money in the account; this answers whether there will be an
+ * appointment next year.
+ */
+function intermediationPanel(position) {
+  if (position?.error) {
+    return html`<div class="card" style="margin-bottom:14px">
+      <h2>Staying between the client and the panel</h2>
+      <p class="metric-sub">This could not be read: ${position.error.message}</p>
+    </div>`;
+  }
+  if (!position) return '';
+
+  const threshold = position.concentrationThreshold ?? {};
+  return html`
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">Staying between the client and the panel</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        ${position.summary ?? ''}
+      </p>
+
+      ${
+        (position.concerns ?? []).length > 0
+          ? html`<div class="split-list" style="padding:11px 17px 0">
+              ${position.concerns.map(
+                (concern) => html`<div class="row">
+                  <span class="lbl">${badge(humanise(concern.kind), INTERMEDIATION_TONE[concern.kind] ?? 'warn')} ${concern.subject}</span>
+                  <span class="val" style="font-size:12px;color:var(--text-3)">${concern.consequence}</span>
+                </div>`,
+              )}
+            </div>`
+          : ''
+      }
+
+      <h2 style="padding:15px 17px 0">What keeps this business in the middle</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        Every supplier on this appointment is introduced to the client, and next time the client can buy from any of
+        them directly. What each defence <b>does not</b> do is the more useful column: a business with three of these
+        that believes it therefore cannot be displaced has stopped doing the thing that keeps it there.
+      </p>
+      ${table({
+        headers: ['Defence', 'In place', 'What it buys', 'What it does not do'],
+        rows: (position.defences ?? []).map((defence) => [
+          defence.label,
+          // Never assessed and assessed as absent are different facts, and
+          // only one of them is somebody's decision.
+          defence.assessed
+            ? badge(defence.inPlace ? 'Yes' : 'No', DEFENCE_TONE[String(defence.inPlace)])
+            : badge('Not assessed', 'warn'),
+          html`<span style="font-size:12px;color:var(--text-3)">${defence.holds}</span>${
+            // On its own line. Appended to the sentence above it, the evidence
+            // read as the end of that sentence — "...the easiest line on the
+            // account to question. One consolidated application per month".
+            defence.evidence
+              ? html`<div style="font-size:12px;margin-top:5px"><span class="lbl">Where it lives</span> <b>${defence.evidence}</b></div>`
+              : ''
+          }`,
+          html`<span style="font-size:12px;color:var(--text-3)">${defence.doesNotHold}</span>`,
+        ]),
+      })}
+
+      <h2 style="padding:15px 17px 0">Where the committed value sits</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        Measured off the subcontracts rather than from an impression. Judged against
+        ${threshold.percent}% — ${threshold.source ?? ''}.
+      </p>
+      ${
+        (position.shares ?? []).length > 0
+          ? table({
+              headers: ['Supplier', 'Committed', 'Share', 'Has approached the client'],
+              align: ['', 'num', 'num', ''],
+              rows: position.shares.map((share) => [
+                share.supplierName,
+                money(share.committedMinor),
+                html`<span class="${raw(share.sharePercent > (threshold.percent ?? 100) ? 'bad' : '')}">${share.sharePercent}%</span>`,
+                share.hasApproachedClient ? badge('Yes', 'bad') : '—',
+              ]),
+            })
+          : html`<div style="padding:11px 17px 15px">
+              <div class="notice"><div>Nothing has been committed to a supplier yet, so there is no concentration to
+                measure. It becomes measurable with the first subcontract.</div></div>
+            </div>`
+      }
+
+      ${
+        (position.approaches ?? []).length > 0
+          ? html`<h2 style="padding:15px 17px 0">Direct approaches on the record</h2>
+            <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+              One is a conversation. A pattern is the appointment being priced by somebody else, and it shows up
+              months before the renewal it decides.
+            </p>
+            ${table({
+              headers: ['When', 'Supplier', 'What happened', 'Outcome'],
+              rows: position.approaches.map((entry) => [
+                entry.occurredOn,
+                entry.supplierName,
+                html`<span style="font-size:12px;color:var(--text-3)">${entry.what}</span>`,
+                badge(entry.outcomeLabel, entry.outcome === 'PROCEEDED' ? 'bad' : 'warn'),
+              ]),
+            })}`
+          : ''
+      }
+    </div>`;
+}
+
 function integrationPanel(position) {
   if (position?.error) {
     return html`<div class="card" style="margin-bottom:14px">
@@ -379,7 +501,7 @@ function integrationPanel(position) {
 export async function commercial(root) {
   const projectId = state.session.projectId;
 
-  const [bundle, ledger, forward, commercialControl, settlements, integration, cisMonths] = await Promise.all([
+  const [bundle, ledger, forward, commercialControl, settlements, integration, intermediation, cisMonths] = await Promise.all([
     entityBundle(projectId, [
       'CVR',
       'EarnedValueSnapshot',
@@ -411,6 +533,7 @@ export async function commercial(root) {
     // Running an integrated appointment: what the price is made of, and whether
     // the money will be in the account when the suppliers are due.
     api.get(`/v1/projects/${projectId}/integration`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${projectId}/intermediation`).catch((error) => ({ error })),
     // Tax months with CIS payments on this project. The board is cheap; the
     // return itself is fetched only for the month somebody opened.
     api.get(`/v1/projects/${projectId}/cis/returns`).catch(() => null),
@@ -510,6 +633,8 @@ export async function commercial(root) {
             { id: 'price', label: 'Price the appointment', permitted: can('BUDGET_COST', 'C'), reason: blockedReason('BUDGET_COST', 'C') },
             { id: 'advance', label: 'Record client advance', permitted: can('BUDGET_COST', 'U'), reason: blockedReason('BUDGET_COST', 'U') },
             { id: 'tradingTerms', label: 'Record payment periods', permitted: can('BUDGET_COST', 'U'), reason: blockedReason('BUDGET_COST', 'U') },
+            { id: 'defence', label: 'Record a margin defence', permitted: can('BUDGET_COST', 'U'), reason: blockedReason('BUDGET_COST', 'U') },
+            { id: 'directApproach', label: 'Log a direct approach', permitted: can('BUDGET_COST', 'U'), reason: blockedReason('BUDGET_COST', 'U') },
             // Approval authority rather than the QS who maintains the budget. A
             // business where the person spending the contingency is the person
             // recording it has no contingency, it has a slower profit.
@@ -524,6 +649,7 @@ export async function commercial(root) {
       </div>
 
       ${integrationPanel(integration)}
+      ${intermediationPanel(intermediation)}
 
       ${retentionPanel(retention)}
 
@@ -1121,6 +1247,114 @@ export async function commercial(root) {
         supplierPaymentDays: Math.round(Number(v.supplierPaymentDays)),
         conditionalOnClientPayment: v.conditionalOnClientPayment === 'yes',
         publicSectorClient: v.publicSectorClient === 'yes',
+      }),
+    },
+    defence: {
+      title: 'Record a margin defence',
+      intent:
+        'Five things keep a coordinator between its client and the panel, and each one has a limit worth knowing. ' +
+        'A non-circumvention term binds the supplier and not the client — the client may appoint whoever it likes ' +
+        'and is not a party to it. Recording a defence as in place with nothing behind it is the belief this ' +
+        'register exists to test, written down as a fact, so where it lives is required.',
+      path: () => `/v1/projects/${projectId}/intermediation/defence`,
+      submitLabel: 'Record it',
+      fields: [
+        {
+          name: 'kind',
+          label: 'Which defence',
+          type: 'select',
+          // From the position, which publishes all five with their limits, so
+          // the form and the rule come from the same place.
+          options: (intermediation?.defences ?? []).map((entry) => ({ value: entry.kind, label: entry.label })),
+        },
+        {
+          name: 'inPlace',
+          label: 'Is it in place?',
+          type: 'select',
+          options: [
+            { value: 'yes', label: 'Yes' },
+            { value: 'no', label: 'No' },
+          ],
+        },
+        {
+          name: 'evidence',
+          label: 'Where does it live?',
+          type: 'text',
+          required: false,
+          placeholder: 'Clause 14.3 of the standard subcontract',
+          hint: 'Required where the answer is yes. The clause, the framework, the document.',
+        },
+        {
+          name: 'relation',
+          label: 'For a non-circumvention term: what is the other party?',
+          type: 'select',
+          required: false,
+          options: [
+            { value: '', label: '—' },
+            { value: 'OWN_SUPPLIER', label: 'A supplier or subcontractor this business appoints' },
+            { value: 'COMPETITOR', label: 'A business that competes for the same appointment' },
+            { value: 'PANEL_TO_PANEL', label: 'An arrangement between the panel suppliers themselves' },
+          ],
+          hint:
+            'With your own supplier this is an ordinary vertical restraint. Between competitors, or among the panel ' +
+            'itself, the same words are customer allocation and unlawful — the platform refuses to record it.',
+        },
+      ],
+      transform: (v) => ({
+        kind: v.kind,
+        inPlace: v.inPlace === 'yes',
+        ...(v.evidence ? { evidence: v.evidence } : {}),
+        ...(v.relation ? { relation: v.relation } : {}),
+      }),
+    },
+    directApproach: {
+      title: 'Log a direct approach',
+      intent:
+        'A panel supplier went to the client without us. Written down at the time, because the value is in the ' +
+        'pattern and the pattern is invisible in hindsight — one is a conversation, three in a quarter is the ' +
+        'appointment being priced by somebody else while there is still time to answer it.',
+      path: () => `/v1/projects/${projectId}/intermediation/direct-approach`,
+      submitLabel: 'Log it',
+      fields: [
+        {
+          name: 'supplierPartyId',
+          label: 'Supplier',
+          type: 'select',
+          // The suppliers this project has actually committed to, so the log
+          // cannot name a firm the project does not buy from.
+          options: (intermediation?.shares ?? []).map((share) => ({
+            value: share.supplierPartyId,
+            label: `${share.supplierName} — ${share.sharePercent}% of committed value`,
+          })),
+        },
+        { name: 'occurredOn', label: 'When', type: 'date' },
+        {
+          name: 'what',
+          label: 'What happened',
+          type: 'textarea',
+          rows: 2,
+          hint: 'This is a record about a named business. A line with no facts in it is an allegation.',
+        },
+        {
+          name: 'outcome',
+          label: 'What came of it',
+          type: 'select',
+          options: [
+            { value: 'UNKNOWN', label: 'Not known what came of it' },
+            { value: 'SUPPLIER_DECLINED', label: 'The supplier declined and told us' },
+            { value: 'CLIENT_REDIRECTED', label: 'The client redirected it back to us' },
+            { value: 'PROCEEDED', label: 'It went ahead without us' },
+          ],
+        },
+      ],
+      transform: (v) => ({
+        supplierPartyId: v.supplierPartyId,
+        supplierName:
+          (intermediation?.shares ?? []).find((share) => share.supplierPartyId === v.supplierPartyId)?.supplierName ??
+          v.supplierPartyId,
+        occurredOn: v.occurredOn,
+        what: v.what,
+        outcome: v.outcome,
       }),
     },
     contra: {

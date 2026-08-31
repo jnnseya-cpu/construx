@@ -62,6 +62,7 @@ import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
 import * as integrator from '../domain/integrator.ts';
+import * as intermediation from '../domain/intermediation.ts';
 import * as responsibility from '../domain/responsibility.ts';
 import * as sitecapture from '../domain/sitecapture.ts';
 import * as sitelayout from '../domain/sitelayout.ts';
@@ -4426,6 +4427,55 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => integrator.recordTradingTerms(projectContext(platform, ctx), body(ctx)),
+  },
+  // --------------------------------------------- staying between client and panel
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/intermediation',
+    description: 'What keeps this business between its client and the panel, and where that position is exposed',
+    handler: (platform, ctx) => intermediation.intermediationPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/intermediation/defence',
+    description: 'Record whether one of the five margin defences is in place, and where it lives',
+    schema: {
+      type: 'object',
+      required: ['kind', 'inPlace'],
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['SPECIFICATION_OWNERSHIP', 'SINGLE_INVOICE', 'FRAMEWORK_TERM', 'NON_CIRCUMVENTION', 'PERFORMANCE_EVIDENCE'],
+        },
+        inPlace: { type: 'boolean' },
+        evidence: { type: 'string' },
+        // Required by the domain for a non-circumvention term, because the
+        // answer decides whether the arrangement is a lawful vertical restraint
+        // or customer allocation between competitors. Optional in the schema so
+        // the refusal comes back naming the law rather than as a shape error.
+        relation: { type: 'string', enum: ['OWN_SUPPLIER', 'COMPETITOR', 'PANEL_TO_PANEL'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => intermediation.recordDefence(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/intermediation/direct-approach',
+    description: 'Record a panel supplier approaching the client directly, and what came of it',
+    schema: {
+      type: 'object',
+      required: ['supplierPartyId', 'supplierName', 'occurredOn', 'what', 'outcome'],
+      properties: {
+        supplierPartyId: stringField,
+        supplierName: stringField,
+        occurredOn: stringField,
+        what: { type: 'string', minLength: 8 },
+        outcome: { type: 'string', enum: ['SUPPLIER_DECLINED', 'CLIENT_REDIRECTED', 'PROCEEDED', 'UNKNOWN'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => intermediation.recordDirectApproach(projectContext(platform, ctx), body(ctx)),
   },
   // ------------------------------------------------------------------ retention
   {
