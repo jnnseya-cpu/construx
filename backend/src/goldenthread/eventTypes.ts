@@ -1616,6 +1616,26 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // Superseded, never overwritten. A figure that changed with no record of the
   // change is how two teams end up working to different numbers.
   def('SITE_SERVICE_FACT_SUPERSEDED', 'SiteServiceFact', 'UPDATE', 'PROJECT_CONTROL', { aiAllowed: true }),
+
+  // §4, the Composer. A service system freezes a design basis: the derivations
+  // as they stood the day the compound was ordered. Recomposing is an approval
+  // rather than an edit, because it changes what the service is designed to
+  // deliver — and the previous basis stays on the chain, which is the whole
+  // point of freezing one.
+  def('SERVICE_SYSTEM_COMPOSED', 'ServiceSystem', 'CREATE', 'PROJECT_CONTROL', { aiAllowed: true, creates: true }),
+  def('SERVICE_SYSTEM_RECOMPOSED', 'ServiceSystem', 'APPROVE', 'PROJECT_CONTROL'),
+  // The interface matrix. Raised unowned on purpose — an interface nobody has
+  // taken is the gap that turns up on site, and it has to be visible as a gap.
+  def('SERVICE_INTERFACE_RAISED', 'ServiceInterface', 'CREATE', 'PROJECT_CONTROL', { aiAllowed: true, creates: true }),
+  def('SERVICE_INTERFACE_ASSIGNED', 'ServiceInterface', 'UPDATE', 'PROJECT_CONTROL'),
+  def('SERVICE_INTERFACE_ACCEPTED', 'ServiceInterface', 'APPROVE', 'PROJECT_CONTROL'),
+  // What a service actually consumed. AI may record it — a meter reading is
+  // exactly the work to automate — and what follows from it is a proposal, never
+  // a reduction in the basis.
+  def('SERVICE_OBSERVATION_RECORDED', 'ServiceObservation', 'CREATE', 'PROJECT_CONTROL', {
+    aiAllowed: true,
+    creates: true,
+  }),
 ];
 
 /**

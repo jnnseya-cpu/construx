@@ -52,9 +52,10 @@ const FIT_FIELDS = [
 const SCALE_HINT = '0 = not at all · 2 = partly · 4 = strongly. Score what the evidence says, not what would be convenient.';
 
 export async function siteservices(root) {
-  const [position, readiness] = await Promise.all([
+  const [position, readiness, structure] = await Promise.all([
     api.get(`/v1/projects/${state.session.projectId}/site-services/appointment`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/brief`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/sbs`).catch((error) => ({ error })),
   ]);
 
   if (position.error) {
@@ -111,6 +112,36 @@ export async function siteservices(root) {
           {
             id: 'assume',
             label: 'Assume a value',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'compose',
+            label: 'Compose a system',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'interface',
+            label: 'Take an interface',
+            permitted: can('SITE_SERVICES', 'U'),
+            reason: blockedReason('SITE_SERVICES', 'U'),
+          },
+          {
+            id: 'accept',
+            label: 'Close an interface',
+            permitted: can('SITE_SERVICES', 'A'),
+            reason: blockedReason('SITE_SERVICES', 'A'),
+          },
+          {
+            id: 'recompose',
+            label: 'Recompose a system',
+            permitted: can('SITE_SERVICES', 'A'),
+            reason: blockedReason('SITE_SERVICES', 'A'),
+          },
+          {
+            id: 'observe',
+            label: 'Record what it consumed',
             permitted: can('SITE_SERVICES', 'C'),
             reason: blockedReason('SITE_SERVICES', 'C'),
           },
@@ -276,6 +307,8 @@ export async function siteservices(root) {
 
       ${readiness.error ? refusal('Brief readiness', readiness.error) : briefCard(readiness)}
 
+      ${structure.error ? refusal('The system breakdown structure', structure.error) : sbsCard(structure)}
+
       ${assessment ? assessmentCard(assessment, models) : ''}
     `,
   );
@@ -440,6 +473,156 @@ export async function siteservices(root) {
           `${result.itemId} = ${result.value} ${result.unit}${assuming ? ` · ${result.owner} by ${result.decideBy}` : ''}`,
           assuming ? 'warn' : 'ok',
         );
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'compose') {
+      // Only the families with no system yet. Composing a second for the same
+      // zone is refused, and offering it would be offering a refusal.
+      const options = (structure.error ? [] : structure.uncomposed).map((entry) => ({
+        value: entry.family,
+        label: entry.label,
+      }));
+      const result = await command({
+        title: 'Compose a service system',
+        intent:
+          'Freezes the design basis for one family in one zone — every capacity with the formula, the inputs and the ' +
+          'rates behind it — and raises the interfaces it cannot be built without, open and unowned. Capacity is ' +
+          'zone-specific: two compounds are two systems, and merging them hides the one that is short.',
+        path: `/v1/projects/${state.session.projectId}/site-services/system`,
+        submitLabel: 'Compose',
+        transform: (values) => ({ ...values, leadDays: Number(values.leadDays) }),
+        fields: [
+          {
+            name: 'family',
+            label: 'Service family',
+            type: 'select',
+            options: options.length > 0 ? options : [{ value: '', label: 'Every family is already composed' }],
+          },
+          { name: 'zone', label: 'Zone', hint: 'Where on site. Two compounds are two systems.' },
+          { name: 'fromDate', label: 'Operational from', type: 'date' },
+          { name: 'toDate', label: 'No longer needed after', type: 'date' },
+          {
+            name: 'leadDays',
+            label: 'Lead time in days',
+            type: 'number',
+            hint: 'Between ordering it and it being usable. Zero is an answer; absent is not.',
+          },
+        ],
+      });
+      if (result) {
+        toast('Composed', `${result.system.label} — ${result.system.zone}`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'recompose') {
+      const options = (structure.error ? [] : structure.systems).map((system) => ({
+        value: system.id,
+        label: `${system.label} — ${system.zone}${system.drift.length > 0 ? ` (${system.drift.length} drifted)` : ''}`,
+      }));
+      if (options.length === 0) {
+        toast('Nothing composed', 'There is no service system to recompose yet.', 'warn');
+        return;
+      }
+      const result = await command({
+        title: 'Recompose a system',
+        intent:
+          'Re-freezes the design basis against the brief as it now stands. The version it was ordered against stays on ' +
+          'the record — that is the whole point of freezing one.',
+        path: `/v1/projects/${state.session.projectId}/site-services/system/recompose`,
+        submitLabel: 'Recompose',
+        fields: [
+          { name: 'systemId', label: 'System', type: 'select', options },
+          { name: 'reason', label: 'Why the basis is changing', type: 'textarea' },
+        ],
+      });
+      if (result) {
+        toast('Recomposed', `${result.label} now at version ${result.version}`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'interface' || which === 'accept') {
+      const closing = which === 'accept';
+      const open = (structure.error ? [] : structure.systems).flatMap((system) =>
+        system.interfaces
+          .filter((entry) => (closing ? entry.status === 'OPEN' && entry.owner : entry.status === 'OPEN'))
+          .map((entry) => ({
+            value: entry.id,
+            label: `${entry.name} — ${system.label}, ${system.zone}${entry.owner ? ` (${entry.owner})` : ' — unowned'}`,
+          })),
+      );
+      if (open.length === 0) {
+        toast(
+          closing ? 'Nothing to close' : 'Nothing open',
+          closing
+            ? 'Every open interface still needs an owner before it can be accepted.'
+            : 'No interface is open. Compose a system to raise its matrix.',
+          'warn',
+        );
+        return;
+      }
+
+      const result = await command({
+        title: closing ? 'Close an interface' : 'Take an interface',
+        intent: closing
+          ? 'Acceptance, not an update. Say what closes it — the drawing, the survey, the consent or the agreement. ' +
+            '"Accepted" on its own proves nothing later.'
+          : 'An owner and a date together. Either alone is unmanageable: an owner with no date cannot be late, and a ' +
+            'date with no owner is nobody’s.',
+        path: closing
+          ? `/v1/projects/${state.session.projectId}/site-services/interface/accept`
+          : `/v1/projects/${state.session.projectId}/site-services/interface`,
+        submitLabel: closing ? 'Accept' : 'Take it',
+        fields: [
+          { name: 'interfaceId', label: 'Interface', type: 'select', options: open },
+          ...(closing
+            ? [{ name: 'note', label: 'What closes it', type: 'textarea' }]
+            : [
+                { name: 'owner', label: 'Owner', hint: 'A person, not a team' },
+                { name: 'dueDate', label: 'Due', type: 'date' },
+                { name: 'counterparty', label: 'Other side', required: false, hint: 'The system or party it is with' },
+              ]),
+        ],
+      });
+      if (result) {
+        toast(closing ? 'Interface closed' : 'Interface taken', result.name, closing ? 'ok' : '');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'observe') {
+      const options = (structure.error ? [] : structure.demand.derivations).map((derivation) => ({
+        value: derivation.id,
+        label: `${derivation.label} — basis ${derivation.normal} ${derivation.unit}`,
+      }));
+      if (options.length === 0) {
+        toast('Nothing sized yet', 'There is no design basis to measure against.', 'warn');
+        return;
+      }
+      const result = await command({
+        title: 'Record what it consumed',
+        intent:
+          'A meter reading, a tanker ticket or a count. What follows from it is a proposal: consumption below the ' +
+          'basis does not reduce the basis, because that is what the service was sized, contracted and priced against.',
+        path: `/v1/projects/${state.session.projectId}/site-services/observation`,
+        submitLabel: 'Record',
+        transform: (values) => ({ ...values, observed: Number(values.observed) }),
+        fields: [
+          { name: 'derivationId', label: 'Against which capacity', type: 'select', options },
+          { name: 'observed', label: 'Observed', type: 'number' },
+          { name: 'over', label: 'Measured over', hint: 'The period — a day, a week, the four weeks to a date' },
+          { name: 'source', label: 'Source', hint: 'The meter, the ticket or the count' },
+        ],
+      });
+      if (result) {
+        toast('Recorded', `${result.derivationId} = ${result.observed} over ${result.over}`, 'ok');
         await again();
       }
       return;
@@ -732,6 +915,180 @@ function briefCard(readiness) {
         : ''}
     </div>
   `;
+}
+
+/**
+ * The system breakdown structure, and the two things it exists to show.
+ *
+ * **The design basis, frozen.** Every capacity carries the formula it came
+ * from, the inputs with their sources, and the rates applied with the basis
+ * each rests on. A screen showing "7 WCs" cannot answer *seven from what*, and
+ * that is the only question anybody asks six months later.
+ *
+ * **What has moved since.** The compound was ordered against the numbers as
+ * they stood on a particular Tuesday, and the brief has not stopped. Drift is
+ * the difference, and it is the thing that decides whether an order is still
+ * right.
+ */
+function sbsCard(structure) {
+  const { systems, uncomposed, demand, deployment, reforecasts, interfaceMatrix } = structure;
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>System breakdown structure</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">
+        ${systems.length} of ${systems.length + uncomposed.length} service families composed. Each carries the demand
+        basis it was frozen against, the interfaces it cannot be built without, and what has to be removed at the end.
+      </div>
+
+      ${deployment.length > 0
+        ? html`<div style="margin-bottom:14px">
+            ${deployment.map(
+              (entry) => html`<div class="notice ${entry.kind === 'PREMATURE_REMOVAL' ? 'bad' : 'warn'}" style="margin-bottom:8px">
+                <div>
+                  <b>${humaniseKind(entry.kind)}.</b> ${entry.statement}<br />
+                  ${entry.resolution}
+                </div>
+              </div>`,
+            )}
+          </div>`
+        : ''}
+
+      ${reforecasts.length > 0
+        ? html`<div style="margin-bottom:14px">
+            <h2>Observed against basis</h2>
+            ${reforecasts.map(
+              (entry) => html`<div class="notice ${entry.reducesBaseline ? 'warn' : 'bad'}" style="margin-bottom:8px">
+                <div>
+                  <b>${entry.label}: ${entry.observed} against a basis of ${entry.basis} ${entry.unit}
+                  (${entry.variancePercent > 0 ? '+' : ''}${pct(entry.variancePercent)}).</b><br />
+                  ${entry.proposal}
+                  ${entry.requiresApproval ? html`<br /><b>${entry.requiresApproval}</b>` : ''}
+                </div>
+              </div>`,
+            )}
+          </div>`
+        : ''}
+
+      ${systems.map(
+        (system) => html`<div style="padding:14px 0;border-top:1px solid var(--line)">
+          <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+            <b>${system.label} — ${system.zone}</b>
+            <span>
+              ${badge(`v${system.version}`, 'info')}
+              ${system.openInterfaces > 0
+                ? badge(`${system.openInterfaces} interfaces open`, 'warn')
+                : badge('interfaces closed', 'ok')}
+              ${system.drift.length > 0 ? badge(`${system.drift.length} drifted`, 'bad') : ''}
+            </span>
+          </div>
+          <div class="metric-sub" style="margin-top:4px">
+            On site ${date(system.fromDate)} to ${date(system.toDate)} · ${system.leadDays} days lead
+          </div>
+
+          ${system.drift.length > 0
+            ? html`<div class="notice bad" style="margin-top:10px">
+                <div>
+                  <b>The brief has moved since this was sized.</b>
+                  ${system.drift.map(
+                    (entry) =>
+                      html`<br />${entry.label}: ${entry.composedAt} → ${entry.now} ${entry.unit}
+                        (${entry.changePercent > 0 ? '+' : ''}${pct(entry.changePercent)}). ${entry.consequence}`,
+                  )}
+                </div>
+              </div>`
+            : ''}
+
+          ${system.basis.length > 0
+            ? html`<div style="margin-top:10px">
+                ${table({
+                  headers: ['Capacity', 'Normal', 'Peak', 'Held in reserve', 'Because'],
+                  align: ['', 'num', 'num', '', ''],
+                  rows: system.basis.map((derivation) => [
+                    html`${derivation.label}
+                      <div class="metric-sub mono">${derivation.formula}</div>
+                      ${derivation.inputs.map(
+                        (input) =>
+                          html`<div class="metric-sub">
+                            ${input.label}: ${input.value} ${input.unit}
+                            ${input.status === 'PROVISIONAL' ? badge('assumed', 'warn') : ''} · ${input.source}
+                          </div>`,
+                      )}
+                      ${derivation.assumptions.map(
+                        (assumption) =>
+                          html`<div class="metric-sub">
+                            ${assumption.name} = ${assumption.value}${assumption.unit ? ` ${assumption.unit}` : ''} —
+                            ${assumption.basis}
+                          </div>`,
+                      )}`,
+                    `${derivation.normal} ${derivation.unit}`,
+                    `${derivation.peak} ${derivation.unit}`,
+                    `${derivation.continuity} ${derivation.continuityUnit}`,
+                    html`${derivation.continuityBasis}
+                      ${derivation.exceptions.map(
+                        (exception) => html`<div class="metric-sub bad" style="margin-top:4px">· ${exception}</div>`,
+                      )}`,
+                  ]),
+                })}
+              </div>`
+            : html`<div class="metric-sub" style="margin-top:8px">
+                Sized on scope and sequence rather than capacity. The interfaces are what this family turns on.
+              </div>`}
+
+          <div class="metric-sub" style="margin-top:10px"><b>Removal obligation.</b> ${system.removalObligation}</div>
+          <div class="metric-sub" style="margin-top:6px">
+            <b>Not yet populated.</b>
+            ${system.awaiting.map((entry) => `${entry.field} — ${entry.from}`).join(' · ')}
+          </div>
+        </div>`,
+      )}
+
+      ${interfaceMatrix.length > 0
+        ? html`<div style="padding:14px 0 0;border-top:1px solid var(--line)">
+            <h2>Interface matrix</h2>
+            <div class="metric-sub" style="margin:6px 0 10px">
+              Rolled up by name across every zone, because "who owns ground bearing on this job" is asked once.
+            </div>
+            ${table({
+              headers: ['Interface', 'Open', 'Unowned', 'Accepted'],
+              align: ['', 'num', 'num', 'num'],
+              rows: interfaceMatrix.map((entry) => [
+                entry.name,
+                entry.open,
+                entry.unowned > 0 ? badge(String(entry.unowned), 'bad') : '0',
+                entry.accepted,
+              ]),
+            })}
+          </div>`
+        : ''}
+
+      ${uncomposed.length > 0
+        ? html`<div class="notice warn" style="margin-top:14px">
+            <div>
+              <b>${uncomposed.length} famil${uncomposed.length === 1 ? 'y has' : 'ies have'} no system.</b>
+              ${uncomposed.map((entry) => entry.label).join(' · ')}. Absent is not the same as complete.
+            </div>
+          </div>`
+        : ''}
+
+      ${demand.notDerivable.length > 0
+        ? html`<div class="metric-sub" style="margin-top:12px">
+            <b>Cannot be derived yet:</b>
+            ${demand.notDerivable.map((entry) => `${entry.label} (needs ${entry.missing.join(', ')})`).join(' · ')}
+          </div>`
+        : ''}
+    </div>
+  `;
+}
+
+function humaniseKind(kind) {
+  return (
+    {
+      STRANDED_HIRE: 'Stranded hire',
+      PREMATURE_REMOVAL: 'Premature removal',
+      LEAD_TIME_MISSED: 'Lead time already gone',
+    }[kind] ?? kind
+  );
 }
 
 /**

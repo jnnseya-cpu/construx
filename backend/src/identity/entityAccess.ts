@@ -77,6 +77,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // a headcount as commercial-in-confidence would bar the welfare designer from
   // the number the welfare is sized on.
   SiteServiceFact: { area: 'SITE_SERVICES' },
+  // The SBS and its interface matrix. Design records rather than commercial
+  // ones — the people who need them are the ones designing against them.
+  ServiceSystem: { area: 'SITE_SERVICES' },
+  ServiceInterface: { area: 'SITE_SERVICES' },
+  ServiceObservation: { area: 'SITE_SERVICES' },
 
   // Design and information
   Specification: { area: 'DESIGN_INFORMATION' },

@@ -64,6 +64,7 @@ import * as radar from '../domain/radar.ts';
 import * as integrator from '../domain/integrator.ts';
 import * as appointment from '../domain/etablix/appointment.ts';
 import * as brief from '../domain/etablix/brief.ts';
+import * as composer from '../domain/etablix/composer.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
 import * as programmereview from '../domain/programmereview.ts';
@@ -4598,6 +4599,91 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => brief.assumeFact(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/sbs',
+    description:
+      'The system breakdown structure: composed systems with their frozen design basis, the drift since, the interface matrix and the deployment curve',
+    handler: (platform, ctx) => composer.sbs(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/system',
+    description: 'Compose a service system for one family in one zone, freezing its design basis and raising its interfaces',
+    schema: {
+      type: 'object',
+      required: ['family', 'zone', 'fromDate', 'toDate', 'leadDays'],
+      properties: {
+        family: { type: 'string', minLength: 3 },
+        // Zone, because capacity is zone-specific. Two compounds are two
+        // systems with two demand bases, and merging them hides the short one.
+        zone: { type: 'string', minLength: 1 },
+        fromDate: { type: 'string', minLength: 10 },
+        toDate: { type: 'string', minLength: 10 },
+        leadDays: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => composer.composeSystem(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/system/recompose',
+    description: 'Re-freeze a system against the brief as it now stands, keeping the basis it was ordered against',
+    schema: {
+      type: 'object',
+      required: ['systemId', 'reason'],
+      properties: { systemId: { type: 'string', minLength: 6 }, reason: { type: 'string', minLength: 3 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => composer.recomposeSystem(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/interface',
+    description: 'Take an interface, with the person who owns it and the date it is due',
+    schema: {
+      type: 'object',
+      required: ['interfaceId', 'owner', 'dueDate'],
+      properties: {
+        interfaceId: { type: 'string', minLength: 6 },
+        owner: { type: 'string', minLength: 2 },
+        dueDate: { type: 'string', minLength: 10 },
+        counterparty: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => composer.assignInterface(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/interface/accept',
+    description: 'Close an interface, naming what closes it',
+    schema: {
+      type: 'object',
+      required: ['interfaceId', 'note'],
+      properties: { interfaceId: { type: 'string', minLength: 6 }, note: { type: 'string', minLength: 3 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => composer.acceptInterface(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/observation',
+    description: 'Record what a service actually consumed, against the basis it was sized on',
+    schema: {
+      type: 'object',
+      required: ['derivationId', 'observed', 'over', 'source'],
+      properties: {
+        derivationId: { type: 'string', minLength: 3 },
+        observed: { type: 'number', minimum: 0 },
+        over: { type: 'string', minLength: 3 },
+        source: { type: 'string', minLength: 3 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => composer.recordObservation(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'GET',

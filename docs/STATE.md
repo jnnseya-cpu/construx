@@ -12895,3 +12895,101 @@ cost budget (`acuTier`), approval class (`maxUnattended`) and the audit event
 itself. **Not yet carried: the appointment model and the baseline version on
 the finding record**, and the versioned prompt/rule identity — the last needs
 model governance that is a separate piece of work. Stated rather than implied.
+
+
+### Capacity that keeps its working
+
+§4, the Site-Service System Composer, and §4.1, the demand and capacity engine.
+The specification's own sentence is the design: **"the engine stores formulas
+and assumptions, not just final quantities."** A platform that recorded "seven
+WCs" cannot answer the only two questions asked six months later — seven from
+what, and does it still hold.
+
+So nothing in `engines/maths/demand.ts` returns a number. Every calculation
+returns a **derivation**: the formula as a person would check it, every input
+with its value, unit, source and whether it was a fact or an assumption, every
+rate with the basis it rests on, and three capacities rather than one.
+
+#### Three capacities, and resilience by consequence
+
+| Control | What it answers |
+|---|---|
+| Base demand × concurrency × utilisation | Normal operating capacity |
+| Peak factor + planned growth | Peak design capacity |
+| Resilience, N+1 or autonomy hours | Continuity capacity |
+
+The third is the one that changes what gets built. **"Add 15% for resilience"
+is wrong in both directions at once** — it buys a spare canteen nobody needs
+and leaves the potable water on a single tank. Every derivation declares what
+happens *when this service fails*, and the reserve follows:
+
+- **The site stops** (potable water, electrical supply) — N+1 and 48 hours of
+  stored autonomy, enough for a missed delivery and the slot after it.
+- **The site is in breach** (WCs, showers) — one spare unit, so a single failure
+  cannot drop provision below the statutory minimum.
+- **The shift is degraded** (waste, cleaning, gate) — nothing held; a same-day
+  response obligation instead, because duplicating the asset costs more than
+  the loss.
+
+A test asserts the reserves are **not a constant fraction of demand**, which is
+what "not a blanket percentage" has to mean to be checkable.
+
+#### The five calculation controls, with their exceptions
+
+- **Only a total headcount** → concurrency is assumed at 100% and *says so*.
+  The safe assumption and usually the wrong one.
+- **Event peak vs sustained** → a peak lasting two days is managed, not designed
+  for. Sizing permanent welfare to it is hire nobody needed for the other fifty
+  weeks. Unstated is treated as sustained and flagged as the expensive
+  assumption.
+- **Resilience by consequence** — above.
+- **Stranded hire and premature removal** — read from the deployment windows and
+  the physical dependencies between families. The last service off site is not
+  called stranded, because something has to be last.
+- **Observed vs basis** → a reduction is a **proposal with an approval
+  attached**; an increase is an alert that the basis, not the usage, is wrong.
+  The asymmetry is the rule: a design basis is not a forecast corrected downward
+  as the meters come in.
+
+Every rate is a named assumption with a stated basis — 50 litres per person per
+day, 0.7 diversity, 200 m² per cleaning hour, one shower per fifteen — because a
+demand engine whose rates are unexplained magic numbers is a spreadsheet with
+better error handling. The statutory sanitary table now lives once, in the
+demand engine, and `brief.ts` re-exports it.
+
+#### Composing freezes a design basis
+
+The compound was ordered against the numbers as they stood on a particular
+Tuesday, and the brief has not stopped. A `ServiceSystem` carries the
+derivations *as they were when it was composed*, every read re-derives from the
+live brief, and the difference is reported as **drift** — which is the question
+that decides whether an order is still right.
+
+Driven live: welfare composed at 142 concurrent needing 7 WCs; the shift plan
+then moved to 180 and the screen reads *"Sanitary conveniences required: 7 → 10
+WCs (+42.9%). Whatever was ordered against the frozen basis is short."*
+
+Composing also raises the **interface matrix** — one record per non-negotiable
+interface from §4's table, **open and unowned**, each carrying what happens if it
+is never closed. An interface with no owner is the definition of the gap that
+turns up on site, and it has to be visible as a gap rather than absent. Taking
+one needs a person *and* a date together: an owner with no date cannot be late,
+and a date with no owner is nobody's. Closing one needs evidence, because
+"accepted" on its own proves nothing later.
+
+What a brief cannot supply — assets, operating tasks, the supplier package, KPIs
+and cost — is listed per system with the section that fills it, because "assets:
+none" and "assets: not built yet" are opposite statements.
+
+**24 mutations, 22 caught.** One survivor was found by driving it rather than by
+mutation: the reforecast compared a meter reading against the **live**
+re-derivation, so the variance moved every time the brief did. Against a basis
+that had grown, 4,000 litres read as 60% below; against the frozen basis it is
+44%, and only the second is what "observed versus basis" means. Fixed, and the
+fix is pinned by a mutation of its own.
+
+The two remaining survivors are the pair of ordering guards in `factsFor` —
+excluding superseded records, and taking the later ULID. Each is individually
+redundant given the other, because `list` sorts by refId; both are kept because
+each is a rule that is true independently of how the ledger happens to order a
+result. Stated rather than claimed as tested.

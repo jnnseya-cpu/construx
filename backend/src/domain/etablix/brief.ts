@@ -2,6 +2,7 @@ import { DomainError } from '../../core/errors.ts';
 import { ulid } from '../../core/ids.ts';
 import { authorise, write, type EngineContext } from '../../engines/context.ts';
 import { requireModule } from '../../identity/modules.ts';
+import { statutoryWcs } from '../../engines/maths/demand.ts';
 
 /**
  * §3 — the Customer Brief Intelligence Gateway, for site services.
@@ -156,6 +157,48 @@ export const BRIEF_ITEMS: readonly BriefItem[] = [
     question: 'How many visitors, deliveries drivers and inspectors come through the gate on a busy day?',
     changes: ['CAPACITY', 'RISK'],
     provisionalBasis: '10% of the peak workforce, which is typical for a project of this shape.',
+  },
+  {
+    id: 'peakDurationDays',
+    family: 'WELFARE_ACCOMMODATION',
+    label: 'How long the peak lasts',
+    unit: 'consecutive days',
+    decides:
+      'Whether the peak is designed for or managed. A two-day peak sized into permanent welfare is hire nobody needed for the other fifty weeks.',
+    question: 'How many consecutive days does the workforce sit at its peak?',
+    changes: ['CAPACITY', 'COST'],
+    provisionalBasis: 'Sustained, which is the expensive assumption and the one that never leaves anybody short.',
+  },
+  {
+    id: 'plannedGrowthPercent',
+    family: 'WELFARE_ACCOMMODATION',
+    label: 'Planned growth above the current peak',
+    unit: '%',
+    decides: 'The peak design capacity, and therefore what has to be ordered rather than added later at a premium.',
+    question: 'How much growth above today’s peak should the design carry, and on what basis?',
+    changes: ['CAPACITY', 'COST', 'SEQUENCE'],
+    provisionalBasis: '10%, which absorbs an ordinary programme change and not a scope one.',
+  },
+  {
+    id: 'connectedLoadKva',
+    family: 'TEMPORARY_MEP',
+    label: 'Connected electrical load',
+    unit: 'kVA',
+    decides:
+      'The maximum demand once diversity is applied, and whether a stated demand figure was derived from anything.',
+    question: 'What is the total connected load of the cabins, welfare, workshops and site plant?',
+    changes: ['CAPACITY', 'COST'],
+    provisionalBasis: 'Derived from the cabin and welfare schedule at published unit loads.',
+  },
+  {
+    id: 'foulTankCapacityM3',
+    family: 'TEMPORARY_MEP',
+    label: 'Foul storage capacity',
+    unit: 'm³',
+    decides: 'How often a tanker must attend, and whether the achievable interval keeps up with it.',
+    question: 'What foul storage is on site, and what is its working capacity?',
+    changes: ['CAPACITY', 'RISK'],
+    provisionalBasis: 'None, until a foul strategy exists.',
   },
   {
     id: 'operatingHours',
@@ -774,26 +817,14 @@ export type BriefConflict = {
 };
 
 /**
- * The statutory minimum number of WCs for a given number of people.
+ * The statutory minimum number of WCs, re-exported from the demand engine.
  *
- * Workplace (Health, Safety and Welfare) Regulations 1992, Schedule 1, Table 1,
- * for mixed use where separate facilities are not provided: 1–5 people one
- * convenience, then one more at 25, 50, 75 and 100, and one for every 25 people
- * or part thereof beyond that.
- *
- * A real rule with a citation, not a rule of thumb — this is the number an
- * inspector arrives with, and a platform that invented its own would be wrong
- * in the one conversation it exists to be right in.
+ * The rule lives once, in `engines/maths/demand.ts`, because two copies of a
+ * statutory table are two chances to be wrong in the one conversation this
+ * platform exists to be right in. Re-exported here so the conflict checks below
+ * read it from the module they belong to rather than reaching across.
  */
-export function statutoryWcs(persons: number): number {
-  if (persons <= 0) return 0;
-  if (persons <= 5) return 1;
-  if (persons <= 25) return 2;
-  if (persons <= 50) return 3;
-  if (persons <= 75) return 4;
-  if (persons <= 100) return 5;
-  return 5 + Math.ceil((persons - 100) / 25);
-}
+export { statutoryWcs };
 
 /**
  * Every cross-check the recorded facts allow.
