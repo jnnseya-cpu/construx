@@ -2,6 +2,7 @@ import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { today as todayIso } from '../lib/enums.js';
 import { badge, date, html, humanise, positionReport, raw, render, statusTone, table, toast } from '../lib/ui.js';
+import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -208,6 +209,13 @@ export async function construction(root) {
           ]))}
         </div>
       </div>
+      <!--
+        The agents that watch this area, at the point somebody is looking at the
+        number they are about. The machinery was built and reachable only from
+        the autopilot queue — the screen a person opens once they have already
+        decided to look at what the fleet found, which is exactly backwards.
+      -->
+      <div id="construction-insight" style="margin-bottom:14px"></div>
 
       <div class="grid g4" style="margin-bottom:14px">
         <div>
@@ -853,6 +861,13 @@ export async function construction(root) {
       transform: ({ ncrId: _ncrId, ...rest }) => rest,
     },
   };
+
+  void insightPanel(root.querySelector('#construction-insight'), {
+    projectId,
+    areas: ['SAFETY_RAMS', 'QUALITY_COMMISSIONING', 'FIELD_EXECUTION'],
+    subject: 'the site registers',
+    onChange: draw,
+  });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

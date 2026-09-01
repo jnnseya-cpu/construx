@@ -12439,3 +12439,52 @@ whether the line goes under and roughly when.
 holds a composition-over-time series. The nearest candidate — several resources'
 demand across the same weeks — is in different units, and stacking gangs on
 cranes would produce a total that means nothing. Named here rather than forced.
+
+
+### The agent fleet, at the point somebody is looking at the number
+
+The fleet was already built — **58 agents, 49 deployed**, across nine divisions.
+What was missing was reach: the insight panel sat on **10 of 52 console
+screens**, and everywhere else the only way to see what the agents found was the
+autopilot queue, which is the screen a person opens once they have *already*
+decided to look. That is backwards, and it is why a large fleet felt absent.
+
+Three screens gained the panel — the three with agent coverage and no way to see
+it:
+
+| Screen | Areas | What watches it |
+|---|---|---|
+| Concept | `BUDGET_COST`, `PROJECT_SETUP` | the cost-plan agents |
+| Construction | `SAFETY_RAMS`, `QUALITY_COMMISSIONING`, `FIELD_EXECUTION` | the HSEQ and field agents |
+| Pipeline & Bids | `BUSINESS_DEVELOPMENT`, `ESTIMATE_TENDER` | the 16-agent bid engine, which had no screen of its own at all |
+
+#### A panel that always showed an error
+
+Driving the Concept screen surfaced a 404 on every load:
+`GET /concept/options/sensitivity` was called with no criterion, and the handler
+refused an unnamed one — so a working panel reported an error on a project with
+nothing wrong with it.
+
+Naming no criterion now means *vary the one that matters most*, which is the
+**heaviest-weighted** one. Refusing an unspecified question is right only where
+there is no sensible default, and here there is an obvious one: the criterion
+carrying most of the decision is both the first test anybody runs by hand and
+the one most likely to flip the answer. It is weighted **by sum across every
+scored option, not by the highest single weight** — a criterion at 0.8 on one
+option and 0.05 on two others carries less of the decision than one at 0.5 on
+two of three. The result already names what it varied, so nothing is guessed at
+by the reader. A criterion nobody scored is still refused.
+
+The first fixture could not catch either mistake: its heaviest criterion was
+also the first in the list *and* the per-option maximum. A three-option fixture
+where the two rules disagree kills all three mutations.
+
+#### The remaining gap, named
+
+**14 of 25 capability areas have no agent proposing into them** —
+`QUALITY_COMMISSIONING`, `CHANGE_VARIATION`, `PAYMENT_APPLICATIONS`,
+`LOOKAHEAD_CONSTRAINTS`, `WORKPACKAGES_TASKS`, `DESIGN_INFORMATION`,
+`SUPPLIER_SUBMISSION`, `BOQ_TAKEOFF`, `EVIDENCE_AUDIT` among them. The panel is
+fitted on every screen where a fleet exists to fill it; the areas above would
+need agents built before a panel there would be anything but an empty box, and
+an empty panel on a screen nothing watches is worse than none.

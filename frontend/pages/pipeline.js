@@ -1,6 +1,7 @@
 import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, table, toast } from '../lib/ui.js';
+import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, openProject, phaseGates, state } from '../app.js';
 
 /**
@@ -483,6 +484,13 @@ export async function pipeline(root) {
           )}
         </div>
       </div>
+      <!--
+        The agents that watch this area, at the point somebody is looking at the
+        number they are about. The machinery was built and reachable only from
+        the autopilot queue — the screen a person opens once they have already
+        decided to look at what the fleet found, which is exactly backwards.
+      -->
+      <div id="pipeline-insight" style="margin-bottom:14px"></div>
 
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Invitations in hand</h2>
@@ -1048,6 +1056,13 @@ export async function pipeline(root) {
       open.disabled = false;
       open.textContent = 'Open';
     }
+  });
+
+  void insightPanel(root.querySelector('#pipeline-insight'), {
+    projectId,
+    areas: ['BUSINESS_DEVELOPMENT', 'ESTIMATE_TENDER'],
+    subject: 'the pipeline and what to bid',
+    onChange: draw,
   });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {

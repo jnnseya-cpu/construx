@@ -104,6 +104,23 @@ export type SensitivityResult = {
   rankChanged: boolean;
 };
 
+/**
+ * The criterion carrying the most weight across every scored option.
+ *
+ * Summed rather than maximum: a criterion weighted 0.4 on one option and 0.05
+ * on three others carries less of the decision than one weighted 0.2 on all
+ * four, and the maximum would pick the first.
+ */
+function heaviestCriterion(scored: OptionState[]): string {
+  const weight = new Map<string, number>();
+  for (const option of scored) {
+    for (const score of option.scores) {
+      weight.set(score.criterion, (weight.get(score.criterion) ?? 0) + score.weight);
+    }
+  }
+  return [...weight.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0] ?? '';
+}
+
 function optionsOf(ctx: EngineContext): OptionState[] {
   return ctx.ledger.list(ctx.projectId, 'FeasibilityOption').map((r) => r.state as unknown as OptionState);
 }
@@ -401,7 +418,7 @@ export function compareOptions(ctx: EngineContext): Comparison {
  */
 export function sensitivity(
   ctx: EngineContext,
-  input: { criterion: string; changePercent: number },
+  input: { criterion?: string; changePercent: number },
 ): SensitivityResult {
   authorise(ctx, 'PROJECT_SETUP', 'R');
 
@@ -413,8 +430,24 @@ export function sensitivity(
   if (scored.length === 0) {
     throw new DomainError('NOTHING_TO_TEST', 'No option has been analysed', 409);
   }
-  if (!scored.some((o) => o.scores.some((s) => s.criterion === input.criterion))) {
-    throw new DomainError('NO_SUCH_CRITERION', `No option is scored against "${input.criterion}"`, 404);
+  // Naming no criterion means "vary the one that matters most", which is the
+  // heaviest-weighted. It used to mean a 404: the console asked this question
+  // with no criterion on every load and got "No option is scored against \"\""
+  // every time, so a working panel showed an error on a project that had
+  // nothing wrong with it. Refusing to answer an unspecified question is only
+  // right when there is no sensible default, and here there is an obvious one —
+  // the criterion carrying the most weight is the one most likely to flip the
+  // answer, and it is the first test anybody runs by hand.
+  //
+  // The result already carries `variable`, so what was varied is never guessed
+  // at by the reader.
+  const criterion =
+    input.criterion && input.criterion.trim()
+      ? input.criterion.trim()
+      : heaviestCriterion(scored);
+
+  if (!scored.some((o) => o.scores.some((s) => s.criterion === criterion))) {
+    throw new DomainError('NO_SUCH_CRITERION', `No option is scored against "${criterion}"`, 404);
   }
 
   const baseline = [...scored].sort((a, b) => weightedScore(b) - weightedScore(a))[0]?.reference;
@@ -424,14 +457,14 @@ export function sensitivity(
     reference: o.reference,
     score: Number(
       o.scores
-        .reduce((sum, s) => sum + (s.criterion === input.criterion ? s.rawValue * factor : s.rawValue) * s.weight, 0)
+        .reduce((sum, s) => sum + (s.criterion === criterion ? s.rawValue * factor : s.rawValue) * s.weight, 0)
         .toFixed(4),
     ),
   }));
   const leader = [...varied].sort((a, b) => b.score - a.score)[0]?.reference;
 
   return {
-    variable: input.criterion,
+    variable: criterion,
     changePercent: input.changePercent,
     scoresByOption: Object.fromEntries(varied.map((v) => [v.reference, v.score])),
     rankChanged: leader !== baseline,

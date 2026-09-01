@@ -1223,6 +1223,80 @@ describe('C-WF-04 — feasibility options and option selection', () => {
     const big = conceptoptions.sensitivity(as('pm'), { criterion: 'CAPITAL_COST', changePercent: -100 });
     assert.equal(big.rankChanged, true);
     assert.equal(big.scoresByOption['OPT-B'], 4.8);
+
+    // Naming no criterion varies the heaviest-weighted one, which here is
+    // capital cost at 0.4 against operability's 0.35 and carbon's 0.25.
+    //
+    // It used to be a 404, and the console asked exactly this question on every
+    // load: a working panel showed an error on a project with nothing wrong
+    // with it. Refusing an unspecified question is only right where there is no
+    // sensible default, and the criterion carrying most of the decision is both
+    // the obvious one and the one most likely to flip the answer.
+    const defaulted = conceptoptions.sensitivity(as('pm'), { changePercent: -100 });
+    assert.equal(defaulted.variable, 'CAPITAL_COST', 'the heaviest-weighted criterion');
+    assert.deepEqual(defaulted, big, 'and it is the same test, named rather than guessed');
+
+    // An empty string is the same as saying nothing, because that is what the
+    // query string produces when the parameter is absent.
+    assert.equal(conceptoptions.sensitivity(as('pm'), { criterion: '  ', changePercent: -100 }).variable, 'CAPITAL_COST');
+
+    // A criterion nobody scored is still refused: that is a question with an
+    // answer of "you asked about something that is not here", which is not the
+    // same as asking nothing.
+    throwsCode(
+      () => conceptoptions.sensitivity(as('pm'), { criterion: 'BUILDABILITY', changePercent: -10 }),
+      'NO_SUCH_CRITERION',
+    );
+  });
+
+  it('defaults to the criterion carrying most of the decision, not the loudest one', () => {
+    // Three options, and the two candidate rules give different answers.
+    //
+    //   criterion   weights            sum    highest single
+    //   SPIKE       0.80, 0.05, 0.05   0.90   0.80
+    //   STEADY      0.10, 0.50, 0.50   1.10   0.50
+    //
+    // A criterion weighted 0.8 on one option and next to nothing on the other
+    // two carries less of the decision than one weighted half on two of three.
+    // Picking by the highest single weight — or by whichever criterion happens
+    // to be listed first, which is also SPIKE here — answers a different
+    // question from the one the panel is asking.
+    const shape = {
+      description: 'x',
+      assumptions: ['a'],
+      exclusions: [],
+      baseDate: iso(0),
+      currency: 'GBP',
+      orderOfCostMinor: 180_000_000,
+      costLowMinor: 160_000_000,
+      costHighMinor: 220_000_000,
+      durationDaysLow: 500,
+      durationDaysMostLikely: 600,
+      durationDaysHigh: 780,
+    };
+    const weights = [
+      { ref: 'OPT-P', spike: 0.8, steady: 0.1, other: 0.1 },
+      { ref: 'OPT-Q', spike: 0.05, steady: 0.5, other: 0.45 },
+      { ref: 'OPT-R', spike: 0.05, steady: 0.5, other: 0.45 },
+    ];
+    for (const w of weights) {
+      const created = conceptoptions.createOption(as('admin'), {
+        ...shape,
+        reference: w.ref,
+        name: w.ref,
+        scopeStatement: 'Existing retained',
+      });
+      conceptoptions.analyseOption(as('pm'), {
+        optionId: created.optionId,
+        scores: [
+          { criterion: 'SPIKE', rawValue: 6, weight: w.spike, basis: 'Benchmark' },
+          { criterion: 'STEADY', rawValue: 5, weight: w.steady, basis: 'Operator assessment' },
+          { criterion: 'OTHER', rawValue: 4, weight: w.other, basis: 'PAS 2080' },
+        ],
+      });
+    }
+
+    assert.equal(conceptoptions.sensitivity(as('pm'), { changePercent: -10 }).variable, 'STEADY');
   });
 
   it('links the selected option to the brief baseline hash it was chosen against', () => {

@@ -1,6 +1,7 @@
 import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { badge, html, humanise, money, pct, positionReport, raw, render, table, toast } from '../lib/ui.js';
+import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -123,6 +124,13 @@ export async function concept(root) {
           )}
         </div>
       </div>
+      <!--
+        The agents that watch this area, at the point somebody is looking at the
+        number they are about. The machinery was built and reachable only from
+        the autopilot queue — the screen a person opens once they have already
+        decided to look at what the fleet found, which is exactly backwards.
+      -->
+      <div id="concept-insight" style="margin-bottom:14px"></div>
 
       ${gate ? gateBand(gate) : ''}
 
@@ -485,6 +493,13 @@ export async function concept(root) {
       ],
     },
   };
+
+  void insightPanel(root.querySelector('#concept-insight'), {
+    projectId,
+    areas: ['BUDGET_COST', 'PROJECT_SETUP'],
+    subject: 'the concept and its cost plan',
+    onChange: draw,
+  });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
