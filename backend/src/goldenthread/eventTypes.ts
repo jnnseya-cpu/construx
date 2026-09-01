@@ -367,6 +367,13 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('ACTIVITY_ATTRIBUTES_SET', 'Task', 'UPDATE', 'PROJECT_CONTROL'),
   def('ACTIVITY_STATUS_RECORDED', 'Task', 'UPDATE', 'PROJECT_CONTROL'),
   def('SCHEDULE_RUN', 'ScheduleRun', 'CREATE', 'PROJECT_CONTROL'),
+  // Resources: what the programme needs and how much of it there is. The
+  // availability limit is a statement about the business, so it is recorded
+  // rather than assumed, and levelling is computed from it rather than stored.
+  def('RESOURCE_DEFINED', 'Resource', 'CREATE', 'PROJECT_CONTROL'),
+  def('RESOURCE_UPDATED', 'Resource', 'UPDATE', 'PROJECT_CONTROL'),
+  def('RESOURCE_ASSIGNED', 'ResourceAssignment', 'CREATE', 'PROJECT_CONTROL'),
+  def('RESOURCE_UNASSIGNED', 'ResourceAssignment', 'UPDATE', 'PROJECT_CONTROL'),
   // Reviewing the programme. The comment is a governance record — it is what a
   // party will point at in an adjudication — so no agent may raise or answer one.
   def('PROGRAMME_REVIEW_OPENED', 'ProgrammeReview', 'ISSUE', 'PROJECT_CONTROL', { creates: true }),

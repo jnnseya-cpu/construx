@@ -328,14 +328,34 @@ export function ganttChart({ bars, dataDate, rowHeight = 20, empty = 'Nothing sc
  * actually produced; nothing is fitted, because a fitted curve puts probability
  * on outcomes the model never generated.
  *
+ * Also draws a **limit line** where the caller has one — a resource
+ * availability, a consent threshold. A demand curve without the line it is
+ * being judged against is a picture of some bars: the reader cannot tell a
+ * comfortable week from an impossible one, which is the only question they came
+ * with. Bars above the line mark themselves, so the overrun reads at a glance
+ * rather than by comparing heights against an axis.
+ *
  * @param {object} options
  * @param {Array<{ label: string, count: number, marked?: boolean }>} options.buckets
  * @param {string} [options.markLabel] What a marked bucket means — a P80 date, say.
+ * @param {number} [options.limit] Draw a line here, and mark every bar above it.
+ * @param {string} [options.limitLabel] What the line is.
  */
-export function histogram({ buckets, markLabel = '', empty = 'Nothing simulated yet' }) {
+export function histogram({
+  buckets,
+  markLabel = '',
+  limit,
+  limitLabel = '',
+  empty = 'Nothing simulated yet',
+  // The second line of the empty state. A parameter because this chart started
+  // as the Monte Carlo one and now draws resource demand too: "once the
+  // simulation has been run" is wrong on a labour histogram, and an empty state
+  // that explains the wrong thing is worse than one that explains nothing.
+  emptyDetail = 'A distribution appears once the simulation has been run.',
+}) {
   const rows = (buckets ?? []).filter((bucket) => Number.isFinite(bucket.count));
   if (rows.length === 0) {
-    return html`<div class="empty"><b>${empty}</b>A distribution appears once the simulation has been run.</div>`;
+    return html`<div class="empty"><b>${empty}</b>${emptyDetail}</div>`;
   }
 
   const width = 720;
@@ -343,7 +363,11 @@ export function histogram({ buckets, markLabel = '', empty = 'Nothing simulated 
   const pad = { top: 10, right: 10, bottom: 30, left: 40 };
   const plotW = width - pad.left - pad.right;
   const plotH = height - pad.top - pad.bottom;
-  const highest = Math.max(...rows.map((bucket) => bucket.count), 1);
+  // The limit is part of the range even where nothing reaches it: a chart scaled
+  // to the bars alone puts the line off the top and reports a comfortable week
+  // as a crisis, or off the bottom and hides one.
+  const hasLimit = Number.isFinite(limit);
+  const highest = Math.max(...rows.map((bucket) => bucket.count), hasLimit ? limit : 0, 1);
   const axis = ticks(highest);
   const ceiling = Math.max(axis[axis.length - 1], 1);
   const barW = plotW / rows.length;
@@ -358,9 +382,10 @@ export function histogram({ buckets, markLabel = '', empty = 'Nothing simulated 
 
   rows.forEach((bucket, index) => {
     const h = (bucket.count / ceiling) * plotH;
+    const over = hasLimit && bucket.count > limit;
     svg.push(
       `<rect x="${pad.left + index * barW + 1}" y="${pad.top + plotH - h}" width="${Math.max(1, barW - 2)}" height="${h}" class="hist-bar ${
-        bucket.marked ? 'marked' : ''
+        bucket.marked || over ? 'marked' : ''
       }"/>`,
     );
     if (index % every === 0) {
@@ -372,9 +397,23 @@ export function histogram({ buckets, markLabel = '', empty = 'Nothing simulated 
     }
   });
 
+  if (hasLimit) {
+    const y = pad.top + plotH - (limit / ceiling) * plotH;
+    svg.push(
+      `<line x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}" class="hist-limit"/>`,
+    );
+  }
+
   return html`<div class="chart">
     <svg viewBox="0 0 ${raw(width)} ${raw(height)}" role="img" aria-label="Distribution">${raw(svg.join(''))}</svg>
-    ${markLabel ? html`<div class="chart-key"><span><i class="hist-key-marked"></i>${markLabel}</span></div>` : ''}
+    ${
+      markLabel || (hasLimit && limitLabel)
+        ? html`<div class="chart-key">
+            ${markLabel ? html`<span><i class="hist-key-marked"></i>${markLabel}</span>` : ''}
+            ${hasLimit && limitLabel ? html`<span><i class="hist-key-limit"></i>${limitLabel}</span>` : ''}
+          </div>`
+        : ''
+    }
   </div>`;
 }
 

@@ -12125,8 +12125,8 @@ data-date line, no `NaN` in any attribute and no page errors.
 
 #### Still not built
 
-Resources and levelling, and activity codes as a grouping dimension. The charts
-remain fitted to two panels rather than across the console.
+Activity codes as a grouping dimension. The charts remain fitted to a handful of
+panels rather than across the console.
 
 
 ### Multiple float paths, and what is actually holding each activity
@@ -12230,3 +12230,82 @@ five of the fix, all fourteen caught**. Driven over HTTP end to end — run, iss
 three comments of three kinds, two dispositions, the refusal to close over an
 unanswered comment — and **read in a browser**, where the register shows five
 named people, one objector, four silent, and "of 5 invited".
+
+
+### Resources, the histogram and levelling
+
+`engines/maths/resources.ts` and `domain/resources.ts`, with a route, a door and
+a panel on Programme.
+
+A critical path assumes infinite resource. It will put two pours side by side
+that need the same gang and report a date nobody on site can hit — which is why
+the resource histogram is the second thing any planner opens after the Gantt.
+
+Three things kept deliberately separate, because merging them is how a resource
+tool comes to lie:
+
+- **The histogram** is demand against availability, and it **never smooths the
+  curve to the limit**. A demand line drawn at the availability line is a
+  programme made to *look* achievable rather than made achievable, and the person
+  it fools is whoever has to build it. Availability is a limit, not a plan.
+- **Levelling** delays work into its own float until the demand fits. It never
+  moves an activity past its late finish: levelling inside float rearranges work,
+  levelling beyond it changes the completion date, and that is a commercial
+  decision rather than an arithmetic one.
+- **What levelling could not fix** is the answer that matters. A leveller that
+  always succeeds has either extended the programme without saying so or lifted
+  the limit. What will not fit is reported with the number of days it would take,
+  and placed at its late start anyway — over the limit — because dropping it
+  would understate every resource day after it.
+
+Two further decisions stated rather than buried:
+
+- **Demand is counted on each activity's own calendar.** A cure on a seven-day
+  calendar puts demand on a Saturday and a pour on a five-day one does not.
+  Rolling both onto one project calendar either invents weekend labour or hides
+  it, and those are the two ways a resource histogram lies.
+- **The priority rule is published** — least total float first, then earliest
+  start, then id. Two levellers with different priority rules give different
+  programmes from the same inputs, and a tool that will not say which it used has
+  made the choice on the planner's behalf.
+
+The console histogram is **weekly and carries the peak inside each week, not the
+average**: an average smooths away the Tuesday that needs three gangs, which is
+the only day on that bar anybody can act on. The chart component gained a
+**limit line** — a demand curve without the line it is judged against is a
+picture of some bars, and the reader cannot tell a comfortable week from an
+impossible one.
+
+#### Two defects found by running it, not by testing it
+
+**Started work was competing for its own resource.** Activities with an actual
+start sat in the same priority queue as everything else, so an unstarted activity
+sorted ahead of one already under way could be given the days that work was
+physically using. Started and complete work is now committed *first* and the rest
+of the programme arranged around it — levelling an actual date would be rewriting
+history to make an arithmetic problem go away.
+
+**A forced placement read as a success.** An activity that would not fit inside
+its float appeared in both `levelled` and `unresolved`, so a programme that had
+not levelled looked as though it had. Forced placements now appear only in
+`unresolved`, carrying `placedAt`.
+
+**Verified**: 11 engine tests and 6 domain tests on hand-worked dates, **seven
+mutations all caught**. Driven over HTTP and read in a browser on the flagship
+project: 45 weekly bars, 15 of them over the line, the dashed availability line
+drawn, no `NaN` in any attribute, and one activity reported as unfittable with 50
+days of float and 70 days of shortfall behind it.
+
+Two rendering defects the browser caught and no test would have: the histogram's
+empty state read *"A distribution appears once the simulation has been run"* on a
+labour chart — a Monte Carlo assumption left in a component that now draws two
+different things — and the crane with no demand needed an empty state that said
+it was defined and unused rather than one that explained nothing.
+
+#### Where this deliberately stops
+
+Resource **cost** is recorded (`dayRateMinor`) and not yet rolled into a
+resource-loaded cost curve; the cash-flow model is built from the commercial
+records instead. Levelling smooths against availability and does not attempt
+resource **smoothing to a target profile**, which is a different problem and one
+no measured requirement here calls for.

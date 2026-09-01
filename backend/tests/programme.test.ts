@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import * as programme from '../src/domain/programme.ts';
+import * as resources from '../src/domain/resources.ts';
 import * as planning from '../src/engines/planning.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -555,5 +556,119 @@ describe('what drives the date next', () => {
     const view = programme.programmeView(planner(), '2026-06-01');
     assert.deepEqual(view.floatPaths, []);
     assert.match(view.summary, /No activities have been created/);
+  });
+});
+
+// ── Resources ───────────────────────────────────────────────────────────────
+
+describe('what the programme needs and whether it can be had', () => {
+  it('reports demand against availability and what levelling cannot fix', async () => {
+    // Two three-day activities, one gang between them, and no chain to give
+    // either any float. There is no arrangement that fits, and saying so is the
+    // whole point — a leveller that always succeeds has either extended the
+    // programme without saying so or lifted the limit.
+    const { planner } = await project();
+    const [a, b] = planning.createTasks(planner(), [
+      { activityCode: 'A100', name: 'Pour bay 1', workPackageId: 'wp-1', durationDays: 3 },
+      { activityCode: 'A200', name: 'Pour bay 2', workPackageId: 'wp-1', durationDays: 3 },
+    ]);
+    resources.defineResource(planner(), {
+      id: 'gang',
+      name: 'Concrete gang',
+      type: 'LABOUR',
+      unit: 'gang',
+      availablePerDay: 1,
+    });
+    resources.assignResource(planner(), { taskId: a!, resourceId: 'GANG', unitsPerDay: 1 });
+    resources.assignResource(planner(), { taskId: b!, resourceId: 'GANG', unitsPerDay: 1 });
+
+    const position = resources.resourcePosition(planner(), '2026-06-01');
+    assert.equal(position.resources.length, 1);
+    assert.equal(position.resources[0]!.assignedActivities, 2);
+    assert.equal(position.activitiesWithResource, 2);
+
+    const profile = position.profiles[0]!;
+    assert.equal(profile.peakDemand, 2, 'two gangs wanted where there is one');
+    assert.equal(profile.overallocatedDays, 3);
+    assert.equal(profile.shortfallUnitDays, 3);
+    // Weekly, and the peak inside the week rather than its average: an average
+    // hides the day that needs two gangs, which is the only day anybody has to
+    // do something about.
+    assert.deepEqual(profile.weeks, [{ weekStarting: '2026-06-01', peak: 2, available: 1, over: 1 }]);
+
+    assert.equal(position.levelling!.fits, false);
+    assert.equal(position.levelling!.unresolved.length, 1);
+    assert.match(position.summary, /will not fit however they are moved/);
+    assert.match(position.summary, /commercial decision and not an arithmetic one/);
+  });
+
+  it('tells a programme with no resources from one that fits', async () => {
+    // A project nobody has resourced and a project that resources cleanly both
+    // show an empty overallocation table, and only one of them is finished.
+    const { planner } = await project();
+    planning.createTasks(planner(), [
+      { activityCode: 'A100', name: 'Excavate', workPackageId: 'wp-1', durationDays: 3 },
+    ]);
+    const before = resources.resourcePosition(planner(), '2026-06-01');
+    assert.deepEqual(before.profiles, []);
+    assert.match(before.summary, /still assuming there is enough of everything/);
+
+    resources.defineResource(planner(), { id: 'gang', name: 'Gang', type: 'LABOUR', unit: 'gang', availablePerDay: 2 });
+    const after = resources.resourcePosition(planner(), '2026-06-01');
+    assert.equal(after.profiles.length, 1, 'a resource nothing asks for is still reported');
+    assert.match(after.summary, /Every resource fits what is available/);
+  });
+
+  it('refuses an assignment to a resource that does not exist', async () => {
+    const { planner } = await project();
+    const [a] = planning.createTasks(planner(), [
+      { activityCode: 'A100', name: 'Excavate', workPackageId: 'wp-1', durationDays: 3 },
+    ]);
+    const error = throwsCode(
+      () => resources.assignResource(planner(), { taskId: a!, resourceId: 'NOBODY', unitsPerDay: 1 }),
+      'RESOURCE_NOT_FOUND',
+    );
+    assert.match(String(error.message), /no limit to compare against/);
+  });
+
+  it('refuses a resource with none of it available', async () => {
+    // Different from not having recorded a limit: zero available makes every
+    // activity that needs it unschedulable, which is a statement rather than a
+    // gap, and it should have to be made deliberately somewhere else.
+    const { planner } = await project();
+    throwsCode(
+      () => resources.defineResource(planner(), { id: 'gang', name: 'Gang', type: 'LABOUR', unit: 'gang', availablePerDay: 0 }),
+      'RESOURCE_AVAILABILITY_REQUIRED',
+    );
+  });
+
+  it('takes a resource off an activity rather than recording a demand of nothing', async () => {
+    // A zero row in a demand table reads as "checked, needs none" when what
+    // happened was somebody removing it.
+    const { planner } = await project();
+    const [a] = planning.createTasks(planner(), [
+      { activityCode: 'A100', name: 'Excavate', workPackageId: 'wp-1', durationDays: 3 },
+    ]);
+    resources.defineResource(planner(), { id: 'gang', name: 'Gang', type: 'LABOUR', unit: 'gang', availablePerDay: 1 });
+    resources.assignResource(planner(), { taskId: a!, resourceId: 'GANG', unitsPerDay: 1 });
+    const removal = resources.assignResource(planner(), { taskId: a!, resourceId: 'GANG', unitsPerDay: 0 });
+    assert.equal(removal.removed, true);
+
+    const position = resources.resourcePosition(planner(), '2026-06-01');
+    assert.equal(position.resources[0]!.assignedActivities, 0);
+    assert.equal(position.activitiesWithResource, 0);
+    assert.deepEqual(position.profiles[0]!.weeks, []);
+  });
+
+  it('refuses a resource to a role that cannot change the programme', async () => {
+    const { platform, seed, projectId } = await project();
+    const qs = platform.context(seed.users.qs!.auth, projectId, { source: 'WEB' });
+    throwsCode(
+      () => resources.defineResource(qs, { id: 'gang', name: 'Gang', type: 'LABOUR', unit: 'gang', availablePerDay: 1 }),
+      'ACCESS_DENIED',
+    );
+    // But they may read it: resourcing is everybody's problem to see and the
+    // planner's to change.
+    assert.ok(resources.resourcePosition(qs, '2026-06-01'));
   });
 });

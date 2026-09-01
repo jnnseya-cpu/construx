@@ -309,7 +309,7 @@ export function recordActivityStatus(
 // --- Running the schedule -----------------------------------------------------
 
 /** What the network looks like to the scheduler. */
-function loadProgramme(ctx: EngineContext): {
+export function loadProgramme(ctx: EngineContext): {
   activities: ScheduleActivity[];
   relationships: ScheduleRelationship[];
 } {
@@ -486,6 +486,33 @@ export function runSchedule(
 
 // --- Reading it ---------------------------------------------------------------
 
+/**
+ * The options the programme is scheduled under, live.
+ *
+ * The last run's own options carried forward with the data date moved, so a
+ * live read answers the same question the planner last asked rather than a
+ * default one. Extracted because the resource position needs exactly this and a
+ * second copy would silently level against different settings from the ones the
+ * Gantt was drawn with.
+ */
+export function scheduleOptionsFor(ctx: EngineContext, asAt?: string): ScheduleOptions {
+  const last = ctx.ledger
+    .list(ctx.projectId, 'ScheduleRun')
+    .map((record) => record.state as Record<string, unknown>)
+    .sort((a, b) => String(a.ranAt).localeCompare(String(b.ranAt)))
+    .pop();
+  const dataDate = (asAt ?? (last?.options as ScheduleOptions | undefined)?.dataDate ?? new Date().toISOString()).slice(0, 10);
+  return {
+    ...((last?.options as ScheduleOptions | undefined) ?? {
+      outOfSequence: 'RETAINED_LOGIC' as const,
+      lagCalendar: 'PREDECESSOR' as const,
+      defaultCalendarId: STANDARD_CALENDAR.id,
+      projectStart: dataDate,
+    }),
+    dataDate,
+  };
+}
+
 export type ProgrammeView = {
   /** The last run, or nothing where the programme has never been scheduled. */
   lastRun?: { runId: string; ranAt: string; options: ScheduleOptions; finishDate: string; remainingDurationDays: number };
@@ -616,16 +643,7 @@ export function programmeView(ctx: EngineContext, asAt?: string): ProgrammeView 
     };
   }
 
-  const dataDate = (asAt ?? (last?.options as ScheduleOptions | undefined)?.dataDate ?? new Date().toISOString()).slice(0, 10);
-  const options: ScheduleOptions = {
-    ...(last?.options as ScheduleOptions | undefined ?? {
-      outOfSequence: 'RETAINED_LOGIC' as const,
-      lagCalendar: 'PREDECESSOR' as const,
-      defaultCalendarId: STANDARD_CALENDAR.id,
-      projectStart: dataDate,
-    }),
-    dataDate,
-  };
+  const options = scheduleOptionsFor(ctx, asAt);
 
   const result = schedule(activities, relationships, calendarsFor(ctx), options);
   const taskState = new Map(ctx.ledger.list(ctx.projectId, 'Task').map((record) => [record.refId, record.state]));

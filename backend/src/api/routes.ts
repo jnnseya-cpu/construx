@@ -65,6 +65,7 @@ import * as integrator from '../domain/integrator.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
 import * as programmereview from '../domain/programmereview.ts';
+import * as resources from '../domain/resources.ts';
 import * as responsibility from '../domain/responsibility.ts';
 import * as sitecapture from '../domain/sitecapture.ts';
 import * as sitelayout from '../domain/sitelayout.ts';
@@ -4630,6 +4631,47 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => programmereview.closeReview(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/programme/resources',
+    description: 'What the programme needs, what there is, and what levelling cannot fix',
+    handler: (platform, ctx) =>
+      resources.resourcePosition(
+        projectContext(platform, ctx),
+        ctx.query.get('asAt') ? String(ctx.query.get('asAt')) : undefined,
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/resource',
+    description: 'Define a resource and how many of it there are on a working day',
+    schema: {
+      type: 'object',
+      required: ['id', 'name', 'type', 'unit', 'availablePerDay'],
+      properties: {
+        id: stringField,
+        name: stringField,
+        type: { type: 'string', enum: ['LABOUR', 'PLANT', 'MATERIAL', 'SUBCONTRACT'] },
+        unit: stringField,
+        availablePerDay: { type: 'number', minimum: 0 },
+        dayRateMinor: { type: 'number', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => resources.defineResource(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/resource-assignment',
+    description: 'Put a resource on an activity, or take it off with zero',
+    schema: {
+      type: 'object',
+      required: ['taskId', 'resourceId', 'unitsPerDay'],
+      properties: { taskId: stringField, resourceId: stringField, unitsPerDay: { type: 'number', minimum: 0 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => resources.assignResource(projectContext(platform, ctx), body(ctx)),
   },
   // --------------------------------------------- staying between client and panel
   {

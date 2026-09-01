@@ -153,6 +153,8 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   IntermediationPosition: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
   Calendar: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
   ScheduleRun: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
+  Resource: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
+  ResourceAssignment: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
   ProgrammeReview: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
   ProgrammeComment: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
   Task: { area: 'WORKPACKAGES_TASKS' },

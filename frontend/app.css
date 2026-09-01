@@ -786,6 +786,9 @@ input:focus, select:focus, textarea:focus {
 .hist-bar { fill: var(--info); opacity: 0.6; }
 .hist-bar.marked { fill: var(--orange); opacity: 0.95; }
 .chart-key i.hist-key-marked { background: var(--orange); }
+/* The line a demand curve is judged against — an availability, a threshold. */
+.hist-limit { stroke: var(--critical); stroke-width: 1.5; stroke-dasharray: 5 3; }
+.chart-key i.hist-key-limit { background: var(--critical); }
 .wf-total { fill: var(--text-2); }
 .wf-up { fill: var(--info); opacity: 0.75; }
 .wf-down { fill: var(--warning); opacity: 0.8; }
