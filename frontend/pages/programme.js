@@ -178,12 +178,165 @@ function datedPanel(view) {
     </div>`;
 }
 
+/**
+ * Review and comment, for everybody the programme lands on.
+ *
+ * Two things this panel exists to show and no other screen does. A comment is
+ * against a *run*, so it is legible later as an objection to the version it was
+ * made about rather than to "the programme". And silence is shown as silence:
+ * the three participation states are kept apart on screen exactly as the
+ * register keeps them apart, because a party who read it and had no objection
+ * and a party who never opened it are the two facts a deemed-acceptance
+ * argument turns on, and a screen that merges them has decided that argument.
+ */
+function reviewPanel(view) {
+  if (view?.error) {
+    return html`<div class="card" style="margin-bottom:14px">
+      <h2>Review and comment</h2>
+      <p class="metric-sub">This could not be read: ${view.error.message}</p>
+    </div>`;
+  }
+  if (!view) return '';
+
+  const open = view.open;
+  const comments = view.comments ?? [];
+  const forOpen = open ? comments.filter((entry) => entry.reviewId === open.reviewId) : [];
+  const silent = view.participation?.didNotRespond ?? [];
+
+  return html`
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">Review and comment</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">${view.summary ?? ''}</p>
+
+      ${
+        !open
+          ? html`<div style="padding:13px 17px 15px">
+              <div class="notice"><div>
+                No review is open. ${
+                  view.closedReviews > 0
+                    ? `${view.closedReviews} previous review(s) have been closed; their comments and dispositions are in the register below.`
+                    : 'Issue a schedule run for comment to let every party say what they think of it before it becomes the thing they are measured against.'
+                }
+              </div></div>
+            </div>`
+          : html`
+            <div class="grid g4" style="padding:13px 17px 0">
+              <div class="card">
+                <h2>Closes</h2>
+                <div class="metric ${raw(open.daysRemaining < 0 ? 'bad' : open.daysRemaining <= 3 ? 'warn' : '')}">${date(open.closesOn)}</div>
+                <div class="metric-sub">
+                  ${
+                    open.daysRemaining < 0
+                      ? `${Math.abs(open.daysRemaining)} day(s) past its closing date and still open.`
+                      : `${open.daysRemaining} day(s) left to comment.`
+                  }
+                </div>
+              </div>
+              <div class="card">
+                <h2>Comments</h2>
+                <div class="metric">${forOpen.length}</div>
+                <div class="metric-sub">Against run ${open.runId.slice(-6)}, which finished ${date(open.finishDateAtIssue)} as issued.</div>
+              </div>
+              <div class="card">
+                <h2>Unanswered</h2>
+                <div class="metric ${raw(view.unanswered > 0 ? 'warn' : 'good')}">${view.unanswered}</div>
+                <div class="metric-sub">The review cannot be closed while any comment has no disposition against it.</div>
+              </div>
+              <div class="card">
+                <h2>Not responded</h2>
+                <div class="metric ${raw(silent.length > 0 ? 'warn' : '')}">${silent.length}</div>
+                <div class="metric-sub">Of ${open.invitedCount} invited. Not agreement — an absence of one.</div>
+              </div>
+            </div>
+
+            ${
+              open.supersededByLaterRun
+                ? html`<div style="padding:11px 17px 0"><div class="notice warn"><div>
+                    <b>The programme has been rescheduled since this went out.</b> Every comment below was made about
+                    run ${open.runId.slice(-6)}, not about what the Gantt above now shows. Rescheduling deliberately
+                    does not close or move the review — a comment silently reattached to a later version is a comment
+                    nobody made — but the planner answering these needs to know they are answering about a superseded
+                    version, and so does the party who raised them.
+                  </div></div></div>`
+                : ''
+            }
+
+            <h2 style="padding:15px 17px 0">Who said what, and who said nothing</h2>
+            <div style="padding:4px 17px 0"><div class="metric-sub">
+              Three states, kept apart. Objected is what people did. Not responded is what they did not do. The middle
+              state — read it, no objection — stays empty because this platform has no way for a party to say that,
+              and filling it from the invitation list would be exactly the deeming the register exists to refuse.
+            </div></div>
+            ${table({
+              headers: ['State', 'Parties', 'What it means'],
+              rows: [
+                [
+                  badge('Objected', 'info'),
+                  (view.participation?.objected ?? []).map((party) => party.name).join(', ') || '—',
+                  'Raised at least one comment against this run.',
+                ],
+                [
+                  badge('Read it, no objection', 'neutral'),
+                  (view.participation?.reviewedWithoutObjection ?? []).map((party) => party.name).join(', ') || '—',
+                  'Nobody. There is no confirmation mechanism, so nobody can be recorded here without inventing the fact.',
+                ],
+                [
+                  badge('Did not respond', silent.length > 0 ? 'warn' : 'neutral'),
+                  silent.map((party) => party.name).join(', ') || '—',
+                  'Invited and said nothing. Whether that becomes acceptance is a question about the contract, not about this register.',
+                ],
+              ],
+            })}
+
+            ${
+              (view.byKind ?? []).length > 0
+                ? html`
+                  <h2 style="padding:15px 17px 0">What the objections are about</h2>
+                  ${table({
+                    headers: ['Kind', 'Raised', 'Unanswered'],
+                    align: ['', 'num', 'num'],
+                    rows: view.byKind.map((entry) => [
+                      entry.label,
+                      String(entry.count),
+                      html`<span class="${raw(entry.unanswered > 0 ? 'warn' : '')}">${entry.unanswered}</span>`,
+                    ]),
+                  })}`
+                : ''
+            }
+          `
+      }
+
+      ${
+        comments.length > 0
+          ? html`
+            <h2 style="padding:15px 17px 0">Comment register</h2>
+            ${table({
+              headers: ['Raised', 'By', 'Activity', 'Kind', 'Comment', 'Disposition'],
+              rows: comments.slice(0, 60).map((entry) => [
+                date(entry.raisedAt),
+                entry.raisedByName,
+                entry.activityName ?? (entry.activityId ? entry.activityId.slice(-6) : '—'),
+                entry.kindLabel,
+                entry.body,
+                entry.answered
+                  ? html`${badge(
+                      entry.dispositionLabel ?? humanise(entry.disposition ?? ''),
+                      entry.disposition === 'ACCEPTED' ? 'ok' : entry.disposition === 'REJECTED' ? 'bad' : 'warn',
+                    )}${entry.reason ? html`<div class="metric-sub" style="margin-top:4px">${entry.reason}</div>` : ''}`
+                  : badge('Unanswered', 'warn'),
+              ]),
+            })}`
+          : ''
+      }
+    </div>`;
+}
+
 export async function programme(root) {
   const projectId = state.session.projectId;
 
   const [calc, bundle, ppc, logic, control, dated] = await Promise.all([
     api.get(`/v1/projects/${projectId}/programme?contractualDurationDays=400`).catch((error) => ({ error })),
-    entityBundle(projectId, ['Task', 'ProgrammeBaseline', 'DelayRiskSnapshot', 'Dependency', 'Constraint', 'LookaheadPlan', 'WorkPackage', 'ScopePackage']),
+    entityBundle(projectId, ['Task', 'ProgrammeBaseline', 'DelayRiskSnapshot', 'Dependency', 'Constraint', 'LookaheadPlan', 'WorkPackage', 'ScopePackage', 'ScheduleRun']),
     // Percent Plan Complete and the constraints log. The critical path says
     // what the programme needs; PPC says whether the team can be relied on to
     // deliver a week of it, which is a different and more useful question.
@@ -200,6 +353,17 @@ export async function programme(root) {
     // different question — this one answers "what date".
     api.get(`/v1/projects/${projectId}/programme/schedule`).catch((error) => ({ error })),
   ]);
+
+  // Who said what about which version, and who said nothing. Read separately
+  // because it is readable by every participant, including people who cannot
+  // change a single date on the programme they are commenting on.
+  const review = await api.get(`/v1/projects/${projectId}/programme/review`).catch((error) => ({ error }));
+
+  // Who there is to ask. An invitation carries the identity a comment will be
+  // matched against, so the list has to come from the people this platform
+  // actually knows — typing a name would put the invitation and the objection
+  // in different vocabularies and report every objector as silent.
+  const people = await api.get('/v1/users').then((r) => r.users ?? []).catch(() => []);
 
   // The simulated distribution, alongside the analytic figure rather than
   // instead of it — people have been quoting the analytic one and need to be
@@ -249,6 +413,16 @@ export async function programme(root) {
             { id: 'activityStatus', label: 'Update activity status', permitted: can('PROGRAMME_BASELINES', 'U'), reason: blockedReason('PROGRAMME_BASELINES', 'U') },
             { id: 'calendar', label: 'Define a calendar', permitted: can('PROGRAMME_BASELINES', 'U'), reason: blockedReason('PROGRAMME_BASELINES', 'U') },
           ]))}
+          ${raw(commandBar([
+            // Commenting sits on read, not on update: the objection worth having
+            // comes from the party who has to do the work, and requiring the
+            // authority to change a programme in order to say something about it
+            // would leave only the planner able to comment on it.
+            { id: 'comment', label: 'Comment on the programme', permitted: can('PROGRAMME_BASELINES', 'R'), reason: blockedReason('PROGRAMME_BASELINES', 'R') },
+            { id: 'openReview', label: 'Issue for comment', permitted: can('PROGRAMME_BASELINES', 'A'), reason: blockedReason('PROGRAMME_BASELINES', 'A') },
+            { id: 'respond', label: 'Answer a comment', permitted: can('PROGRAMME_BASELINES', 'A'), reason: blockedReason('PROGRAMME_BASELINES', 'A') },
+            { id: 'closeReview', label: 'Close the review', permitted: can('PROGRAMME_BASELINES', 'A'), reason: blockedReason('PROGRAMME_BASELINES', 'A') },
+          ]))}
           ${can('PROGRAMME_BASELINES', 'R') ? html`<button class="btn quiet" id="whatif">What-if analysis</button>` : ''}
         </div>
       </div>
@@ -256,6 +430,8 @@ export async function programme(root) {
       ${calc.error ? html`<div class="notice err">${calc.error.message}</div>` : ''}
 
       ${datedPanel(dated)}
+
+      ${reviewPanel(review)}
 
       ${
         sim
@@ -783,6 +959,179 @@ export async function programme(root) {
             }
           : {}),
       }),
+    },
+    openReview: {
+      title: 'Issue the programme for comment',
+      intent:
+        'A review is opened against one schedule run, not against “the programme”. Every comment made under it is ' +
+        'then anchored to the version it was made about, which is the difference between a register that can be read ' +
+        'back in two years and a pile of objections to something nobody can reconstruct. Name who is being asked: a ' +
+        'review with no invitation list cannot tell a party who looked and had no objection from one who never saw it.',
+      path: () => `/v1/projects/${projectId}/programme/review`,
+      submitLabel: 'Issue it',
+      fields: [
+        {
+          name: 'runId',
+          label: 'Which run',
+          type: 'select',
+          options: (bundle.ScheduleRun ?? [])
+            .slice()
+            .reverse()
+            .map((run) => ({
+              value: run._refId,
+              label: `${String(run.ranAt ?? '').slice(0, 16).replace('T', ' ')} — finishing ${run.finishDate} (data date ${run.options?.dataDate ?? '—'})`,
+            })),
+          hint: 'Schedule the programme first if there is nothing here: a review needs a version to be about.',
+        },
+        { name: 'closesOn', label: 'Comments close on', type: 'date' },
+        {
+          name: 'invited',
+          label: 'Who is being asked',
+          type: 'multiselect',
+          options: people.map((person) => ({
+            value: person.id,
+            label: `${person.name} — ${(person.roles ?? []).map((role) => humanise(role)).join(', ')}`,
+          })),
+          hint: 'Everybody the dates land on, not only the people who can change them.',
+        },
+        { name: 'note', label: 'Covering note', type: 'text', required: false },
+      ],
+      transform: (v) => ({
+        runId: v.runId,
+        closesOn: v.closesOn,
+        // Id and name together: the id is matched against a comment's author,
+        // the name keeps the closed register readable years later.
+        invited: (Array.isArray(v.invited) ? v.invited : [v.invited].filter(Boolean)).map((id) => ({
+          id,
+          name: people.find((person) => person.id === id)?.name ?? id,
+        })),
+        ...(v.note ? { note: v.note } : {}),
+      }),
+    },
+    comment: {
+      title: 'Comment on the programme',
+      intent:
+        'Say what is wrong with it while it can still change. The kind is a closed list because the register’s use is ' +
+        'that it can be read as a pattern — twelve access objections against one area is a different conversation ' +
+        'from twelve scattered ones — and free text cannot be counted.',
+      path: () => `/v1/projects/${projectId}/programme/review/comment`,
+      submitLabel: 'Raise it',
+      fields: [
+        {
+          name: 'reviewId',
+          label: 'Review',
+          type: 'select',
+          options: review?.open ? [{ value: review.open.reviewId, label: `Run ${review.open.runId.slice(-6)}, closing ${review.open.closesOn}` }] : [],
+          hint: review?.open ? '' : 'No review is open. Comments are raised against an open review so they are anchored to a version.',
+        },
+        {
+          name: 'kind',
+          label: 'What kind of objection',
+          type: 'select',
+          options: [
+            { value: 'SEQUENCE', label: 'The order of the work' },
+            { value: 'DURATION', label: 'How long an activity is allowed' },
+            { value: 'ACCESS', label: 'When the area is actually available' },
+            { value: 'RESOURCE', label: 'What it would take to achieve it' },
+            { value: 'CONSTRAINT', label: 'A date the programme is pinned to' },
+            { value: 'OMISSION', label: 'Work that is not on the programme at all' },
+            { value: 'OTHER', label: 'Something else' },
+          ],
+        },
+        {
+          name: 'activityId',
+          label: 'Against which activity',
+          type: 'select',
+          required: false,
+          options: (dated?.activities ?? []).map((activity) => ({
+            value: activity.id,
+            label: `${activity.activityCode} ${activity.name}`,
+          })),
+          hint: 'Leave blank for an objection to the programme as a whole, or for work that is not on it.',
+        },
+        {
+          name: 'body',
+          label: 'The objection',
+          type: 'textarea',
+          hint: 'What is wrong and what it should be. “Disagree” cannot be answered.',
+        },
+      ],
+      transform: (v) => ({
+        reviewId: v.reviewId,
+        kind: v.kind,
+        body: v.body,
+        ...(v.activityId ? { activityId: v.activityId } : {}),
+      }),
+    },
+    respond: {
+      title: 'Answer a comment',
+      intent:
+        'Everything but a plain acceptance carries a reason. “Noted” is a real answer and deliberately not a synonym ' +
+        'for accepted — it means the point is understood and the programme is not changing, which the party who ' +
+        'raised it is entitled to be told rather than left to infer from the dates staying the same.',
+      path: () => `/v1/projects/${projectId}/programme/review/respond`,
+      submitLabel: 'Answer it',
+      fields: [
+        {
+          name: 'commentId',
+          label: 'Comment',
+          type: 'select',
+          options: (review?.comments ?? [])
+            .filter((entry) => !entry.answered)
+            .map((entry) => ({
+              value: entry.commentId,
+              label: `${entry.raisedBy} · ${entry.kindLabel} · ${String(entry.body).slice(0, 60)}`,
+            })),
+          hint: 'Only unanswered comments. An answer already given cannot be rewritten — answer the next issue instead.',
+        },
+        {
+          name: 'disposition',
+          label: 'What is happening to it',
+          type: 'select',
+          options: [
+            { value: 'ACCEPTED', label: 'Accepted — the programme will change' },
+            { value: 'ACCEPTED_IN_PART', label: 'Accepted in part' },
+            { value: 'REJECTED', label: 'Rejected' },
+            { value: 'NOTED', label: 'Noted, and the programme is not changing' },
+          ],
+        },
+        {
+          name: 'reason',
+          label: 'Why',
+          type: 'textarea',
+          required: false,
+          hint: 'Required for anything but a plain acceptance.',
+        },
+      ],
+      transform: (v) => ({
+        commentId: v.commentId,
+        disposition: v.disposition,
+        ...(v.reason ? { reason: v.reason } : {}),
+      }),
+    },
+    closeReview: {
+      title: 'Close the review',
+      intent:
+        'Refused while any comment is unanswered. A review closed over an open objection is a record that says the ' +
+        'party was heard when they were not, and that is exactly the record somebody will rely on later.',
+      path: () => `/v1/projects/${projectId}/programme/review/close`,
+      submitLabel: 'Close it',
+      fields: [
+        {
+          name: 'reviewId',
+          label: 'Review',
+          type: 'select',
+          options: review?.open ? [{ value: review.open.reviewId, label: `Run ${review.open.runId.slice(-6)}, closing ${review.open.closesOn}` }] : [],
+        },
+        {
+          name: 'note',
+          label: 'What this review concluded',
+          type: 'textarea',
+          hint:
+            'Recorded now rather than recomputed later. Say what changed as a result and what did not — including ' +
+            'who did not respond, because that is what somebody will argue about.',
+        },
+      ],
     },
     task: {
       title: 'Create activity',

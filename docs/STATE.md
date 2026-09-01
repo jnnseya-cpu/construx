@@ -12125,6 +12125,66 @@ data-date line, no `NaN` in any attribute and no page errors.
 
 #### Still not built
 
-Resources and levelling, activity codes as a grouping dimension, multiple float
-paths, and review-and-comment for every participant. The charts remain fitted to
-two panels rather than across the console.
+Resources and levelling, activity codes as a grouping dimension, and multiple
+float paths. The charts remain fitted to two panels rather than across the
+console.
+
+
+### Review and comment on the programme, for everybody it lands on
+
+`domain/programmereview.ts`. Two disciplines, and both are about what a register
+may not claim.
+
+**A review is of a run, not of "the programme".** Every comment is anchored to
+the version it was made about, so it can be read back in two years as an
+objection to something reconstructable. Rescheduling deliberately does **not**
+close or move an open review — that would silently reattach comments to a version
+nobody made them about, and discard the objections to the version somebody would
+later want to point at — but `supersededByLaterRun` is reported on the position
+and said in as many words on the screen.
+
+**Silence is never agreement.** Three participation states are kept apart:
+objected, reviewed-without-objection, did-not-respond.
+`reviewedWithoutObjection` is **always empty** and that is the design: this
+platform has no way for a party to say "I read it and have no objection", so
+nobody can be recorded as having said it. Filling it from the invitation list
+would be exactly the deeming the module exists to refuse. The summary says the
+number who did not respond, says it is not agreement, and says that whether it
+becomes acceptance is a question about the contract rather than about the
+register.
+
+Commenting is authorised on `PROGRAMME_BASELINES` **R**, not `U` — the objection
+worth having comes from the party who has to do the work, and requiring the
+authority to change a programme in order to say something about it would leave
+only the planner able to comment. Issuing, answering and closing are on **A**.
+Every disposition but a plain acceptance carries a reason, and `NOTED` is a real
+answer rather than a synonym for accepted. A review will not close while any
+comment is unanswered; an answer once given cannot be rewritten.
+
+**The boundary, stated rather than quietly widened**: 14 roles hold
+`PROGRAMME_BASELINES` R and can therefore comment. `SUPPLIER` does not, so a
+supplier cannot comment on the programme. Widening the permission matrix is a
+security decision and is not made here.
+
+#### A defect the rendering found and no test could have
+
+The invitation list held free text while a comment recorded the actor id that
+made it. The two halves of the participation split were in different
+vocabularies, so **a party who had objected was still reported as having said
+nothing** — a register producing a false silence, which is the one thing it
+exists not to do. It is only visible when the register is read: every test
+passed, because every test invited the same strings it then asserted on.
+
+An invitation now carries the identity **and** the name: the id is what a
+comment's author is matched against, the name is what keeps the closed record
+readable once the person has left. The console door is a multi-select of real
+people from `/v1/users` rather than a box to type names into. `invitedCount` is
+published because objectors are not a subset of the invited — a review is open to
+anybody who can read the programme — so adding the two lists together overstates
+who was asked.
+
+**Verified**: 22 unit tests, and **nine mutations of the original module plus
+five of the fix, all fourteen caught**. Driven over HTTP end to end — run, issue,
+three comments of three kinds, two dispositions, the refusal to close over an
+unanswered comment — and **read in a browser**, where the register shows five
+named people, one objector, four silent, and "of 5 invited".

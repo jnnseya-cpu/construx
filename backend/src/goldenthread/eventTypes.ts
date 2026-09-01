@@ -367,6 +367,12 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('ACTIVITY_ATTRIBUTES_SET', 'Task', 'UPDATE', 'PROJECT_CONTROL'),
   def('ACTIVITY_STATUS_RECORDED', 'Task', 'UPDATE', 'PROJECT_CONTROL'),
   def('SCHEDULE_RUN', 'ScheduleRun', 'CREATE', 'PROJECT_CONTROL'),
+  // Reviewing the programme. The comment is a governance record — it is what a
+  // party will point at in an adjudication — so no agent may raise or answer one.
+  def('PROGRAMME_REVIEW_OPENED', 'ProgrammeReview', 'ISSUE', 'PROJECT_CONTROL', { creates: true }),
+  def('PROGRAMME_COMMENT_RAISED', 'ProgrammeComment', 'CREATE', 'PROJECT_CONTROL', { aiAllowed: false }),
+  def('PROGRAMME_COMMENT_ANSWERED', 'ProgrammeComment', 'UPDATE', 'PROJECT_CONTROL', { aiAllowed: false }),
+  def('PROGRAMME_REVIEW_CLOSED', 'ProgrammeReview', 'APPROVE', 'PROJECT_CONTROL', { aiAllowed: false }),
   def('CONTINGENCY_DRAWN', 'IntegrationAccount', 'APPROVE', 'COMMERCIAL'),
   def('RESPONSIBILITY_ASSIGNED', 'ResponsibilityItem', 'CREATE', 'PROJECT_CONTROL'),
   def('RESPONSIBILITY_REASSIGNED', 'ResponsibilityItem', 'UPDATE', 'PROJECT_CONTROL'),

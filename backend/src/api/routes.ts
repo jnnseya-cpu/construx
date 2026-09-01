@@ -64,6 +64,7 @@ import * as radar from '../domain/radar.ts';
 import * as integrator from '../domain/integrator.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
+import * as programmereview from '../domain/programmereview.ts';
 import * as responsibility from '../domain/responsibility.ts';
 import * as sitecapture from '../domain/sitecapture.ts';
 import * as sitelayout from '../domain/sitelayout.ts';
@@ -4543,6 +4544,92 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => programme.runSchedule(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/programme/review',
+    description: 'Who said what about which version of the programme, and who said nothing',
+    handler: (platform, ctx) =>
+      programmereview.reviewPosition(
+        projectContext(platform, ctx),
+        ctx.query.get('asAt') ? String(ctx.query.get('asAt')) : undefined,
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/review',
+    description: 'Issue a schedule run for comment, so every objection is anchored to the version it was made about',
+    schema: {
+      type: 'object',
+      required: ['runId', 'closesOn', 'invited'],
+      properties: {
+        runId: stringField,
+        closesOn: stringField,
+        // Identity and name together. The id is what a comment's author is
+        // matched against — an invitation list in any other vocabulary reports
+        // every objector as having said nothing — and the name is what keeps
+        // the record readable once the person has left.
+        invited: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 200,
+          items: {
+            type: 'object',
+            required: ['id', 'name'],
+            properties: { id: stringField, name: stringField },
+            additionalProperties: false,
+          },
+        },
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => programmereview.openReview(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/review/comment',
+    description: 'Comment on the programme under review — open to anybody who can read it, not only who can change it',
+    schema: {
+      type: 'object',
+      required: ['reviewId', 'kind', 'body'],
+      properties: {
+        reviewId: stringField,
+        kind: { type: 'string', enum: ['SEQUENCE', 'DURATION', 'ACCESS', 'RESOURCE', 'CONSTRAINT', 'OMISSION', 'OTHER'] },
+        body: { type: 'string', minLength: 10, maxLength: 4000 },
+        activityId: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => programmereview.comment(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/review/respond',
+    description: 'Answer a comment. Everything but a plain acceptance carries a reason',
+    schema: {
+      type: 'object',
+      required: ['commentId', 'disposition'],
+      properties: {
+        commentId: stringField,
+        disposition: { type: 'string', enum: ['ACCEPTED', 'ACCEPTED_IN_PART', 'REJECTED', 'NOTED'] },
+        reason: { type: 'string', maxLength: 4000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => programmereview.respond(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/review/close',
+    description: 'Close the review, which is refused while any comment is unanswered',
+    schema: {
+      type: 'object',
+      required: ['reviewId', 'note'],
+      properties: { reviewId: stringField, note: { type: 'string', minLength: 8, maxLength: 4000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => programmereview.closeReview(projectContext(platform, ctx), body(ctx)),
   },
   // --------------------------------------------- staying between client and panel
   {
