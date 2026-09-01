@@ -129,6 +129,24 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SUBSCRIPTION_CHARGE_RAISED', 'SubscriptionCharge', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('SUBSCRIPTION_CHARGE_SETTLED', 'SubscriptionCharge', 'UPDATE', 'GOVERNANCE'),
   def('SUBSCRIPTION_COLLECTION_FAILED', 'SubscriptionCharge', 'UPDATE', 'GOVERNANCE'),
+  // Private modules. A grant is an operator's decision to hand a named company
+  // capability that is not on the price list, so it is recorded the way the
+  // subscription switch is: with the person who decided it and their reason.
+  //
+  // Revocation is a second event against the same record rather than a delete,
+  // for the ordinary reason nothing here is ever deleted, and for one specific
+  // one: "who had this, and between which dates" is the question an access
+  // review asks, and a removed row cannot answer it.
+  //
+  // The grant is UPDATE-with-`creates` rather than CREATE, because a company
+  // can be granted a module, have it revoked, and be granted it again — and one
+  // record has to carry all three. CREATE would refuse the third, and a second
+  // record would leave two rows disagreeing about whether the company holds it.
+  def('MODULE_GRANTED', 'ModuleGrant', 'UPDATE', 'GOVERNANCE', { creates: true }),
+  // Revocation is a plain UPDATE: there is nothing to take back from a company
+  // that was never given it, and a revocation record with no grant behind it
+  // would have to invent a grantor.
+  def('MODULE_REVOKED', 'ModuleGrant', 'UPDATE', 'GOVERNANCE'),
   def('POLICY_UPDATED', 'PermissionPolicy', 'UPDATE', 'GOVERNANCE'),
   def('ACU_CAPS_SET', 'ACUWallet', 'UPDATE', 'GOVERNANCE'),
   // Capacity bought is a commercial fact with money behind it, so it belongs on
@@ -1589,6 +1607,9 @@ export const PLATFORM_GOVERNANCE_EVENTS: readonly string[] = [
   'ENTERPRISE_CREATED',
   'SUBSCRIPTION_ACTIVATED',
   'SUBSCRIPTION_STATUS_CHANGED',
+  // Capability handed to a named company off the price list, and taken back
+  'MODULE_GRANTED',
+  'MODULE_REVOKED',
   // Identity — who exists, what they may do, and their removal
   'USER_CREATED',
   'USER_ROLE_ASSIGNED',

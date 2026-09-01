@@ -28,6 +28,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // Tenancy and platform — the operator layer, never delivery
   Tenant: { area: 'PLATFORM_ADMINISTRATION' },
   Subscription: { area: 'PLATFORM_ADMINISTRATION' },
+  // Which companies hold a private module. PLATFORM_ADMINISTRATION rather than
+  // the module's own area: the grant is the operator's decision about a
+  // customer, and a tenancy that could read its own grant through the generic
+  // entity route would be reading the register of who else has been given it.
+  ModuleGrant: { area: 'PLATFORM_ADMINISTRATION' },
   PermissionPolicy: { area: 'PLATFORM_ADMINISTRATION' },
   ACUWallet: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   // Money entering the platform. Same area and sensitivity as the wallet it

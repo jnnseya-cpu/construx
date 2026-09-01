@@ -156,6 +156,7 @@ import {
 } from '../messaging/newsletter.ts';
 import { unsubscribePage, verificationPage } from '../messaging/render.ts';
 import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
+import { MODULES, isModuleId } from '../identity/modules.ts';
 import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
 import { lockedSubjects } from '../identity/lockout.ts';
 import { renderAndCharge, quoteRender, type RenderableFormat } from '../export/render.ts';
@@ -1164,6 +1165,91 @@ export const ROUTES: Route[] = [
     },
   },
   {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:tenantId/modules/:moduleId',
+    description: 'Give a tenancy a private module, or take it back (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['status', 'reason'],
+      properties: {
+        status: { type: 'string', enum: ['ACTIVE', 'REVOKED'] },
+        // Required for the same reason it is on a subscription status change:
+        // this hands a named company capability that is not on the price list,
+        // and a record of that with no stated basis is unreviewable.
+        reason: { type: 'string', minLength: 3 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      // Operator-only, and there is no second path. A tenant administrator
+      // cannot grant themselves a module any more than they can grant
+      // themselves PLATFORM_ADMIN — which is the same class of escalation and
+      // is refused in the same place.
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may grant a module', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const moduleId = ctx.params.moduleId!;
+      if (!isModuleId(moduleId)) {
+        throw new DomainError('MODULE_UNKNOWN', `${moduleId} is not a module this platform has`, 404);
+      }
+      const input = body<{ status: 'ACTIVE' | 'REVOKED'; reason: string }>(ctx);
+      const grant = platform.setModuleGrant({
+        moduleId,
+        tenantId: ctx.params.tenantId!,
+        status: input.status,
+        reason: input.reason,
+        decidedBy: actor.actorId,
+      });
+      return {
+        ...grant,
+        moduleName: MODULES[moduleId].name,
+        // Stated back rather than left implied, exactly as the subscription
+        // switch does: an operator should see what they have just handed over.
+        effect:
+          grant.status === 'ACTIVE'
+            ? `${MODULES[moduleId].name} is now available to this tenancy alongside everything else it holds.`
+            : `${MODULES[moduleId].name} is closed to this tenancy. Records already written stay on the ledger and stay readable to the operator.`,
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/modules',
+    description: 'Private modules and which tenancies hold them (platform operator only)',
+    handler: (platform, ctx) => {
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may see the module register', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const names = new Map(platform.tenants().map((tenant) => [tenant.id, tenant.legalName]));
+      // Who decided, by name. A register that identifies the operator by ULID
+      // is not a register anybody can review — and "who gave this company
+      // access" is the question it exists to answer.
+      const person = (userId: string): string => {
+        try {
+          return platform.user(userId).name;
+        } catch {
+          // An operator account that has since been removed. Their id is still
+          // the truthful answer, and it is better than an empty cell.
+          return userId;
+        }
+      };
+      return {
+        modules: Object.entries(MODULES).map(([id, definition]) => ({ id, ...definition })),
+        // Every grant ever made, revoked ones included. "Who had this, and
+        // between which dates" is the question an access review asks, and a
+        // register showing only live grants cannot answer it.
+        grants: platform.moduleGrants().map((grant) => ({
+          ...grant,
+          moduleName: MODULES[grant.moduleId].name,
+          legalName: names.get(grant.tenantId) ?? grant.tenantId,
+          grantedByName: person(grant.grantedBy),
+          revokedByName: grant.revokedBy ? person(grant.revokedBy) : undefined,
+        })),
+      };
+    },
+  },
+  {
     method: 'GET',
     pattern: '/v1/admin/tenants',
     description: 'Tenancy, seats and prepaid balance across the estate (platform operator only)',
@@ -1207,6 +1293,16 @@ export const ROUTES: Route[] = [
             // what they contain — the operator layer sees the meter, never the
             // evidence.
             storage: storagePositionFor(platform, tenant.id),
+            // The private modules this tenancy holds, on the row an operator
+            // judges a customer from. Almost always empty, which is the point:
+            // a module is capability handed to a named company off the price
+            // list, and "who has been given what" should be visible beside the
+            // commercial terms rather than on a screen somebody has to know to
+            // look for.
+            modules: platform.grantedModules(tenant.id).map((moduleId) => ({
+              id: moduleId,
+              name: MODULES[moduleId].name,
+            })),
           };
         }),
         // The estate total, because the decision it informs is not about any
@@ -3571,8 +3667,24 @@ export const ROUTES: Route[] = [
     method: 'GET',
     pattern: '/v1/permissions/matrix',
     description: 'The enforceable permission matrix and the phases each area may be written in',
-    handler: () => ({
+    handler: (platform, ctx) => ({
       matrix: PERMISSION_MATRIX,
+      // The private modules this tenancy holds — the one part of this response
+      // that differs between customers.
+      //
+      // Published here rather than on a route of its own because it answers the
+      // same question the rest of this does: what is reachable from this
+      // session. The console loads this once and gates its navigation on the
+      // answer, so a module screen is absent for a tenancy without the grant
+      // instead of present and refusing — and the rule stays on the server,
+      // where a client-side constant would drift from it.
+      //
+      // A tenancy sees only what it holds. It never learns that a module it
+      // does not hold exists, which is what "not visible to other users" has to
+      // mean if it is to mean anything.
+      modules: platform
+        .grantedModules(auth(ctx).tenantId)
+        .map((moduleId) => ({ id: moduleId, ...MODULES[moduleId] })),
       // Published so a client can show a command as unavailable for the reason
       // it will actually be refused, rather than duplicating the rule and
       // drifting from it.

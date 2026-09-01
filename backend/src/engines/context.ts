@@ -14,6 +14,7 @@ import { DomainError } from '../core/errors.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import { assertAccess, type AccessAttributes } from '../identity/abac.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
+import type { ModuleId } from '../identity/modules.ts';
 import type { GoldenThreadLedger, CommitInput } from '../goldenthread/ledger.ts';
 import type { ActorRef, EntityRef, EventSource, GoldenThreadEvent } from '../goldenthread/types.ts';
 import { hashEvidence } from '../core/canonical.ts';
@@ -48,6 +49,14 @@ export type EngineContext = {
    * succeed and the second half fail.
    */
   standing: TenancyStanding;
+  /**
+   * The private modules this tenancy holds, resolved once with standing.
+   *
+   * Empty for almost every tenancy, which is the point: a module is capability
+   * an operator has handed to a named company off the price list. See
+   * `identity/modules.ts` for why this is neither a package tier nor a standing.
+   */
+  grantedModules: readonly ModuleId[];
   /**
    * The agent this context is acting on behalf of, where one is.
    *

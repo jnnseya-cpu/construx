@@ -7093,6 +7093,16 @@ Specified in the source documents, deliberately absent, and **not to be claimed
 as present**. Most of it is perception and ingestion infrastructure — real ML and
 parsing work, not wiring.
 
+- **The ETABLIX AI Site Services module itself** — the entitlement gate is
+  built, tested and reachable from the operator console: an operator grants the
+  module to a named company, that company is told it holds it, everybody else is
+  never told it exists. What sits behind the gate is not built — the appointment
+  models, the brief intelligence gateway, the site-service system composer, the
+  sixteen specialist agents, the procurement factory, the mobilisation control
+  tower, live operations and the demobilisation workflows. There is currently no
+  `ETABLIX` capability area and no module screen, deliberately: an area in the
+  permission matrix that no route authorises against would be a permission that
+  means nothing
 - **OCR, and any semantic embedding** — the ingestion pipeline reports
   `NEEDS_OCR` for a PDF or a photograph and routes to the perception pipeline,
   which refuses where no multimodal provider is configured. The document index is
@@ -12490,3 +12500,95 @@ where the two rules disagree kills all three mutations.
 fitted on every screen where a fleet exists to fill it; the areas above would
 need agents built before a panel there would be anything but an empty box, and
 an empty panel on a screen nothing watches is worse than none.
+
+
+### A module only some companies can see
+
+A customer asked for capability that exists in this codebase, runs against this
+ledger and this permission matrix, and is reachable **only by the tenancies a
+platform operator has explicitly granted it to** — invisible to everybody else,
+and additive rather than exclusive: a granted company keeps every CONSTRUX
+module, function and feature it already had, unchanged.
+
+The first module is **ETABLIX AI Site Services** — temporary infrastructure and
+the living environment: welfare, accommodation, temporary MEP, enabling civils,
+FM, security and logistics. This commit builds the **entitlement gate only**.
+What the module *does* is not built; see "what is not built" below.
+
+#### Why this is not a package tier, and not a standing either
+
+`billing/seats.ts` already has FREE_TRIAL through ENTERPRISE and the obvious
+move is a sixth tier. It is the wrong shape twice over. A tier is something a
+customer **buys** — it appears on the pricing page, it is self-serve, and its
+whole purpose is to be chosen; putting a private module in the tier ladder would
+put it in the shop window. And a tier is exclusive, one per tenancy, where a
+module is additive: the grant sits *beside* whatever package the tenancy pays
+for.
+
+`billing/entitlement.ts` is the other near miss. Every answer `TenancyStanding`
+gives is derived from whether the tenancy is paying. A module grant is derived
+from nothing — it is an act, by a named operator, with a stated reason, on a
+date. So the two are resolved side by side onto the engine context and neither
+is expressed in terms of the other. **A granted tenancy that stops paying loses
+the platform, not the grant**, so reactivating restores what they had rather
+than silently dropping a module nobody remembered to re-add. Pinned by test.
+
+#### What was built
+
+| Piece | Where |
+|---|---|
+| Closed module catalogue, `requireModule`, `grantRef` | `backend/src/identity/modules.ts` |
+| `MODULE_GRANTED` / `MODULE_REVOKED`, on the operator's accountability list | `backend/src/goldenthread/eventTypes.ts` |
+| `ModuleGrant` classified `PLATFORM_ADMINISTRATION` | `backend/src/identity/entityAccess.ts` |
+| `setModuleGrant`, `moduleGrants`, `grantedModules`, replay | `backend/src/platform.ts` |
+| `grantedModules` on `EngineContext`, beside `standing` | `backend/src/engines/context.ts` |
+| `POST /v1/admin/tenants/:tenantId/modules/:moduleId`, `GET /v1/admin/modules` | `backend/src/api/routes.ts` |
+| The tenancy's own list, on the matrix publish | `GET /v1/permissions/matrix` |
+| Register, per-row badge and the grant/revoke door | `frontend/pages/tenants.js` |
+| `modules()` / `hasModule()`, and `forgetPermissions()` | `frontend/app.js` |
+
+**Two properties, and the second is the one that is easy to lose.** A tenancy
+without the grant is *refused* — fail-closed, including on a module id that is
+not in the catalogue, because a typo in an access check must never resolve to
+"allowed". And a tenancy without the grant is **never told the module exists**:
+`/v1/permissions/matrix` publishes only what that tenancy holds, so the console
+gates its navigation on the server's answer rather than a client-side constant.
+Refusing a request is not enough if the catalogue is published to everybody —
+the module would then be invisible only in the sense that a locked door is.
+
+`MODULE_NOT_GRANTED` is a **403, deliberately not a 404**. Pretending the route
+does not exist is obscurity against somebody who can already read `/v1/routes`,
+and it makes a genuine misconfiguration — a company that should hold the module
+and does not — indistinguishable from a typo.
+
+#### The operator's own tenancy is not special
+
+ETABLIX will hold the ETABLIX module by the same command, on the same register.
+A tenant id in a constant would make revocation a deployment, leave no record of
+who decided it, and create exactly one code path the tests for every other
+tenancy never cover. **Nothing is seeded** — the catalogue exists, and every
+grant is an act taken in the console.
+
+#### Two shapes the ledger forced, and one the browser found
+
+`MODULE_GRANTED` is **UPDATE-with-`creates`, not CREATE**. A company can be
+granted a module, have it revoked, and be granted it again; one record has to
+carry all three, and CREATE refuses the third. Revocation is a plain UPDATE, and
+**revoking a module a tenancy never held is refused** rather than recorded — a
+revocation with no grant behind it would have to invent a grantor, and that
+fiction would sit on the register looking exactly like a real one. The original
+grant survives revocation untouched, because "who had this, and between which
+dates" is what an access review asks.
+
+Reading the rendered screen caught two things tests did not: an `[object
+Object]` where a `.map()` over `html` templates had been `.join('')`ed instead
+of left as an array for `resolve`, and a register that identified the deciding
+operator by **ULID**. A register nobody can read is not a register, so
+`GET /v1/admin/modules` now resolves the name.
+
+**11 mutations, 11 caught** — 10 by the suite, 1 (`isModuleId` removed from the
+route) by the compiler, because dropping it makes a `string` reach a `ModuleId`
+parameter. One mutation survived first time round and was a real gap:
+`grantRef` reduced to the module id alone left every tenancy sharing one grant
+record, and the fixture only ever granted to one company. The test now grants to
+two, and revokes one.

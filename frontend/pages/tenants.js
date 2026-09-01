@@ -19,9 +19,10 @@ import { badge, date, html, money, raw, render, table, time, toast, track } from
  */
 
 export async function tenants(root) {
-  const [estate, vocab] = await Promise.all([
+  const [estate, vocab, register] = await Promise.all([
     api.get('/v1/admin/tenants').catch((error) => ({ error })),
     api.get('/v1/signup/account-types').catch(() => null),
+    api.get('/v1/admin/modules').catch(() => null),
   ]);
 
   if (estate.error) {
@@ -109,7 +110,14 @@ export async function tenants(root) {
           rows: rows.map((tenant) => [
             html`${tenant.legalName}<div class="metric-sub">${tenant.jurisdiction} · ${
               tenant.isolatedTenancy ? 'dedicated tenancy' : 'shared tenancy'
-            }${tenant.referralCode ? ` · referred by ${tenant.referralCode}` : ''}</div>`,
+            }${tenant.referralCode ? ` · referred by ${tenant.referralCode}` : ''}</div>
+              ${
+                // On the row itself, because a module is capability handed to
+                // this company off the price list — it belongs beside the
+                // commercial terms rather than on a panel further down that
+                // somebody has to know to read.
+                (tenant.modules ?? []).map((module) => badge(module.name, 'ai'))
+              }`,
             badge(tenant.tier, tenant.tier === 'ENTERPRISE' || tenant.tier === 'SOVEREIGN' ? 'ai' : 'info'),
             badge(tenant.status, tenant.status === 'ACTIVE' ? 'ok' : 'warn'),
             tenant.administrators === 0
@@ -123,11 +131,48 @@ export async function tenants(root) {
             money(tenant.wallet.availableMinor),
             date(tenant.renewsAt),
             html`<button class="btn quiet sm" data-credit="${tenant.id}">Credit</button>
-              <button class="btn quiet sm" data-status="${tenant.id}">Status</button>`,
+              <button class="btn quiet sm" data-status="${tenant.id}">Status</button>
+              <button class="btn quiet sm" data-modules="${tenant.id}">Modules</button>`,
           ]),
           empty: 'No tenancy on the estate yet.',
         })}
       </div>
+
+      ${register
+        ? html`<div class="card pad0" style="margin-top:14px">
+            <h2 style="padding:15px 17px 0">Private modules</h2>
+            <div class="metric-sub" style="padding:6px 17px 0">
+              Capability that is not part of the subscription and is not on the pricing page. A tenancy without the
+              grant is never told the module exists; a tenancy with it keeps everything else it holds, unchanged.
+            </div>
+            ${register.modules.map(
+              (definition) => html`<div style="padding:12px 17px 0">
+                <b>${definition.name}</b>
+                <div class="metric-sub" style="margin-top:4px">${definition.summary}</div>
+                <div class="metric-sub" style="margin-top:4px">${definition.restricted}</div>
+              </div>`,
+            )}
+            <div style="padding:12px 0 0">
+              ${table({
+                headers: ['Tenancy', 'Module', 'Status', 'Granted', 'Reason', 'Revoked'],
+                rows: register.grants.map((grant) => [
+                  grant.legalName,
+                  grant.moduleName,
+                  badge(grant.status.toLowerCase(), grant.status === 'ACTIVE' ? 'ok' : 'warn'),
+                  html`${date(grant.grantedAt)}<div class="metric-sub">${grant.grantedByName}</div>`,
+                  grant.status === 'ACTIVE' ? grant.reason : grant.revokedReason ?? grant.reason,
+                  grant.revokedAt
+                    ? html`${date(grant.revokedAt)}<div class="metric-sub">${grant.revokedByName}</div>`
+                    : '—',
+                ]),
+                // Revoked grants stay on this table on purpose: "who had this,
+                // and between which dates" is what an access review asks, and a
+                // register showing only live grants cannot answer it.
+                empty: 'No module has been granted to anybody.',
+              })}
+            </div>
+          </div>`
+        : ''}
     `,
   );
 
@@ -285,6 +330,59 @@ export async function tenants(root) {
 
       if (result) {
         toast(`${tenant?.legalName ?? 'Tenancy'} — ${result.status}`, result.effect, result.status === 'ACTIVE' ? 'ok' : 'warn');
+        await again();
+      }
+    });
+  }
+
+  for (const button of root.querySelectorAll('[data-modules]')) {
+    button.addEventListener('click', async () => {
+      const tenantId = button.getAttribute('data-modules');
+      const tenant = byId.get(tenantId);
+      // Two fields rather than one, because the module and the decision are
+      // separate questions and a single "grant X" button would need one button
+      // per module and no way to take any of them back.
+      const held = new Set((tenant?.modules ?? []).map((entry) => entry.id));
+      const choice = await command({
+        title: `Private modules — ${tenant?.legalName ?? 'tenancy'}`,
+        intent:
+          'Gives this company capability that is not part of the subscription and is not on the pricing page. It sits ' +
+          'beside whatever package they pay for — everything else they hold carries on unchanged — and nobody without ' +
+          'the grant is told the module exists. The reason is recorded against the decision.',
+        // The module is a path segment rather than a body field, so the path is
+        // a function of what the person picked — the endpoint would otherwise
+        // have two ways to say which module this is.
+        path: (values) => `/v1/admin/tenants/${tenantId}/modules/${values.moduleId}`,
+        submitLabel: 'Apply',
+        fields: [
+          {
+            name: 'moduleId',
+            label: 'Module',
+            type: 'select',
+            options: (register?.modules ?? []).map((definition) => ({
+              value: definition.id,
+              label: `${definition.name}${held.has(definition.id) ? ' — held' : ''}`,
+            })),
+          },
+          {
+            name: 'status',
+            label: 'Decision',
+            type: 'select',
+            options: [
+              { value: 'ACTIVE', label: 'Grant — the module becomes available to this tenancy' },
+              { value: 'REVOKED', label: 'Revoke — the module closes; what was written stays on the ledger' },
+            ],
+          },
+          { name: 'reason', label: 'Reason', hint: 'Why this company, in your own words. Recorded against the decision.' },
+        ],
+        // `moduleId` went into the address, so it is dropped from the body —
+        // the route's schema is `additionalProperties: false` and would refuse
+        // it, correctly.
+        transform: (values) => ({ status: values.status, reason: values.reason }),
+      });
+
+      if (choice) {
+        toast(`${tenant?.legalName ?? 'Tenancy'} — ${choice.moduleName}`, choice.effect, choice.status === 'ACTIVE' ? 'ok' : 'warn');
         await again();
       }
     });

@@ -319,6 +319,15 @@ let matrix = null;
 let writePhaseGates = {};
 /** The roles a tenant admin may grant — published by the API, not assumed here. */
 let grantableRoles = [];
+/**
+ * The private modules this tenancy holds. Almost always empty.
+ *
+ * Published by the API with the matrix, never assumed here: a module is
+ * capability an operator has handed to a named company off the price list, and
+ * the browser deciding for itself which company that is would be the browser
+ * holding a rule the server does not.
+ */
+let heldModules = [];
 
 /**
  * The grantable roles, for a screen that offers them.
@@ -351,6 +360,51 @@ export function phaseGates() {
 }
 
 /**
+ * The private modules this tenancy holds, for a screen that shows them.
+ *
+ * A getter for the same reason as the two above: the value arrives with the
+ * matrix, so a page importing the binding directly would capture the empty
+ * array this module starts with.
+ */
+export function modules() {
+  return heldModules;
+}
+
+/**
+ * Does this tenancy hold a module?
+ *
+ * Used to gate navigation, so a module screen is *absent* for a tenancy without
+ * the grant rather than present and refusing. The server refuses it either way
+ * — `requireModule` runs on every module route — and this only decides whether
+ * to offer something that would be refused.
+ *
+ * Note the direction: unlike `can()`, which returns true before the matrix has
+ * loaded so the interface does not flicker into a locked state, this returns
+ * false. Offering a capability early is a cosmetic problem; showing somebody a
+ * module their company has not been given is the one thing this must not do.
+ */
+export function hasModule(id) {
+  return heldModules.some((entry) => entry.id === id);
+}
+
+/**
+ * Forget everything the last session was told about what it may do.
+ *
+ * Called on every sign-in, sign-out and token expiry. All four values arrive
+ * together from `/v1/permissions/matrix` and only `matrix` was being cleared,
+ * which left the previous identity's grantable roles — and, once modules
+ * existed, the previous *tenancy's* module list — readable in the window
+ * between the reset and the next load. For the matrix that was harmless
+ * because it is the same for everybody; for a module grant it is not.
+ */
+function forgetPermissions() {
+  matrix = null;
+  writePhaseGates = {};
+  grantableRoles = [];
+  heldModules = [];
+}
+
+/**
  * Which roles in this customer's world can read an area, excluding the viewer's.
  *
  * This is the sentence a lock is actually for — not "you cannot", which the
@@ -370,6 +424,7 @@ async function loadMatrix() {
   matrix = result.matrix;
   writePhaseGates = result.writePhaseGates ?? {};
   grantableRoles = result.tenantGrantableRoles ?? [];
+  heldModules = result.modules ?? [];
   // The same call carries which events a device may never originate, so the
   // outbox refuses a governance action at the point of the press rather than
   // queuing one the sync engine will certainly reject.
@@ -513,7 +568,7 @@ export async function signInWithCredentials({ actorId, challengeId, code }) {
   state.project = null;
   state.gate = null;
   state.wallet = null;
-  matrix = null;
+  forgetPermissions();
 
   navigate(isOperator() ? 'admin' : state.session.projectId ? 'overview' : 'enterprise');
 }
@@ -547,7 +602,7 @@ export async function signIn(identity) {
   state.project = null;
   state.gate = null;
   state.wallet = null;
-  matrix = null;
+  forgetPermissions();
   navigate(isOperator() ? 'admin' : 'overview');
 }
 
@@ -931,7 +986,7 @@ async function draw() {
     state.project = null;
     state.gate = null;
     state.wallet = null;
-    matrix = null;
+    forgetPermissions();
   }
 
   if (!state.session) {

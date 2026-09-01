@@ -34,6 +34,7 @@ import type { EventSource } from './goldenthread/types.ts';
 import type { AuthContext } from './identity/auth.ts';
 import { issueTokens, type TokenPair } from './identity/auth.ts';
 import type { Role } from './identity/roles.ts';
+import { MODULES, grantRef, isModuleId, type ModuleGrant, type ModuleId } from './identity/modules.ts';
 import { dueAt, graceDays, isDue, pseudonym, retentionBasis } from './identity/erasure.ts';
 
 /**
@@ -165,6 +166,12 @@ export class Platform {
   readonly #receiptsByReference = new Map<string, PaymentReceipt>();
   readonly #tenants = new Map<string, Tenant>();
   readonly #users = new Map<string, PlatformUser>();
+  /**
+   * Private module grants, keyed by `grantRef` — one record per module per
+   * tenancy, so a re-grant after a revocation moves the same record back to
+   * ACTIVE rather than starting a second one that would have to be reconciled.
+   */
+  readonly #moduleGrants = new Map<string, ModuleGrant>();
 
   constructor(
     orchestrator = new AIOrchestrator(),
@@ -1092,6 +1099,116 @@ export class Platform {
     return updated;
   }
 
+  // --- Private modules -------------------------------------------------------
+
+  /**
+   * Give a tenancy a private module, or take it back.
+   *
+   * The operator's decision, and the only way a grant is ever made — including
+   * the operator's own tenancy, which holds its modules by the same command and
+   * appears on the same register. A tenant id in a constant would make
+   * revocation a deployment and leave no record of who decided it.
+   *
+   * A reason is required for the same reason it is on a subscription status
+   * change: this hands a named company capability that is not on the price
+   * list, and a record of that with no stated basis is unreviewable.
+   */
+  setModuleGrant(input: {
+    moduleId: ModuleId;
+    tenantId: string;
+    status: ModuleGrant['status'];
+    reason: string;
+    decidedBy: string;
+  }): ModuleGrant {
+    if (!isModuleId(input.moduleId)) {
+      throw new DomainError('MODULE_UNKNOWN', `${input.moduleId} is not a module this platform has`, 404);
+    }
+    if (!input.reason.trim()) {
+      throw new DomainError('MODULE_REASON_REQUIRED', 'Granting or revoking a module requires a reason');
+    }
+    // The tenancy has to exist. Without this a typo in a tenant id writes a
+    // grant nobody can see, against a company that does not exist, which then
+    // sits on the register looking exactly like a real one.
+    const tenant = this.tenant(input.tenantId);
+
+    const ref = grantRef(input.moduleId, input.tenantId);
+    const existing = this.#moduleGrants.get(ref);
+    if (existing && existing.status === input.status) return existing;
+    if (!existing && input.status === 'REVOKED') {
+      // There is nothing to take back. Refused rather than recorded, because a
+      // revocation with no grant behind it would have to name a grantor who
+      // never granted anything, and that fiction would then sit on the register
+      // looking exactly like a real one.
+      throw new DomainError(
+        'MODULE_NOT_GRANTED',
+        `${tenant.legalName} does not hold ${MODULES[input.moduleId].name}, so there is nothing to revoke.`,
+        404,
+      );
+    }
+
+    const decidedAt = new Date().toISOString();
+    const granting = input.status === 'ACTIVE';
+
+    const updated: ModuleGrant = granting
+      ? {
+          moduleId: input.moduleId,
+          tenantId: tenant.id,
+          status: 'ACTIVE',
+          grantedBy: input.decidedBy,
+          grantedAt: decidedAt,
+          reason: input.reason,
+          // A re-grant clears the revocation. Leaving it would show a live
+          // grant with a revocation date on it, which reads as expired.
+        }
+      : {
+          // The original grant survives revocation untouched. "Who had this,
+          // and between which dates" is what an access review asks, and a
+          // record that overwrote its own grant cannot answer it.
+          ...existing!,
+          status: 'REVOKED',
+          revokedBy: input.decidedBy,
+          revokedAt: decidedAt,
+          revokedReason: input.reason,
+        };
+
+    this.#moduleGrants.set(ref, updated);
+
+    this.ledger.commit({
+      // Written on the platform's own tenancy, not the customer's: this is the
+      // operator's decision about a company, not that company's record about
+      // themselves, and a tenancy that could read its own grant would be
+      // reading the register of who else has been given the module.
+      tenantId: PLATFORM_TENANT_ID,
+      projectId: `${PLATFORM_TENANT_ID}-governance`,
+      actor: { refType: 'User', refId: input.decidedBy },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: granting ? 'MODULE_GRANTED' : 'MODULE_REVOKED',
+      entity: { refType: 'ModuleGrant', refId: ref },
+      nextState: { ...updated, id: ref, moduleName: MODULES[input.moduleId].name },
+    });
+
+    return updated;
+  }
+
+  /** Every grant ever made, live and revoked. The operator's register. */
+  moduleGrants(): ModuleGrant[] {
+    return [...this.#moduleGrants.values()];
+  }
+
+  /**
+   * The modules a tenancy currently holds.
+   *
+   * Derived from the grants each time rather than cached on the tenancy: a
+   * cached copy is a second source of truth for the same fact, and the one that
+   * goes stale is always the one an access check reads.
+   */
+  grantedModules(tenantId: string): ModuleId[] {
+    return this.moduleGrants()
+      .filter((grant) => grant.tenantId === tenantId && grant.status === 'ACTIVE')
+      .map((grant) => grant.moduleId);
+  }
+
   // --- Accessors -------------------------------------------------------------
 
   tenant(tenantId: string): Tenant {
@@ -1139,6 +1256,16 @@ export class Platform {
         startedAt: state.startedAt ?? new Date().toISOString(),
         renewsAt: state.renewsAt ?? new Date(Date.now() + 30 * 86_400_000).toISOString(),
       });
+    }
+
+    for (const record of this.ledger.entitiesOfType('ModuleGrant')) {
+      const state = record.state as unknown as ModuleGrant;
+      // Guarded, because a grant restored for a module this build no longer has
+      // would be an access check reading a module id that is not in the
+      // catalogue. Dropping it fails closed; keeping it would not.
+      if (isModuleId(state.moduleId)) {
+        this.#moduleGrants.set(grantRef(state.moduleId, state.tenantId), state);
+      }
     }
 
     for (const record of this.ledger.entitiesOfType('ACUWallet')) {
@@ -1671,6 +1798,12 @@ export class Platform {
       // unprovisioned tenancy a 404 on every route instead of a 402 on the ones
       // that change something.
       standing: standing(this.#subscriptions.get(auth.tenantId), auth.roles),
+      // Beside standing, and not expressed in terms of it. Standing is derived
+      // from whether the tenancy is paying; a module grant is an act somebody
+      // took. A granted tenancy that stops paying loses the platform, not the
+      // grant, so reactivating restores what they had rather than silently
+      // dropping a module nobody remembered to re-add.
+      grantedModules: this.grantedModules(auth.tenantId),
     };
   }
 
