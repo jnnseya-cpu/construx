@@ -61,6 +61,17 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   GateReview: { area: 'PROJECT_SETUP' },
   User: { area: 'ENTERPRISE_STRUCTURE' },
 
+  // ETABLIX site services — reachable only by a tenancy holding the module.
+  // Classified so the generic entity route enforces the capability boundary on
+  // them like everything else; `requireModule` is the gate above that, and both
+  // have to pass.
+  //
+  // COMMERCIAL_L3 on both: the appointment names the contracting entity, the
+  // funding source and which party carries the cash exposure, and the fit
+  // assessment carries ETABLIX's own credit position.
+  SiteServicesAppointment: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  ModelFitAssessment: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+
   // Design and information
   Specification: { area: 'DESIGN_INFORMATION' },
   SpecClause: { area: 'DESIGN_INFORMATION' },

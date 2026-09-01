@@ -12592,3 +12592,111 @@ parameter. One mutation survived first time round and was a real gap:
 `grantRef` reduced to the module id alone left every tenancy sharing one grant
 record, and the fixture only ever granted to one company. The test now grants to
 two, and revokes one.
+
+
+### Which of three businesses ETABLIX is on this job
+
+The first vertical of the ETABLIX module, and the one everything after it
+depends on. The same welfare, power, roads, cleaning, security and transport is
+delivered under three appointments that differ on **every** control point that
+matters, and almost every argument on such a job traces back to somebody
+assuming one of them while somebody else assumed another.
+
+| | Advisory | Management Integrator | Prime Service Contractor |
+|---|---|---|---|
+| Holds the supplier contract | Customer | Customer | ETABLIX |
+| Pays the supplier | Customer, direct | Customer, on ETABLIX's recommendation | ETABLIX, under its own terms |
+| Runs the operation | Customer from handover | ETABLIX | ETABLIX |
+| Enforces performance | Not ETABLIX | Administers the customer's remedies | Directly and contractually |
+| Exposed to | Professional liability | A management duty | Supplier default, cashflow, performance |
+| Paid | A fixed professional fee | Mobilisation + monthly management fee | An integrated price, allowances disclosed |
+| Customer receives | Professional milestones | A fee invoice + payment recommendations | One invoice, supplier liabilities behind it |
+
+**Not a second copy of `TRADING_MODEL`.** `domain/integrator.ts` already holds
+the three models and the *commercial* consequence of each — whether supplier
+cost passes through the account, the cash risk, the margin risk — and stays the
+source of truth for all of it; `profileFor` reads it rather than restating it,
+pinned by a test. What is new is the layer it deliberately does not have: who
+contracts, who pays, who coordinates, who may enforce, and what has to be true
+before a model may be chosen at all. The spec writes the third model as "Prime
+Service Contractor" and this codebase already calls it
+`PRINCIPAL_SERVICE_CONTRACTOR`; it keeps one name, because a synonym splits
+every query over this decision in half.
+
+**The distinction the module exists to keep** is Management. ETABLIX runs the
+operation and *still cannot enforce* — it is not a party to the contract — so
+`mayInstructSupplier` and `mayEnforceDirectly` are separate flags with different
+answers. A platform that let Management act as though it could enforce would be
+manufacturing an authority that does not exist.
+
+**Changing the model is a transition, not a toggle.** Before baseline it is an
+ordinary correction. After baseline it is ETABLIX taking on — or putting down —
+a supply chain, a cash exposure and a liability it did not have that morning, so
+the commercial basis is required and the change is refused without it. The
+earlier appointment stays on the record: what ETABLIX *used to be* answerable
+for is the first thing asked when something goes wrong.
+
+#### The Model Fit agent, and the recommendation it refuses to make
+
+Ten factors, each scored 0–4 against evidence, each with a stated coefficient
+per model in the range −2..2. The coefficients are ETABLIX's judgement about
+what those facts mean and they sit in the source where a recommendation can be
+argued with, rather than inside an arithmetic expression. Every factor's
+contribution to every model is on the screen.
+
+Two rules do the real work:
+
+- **No recommendation at all where the contracting entity or the funding source
+  is unknown.** Not a low-confidence answer — no answer, because both decide
+  which appointments are even legally available. It still scores every model: a
+  refusal to recommend is not a refusal to analyse, and the paper is what tells
+  somebody what to go and find out.
+- **A blocked model is never recommended, however well it scores.** Nine
+  viability gates across the three models — treasury, mobilisation cash,
+  insurance, bonds; delegated authority and payment workflow; deliverables,
+  procurement owner, handover date and post-award responsibilities. The
+  recommendation that puts a business into an appointment it cannot fund is
+  exactly the one a fit percentage makes persuasive, and the test that pins this
+  asserts the blocked model *out-scored* the recommended one — otherwise it
+  would prove nothing.
+
+"None required" is an answer on bonds; **silence is not**, and it blocks. So
+does an unstated post-award responsibility on Advisory: advisory ends at award
+unless it says otherwise, and that is exactly what gets assumed either way.
+
+#### What this added to the platform's own machinery
+
+`SITE_SERVICES` joins the capability matrix as the twenty-sixth area, with its
+own scope pair (`siteservices:read`/`siteservices:write`) rather than reusing
+`field:*` — a token integrating with the permanent-works programme should not,
+by holding it, reach the welfare village's occupancy. Nineteen of the
+twenty-three roles hold something on it; `PLATFORM_ADMIN` holds nothing, being
+blind to delivery, and `SUPPLIER` reaches its own lane through
+`SUPPLIER_SUBMISSION` as before.
+
+The area exists in the matrix for every tenancy, because the matrix is one
+published document. **Holding a permission on it does nothing without the
+grant** — every route calls `requireModule` beside `authorise`, and the two ask
+different questions: whether the *company* holds the module, and whether this
+*person* may do this thing within it. Both are tested, including the case where
+the answer to the second is yes and the first still refuses.
+
+The console screen is gated by `module: 'ETABLIX'` on the navigation entry,
+which makes it **absent rather than locked**. A padlock reading "ETABLIX AI Site
+Services" would tell a company the module exists, which is the one thing it must
+never learn.
+
+**23 mutations, 23 caught.** Four survived the first pass and every one was the
+same gap: only one viability gate per model had a test, so four of the nine
+could be deleted outright with the suite green. They are now a table — one case
+per gate, asserting the right model is blocked, the blocker names the right
+thing, and *the other two models stay viable*, because one missing document must
+not block every route out of the job.
+
+Reading the rendered screen caught two more. A badge was carrying a full
+sentence — the model label is `"Principal — one price to the client, and every
+supplier is this business's"` and a badge is not a paragraph. And a model the
+evidence argues *against* rendered as "viable, 0.0% fit", identical to one
+nothing had been said about, because the bar clamps at zero and the raw score
+does not. The score is now stated beside it: **−28 across the ten factors**
+reads as the opposite of neutral, which is what it is.

@@ -136,7 +136,23 @@ export type CapabilityArea =
   | 'HANDOVER_OM'
   | 'EVIDENCE_AUDIT'
   | 'AI_EXECUTION'
-  | 'BILLING_ACU';
+  | 'BILLING_ACU'
+  // The temporary infrastructure and the living environment: compounds,
+  // enabling civils, temporary MEP, welfare and accommodation, cleaning and FM,
+  // security, logistics and transport.
+  //
+  // Its own area rather than a corner of FIELD_EXECUTION or HANDOVER_OM,
+  // because the parties are not the same ones. The people who run a welfare
+  // village and a bus fleet are the FM and facilities side of a business, and
+  // the people who hold FIELD_EXECUTION are building the permanent works. A
+  // shared area would have given each of them authority over the other's work
+  // and no way to tell the two apart on the audit trail.
+  //
+  // Reachable only inside the ETABLIX module — every route that authorises
+  // against it also calls `requireModule`. The area exists in the matrix for
+  // every tenancy because the matrix is one published document; holding a
+  // permission on it does nothing at all without the grant.
+  | 'SITE_SERVICES';
 
 export const ROLE_ACCOUNT_LAYER: Record<Role, AccountLayer> = {
   PLATFORM_ADMIN: 'PLATFORM_ADMIN',
@@ -271,6 +287,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R', 'U'],
+    SITE_SERVICES: ['R'],
   },
 
   OWNER: {
@@ -295,6 +312,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R', 'U'],
+    SITE_SERVICES: ['R', 'A'],
   },
 
   // Reads everything, authors nothing, signs the few things that commit the
@@ -324,6 +342,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
+    SITE_SERVICES: ['R', 'A'],
   },
 
   // Authors the concept and approves none of it. Every 'A' is absent
@@ -348,6 +367,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
+    SITE_SERVICES: ['R'],
   },
 
   // Contractor-side seniority: approves what the delivery team authors, and
@@ -377,6 +397,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
+    SITE_SERVICES: ['R', 'C', 'U', 'A'],
   },
 
   // Approves what the QS authors, and receives the exception when the data
@@ -402,6 +423,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
+    SITE_SERVICES: ['R', 'U', 'A'],
   },
 
   // The CDM 2015 statutory duty holder for the pre-construction phase. This is
@@ -425,6 +447,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
+    SITE_SERVICES: ['R'],
   },
 
   EPC: {
@@ -450,6 +473,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
+    SITE_SERVICES: ['R', 'C', 'U'],
   },
 
   // QS authors commercial documents but must not approve the budget baseline
@@ -475,6 +499,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
+    SITE_SERVICES: ['R', 'C', 'U'],
   },
 
   PM: {
@@ -502,6 +527,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
+    SITE_SERVICES: ['R', 'C', 'U', 'A'],
   },
 
   PLANNER: {
@@ -518,6 +544,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     BIM_TWIN: ['R'],
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
+    SITE_SERVICES: ['R'],
   },
 
   // Safety approves RAMS but has no line of sight into Legal-L4 contract content.
@@ -533,6 +560,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     QUALITY_COMMISSIONING: ['R'],
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
+    SITE_SERVICES: ['R', 'C', 'U'],
   },
 
   QAQC: {
@@ -545,6 +573,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     RISK_REGISTER: ['R'],
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
+    SITE_SERVICES: ['R'],
   },
 
   DESIGNER: {
@@ -556,6 +585,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     RISK_REGISTER: ['R'],
     EVIDENCE_AUDIT: ['R'],
     AI_EXECUTION: ['R', 'X'],
+    SITE_SERVICES: ['R'],
   },
 
   BIM: {
@@ -569,6 +599,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     HANDOVER_OM: ['R', 'C', 'U'],
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
+    SITE_SERVICES: ['R'],
   },
 
   /**
@@ -607,6 +638,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     HANDOVER_OM: ['R', 'C', 'U'],
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
+    SITE_SERVICES: ['R', 'C', 'U', 'A'],
   },
 
   SUPERVISOR: {
@@ -620,6 +652,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     RISK_REGISTER: ['R', 'C'],
     EVIDENCE_AUDIT: ['R'],
     AI_EXECUTION: ['R', 'X'],
+    SITE_SERVICES: ['R', 'C', 'U'],
   },
 
   // FM owns the asset after handover, and cannot reach back into tender baselines.
@@ -632,6 +665,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     SAFETY_RAMS: ['R'],
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
+    SITE_SERVICES: ['R', 'C', 'U', 'A', 'X'],
   },
 
   // Supplier sees only its own RFQ and its own submission (enforced by ABAC).
@@ -651,6 +685,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     HANDOVER_OM: ['R'],
     BIM_TWIN: ['R'],
     EVIDENCE_AUDIT: ['R', 'I'],
+    SITE_SERVICES: ['R'],
   },
 };
 

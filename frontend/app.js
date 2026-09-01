@@ -109,6 +109,18 @@ export const NAV = [
       // who authors every container on the project could not open the screen
       // that holds them, while the BIM coordinator could.
       { id: 'design', label: 'Design & BIM', area: 'BIM_TWIN', alsoArea: ['DESIGN_INFORMATION'], icon: 'cube' },
+      // The ETABLIX module. `module` is what makes it absent rather than locked
+      // for everybody else — see `reachable()` — and the value is checked
+      // against what the API said this tenancy holds, never against a constant
+      // here. In the Deliver group because the temporary infrastructure and the
+      // living environment are what the permanent works are built out of.
+      {
+        id: 'siteservices',
+        label: 'Site Services',
+        area: 'SITE_SERVICES',
+        module: 'ETABLIX',
+        icon: 'layers',
+      },
     ],
   },
   {
@@ -765,6 +777,12 @@ function reachable(item) {
   if (isOperator()) return OPERATOR_NAV.some((group) => group.items.some((entry) => entry.id === item.id));
   if (item.area === 'PLATFORM_ADMINISTRATION') return false;
   if (item.id === 'overview' || item.id === 'copilot') return true;
+  // A screen belonging to a private module is absent, not locked, for a tenancy
+  // without the grant — and absent rather than locked is the whole requirement:
+  // a padlock labelled "ETABLIX AI Site Services" tells somebody the module
+  // exists, which is exactly what a company that has not been given it must
+  // never learn. The server refuses the routes either way.
+  if (item.module && !hasModule(item.module)) return false;
   return readableAreas(item).some((area) => can(area, 'R'));
 }
 

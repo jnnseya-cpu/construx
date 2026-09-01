@@ -62,6 +62,7 @@ import * as supplychain from '../domain/supplychain.ts';
 import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
 import * as integrator from '../domain/integrator.ts';
+import * as appointment from '../domain/etablix/appointment.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
 import * as programmereview from '../domain/programmereview.ts';
@@ -4468,6 +4469,85 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => structure.createScopePackage(projectContext(platform, ctx), body(ctx)),
+  },
+  // --------------------------------------------- ETABLIX site services (§2)
+  //
+  // Every route below calls `requireModule` inside the domain command as well
+  // as authorising the capability, and the two ask different questions: whether
+  // this *company* holds the module at all, and whether this *person* may do
+  // this thing within it. A tenancy without the grant is refused here and is
+  // never told the routes exist, because `/v1/permissions/matrix` publishes
+  // only the modules it holds and the console gates its navigation on that.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/appointment',
+    description: 'Which appointment ETABLIX holds, what it decides, and what the other two models would have meant',
+    handler: (platform, ctx) => appointment.appointmentPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/appointment',
+    description: 'Appoint ETABLIX under one of the three models, once, at the start',
+    schema: {
+      type: 'object',
+      required: ['model', 'contractingEntity', 'fundingSource', 'basis'],
+      properties: {
+        model: { type: 'string', enum: ['ADVISORY', 'MANAGEMENT_INTEGRATOR', 'PRINCIPAL_SERVICE_CONTRACTOR'] },
+        // Both required at the schema as well as in the command. They are the
+        // two facts that decide which appointments are legally available, and
+        // an appointment missing either is one nobody can enforce or invoice.
+        contractingEntity: { type: 'string', minLength: 2 },
+        fundingSource: { type: 'string', minLength: 2 },
+        basis: { type: 'string', minLength: 3 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => appointment.setAppointment(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/appointment/baseline',
+    description: 'Record that the requirements baseline is agreed, after which a change of model is a commercial transition',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => appointment.baselineAgreed(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/appointment/transition',
+    description: 'Move to a different appointment model — a governed commercial transition, never a settings change',
+    schema: {
+      type: 'object',
+      required: ['model', 'basis'],
+      properties: {
+        model: { type: 'string', enum: ['ADVISORY', 'MANAGEMENT_INTEGRATOR', 'PRINCIPAL_SERVICE_CONTRACTOR'] },
+        basis: { type: 'string', minLength: 3 },
+        // Optional at the schema and mandatory in the command once a baseline
+        // exists. The schema cannot see whether it does; the command can.
+        commercialBasis: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => appointment.transitionAppointment(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/model-fit',
+    description: 'Score the three appointment models against the evidence and produce a decision paper',
+    schema: {
+      type: 'object',
+      required: ['scores', 'evidence'],
+      properties: {
+        // Ten named factors, all required by the command. Left loose here
+        // because the schema would otherwise be a second copy of FIT_FACTORS,
+        // and the two would drift the first time a factor was added.
+        scores: { type: 'object' },
+        evidence: { type: 'object' },
+        contractingEntity: { type: 'string' },
+        fundingSource: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => appointment.assessModelFit(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'GET',

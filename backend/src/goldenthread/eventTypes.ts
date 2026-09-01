@@ -1569,6 +1569,31 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // baseline is the one thing stage 6 freezes that no other stage does, and it
   // is the only new event the gate needs.
   def('CONCEPT_BASELINE_APPROVED', 'ConceptBaseline', 'APPROVE', 'PROJECT_CONTROL', { requiresEvidence: true, creates: true }),
+
+  // --- ETABLIX site services ------------------------------------------------
+  //
+  // Reachable only by a tenancy holding the ETABLIX module. In the shared
+  // catalogue rather than a catalogue of its own, because the ledger has one
+  // event catalogue and a second one would be a second thing that can disagree
+  // about what an event means — and because the module's records are ordinary
+  // Golden Thread records, on the same chain, with the same replay.
+  //
+  // Which appointment ETABLIX holds decides who contracts, who pays, who
+  // coordinates and who may enforce. It is a commercial act, so no agent may
+  // author it: `aiAllowed` is false on all three, which the ledger enforces
+  // regardless of what any mandate says.
+  def('SITE_SERVICES_APPOINTED', 'SiteServicesAppointment', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('SITE_SERVICES_BASELINE_AGREED', 'SiteServicesAppointment', 'APPROVE', 'GOVERNANCE'),
+  // A transition, not an edit: after baseline this is ETABLIX taking on — or
+  // putting down — a supply chain and the cash exposure behind it.
+  def('SITE_SERVICES_APPOINTMENT_TRANSITIONED', 'SiteServicesAppointment', 'APPROVE', 'GOVERNANCE'),
+  // The Model Fit agent's decision paper. `aiAllowed`, unlike the three above,
+  // because producing the assessment is exactly the work an agent does; what it
+  // may not do is act on it.
+  def('SITE_SERVICES_MODEL_FIT_ASSESSED', 'ModelFitAssessment', 'CREATE', 'GOVERNANCE', {
+    aiAllowed: true,
+    creates: true,
+  }),
 ];
 
 /**

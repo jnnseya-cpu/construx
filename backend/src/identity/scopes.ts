@@ -35,6 +35,12 @@ export type Scope =
   | 'ai:execute'
   | 'billing:read'
   | 'billing:write'
+  // Its own pair rather than reusing `field:*`. A token issued to a site
+  // system integrating with the permanent-works programme should not, by
+  // holding it, reach the welfare village's occupancy or the accommodation
+  // roster — and the reverse is just as true.
+  | 'siteservices:read'
+  | 'siteservices:write'
   | 'media:upload'
   | 'media:read'
   | 'admin:*';
@@ -68,6 +74,7 @@ const AREA_SCOPES: Record<CapabilityArea, { read: Scope; write: Scope }> = {
   EVIDENCE_AUDIT: { read: 'audit:read', write: 'audit:read' },
   AI_EXECUTION: { read: 'ai:execute', write: 'ai:execute' },
   BILLING_ACU: { read: 'billing:read', write: 'billing:write' },
+  SITE_SERVICES: { read: 'siteservices:read', write: 'siteservices:write' },
 };
 
 const WRITE_CODES = new Set<PermissionCode>(['C', 'U', 'A', 'I', 'G']);

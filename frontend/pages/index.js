@@ -43,6 +43,7 @@ import { procurement } from './procurement.js';
 import { programme } from './programme.js';
 import { reports } from './reports.js';
 import { risk } from './risk.js';
+import { siteservices } from './siteservices.js';
 import { settings } from './settings.js';
 import { signup } from './signup.js';
 import { support } from './support.js';
@@ -70,6 +71,10 @@ export const PAGES = {
   construction,
   concept,
   design,
+  // ETABLIX. Registered like any other page; the navigation is what makes it
+  // absent for a tenancy without the module, and the routes behind it refuse
+  // one regardless.
+  siteservices,
   documents,
   commercial,
   commands,
