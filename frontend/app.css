@@ -759,6 +759,42 @@ input:focus, select:focus, textarea:focus {
 .chart-key { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; font-size: 11px; color: var(--text-2); }
 .chart-key span { display: inline-flex; align-items: center; gap: 6px; }
 .chart-key i { width: 9px; height: 3px; border-radius: 2px; }
+/* sparkline — a shape beside a number, no axes at this size */
+.spark { display: inline-block; width: 84px; height: 20px; vertical-align: middle; }
+.spark svg { display: block; width: 100%; height: 100%; }
+.spark-empty { color: var(--text-3); font-family: var(--mono); font-size: 11px; }
+
+/* gantt — bars on a date axis */
+.gantt-name { fill: var(--text-2); font-size: 9.5px; }
+.gantt-name[data-driving] { fill: var(--text-1); font-weight: 600; }
+.gantt-bar { fill: var(--info); opacity: 0.55; }
+.gantt-bar.critical { fill: var(--warning); opacity: 0.7; }
+/* the chain that moves the finish date, and the only one worth the accent */
+.gantt-bar.driving { fill: var(--orange); opacity: 0.9; }
+.gantt-done { fill: var(--success); opacity: 0.85; }
+.gantt-baseline { fill: var(--text-3); opacity: 0.5; }
+.gantt-milestone { fill: var(--text-2); }
+.gantt-milestone.driving { fill: var(--orange); }
+.gantt-datadate { stroke: var(--critical); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.chart-key i.gantt-key-driving { background: var(--orange); }
+.chart-key i.gantt-key-bar { background: var(--info); opacity: 0.55; }
+.chart-key i.gantt-key-baseline { background: var(--text-3); opacity: 0.5; }
+.chart-key i.gantt-key-datadate { background: var(--critical); }
+.gantt svg { min-height: 120px; }
+
+/* histogram and waterfall */
+.hist-bar { fill: var(--info); opacity: 0.6; }
+.hist-bar.marked { fill: var(--orange); opacity: 0.95; }
+.chart-key i.hist-key-marked { background: var(--orange); }
+.wf-total { fill: var(--text-2); }
+.wf-up { fill: var(--info); opacity: 0.75; }
+.wf-down { fill: var(--warning); opacity: 0.8; }
+
+/* donut — the ring beside its figures, never instead of them */
+.chart.donut { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.chart.donut svg { width: 132px; height: 132px; flex: none; }
+.chart.donut .chart-key { flex-direction: column; gap: 6px; margin-top: 0; align-items: flex-start; }
+
 /* a chart sitting beside a taller panel: the plot takes the slack, not blank space */
 .card.chart-card { display: flex; flex-direction: column; }
 .card.chart-card .chart { flex: 1; display: flex; flex-direction: column; min-height: 200px; }

@@ -12017,3 +12017,52 @@ discriminates — one working day back from a Saturday — is now asserted.
 Resources and resource levelling, activity codes, multiple float paths, and the
 domain, routes and console door for any of this: the engine exists and nothing
 reaches it yet.
+
+
+### Charts the platform's own data needed and nothing drew
+
+The console had two chart types — a line and a ranked bar — on six pages, none
+of them a delivery or commercial page. Every figure elsewhere was a number,
+which answers "what is it" and never "which way is it going" or "what is it made
+of".
+
+Six added to `frontend/lib/chart.js`, all inline SVG on the settled
+zero-dependency decision, all holding to the three rules the file already had:
+no invented axis, an empty series draws its empty state rather than an axis
+around blank space, and nothing is smoothed.
+
+**`sparkline`** is the one that makes "everywhere" possible: a shape small enough
+to sit beside a number in a metric card or a table cell, with no axis, no grid
+and no labels, because at that size they are illegible. Fewer than two points
+draws a dash — one point is not a trend, and drawing a dot and calling it one
+makes every other chart on the page less trusted.
+
+**`ganttChart`** draws the data date as a line, the baseline as a rule *under*
+the bar rather than over it, milestones as diamonds (a zero-duration bar is
+invisible and widening it states a duration the activity does not have), and the
+**longest path** in the accent rather than "critical" — with calendars and
+constraints those are different sets and the driving chain is the one worth the
+colour.
+
+**`histogram`** counts what a simulation produced rather than fitting a curve
+through it, because a fitted curve puts probability on outcomes the model never
+generated. **`stackedBarChart`** holds segment order constant across columns, or
+the stack cannot be read across. **`waterfall`** shows how a total was arrived at
+step by step — the shape a price build-up and a variance bridge both want.
+**`donut`** is capped and every slice carries its figure, because a ring is poor
+at comparing similar slices and nobody should have to judge an angle.
+
+Placed so far: the waterfall on the integrator price build-up — a client arguing
+about "twenty per cent" is arguing about a total, and this is the only view that
+shows which step they object to — and the donut on cross-project supplier
+exposure.
+
+**Verified in a browser**, which is the only place a chart can be: six waterfall
+bars in the right classes, the donut rendering with its figures, no collapsed
+SVG, no `NaN` in any attribute, no page errors. A chart that computes `NaN` still
+renders an element and simply shows nothing, so the check is for the attribute
+rather than for the exception.
+
+**Not yet placed**: the sparkline, histogram and stacked bar have no callers, and
+the Gantt has nothing to draw until the schedule engine has a domain record and a
+route. Named here rather than implied by the section above.

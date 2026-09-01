@@ -1,4 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
+import { donut, waterfall } from '../lib/chart.js';
 import { command, commandBar } from '../lib/command.js';
 import { today } from '../lib/enums.js';
 import { badge, date, exact, html, humanise, metric, money, pct, positionReport, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
@@ -242,7 +243,16 @@ function exposurePanel(view) {
 
       ${
         (view.suppliers ?? []).length > 0
-          ? html`${table({
+          ? html`<div style="padding:11px 17px 0">
+              ${donut({
+                slices: view.suppliers.map((supplier) => ({
+                  label: supplier.supplierName,
+                  value: supplier.committedMinor / 100,
+                })),
+                format: (value) => money(Math.round(value * 100)),
+              })}
+            </div>
+            ${table({
               headers: ['Supplier', 'Committed', 'Share of the business', 'Largest single job', 'Appointments'],
               align: ['', 'num', 'num', 'num', ''],
               rows: view.suppliers.map((supplier) => [
@@ -523,6 +533,24 @@ function integrationPanel(position) {
                 ],
               ],
             })}
+
+            <p style="padding:12px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+              The same build-up as a shape: where the price starts, what each component adds, and where it ends. A
+              client arguing about "twenty per cent" is arguing about a total; this is the only view that shows which
+              step they are actually objecting to.
+            </p>
+            <div style="padding:6px 17px 4px">
+              ${waterfall({
+                steps: [
+                  { label: 'Supplier cost', value: price.directSupplierCostMinor / 100, kind: 'BASE' },
+                  ...price.components
+                    .filter((component) => component.amountMinor > 0)
+                    .map((component) => ({ label: component.label, value: component.amountMinor / 100, kind: 'ADD' })),
+                  { label: 'Contract price', value: price.contractPriceMinor / 100, kind: 'TOTAL' },
+                ],
+                format: (value) => money(Math.round(value * 100)),
+              })}
+            </div>
 
             <div class="split-list" style="padding:0 17px 15px">
               <div class="row">
