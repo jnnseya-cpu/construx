@@ -13298,3 +13298,119 @@ share rather than counted in the ledger; the acknowledgement breach was never
 checked while an event was still unacknowledged, which is the only time it
 matters; and the paused-clock blocker never appeared in a test. All eight now
 have tests.
+
+### An invoice is not proof of value
+
+§10, commercial control and earned value —
+`backend/src/domain/etablix/commercial.ts`, tested in
+`backend/tests/etablix.commercial.test.ts`.
+
+The specification's own sentence, enforced. A supplier **application** is a
+claim; what is **earned** is the budgeted value of accepted progress; what is
+**actual** is what somebody certified. Three numbers every commercial system on
+the market collapses into one, and the collapse is why a job can be 40% paid,
+25% delivered and reported as on track. The eight records are kept apart, and
+the console shows budget, committed, earned and certified as four separate
+figures rather than one percentage.
+
+**The earned-value method is chosen per line, not assumed.** A welfare hire
+earns by *time* and cannot go faster by working harder; a compound earns by
+*milestone* and earns nothing until it is accepted; cleaning earns by *weighted
+evidence* against the inspection sample. A line whose method has nothing to
+measure against — a time line with no duration, a quantity line with no
+quantity — is refused, because progress against nothing is a percentage of
+nothing.
+
+Earned value is a **position, not a sum**: three readings of 40%, 60% and 80%
+are one line at 80%, and adding them is how earned value passes 100. A
+certificate pays the **movement** between two positions, not the position.
+
+The reconciliation finds six exceptions, each carrying what it is worth —
+overclaim, unsupported, premature, prior drift, KPI deduction, and the one
+nobody looks for: **work earned and never claimed**, which is a liability
+whether it is on the application or not. Certification is refused while any line
+claims more than the evidence supports, which is the moment a claim would
+otherwise become an actual. Driven live: a claim of sixteen weeks against ten
+weeks of dockets refused at *"1 line claims more than the accepted evidence
+supports"*, then certified at £50,000 once corrected.
+
+Service credits are a **separate transparent adjustment**, never netted into a
+rate. They must arise from a recorded KPI event, quote the contract formula,
+respect the cap, and cannot be approved inside the cure period — that period is
+the supplier's contractual chance to put it right.
+
+**20 mutations, 20 caught.** One exposed a genuinely unreachable branch: the
+premature-claim exception checked the already-filtered set and could never fire,
+which made the exception decorative. It now looks at the whole record and is
+pinned by a test.
+
+### No change becomes forecast-neutral because it lacks a quotation
+
+§11, change, early warning and recovery — `backend/src/domain/etablix/change.ts`.
+The golden rule, verbatim, and the module is that rule enforced.
+
+A job carrying three hundred thousand pounds of instructed-but-unpriced work
+reports itself on budget right up until somebody agrees a number. So
+**entitlement, probability and value are three separate fields** — collapsed
+into one expected value, nobody can see which of the three is the weak one, and
+it is always a different one — and the risk-adjusted exposure is on the forecast
+from the day the change is raised. Driven live: a £40,000 arguable instruction
+at 75% shows as *£30,000 on the forecast today*, with no quotation anywhere near
+it.
+
+A change with no probability or no value is refused, because both become zero
+silently. An **agreed** change is certain by definition: agreeing one still
+carrying a probability is refused with *"it has been quoted, and the forecast
+should carry it as exposure rather than as value"*.
+
+Six triggers, each asking a different question, and four of them start a
+contract clock. A notice is a separate act with a reference and a date — the
+commonest way an entitlement is lost is that everybody assumed somebody had sent
+one — and the register flags a notice period that has passed with nothing sent.
+
+**13 mutations, 13 caught.**
+
+### Demobilisation begins at design
+
+§12 — `backend/src/domain/etablix/demobilisation.ts`. Every temporary asset must
+have an owner, a removal method, a trigger, a cost, a waste route and a
+reinstatement criterion *before it is installed*, because the moment to agree who
+breaks out a hardstanding is the moment before it is poured, when somebody still
+wants something from you. A plan missing any of the six is refused and names
+them; "removed" is not a method and "off site" is not a waste route.
+
+**The refusal that matters** is §12's first workstream: *prevent premature loss
+of statutory welfare*. This is the phase where the last WCs go back because the
+compound is "finishing" and there are still forty people working. A run-down
+that would take provision below the statutory minimum is refused with the
+arithmetic in it — *"40 people still on site require 3 WCs under Schedule 1
+Table 1, and this run-down leaves 1"* — using the same `statutoryWcs` table §4
+sizes the welfare from, read in reverse. Naming a successor facility permits it;
+the register still shows it as below the minimum, because the successor is the
+reason it is acceptable rather than a reason it stops being true.
+
+The seven workstreams each close on the acceptance evidence they declare, and
+none closes on a narrative. The demand run-down cannot be accepted with no
+run-down behind it, and an asset removal cannot be accepted with no plan behind
+it — that would accept whatever was done, at whatever cost, to whatever
+standard.
+
+**13 mutations, 13 caught.**
+
+#### What driving §9–§12 in a browser found
+
+Two defects the tests could not see, both fixed:
+
+- The page named its commercial-position variable `money`, shadowing the shared
+  currency formatter imported from `lib/ui.js`. Every panel below it rendered as
+  `TypeError: money is not a function` — a blank screen, with the console
+  bindings invariant satisfied, because the name *was* bound. It is now
+  `commercial`, and the hand-rolled decimal helper written around the shadow was
+  deleted in favour of the real `money()`.
+- A certified valuation was labelled **not certifiable**, which reads as a
+  problem when it is the opposite. `certifiable` means "can be certified now";
+  once it has been, the honest word is the past tense.
+
+And three domain sentences carried bare minor units to a reader — *"worth
+4000000 at face"* for a £40,000 change. A minor-unit integer in a sentence gets
+misread by a factor of a hundred exactly once, expensively.

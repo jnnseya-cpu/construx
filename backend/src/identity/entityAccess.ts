@@ -105,6 +105,25 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // standing in the compound.
   ServiceEvent: { area: 'SITE_SERVICES' },
   ServicePeriod: { area: 'SITE_SERVICES' },
+  // §10. Budgets, commitments, what was earned and what was certified. All
+  // COMMERCIAL_L3: a contract line names a supplier's rate, and a valuation
+  // names what a firm is about to be paid.
+  ContractLine: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  Valuation: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  ServiceCredit: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  // Accepted progress is the evidential half and is deliberately not
+  // commercial: the people who record what the platform actually saw are the
+  // ones running the operation, not the ones pricing it.
+  AcceptedProgress: { area: 'SITE_SERVICES' },
+  // §11. A change carries an entitlement view and what it is worth, which is
+  // the most commercially sensitive thing on the project.
+  ServiceChange: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  // §12. The removal plan, the run-down and the closeout. Not commercial: the
+  // people who need them are the ones taking the compound apart, and the
+  // statutory-welfare check has to be readable by whoever is on site.
+  RemovalPlan: { area: 'SITE_SERVICES' },
+  RunDown: { area: 'SITE_SERVICES' },
+  DemobilisationRecord: { area: 'SITE_SERVICES' },
 
   // Design and information
   Specification: { area: 'DESIGN_INFORMATION' },

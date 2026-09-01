@@ -52,14 +52,28 @@ const FIT_FIELDS = [
 const SCALE_HINT = '0 = not at all · 2 = partly · 4 = strongly. Score what the evidence says, not what would be convenient.';
 
 export async function siteservices(root) {
-  const [position, readiness, structure, tower, factory, live] = await Promise.all([
+  const [position, readiness, structure, tower, factory, live, commercial, changes, closeout] = await Promise.all([
     api.get(`/v1/projects/${state.session.projectId}/site-services/appointment`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/brief`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/sbs`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/mobilisation`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/procurement`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/operations`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/commercial`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/change`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/demobilisation`).catch((error) => ({ error })),
   ]);
+
+  // The reconciliation itself, for the valuation that is actually live. It is
+  // a second fetch because it is per-valuation, and it is the most useful thing
+  // in §10 — a summary of a valuation without its exceptions is the summary the
+  // supplier would write.
+  const latest = commercial.error ? undefined : commercial.valuations.at(-1);
+  const reconciliation = latest
+    ? await api
+        .get(`/v1/projects/${state.session.projectId}/site-services/assessment/${latest.id}`)
+        .catch((error) => ({ error }))
+    : undefined;
 
   if (position.error) {
     render(root, html`${head({ title: 'Site Services' })}${refusal('The site-services appointment', position.error)}`);
@@ -280,6 +294,96 @@ export async function siteservices(root) {
             permitted: can('SITE_SERVICES', 'C'),
             reason: blockedReason('SITE_SERVICES', 'C'),
           },
+          {
+            id: 'line',
+            label: 'Open a contract line',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'accepted',
+            label: 'Record accepted progress',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'valuation',
+            label: 'Open a valuation',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'application',
+            label: 'Record an application',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'certify',
+            label: 'Certify a valuation',
+            permitted: can('SITE_SERVICES', 'A'),
+            reason: blockedReason('SITE_SERVICES', 'A'),
+          },
+          {
+            id: 'credit',
+            label: 'Raise a service credit',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'approvecredit',
+            label: 'Approve a service credit',
+            permitted: can('SITE_SERVICES', 'A'),
+            reason: blockedReason('SITE_SERVICES', 'A'),
+          },
+          {
+            id: 'change',
+            label: 'Raise a change',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'notice',
+            label: 'Record a contract notice',
+            permitted: can('SITE_SERVICES', 'U'),
+            reason: blockedReason('SITE_SERVICES', 'U'),
+          },
+          {
+            id: 'movechange',
+            label: 'Move a change on',
+            permitted: can('SITE_SERVICES', 'A'),
+            reason: blockedReason('SITE_SERVICES', 'A'),
+          },
+          {
+            id: 'removal',
+            label: 'Agree a removal plan',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'rundown',
+            label: 'Propose a run-down',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'closeout',
+            label: 'Open a closeout workstream',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'closeoutevidence',
+            label: 'Record closeout evidence',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'acceptcloseout',
+            label: 'Accept a workstream',
+            permitted: can('SITE_SERVICES', 'A'),
+            reason: blockedReason('SITE_SERVICES', 'A'),
+          },
         ]),
       })}
 
@@ -445,6 +549,12 @@ export async function siteservices(root) {
       ${structure.error ? refusal('The system breakdown structure', structure.error) : sbsCard(structure)}
 
       ${live.error ? refusal('Live operations', live.error) : operationsCard(live)}
+
+      ${commercial.error ? refusal('Commercial control', commercial.error) : commercialCard(commercial, reconciliation)}
+
+      ${changes.error ? refusal('The change register', changes.error) : changeCard(changes)}
+
+      ${closeout.error ? refusal('Demobilisation', closeout.error) : demobCard(closeout)}
 
       ${factory.error ? refusal('The procurement factory', factory.error) : factoryCard(factory)}
 
@@ -931,6 +1041,598 @@ export async function siteservices(root) {
       });
       if (result) {
         toast('Declaration recorded', result.moves, 'warn');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'line') {
+      const packages = (factory.error ? [] : factory.packages).map((entry) => ({
+        value: entry.id,
+        label: `${entry.reference} ${entry.title}`,
+      }));
+      if (packages.length === 0) {
+        toast('No packages', 'A line hangs from a package. Create one first.', 'warn');
+        return;
+      }
+      const result = await command({
+        title: 'Open a contract line',
+        intent:
+          'The earned-value method is chosen here and it decides what the line can ever claim. Hire earns by time and ' +
+          'cannot go faster by working harder; a compound earns by milestone and earns nothing until it is accepted; ' +
+          'cleaning earns by weighted evidence against the inspection sample. One method applied to all three is how a ' +
+          'percentage gets reported that nobody can defend.',
+        path: `/v1/projects/${state.session.projectId}/site-services/line`,
+        submitLabel: 'Open',
+        transform: (values) => ({
+          packageId: values.packageId,
+          description: values.description,
+          budgetMinor: Number(values.budgetMinor),
+          commitmentMinor: Number(values.commitmentMinor),
+          currency: values.currency,
+          method: values.method,
+          ...(values.contractQuantity ? { contractQuantity: Number(values.contractQuantity) } : {}),
+          ...(values.unit ? { unit: values.unit } : {}),
+          ...(values.contractWeeks ? { contractWeeks: Number(values.contractWeeks) } : {}),
+          ...(values.systemId ? { systemId: values.systemId } : {}),
+        }),
+        fields: [
+          { name: 'packageId', label: 'Against which package', type: 'select', options: packages },
+          { name: 'description', label: 'What the line buys' },
+          { name: 'budgetMinor', label: 'Budget in pence', type: 'number' },
+          { name: 'commitmentMinor', label: 'Committed in pence', type: 'number' },
+          { name: 'currency', label: 'Currency', value: 'GBP' },
+          {
+            name: 'method',
+            label: 'Earns by',
+            type: 'select',
+            options: (commercial.error ? [] : commercial.methods).map((entry) => ({
+              value: entry.id,
+              label: `${entry.label} — ${entry.suits}`,
+            })),
+          },
+          { name: 'contractQuantity', label: 'Contract quantity', type: 'number', required: false, hint: 'Required for a quantity line' },
+          { name: 'unit', label: 'Unit', required: false },
+          { name: 'contractWeeks', label: 'Contract weeks', type: 'number', required: false, hint: 'Required for a time line' },
+          {
+            name: 'systemId',
+            label: 'Against which service',
+            type: 'select',
+            required: false,
+            options: [
+              { value: '', label: 'Not tied to one system' },
+              ...(structure.error ? [] : structure.systems).map((system) => ({
+                value: system.id,
+                label: `${system.label} — ${system.zone}`,
+              })),
+            ],
+          },
+        ],
+      });
+      if (result) {
+        toast('Line open', `${result.reference} — earns by ${result.method.toLowerCase()}`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'accepted' || which === 'credit') {
+      const lines = (commercial.error ? [] : commercial.lines).map((entry) => ({
+        value: entry.id,
+        label: `${entry.reference} ${entry.description} (${entry.methodLabel.toLowerCase()})`,
+      }));
+      if (lines.length === 0) {
+        toast('No lines', 'Open a contract line before recording anything against one.', 'warn');
+        return;
+      }
+
+      if (which === 'accepted') {
+        const result = await command({
+          title: 'Record accepted progress',
+          intent:
+            'What the platform actually saw, in the line’s own units — accepted quantity, elapsed weeks, the milestone ' +
+            'reached, or evidence accepted over evidence required. This is the number the valuation reconciles a claim ' +
+            'against, and the difference between the two is the entire valuation.',
+          path: `/v1/projects/${state.session.projectId}/site-services/progress`,
+          submitLabel: 'Record',
+          transform: (values) => ({ ...values, accepted: Number(values.accepted) }),
+          fields: [
+            { name: 'lineId', label: 'Which line', type: 'select', options: lines },
+            { name: 'periodTo', label: 'Position at', type: 'date' },
+            {
+              name: 'accepted',
+              label: 'Accepted',
+              type: 'number',
+              hint: 'Cumulative, not the period. Three readings of 40, 60 and 80 are one line at 80.',
+            },
+            {
+              name: 'evidence',
+              label: 'What was seen',
+              type: 'textarea',
+              hint: 'The gate, the work order, the meter, the inspection. "Agreed" is what a claim says.',
+            },
+          ],
+        });
+        if (result) {
+          toast('Recorded', `${result.accepted} accepted to ${result.periodTo}`, 'ok');
+          await again();
+        }
+        return;
+      }
+
+      const events = (live.error ? [] : live.events).map((entry) => ({
+        value: entry.id,
+        label: `${entry.reference} ${entry.defectLabel} (${entry.severity})`,
+      }));
+      if (events.length === 0) {
+        toast('No events', 'A service credit arises from a recorded KPI event, not from a number somebody chose.', 'warn');
+        return;
+      }
+      const result = await command({
+        title: 'Raise a service credit',
+        intent:
+          'Against a recorded KPI event and under the contract formula. Kept as a separate transparent adjustment and ' +
+          'never netted into a rate — a rate with a credit inside it is a rate nobody can check and a credit nobody can ' +
+          'dispute. A cure period, where the contract gives one, stops it being approved until it has run.',
+        path: `/v1/projects/${state.session.projectId}/site-services/credit`,
+        submitLabel: 'Raise',
+        transform: (values) => ({
+          lineId: values.lineId,
+          eventId: values.eventId,
+          formula: values.formula,
+          amountMinor: Number(values.amountMinor),
+          ...(values.capMinor ? { capMinor: Number(values.capMinor) } : {}),
+          ...(values.cureUntil ? { cureUntil: values.cureUntil } : {}),
+        }),
+        fields: [
+          { name: 'lineId', label: 'Against which line', type: 'select', options: lines },
+          { name: 'eventId', label: 'Arising from', type: 'select', options: events },
+          { name: 'formula', label: 'Contract formula', type: 'textarea' },
+          { name: 'amountMinor', label: 'Amount in pence', type: 'number' },
+          { name: 'capMinor', label: 'Contract cap in pence', type: 'number', required: false },
+          { name: 'cureUntil', label: 'Cure period runs to', type: 'date', required: false },
+        ],
+      });
+      if (result) {
+        toast('Credit raised', money(result.amountMinor) + ' under the contract formula', 'warn');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'approvecredit') {
+      const options = (commercial.error ? [] : commercial.credits)
+        .filter((entry) => !entry.approvedAt)
+        .map((entry) => ({
+          value: entry.id,
+          label: `${entry.reference} — ${money(entry.amountMinor)}${entry.cureUntil ? ` (cure to ${entry.cureUntil})` : ''}`,
+        }));
+      if (options.length === 0) {
+        toast('Nothing to approve', 'No service credit is waiting.', 'ok');
+        return;
+      }
+      const result = await command({
+        title: 'Approve a service credit',
+        intent:
+          'The deduction becomes real here. Refused inside the cure period, because that period is the supplier’s ' +
+          'contractual chance to put it right and deducting inside it deducts for a failure they are still entitled to fix.',
+        path: `/v1/projects/${state.session.projectId}/site-services/credit/approve`,
+        submitLabel: 'Approve',
+        fields: [{ name: 'creditId', label: 'Which credit', type: 'select', options }],
+      });
+      if (result) {
+        toast('Approved', money(result.amountMinor) + ' deducted', 'warn');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'valuation') {
+      const result = await command({
+        title: 'Open a valuation',
+        intent:
+          'Opens the period and freezes its cut-off. Only one valuation is open at a time: two means one period’s ' +
+          'progress can be claimed in both, which is the commonest way a supplier is paid twice for one week.',
+        path: `/v1/projects/${state.session.projectId}/site-services/valuation`,
+        submitLabel: 'Open',
+        fields: [
+          { name: 'periodFrom', label: 'Period from', type: 'date' },
+          { name: 'periodTo', label: 'Period to', type: 'date' },
+        ],
+      });
+      if (result) {
+        toast('Valuation open', `${result.reference} to ${result.periodTo}`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'application' || which === 'certify') {
+      const open = (commercial.error ? [] : commercial.valuations).filter((entry) => entry.status !== 'CERTIFIED');
+      if (open.length === 0) {
+        toast('No open valuation', 'Open a valuation period first.', 'warn');
+        return;
+      }
+
+      if (which === 'application') {
+        const lines = (commercial.error ? [] : commercial.lines).map((entry) => ({
+          value: entry.id,
+          label: `${entry.reference} ${entry.description}`,
+        }));
+        const result = await command({
+          title: 'Record the supplier application',
+          intent:
+            'What the supplier says it did, mapped to a contract line. It is a claim and it is recorded as one — what ' +
+            'the platform accepted is a different number, and the reconciliation between them is the valuation.',
+          path: `/v1/projects/${state.session.projectId}/site-services/application`,
+          submitLabel: 'Record',
+          transform: (values) => ({
+            valuationId: values.valuationId,
+            lines: [{ lineId: values.lineId, claimed: Number(values.claimed), narrative: values.narrative }],
+          }),
+          fields: [
+            {
+              name: 'valuationId',
+              label: 'Which valuation',
+              type: 'select',
+              options: open.map((entry) => ({ value: entry.id, label: `${entry.reference} to ${entry.periodTo}` })),
+            },
+            { name: 'lineId', label: 'Which line', type: 'select', options: lines },
+            { name: 'claimed', label: 'Claimed', type: 'number', hint: 'In the line’s own units, cumulative' },
+            { name: 'narrative', label: 'What they say they did', type: 'textarea', required: false },
+          ],
+        });
+        if (result) {
+          toast('Application recorded', result.reference, 'ok');
+          await again();
+        }
+        return;
+      }
+
+      const result = await command({
+        title: 'Certify a valuation',
+        intent:
+          'Refused while any line claims more than the accepted evidence supports. That refusal is the whole point: a ' +
+          'certificate issued over an unreconciled overclaim is the moment a claim becomes an actual, and every ' +
+          'downstream number — cost, forecast, cash — is wrong from then on.',
+        path: `/v1/projects/${state.session.projectId}/site-services/certify`,
+        submitLabel: 'Certify',
+        fields: [
+          {
+            name: 'valuationId',
+            label: 'Which valuation',
+            type: 'select',
+            options: open.map((entry) => ({
+              value: entry.id,
+              label: `${entry.reference} — ${entry.exceptions} exception${entry.exceptions === 1 ? '' : 's'}`,
+            })),
+          },
+          { name: 'note', label: 'What is certified and on what basis', type: 'textarea' },
+        ],
+      });
+      if (result) {
+        toast('Certified', `${result.reference} — ${money(result.certifiedMinor)}`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'change') {
+      const result = await command({
+        title: 'Raise a change',
+        intent:
+          'Entitlement, probability and value are three separate fields and stay that way — collapsed into one expected ' +
+          'value, nobody can see which of the three is the weak one, and it is always a different one. What it is worth ' +
+          'goes onto the forecast risk-adjusted from today, with no quotation anywhere near it.',
+        path: `/v1/projects/${state.session.projectId}/site-services/change`,
+        submitLabel: 'Raise',
+        transform: (values) => ({
+          trigger: values.trigger,
+          summary: values.summary,
+          difference: values.difference,
+          entitlement: values.entitlement,
+          probabilityPercent: Number(values.probabilityPercent),
+          valueMinor: Number(values.valueMinor),
+          ...(values.noticeDueBy ? { noticeDueBy: values.noticeDueBy } : {}),
+        }),
+        fields: [
+          {
+            name: 'trigger',
+            label: 'Trigger',
+            type: 'select',
+            options: (changes.error ? [] : changes.triggers).map((entry) => ({
+              value: entry.id,
+              label: `${entry.label} — ${entry.analysis}`,
+            })),
+          },
+          { name: 'summary', label: 'What the change is' },
+          {
+            name: 'difference',
+            label: 'What is different from the baseline',
+            type: 'textarea',
+            hint: '"As discussed" is not a difference, and a change that cannot name what moved cannot be defended.',
+          },
+          {
+            name: 'entitlement',
+            label: 'Entitlement',
+            type: 'select',
+            options: (changes.error ? [] : changes.entitlements).map((entry) => ({
+              value: entry.id,
+              label: `${entry.label} — ${entry.detail}`,
+            })),
+          },
+          { name: 'probabilityPercent', label: 'Probability the entitlement holds', type: 'number' },
+          { name: 'valueMinor', label: 'Worth in pence if it does', type: 'number', hint: 'Zero is a value; absent is not' },
+          { name: 'noticeDueBy', label: 'Contract notice due by', type: 'date', required: false },
+        ],
+      });
+      if (result) {
+        toast('Raised', `${result.reference} — ${money(result.valueMinor)} at ${result.probabilityPercent}%`, 'warn');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'notice' || which === 'movechange') {
+      const live2 = (changes.error ? [] : changes.changes).filter(
+        (entry) => entry.status !== 'AGREED' && entry.status !== 'REJECTED',
+      );
+      if (live2.length === 0) {
+        toast('Nothing live', 'Every change is agreed or rejected.', 'ok');
+        return;
+      }
+
+      if (which === 'notice') {
+        const outstanding = live2.filter((entry) => entry.noticeOutstanding);
+        if (outstanding.length === 0) {
+          toast('No notice outstanding', 'Every notice-bearing change has one on the file.', 'ok');
+          return;
+        }
+        const result = await command({
+          title: 'Record the contract notice',
+          intent:
+            'A notice is a contractual act with a reference and a date. The commonest way an entitlement is lost is ' +
+            'that everybody assumed somebody had sent one.',
+          path: `/v1/projects/${state.session.projectId}/site-services/change/notified`,
+          submitLabel: 'Record',
+          fields: [
+            {
+              name: 'changeId',
+              label: 'Which change',
+              type: 'select',
+              options: outstanding.map((entry) => ({
+                value: entry.id,
+                label: `${entry.reference} ${entry.summary}${entry.noticeLapsed ? ' — period passed' : ''}`,
+              })),
+            },
+            { name: 'reference', label: 'Notice reference', hint: 'The letter, the portal entry, the email' },
+          ],
+        });
+        if (result) {
+          toast('Notice recorded', result.noticeReference, 'ok');
+          await again();
+        }
+        return;
+      }
+
+      const result = await command({
+        title: 'Move a change on',
+        intent:
+          'The value and the probability are re-stated with the move rather than edited separately, because a change ' +
+          'that has reached instruction still carrying the early-warning guess is a change nobody re-thought. Agreeing ' +
+          'one sets its probability to certainty, and a change still below that has been quoted, not agreed.',
+        path: `/v1/projects/${state.session.projectId}/site-services/change/progress`,
+        submitLabel: 'Move it',
+        transform: (values) => ({
+          changeId: values.changeId,
+          to: values.to,
+          basis: values.basis,
+          ...(values.valueMinor ? { valueMinor: Number(values.valueMinor) } : {}),
+          ...(values.probabilityPercent ? { probabilityPercent: Number(values.probabilityPercent) } : {}),
+          ...(values.entitlement ? { entitlement: values.entitlement } : {}),
+        }),
+        fields: [
+          {
+            name: 'changeId',
+            label: 'Which change',
+            type: 'select',
+            options: live2.map((entry) => ({
+              value: entry.id,
+              label: `${entry.reference} ${entry.summary} (${entry.status.replaceAll('_', ' ').toLowerCase()})`,
+            })),
+          },
+          {
+            name: 'to',
+            label: 'To',
+            type: 'select',
+            options: [
+              { value: 'NOTIFIED', label: 'Notified' },
+              { value: 'QUOTED', label: 'Quoted' },
+              { value: 'INSTRUCTED', label: 'Instructed' },
+              { value: 'AGREED', label: 'Agreed — certain by definition' },
+              { value: 'REJECTED', label: 'Rejected' },
+            ],
+          },
+          { name: 'basis', label: 'What moved it', type: 'textarea' },
+          { name: 'valueMinor', label: 'Revised worth in pence', type: 'number', required: false },
+          { name: 'probabilityPercent', label: 'Revised probability', type: 'number', required: false },
+          {
+            name: 'entitlement',
+            label: 'Revised entitlement',
+            type: 'select',
+            required: false,
+            options: [
+              { value: '', label: 'Unchanged' },
+              ...(changes.error ? [] : changes.entitlements).map((entry) => ({ value: entry.id, label: entry.label })),
+            ],
+          },
+        ],
+      });
+      if (result) {
+        toast('Moved', `${result.reference} — ${result.status.replaceAll('_', ' ').toLowerCase()}`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'removal' || which === 'rundown') {
+      const systems = (structure.error ? [] : structure.systems).map((system) => ({
+        value: system.id,
+        label: `${system.label} — ${system.zone}`,
+      }));
+      if (systems.length === 0) {
+        toast('Nothing composed', 'Demobilisation begins at design, and the design has not started.', 'warn');
+        return;
+      }
+
+      if (which === 'removal') {
+        const result = await command({
+          title: 'Agree the removal plan',
+          intent:
+            'At design, not at the end. Six fields, and every one becomes an argument if it is agreed later: who does ' +
+            'it, how, what starts it, what it costs, where the material goes and what condition the land comes back in. ' +
+            'The moment to agree who breaks out a hardstanding is the moment before it is poured.',
+          path: `/v1/projects/${state.session.projectId}/site-services/removal`,
+          submitLabel: 'Agree',
+          transform: (values) => ({ ...values, costMinor: Number(values.costMinor) }),
+          fields: [
+            { name: 'systemId', label: 'Which system', type: 'select', options: systems },
+            { name: 'owner', label: 'Who does it', hint: 'A firm, not a function' },
+            { name: 'method', label: 'How', type: 'textarea', hint: '"Removed" is not a method' },
+            { name: 'trigger', label: 'What starts it', hint: 'A date, a milestone, or a successor being ready' },
+            { name: 'costMinor', label: 'Cost in pence', type: 'number', hint: 'Zero is allowed; absent is not' },
+            { name: 'currency', label: 'Currency', value: 'GBP', required: false },
+            { name: 'wasteRoute', label: 'Where the material goes', hint: 'A licensed destination, not "off site"' },
+            { name: 'reinstatementCriterion', label: 'Returned in what condition', type: 'textarea', hint: 'And against which record' },
+          ],
+        });
+        if (result) {
+          toast('Plan agreed', `${result.owner} — ${money(result.costMinor)}`, 'ok');
+          await again();
+        }
+        return;
+      }
+
+      const result = await command({
+        title: 'Propose a demand run-down',
+        intent:
+          'Refused where it would take welfare below the statutory minimum for the people still on site — the same ' +
+          'Schedule 1 table the welfare was sized from, read in reverse. This is the phase where the last WCs go back ' +
+          'because the compound is "finishing" and there are still forty people working.',
+        path: `/v1/projects/${state.session.projectId}/site-services/rundown`,
+        submitLabel: 'Propose',
+        transform: (values) => ({
+          systemId: values.systemId,
+          remainingPersons: Number(values.remainingPersons),
+          remainingWcs: Number(values.remainingWcs),
+          effectiveFrom: values.effectiveFrom,
+          ...(values.successor ? { successor: values.successor } : {}),
+          basis: values.basis,
+        }),
+        fields: [
+          { name: 'systemId', label: 'Which system', type: 'select', options: systems },
+          { name: 'effectiveFrom', label: 'Effective from', type: 'date' },
+          { name: 'remainingPersons', label: 'People still on site after this', type: 'number' },
+          { name: 'remainingWcs', label: 'WCs remaining', type: 'number' },
+          {
+            name: 'successor',
+            label: 'Successor facility',
+            required: false,
+            hint: 'Where the provision moves to, if it moves rather than goes',
+          },
+          { name: 'basis', label: 'Where the headcount comes from', type: 'textarea' },
+        ],
+      });
+      if (result) {
+        toast('Run-down proposed', `${result.remainingPersons} people, ${result.remainingWcs} WCs`, 'warn');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'closeout' || which === 'closeoutevidence' || which === 'acceptcloseout') {
+      if (which === 'closeout') {
+        const result = await command({
+          title: 'Open a closeout workstream',
+          intent:
+            'Closeout is planned backwards from land, customer and permanent-works acceptance. Each of the seven ' +
+            'workstreams closes on the evidence it declares, and none of them closes on a narrative.',
+          path: `/v1/projects/${state.session.projectId}/site-services/closeout`,
+          submitLabel: 'Open',
+          transform: (values) => ({
+            workstream: values.workstream,
+            ...(values.systemId ? { systemId: values.systemId } : {}),
+          }),
+          fields: [
+            {
+              name: 'workstream',
+              label: 'Which workstream',
+              type: 'select',
+              options: (closeout.error ? [] : closeout.workstreams).map((entry) => ({
+                value: entry.id,
+                label: `${entry.label} — closes on ${entry.acceptance}`,
+              })),
+            },
+            {
+              name: 'systemId',
+              label: 'Against which system',
+              type: 'select',
+              required: false,
+              options: [
+                { value: '', label: 'The whole project' },
+                ...(structure.error ? [] : structure.systems).map((system) => ({
+                  value: system.id,
+                  label: `${system.label} — ${system.zone}`,
+                })),
+              ],
+            },
+          ],
+        });
+        if (result) {
+          toast('Opened', result.workstream.replaceAll('_', ' ').toLowerCase(), 'ok');
+          await again();
+        }
+        return;
+      }
+
+      const accepting = which === 'acceptcloseout';
+      const records = (closeout.error ? [] : closeout.workstreams).flatMap((workstream) =>
+        workstream.records
+          .filter((record) => (accepting ? record.status !== 'ACCEPTED' : record.status !== 'ACCEPTED'))
+          .map((record) => ({
+            value: record.id,
+            label: `${workstream.label}${record.systemLabel ? ` — ${record.systemLabel}` : ''} (${record.evidence.length} evidenced)`,
+          })),
+      );
+      if (records.length === 0) {
+        toast('Nothing open', 'No closeout workstream is open.', 'warn');
+        return;
+      }
+
+      const result = await command({
+        title: accepting ? 'Accept a workstream' : 'Record closeout evidence',
+        intent: accepting
+          ? 'Refused on a narrative. A closeout accepted without the evidence its workstream declares reopens the day ' +
+            'the landowner walks the site — and the demand run-down cannot be accepted with no run-down behind it, ' +
+            'because that accepts the assumption that everybody left.'
+          : 'A reference and what it shows: the consignment note number and what it consigned, the survey and what it ' +
+            'surveyed. Evidence added after acceptance is evidence for a dispute, not for the acceptance.',
+        path: accepting
+          ? `/v1/projects/${state.session.projectId}/site-services/closeout/accept`
+          : `/v1/projects/${state.session.projectId}/site-services/closeout/evidence`,
+        submitLabel: accepting ? 'Accept' : 'Record',
+        fields: [
+          { name: 'recordId', label: 'Which workstream', type: 'select', options: records },
+          ...(accepting
+            ? [{ name: 'note', label: 'What is being accepted', type: 'textarea' }]
+            : [
+                { name: 'reference', label: 'Reference' },
+                { name: 'description', label: 'What it shows', type: 'textarea' },
+              ]),
+        ],
+      });
+      if (result) {
+        toast(accepting ? 'Accepted' : 'Recorded', result.workstream.replaceAll('_', ' ').toLowerCase(), 'ok');
         await again();
       }
       return;
@@ -2057,6 +2759,378 @@ function sbsCard(structure) {
             ${demand.notDerivable.map((entry) => `${entry.label} (needs ${entry.missing.join(', ')})`).join(' · ')}
           </div>`
         : ''}
+    </div>
+  `;
+}
+
+const CHANGE_TONE = {
+  EARLY_WARNING: 'warn',
+  NOTIFIED: 'info',
+  QUOTED: 'info',
+  INSTRUCTED: 'warn',
+  AGREED: 'ok',
+  REJECTED: '',
+};
+const ENTITLEMENT_TONE = { CLEAR: 'ok', ARGUABLE: 'warn', WEAK: 'bad', NONE: 'bad' };
+
+/**
+ * Commercial control, with three numbers kept apart.
+ *
+ * Budget, earned and certified are three different figures and every commercial
+ * system on the market collapses them into one. That collapse is why a job can
+ * be 40% paid, 25% delivered and reported as on track — so this shows all
+ * three, and the exception list underneath is the difference between what was
+ * claimed and what the platform's own records support.
+ */
+function commercialCard(control, assessment) {
+  const { lines, valuations, credits, totals, methods, records, statement } = control;
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>Commercial control</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">${statement}</div>
+
+      ${lines.length > 0
+        ? html`<section class="grid g4" style="margin-bottom:14px">
+              <div class="card">
+                <h2>Budget</h2>
+                <div class="metric">${money(totals.budgetMinor)}</div>
+                <div class="metric-sub">Approved control budget across every line</div>
+              </div>
+              <div class="card">
+                <h2>Committed</h2>
+                <div class="metric">${money(totals.commitmentMinor)}</div>
+                <div class="metric-sub">Executed contracts and orders</div>
+              </div>
+              <div class="card">
+                <h2>Earned</h2>
+                <div class="metric">${money(totals.earnedMinor)}</div>
+                <div class="metric-sub">Budgeted value of accepted progress</div>
+              </div>
+              <div class="card">
+                <h2>Certified</h2>
+                <div class="metric">${money(totals.certifiedMinor)}</div>
+                <div class="metric-sub">What somebody signed for</div>
+              </div>
+            </section>
+
+            ${table({
+              headers: ['Line', 'Earns by', 'Budget', 'Committed', 'Earned', 'Credits'],
+              align: ['', '', 'num', 'num', 'num', 'num'],
+              rows: lines.map((line) => [
+                html`<b>${line.reference}</b>
+                  <div class="metric-sub">${line.description}</div>`,
+                html`${badge(line.methodLabel.toLowerCase(), 'info')}
+                  <div class="metric-sub">
+                    ${methods.find((entry) => entry.id === line.method)?.detail ?? ''}
+                  </div>`,
+                money(line.budgetMinor),
+                money(line.commitmentMinor),
+                money(line.earnedMinor),
+                line.credits > 0 ? badge(String(line.credits), 'warn') : '0',
+              ]),
+            })}`
+        : ''}
+
+      ${valuations.length > 0
+        ? html`<div style="padding:14px 0 0;border-top:1px solid var(--line)">
+            <h2>Valuations</h2>
+            ${table({
+              headers: ['Period', 'Status', 'Gross', 'Net', 'Exceptions', 'Certified'],
+              align: ['', '', 'num', 'num', 'num', 'num'],
+              rows: valuations.map((entry) => [
+                html`<b>${entry.reference}</b>
+                  <div class="metric-sub">${entry.periodFrom} to ${entry.periodTo}</div>`,
+                badge(entry.status.toLowerCase(), entry.status === 'CERTIFIED' ? 'ok' : 'warn'),
+                money(entry.grossMinor),
+                money(entry.netMinor),
+                entry.exceptions > 0 ? badge(String(entry.exceptions), 'bad') : '0',
+                entry.certifiedMinor === undefined ? '—' : money(entry.certifiedMinor),
+              ]),
+            })}
+          </div>`
+        : ''}
+
+      ${assessment && !assessment.error
+        ? html`<div style="padding:14px 0 0;border-top:1px solid var(--line)">
+            <h2>${assessment.reference} — reconciled</h2>
+            <div class="metric-sub" style="margin:6px 0 10px">
+              ${assessment.periodFrom} to ${assessment.periodTo}. Claimed against what the accepted evidence supports.
+              <b>${assessment.issues}</b>
+            </div>
+            ${table({
+              headers: ['Line', 'Earns by', 'Claimed', 'Accepted', 'Earned', 'This period'],
+              align: ['', '', 'num', 'num', 'num', 'num'],
+              rows: assessment.lines.map((line) => [
+                html`${line.reference}
+                  <div class="metric-sub">${line.acceptedEvidence ?? 'Nothing accepted yet.'}</div>`,
+                line.methodLabel.toLowerCase(),
+                line.claimed === undefined ? html`<span class="metric-sub">not claimed</span>` : line.claimed,
+                line.accepted,
+                money(line.earnedMinor),
+                money(line.movementMinor),
+              ]),
+            })}
+            ${assessment.exceptions.length > 0
+              ? html`<div style="margin-top:12px">
+                  ${assessment.exceptions.map(
+                    (exception) => html`<div class="notice ${exception.effectMinor < 0 ? 'bad' : 'warn'}" style="margin-bottom:8px">
+                      <div>
+                        <b>${exception.kind.replaceAll('_', ' ').toLowerCase()} — ${exception.reference}.</b>
+                        ${exception.statement}
+                        ${exception.effectMinor !== 0
+                          ? html`<br /><b>Worth ${money(Math.abs(exception.effectMinor))}.</b>`
+                          : ''}
+                      </div>
+                    </div>`,
+                  )}
+                </div>`
+              : html`<div class="notice ok" style="margin-top:12px">
+                  <div>Nothing claimed exceeds what the evidence supports.</div>
+                </div>`}
+            <!--
+              A valuation that has been certified is not "not certifiable" —
+              that reads as a problem when it is the opposite. The flag means
+              "can be certified now", and once it has been the honest word is
+              the past tense.
+            -->
+            <div class="metric-sub" style="margin-top:10px">
+              Gross ${money(assessment.grossMinor)} · net ${money(assessment.netMinor)} ·
+              ${assessment.status === 'CERTIFIED'
+                ? badge('certified', 'ok')
+                : assessment.certifiable
+                  ? badge('ready to certify', 'ok')
+                  : html`${badge('not certifiable', 'bad')}
+                      <div class="metric-sub bad">${assessment.blockedBecause}</div>`}
+            </div>
+          </div>`
+        : ''}
+
+      ${credits.length > 0
+        ? html`<div style="padding:14px 0 0;border-top:1px solid var(--line)">
+            <h2>Service credits</h2>
+            <div class="metric-sub" style="margin:6px 0 10px">
+              Kept as separate transparent adjustments and never netted into a rate — a rate with a credit inside it is
+              a rate nobody can check and a credit nobody can dispute.
+            </div>
+            ${table({
+              headers: ['Line', 'Formula', 'Amount', 'Position'],
+              align: ['', '', 'num', ''],
+              rows: credits.map((credit) => [
+                credit.reference,
+                credit.formula,
+                money(credit.amountMinor),
+                credit.approvedAt
+                  ? badge('approved', 'ok')
+                  : credit.cureUntil
+                    ? badge(`in cure to ${credit.cureUntil}`, 'warn')
+                    : badge('raised', 'info'),
+              ]),
+            })}
+          </div>`
+        : ''}
+
+      <div style="padding:14px 0 0;border-top:1px solid var(--line)">
+        <h2>The eight records</h2>
+        <div class="metric-sub" style="margin:6px 0 10px">
+          Kept apart on purpose. An invoice is not proof of value, and a system that collapses commitment, actual and
+          earned value into one number cannot tell you which of the three is wrong.
+        </div>
+        ${table({
+          headers: ['Record', 'What it controls'],
+          rows: records.map((record) => [html`<b>${record.label}</b>`, record.control]),
+        })}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * The change register, and the number the golden rule exists to keep on it.
+ *
+ * Pending change is shown risk-adjusted *and* at face value. A forecast that
+ * carries only the agreed changes is a forecast that says the job is on budget
+ * until the month somebody agrees a number, and the gap between those two
+ * figures is exactly what is being ignored.
+ */
+function changeCard(register) {
+  const { changes, triggers, agreedMinor, exposureMinor, exposureAtFaceMinor, goldenRule, statement } = register;
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>Change, early warning and recovery</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">${statement}</div>
+
+      <div class="notice warn" style="margin-bottom:14px">
+        <div><b>The golden rule.</b> ${goldenRule}</div>
+      </div>
+
+      ${changes.length > 0
+        ? html`<section class="grid g3" style="margin-bottom:14px">
+              <div class="card">
+                <h2>Agreed</h2>
+                <div class="metric">${money(agreedMinor)}</div>
+                <div class="metric-sub">Certain, and in the forecast at face value</div>
+              </div>
+              <div class="card">
+                <h2>Exposure</h2>
+                <div class="metric">${money(exposureMinor)}</div>
+                <div class="metric-sub">Pending change, risk-adjusted</div>
+              </div>
+              <div class="card">
+                <h2>At face</h2>
+                <div class="metric">${money(exposureAtFaceMinor)}</div>
+                <div class="metric-sub">The same change if every entitlement holds</div>
+              </div>
+            </section>
+
+            ${changes.map(
+              (entry) => html`<div style="padding:12px 0;border-top:1px solid var(--line)">
+                <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+                  <b>${entry.reference} — ${entry.summary}</b>
+                  <span>
+                    ${badge(entry.triggerLabel.toLowerCase(), 'info')}
+                    ${badge(entry.status.replaceAll('_', ' ').toLowerCase(), CHANGE_TONE[entry.status] ?? 'info')}
+                    ${badge(entry.entitlementLabel.toLowerCase(), ENTITLEMENT_TONE[entry.entitlement] ?? 'info')}
+                  </span>
+                </div>
+                <div class="metric-sub" style="margin-top:4px">${entry.difference}</div>
+                <div class="metric-sub" style="margin-top:6px">
+                  <b>${money(entry.valueMinor)}</b> at ${entry.probabilityPercent}% —
+                  <b>${money(entry.exposureMinor)}</b> on the forecast today.
+                </div>
+                ${entry.noticeLapsed
+                  ? html`<div class="notice bad" style="margin-top:8px">
+                      <div>
+                        <b>Notice period passed on ${entry.noticeDueBy} with nothing sent.</b> ${entry.analysis} The
+                        entitlement is what is at risk, not the value.
+                      </div>
+                    </div>`
+                  : entry.noticeOutstanding
+                    ? html`<div class="metric-sub warn" style="margin-top:4px">
+                        Contract notice outstanding${entry.noticeDueBy ? `, due by ${entry.noticeDueBy}` : ''}.
+                      </div>`
+                    : entry.noticeReference
+                      ? html`<div class="metric-sub ok" style="margin-top:4px">
+                          Notice given ${date(entry.noticeGivenAt)} — ${entry.noticeReference}
+                        </div>`
+                      : ''}
+                <div class="metric-sub" style="margin-top:6px"><b>Controlled result.</b> ${entry.result}</div>
+              </div>`,
+            )}`
+        : ''}
+
+      <div style="padding:14px 0 0;border-top:1px solid var(--line)">
+        <h2>The six triggers</h2>
+        ${table({
+          headers: ['Trigger', 'What is analysed', 'Controlled result', ''],
+          rows: triggers.map((trigger) => [
+            html`<b>${trigger.label}</b>`,
+            trigger.analysis,
+            trigger.result,
+            trigger.noticeBearing ? badge('notice', 'warn') : '',
+          ]),
+        })}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Demobilisation, which begins at design.
+ *
+ * The panel leads with what has *no* removal plan, because that is the number
+ * that is cheap to fix today and expensive to fix at the end. Every run-down is
+ * shown against the statutory minimum for the people still there, whether it
+ * passed or not — a successor facility is the reason a run-down below the
+ * minimum is acceptable, not a reason it stops being below it.
+ */
+function demobCard(closeout) {
+  const { workstreams, plans, runDowns, removalCostMinor, unplanned, statement } = closeout;
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>Demobilisation and reinstatement</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">${statement}</div>
+
+      ${unplanned > 0
+        ? html`<div class="notice warn" style="margin-bottom:14px">
+            <div>
+              <b>${unplanned} system${unplanned === 1 ? '' : 's'} with no removal plan.</b>
+              ${plans
+                .filter((entry) => !entry.plan)
+                .map((entry) => `${entry.label} (${entry.zone})`)
+                .join(' · ')}. The moment to agree who breaks out a hardstanding is the moment before it is poured.
+            </div>
+          </div>`
+        : ''}
+
+      ${runDowns.length > 0
+        ? html`<div style="margin-bottom:14px">
+            <h2>Demand run-down</h2>
+            ${table({
+              headers: ['System', 'From', 'People left', 'WCs left', 'Statutory minimum', 'Position'],
+              align: ['', '', 'num', 'num', 'num', ''],
+              rows: runDowns.map((entry) => [
+                entry.label,
+                entry.effectiveFrom,
+                entry.remainingPersons,
+                entry.remainingWcs,
+                entry.requiredWcs,
+                entry.belowStatutory
+                  ? html`${badge('below the minimum', 'bad')}
+                      <div class="metric-sub">
+                        ${entry.successor ? `Carried by: ${entry.successor}` : 'No successor named.'}
+                      </div>`
+                  : badge('above the minimum', 'ok'),
+              ]),
+            })}
+          </div>`
+        : ''}
+
+      ${plans.some((entry) => entry.plan)
+        ? html`<div style="margin-bottom:14px">
+            <h2>Removal plans — ${money(removalCostMinor)} agreed</h2>
+            ${plans
+              .filter((entry) => entry.plan)
+              .map(
+                (entry) => html`<div style="padding:10px 0;border-top:1px solid var(--line)">
+                  <b>${entry.label} — ${entry.zone}</b>
+                  <div class="metric-sub" style="margin-top:4px">
+                    <b>${entry.plan.owner}</b> · ${entry.plan.method} · triggered by ${entry.plan.trigger} ·
+                    ${money(entry.plan.costMinor)}
+                  </div>
+                  <div class="metric-sub" style="margin-top:4px">
+                    Waste: ${entry.plan.wasteRoute} · Returned as: ${entry.plan.reinstatementCriterion}
+                  </div>
+                  <div class="metric-sub" style="margin-top:4px"><b>Obligation.</b> ${entry.obligation}</div>
+                </div>`,
+              )}
+          </div>`
+        : ''}
+
+      <div style="padding:14px 0 0;border-top:1px solid var(--line)">
+        <h2>The seven workstreams</h2>
+        ${table({
+          headers: ['Workstream', 'Controls', 'Closes on', 'Position'],
+          rows: workstreams.map((workstream) => [
+            html`<b>${workstream.label}</b>`,
+            workstream.controls,
+            workstream.acceptance,
+            workstream.records.length === 0
+              ? html`<span class="metric-sub">not opened</span>`
+              : html`${workstream.accepted > 0 ? badge(`${workstream.accepted} accepted`, 'ok') : ''}
+                  ${workstream.open > 0 ? badge(`${workstream.open} open`, 'warn') : ''}
+                  ${workstream.records.map(
+                    (record) => html`<div class="metric-sub">
+                      ${record.systemLabel ? `${record.systemLabel}: ` : ''}${record.evidence.length} piece${
+                        record.evidence.length === 1 ? '' : 's'
+                      } of evidence
+                    </div>`,
+                  )}`,
+          ]),
+        })}
+      </div>
     </div>
   `;
 }

@@ -1709,6 +1709,43 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SERVICE_CLOCK_PAUSED', 'ServiceEvent', 'APPROVE', 'DELIVERY'),
   def('SERVICE_CLOCK_RESUMED', 'ServiceEvent', 'UPDATE', 'DELIVERY', { aiAllowed: true }),
   def('SERVICE_PERIOD_RECORDED', 'ServicePeriod', 'CREATE', 'DELIVERY', { aiAllowed: true, creates: true }),
+
+  // §10 — commercial control and earned value.
+  //
+  // An invoice is not proof of value, so the acts split three ways: recording
+  // what a supplier claims is clerical, recording what the platform accepted is
+  // evidential, and certifying is a decision with money attached. Only the last
+  // is an APPROVE, and none of the three is delegable to an agent past OBSERVE.
+  def('SERVICE_CONTRACT_LINE_OPENED', 'ContractLine', 'CREATE', 'COMMERCIAL', { aiAllowed: true, creates: true }),
+  def('SERVICE_PROGRESS_ACCEPTED', 'AcceptedProgress', 'CREATE', 'COMMERCIAL', { aiAllowed: true, creates: true }),
+  def('SERVICE_VALUATION_OPENED', 'Valuation', 'CREATE', 'COMMERCIAL', { aiAllowed: true, creates: true }),
+  def('SERVICE_APPLICATION_RECORDED', 'Valuation', 'UPDATE', 'COMMERCIAL', { aiAllowed: true }),
+  def('SERVICE_VALUATION_CERTIFIED', 'Valuation', 'APPROVE', 'COMMERCIAL'),
+  // A credit is a deduction from somebody's money. Raising one is a proposal;
+  // approving one is the act, and it is not an agent's.
+  def('SERVICE_CREDIT_RAISED', 'ServiceCredit', 'CREATE', 'COMMERCIAL', { aiAllowed: true, creates: true }),
+  def('SERVICE_CREDIT_APPROVED', 'ServiceCredit', 'APPROVE', 'COMMERCIAL'),
+
+  // §11 — change, early warning and recovery.
+  //
+  // Raising an early warning is exactly what an agent should do and the sooner
+  // the better. Moving one on is a commercial decision with a value attached,
+  // and a notice is a contractual act.
+  def('SERVICE_CHANGE_RAISED', 'ServiceChange', 'CREATE', 'CONTRACTS_CLAIMS', { aiAllowed: true, creates: true }),
+  def('SERVICE_CHANGE_NOTIFIED', 'ServiceChange', 'UPDATE', 'CONTRACTS_CLAIMS'),
+  def('SERVICE_CHANGE_PROGRESSED', 'ServiceChange', 'APPROVE', 'CONTRACTS_CLAIMS'),
+  def('SERVICE_CHANGE_REJECTED', 'ServiceChange', 'APPROVE', 'CONTRACTS_CLAIMS'),
+
+  // §12 — demobilisation and reinstatement.
+  //
+  // The plan is agreed at design, which is the whole point of the module, and
+  // acceptance is the act that releases the land.
+  def('REMOVAL_PLAN_AGREED', 'RemovalPlan', 'CREATE', 'DELIVERY', { aiAllowed: true, creates: true }),
+  def('REMOVAL_PLAN_REVISED', 'RemovalPlan', 'UPDATE', 'DELIVERY', { aiAllowed: true }),
+  def('SERVICE_RUNDOWN_PROPOSED', 'RunDown', 'CREATE', 'DELIVERY', { aiAllowed: true, creates: true }),
+  def('DEMOBILISATION_OPENED', 'DemobilisationRecord', 'CREATE', 'DELIVERY', { aiAllowed: true, creates: true }),
+  def('DEMOBILISATION_EVIDENCED', 'DemobilisationRecord', 'UPDATE', 'DELIVERY', { aiAllowed: true }),
+  def('DEMOBILISATION_ACCEPTED', 'DemobilisationRecord', 'APPROVE', 'DELIVERY'),
 ];
 
 /**

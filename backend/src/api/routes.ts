@@ -71,6 +71,9 @@ import * as siteMobilisation from '../domain/etablix/mobilisation.ts';
 // questions. This one buys site services against a composed system breakdown.
 import * as sitePackages from '../domain/etablix/procurement.ts';
 import * as siteOperations from '../domain/etablix/operations.ts';
+import * as siteCommercial from '../domain/etablix/commercial.ts';
+import * as siteChange from '../domain/etablix/change.ts';
+import * as siteDemob from '../domain/etablix/demobilisation.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
 import * as programmereview from '../domain/programmereview.ts';
@@ -5085,6 +5088,322 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => siteOperations.recordPeriod(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // §10 — commercial control and earned value.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/commercial',
+    description:
+      'Budget, commitment, earned value and certified — kept apart, because an invoice is not proof of value',
+    handler: (platform, ctx) => siteCommercial.commercialPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/line',
+    description: 'Open a contract line with the earned-value method it will be measured by',
+    schema: {
+      type: 'object',
+      required: ['packageId', 'description', 'budgetMinor', 'commitmentMinor', 'method'],
+      properties: {
+        packageId: { type: 'string', minLength: 6 },
+        description: { type: 'string', minLength: 3 },
+        budgetMinor: { type: 'number', minimum: 1 },
+        commitmentMinor: { type: 'number', minimum: 0 },
+        currency: { type: 'string' },
+        method: { type: 'string', enum: ['MILESTONE', 'QUANTITY', 'TIME', 'WEIGHTED_EVIDENCE'] },
+        contractQuantity: { type: 'number' },
+        unit: { type: 'string' },
+        contractWeeks: { type: 'number' },
+        systemId: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteCommercial.openLine(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/progress',
+    description: 'Record what the platform actually accepted, in the line’s own units, with what was seen',
+    schema: {
+      type: 'object',
+      required: ['lineId', 'periodTo', 'accepted', 'evidence'],
+      properties: {
+        lineId: { type: 'string', minLength: 6 },
+        periodTo: { type: 'string', minLength: 8 },
+        accepted: { type: 'number', minimum: 0 },
+        evidence: { type: 'string', minLength: 3 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteCommercial.recordAcceptedProgress(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/valuation',
+    description: 'Open a valuation period and freeze its cut-off',
+    schema: {
+      type: 'object',
+      required: ['periodFrom', 'periodTo'],
+      properties: { periodFrom: { type: 'string', minLength: 8 }, periodTo: { type: 'string', minLength: 8 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteCommercial.openValuation(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/application',
+    description: 'Record the supplier application, mapped to contract lines',
+    schema: {
+      type: 'object',
+      required: ['valuationId', 'lines'],
+      properties: {
+        valuationId: { type: 'string', minLength: 6 },
+        lines: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['lineId', 'claimed'],
+            properties: {
+              lineId: { type: 'string', minLength: 6 },
+              claimed: { type: 'number', minimum: 0 },
+              narrative: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteCommercial.recordApplication(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/assessment/:valuationId',
+    description:
+      'Reconcile and identify: what was claimed against what the evidence supports, every exception with what it is worth, and the deductions',
+    handler: (platform, ctx) =>
+      siteCommercial.assessValuation(projectContext(platform, ctx), String(ctx.params.valuationId)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/certify',
+    description: 'Certify a valuation — refused while any line claims more than the accepted evidence supports',
+    schema: {
+      type: 'object',
+      required: ['valuationId', 'note'],
+      properties: { valuationId: { type: 'string', minLength: 6 }, note: { type: 'string', minLength: 3 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteCommercial.certifyValuation(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/credit',
+    description: 'Raise a service credit against a recorded KPI event, under the contract formula',
+    schema: {
+      type: 'object',
+      required: ['lineId', 'eventId', 'formula', 'amountMinor'],
+      properties: {
+        lineId: { type: 'string', minLength: 6 },
+        eventId: { type: 'string', minLength: 6 },
+        formula: { type: 'string', minLength: 3 },
+        amountMinor: { type: 'number', minimum: 1 },
+        capMinor: { type: 'number' },
+        cureUntil: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteCommercial.raiseServiceCredit(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/credit/approve',
+    description: 'Approve a service credit once its cure period has run',
+    schema: {
+      type: 'object',
+      required: ['creditId'],
+      properties: { creditId: { type: 'string', minLength: 6 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteCommercial.approveServiceCredit(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // §11 — change, early warning and recovery.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/change',
+    description:
+      'The change register: entitlement, probability and value kept apart, and the risk-adjusted exposure nothing is allowed to be zero in',
+    handler: (platform, ctx) => siteChange.changePosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/change',
+    description: 'Raise a change against one of the six triggers, with what it is worth and how likely that is',
+    schema: {
+      type: 'object',
+      required: ['trigger', 'summary', 'difference', 'entitlement', 'probabilityPercent', 'valueMinor'],
+      properties: {
+        trigger: {
+          type: 'string',
+          enum: [
+            'CUSTOMER_INSTRUCTION',
+            'DEMAND_VARIANCE',
+            'PROGRAMME_MOVEMENT',
+            'SUPPLIER_FAILURE',
+            'UNFORESEEN_CONDITION',
+            'DESIGN_DEVELOPMENT',
+          ],
+        },
+        summary: { type: 'string', minLength: 3 },
+        difference: { type: 'string', minLength: 3 },
+        entitlement: { type: 'string', enum: ['CLEAR', 'ARGUABLE', 'WEAK', 'NONE'] },
+        probabilityPercent: { type: 'number', minimum: 0, maximum: 100 },
+        valueMinor: { type: 'number', minimum: 0 },
+        currency: { type: 'string' },
+        noticeDueBy: { type: 'string' },
+        systemId: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteChange.raiseChange(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/change/notified',
+    description: 'Record the contract notice, with the reference it was sent under',
+    schema: {
+      type: 'object',
+      required: ['changeId', 'reference'],
+      properties: { changeId: { type: 'string', minLength: 6 }, reference: { type: 'string', minLength: 2 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteChange.giveNotice(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/change/progress',
+    description: 'Move a change on, re-stating what it is worth and how likely that is while doing it',
+    schema: {
+      type: 'object',
+      required: ['changeId', 'to', 'basis'],
+      properties: {
+        changeId: { type: 'string', minLength: 6 },
+        to: { type: 'string', enum: ['NOTIFIED', 'QUOTED', 'INSTRUCTED', 'AGREED', 'REJECTED'] },
+        basis: { type: 'string', minLength: 3 },
+        valueMinor: { type: 'number', minimum: 0 },
+        probabilityPercent: { type: 'number', minimum: 0, maximum: 100 },
+        entitlement: { type: 'string', enum: ['CLEAR', 'ARGUABLE', 'WEAK', 'NONE'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteChange.progressChange(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // §12 — demobilisation and reinstatement.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/demobilisation',
+    description:
+      'The closeout: which systems have a removal plan, the seven workstreams and what each has produced, and every run-down against the statutory minimum',
+    handler: (platform, ctx) => siteDemob.demobilisationPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/removal',
+    description: 'Agree the removal plan at design: owner, method, trigger, cost, waste route and reinstatement criterion',
+    schema: {
+      type: 'object',
+      required: ['systemId', 'owner', 'method', 'trigger', 'costMinor', 'wasteRoute', 'reinstatementCriterion'],
+      properties: {
+        systemId: { type: 'string', minLength: 6 },
+        owner: { type: 'string', minLength: 2 },
+        method: { type: 'string', minLength: 3 },
+        trigger: { type: 'string', minLength: 3 },
+        costMinor: { type: 'number', minimum: 0 },
+        currency: { type: 'string' },
+        wasteRoute: { type: 'string', minLength: 3 },
+        reinstatementCriterion: { type: 'string', minLength: 3 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDemob.agreeRemovalPlan(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/rundown',
+    description:
+      'Propose a demand run-down — refused where it would take welfare below the statutory minimum for the people still on site',
+    schema: {
+      type: 'object',
+      required: ['systemId', 'remainingPersons', 'remainingWcs', 'effectiveFrom', 'basis'],
+      properties: {
+        systemId: { type: 'string', minLength: 6 },
+        remainingPersons: { type: 'number', minimum: 0 },
+        remainingWcs: { type: 'number', minimum: 0 },
+        effectiveFrom: { type: 'string', minLength: 8 },
+        successor: { type: 'string' },
+        basis: { type: 'string', minLength: 3 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDemob.proposeRunDown(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/closeout',
+    description: 'Open one of the seven demobilisation workstreams',
+    schema: {
+      type: 'object',
+      required: ['workstream'],
+      properties: {
+        workstream: {
+          type: 'string',
+          enum: [
+            'DEMAND_RUNDOWN',
+            'ASSET_REMOVAL',
+            'TEMPORARY_CIVILS',
+            'UTILITIES_ENVIRONMENT',
+            'ACCOMMODATION_CLOSE',
+            'FINAL_ACCOUNT',
+            'KNOWLEDGE_CLOSE',
+          ],
+        },
+        systemId: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDemob.openWorkstream(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/closeout/evidence',
+    description: 'Record acceptance evidence against a demobilisation workstream',
+    schema: {
+      type: 'object',
+      required: ['recordId', 'reference', 'description'],
+      properties: {
+        recordId: { type: 'string', minLength: 6 },
+        reference: { type: 'string', minLength: 2 },
+        description: { type: 'string', minLength: 3 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDemob.recordDemobEvidence(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/closeout/accept',
+    description: 'Accept a workstream — refused on a narrative, because a closeout accepted on one reopens on site',
+    schema: {
+      type: 'object',
+      required: ['recordId', 'note'],
+      properties: { recordId: { type: 'string', minLength: 6 }, note: { type: 'string', minLength: 3 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDemob.acceptWorkstream(projectContext(platform, ctx), body(ctx)),
   },
 
   {
