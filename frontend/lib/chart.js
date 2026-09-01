@@ -338,14 +338,19 @@ export function ganttChart({ bars, dataDate, rowHeight = 20, empty = 'Nothing sc
  * @param {object} options
  * @param {Array<{ label: string, count: number, marked?: boolean }>} options.buckets
  * @param {string} [options.markLabel] What a marked bucket means — a P80 date, say.
- * @param {number} [options.limit] Draw a line here, and mark every bar above it.
+ * @param {number} [options.limit] Draw a line here, and mark every bar past it.
  * @param {string} [options.limitLabel] What the line is.
+ * @param {'above'|'below'} [options.markPast] Which side of the line is the bad
+ *   side. Demand over an availability is a problem; plan reliability *under* a
+ *   target is a problem. The same chart draws both and only the caller knows
+ *   which way round it is, so it is a parameter rather than an assumption.
  */
 export function histogram({
   buckets,
   markLabel = '',
   limit,
   limitLabel = '',
+  markPast = 'above',
   empty = 'Nothing simulated yet',
   // The second line of the empty state. A parameter because this chart started
   // as the Monte Carlo one and now draws resource demand too: "once the
@@ -382,7 +387,7 @@ export function histogram({
 
   rows.forEach((bucket, index) => {
     const h = (bucket.count / ceiling) * plotH;
-    const over = hasLimit && bucket.count > limit;
+    const over = hasLimit && (markPast === 'below' ? bucket.count < limit : bucket.count > limit);
     svg.push(
       `<rect x="${pad.left + index * barW + 1}" y="${pad.top + plotH - h}" width="${Math.max(1, barW - 2)}" height="${h}" class="hist-bar ${
         bucket.marked || over ? 'marked' : ''

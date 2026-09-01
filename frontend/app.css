@@ -522,6 +522,40 @@ button { font: inherit; }
   font-family: var(--mono); font-size: 25px; font-weight: 600;
   letter-spacing: -0.4px; line-height: 1.1; font-variant-numeric: tabular-nums;
 }
+
+/* ------------------------------------------------------------ figure strip */
+/*
+ * A row of headline figures, set as a specification rather than as a counter.
+ *
+ * Four numbers floating in a grid with a caption under each is what a generated
+ * dashboard looks like: nothing says they belong to one statement, and the
+ * whitespace between them reads as four unrelated boasts. A hairline says they
+ * are one table. The label goes first because a figure is read after the thing
+ * it measures — you cannot know what `49d` means until you have been told.
+ *
+ * Reusable deliberately: this shape recurs on every screen that opens with a
+ * summary, and four hand-rolled copies of it drift into four different
+ * treatments within a month.
+ */
+.figure-strip {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  margin: 4px 0 15px;
+}
+.figure-strip > div { padding: 13px 20px; border-left: 1px solid var(--line); }
+.figure-strip > div:first-child { padding-left: 0; border-left: 0; }
+.figure-strip .fig-k {
+  font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-2);
+}
+.figure-strip .metric { font-size: 22px; margin-top: 4px; }
+.figure-strip .metric-sub { margin-top: 3px; }
+
+@media (max-width: 700px) {
+  /* Two up, and the third cell loses its rule so the second row starts clean. */
+  .figure-strip { grid-template-columns: 1fr 1fr; }
+  .figure-strip > div:nth-child(odd) { padding-left: 0; border-left: 0; }
+}
 .metric.orange { color: var(--orange); }
 .metric.good { color: var(--success); }
 .metric.warn { color: var(--warning); }

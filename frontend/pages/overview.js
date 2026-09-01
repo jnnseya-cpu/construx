@@ -115,22 +115,38 @@ export async function overview(root) {
               <h2>${briefing.greeting} ${badge(briefing.asAt, '')}</h2>
               <p style="font-size:13px;color:var(--text-2);margin:2px 0 13px">${briefing.headline}</p>
 
-              <div class="grid g4" style="margin-bottom:13px">
+              <!--
+                Label first, then the figure. A bare "49d" means nothing until
+                you have been told what it counts, and a caption underneath asks the
+                reader to hold a number they cannot yet interpret.
+
+                Only two of these carry colour, and both earn it: money lost and
+                days late are conditions somebody has to act on. The count of
+                opportunities recommended is a count — it used to be painted in
+                Signal Orange, which is the colour this palette reserves for
+                things that carry meaning, and spending it on a neutral figure
+                is how the accent stops meaning anything.
+              -->
+              <div class="figure-strip">
                 <div>
+                  <div class="fig-k">Screened</div>
                   <div class="metric">${briefing.market.detected}</div>
-                  <div class="metric-sub">opportunities screened, ${briefing.market.rejected} rejected before anybody read them</div>
+                  <div class="metric-sub">${briefing.market.rejected} rejected before anybody read them</div>
                 </div>
                 <div>
-                  <div class="metric orange">${briefing.market.recommended.length}</div>
-                  <div class="metric-sub">recommended to bid</div>
+                  <div class="fig-k">Recommended to bid</div>
+                  <div class="metric">${briefing.market.recommended.length}</div>
+                  <div class="metric-sub">of those screened</div>
                 </div>
                 <div>
+                  <div class="fig-k">Margin gone since tender</div>
                   <div class="metric ${raw(briefing.money.marginErosionMinor > 0 ? 'bad' : 'good')}">${money(briefing.money.marginErosionMinor)}</div>
-                  <div class="metric-sub">margin gone since tender, across every job</div>
+                  <div class="metric-sub">across every job</div>
                 </div>
                 <div>
+                  <div class="fig-k">Worst forecast delay</div>
                   <div class="metric ${raw(briefing.delivery.worstDelayDays > 0 ? 'warn' : 'good')}">${days(briefing.delivery.worstDelayDays)}</div>
-                  <div class="metric-sub">worst forecast delay${briefing.delivery.worstDelayProject ? ` — ${briefing.delivery.worstDelayProject}` : ''}</div>
+                  <div class="metric-sub">${briefing.delivery.worstDelayProject ? briefing.delivery.worstDelayProject : 'nothing forecast late'}</div>
                 </div>
               </div>
 

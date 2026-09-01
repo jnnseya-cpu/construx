@@ -12411,11 +12411,31 @@ and 700 render at different widths); the landing, how-it-works, developers, demo
 and get-started pages plus the console render with no console error; the full
 suite is green at 4,532.
 
-#### What this pass did not reach
+#### The console, and the charts that had no callers
 
-Every page now carries the type system, and the landing page and the prose pages
-have had their structure reworked. The console's own screens have the faces and
-the condensed page title, and no further layout work: the briefing's four-figure
-row is still uncontained and two of its four values are accent-coloured, which
-is more accent than the palette's own rule allows. Named here rather than
-implied by the section above.
+**The figure strip.** The briefing opened with four numbers floating in a grid,
+two of them accent-coloured. It is now a `.figure-strip` component — hairline
+between each cell, label first, then the figure — for the same reason the hero's
+was: nothing said the four belonged to one statement, and the whitespace read as
+four unrelated boasts. Only the two that carry a condition keep their colour;
+the count of opportunities recommended lost its orange, because spending the
+accent on a neutral figure is how the accent stops meaning anything. Built as a
+reusable class rather than a fourth hand-rolled row.
+
+**Percent Plan Complete was a chart drawn by hand.** Twelve inline-styled divs
+with a gradient background, sitting on a page that imports a chart library. It
+is now the histogram, measured against the 85% line Last Planner is judged by —
+the same threshold the panel already colours its headline figure on, rather than
+a second number nobody reconciled. The component gained `markPast`, because
+demand *over* an availability is a problem and reliability *under* a target is a
+problem, and only the caller knows which way round it is.
+
+**The sparkline has a home.** The forward cashflow's cumulative position, above
+the table it summarises: a table of twelve periods answers "what happens in
+period 7" and hides the only question anybody opens the panel with, which is
+whether the line goes under and roughly when.
+
+**`stackedBarChart` still has no caller, deliberately.** No screen currently
+holds a composition-over-time series. The nearest candidate — several resources'
+demand across the same weeks — is in different units, and stacking gangs on
+cranes would produce a total that means nothing. Named here rather than forced.

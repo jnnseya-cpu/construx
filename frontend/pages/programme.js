@@ -1,7 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { badge, date, days, html, humanise, metric, modal, pct, positionReport, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
-import { ganttChart, histogram, sparkline } from '../lib/chart.js';
+import { ganttChart, histogram } from '../lib/chart.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -726,10 +726,21 @@ export async function programme(root) {
               <div class="notice ${raw(ppc.meanPpcPercent === null ? '' : ppc.meanPpcPercent >= 85 ? 'ok' : 'warn')}">${ppc.summary}</div>
               ${
                 ppc.weeks.length > 0
-                  ? html`<div style="display:flex;align-items:flex-end;gap:4px;height:80px;margin:12px 0 4px">
-                      ${ppc.weeks.map((w) => html`<div style="flex:1;background:linear-gradient(180deg,var(--orange),rgba(255,106,26,.25));height:${raw(Math.max(2, Math.round(w.ppcPercent)))}%;border-radius:2px 2px 0 0" title="${w.weekStarting}: ${w.completed}/${w.promised}"></div>`)}
-                    </div>
-                    <div class="metric-sub">${ppc.weeks.map((w) => `${w.weekStarting} ${w.ppcPercent}%`).join(' · ')}</div>`
+                  ? html`<div style="margin:12px 0 4px">
+                      ${histogram({
+                        buckets: ppc.weeks.map((w) => ({ label: w.weekStarting.slice(5), count: w.ppcPercent })),
+                        // 85% is the line Last Planner is judged against, and it
+                        // is already the threshold this page colours its headline
+                        // figure on — so the chart is measured against the same
+                        // number rather than a second one nobody reconciled.
+                        limit: 85,
+                        limitLabel: 'reliable planning (85%)',
+                        markPast: 'below',
+                        markLabel: 'a week that under-delivered',
+                        empty: 'No week has been reviewed yet',
+                        emptyDetail: 'PPC appears once a lookahead week has been closed out.',
+                      })}
+                    </div>`
                   : ''
               }
               ${

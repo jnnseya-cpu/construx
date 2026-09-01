@@ -1,5 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
-import { donut, waterfall } from '../lib/chart.js';
+import { donut, sparkline, waterfall } from '../lib/chart.js';
 import { command, commandBar } from '../lib/command.js';
 import { today } from '../lib/enums.js';
 import { badge, date, exact, html, humanise, metric, money, pct, positionReport, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
@@ -1041,6 +1041,34 @@ export async function commercial(root) {
                             </div>
                           </div></div>`
                         : ''
+                  }
+                  <!--
+                    The cumulative line, above the table it summarises.
+
+                    A table of twelve periods answers "what happens in period 7"
+                    and hides the only question anybody opens this panel with:
+                    does the line go under, and roughly when. The shape answers
+                    that before the eye has read a single figure; the table is
+                    still there for the number.
+                  -->
+                  ${
+                    forward.periods.length > 1
+                      ? html`<div style="padding:12px 17px 0;display:flex;align-items:center;gap:11px">
+                          ${sparkline({
+                            points: forward.periods.map((period) => period.cumulativeMinor),
+                            tone: forward.periods.some((period) => period.cumulativeMinor < 0) ? 'bad' : 'good',
+                            label: 'Cumulative cash position across the forecast periods',
+                          })}
+                          <span class="metric-sub">
+                            Cumulative position across ${forward.periods.length} period(s).
+                            ${
+                              forward.periods.some((period) => period.cumulativeMinor < 0)
+                                ? html`<b class="bad">It goes negative at period ${forward.periods.find((period) => period.cumulativeMinor < 0).period}</b> — the job funds itself out of somebody else's money until then.`
+                                : 'It stays positive throughout, on the rate measured so far.'
+                            }
+                          </span>
+                        </div>`
+                      : ''
                   }
                   ${table({
                     headers: ['Period', 'Final date', 'Basis', 'In', 'Out', 'Net', 'Cumulative'],
