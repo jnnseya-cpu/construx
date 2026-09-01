@@ -12125,8 +12125,7 @@ data-date line, no `NaN` in any attribute and no page errors.
 
 #### Still not built
 
-Activity codes as a grouping dimension. The charts remain fitted to a handful of
-panels rather than across the console.
+The charts remain fitted to a handful of panels rather than across the console.
 
 
 ### Multiple float paths, and what is actually holding each activity
@@ -12309,3 +12308,40 @@ resource-loaded cost curve; the cash-flow model is built from the commercial
 records instead. Levelling smooths against availability and does not attempt
 resource **smoothing to a target profile**, which is a different problem and one
 no measured requirement here calls for.
+
+
+### Activity codes: grouping the same work a way that is not the breakdown
+
+`rollUpCode()` in the engine, `defineActivityCode` and code values on
+`setActivityAttributes` in the domain, a panel and two doors on Programme.
+
+The WBS answers "what is this job made of" and every activity sits in exactly one
+place in it. A code answers a different question — everything the M&E
+subcontractor owns, everything in the north basin, everything in commissioning —
+and that work is scattered through six branches of the breakdown, which is
+precisely why the breakdown cannot produce the view. It is the view somebody
+takes into a subcontractor meeting.
+
+Decisions worth stating:
+
+- **Values are a closed list.** The use of a code is that it can be counted, and
+  one activity coded `M+E` against nine coded `MECHANICAL` is a group of nine and
+  a mystery. A value off the list is refused.
+- **Codes merge rather than replace.** Setting the discipline does not silently
+  drop the area somebody else coded — the same rule as a constraint, where an
+  explicit null clears and an omission leaves alone.
+- **What nobody has coded is counted**, for the reason unassigned activities are:
+  an empty group and a programme nobody has coded look identical on screen.
+- **Rows come out in the order the code declares its values**, not
+  alphabetically. A code is usually a sequence — civils, mechanical,
+  commissioning — and sorting by the value's own spelling turns that into civils,
+  commissioning, mechanical, which reads as no order at all. Found by reading the
+  rendered table; the first fixture could not catch it because its two values
+  happened to be in alphabetical order already.
+- **The console offers every value a code can take**, not only the values
+  something already carries — a door built from the groups could never code the
+  first activity against a new code.
+
+**Verified**: 6 domain tests, driven over HTTP and read in a browser — two codes
+across seven activities, a refused value, codes surviving an unrelated calendar
+change, and the door offering both codes with all their values.

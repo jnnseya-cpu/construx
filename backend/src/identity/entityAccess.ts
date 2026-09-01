@@ -155,6 +155,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   ScheduleRun: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
   Resource: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
   ResourceAssignment: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
+  ActivityCode: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
   ProgrammeReview: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
   ProgrammeComment: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
   Task: { area: 'WORKPACKAGES_TASKS' },

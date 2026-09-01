@@ -4505,6 +4505,9 @@ export const ROUTES: Route[] = [
           additionalProperties: false,
         },
         wbsPath: stringField,
+        // Code values keyed by code id. Null clears one; codes not named are
+        // left alone, so setting a discipline does not drop an area.
+        codes: { type: 'object', additionalProperties: { type: ['string', 'null'] } },
       },
       additionalProperties: false,
     },
@@ -4631,6 +4634,32 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => programmereview.closeReview(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/activity-code',
+    description: 'Define a way of grouping activities that is not the breakdown — discipline, area, responsibility',
+    schema: {
+      type: 'object',
+      required: ['id', 'name', 'values'],
+      properties: {
+        id: stringField,
+        name: stringField,
+        values: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 200,
+          items: {
+            type: 'object',
+            required: ['value'],
+            properties: { value: stringField, description: { type: 'string' } },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => programme.defineActivityCode(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'GET',

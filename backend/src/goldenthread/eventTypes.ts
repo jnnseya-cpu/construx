@@ -374,6 +374,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('RESOURCE_UPDATED', 'Resource', 'UPDATE', 'PROJECT_CONTROL'),
   def('RESOURCE_ASSIGNED', 'ResourceAssignment', 'CREATE', 'PROJECT_CONTROL'),
   def('RESOURCE_UNASSIGNED', 'ResourceAssignment', 'UPDATE', 'PROJECT_CONTROL'),
+  // A way of grouping activities that is not the breakdown — discipline, area,
+  // responsibility. Cuts across the WBS rather than subdividing it.
+  def('ACTIVITY_CODE_DEFINED', 'ActivityCode', 'CREATE', 'PROJECT_CONTROL'),
+  def('ACTIVITY_CODE_UPDATED', 'ActivityCode', 'UPDATE', 'PROJECT_CONTROL'),
   // Reviewing the programme. The comment is a governance record — it is what a
   // party will point at in an adjudication — so no agent may raise or answer one.
   def('PROGRAMME_REVIEW_OPENED', 'ProgrammeReview', 'ISSUE', 'PROJECT_CONTROL', { creates: true }),

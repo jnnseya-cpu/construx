@@ -111,6 +111,16 @@ export type ScheduleActivity = {
   calendarId: string;
   /** Where this sits in the breakdown, as a path like `1.2.3`. Optional. */
   wbsPath?: string;
+  /**
+   * Activity codes: values keyed by code type — discipline, area, responsibility.
+   *
+   * A second way to group the same activities, and deliberately not a second
+   * breakdown. The WBS answers "what is this job made of" and each activity sits
+   * in exactly one place in it. A code answers "show me everything the M&E
+   * subcontractor is doing" or "everything in the north basin", which cuts
+   * across the WBS rather than subdividing it — and that is why P6 has both.
+   */
+  codes?: Record<string, string>;
   constraint?: { type: ConstraintType; date: string };
   /** Actual start, once work has begun. */
   actualStart?: string;
@@ -626,24 +636,63 @@ export function rollUpWBS(result: ScheduleResult): WBSNode[] {
   }
 
   return [...nodes.entries()]
-    .map(([path, activities]) => {
-      const totalDuration = activities.reduce((sum, activity) => sum + Math.max(activity.duration, 0), 0);
-      const doneDuration = activities.reduce(
-        (sum, activity) => sum + Math.max(activity.duration, 0) * ((activity.percentComplete ?? (activity.status === 'COMPLETE' ? 100 : 0)) / 100),
-        0,
-      );
-      return {
-        path,
-        activityIds: activities.map((activity) => activity.id),
-        earlyStart: activities.reduce((min, a) => (a.earlyStart < min ? a.earlyStart : min), activities[0]!.earlyStart),
-        earlyFinish: activities.reduce((max, a) => (a.earlyFinish > max ? a.earlyFinish : max), activities[0]!.earlyFinish),
-        totalFloat: activities.reduce((worst, a) => Math.min(worst, a.totalFloat), Number.POSITIVE_INFINITY),
-        percentComplete: totalDuration > 0 ? Math.round((doneDuration / totalDuration) * 1000) / 10 : 0,
-        activities: activities.length,
-        complete: activities.filter((a) => a.status === 'COMPLETE').length,
-      };
-    })
+    .map(([path, activities]) => aggregate(path, activities))
     .sort((a, b) => (a.path < b.path ? -1 : 1));
+}
+
+/**
+ * Roll a schedule up an activity code instead of the breakdown.
+ *
+ * The same arithmetic against a different grouping. A code cuts across the WBS —
+ * every activity a trade contractor owns, wherever it sits in the breakdown —
+ * which is the view somebody takes into a subcontractor meeting and one the
+ * breakdown cannot produce, because that work is scattered through six branches
+ * of it.
+ *
+ * Activities carrying no value for this code are returned under `uncoded`
+ * rather than dropped. A group with nothing in it and a programme nobody has
+ * coded look identical on screen, and only one of them is somebody's job to fix.
+ */
+export function rollUpCode(
+  result: ScheduleResult,
+  codeId: string,
+): { values: WBSNode[]; uncoded: string[] } {
+  const groups = new Map<string, ScheduledActivityDates[]>();
+  const uncoded: string[] = [];
+  for (const activity of result.activities) {
+    const value = activity.codes?.[codeId];
+    if (value === undefined || value === '') {
+      uncoded.push(activity.id);
+      continue;
+    }
+    groups.set(value, [...(groups.get(value) ?? []), activity]);
+  }
+
+  return {
+    values: [...groups.entries()]
+      .map(([value, activities]) => aggregate(value, activities))
+      .sort((a, b) => (a.path < b.path ? -1 : 1)),
+    uncoded,
+  };
+}
+
+/** The span, worst float and weighted progress of a set of activities. */
+function aggregate(path: string, activities: ScheduledActivityDates[]): WBSNode {
+  const totalDuration = activities.reduce((sum, activity) => sum + Math.max(activity.duration, 0), 0);
+  const doneDuration = activities.reduce(
+    (sum, activity) => sum + Math.max(activity.duration, 0) * ((activity.percentComplete ?? (activity.status === 'COMPLETE' ? 100 : 0)) / 100),
+    0,
+  );
+  return {
+    path,
+    activityIds: activities.map((activity) => activity.id),
+    earlyStart: activities.reduce((min, a) => (a.earlyStart < min ? a.earlyStart : min), activities[0]!.earlyStart),
+    earlyFinish: activities.reduce((max, a) => (a.earlyFinish > max ? a.earlyFinish : max), activities[0]!.earlyFinish),
+    totalFloat: activities.reduce((worst, a) => Math.min(worst, a.totalFloat), Number.POSITIVE_INFINITY),
+    percentComplete: totalDuration > 0 ? Math.round((doneDuration / totalDuration) * 1000) / 10 : 0,
+    activities: activities.length,
+    complete: activities.filter((a) => a.status === 'COMPLETE').length,
+  };
 }
 
 // --- Multiple float paths -------------------------------------------------------

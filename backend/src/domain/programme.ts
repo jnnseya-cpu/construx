@@ -6,6 +6,7 @@ import {
   ACTIVITY_TYPE,
   CONSTRAINT_TYPE,
   floatPaths as rankFloatPaths,
+  rollUpCode,
   rollUpWBS,
   schedule,
   type ActivityType,
@@ -144,6 +145,84 @@ export function calendarsFor(ctx: EngineContext): WorkCalendar[] {
   return [...byId.values()];
 }
 
+// --- Activity codes ------------------------------------------------------------
+
+type ActivityCodeState = {
+  id: string;
+  name: string;
+  values: Array<{ value: string; description: string }>;
+  projectId: string;
+  definedBy: string;
+  definedAt: string;
+};
+
+/**
+ * Define a way of grouping activities that is not the breakdown.
+ *
+ * The WBS answers "what is this job made of" and every activity sits in exactly
+ * one place in it. A code answers a different question — everything the M&E
+ * subcontractor owns, everything in the north basin, everything in the
+ * commissioning phase — and that work is scattered through six branches of the
+ * breakdown, which is precisely why the breakdown cannot produce the view.
+ *
+ * A closed list of values per code, because the use of a code is that it can be
+ * counted and grouped, and free text cannot be. Redefining a code by its own id
+ * replaces it, for the reason a calendar is replaced: a correction is not a
+ * second code, and two codes differing by one value is how half a programme ends
+ * up grouped under the wrong one.
+ */
+export function defineActivityCode(
+  ctx: EngineContext,
+  input: { id: string; name: string; values: Array<{ value: string; description?: string }> },
+): { codeId: string; values: number } {
+  authorise(ctx, 'PROGRAMME_BASELINES', 'U');
+
+  const id = input.id.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+  if (!id) throw new DomainError('ACTIVITY_CODE_ID_REQUIRED', 'A code needs an id to be assigned by.');
+
+  const values: Array<{ value: string; description: string }> = [];
+  for (const entry of input.values) {
+    const value = String(entry?.value ?? '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '_');
+    if (!value) continue;
+    if (!values.some((existing) => existing.value === value)) {
+      values.push({ value, description: String(entry.description ?? '').trim() || value });
+    }
+  }
+  if (values.length === 0) {
+    throw new DomainError(
+      'ACTIVITY_CODE_VALUES_REQUIRED',
+      'List the values this code can take. A code with no values cannot group anything, and an activity given a ' +
+        'value that is not on the list is a grouping nobody can count.',
+    );
+  }
+
+  const existing = ctx.ledger.get({ refType: 'ActivityCode', refId: `${ctx.projectId}:${id}` });
+  const state: ActivityCodeState = {
+    id,
+    name: input.name.trim() || id,
+    values,
+    projectId: ctx.projectId,
+    definedBy: ctx.auth.actorId,
+    definedAt: new Date().toISOString(),
+  };
+
+  write(ctx, {
+    eventType: existing ? 'ACTIVITY_CODE_UPDATED' : 'ACTIVITY_CODE_DEFINED',
+    entity: { refType: 'ActivityCode', refId: `${ctx.projectId}:${id}` },
+    reason: `${state.name}: ${values.map((entry) => entry.value).join(', ')}`,
+    nextState: state as unknown as Record<string, unknown>,
+  });
+
+  return { codeId: id, values: values.length };
+}
+
+/** Every activity code defined on this project. */
+export function activityCodesFor(ctx: EngineContext): ActivityCodeState[] {
+  return ctx.ledger
+    .list(ctx.projectId, 'ActivityCode')
+    .map((record) => record.state as unknown as ActivityCodeState);
+}
+
 // --- What makes a task schedulable in dates -----------------------------------
 
 /**
@@ -166,6 +245,14 @@ export function setActivityAttributes(
     constraint?: { type: ConstraintType; date: string } | null;
     /** Overrides the work package's own code, for a hand-placed activity. */
     wbsPath?: string;
+    /**
+     * Activity code values, keyed by code id. Null clears one.
+     *
+     * Merged into what is already there rather than replacing the set: a planner
+     * setting the discipline should not silently drop the area somebody else
+     * coded, which is the same reason omitting a constraint leaves it alone.
+     */
+    codes?: Record<string, string | null>;
   },
 ): { taskId: string; type: ActivityType; calendarId: string } {
   authorise(ctx, 'PROGRAMME_BASELINES', 'U');
@@ -213,10 +300,55 @@ export function setActivityAttributes(
           ? { constraint: { type: input.constraint.type, date: input.constraint.date.slice(0, 10) } }
           : {}),
       ...(input.wbsPath ? { wbsPath: input.wbsPath } : {}),
+      ...(input.codes ? { activityCodes: mergeCodes(ctx, task.state.activityCodes, input.codes) } : {}),
     },
   });
 
   return { taskId: input.taskId, type, calendarId };
+}
+
+/**
+ * Merge code values onto what an activity already carries.
+ *
+ * A value that is not on its code's list is refused rather than stored. The
+ * whole use of a code is that it can be counted, and one activity coded
+ * `M+E` against nine coded `MECHANICAL` is a group of nine and a mystery.
+ */
+function mergeCodes(
+  ctx: EngineContext,
+  current: unknown,
+  changes: Record<string, string | null>,
+): Record<string, string> {
+  const codes = new Map(activityCodesFor(ctx).map((code) => [code.id, code]));
+  const merged: Record<string, string> = { ...((current as Record<string, string> | undefined) ?? {}) };
+
+  for (const [rawId, rawValue] of Object.entries(changes)) {
+    const codeId = rawId.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+    const code = codes.get(codeId);
+    if (!code) {
+      throw new DomainError(
+        'ACTIVITY_CODE_NOT_FOUND',
+        `No activity code ${codeId} on this project. Define the code and the values it can take before putting one ` +
+          'on an activity.',
+        404,
+      );
+    }
+    if (rawValue === null || rawValue === '') {
+      delete merged[codeId];
+      continue;
+    }
+    const value = String(rawValue).trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '_');
+    if (!code.values.some((entry) => entry.value === value)) {
+      throw new DomainError(
+        'ACTIVITY_CODE_VALUE_UNKNOWN',
+        `${value} is not one of the values ${code.name} can take (${code.values.map((entry) => entry.value).join(', ')}). ` +
+          'A value off the list makes a group of one and a mystery, which is the opposite of what a code is for.',
+      );
+    }
+    merged[codeId] = value;
+  }
+
+  return merged;
 }
 
 /**
@@ -358,6 +490,7 @@ export function loadProgramme(ctx: EngineContext): {
       ...(state.actualFinish ? { actualFinish: String(state.actualFinish) } : {}),
       ...(state.remainingDuration !== undefined ? { remainingDuration: Number(state.remainingDuration) } : {}),
       ...(state.percentComplete !== undefined ? { percentComplete: Number(state.percentComplete) } : {}),
+      ...(state.activityCodes ? { codes: state.activityCodes as Record<string, string> } : {}),
     } satisfies ScheduleActivity;
   });
 
@@ -548,6 +681,28 @@ export type ProgrammeView = {
   }>;
   wbs: WBSNode[];
   /**
+   * The same activities grouped every other way somebody has asked for.
+   *
+   * A code cuts across the breakdown rather than subdividing it, which is the
+   * view somebody takes into a subcontractor meeting. `uncoded` is counted per
+   * code because a group with nothing in it and a programme nobody has coded
+   * look identical on screen.
+   */
+  codeGroups: Array<{
+    codeId: string;
+    codeName: string;
+    uncoded: number;
+    values: Array<WBSNode & { description: string }>;
+  }>;
+  /**
+   * The codes and every value they can take, whether or not anything carries one.
+   *
+   * Published separately from the groups because the groups only contain values
+   * something is coded with, and a screen offering a planner the values already
+   * in use can never be used to code the first activity against a new one.
+   */
+  activityCodes: Array<{ id: string; name: string; values: Array<{ value: string; description: string }> }>;
+  /**
    * Activities that sit under no package at all.
    *
    * Counted rather than left to be inferred from an empty table. A breakdown
@@ -633,6 +788,8 @@ export function programmeView(ctx: EngineContext, asAt?: string): ProgrammeView 
       unassignedActivities: 0,
       progressDisagreement: [],
       calendars,
+      codeGroups: [],
+      activityCodes: activityCodesFor(ctx).map(({ id, name, values }) => ({ id, name, values })),
       criticalPath: [],
       longestPath: [],
       floatPaths: [],
@@ -728,6 +885,24 @@ export function programmeView(ctx: EngineContext, asAt?: string): ProgrammeView 
       };
     }),
     wbs: rollUpWBS(result),
+    activityCodes: activityCodesFor(ctx).map(({ id, name, values }) => ({ id, name, values })),
+    codeGroups: activityCodesFor(ctx).map((code) => {
+      const grouped = rollUpCode(result, code.id);
+      const described = new Map(code.values.map((entry) => [entry.value, entry.description]));
+      // In the order the code declares its values, not alphabetically. A code
+      // is usually a sequence — civils, then mechanical, then commissioning —
+      // and sorting it by the value's own spelling scrambles that into
+      // civils, commissioning, mechanical, which reads as no order at all.
+      const declared = new Map(code.values.map((entry, index) => [entry.value, index]));
+      return {
+        codeId: code.id,
+        codeName: code.name,
+        uncoded: grouped.uncoded.length,
+        values: grouped.values
+          .map((node) => ({ ...node, description: described.get(node.path) ?? node.path }))
+          .sort((a2, b2) => (declared.get(a2.path) ?? 999) - (declared.get(b2.path) ?? 999)),
+      };
+    }),
     unassignedActivities: result.activities.filter((activity) => !activity.wbsPath).length,
     progressDisagreement: result.activities
       .filter((activity) => {

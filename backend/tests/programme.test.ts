@@ -672,3 +672,153 @@ describe('what the programme needs and whether it can be had', () => {
     assert.ok(resources.resourcePosition(qs, '2026-06-01'));
   });
 });
+
+// ── Activity codes ──────────────────────────────────────────────────────────
+
+describe('grouping the same activities a way that is not the breakdown', () => {
+  it('groups across the breakdown, which is the whole reason a code exists', async () => {
+    // Three activities in one branch of the WBS and two disciplines between
+    // them. The breakdown says "civils and process structures, 3 activities".
+    // The code says "the M&E subcontractor owns one of them, finishing on the
+    // 12th" — the view somebody takes into a subcontractor meeting, and the one
+    // the breakdown cannot produce.
+    const { planner } = await project();
+    const [a, b, c] = planning.createTasks(planner(), [
+      { activityCode: 'A100', name: 'Excavate', workPackageId: 'wp-1', durationDays: 5 },
+      { activityCode: 'A200', name: 'Pour base', workPackageId: 'wp-1', durationDays: 3 },
+      { activityCode: 'A300', name: 'Install pumps', workPackageId: 'wp-1', durationDays: 4 },
+    ]);
+    planning.linkTasks(planner(), [
+      { predecessorId: a!, successorId: b!, type: 'FS', lag: 0 },
+      { predecessorId: b!, successorId: c!, type: 'FS', lag: 0 },
+    ]);
+    // Declared in the order the work happens, and deliberately not alphabetical:
+    // a code is usually a sequence, and sorting the rows by the value's own
+    // spelling turns civils → mechanical → commissioning into civils →
+    // commissioning → mechanical, which reads as no order at all.
+    programme.defineActivityCode(planner(), {
+      id: 'discipline',
+      name: 'Discipline',
+      values: [
+        { value: 'CIVILS', description: 'Civil and structural' },
+        { value: 'MECHANICAL', description: 'Mechanical and electrical' },
+        { value: 'COMMISSIONING', description: 'Testing and commissioning' },
+      ],
+    });
+    programme.setActivityAttributes(planner(), { taskId: a!, codes: { DISCIPLINE: 'CIVILS' } });
+    programme.setActivityAttributes(planner(), { taskId: b!, codes: { DISCIPLINE: 'CIVILS' } });
+    programme.setActivityAttributes(planner(), { taskId: c!, codes: { DISCIPLINE: 'MECHANICAL' } });
+
+    const view = programme.programmeView(planner(), '2026-06-01');
+    assert.equal(view.codeGroups.length, 1);
+    const group = view.codeGroups[0]!;
+    assert.equal(group.codeName, 'Discipline');
+    assert.equal(group.uncoded, 0);
+    assert.deepEqual(group.values.map((entry) => entry.path), ['CIVILS', 'MECHANICAL']);
+    assert.equal(group.values.length, 2, 'a declared value nothing carries is not a row');
+    assert.equal(group.values[0]!.activities, 2);
+    assert.equal(group.values[1]!.activities, 1);
+    assert.equal(group.values[1]!.description, 'Mechanical and electrical');
+    // A100 Mon 01 → Fri 05, A200 Mon 08 → Wed 10, A300 Thu 11 → Tue 16.
+    assert.equal(group.values[0]!.earlyFinish, '2026-06-10');
+    assert.equal(group.values[1]!.earlyStart, '2026-06-11');
+  });
+
+  it('lists the values in the order the code declares them, not alphabetically', async () => {
+    // Civils → mechanical → commissioning is the order the work happens.
+    // Sorted by the value's own spelling it becomes civils → commissioning →
+    // mechanical, which reads as no order at all and is worse than no sort.
+    const { planner } = await project();
+    const [a, b, c] = planning.createTasks(planner(), [
+      { activityCode: 'A100', name: 'Excavate', workPackageId: 'wp-1', durationDays: 5 },
+      { activityCode: 'A200', name: 'Install pumps', workPackageId: 'wp-1', durationDays: 3 },
+      { activityCode: 'A300', name: 'Wet commissioning', workPackageId: 'wp-1', durationDays: 4 },
+    ]);
+    programme.defineActivityCode(planner(), {
+      id: 'DISCIPLINE',
+      name: 'Discipline',
+      values: [
+        { value: 'CIVILS', description: 'Civil and structural' },
+        { value: 'MECHANICAL', description: 'Mechanical and electrical' },
+        { value: 'COMMISSIONING', description: 'Testing and commissioning' },
+      ],
+    });
+    programme.setActivityAttributes(planner(), { taskId: a!, codes: { DISCIPLINE: 'CIVILS' } });
+    programme.setActivityAttributes(planner(), { taskId: b!, codes: { DISCIPLINE: 'MECHANICAL' } });
+    programme.setActivityAttributes(planner(), { taskId: c!, codes: { DISCIPLINE: 'COMMISSIONING' } });
+
+    const group = programme.programmeView(planner(), '2026-06-01').codeGroups[0]!;
+    assert.deepEqual(
+      group.values.map((entry) => entry.path),
+      ['CIVILS', 'MECHANICAL', 'COMMISSIONING'],
+    );
+  });
+
+  it('counts what nobody has coded rather than dropping it', async () => {
+    // A group with nothing in it and a programme nobody has coded look identical
+    // on screen, and only one of them is somebody's job to fix.
+    const { planner } = await project();
+    const [a] = planning.createTasks(planner(), [
+      { activityCode: 'A100', name: 'Excavate', workPackageId: 'wp-1', durationDays: 5 },
+      { activityCode: 'A200', name: 'Pour base', workPackageId: 'wp-1', durationDays: 3 },
+    ]);
+    programme.defineActivityCode(planner(), { id: 'AREA', name: 'Area', values: [{ value: 'NORTH' }] });
+    programme.setActivityAttributes(planner(), { taskId: a!, codes: { AREA: 'NORTH' } });
+
+    const group = programme.programmeView(planner(), '2026-06-01').codeGroups[0]!;
+    assert.equal(group.uncoded, 1);
+    assert.equal(group.values.length, 1);
+    assert.equal(group.values[0]!.activities, 1);
+  });
+
+  it('leaves the codes it was not asked about alone', async () => {
+    // The same rule as a constraint: setting the discipline should not silently
+    // drop the area somebody else coded.
+    const { planner } = await project();
+    const [a] = planning.createTasks(planner(), [
+      { activityCode: 'A100', name: 'Excavate', workPackageId: 'wp-1', durationDays: 5 },
+    ]);
+    programme.defineActivityCode(planner(), { id: 'AREA', name: 'Area', values: [{ value: 'NORTH' }] });
+    programme.defineActivityCode(planner(), { id: 'TRADE', name: 'Trade', values: [{ value: 'GROUNDWORKS' }] });
+    programme.setActivityAttributes(planner(), { taskId: a!, codes: { AREA: 'NORTH' } });
+    programme.setActivityAttributes(planner(), { taskId: a!, codes: { TRADE: 'GROUNDWORKS' } });
+
+    const view = programme.programmeView(planner(), '2026-06-01');
+    assert.equal(view.codeGroups.find((group) => group.codeId === 'AREA')!.uncoded, 0, 'the area survived');
+    assert.equal(view.codeGroups.find((group) => group.codeId === 'TRADE')!.uncoded, 0);
+
+    // And an explicit null clears one without touching the other.
+    programme.setActivityAttributes(planner(), { taskId: a!, codes: { AREA: null } });
+    const after = programme.programmeView(planner(), '2026-06-01');
+    assert.equal(after.codeGroups.find((group) => group.codeId === 'AREA')!.uncoded, 1);
+    assert.equal(after.codeGroups.find((group) => group.codeId === 'TRADE')!.uncoded, 0);
+  });
+
+  it('refuses a value that is not on the code’s list', async () => {
+    // One activity coded M+E against nine coded MECHANICAL is a group of nine
+    // and a mystery, which is the opposite of what a code is for.
+    const { planner } = await project();
+    const [a] = planning.createTasks(planner(), [
+      { activityCode: 'A100', name: 'Excavate', workPackageId: 'wp-1', durationDays: 5 },
+    ]);
+    programme.defineActivityCode(planner(), { id: 'DISCIPLINE', name: 'Discipline', values: [{ value: 'MECHANICAL' }] });
+    const error = throwsCode(
+      () => programme.setActivityAttributes(planner(), { taskId: a!, codes: { DISCIPLINE: 'M+E' } }),
+      'ACTIVITY_CODE_VALUE_UNKNOWN',
+    );
+    assert.match(String(error.message), /group of one and a mystery/);
+
+    throwsCode(
+      () => programme.setActivityAttributes(planner(), { taskId: a!, codes: { NOSUCHCODE: 'X' } }),
+      'ACTIVITY_CODE_NOT_FOUND',
+    );
+  });
+
+  it('refuses a code that can take no values', async () => {
+    const { planner } = await project();
+    throwsCode(
+      () => programme.defineActivityCode(planner(), { id: 'EMPTY', name: 'Empty', values: [] }),
+      'ACTIVITY_CODE_VALUES_REQUIRED',
+    );
+  });
+});

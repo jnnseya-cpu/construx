@@ -201,6 +201,34 @@ function datedPanel(view) {
               ]),
             })}
 
+            ${(view.codeGroups ?? []).map((group) => html`
+              <h2 style="padding:15px 17px 0">Grouped by ${group.codeName.toLowerCase()}</h2>
+              <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                The same activities cut a different way. The breakdown says what the job is made of; this says who
+                owns what and where it is, which is scattered through six branches of the breakdown and is the view
+                somebody takes into a subcontractor meeting.
+              </p>
+              ${
+                group.uncoded > 0
+                  ? html`<div style="padding:9px 17px 0"><div class="notice"><div>
+                      ${group.uncoded} activity(ies) carry no ${group.codeName.toLowerCase()}, so they appear in no
+                      row below. An empty group and a programme nobody has coded look identical on screen.
+                    </div></div></div>`
+                  : ''
+              }
+              ${table({
+                headers: [group.codeName, 'Activities', 'Start', 'Finish', 'Worst float', 'Complete'],
+                align: ['', 'num', '', '', 'num', 'num'],
+                rows: group.values.map((entry) => [
+                  entry.description,
+                  `${entry.complete} of ${entry.activities}`,
+                  date(entry.earlyStart),
+                  date(entry.earlyFinish),
+                  html`<span class="${raw(entry.totalFloat < 0 ? 'bad' : entry.totalFloat === 0 ? 'warn' : '')}">${entry.totalFloat}d</span>`,
+                  `${entry.percentComplete}%`,
+                ]),
+              })}`)}
+
             <h2 style="padding:15px 17px 0">Working calendars</h2>
             ${table({
               headers: ['Calendar', 'Working week', 'Exceptions'],
@@ -605,6 +633,7 @@ export async function programme(root) {
             { id: 'calendar', label: 'Define a calendar', permitted: can('PROGRAMME_BASELINES', 'U'), reason: blockedReason('PROGRAMME_BASELINES', 'U') },
             { id: 'resource', label: 'Define a resource', permitted: can('PROGRAMME_BASELINES', 'U'), reason: blockedReason('PROGRAMME_BASELINES', 'U') },
             { id: 'assignResource', label: 'Put a resource on an activity', permitted: can('PROGRAMME_BASELINES', 'U'), reason: blockedReason('PROGRAMME_BASELINES', 'U') },
+            { id: 'activityCode', label: 'Define an activity code', permitted: can('PROGRAMME_BASELINES', 'U'), reason: blockedReason('PROGRAMME_BASELINES', 'U') },
           ]))}
           ${raw(commandBar([
             // Commenting sits on read, not on update: the objection worth having
@@ -1048,11 +1077,35 @@ export async function programme(root) {
           hint: 'The two mandatory types break the network rather than bounding it. A programme full of them is a bar chart.',
         },
         { name: 'constraintDate', label: 'Constraint date', type: 'date', required: false },
+        // One select per code the project has defined, offering every value the
+        // code can take — not only the values something already carries, which
+        // could never be used to code the first activity against a new code.
+        ...(dated?.activityCodes ?? []).map((code) => ({
+          name: `code_${code.id}`,
+          label: code.name,
+          type: 'select',
+          required: false,
+          options: [
+            { value: '', label: 'Leave as it is' },
+            { value: 'CLEAR', label: `Remove the ${code.name.toLowerCase()}` },
+            ...code.values.map((entry) => ({ value: entry.value, label: entry.description })),
+          ],
+        })),
       ],
       transform: (v) => ({
         taskId: v.taskId,
         type: v.type,
         calendarId: v.calendarId,
+        // Same three intentions as a constraint: leave it, clear it, set it.
+        ...(() => {
+          const codes = {};
+          for (const code of dated?.activityCodes ?? []) {
+            const chosen = v[`code_${code.id}`];
+            if (chosen === 'CLEAR') codes[code.id] = null;
+            else if (chosen) codes[code.id] = chosen;
+          }
+          return Object.keys(codes).length > 0 ? { codes } : {};
+        })(),
         // Leaving the constraint alone, clearing it and setting one are three
         // different intentions, and the middle one has to be sayable.
         ...(v.constraintType === 'CLEAR'
@@ -1153,6 +1206,37 @@ export async function programme(root) {
               ],
             }
           : {}),
+      }),
+    },
+    activityCode: {
+      title: 'Define an activity code',
+      intent:
+        'A way of grouping activities that is not the breakdown — discipline, area, responsibility, phase. The values ' +
+        'are a closed list because the use of a code is that it can be counted, and one activity coded “M+E” against ' +
+        'nine coded “MECHANICAL” is a group of nine and a mystery.',
+      path: () => `/v1/projects/${projectId}/programme/activity-code`,
+      submitLabel: 'Define it',
+      fields: [
+        { name: 'id', label: 'Code id', type: 'text', placeholder: 'DISCIPLINE' },
+        { name: 'name', label: 'Name', type: 'text', placeholder: 'Discipline' },
+        {
+          name: 'values',
+          label: 'The values it can take',
+          type: 'textarea',
+          hint: 'One per line, as CODE — what it means. For example: MECHANICAL — Mechanical and electrical',
+        },
+      ],
+      transform: (v) => ({
+        id: v.id,
+        name: v.name,
+        values: String(v.values ?? '')
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const [value, ...rest] = line.split(/\s+[—-]\s+/);
+            return { value: value.trim(), ...(rest.length > 0 ? { description: rest.join(' - ').trim() } : {}) };
+          }),
       }),
     },
     resource: {
