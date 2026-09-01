@@ -12700,3 +12700,100 @@ evidence argues *against* rendered as "viable, 0.0% fit", identical to one
 nothing had been said about, because the bar clamps at zero and the raw score
 does not. The score is now stated beside it: **−28 across the ten factors**
 reads as the opposite of neutral, which is what it is.
+
+
+### The twenty-five numbers a site is designed from
+
+§3, the Customer Brief Intelligence Gateway. A customer hands over a programme,
+a layout, an employer's requirements and a workforce curve, and somewhere in
+them are the figures that decide how many WCs, how much power, how many buses
+and how many beds. They are never all there, and the missing ones are never the
+ones anybody notices.
+
+**`conceptbrief.ts` is the requirements register and stays it.** It holds
+requirement *statements* with source, confidence, author, supersession and
+verification method, refuses to baseline one with no verification method, and
+makes an AI-extracted requirement visibly unaccepted. None of that is rebuilt.
+What it cannot hold is a **number with a unit**: "welfare shall comply with
+Schedule 1" is a requirement, "the peak is 164 across two shifts" is a fact, and
+it is the fact that decides whether five WCs is enough. A `SiteServiceFact`
+carries a `requirementId` where it was read off an accepted requirement — the
+link between the two registers rather than a merge of them.
+
+Twenty-five items across the seven service families, each one an input to a
+demand calculation in §4.1. That is what makes the list load-bearing rather than
+a questionnaire: **an item is missing exactly when a calculation cannot run.**
+
+#### "A percentage alone is forbidden"
+
+The specification's rule, and the reason is visible the moment you try: 72%
+reads as *mostly fine*, which is the opposite of true when the missing 28% is
+the electrical load and the water storage. Every gap carries four things — what
+it decides, the date the answer arrives too late, what is assumed meanwhile, and
+whose answer it is.
+
+**An assumption is not an answer.** A provisional value is a distinct status,
+not a value with a flag; it does not count toward the percentage, and it stays
+in the interview queue. If it counted, a brief nobody has answered would report
+as complete, which is the reading the whole structure exists to prevent. It is
+refused outright without a basis, a decision date and a named owner: an
+assumption nobody owns and nothing expires is a wrong number that has stopped
+being questioned.
+
+#### Eight cross-checks with real arithmetic
+
+Each runs only where both its inputs exist — a check against an absent value
+compares against zero and produces a false alarm with arithmetic on it, and the
+missing value is already reported as a gap.
+
+| Check | The failure it catches |
+|---|---|
+| Concurrent occupancy vs WCs | Welfare sized on the headcount rather than the changeover |
+| Changeover vs daily peak | Two figures that cannot both be true |
+| Operating hours vs security cover | A site live 24 hours and guarded for 12 |
+| Water storage vs tanker interval | Running dry on the first missed slot |
+| Maximum demand vs secured supply | A grid connection nobody ordered |
+| Accommodated workers vs beds | More people than rooms × occupancy |
+| Travelling workforce vs bus seats | People with no way to site |
+| Waste produced vs removed | A compound that fills up over weeks |
+| Gate throughput vs changeover | A shift that loses ninety minutes a day |
+
+The sanitary check uses **Schedule 1 of the Workplace (Health, Safety and
+Welfare) Regulations 1992** — 1 WC to 5 people, then one more at 25, 50, 75 and
+100, then one per 25 or part thereof. A real rule with a citation, because an
+inspector arrives with these numbers and a platform that invented its own would
+be wrong in the one conversation it exists to be right in.
+
+Driven live, it reproduces the specification's own worked example from recorded
+facts: *"Concurrent occupancy is 142 people at changeover (120 on shift plus 22
+visitors), which needs 7 WCs under Schedule 1. The layout provides 5. Confirm
+the peak concurrent occupancy, or accept a provisional design basis of 164
+persons — 142 plus 15% resilience — and provide 8 WCs."* Every resolution ends
+in a choice, as the spec's example does, not a warning.
+
+#### The offer, folded into the appointment
+
+The three models now carry what ETABLIX actually undertakes — four named pillars
+each, the fee logic, and the "choose this when" sentence — in ETABLIX's own
+words rather than the platform's. Plus the two things §2 named and the first
+pass did not instantiate: **approval thresholds** (nothing delegated under
+Advisory or Management, because it is the customer's money on the customer's
+contract; a £50k instruction limit under Prime, because a business that referred
+every purchase upward could not run a site) and **required insurance evidence**,
+which follows the exposure. The seven acts that are never delegated under any
+model — award, signature, energisation, certification, contingency, termination,
+regulatory submission — are the specification's Class C, held once rather than
+per model because they do not vary.
+
+**20 mutations, 19 caught.** One survivor was a real finding rather than a gap:
+a second filter in the interview for "only questions that change something"
+never removed anything, because the catalogue invariant already refuses an item
+that changes nothing. Two statements of one rule, and the two would eventually
+disagree about which was in force. Deleted; the invariant carries it.
+
+One guard is deliberately **not** claimed as tested. `liveFacts` excludes
+superseded records, and no mutation of that exclusion fails the suite, because
+`list` sorts by ULID so the newest record wins either way. It is kept because it
+is the rule that is actually true and the ordering is not — the day anything
+supersedes a fact without replacing it, "newest wins" alone would resurrect the
+figure that was retired.

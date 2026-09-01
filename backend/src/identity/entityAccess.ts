@@ -71,6 +71,12 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // assessment carries ETABLIX's own credit position.
   SiteServicesAppointment: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
   ModelFitAssessment: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  // A brief fact is a site measurement, not a commercial one — the peak
+  // workforce, the secured supply, the WCs provided. No `COMMERCIAL_L3`: the
+  // people who need these are the ones designing against them, and classifying
+  // a headcount as commercial-in-confidence would bar the welfare designer from
+  // the number the welfare is sized on.
+  SiteServiceFact: { area: 'SITE_SERVICES' },
 
   // Design and information
   Specification: { area: 'DESIGN_INFORMATION' },

@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
-import { badge, date, html, pct, raw, render, table, toast, track } from '../lib/ui.js';
+import { badge, date, html, money, pct, raw, render, table, toast, track } from '../lib/ui.js';
 import { head, refusal } from '../lib/estate.js';
 import { blockedReason, can, modules, state } from '../app.js';
 
@@ -52,9 +52,10 @@ const FIT_FIELDS = [
 const SCALE_HINT = '0 = not at all · 2 = partly · 4 = strongly. Score what the evidence says, not what would be convenient.';
 
 export async function siteservices(root) {
-  const position = await api
-    .get(`/v1/projects/${state.session.projectId}/site-services/appointment`)
-    .catch((error) => ({ error }));
+  const [position, readiness] = await Promise.all([
+    api.get(`/v1/projects/${state.session.projectId}/site-services/appointment`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/brief`).catch((error) => ({ error })),
+  ]);
 
   if (position.error) {
     render(root, html`${head({ title: 'Site Services' })}${refusal('The site-services appointment', position.error)}`);
@@ -98,6 +99,18 @@ export async function siteservices(root) {
           {
             id: 'modelfit',
             label: 'Run model fit',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'fact',
+            label: 'Record a brief fact',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'assume',
+            label: 'Assume a value',
             permitted: can('SITE_SERVICES', 'C'),
             reason: blockedReason('SITE_SERVICES', 'C'),
           },
@@ -156,6 +169,20 @@ export async function siteservices(root) {
             </div>
 
             <div class="card" style="margin-bottom:14px">
+              <h2>What ETABLIX undertakes to do</h2>
+              <div class="metric-sub" style="margin:6px 0 4px">
+                <b>${profile.headline}</b> ${profile.fee}.
+              </div>
+              ${profile.undertakes.map(
+                (pillar) => html`<div style="padding:10px 0;border-top:1px solid var(--line)">
+                  <b>${pillar.pillar}</b>
+                  <div class="metric-sub" style="margin-top:4px">${pillar.detail}</div>
+                </div>`,
+              )}
+              <div class="notice" style="margin-top:12px"><div>${profile.chooseWhen}</div></div>
+            </div>
+
+            <div class="card" style="margin-bottom:14px">
               <h2>What ETABLIX may and may not do here</h2>
               <div class="split-list" style="margin-top:8px">
                 <div class="row">
@@ -184,7 +211,28 @@ export async function siteservices(root) {
                   </span>
                 </div>
               </div>
-              <div class="notice" style="margin-top:12px">
+              <div class="split-list" style="margin-top:12px">
+                <div class="row">
+                  <span class="lbl">Delegated instruction limit</span>
+                  <span class="val">
+                    ${profile.approvals.delegatedInstructionMinor > 0
+                      ? money(profile.approvals.delegatedInstructionMinor)
+                      : badge('nothing delegated', 'warn')}
+                  </span>
+                </div>
+                <div class="row"><span class="lbl">Above it</span><span class="val">${profile.approvals.above}</span></div>
+                <div class="row">
+                  <span class="lbl">Insurance ETABLIX must evidence</span>
+                  <span class="val">${profile.insuranceRequired.join(' · ')}</span>
+                </div>
+              </div>
+              <div class="notice warn" style="margin-top:12px">
+                <div>
+                  <b>Never delegated, under any model.</b> ${profile.approvals.neverDelegated.join(' · ')}. An agent
+                  may prepare any of these and may not take one.
+                </div>
+              </div>
+              <div class="notice" style="margin-top:8px">
                 <div><b>Cash exposure.</b> ${profile.cashRisk}</div>
               </div>
               <div class="notice warn" style="margin-top:8px">
@@ -225,6 +273,8 @@ export async function siteservices(root) {
           rows: controlPointRows(models),
         })}
       </div>
+
+      ${readiness.error ? refusal('Brief readiness', readiness.error) : briefCard(readiness)}
 
       ${assessment ? assessmentCard(assessment, models) : ''}
     `,
@@ -313,6 +363,83 @@ export async function siteservices(root) {
       });
       if (result) {
         toast('Appointment changed', result.model.replaceAll('_', ' ').toLowerCase(), 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'fact' || which === 'assume') {
+      // The picker offers only what is not already settled, and each option
+      // says what the gap decides. A dropdown of twenty-five item names tells
+      // somebody nothing about which one to answer first.
+      const options = (readiness.error ? [] : readiness.interview).map((gap) => ({
+        value: gap.itemId,
+        label: `${gap.label} (${gap.unit})${gap.provisionalValue !== undefined ? ' — currently assumed' : ''}`,
+      }));
+      if (options.length === 0) {
+        toast('Nothing outstanding', 'Every fact this brief needs is already settled.', 'ok');
+        return;
+      }
+
+      const assuming = which === 'assume';
+      const result = await command({
+        title: assuming ? 'Assume a value' : 'Record a brief fact',
+        intent: assuming
+          ? 'Records an assumption as an assumption. It is tagged, it names what it was assumed on, and it carries a ' +
+            'decision date and an owner — because an assumption nobody owns and nothing expires stops being questioned ' +
+            'and quietly becomes the design.'
+          : 'A number the brief actually establishes, with the document, drawing or conversation it came from. ' +
+            'Recording over an existing figure supersedes it rather than replacing it: a number that changed silently ' +
+            'is how two teams end up working to different ones.',
+        // Two whole paths rather than one with the last segment interpolated.
+        // The doors invariant matches the literal a screen calls, and a path
+        // whose last segment is an expression matches no route — which is the
+        // same shape as a screen calling an endpoint that does not exist.
+        path: assuming
+          ? `/v1/projects/${state.session.projectId}/site-services/brief/assumption`
+          : `/v1/projects/${state.session.projectId}/site-services/brief/fact`,
+        submitLabel: assuming ? 'Assume' : 'Record',
+        transform: (values) => {
+          const numeric = values.value !== '' && Number.isFinite(Number(values.value));
+          const body = { itemId: values.itemId, value: numeric ? Number(values.value) : values.value };
+          return assuming
+            ? { ...body, basis: values.basis, decideBy: values.decideBy, owner: values.owner }
+            : { ...body, source: values.source };
+        },
+        fields: [
+          { name: 'itemId', label: 'Which fact', type: 'select', options },
+          {
+            name: 'value',
+            label: 'Value',
+            hint: 'A number for anything the demand engine calculates; a date as YYYY-MM-DD; text for a standard.',
+          },
+          ...(assuming
+            ? [
+                { name: 'basis', label: 'Assumed on what basis', type: 'textarea' },
+                {
+                  name: 'decideBy',
+                  label: 'Decide by',
+                  type: 'date',
+                  hint: 'After this date the assumption is too late to change — it has become the design.',
+                },
+                { name: 'owner', label: 'Whose answer replaces it', hint: 'A person, not a team' },
+              ]
+            : [
+                {
+                  name: 'source',
+                  label: 'Source',
+                  hint: 'The document, drawing revision or conversation. The argument in month six is always about where a number came from.',
+                },
+              ]),
+        ],
+      });
+
+      if (result) {
+        toast(
+          assuming ? 'Assumed' : 'Recorded',
+          `${result.itemId} = ${result.value} ${result.unit}${assuming ? ` · ${result.owner} by ${result.decideBy}` : ''}`,
+          assuming ? 'warn' : 'ok',
+        );
         await again();
       }
       return;
@@ -502,6 +629,146 @@ function assessmentCard(assessment, models) {
     </div>
   `;
 }
+
+/**
+ * Brief readiness, with the percentage kept firmly in its place.
+ *
+ * The specification forbids reporting completeness as a percentage alone, and
+ * the reason is visible the moment you try: 72% reads as *mostly fine*, which is
+ * the opposite of true when the missing 28% is the electrical load and the
+ * water storage. So the number is a caption and the gaps are the content —
+ * every one carrying what it decides, when the answer arrives too late, what is
+ * being assumed in the meantime, and whose answer it is.
+ *
+ * Conflicts sit above completeness, because a contradiction between two facts
+ * that are both recorded is worse than a fact that is missing: nobody is
+ * looking for it.
+ */
+function briefCard(readiness) {
+  const { families, percentKnown, conflicts, overdue, interview } = readiness;
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>Brief readiness</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">
+        ${pct(percentKnown)} of the ${families.reduce((sum, family) => sum + family.items, 0)} facts a site-services
+        system is designed from are settled. The percentage is a caption, not the answer — what each gap decides is
+        below it.
+      </div>
+
+      ${conflicts.length > 0
+        ? html`<div style="margin-bottom:14px">
+            <h2>What contradicts what</h2>
+            <div class="metric-sub" style="margin:6px 0 10px">
+              Both figures in each of these is recorded. A contradiction between two facts is worse than a missing one,
+              because nobody is looking for it.
+            </div>
+            ${conflicts.map(
+              (conflict) => html`<div class="notice ${conflict.severity === 'BLOCKING' ? 'bad' : 'warn'}" style="margin-bottom:8px">
+                <div>
+                  <b>${conflict.statement}</b><br />
+                  ${conflict.resolution}
+                </div>
+              </div>`,
+            )}
+          </div>`
+        : html`<div class="notice ok" style="margin-bottom:14px">
+            <div>Nothing recorded contradicts anything else recorded. Checks only run where both figures exist.</div>
+          </div>`}
+
+      ${overdue.length > 0
+        ? html`<div class="notice bad" style="margin-bottom:14px">
+            <div>
+              <b>${overdue.length} provisional value${overdue.length === 1 ? '' : 's'} past the decision date.</b>
+              ${overdue.map((gap) => `${gap.label} (${gap.owner ?? 'unowned'}, due ${gap.latestAnswer})`).join(' · ')}
+            </div>
+          </div>`
+        : ''}
+
+      ${families.map(
+        (family) => html`<div style="padding:12px 0;border-top:1px solid var(--line)">
+          <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+            <b>${family.label}</b>
+            <span>
+              ${family.known} settled${family.provisional > 0 ? ` · ${family.provisional} assumed` : ''}${
+                family.missing > 0 ? ` · ${family.missing} unanswered` : ''
+              }
+            </span>
+          </div>
+          ${track(family.percentKnown, family.percentKnown === 100 ? 'ok' : family.missing > 0 ? 'bad' : 'warn')}
+          ${family.gaps.length > 0
+            ? table({
+                headers: ['Not settled', 'What it decides', 'Assumed meanwhile', 'Answer by', 'Whose'],
+                rows: family.gaps.map((gap) => [
+                  html`${gap.label}
+                    <div class="metric-sub">${gap.changes.join(' · ').toLowerCase()}</div>`,
+                  gap.decides,
+                  gap.provisionalValue !== undefined
+                    ? html`<b>${gap.provisionalValue} ${gap.unit}</b>
+                        <div class="metric-sub">${gap.provisionalAssumption}</div>`
+                    : html`<span class="metric-sub">${gap.provisionalAssumption}</span>`,
+                  gap.latestAnswer ?? badge('no date', 'warn'),
+                  gap.owner ?? badge('unowned', 'warn'),
+                ]),
+              })
+            : html`<div class="metric-sub" style="margin-top:6px">Every fact this family needs is settled.</div>`}
+        </div>`,
+      )}
+
+      ${interview.length > 0
+        ? html`<div style="padding:14px 0 0;border-top:1px solid var(--line)">
+            <h2>The next questions worth asking</h2>
+            <div class="metric-sub" style="margin:6px 0 10px">
+              Only the ones that change capacity, cost, risk, sequence, contract or acceptance, soonest deadline first.
+              Nothing here is general discovery.
+            </div>
+            ${interview
+              .slice(0, 5)
+              .map(
+                (gap, index) => html`<div class="metric-sub" style="margin-top:6px">
+                  <b>${index + 1}.</b> ${QUESTIONS[gap.itemId] ?? gap.label}
+                </div>`,
+              )}
+          </div>`
+        : ''}
+    </div>
+  `;
+}
+
+/**
+ * The interview questions, keyed by item.
+ *
+ * Held here rather than sent with each gap because the readiness response
+ * already carries four fields per gap and the question is the fifth thing only
+ * this panel needs. Nothing in this object is a rule — the *list* of questions
+ * to ask is decided by the server, and this only supplies the wording.
+ */
+const QUESTIONS = {
+  peakWorkforce: 'What is the peak number of people on site in a single day, across all shifts and trades?',
+  shiftOverlapPersons: 'How many people are on site at once during the busiest shift changeover?',
+  visitorsPerDay: 'How many visitors, delivery drivers and inspectors come through the gate on a busy day?',
+  operatingHours: 'What hours is the site live — single shift, double shift, or continuous?',
+  wcProvision: 'How many WCs does the current welfare layout provide?',
+  accommodatedWorkers: 'How many of the workforce need accommodation rather than travelling daily?',
+  roomsAvailable: 'How many rooms does the accommodation provide?',
+  occupancyPerRoom: 'Is the rooming policy single occupancy, or shared — and if shared, how many to a room?',
+  maximumDemandKva: 'What is the maximum electrical demand, after diversity, across the whole site at peak?',
+  suppliedKva: 'What supply is actually secured — grid connection, generation, or both?',
+  waterStorageHours: 'How many hours of potable water does on-site storage hold at peak draw?',
+  tankerIntervalHours: 'How often can a tanker actually reach the site, allowing for access restrictions?',
+  compoundAreaSqm: 'What area is available for the compound, and is it available for the whole programme?',
+  groundBearingKpa: 'What is the ground bearing capacity across the compound area?',
+  reinstatementStandard: 'What condition must the land be returned in, and against what record?',
+  cleanableAreaSqm: 'What floor area is cleaned, and to what standard in each zone?',
+  wasteVolumeM3PerWeek: 'What waste volume does the site produce weekly, split by stream?',
+  wasteContainerCapacityM3: 'What total container capacity is on site, and how often is it emptied?',
+  wasteCollectionsPerWeek: 'How many waste collections per week can the site actually take?',
+  securityHoursCovered: 'How many hours a day is the security post manned?',
+  gateThroughputPerHour: 'How many people per hour can the access control actually process?',
+  travellingWorkforce: 'How many people per shift arrive by site transport rather than their own vehicle?',
+  busSeatsPerShift: 'How many seats does the scheduled transport provide per shift?',
+  packageCount: 'How many separate service packages will be let, and by whom?',
+  firstMobilisationDate: 'When does the first service have to be operational on site?',
+};
 
 /** A contribution reads as a direction, not a magnitude, so the sign is kept. */
 function signed(value) {

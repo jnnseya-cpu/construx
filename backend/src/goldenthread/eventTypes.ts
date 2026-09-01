@@ -1594,6 +1594,28 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
     aiAllowed: true,
     creates: true,
   }),
+
+  // §3, the brief gateway. A fact is a number with a unit — the peak workforce,
+  // the secured supply, the WCs provided — and it is a different object from a
+  // requirement, which is a statement somebody argues about. `conceptbrief.ts`
+  // holds the requirements and is not duplicated; these are what the demand
+  // calculations run on.
+  //
+  // AI may record and assume both, because extracting a figure from a drawing
+  // is exactly the work an agent does. What the catalogue enforces is that it
+  // cannot do so silently: an assumption is a different event from a fact, so
+  // "what did a machine decide for us" is a query rather than an audit.
+  def('SITE_SERVICE_FACT_RECORDED', 'SiteServiceFact', 'CREATE', 'PROJECT_CONTROL', {
+    aiAllowed: true,
+    creates: true,
+  }),
+  def('SITE_SERVICE_FACT_ASSUMED', 'SiteServiceFact', 'CREATE', 'PROJECT_CONTROL', {
+    aiAllowed: true,
+    creates: true,
+  }),
+  // Superseded, never overwritten. A figure that changed with no record of the
+  // change is how two teams end up working to different numbers.
+  def('SITE_SERVICE_FACT_SUPERSEDED', 'SiteServiceFact', 'UPDATE', 'PROJECT_CONTROL', { aiAllowed: true }),
 ];
 
 /**

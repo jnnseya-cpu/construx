@@ -63,6 +63,7 @@ import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
 import * as integrator from '../domain/integrator.ts';
 import * as appointment from '../domain/etablix/appointment.ts';
+import * as brief from '../domain/etablix/brief.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
 import * as programmereview from '../domain/programmereview.ts';
@@ -4548,6 +4549,55 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => appointment.assessModelFit(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/brief',
+    description:
+      'Brief readiness by service family: what is known, what is assumed, what each gap decides and what contradicts what',
+    handler: (platform, ctx) => brief.briefReadiness(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/brief/fact',
+    description: 'Record a fact the brief actually establishes, with the source it came from',
+    schema: {
+      type: 'object',
+      required: ['itemId', 'value', 'source'],
+      properties: {
+        itemId: { type: 'string', minLength: 2 },
+        // Either, because a date and a standard are facts too. The command
+        // checks the value against the item's own unit, which the schema
+        // cannot see.
+        value: { type: ['number', 'string'] },
+        source: { type: 'string', minLength: 3 },
+        requirementId: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => brief.recordFact(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/brief/assumption',
+    description: 'Assume a value out loud, with the basis, the decision date and the person whose answer replaces it',
+    schema: {
+      type: 'object',
+      required: ['itemId', 'value', 'basis', 'decideBy', 'owner'],
+      properties: {
+        itemId: { type: 'string', minLength: 2 },
+        value: { type: ['number', 'string'] },
+        basis: { type: 'string', minLength: 3 },
+        // All three required at the schema as well as the command. An
+        // assumption nobody owns and nothing expires is a wrong number that has
+        // stopped being questioned, and that is the whole failure mode this
+        // command exists to prevent.
+        decideBy: { type: 'string', minLength: 10 },
+        owner: { type: 'string', minLength: 2 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => brief.assumeFact(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'GET',

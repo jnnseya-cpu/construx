@@ -193,15 +193,202 @@ export type AppointmentProfile = {
    */
   agentCeiling: 'A' | 'B';
   /**
-   * What a person must approve above this value, in minor units, expressed as
-   * a multiple of nothing — it is an absolute figure the customer sets.
+   * What a person must approve, and who.
    *
-   * Absent means every instruction needs approval, which is the correct default
-   * for an appointment where ETABLIX is spending somebody else's money on their
-   * contract.
+   * The spec's "approval thresholds", instantiated by the model rather than set
+   * per project, because the threshold is a consequence of whose money it is.
+   * Under Advisory ETABLIX commits nothing, so there is nothing to threshold;
+   * under Management it is spending the customer's money on the customer's
+   * contract, so **every** instruction goes to them; under Prime it is
+   * ETABLIX's own money and its own liability, so a delegated limit is both
+   * possible and necessary — a business that referred every purchase upward
+   * could not run a site.
    */
+  approvals: {
+    /** Below this, in minor units, an ETABLIX manager may instruct alone. Zero means nothing is delegated. */
+    delegatedInstructionMinor: number;
+    /** Who must approve above it. */
+    above: string;
+    /** Acts that are never delegated whatever the figure. The spec's Class C. */
+    neverDelegated: readonly string[];
+  };
+  /**
+   * The insurance ETABLIX must evidence before it may act under this model.
+   *
+   * Instantiated by the appointment because the cover follows the exposure:
+   * professional indemnity answers advice, and nothing else on this list is
+   * needed until ETABLIX is standing behind a supply chain.
+   */
+  insuranceRequired: readonly string[];
   cashRisk: string;
   marginRisk: string;
+  /** What ETABLIX undertakes to do, in the words the offer is made in. */
+  headline: string;
+  fee: string;
+  undertakes: { pillar: string; detail: string }[];
+  chooseWhen: string;
+};
+
+/**
+ * What ETABLIX actually undertakes to do under each appointment, and when a
+ * customer should choose it.
+ *
+ * The control points above answer *who is answerable*. These answer *what is
+ * delivered*, which is the half a customer reads first and the half a delivery
+ * team is measured against. Four pillars per model, in ETABLIX's own words,
+ * because a scope written in the platform's words is a scope somebody has to
+ * reconcile against the one in the contract.
+ *
+ * The "choose when" line is not marketing. It is the sentence the Model Fit
+ * assessment is trying to evaluate, written out so a recommendation and the
+ * offer it recommends cannot drift apart.
+ */
+export const MODEL_OFFER: Record<TradingModel, { headline: string; fee: string; undertakes: { pillar: string; detail: string }[]; chooseWhen: string }> = {
+  ADVISORY: {
+    headline: 'We define it, you buy it.',
+    fee: 'Fixed professional fee',
+    undertakes: [
+      {
+        pillar: 'Strategy',
+        detail:
+          'Site-services and workforce-village strategy: constraints, workforce demand, phasing, utility and logistics studies, and a recommended delivery model with its risk basis.',
+      },
+      {
+        pillar: 'Technical requirements',
+        detail:
+          'Output specifications, package boundaries, the interface matrix, performance KPIs, evidence and acceptance criteria — a baseline the whole supply chain can price and deliver against.',
+      },
+      {
+        pillar: 'Procurement documents',
+        detail:
+          'PQQ and ITT packs, scope sheets, pricing schedules, tender programme and contract recommendations, ready to issue.',
+      },
+      {
+        pillar: 'Evaluation',
+        detail:
+          'Clarifications, technical and commercial bid normalisation, exclusion and risk review, and a defensible, auditable award recommendation.',
+      },
+    ],
+    chooseWhen:
+      'Choose Advisory when you have the procurement and operational capacity in-house, but need the strategy, specification and tender basis built to contractor standard before you commit the money.',
+  },
+  MANAGEMENT_INTEGRATOR: {
+    headline: 'You contract, we control.',
+    fee: 'Mobilisation fee plus monthly management fee',
+    undertakes: [
+      {
+        pillar: 'Procurement',
+        detail:
+          'Market engagement, prequalification, controlled enquiries, evaluation and award recommendations, with contracts placed in your name on terms we help you set.',
+      },
+      {
+        pillar: 'Coordination',
+        detail:
+          'One management team owns every supplier interface, mobilisation gate, readiness check and daily operating rhythm across all packages.',
+      },
+      {
+        pillar: 'Commercial administration',
+        detail:
+          'Monthly valuations and payment recommendations against evidenced Earned Value, change control, cost coding and forecast reporting.',
+      },
+      {
+        pillar: 'Performance management',
+        detail:
+          'KPIs, inspections, service-credit administration and supplier escalation, reported live on one CONSTRUX dashboard your leadership can open any day.',
+      },
+    ],
+    chooseWhen:
+      'Choose Management Integrator when you want direct supplier relationships and direct cash flow, but one party accountable for coordinating, administering and driving performance across the agreed site-services system. This is the core offer.',
+  },
+  PRINCIPAL_SERVICE_CONTRACTOR: {
+    headline: 'One contract, complete service.',
+    fee: 'Integrated contract price with markup and risk allowances',
+    undertakes: [
+      {
+        pillar: 'One integrated contract',
+        detail:
+          'The complete site-services or workforce-village scope under a single commercial agreement with defined outputs and acceptance criteria.',
+      },
+      {
+        pillar: 'The complete supply chain, ours',
+        detail:
+          'ETABLIX selects, contracts, pays and manages every specialist supplier. Supplier performance and supplier risk sit with ETABLIX, not with your team.',
+      },
+      {
+        pillar: 'Accountability across the lifecycle',
+        detail:
+          'Mobilisation, daily operation, HSE interface, performance, change and complete removal, all owned by one organisation.',
+      },
+      {
+        pillar: 'Transparent price build-up',
+        detail:
+          'Audited direct supplier cost plus defined allowances for management and integration, overhead, single-point-accountability risk, and a governed contingency controlled against a joint risk register — never a hidden margin.',
+      },
+    ],
+    chooseWhen:
+      'Choose Prime Service Contractor when a single contract for the whole scope is commercially justified and the funding, credit, liability and mobilisation gates are satisfied. These appointments are accepted selectively, because a partner that controls its own exposure is a partner that finishes.',
+  },
+};
+
+/**
+ * The five acts no appointment ever delegates.
+ *
+ * The specification's Class C: AI advises only, and a named authority or two
+ * people decide. Held once rather than per model because they do not vary —
+ * signing a contract is a human act under Advisory for the same reason it is
+ * under Prime, and a per-model copy would eventually disagree with itself.
+ */
+const NEVER_DELEGATED = [
+  'Supplier award',
+  'Contract signature',
+  'Safety-critical energisation or isolation',
+  'Payment certification',
+  'Contingency draw',
+  'Termination',
+  'Regulatory submission',
+] as const;
+
+const APPROVALS: Record<TradingModel, AppointmentProfile['approvals']> = {
+  ADVISORY: {
+    // Nothing is delegated because nothing is committed. ETABLIX under Advisory
+    // does not instruct anybody, so a threshold would be a limit on an act that
+    // cannot happen.
+    delegatedInstructionMinor: 0,
+    above: 'The customer. ETABLIX recommends and the customer instructs; there is no ETABLIX instruction to threshold.',
+    neverDelegated: NEVER_DELEGATED,
+  },
+  MANAGEMENT_INTEGRATOR: {
+    // Every instruction, because it is the customer's money on the customer's
+    // contract. A delegated limit here would be ETABLIX committing somebody
+    // else's funds under an authority it does not hold.
+    delegatedInstructionMinor: 0,
+    above:
+      'The customer’s delegated authority holder. ETABLIX prepares and recommends; the customer’s own limit decides who signs it off.',
+    neverDelegated: NEVER_DELEGATED,
+  },
+  PRINCIPAL_SERVICE_CONTRACTOR: {
+    // ETABLIX's own money and own liability, so a limit is both possible and
+    // necessary — a business that referred every purchase upward could not run
+    // a site. The figure is a starting position recorded on the appointment,
+    // not a rule: it is what the profile publishes so a screen can show what is
+    // in force rather than leaving it to be assumed.
+    delegatedInstructionMinor: 50_000_00,
+    above: 'The ETABLIX project director, and the commercial manager jointly above £250,000.',
+    neverDelegated: NEVER_DELEGATED,
+  },
+};
+
+const INSURANCE_REQUIRED: Record<TradingModel, readonly string[]> = {
+  ADVISORY: ['Professional indemnity'],
+  MANAGEMENT_INTEGRATOR: ['Professional indemnity', 'Public liability', 'Employer’s liability'],
+  PRINCIPAL_SERVICE_CONTRACTOR: [
+    'Professional indemnity',
+    'Public liability',
+    'Employer’s liability',
+    'Contract works',
+    'Hired-in plant',
+    'Performance bond, or a recorded decision that none is required',
+  ],
 };
 
 export function profileFor(model: TradingModel): AppointmentProfile {
@@ -218,8 +405,11 @@ export function profileFor(model: TradingModel): AppointmentProfile {
     fundsSupplierCost: trading.fundsSupplierCost,
     invoicesClientForSupplierCost: trading.invoicesClientForSupplierCost,
     agentCeiling: model === 'PRINCIPAL_SERVICE_CONTRACTOR' ? 'A' : 'B',
+    approvals: APPROVALS[model],
+    insuranceRequired: INSURANCE_REQUIRED[model],
     cashRisk: trading.cashRisk,
     marginRisk: trading.marginRisk,
+    ...MODEL_OFFER[model],
   };
 }
 
