@@ -121,13 +121,18 @@ function datedPanel(view) {
             </div>
 
             ${table({
-              headers: ['Code', 'Activity', 'Calendar', 'Start', 'Finish', 'Total float', 'Status'],
-              align: ['', '', '', '', '', 'num', ''],
+              headers: ['Code', 'Activity', 'Held by', 'Path', 'Calendar', 'Start', 'Finish', 'Total float', 'Status'],
+              align: ['', '', '', 'num', '', '', '', 'num', ''],
               rows: activities.slice(0, 60).map((activity) => [
                 activity.activityCode,
                 html`${activity.name}${activity.longestPath ? html` ${badge('Longest path', 'warn')}` : ''}${
                   activity.outOfSequence ? html` ${badge('Out of sequence', 'bad')}` : ''
                 }${activity.constraint ? html` ${badge(humanise(activity.constraint.type), 'info')}` : ''}`,
+                // The question everybody asks in front of a Gantt chart. The
+                // forward pass already knows the answer and used to discard it.
+                activity.drivingPredecessorName ??
+                  (activity.constraint ? 'its constraint' : activity.status === 'COMPLETE' ? 'done' : 'nothing — it can start'),
+                activity.floatPathRank ? (activity.floatPathRank === 1 ? badge('1', 'bad') : String(activity.floatPathRank)) : '—',
                 activity.calendarId === 'STANDARD_5_DAY' ? '5-day' : activity.calendarId === 'CONTINUOUS_7_DAY' ? '7-day' : activity.calendarId,
                 date(activity.earlyStart),
                 date(activity.earlyFinish),
@@ -135,6 +140,39 @@ function datedPanel(view) {
                 badge(humanise(activity.status), activity.status === 'COMPLETE' ? 'ok' : activity.status === 'IN_PROGRESS' ? 'info' : 'neutral'),
               ]),
             })}
+
+            ${
+              (view.floatPaths ?? []).length > 1
+                ? html`
+                  <h2 style="padding:15px 17px 0">What drives the date next</h2>
+                  <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                    One critical path says what is holding the job today. These are the chains behind it, ranked by
+                    what they have in hand. A chain with three days of float becomes the critical path on the fourth
+                    day of a delay — and by then the argument about who caused it has already been had. Where a chain
+                    merges is the number that matters: the same float feeding the critical path next month and feeding
+                    nothing until handover are different risks, and one float column cannot tell them apart.
+                  </p>
+                  ${table({
+                    headers: ['Path', 'Float', 'Chain', 'From', 'To', 'Runs into'],
+                    align: ['num', 'num', '', '', '', ''],
+                    rows: view.floatPaths.map((path) => [
+                      path.rank === 1 ? badge('Critical', 'bad') : `#${path.rank}`,
+                      html`<span class="${raw(path.totalFloat < 0 ? 'bad' : path.totalFloat === 0 ? 'warn' : '')}">${path.totalFloat}d</span>`,
+                      path.activities.map((entry) => entry.activityCode).join(' → '),
+                      date(path.earlyStart),
+                      date(path.earlyFinish),
+                      path.mergesInto
+                        ? html`${path.mergesInto.activityCode} ${path.mergesInto.name} ${badge(
+                            path.mergesInto.rank === 1 ? 'the critical path' : `path #${path.mergesInto.rank}`,
+                            path.mergesInto.rank === 1 ? 'bad' : 'warn',
+                          )}`
+                        : path.rank === 1
+                          ? 'the finish date'
+                          : '—',
+                    ]),
+                  })}`
+                : ''
+            }
 
             <h2 style="padding:15px 17px 0">The breakdown, rolled up</h2>
             <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">

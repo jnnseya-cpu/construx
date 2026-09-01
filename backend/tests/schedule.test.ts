@@ -15,6 +15,7 @@ import {
   type WorkCalendar,
 } from '../src/engines/maths/calendar.ts';
 import {
+  floatPaths,
   rollUpWBS,
   schedule,
   type ScheduleActivity,
@@ -494,5 +495,172 @@ describe('what the scheduler will not do', () => {
       () => schedule([task('A', 5)], [], [STANDARD_CALENDAR], options({ defaultCalendarId: 'NOT_SUPPLIED' })),
       'SCHEDULE_DEFAULT_CALENDAR_MISSING',
     );
+  });
+});
+
+// ── Multiple float paths ────────────────────────────────────────────────────
+
+describe('the chains behind the critical path', () => {
+  /**
+   * Three chains merging into one activity, with hand-worked dates.
+   *
+   * 2026-06-01 is a Monday throughout.
+   *
+   *   A (10d)  Mon 01 Jun → Fri 12 Jun ─┐
+   *   C (6d)   Mon 01 Jun → Mon 08 Jun  │
+   *     D (3d) Tue 09 Jun → Thu 11 Jun ─┤→ B (5d) Mon 15 Jun → Fri 19 Jun
+   *   E (2d)   Mon 01 Jun → Tue 02 Jun  │
+   *     F (3d) Wed 03 Jun → Fri 05 Jun ─┘
+   *
+   * B is driven by A, which finishes last. D has one day in hand, F has five.
+   */
+  const network = () => ({
+    activities: [task('A', 10), task('B', 5), task('C', 6), task('D', 3), task('E', 2), task('F', 3)],
+    links: [fs('A', 'B'), fs('C', 'D'), fs('D', 'B'), fs('E', 'F'), fs('F', 'B')],
+  });
+
+  it('names what is actually holding each activity', () => {
+    // The question everybody asks in front of a Gantt chart, and the answer the
+    // forward pass already worked out and used to discard.
+    const { activities, links } = network();
+    const result = schedule(activities, links, [STANDARD_CALENDAR], options());
+    const byId = new Map(result.activities.map((a) => [a.id, a]));
+
+    assert.equal(byId.get('B')!.drivingPredecessorId, 'A', 'B waits on A, the one that finishes last');
+    assert.equal(byId.get('D')!.drivingPredecessorId, 'C');
+    // Nothing drives A: it starts at the data date.
+    assert.equal(byId.get('A')!.drivingPredecessorId, undefined);
+  });
+
+  it('ranks the chains by float and says where each one merges', () => {
+    const { activities, links } = network();
+    const result = schedule(activities, links, [STANDARD_CALENDAR], options());
+
+    assert.equal(result.finishDate, '2026-06-19');
+    const paths = floatPaths(result, links);
+    assert.equal(paths.length, 3);
+
+    assert.deepEqual(paths[0]!.activityIds, ['A', 'B']);
+    assert.equal(paths[0]!.rank, 1);
+    assert.equal(paths[0]!.totalFloat, 0);
+    assert.equal(paths[0]!.mergesInto, undefined, 'the critical path merges into nothing');
+
+    // C→D has a single day in hand. One day of delay makes it critical too, and
+    // that is the fact a float column alone will not tell anybody.
+    assert.deepEqual(paths[1]!.activityIds, ['C', 'D']);
+    assert.equal(paths[1]!.totalFloat, 1);
+    assert.deepEqual(paths[1]!.mergesInto, { rank: 1, activityId: 'B' });
+
+    assert.deepEqual(paths[2]!.activityIds, ['E', 'F']);
+    assert.equal(paths[2]!.totalFloat, 5);
+    assert.deepEqual(paths[2]!.mergesInto, { rank: 1, activityId: 'B' });
+  });
+
+  it('reads as a sequence of work, not a bag of activities sharing a float value', () => {
+    // C and D have the same float and are one chain. Grouping by float alone
+    // would put them in the same row without saying one follows the other, and
+    // a path that cannot be walked through with a subcontractor is not a path.
+    const { activities, links } = network();
+    const paths = floatPaths(schedule(activities, links, [STANDARD_CALENDAR], options()), links);
+    const second = paths[1]!;
+    assert.equal(second.earlyStart, '2026-06-01', 'the chain starts where C starts');
+    assert.equal(second.earlyFinish, '2026-06-11', 'and ends where D ends');
+  });
+
+  it('stops at the limit rather than returning every chain on a large network', () => {
+    const { activities, links } = network();
+    const paths = floatPaths(schedule(activities, links, [STANDARD_CALENDAR], options()), links, 2);
+    assert.equal(paths.length, 2);
+    assert.deepEqual(paths[1]!.activityIds, ['C', 'D']);
+  });
+
+  it('puts no activity on two paths', () => {
+    // A chain claimed by a more critical path is that path's. Counting an
+    // activity twice would double the work a delay to it appears to threaten.
+    const { activities, links } = network();
+    const paths = floatPaths(schedule(activities, links, [STANDARD_CALENDAR], options()), links);
+    const all = paths.flatMap((path) => path.activityIds);
+    assert.equal(new Set(all).size, all.length);
+    assert.equal(all.length, 6, 'every activity lands on exactly one path');
+  });
+});
+
+describe('what path 1 is, and what a chain is', () => {
+  it('makes path 1 the driving chain rather than everything at zero float', () => {
+    // X is constrained to finish by the 3rd and finishes on the 3rd, so it sits
+    // at zero float and reads as critical. It is not on the chain that moves the
+    // finish date and delaying it moves nothing. Ranking path 1 off the float
+    // column instead of the driving chain puts it in the middle of the answer to
+    // "what is holding the job", which is the question the table exists for.
+    //
+    //   A (10d) Mon 01 Jun → Fri 12 Jun → B (5d) Mon 15 Jun → Fri 19 Jun
+    //   X (3d)  Mon 01 Jun → Wed 03 Jun, constrained to finish on or before it
+    const activities = [
+      task('A', 10),
+      task('B', 5),
+      task('X', 3, { constraint: { type: 'FINISH_ON_OR_BEFORE', date: '2026-06-03' } }),
+    ];
+    const links = [fs('A', 'B')];
+    const result = schedule(activities, links, [STANDARD_CALENDAR], options());
+    const at = (id: string) => result.activities.find((a) => a.id === id)!;
+
+    assert.equal(result.finishDate, '2026-06-19');
+    assert.equal(at('X').earlyFinish, '2026-06-03');
+    assert.equal(at('X').totalFloat, 0, 'X reads as critical on the float column');
+    assert.equal(at('X').longestPath, false, 'and is not on the chain that sets the date');
+    assert.deepEqual(result.longestPath, ['A', 'B']);
+
+    const paths = floatPaths(result, links);
+    assert.deepEqual(paths[0]!.activityIds, ['A', 'B']);
+    assert.equal(paths[1]!.activityIds.includes('X'), true, 'X is still reported, one rank down');
+  });
+
+  it('follows a chain forwards past the activity that feeds the critical path', () => {
+    //   A (10d) Mon 01 Jun → Fri 12 Jun ─────────────→ B (5d) Mon 15 → Fri 19 Jun
+    //   C (6d)  Mon 01 → Mon 08 → D (3d) Tue 09 → Thu 11 ─┤
+    //                              └→ G (2d) Fri 12 → Mon 15 Jun
+    //
+    // D has one day in hand and G, which follows it, has four. The chain is
+    // C→D→G: stopping at D because D is where the lowest float sits would hide
+    // the two days of work that move when C slips.
+    const activities = [task('A', 10), task('B', 5), task('C', 6), task('D', 3), task('G', 2)];
+    const links = [fs('A', 'B'), fs('C', 'D'), fs('D', 'B'), fs('D', 'G')];
+    const result = schedule(activities, links, [STANDARD_CALENDAR], options());
+    const at = (id: string) => result.activities.find((a) => a.id === id)!;
+
+    assert.equal(at('D').totalFloat, 1);
+    assert.equal(at('G').totalFloat, 4);
+    assert.equal(at('G').drivingPredecessorId, 'D');
+
+    const paths = floatPaths(result, links);
+    assert.deepEqual(paths[0]!.activityIds, ['A', 'B']);
+    assert.deepEqual(paths[1]!.activityIds, ['C', 'D', 'G'], 'the chain runs on through what D drives');
+    // And it still reports where it feeds the critical path, which is at D and
+    // not at the end of the chain.
+    assert.deepEqual(paths[1]!.mergesInto, { rank: 1, activityId: 'B' });
+    assert.equal(paths[1]!.totalFloat, 1, 'a chain is governed by its worst float, not its last');
+    assert.equal(paths[1]!.earlyFinish, '2026-06-15');
+  });
+
+  it('follows the tightest branch where a chain forks, and gives the other its own rank', () => {
+    //   A (10d) Mon 01 → Fri 12 Jun ──────────→ B (5d) Mon 15 → Fri 19 Jun
+    //   C (6d)  Mon 01 → Mon 08 → D (3d) Tue 09 → Thu 11 ─┤
+    //                              ├→ H (3d) Fri 12 → Tue 16 Jun   (3 days float)
+    //                              └→ G (2d) Fri 12 → Mon 15 Jun   (4 days float)
+    //
+    // D forks. The chain follows H, which has less room, and G comes back as a
+    // path in its own right rather than being dropped.
+    const activities = [task('A', 10), task('B', 5), task('C', 6), task('D', 3), task('G', 2), task('H', 3)];
+    const links = [fs('A', 'B'), fs('C', 'D'), fs('D', 'B'), fs('D', 'G'), fs('D', 'H')];
+    const result = schedule(activities, links, [STANDARD_CALENDAR], options());
+    const at = (id: string) => result.activities.find((a) => a.id === id)!;
+
+    assert.equal(at('H').totalFloat, 3);
+    assert.equal(at('G').totalFloat, 4);
+
+    const paths = floatPaths(result, links);
+    assert.deepEqual(paths[1]!.activityIds, ['C', 'D', 'H']);
+    assert.deepEqual(paths[2]!.activityIds, ['G'], 'the branch not taken is still reported');
+    assert.equal(paths[2]!.totalFloat, 4);
   });
 });

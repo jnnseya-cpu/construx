@@ -5,6 +5,7 @@ import { CONTINUOUS_CALENDAR, STANDARD_CALENDAR, type WorkCalendar } from '../en
 import {
   ACTIVITY_TYPE,
   CONSTRAINT_TYPE,
+  floatPaths as rankFloatPaths,
   rollUpWBS,
   schedule,
   type ActivityType,
@@ -509,6 +510,11 @@ export type ProgrammeView = {
     outOfSequence: boolean;
     percentComplete: number;
     constraint?: { type: ConstraintType; date: string };
+    /** What is actually holding this activity, named. */
+    drivingPredecessorId?: string;
+    drivingPredecessorName?: string;
+    /** Which float path this activity sits on. 1 is the chain that sets the date. */
+    floatPathRank?: number;
     /** Where the baseline had it, for the bar underneath the bar. */
     baselineStart?: string;
     baselineFinish?: string;
@@ -544,6 +550,22 @@ export type ProgrammeView = {
   finishDate?: string;
   criticalPath: string[];
   longestPath: string[];
+  /**
+   * The chains behind the critical path, ranked by float.
+   *
+   * One critical path answers what is driving the date today. This answers what
+   * drives it next — a chain with three days in hand becomes the critical path
+   * on the fourth day of a delay, and by then the argument about who caused it
+   * has already been had.
+   */
+  floatPaths: Array<{
+    rank: number;
+    totalFloat: number;
+    earlyStart: string;
+    earlyFinish: string;
+    activities: Array<{ id: string; activityCode: string; name: string }>;
+    mergesInto?: { rank: number; activityId: string; activityCode: string; name: string };
+  }>;
   constraintDriven: ScheduleResult['constraintDriven'];
   outOfSequenceCount: number;
   cycles: string[][];
@@ -586,6 +608,7 @@ export function programmeView(ctx: EngineContext, asAt?: string): ProgrammeView 
       calendars,
       criticalPath: [],
       longestPath: [],
+      floatPaths: [],
       constraintDriven: [],
       outOfSequenceCount: 0,
       cycles: [],
@@ -606,6 +629,22 @@ export function programmeView(ctx: EngineContext, asAt?: string): ProgrammeView 
 
   const result = schedule(activities, relationships, calendarsFor(ctx), options);
   const taskState = new Map(ctx.ledger.list(ctx.projectId, 'Task').map((record) => [record.refId, record.state]));
+
+  // The chains behind the critical path. Ten is enough to see the shape of the
+  // risk and few enough to read; a table of every chain on a nine-hundred
+  // activity programme is a second copy of the activity list.
+  const paths = rankFloatPaths(result, relationships, 10);
+  const rankOfActivity = new Map<string, number>();
+  for (const path of paths) for (const id of path.activityIds) rankOfActivity.set(id, path.rank);
+
+  const named = (id: string) => {
+    const state = taskState.get(id) ?? {};
+    return {
+      id,
+      activityCode: String(state.activityCode ?? id.slice(-6)),
+      name: String(state.name ?? result.activities.find((activity) => activity.id === id)?.name ?? id),
+    };
+  };
 
   // The baseline, where one has been approved, so the Gantt can draw the bar
   // underneath the bar. Without it a chart says when the work is planned; with
@@ -659,6 +698,13 @@ export function programmeView(ctx: EngineContext, asAt?: string): ProgrammeView 
         outOfSequence: activity.outOfSequence,
         percentComplete: Number(state.percentComplete ?? (activity.status === 'COMPLETE' ? 100 : 0)),
         ...(activity.constraint ? { constraint: activity.constraint } : {}),
+        ...(activity.drivingPredecessorId
+          ? {
+              drivingPredecessorId: activity.drivingPredecessorId,
+              drivingPredecessorName: named(activity.drivingPredecessorId).name,
+            }
+          : {}),
+        ...(rankOfActivity.has(activity.id) ? { floatPathRank: rankOfActivity.get(activity.id)! } : {}),
         ...(baselined?.start ? { baselineStart: baselined.start } : {}),
         ...(baselined?.finish ? { baselineFinish: baselined.finish } : {}),
       };
@@ -684,6 +730,23 @@ export function programmeView(ctx: EngineContext, asAt?: string): ProgrammeView 
     finishDate: result.finishDate,
     criticalPath: result.criticalPath,
     longestPath: result.longestPath,
+    floatPaths: paths.map((path) => ({
+      rank: path.rank,
+      totalFloat: path.totalFloat,
+      earlyStart: path.earlyStart,
+      earlyFinish: path.earlyFinish,
+      activities: path.activityIds.map(named),
+      ...(path.mergesInto
+        ? {
+            mergesInto: {
+              rank: path.mergesInto.rank,
+              activityId: path.mergesInto.activityId,
+              activityCode: named(path.mergesInto.activityId).activityCode,
+              name: named(path.mergesInto.activityId).name,
+            },
+          }
+        : {}),
+    })),
     constraintDriven: result.constraintDriven,
     outOfSequenceCount: result.outOfSequenceCount,
     cycles: result.cycles,

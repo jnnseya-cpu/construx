@@ -176,6 +176,15 @@ export type ScheduledActivityDates = ScheduleActivity & {
   status: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETE';
   /** True where work began before a predecessor finished. */
   outOfSequence: boolean;
+  /**
+   * The predecessor that actually set this activity's early start.
+   *
+   * The single most-asked question in front of a Gantt chart — "what is holding
+   * this?" — and the answer the logic already knows and used to throw away.
+   * Absent where nothing drives it: the first activity, or one whose constraint
+   * or the data date set its start instead of a relationship.
+   */
+  drivingPredecessorId?: string;
 };
 
 export type ScheduleResult = {
@@ -522,6 +531,7 @@ export function schedule(
       longestPath: false,
       status,
       outOfSequence: outOfSequence.has(activity.id),
+      ...(drivingPredecessor.has(activity.id) ? { drivingPredecessorId: drivingPredecessor.get(activity.id)! } : {}),
     };
   });
 
@@ -634,4 +644,157 @@ export function rollUpWBS(result: ScheduleResult): WBSNode[] {
       };
     })
     .sort((a, b) => (a.path < b.path ? -1 : 1));
+}
+
+// --- Multiple float paths -------------------------------------------------------
+
+export type FloatPath = {
+  /** 1 is the chain that sets the finish date. */
+  rank: number;
+  /** The chain in date order. */
+  activityIds: string[];
+  /** The float that governs the whole chain — its worst. */
+  totalFloat: number;
+  earlyStart: string;
+  earlyFinish: string;
+  /**
+   * Where this chain runs into a more critical one.
+   *
+   * The number that matters. A chain with four days of float that merges into
+   * the critical path is four days from becoming the critical path; the same
+   * float on a chain that merges into nothing until the end is a different
+   * risk entirely, and a single float column cannot tell them apart.
+   */
+  mergesInto?: { rank: number; activityId: string };
+};
+
+/**
+ * The chains behind the critical path, ranked.
+ *
+ * A single critical path answers "what is driving the finish date today" and
+ * nothing else. The question a planner actually has is "what drives it next" —
+ * because a chain with three days of float becomes the critical path on the
+ * fourth day of a delay, and by then the argument about who caused it is
+ * already lost. P6 calls this multiple float path analysis and it is the
+ * feature planners move tools to get.
+ *
+ * Ranked by float rather than by the free-float chaining P6 also offers. Float
+ * is what a planner reads off the screen and what an extension of time is
+ * argued in; ranking by anything else would produce a table whose order needed
+ * explaining before it could be used.
+ *
+ * Every path is a chain of *driving* relationships, so it reads as a sequence of
+ * work rather than a bag of activities that happen to share a float value —
+ * those are two different things and only the first can be walked through with a
+ * subcontractor.
+ */
+export function floatPaths(
+  result: ScheduleResult,
+  relationships: ScheduleRelationship[],
+  limit = 10,
+): FloatPath[] {
+  const byId = new Map(result.activities.map((activity) => [activity.id, activity]));
+
+  // Every successor, driving or not. The merge point is by definition a *non*-
+  // driving link — if it were driving, the chain would be part of the path it
+  // merges into rather than a separate one — so the driving map alone can never
+  // find it, and a version built on it reports every chain as merging into
+  // nothing.
+  const successorsOf = new Map<string, string[]>();
+  for (const link of relationships) {
+    successorsOf.set(link.predecessorId, [...(successorsOf.get(link.predecessorId) ?? []), link.successorId]);
+  }
+
+  // Driving successors: the reverse of the driving-predecessor map the forward
+  // pass already worked out. An activity can drive several.
+  const drivenBy = new Map<string, string[]>();
+  for (const activity of result.activities) {
+    const driver = activity.drivingPredecessorId;
+    if (driver === undefined) continue;
+    drivenBy.set(driver, [...(drivenBy.get(driver) ?? []), activity.id]);
+  }
+
+  const rankOf = new Map<string, number>();
+  const paths: FloatPath[] = [];
+
+  const chainFrom = (seedId: string): string[] => {
+    // Back through the drivers, then forward through what this drives, stopping
+    // at anything already claimed by a more critical path — that activity is
+    // where this chain merges, and it belongs to the path that claimed it.
+    const chain: string[] = [];
+    let cursor: string | undefined = seedId;
+    const seen = new Set<string>();
+    while (cursor && !seen.has(cursor) && !rankOf.has(cursor) && byId.has(cursor)) {
+      seen.add(cursor);
+      chain.unshift(cursor);
+      cursor = byId.get(cursor)!.drivingPredecessorId;
+    }
+    cursor = seedId;
+    seen.clear();
+    seen.add(seedId);
+    for (;;) {
+      // Where an activity drives several, follow the tightest — least float,
+      // and the later finish where they tie. Consistent with how the paths
+      // themselves are ranked, and it keeps a chain running into the branch
+      // that will bite first rather than the one that merely runs longest.
+      // The branches not taken are not lost: each becomes a path of its own at
+      // the rank its own float earns.
+      const next: string | undefined = (drivenBy.get(cursor!) ?? [])
+        .filter((id) => !rankOf.has(id) && !seen.has(id))
+        .sort(
+          (a, b) =>
+            byId.get(a)!.totalFloat - byId.get(b)!.totalFloat ||
+            byId.get(b)!.earlyFinish.localeCompare(byId.get(a)!.earlyFinish),
+        )[0];
+      if (next === undefined) break;
+      seen.add(next);
+      chain.push(next);
+      cursor = next;
+    }
+    return chain;
+  };
+
+  const record = (chain: string[], rank: number) => {
+    if (chain.length === 0) return;
+    for (const id of chain) rankOf.set(id, rank);
+    const members = chain.map((id) => byId.get(id)!);
+
+    // The merge point: where this chain runs into work a more critical path
+    // already claimed. Taken from anywhere along the chain, not only its end —
+    // a chain often continues past the activity that feeds the critical path
+    // into a tail of its own, and it is the feed that carries the risk.
+    const mergeId = chain
+      .flatMap((id) => successorsOf.get(id) ?? [])
+      .filter((id) => rankOf.get(id) !== undefined && rankOf.get(id)! < rank)
+      .sort((a, b) => rankOf.get(a)! - rankOf.get(b)!)[0];
+
+    paths.push({
+      rank,
+      activityIds: chain,
+      totalFloat: members.reduce((worst, activity) => Math.min(worst, activity.totalFloat), Number.POSITIVE_INFINITY),
+      earlyStart: members.reduce((min, a) => (a.earlyStart < min ? a.earlyStart : min), members[0]!.earlyStart),
+      earlyFinish: members.reduce((max, a) => (a.earlyFinish > max ? a.earlyFinish : max), members[0]!.earlyFinish),
+      ...(mergeId ? { mergesInto: { rank: rankOf.get(mergeId)!, activityId: mergeId } } : {}),
+    });
+  };
+
+  // Path 1 is the longest path — the chain that moves the finish date — and not
+  // "everything at zero float", which with calendars or constraints in play is a
+  // different and larger set.
+  record(result.longestPath.filter((id) => byId.has(id)), 1);
+
+  for (let rank = paths.length + 1; rank <= limit; rank += 1) {
+    const seed = result.activities
+      .filter((activity) => !rankOf.has(activity.id) && activity.status !== 'COMPLETE')
+      .sort(
+        (a, b) =>
+          a.totalFloat - b.totalFloat ||
+          b.earlyFinish.localeCompare(a.earlyFinish) ||
+          (a.id < b.id ? -1 : 1),
+      )[0];
+    if (seed === undefined) break;
+    record(chainFrom(seed.id), rank);
+  }
+
+  return paths;
 }

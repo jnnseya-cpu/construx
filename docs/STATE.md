@@ -12125,9 +12125,51 @@ data-date line, no `NaN` in any attribute and no page errors.
 
 #### Still not built
 
-Resources and levelling, activity codes as a grouping dimension, and multiple
-float paths. The charts remain fitted to two panels rather than across the
-console.
+Resources and levelling, and activity codes as a grouping dimension. The charts
+remain fitted to two panels rather than across the console.
+
+
+### Multiple float paths, and what is actually holding each activity
+
+`floatPaths()` in `engines/maths/schedule.ts`, published through the programme
+view and the Programme screen.
+
+One critical path answers what is driving the finish date **today** and nothing
+else. The question a planner has is what drives it **next**: a chain with three
+days in hand becomes the critical path on the fourth day of a delay, and by then
+the argument about who caused it has been had. This is what planners move tools
+to get.
+
+Three decisions worth stating:
+
+- **Path 1 is the driving chain, not every activity at zero float.** With
+  calendars or constraints in play those are different sets — an activity
+  constrained to finish on the day it finishes reads as critical and delaying it
+  moves nothing. Ranking off the float column puts that activity in the middle of
+  the answer to "what is holding the job".
+- **A path is a chain, not a bag of activities sharing a float value.** It is
+  traced through *driving* relationships, so it reads as a sequence of work that
+  can be walked through with a subcontractor. Where a chain forks it follows the
+  tighter branch; the branch not taken comes back at the rank its own float
+  earns rather than being dropped.
+- **Where a chain merges is the number that matters.** Four days of float feeding
+  the critical path next month and four days feeding nothing until handover are
+  different risks, and a float column cannot tell them apart. The merge point is
+  by definition a *non*-driving link — if it were driving, the chain would be
+  part of the path it merges into — so it is found through the relationships
+  rather than the driving map.
+
+The forward pass already knew which predecessor set each activity's early start
+and threw it away. It is now published as `drivingPredecessorId` and rendered as
+a **"Held by"** column: the single most-asked question in front of a Gantt chart,
+answered without a second lookup.
+
+**Verified**: 33 unit tests on hand-worked dates, **nine mutations all caught** —
+including two that survived the first fixture (path 1 taken from the float column
+rather than the driving chain, and chains never extending forwards) and were only
+killed once fixtures existed that could tell the difference. Driven over HTTP and
+read in a browser on the flagship project: seven activities on path 1, the filter
+gallery on path 2 with 50 days in hand, merging into the process pipework.
 
 
 ### Review and comment on the programme, for everybody it lands on

@@ -497,3 +497,63 @@ describe('who may change the programme', () => {
     throwsCode(() => programme.setActivityAttributes(safety, { taskId: a, type: 'START_MILESTONE' }), 'ACCESS_DENIED');
   });
 });
+
+// ── The chains behind the critical path ─────────────────────────────────────
+
+describe('what drives the date next', () => {
+  it('names the chains in the planner’s own vocabulary, not in ids', async () => {
+    // The engine works in ids because that is all it is given. The view is what
+    // somebody reads, and a table of ULIDs is not an answer to "what is coming
+    // next" — it is the same question in a worse font.
+    //
+    //   A100 Excavate (5d) ─────────────→ A300 Pour (4d)
+    //   A200 Temporary works (2d) ──────┘   (three days in hand)
+    const { planner } = await project();
+    const [a, b, c] = planning.createTasks(planner(), [
+      { activityCode: 'A100', name: 'Excavate', workPackageId: 'wp-1', durationDays: 5 },
+      { activityCode: 'A200', name: 'Temporary works design', workPackageId: 'wp-1', durationDays: 2 },
+      { activityCode: 'A300', name: 'Pour the base', workPackageId: 'wp-1', durationDays: 4 },
+    ]);
+    planning.linkTasks(planner(), [
+      { predecessorId: a!, successorId: c!, type: 'FS', lag: 0 },
+      { predecessorId: b!, successorId: c!, type: 'FS', lag: 0 },
+    ]);
+    programme.runSchedule(planner(), { dataDate: '2026-06-01' });
+
+    const view = programme.programmeView(planner(), '2026-06-01');
+    assert.equal(view.floatPaths.length, 2);
+
+    assert.equal(view.floatPaths[0]!.rank, 1);
+    assert.equal(view.floatPaths[0]!.totalFloat, 0);
+    assert.deepEqual(
+      view.floatPaths[0]!.activities.map((entry) => entry.activityCode),
+      ['A100', 'A300'],
+    );
+
+    // The chain that is not critical yet, with the number that matters: three
+    // days, and where it runs into the one that is.
+    assert.deepEqual(
+      view.floatPaths[1]!.activities.map((entry) => entry.activityCode),
+      ['A200'],
+    );
+    assert.equal(view.floatPaths[1]!.totalFloat, 3);
+    assert.equal(view.floatPaths[1]!.mergesInto?.activityCode, 'A300');
+    assert.equal(view.floatPaths[1]!.mergesInto?.name, 'Pour the base');
+    assert.equal(view.floatPaths[1]!.mergesInto?.rank, 1);
+
+    // And every activity carries its own rank and what is holding it, so the
+    // activity table answers the question without a second lookup.
+    const pour = view.activities.find((activity) => activity.activityCode === 'A300')!;
+    assert.equal(pour.floatPathRank, 1);
+    assert.equal(pour.drivingPredecessorName, 'Excavate', 'the longer of the two predecessors holds it');
+  });
+
+  it('reports no paths at all on a project with no activities', async () => {
+    // An empty programme and a broken one look identical on screen, and only
+    // one of them is somebody's job to fix.
+    const { planner } = await project();
+    const view = programme.programmeView(planner(), '2026-06-01');
+    assert.deepEqual(view.floatPaths, []);
+    assert.match(view.summary, /No activities have been created/);
+  });
+});
