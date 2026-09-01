@@ -84,7 +84,16 @@ function contextFor(platform: Platform, auth: AuthContext, projectId: string): E
   return platform.context(auth, projectId, { source: 'WEB' });
 }
 
-function authOf(platform: Platform, userId: string): AuthContext {
+/**
+ * Build an auth context for a user the way a real client would get one.
+ *
+ * Exported because tests that need a role the demonstration tenancy does not
+ * seed — a commercial manager, a project director — must create that user and
+ * then act as them. Hand-building the context instead would let the test award
+ * itself whatever scopes it liked, and the scope check is part of what the
+ * test is proving.
+ */
+export function authOf(platform: Platform, userId: string): AuthContext {
   const user = platform.user(userId);
   const tokens = issueTokens({
     actorId: user.id,

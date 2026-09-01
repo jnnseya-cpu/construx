@@ -52,10 +52,11 @@ const FIT_FIELDS = [
 const SCALE_HINT = '0 = not at all · 2 = partly · 4 = strongly. Score what the evidence says, not what would be convenient.';
 
 export async function siteservices(root) {
-  const [position, readiness, structure] = await Promise.all([
+  const [position, readiness, structure, tower] = await Promise.all([
     api.get(`/v1/projects/${state.session.projectId}/site-services/appointment`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/brief`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/sbs`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/mobilisation`).catch((error) => ({ error })),
   ]);
 
   if (position.error) {
@@ -142,6 +143,30 @@ export async function siteservices(root) {
           {
             id: 'observe',
             label: 'Record what it consumed',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'attest',
+            label: 'Attest gate evidence',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'withdraw',
+            label: 'Withdraw evidence',
+            permitted: can('SITE_SERVICES', 'U'),
+            reason: blockedReason('SITE_SERVICES', 'U'),
+          },
+          {
+            id: 'gate',
+            label: 'Pass a gate',
+            permitted: can('SITE_SERVICES', 'A'),
+            reason: blockedReason('SITE_SERVICES', 'A'),
+          },
+          {
+            id: 'declare',
+            label: 'Record a supplier declaration',
             permitted: can('SITE_SERVICES', 'C'),
             reason: blockedReason('SITE_SERVICES', 'C'),
           },
@@ -308,6 +333,8 @@ export async function siteservices(root) {
       ${readiness.error ? refusal('Brief readiness', readiness.error) : briefCard(readiness)}
 
       ${structure.error ? refusal('The system breakdown structure', structure.error) : sbsCard(structure)}
+
+      ${tower.error ? refusal('The mobilisation control tower', tower.error) : towerCard(tower)}
 
       ${assessment ? assessmentCard(assessment, models) : ''}
     `,
@@ -623,6 +650,173 @@ export async function siteservices(root) {
       });
       if (result) {
         toast('Recorded', `${result.derivationId} = ${result.observed} over ${result.over}`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'attest') {
+      // Only the items that are actually outstanding, and only the attested
+      // kind. A derived item is refused by the command, and offering it in the
+      // picker would be offering a refusal.
+      const options = (tower.error ? [] : tower.systems).flatMap((system) =>
+        system.gates.flatMap((gate) =>
+          gate.evidence
+            .filter((item) => item.kind === 'ATTESTED' && !item.satisfied)
+            .map((item) => ({
+              value: `${system.systemId}~${gate.id}~${item.itemId}`,
+              label: `${system.label}, ${system.zone} — ${gate.id} ${item.label}${item.expired ? ' (expired)' : ''}`,
+            })),
+        ),
+      );
+      if (options.length === 0) {
+        toast('Nothing outstanding', 'Every attested item on every gate is in place.', 'ok');
+        return;
+      }
+      const result = await command({
+        title: 'Attest gate evidence',
+        intent:
+          'A reference, never a tick — the certificate number, the drawing revision or the test sheet, so somebody can ' +
+          'go and find it when the evidence is challenged. Anything that expires carries the date it expires on: the ' +
+          'commonest mobilisation failure is not that evidence was never provided, it is that everything was in place once.',
+        path: `/v1/projects/${state.session.projectId}/site-services/mobilisation/evidence`,
+        submitLabel: 'Attest',
+        transform: (values) => {
+          const [systemId, gate, itemId] = values.item.split('~');
+          return {
+            systemId,
+            gate,
+            itemId,
+            reference: values.reference,
+            ...(values.expiresAt ? { expiresAt: values.expiresAt } : {}),
+          };
+        },
+        fields: [
+          { name: 'item', label: 'Which item', type: 'select', options },
+          { name: 'reference', label: 'Reference', hint: 'Where the evidence lives, not that it exists' },
+          {
+            name: 'expiresAt',
+            label: 'Expires',
+            type: 'date',
+            required: false,
+            hint: 'Required for anything that lapses — insurance, a competency, a calibration. Refused without it.',
+          },
+        ],
+      });
+      if (result) {
+        toast('Attested', `${result.gate} ${result.itemId} — ${result.reference}`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'withdraw') {
+      const options = (tower.error ? [] : tower.systems).flatMap((system) =>
+        system.gates.flatMap((gate) =>
+          gate.evidence
+            .filter((item) => item.evidenceId)
+            .map((item) => ({
+              value: item.evidenceId,
+              label: `${system.label}, ${system.zone} — ${gate.id} ${item.label} (${item.reference})`,
+            })),
+        ),
+      );
+      if (options.length === 0) {
+        toast('Nothing attested', 'There is no evidence on this project to withdraw.', 'warn');
+        return;
+      }
+      const result = await command({
+        title: 'Withdraw evidence',
+        intent:
+          'A certificate revoked, or a test sheet found to be against the wrong asset. Withdrawing it re-opens the gate ' +
+          'it satisfied — the gate is calculated, so removing an input changes the answer rather than leaving a passed ' +
+          'gate standing on evidence that has gone.',
+        path: `/v1/projects/${state.session.projectId}/site-services/mobilisation/withdraw`,
+        submitLabel: 'Withdraw',
+        fields: [
+          { name: 'evidenceId', label: 'Which evidence', type: 'select', options },
+          { name: 'reason', label: 'Why it no longer stands', type: 'textarea' },
+        ],
+      });
+      if (result) {
+        toast('Withdrawn', `${result.gate} ${result.itemId} — ${result.withdrawnReason}`, 'warn');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'gate') {
+      // Only the gate each system is actually at. Offering G5 on a system
+      // sitting at G1 offers a refusal, and the refusal it offers is the one
+      // that matters least.
+      const options = (tower.error ? [] : tower.systems)
+        .filter((system) => !system.accepted)
+        .map((system) => {
+          const at = system.gates.find((gate) => gate.id === system.atGate);
+          return {
+            value: `${system.systemId}~${system.atGate}`,
+            label: `${system.label}, ${system.zone} — ${at.id} ${at.name} (${at.satisfied}/${at.total} evidence, ${at.approvers.join(' or ')})`,
+          };
+        });
+      if (options.length === 0) {
+        toast('Nothing to pass', 'Every composed system has reached mobilisation acceptance.', 'ok');
+        return;
+      }
+      const result = await command({
+        title: 'Pass a mobilisation gate',
+        intent:
+          'Refused unless every prior gate has passed, every evidence item on this one is satisfied, and you hold a role ' +
+          'the gate names. Holding the capability is not enough: releasing an area and accepting a safe energisation are ' +
+          'competent persons’ acts, and they fail closed.',
+        path: `/v1/projects/${state.session.projectId}/site-services/mobilisation/gate`,
+        submitLabel: 'Pass it',
+        transform: (values) => {
+          const [systemId, gate] = values.gate.split('~');
+          return { systemId, gate, note: values.note };
+        },
+        fields: [
+          { name: 'gate', label: 'Which gate', type: 'select', options },
+          {
+            name: 'note',
+            label: 'What satisfies the condition',
+            type: 'textarea',
+            hint: 'Approval with nothing behind it is the signature that gets read out in the inquiry.',
+          },
+        ],
+      });
+      if (result) {
+        toast('Gate passed', `${result.gate} — ${result.roleAtApproval.join(', ')}`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'declare') {
+      const options = (tower.error ? [] : tower.systems).map((system) => ({
+        value: system.systemId,
+        label: `${system.label} — ${system.zone}`,
+      }));
+      if (options.length === 0) {
+        toast('Nothing composed', 'There is no service system for a supplier to report against.', 'warn');
+        return;
+      }
+      const result = await command({
+        title: 'Record a supplier declaration',
+        intent:
+          'What the supplier says its progress is. It moves nothing: readiness is calculated from the evidence and the ' +
+          'interface tests, and a supplier reporting 100% cannot make a package ready. It is recorded because the ' +
+          'difference between what was declared and what the evidence showed is the entire mobilisation dispute.',
+        path: `/v1/projects/${state.session.projectId}/site-services/mobilisation/declaration`,
+        submitLabel: 'Record it',
+        transform: (values) => ({ ...values, percent: Number(values.percent) }),
+        fields: [
+          { name: 'systemId', label: 'Which system', type: 'select', options },
+          { name: 'percent', label: 'Percent declared', type: 'number' },
+          { name: 'note', label: 'What they said', type: 'textarea' },
+        ],
+      });
+      if (result) {
+        toast('Declaration recorded', result.moves, 'warn');
         await again();
       }
       return;
@@ -1077,6 +1271,160 @@ function sbsCard(structure) {
             ${demand.notDerivable.map((entry) => `${entry.label} (needs ${entry.missing.join(', ')})`).join(' · ')}
           </div>`
         : ''}
+    </div>
+  `;
+}
+
+/** The four gate states, and the tone each one deserves at a glance. */
+const GATE_TONE = { PASSED: 'ok', AWAITING_APPROVAL: 'info', EVIDENCE_OUTSTANDING: 'warn', BLOCKED: 'bad' };
+
+const GATE_STATUS = {
+  PASSED: 'passed',
+  AWAITING_APPROVAL: 'evidence complete, awaiting approval',
+  EVIDENCE_OUTSTANDING: 'evidence outstanding',
+  BLOCKED: 'blocked',
+};
+
+/**
+ * The mobilisation control tower.
+ *
+ * **Mobilisation is a dependency network, not a percentage complete.** Every
+ * mobilisation tracker in the industry is a spreadsheet of percentages supplied
+ * by the people being measured, and it reads 94% until the week it reads 41% —
+ * because a percentage cannot be wrong, only revised.
+ *
+ * So the panel refuses to lead with a number. It leads with the gate each system
+ * is actually at, and under it every evidence item with the reference it lives
+ * at or the reason it is not satisfied. The evidence percentage is a caption on
+ * calculated evidence, never a status somebody typed.
+ *
+ * The supplier's own declaration is shown *beside* the calculated position
+ * rather than instead of it. That juxtaposition is the whole point: the
+ * difference between what was declared and what the evidence showed is the
+ * entire mobilisation dispute, and a screen carrying only one half of it cannot
+ * settle one.
+ */
+function towerCard(tower) {
+  const { systems, gates, expiringSoon } = tower;
+
+  if (systems.length === 0) {
+    return html`<div class="card" style="margin-bottom:14px">
+      <h2>Mobilisation control tower</h2>
+      <div class="metric-sub" style="margin:6px 0 10px">
+        Seven gates per service system, each calculated from evidence rather than reported. Nothing is composed yet, so
+        there is nothing to mobilise.
+      </div>
+      ${table({
+        headers: ['Gate', 'Passes when', 'Approved by'],
+        rows: gates.map((gate) => [
+          html`<b>${gate.id} ${gate.name}</b>
+            ${gate.safetyCritical ? badge('safety-critical', 'bad') : ''}`,
+          gate.approvalCondition,
+          gate.approvers.join(' · '),
+        ]),
+      })}
+    </div>`;
+  }
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>Mobilisation control tower</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">
+        Mobilisation is a dependency network, not a percentage complete. Each gate below is calculated from its evidence
+        and from the gates before it — no gate is a status anybody sets, and no supplier declaration moves one.
+      </div>
+
+      ${expiringSoon.length > 0
+        ? html`<div class="notice warn" style="margin-bottom:14px">
+            <div>
+              <b>${expiringSoon.length} piece${expiringSoon.length === 1 ? '' : 's'} of evidence lapse within the month.</b>
+              ${expiringSoon.map((entry) => `${entry.label}: ${entry.reference} to ${entry.expiresAt}`).join(' · ')}.
+              Expired evidence is not evidence, and the gate it satisfies re-opens on the day it goes.
+            </div>
+          </div>`
+        : ''}
+
+      ${systems.map(
+        (system) => html`<div style="padding:14px 0;border-top:1px solid var(--line)">
+          <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+            <b>${system.label} — ${system.zone}</b>
+            <span>
+              ${system.accepted
+                ? badge('mobilisation accepted', 'ok')
+                : badge(`at ${system.atGate}`, 'info')}
+              ${badge(`${pct(system.evidencePercent)} of evidence in place`, system.evidencePercent === 100 ? 'ok' : 'warn')}
+            </span>
+          </div>
+
+          <!--
+            The declaration is dated in the headline rather than underneath it.
+            The percentage beside it is today's, calculated live, and the
+            declaration is whatever was last said — so a sentence putting the
+            two together in the present tense would imply the supplier is
+            standing by a figure they gave six weeks ago.
+          -->
+          ${system.declarations.length > 0
+            ? html`<div class="notice warn" style="margin-top:10px">
+                <div>
+                  <b>On ${date(system.declarations[0].declaredAt)} the supplier declared
+                  ${system.declarations[0].percent}%. The evidence puts it at ${pct(system.evidencePercent)} today,
+                  at ${system.atGate}.</b><br />
+                  “${system.declarations[0].note}”<br />
+                  ${system.declarations[0].moves}
+                </div>
+              </div>`
+            : ''}
+
+          ${system.gates.map(
+            (gate) => html`<div style="padding:10px 0 0">
+              <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+                <b>${gate.id} ${gate.name}</b>
+                <span>
+                  ${gate.safetyCritical ? badge('safety-critical', 'bad') : ''}
+                  ${badge(GATE_STATUS[gate.status] ?? gate.status, GATE_TONE[gate.status] ?? 'info')}
+                  ${gate.satisfied}/${gate.total}
+                </span>
+              </div>
+              <div class="metric-sub" style="margin-top:4px">
+                ${gate.approvalCondition} Approved by ${gate.approvers.join(' or ')}.
+              </div>
+              ${gate.blockedBy.length > 0
+                ? html`<div class="metric-sub bad" style="margin-top:4px">
+                    Cannot be approved while ${gate.blockedBy.join(' and ')}
+                    ${gate.blockedBy.length === 1 ? 'has' : 'have'} not passed.
+                  </div>`
+                : ''}
+              ${gate.approval
+                ? html`<div class="metric-sub ok" style="margin-top:4px">
+                    Passed ${date(gate.approval.approvedAt)} by ${gate.approval.roleAtApproval.join(', ')} —
+                    ${gate.approval.note}
+                  </div>`
+                : ''}
+              ${table({
+                headers: ['Evidence', 'Kind', 'Position'],
+                rows: gate.evidence.map((item) => [
+                  html`${item.label}
+                    <div class="metric-sub">${item.matters}</div>`,
+                  item.kind === 'DERIVED' ? badge('derived', 'info') : badge('attested', 'warn'),
+                  html`${item.satisfied ? badge('satisfied', 'ok') : badge(item.expired ? 'expired' : 'outstanding', 'bad')}
+                    <div class="metric-sub">${item.detail}</div>`,
+                ]),
+              })}
+            </div>`,
+          )}
+
+          ${system.declarations.length > 1
+            ? html`<div style="padding:12px 0 0">
+                <h2>What the supplier has said, over time</h2>
+                ${table({
+                  headers: ['When', 'Declared', 'Said'],
+                  align: ['', 'num', ''],
+                  rows: system.declarations.map((entry) => [date(entry.declaredAt), `${entry.percent}%`, entry.note]),
+                })}
+              </div>`
+            : ''}
+        </div>`,
+      )}
     </div>
   `;
 }

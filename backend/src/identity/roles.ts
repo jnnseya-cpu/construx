@@ -447,7 +447,10 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
-    SITE_SERVICES: ['R'],
+    // `A` because the principal designer is a named approver of the G1 design
+    // basis gate. Which gate a role may pass is decided by the gate itself;
+    // this only says the role may approve in the area at all.
+    SITE_SERVICES: ['R', 'A'],
   },
 
   EPC: {
@@ -473,7 +476,9 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
-    SITE_SERVICES: ['R', 'C', 'U'],
+    // `A` because the EPC contractor is a named approver of G1 and of the G5
+    // integrated test — the systems being energised are on their supply.
+    SITE_SERVICES: ['R', 'C', 'U', 'A'],
   },
 
   // QS authors commercial documents but must not approve the budget baseline
@@ -560,7 +565,9 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     QUALITY_COMMISSIONING: ['R'],
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
-    SITE_SERVICES: ['R', 'C', 'U'],
+    // `A` because G5, the integrated test and safe energisation, is a
+    // safety-critical hold point the safety function holds.
+    SITE_SERVICES: ['R', 'C', 'U', 'A'],
   },
 
   QAQC: {
@@ -573,7 +580,9 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     RISK_REGISTER: ['R'],
     EVIDENCE_AUDIT: ['R', 'I'],
     AI_EXECUTION: ['R', 'X'],
-    SITE_SERVICES: ['R'],
+    // `C`/`U` to attest the off-site and installation evidence, `A` because
+    // G2 off-site readiness and G4 install complete are quality's gates.
+    SITE_SERVICES: ['R', 'C', 'U', 'A'],
   },
 
   DESIGNER: {
@@ -585,7 +594,8 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     RISK_REGISTER: ['R'],
     EVIDENCE_AUDIT: ['R'],
     AI_EXECUTION: ['R', 'X'],
-    SITE_SERVICES: ['R'],
+    // `A` because the designer is a named approver of the G1 design basis.
+    SITE_SERVICES: ['R', 'A'],
   },
 
   BIM: {
@@ -652,7 +662,9 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     RISK_REGISTER: ['R', 'C'],
     EVIDENCE_AUDIT: ['R'],
     AI_EXECUTION: ['R', 'X'],
-    SITE_SERVICES: ['R', 'C', 'U'],
+    // `A` because G3 releases a physical area to the works, and the person who
+    // releases it is the one standing on it.
+    SITE_SERVICES: ['R', 'C', 'U', 'A'],
   },
 
   // FM owns the asset after handover, and cannot reach back into tender baselines.

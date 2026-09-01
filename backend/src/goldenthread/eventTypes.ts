@@ -1636,6 +1636,28 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
     aiAllowed: true,
     creates: true,
   }),
+
+  // §8, the Mobilisation Control Tower. Mobilisation is a dependency network,
+  // not a percentage complete, and these are the records that make it one.
+  //
+  // Evidence may be attested by an agent — chasing a certificate and recording
+  // its number is exactly the work to automate — and an agent may not pass a
+  // gate. `aiAllowed` is false on both approvals, which the ledger enforces
+  // whatever any mandate says.
+  def('MOBILISATION_EVIDENCE_ATTESTED', 'GateEvidence', 'CREATE', 'DELIVERY', { aiAllowed: true, creates: true }),
+  def('MOBILISATION_EVIDENCE_WITHDRAWN', 'GateEvidence', 'UPDATE', 'DELIVERY', { aiAllowed: true }),
+  def('MOBILISATION_GATE_APPROVED', 'GateApproval', 'APPROVE', 'DELIVERY', { creates: true }),
+  // G6. The Mobilisation Acceptance Certificate, given its own code because it
+  // is the record the whole stage exists to produce and "which packages are
+  // accepted" should be a query rather than a filter over approvals.
+  def('MOBILISATION_ACCEPTED', 'GateApproval', 'APPROVE', 'DELIVERY', { creates: true }),
+  // The hard stop, recorded. A supplier saying it is at 100% moves nothing —
+  // and is worth keeping, because the difference between what was declared and
+  // what the evidence showed is the entire mobilisation dispute.
+  def('SUPPLIER_PROGRESS_DECLARED', 'SupplierDeclaration', 'CREATE', 'DELIVERY', {
+    aiAllowed: true,
+    creates: true,
+  }),
 ];
 
 /**

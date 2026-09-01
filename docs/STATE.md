@@ -12993,3 +12993,79 @@ excluding superseded records, and taking the later ULID. Each is individually
 redundant given the other, because `list` sorts by refId; both are kept because
 each is a rule that is true independently of how the ledger happens to order a
 result. Stated rather than claimed as tested.
+
+### Mobilisation is a dependency network, not a percentage complete
+
+§8, the Mobilisation Control Tower. Seven gates per service system —
+`backend/src/domain/etablix/mobilisation.ts`, with its own tests in
+`backend/tests/etablix.mobilisation.test.ts` and a panel on the Site Services
+screen.
+
+Not to be confused with `backend/src/domain/mobilisation.ts`, which is
+CONSTRUX's CN-WF-01 start-work authorisation for the main works. Different
+subject, same word: this one is about a service system reaching operational
+readiness, gate by gate.
+
+| Gate | Passes when |
+|---|---|
+| G0 Contract effective | Correct contracting party and authority confirmed |
+| G1 Design basis | Design responsibility and review status accepted |
+| G2 Off-site readiness | No unresolved critical nonconformance |
+| G3 Site ready | Access, ground and services verified — **safety-critical** |
+| G4 Install complete | Installed to the approved design |
+| G5 Integrated test | Tested and safely energised — **safety-critical** |
+| G6 Operational ready | Operating regime, people and reporting in place |
+
+Four properties, and the first is the specification's own hard stop.
+
+**A supplier reporting 100% moves nothing.** `declareProgress` records the
+declaration and returns, on the record itself, the sentence *"Nothing. Readiness
+is calculated from prerequisite evidence and interface tests, and every gate is
+approved by a named role."* It is recorded rather than refused because the
+difference between what the supplier said in week six and what the evidence
+showed is the entire mobilisation dispute, and a platform that discarded the
+first half could not settle it. Driven live: a declaration of 100% against a
+tower reading 13.2%, at G0, and no gate moved.
+
+**Evidence is a reference, not a tick** — the certificate number, the drawing
+revision, the test sheet — and anything that lapses is refused without the date
+it lapses on. The commonest mobilisation failure is not that evidence was never
+provided; it is that everything was in place once. Expired evidence is reported
+as *expired*, never as missing: "it lapsed" and "it never existed" are different
+conversations with different people. A renewed attestation supersedes the lapsed
+one rather than sitting beside it. Evidence within 30 days of expiry is on the
+tower as a warning, which is §7.3's expiry monitoring at the one place the
+evidence actually lives.
+
+**Derived items cannot be attested away.** Five of them are answered from the
+platform's own records — the approved requirements, the calculations behind the
+demand basis, the interface matrix, the contracting party from the appointment,
+and whether temporary MEP is composed *and closed* for the zone. An interface
+matrix with three open interfaces is not closed because somebody typed a
+certificate number against it. A derived item with no rule behind it fails
+closed and says so, which is why `deriveEvidence` is exported: a guarantee that
+cannot be proven is not worth stating.
+
+**Only the named role passes a gate.** Holding `A` on `SITE_SERVICES` is not
+enough. Driven live, a project manager at G0 is refused with *"G0 Contract
+effective is approved by COMMERCIAL_MANAGER, PROJECT_DIRECTOR … You hold PM"*,
+and the same manager at G5 is told *"This is a safety-critical hold point and it
+fails closed: it is a competent person's act, not a manager's."* The roles the
+gates name — principal designer, designer, EPC, safety, QAQC, supervisor — were
+given `A` on `SITE_SERVICES` in the same change, because a gate whose named
+approver cannot approve is a gate nobody can pass.
+
+A gate is a conclusion the platform reaches, not a status somebody sets:
+refused while any prior gate is unpassed, refused while any evidence item is
+outstanding (naming which), refused with an empty note, and idempotent once
+passed. G6 writes `MOBILISATION_ACCEPTED` rather than another gate approval, so
+"which packages are accepted" is a query rather than a filter. Withdrawing
+evidence re-opens the gate it satisfied, and is itself written once however many
+times it is called.
+
+**26 mutations, 26 caught.** Four survived the first pass and each named a real
+gap rather than a redundant guard: the utilities item was satisfied by a
+temporary MEP system whose own interfaces were still open, the fail-closed
+default on an underived item was unreachable from the tests, withdrawal was not
+proven to be written once, and the evidence percentage was never checked against
+anything but 100. All four are now covered by tests.

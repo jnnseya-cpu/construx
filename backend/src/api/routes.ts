@@ -65,6 +65,7 @@ import * as integrator from '../domain/integrator.ts';
 import * as appointment from '../domain/etablix/appointment.ts';
 import * as brief from '../domain/etablix/brief.ts';
 import * as composer from '../domain/etablix/composer.ts';
+import * as siteMobilisation from '../domain/etablix/mobilisation.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
 import * as programmereview from '../domain/programmereview.ts';
@@ -4684,6 +4685,78 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => composer.recordObservation(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/mobilisation',
+    description:
+      'The mobilisation control tower: seven gates per system, what evidence satisfies each, what is blocking, and what a supplier claimed',
+    handler: (platform, ctx) => siteMobilisation.mobilisationPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/mobilisation/evidence',
+    description: 'Attest a piece of gate evidence, with the reference it lives at and the date it expires',
+    schema: {
+      type: 'object',
+      required: ['systemId', 'gate', 'itemId', 'reference'],
+      properties: {
+        systemId: { type: 'string', minLength: 6 },
+        gate: { type: 'string', minLength: 2 },
+        itemId: { type: 'string', minLength: 2 },
+        // A reference, never a tick. The certificate number, the drawing
+        // revision or the test sheet — what somebody goes and finds when the
+        // evidence is challenged.
+        reference: { type: 'string', minLength: 2 },
+        expiresAt: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteMobilisation.attestEvidence(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/mobilisation/withdraw',
+    description: 'Withdraw evidence that no longer stands, reopening the gate it satisfied',
+    schema: {
+      type: 'object',
+      required: ['evidenceId', 'reason'],
+      properties: { evidenceId: { type: 'string', minLength: 6 }, reason: { type: 'string', minLength: 3 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteMobilisation.withdrawEvidence(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/mobilisation/gate',
+    description: 'Pass a mobilisation gate — refused unless every prior gate passed, every item is satisfied, and the role is one the gate names',
+    schema: {
+      type: 'object',
+      required: ['systemId', 'gate', 'note'],
+      properties: {
+        systemId: { type: 'string', minLength: 6 },
+        gate: { type: 'string', minLength: 2 },
+        note: { type: 'string', minLength: 3 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteMobilisation.approveGate(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/mobilisation/declaration',
+    description: 'Record what the supplier says its progress is. It moves nothing — readiness is calculated from evidence',
+    schema: {
+      type: 'object',
+      required: ['systemId', 'percent', 'note'],
+      properties: {
+        systemId: { type: 'string', minLength: 6 },
+        percent: { type: 'number', minimum: 0, maximum: 100 },
+        note: { type: 'string', minLength: 3 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteMobilisation.declareProgress(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'GET',
@@ -10800,7 +10873,7 @@ export const ROUTES: Route[] = [
     method: 'GET',
     pattern: '/v1/projects/:projectId/mobilisation',
     description: 'Readiness by package, what is not ready and why, and which start authorities the information has overtaken',
-    handler: (platform, ctx) => mobilisation.mobilisationPosition(projectContext(platform, ctx)),
+    handler: (platform, ctx) => siteMobilisation.mobilisationPosition(projectContext(platform, ctx)),
   },
   {
     method: 'POST',

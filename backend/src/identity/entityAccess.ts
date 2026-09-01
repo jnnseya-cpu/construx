@@ -82,6 +82,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   ServiceSystem: { area: 'SITE_SERVICES' },
   ServiceInterface: { area: 'SITE_SERVICES' },
   ServiceObservation: { area: 'SITE_SERVICES' },
+  // §8. The gate network and what a supplier claimed about it.
+  GateEvidence: { area: 'SITE_SERVICES' },
+  GateApproval: { area: 'SITE_SERVICES' },
+  SupplierDeclaration: { area: 'SITE_SERVICES' },
 
   // Design and information
   Specification: { area: 'DESIGN_INFORMATION' },
