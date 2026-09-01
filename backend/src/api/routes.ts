@@ -66,6 +66,10 @@ import * as appointment from '../domain/etablix/appointment.ts';
 import * as brief from '../domain/etablix/brief.ts';
 import * as composer from '../domain/etablix/composer.ts';
 import * as siteMobilisation from '../domain/etablix/mobilisation.ts';
+// Renamed for the same reason as `siteMobilisation`: CONSTRUX has its own
+// `domain/procurement.ts` for the main works, and the two answer different
+// questions. This one buys site services against a composed system breakdown.
+import * as sitePackages from '../domain/etablix/procurement.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
 import * as programmereview from '../domain/programmereview.ts';
@@ -4758,6 +4762,180 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) => siteMobilisation.declareProgress(projectContext(platform, ctx), body(ctx)),
   },
+
+  // §7 — the procurement and supplier-control factory.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/procurement',
+    description:
+      'The package register: what each package buys, which of the twelve minimum fields are outstanding, and where every supplier stands on it',
+    handler: (platform, ctx) => sitePackages.procurementPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/packaging',
+    description:
+      'Argue the packaging: which systems to bundle because it removes interfaces, and which to split because bundling costs competition',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => sitePackages.recommendPackaging(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/package',
+    description: 'Create a service package against one or more composed systems',
+    schema: {
+      type: 'object',
+      required: ['title', 'systemIds'],
+      properties: {
+        title: { type: 'string', minLength: 3 },
+        systemIds: { type: 'array', minItems: 1, items: { type: 'string', minLength: 6 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => sitePackages.createPackage(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/package/field',
+    description: 'State one of the seven fields a package cannot be issued without',
+    schema: {
+      type: 'object',
+      required: ['packageId', 'field', 'value'],
+      properties: {
+        packageId: { type: 'string', minLength: 6 },
+        field: { type: 'string', minLength: 2 },
+        value: { type: 'string', minLength: 2 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => sitePackages.statePackageField(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/package/tender',
+    description: 'Issue a package to tender — refused while any of the twelve minimum fields is outstanding',
+    schema: {
+      type: 'object',
+      required: ['packageId', 'returnDeadline'],
+      properties: { packageId: { type: 'string', minLength: 6 }, returnDeadline: { type: 'string', minLength: 8 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => sitePackages.openPackageTender(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/bid',
+    description: 'Record a return against a package, with the basis it is priced on and what it excludes',
+    schema: {
+      type: 'object',
+      required: ['packageId', 'supplierId', 'supplierName', 'lines', 'basis'],
+      properties: {
+        packageId: { type: 'string', minLength: 6 },
+        supplierId: { type: 'string', minLength: 6 },
+        supplierName: { type: 'string', minLength: 2 },
+        lines: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['scheduleItemId', 'description', 'quantity', 'unit', 'rateMinor'],
+            properties: {
+              scheduleItemId: { type: 'string', minLength: 2 },
+              description: { type: 'string', minLength: 2 },
+              quantity: { type: 'number' },
+              unit: { type: 'string' },
+              rateMinor: { type: 'number' },
+              qualification: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+        // Left loose at the schema because it would otherwise be a second copy
+        // of NORMALISATION_BASES, and the two would drift the first time a
+        // basis was added.
+        basis: { type: 'object' },
+        exclusions: { type: 'array', items: { type: 'string' } },
+        technicalScore: { type: 'number', minimum: 0, maximum: 100 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => sitePackages.recordBid(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/normalisation/:packageId',
+    description:
+      'The six normalisation steps: mapping problems, the eleven bases, exclusions priced at the median compliant rate, five sensitivities and the ranked clarifications',
+    handler: (platform, ctx) =>
+      sitePackages.normaliseBids(projectContext(platform, ctx), String(ctx.params.packageId)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/bid/lock',
+    description: 'Lock a clarified return with the supplier’s acknowledgement, which award analysis is refused without',
+    schema: {
+      type: 'object',
+      required: ['bidId', 'acknowledgedBy'],
+      properties: { bidId: { type: 'string', minLength: 6 }, acknowledgedBy: { type: 'string', minLength: 2 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => sitePackages.lockReturn(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/award',
+    description:
+      'The award recommendation: eligibility, normalised price, priced exclusions, delivery risk, sensitivity and standstill',
+    schema: {
+      type: 'object',
+      required: ['packageId'],
+      properties: { packageId: { type: 'string', minLength: 6 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      sitePackages.recommendAward(projectContext(platform, ctx), String(body<{ packageId: string }>(ctx).packageId)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/engagement',
+    description: 'Open a supplier engagement on a package, at Prospect',
+    schema: {
+      type: 'object',
+      required: ['packageId', 'supplierId', 'supplierName'],
+      properties: {
+        packageId: { type: 'string', minLength: 6 },
+        supplierId: { type: 'string', minLength: 6 },
+        supplierName: { type: 'string', minLength: 2 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => sitePackages.engageSupplier(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/engagement/advance',
+    description: 'Move a supplier to the next control state — refused unless the platform’s own records meet the entry criteria',
+    schema: {
+      type: 'object',
+      required: ['engagementId', 'to'],
+      properties: { engagementId: { type: 'string', minLength: 6 }, to: { type: 'string', minLength: 4 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => sitePackages.advanceEngagement(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/engagement/suspend',
+    description: 'Suspend a supplier on a package and block new work, naming the failure or the evidence that lapsed',
+    schema: {
+      type: 'object',
+      required: ['engagementId', 'reason'],
+      properties: { engagementId: { type: 'string', minLength: 6 }, reason: { type: 'string', minLength: 3 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => sitePackages.suspendEngagement(projectContext(platform, ctx), body(ctx)),
+  },
+
   {
     method: 'GET',
     pattern: '/v1/projects/:projectId/integration',

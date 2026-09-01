@@ -13069,3 +13069,153 @@ temporary MEP system whose own interfaces were still open, the fail-closed
 default on an underived item was unreachable from the tests, withdrawal was not
 proven to be written once, and the evidence percentage was never checked against
 anything but 100. All four are now covered by tests.
+
+### Packaging is an argument, not a preference
+
+§7, the procurement and supplier-control factory —
+`backend/src/domain/etablix/procurement.ts`, its tests in
+`backend/tests/etablix.procurement.test.ts`, and a panel on the Site Services
+screen with eleven doors.
+
+Named `sitePackages` at the route layer, for the same reason `siteMobilisation`
+is: CONSTRUX has its own `domain/procurement.ts` for the main works, and the two
+answer different questions.
+
+**What is reused rather than rebuilt.** The tender event itself — controlled
+recipients, acknowledgement, addenda, return completeness, late-return
+treatment, audit log — is `domain/enquiry.ts` and is *called*, not copied:
+`openPackageTender` opens a real `Enquiry` and stores its id on the package.
+Whether a firm may be used at all is `domain/supplychain.ts`, and is read rather
+than duplicated: a firm that register holds as barred or suspended is not a
+bidder here, whatever its price. §7's own contribution is the two things neither
+of them does — the packaging argument and the normalisation.
+
+The join between the two vocabularies is `FAMILY_TRADES`: ETABLIX's seven
+service families mapped to the closed trade catalogue firms are registered
+against. Declared rather than string-matched, and pinned by a test that every
+code in it is in the catalogue — a code that drifted out would silently return
+no bidders, and no bidders reads as "no market" rather than as a bug.
+
+#### §7.1 The argument, and the twelve fields
+
+The specification's rule is the sharp part: a recommendation *must show* why
+bundling reduces interfaces, or why disaggregation protects competition and
+specialist performance. So the argument is built from counted evidence and
+cannot be produced without one. Driven live on a real supply chain:
+
+> **Bundling reduces interfaces:** Cleaning, Occupancy, Room status stop being
+> interfaces between two firms and become internal matters for one. 12
+> interfaces remain external either way, and 3 firms can still price it — which
+> meets the floor of 3, so the saving costs no competition.
+
+> **Disaggregation protects competition:** no firm on the register can deliver
+> both families. Split, 4 can price welfare and accommodation and 3 can price
+> enabling civils and reinstatement. A bundle nobody can price is a negotiation,
+> not a tender.
+
+The interface arithmetic needs one thing §4 does not carry: which family each
+non-negotiable interface is *with*. `INTERFACE_COUNTERPART` declares it. Welfare
+carries an interface called "Cleaning"; cleaning carries "Occupancy" and "Room
+status" — three names for two firms having the same three conversations. A
+string match would have found the first and missed the other two, and an
+argument that undercounts the interfaces is an argument for the wrong answer.
+
+`COMPETITION_FLOOR` is three, stated with its basis: with two returns a single
+withdrawal leaves a negotiation, and a negotiation with the only firm that can
+do the work is not a price.
+
+**Twelve minimum fields, five of them derived.** The interfaces, quantities,
+programme and removal obligation come from the linked systems and are never
+retyped — a package retyped from the design is a package that will disagree with
+it. The other seven have to be stated. A package can be created incomplete,
+because a half-drafted package is a real thing, and it **cannot be issued** while
+any of the twelve is silent: the refusal names each one and what its absence
+causes, because the moment of issue is the last moment they are free to fix.
+After issue the scope is frozen — a change is an addendum every bidder
+re-acknowledges, not an edit.
+
+One system, one package. A system in two packages is a system paid for twice.
+
+#### §7.2 An exclusion is priced, visibly, never scored
+
+Six steps, and the third is the one that matters. Recomputed on every read
+rather than stored, because returns keep changing until they are locked.
+
+1. **Map** every line to the issued schedule — omissions, duplicates,
+   unsolicited lines and qualifications, each named. A schedule item neither
+   priced nor excluded is reported: *silence is not a zero*.
+2. **Normalise** the eleven bases, each adjustment carrying what was declared and
+   why it is worth what it is worth. A basis the bidder said nothing about is
+   *unknown*, not included.
+3. **Price the exclusions** at the median compliant rate — the median of the
+   firms that actually priced it, because a firm that excluded an item has no
+   opinion about what it costs. An exclusion nobody in the field priced is
+   carried at zero and named, never scored.
+4. **Evaluate** across the duration and five sensitivity scenarios: mobilisation
+   delay, peak workforce, extension, energy variance, early termination.
+5. **Clarify**, ranked award-blocking first and then by what it is worth being
+   wrong about.
+6. **Lock** the clarified return with the supplier's acknowledgement.
+
+Driven live, four returns against one welfare schedule:
+
+| | Submitted | Normalised |
+|---|---|---|
+| Halcyon Welfare Systems | 308,000 | 308,000 |
+| Brightpath Site Services | 369,600 | 369,600 |
+| **Carrick Camp and Care** | **141,300** | **383,730** |
+| Lowfield Integrated Services | 492,800 | 492,800 |
+
+The cheapest submitted price was cheapest because it priced one item and
+declared the other three out. Priced at the median compliant rate they become
+the most expensive return in the field, and `orderChanged` says so.
+
+Two things are refused rather than guessed: a return in another currency is
+marked incomparable because no exchange rate is held and an invented one
+produces a comparison that looks right and is not; a tax-inclusive return is
+reported rather than silently stripped.
+
+The award recommendation refuses on three grounds — an unlocked return, an
+award-blocking clarification, or no eligible bidder — and each refusal says
+which. It is a recommendation, never an award: placing the contract is
+CONSTRUX's own award machinery.
+
+#### §7.3 A control state is a conclusion, not a click
+
+Nine states, and the entry criteria are read from the platform's own records
+rather than asserted by whoever is doing the moving. Tendering needs the package
+issued; Preferred needs a *locked* return; Contracted needs an award
+recommendation naming that firm; Mobilising needs gate evidence attested against
+the package's systems; Operational needs every system past G6. A skipped state
+is refused, naming the control it skips.
+
+This is not `SupplierStatus` from the corporate register and does not replace it.
+That is a tenant-wide standing — approved, conditional, barred. This is where a
+firm stands on *one package*: the same supplier can be Operational on welfare and
+Tendering on cleaning on the same Tuesday, and a single status field cannot say
+so.
+
+`SUSPENDED_RECOVERY` is out of the linear order deliberately. It is entered from
+any live state on a material failure or an evidence lapse, it blocks new work,
+and it needs the cause named — a suspension with no cause cannot be recovered
+from because nobody can say what would fix it. §7.3's evidence-expiry control is
+real: a prequalification that has run out is not a prequalification, and
+`entryCheck` takes a date so that rule can be exercised rather than waited for.
+
+**46 mutations, 46 caught.** Six survivors on the first pass, each a real gap:
+the median counted a nil line from a firm that had excluded the item, the
+even-length median took the wrong element, an award-blocking clarification was
+never proven to block, a suspended firm on the register was never proven
+ineligible, the standstill note was never checked, and the singular case of the
+bundling sentence read as a mail merge. All six now have tests.
+
+#### What §7 cannot do, and why
+
+A package can only be issued while the project is in a phase where the platform
+permits procurement — Tender or Construction, from `WRITE_PHASE_GATES`. On a
+project already in Operations the issue is refused, and the refusal says so in
+those words rather than reporting a capability area the buyer never chose. That
+is CONSTRUX's phase discipline applying to a module that reuses its enquiry
+machinery, and it is a real constraint: re-letting a service mid-operations is a
+change to a live package rather than a new competition, and the change mechanism
+for that is §11's, not this one's.

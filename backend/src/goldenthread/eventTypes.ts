@@ -1658,6 +1658,40 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
     aiAllowed: true,
     creates: true,
   }),
+
+  // §7 — the procurement and supplier-control factory.
+  //
+  // The packaging strategy is an assessment and never an act: it argues for
+  // bundling or for disaggregation and creates no package, exactly as the model
+  // fit assessment in §2 produces a decision paper and never an appointment.
+  def('PACKAGING_STRATEGY_ASSESSED', 'PackagingStrategy', 'CREATE', 'PROCUREMENT', {
+    aiAllowed: true,
+    creates: true,
+  }),
+  def('SERVICE_PACKAGE_CREATED', 'ServicePackage', 'CREATE', 'PROCUREMENT', { aiAllowed: true, creates: true }),
+  def('SERVICE_PACKAGE_SPECIFIED', 'ServicePackage', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  // Issuing is an approval, not an update: it is the last moment the scope is
+  // free to change, and after it every change is an addendum every bidder has
+  // to see.
+  def('SERVICE_PACKAGE_TENDERED', 'ServicePackage', 'APPROVE', 'PROCUREMENT'),
+  def('SERVICE_BID_RECEIVED', 'ServiceBid', 'CREATE', 'PROCUREMENT', { aiAllowed: true, creates: true }),
+  def('SERVICE_BID_CLARIFIED', 'ServiceBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true, creates: true }),
+  // The lock carries the supplier's acknowledgement of the clarified position,
+  // which is what makes the comparison a comparison of what was priced rather
+  // than of what the buyer believed was priced.
+  def('SERVICE_BID_LOCKED', 'ServiceBid', 'APPROVE', 'PROCUREMENT'),
+  // A recommendation, not an award. Placing the contract is CONSTRUX's own
+  // award machinery; this is the paper that justifies it.
+  def('SERVICE_AWARD_RECOMMENDED', 'AwardRecommendation', 'CREATE', 'PROCUREMENT', { creates: true }),
+  def('SUPPLIER_ENGAGEMENT_OPENED', 'SupplierEngagement', 'CREATE', 'PROCUREMENT', {
+    aiAllowed: true,
+    creates: true,
+  }),
+  def('SUPPLIER_ENGAGEMENT_ADVANCED', 'SupplierEngagement', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  // Suspension blocks new work, so it is an approval rather than an update: it
+  // is a decision with a commercial consequence and it needs the authority that
+  // goes with one.
+  def('SUPPLIER_ENGAGEMENT_SUSPENDED', 'SupplierEngagement', 'APPROVE', 'PROCUREMENT'),
 ];
 
 /**

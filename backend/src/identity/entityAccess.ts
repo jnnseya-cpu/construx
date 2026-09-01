@@ -86,6 +86,20 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   GateEvidence: { area: 'SITE_SERVICES' },
   GateApproval: { area: 'SITE_SERVICES' },
   SupplierDeclaration: { area: 'SITE_SERVICES' },
+  // §7. The packaging argument and the package itself are design-and-scope
+  // records: what is bought, against which systems, with which interfaces.
+  PackagingStrategy: { area: 'SITE_SERVICES' },
+  ServicePackage: { area: 'SITE_SERVICES' },
+  // A return and the paper recommending one are priced positions belonging to
+  // firms competing with each other, so `COMMERCIAL_L3` — the same
+  // classification CONSTRUX gives its own `SupplierSubmission` and
+  // `BidEvaluation`, because a leaked rival's rate is the same harm whichever
+  // module holds it.
+  ServiceBid: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  AwardRecommendation: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  // Where a firm stands on a package. Not commercial-in-confidence: the people
+  // who need it are the ones chasing the evidence and running the operation.
+  SupplierEngagement: { area: 'SITE_SERVICES' },
 
   // Design and information
   Specification: { area: 'DESIGN_INFORMATION' },

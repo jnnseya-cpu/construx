@@ -52,11 +52,12 @@ const FIT_FIELDS = [
 const SCALE_HINT = '0 = not at all · 2 = partly · 4 = strongly. Score what the evidence says, not what would be convenient.';
 
 export async function siteservices(root) {
-  const [position, readiness, structure, tower] = await Promise.all([
+  const [position, readiness, structure, tower, factory] = await Promise.all([
     api.get(`/v1/projects/${state.session.projectId}/site-services/appointment`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/brief`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/sbs`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/mobilisation`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/procurement`).catch((error) => ({ error })),
   ]);
 
   if (position.error) {
@@ -169,6 +170,66 @@ export async function siteservices(root) {
             label: 'Record a supplier declaration',
             permitted: can('SITE_SERVICES', 'C'),
             reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'packaging',
+            label: 'Argue the packaging',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'package',
+            label: 'Create a package',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'field',
+            label: 'State a package field',
+            permitted: can('SITE_SERVICES', 'U'),
+            reason: blockedReason('SITE_SERVICES', 'U'),
+          },
+          {
+            id: 'issue',
+            label: 'Issue to tender',
+            permitted: can('SITE_SERVICES', 'A'),
+            reason: blockedReason('SITE_SERVICES', 'A'),
+          },
+          {
+            id: 'bid',
+            label: 'Record a return',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'lock',
+            label: 'Lock a return',
+            permitted: can('SITE_SERVICES', 'U'),
+            reason: blockedReason('SITE_SERVICES', 'U'),
+          },
+          {
+            id: 'award',
+            label: 'Recommend an award',
+            permitted: can('SITE_SERVICES', 'A'),
+            reason: blockedReason('SITE_SERVICES', 'A'),
+          },
+          {
+            id: 'engage',
+            label: 'Engage a supplier',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'advance',
+            label: 'Advance a supplier',
+            permitted: can('SITE_SERVICES', 'U'),
+            reason: blockedReason('SITE_SERVICES', 'U'),
+          },
+          {
+            id: 'suspend',
+            label: 'Suspend a supplier',
+            permitted: can('SITE_SERVICES', 'A'),
+            reason: blockedReason('SITE_SERVICES', 'A'),
           },
         ]),
       })}
@@ -333,6 +394,8 @@ export async function siteservices(root) {
       ${readiness.error ? refusal('Brief readiness', readiness.error) : briefCard(readiness)}
 
       ${structure.error ? refusal('The system breakdown structure', structure.error) : sbsCard(structure)}
+
+      ${factory.error ? refusal('The procurement factory', factory.error) : factoryCard(factory)}
 
       ${tower.error ? refusal('The mobilisation control tower', tower.error) : towerCard(tower)}
 
@@ -822,6 +885,375 @@ export async function siteservices(root) {
       return;
     }
 
+    if (which === 'packaging') {
+      const result = await command({
+        title: 'Argue the packaging',
+        intent:
+          'Examines every pair of composed systems and produces an argument in one direction or the other — never a ' +
+          'preference. Bundling has to be justified by the interfaces it removes; splitting by the competition or the ' +
+          'specialist performance it protects. Bidder counts come from the supply-chain register, so a bundle only one ' +
+          'firm can price is reported as the negotiation it would be.',
+        path: `/v1/projects/${state.session.projectId}/site-services/packaging`,
+        submitLabel: 'Argue it',
+        fields: [],
+      });
+      if (result) {
+        toast('Packaging argued', `${result.options.length} options, floor of ${result.competitionFloor} bidders`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'package') {
+      const options = (factory.error ? [] : factory.unpackaged).map((entry) => ({
+        value: entry.id,
+        label: `${entry.label} — ${entry.zone}`,
+      }));
+      if (options.length === 0) {
+        toast('Nothing to buy', 'Every composed system is already in a package.', 'warn');
+        return;
+      }
+      const result = await command({
+        title: 'Create a service package',
+        intent:
+          'A package buys composed systems, and one system is bought once. Five of the twelve minimum fields come from ' +
+          'the systems themselves — the interfaces, the quantities, the programme and the removal obligation — so they ' +
+          'are never retyped and never disagree with the design.',
+        path: `/v1/projects/${state.session.projectId}/site-services/package`,
+        submitLabel: 'Create',
+        transform: (values) => ({ title: values.title, systemIds: [values.systemId] }),
+        fields: [
+          { name: 'title', label: 'What it buys' },
+          { name: 'systemId', label: 'Against which system', type: 'select', options },
+        ],
+      });
+      if (result) {
+        toast('Package created', `${result.reference} — ${result.title}`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'field') {
+      // Only the outstanding stated fields, on packages not yet issued. A
+      // derived field is refused by the command, and a tendered package needs
+      // an addendum rather than an edit.
+      const options = (factory.error ? [] : factory.packages)
+        .filter((entry) => !entry.tenderedAt)
+        .flatMap((entry) =>
+          entry.requirements
+            .filter((requirement) => requirement.kind === 'STATED' && !requirement.satisfied)
+            .map((requirement) => ({
+              value: `${entry.id}~${requirement.id}`,
+              label: `${entry.reference} — ${requirement.label}`,
+            })),
+        );
+      if (options.length === 0) {
+        toast('Nothing outstanding', 'Every package not yet issued has all seven stated fields.', 'ok');
+        return;
+      }
+      const result = await command({
+        title: 'State a package field',
+        intent:
+          'One of the seven fields nothing can infer. Each is a thing that gets argued about later if it is silent now, ' +
+          'and the moment of issue is the last moment it is free to fix.',
+        path: `/v1/projects/${state.session.projectId}/site-services/package/field`,
+        submitLabel: 'State it',
+        transform: (values) => {
+          const [packageId, field] = values.which.split('~');
+          return { packageId, field, value: values.value };
+        },
+        fields: [
+          { name: 'which', label: 'Which field', type: 'select', options },
+          { name: 'value', label: 'What it says', type: 'textarea' },
+        ],
+      });
+      if (result) {
+        toast('Stated', result.reference, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'issue') {
+      const options = (factory.error ? [] : factory.packages)
+        .filter((entry) => !entry.tenderedAt)
+        .map((entry) => ({
+          value: entry.id,
+          label: `${entry.reference} ${entry.title}${entry.outstanding > 0 ? ` — ${entry.outstanding} fields outstanding` : ' — complete'}`,
+        }));
+      if (options.length === 0) {
+        toast('Nothing to issue', 'Every package has been issued to tender.', 'warn');
+        return;
+      }
+      const result = await command({
+        title: 'Issue a package to tender',
+        intent:
+          'Opens a controlled enquiry — recipients, acknowledgement, addenda, return completeness and the audit log. ' +
+          'Refused while any of the twelve minimum fields is outstanding, and the refusal names them and says what each ' +
+          'one prevents. After issue the scope is frozen: a change is an addendum every bidder has to re-acknowledge.',
+        path: `/v1/projects/${state.session.projectId}/site-services/package/tender`,
+        submitLabel: 'Issue',
+        fields: [
+          { name: 'packageId', label: 'Which package', type: 'select', options },
+          { name: 'returnDeadline', label: 'Returns by', type: 'date' },
+        ],
+      });
+      if (result) {
+        toast('Issued', `${result.package.reference} as ${result.reference}`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'bid') {
+      const options = (factory.error ? [] : factory.packages)
+        .filter((entry) => entry.tenderedAt)
+        .map((entry) => ({ value: entry.id, label: `${entry.reference} ${entry.title}` }));
+      if (options.length === 0) {
+        toast('Nothing at tender', 'No package has been issued, so there is nothing to return against.', 'warn');
+        return;
+      }
+      const result = await command({
+        title: 'Record a return',
+        intent:
+          'The priced return and the basis it is priced on. The basis is what makes the comparison possible: currency, ' +
+          'tax, hire period, escalation, and whether mobilisation, standby, supervision and reinstatement are in the ' +
+          'price. A basis left silent is reported as unknown rather than assumed included.',
+        path: `/v1/projects/${state.session.projectId}/site-services/bid`,
+        submitLabel: 'Record',
+        transform: (values) => ({
+          packageId: values.packageId,
+          supplierId: values.supplierId,
+          supplierName: values.supplierName,
+          basis: {
+            currency: values.currency,
+            taxBasis: values.taxBasis,
+            ...(values.hirePeriodWeeks ? { hirePeriodWeeks: Number(values.hirePeriodWeeks) } : {}),
+            ...(values.escalationPercent ? { escalationPercent: Number(values.escalationPercent) } : {}),
+            mobilisationIncluded: values.mobilisationIncluded === 'yes',
+            demobilisationIncluded: values.demobilisationIncluded === 'yes',
+            reinstatementIncluded: values.reinstatementIncluded === 'yes',
+          },
+          lines: JSON.parse(values.lines),
+          ...(values.exclusions ? { exclusions: values.exclusions.split(',').map((entry) => entry.trim()).filter(Boolean) } : {}),
+          ...(values.technicalScore ? { technicalScore: Number(values.technicalScore) } : {}),
+        }),
+        fields: [
+          { name: 'packageId', label: 'Against which package', type: 'select', options },
+          { name: 'supplierId', label: 'Supplier id', hint: 'From the supply-chain register' },
+          { name: 'supplierName', label: 'Supplier' },
+          {
+            name: 'lines',
+            label: 'Priced lines',
+            type: 'textarea',
+            hint: 'JSON: [{"scheduleItemId":"…","description":"…","quantity":1,"unit":"nr","rateMinor":100000}]',
+          },
+          { name: 'currency', label: 'Currency', value: 'GBP' },
+          {
+            name: 'taxBasis',
+            label: 'Tax basis',
+            type: 'select',
+            options: [
+              { value: 'EXCLUSIVE', label: 'Exclusive — as issued' },
+              { value: 'INCLUSIVE', label: 'Inclusive — reported as incomparable' },
+            ],
+          },
+          { name: 'hirePeriodWeeks', label: 'Hire period in weeks', type: 'number', required: false },
+          { name: 'escalationPercent', label: 'Escalation percent', type: 'number', required: false },
+          ...[
+            ['mobilisationIncluded', 'Mobilisation included'],
+            ['demobilisationIncluded', 'Demobilisation included'],
+            ['reinstatementIncluded', 'Reinstatement included'],
+          ].map(([name, label]) => ({
+            name,
+            label,
+            type: 'select',
+            required: false,
+            options: [
+              { value: '', label: 'Not stated — reported as unknown' },
+              { value: 'yes', label: 'In the price' },
+              { value: 'no', label: 'Out, and priced at the median' },
+            ],
+          })),
+          {
+            name: 'exclusions',
+            label: 'Excluded schedule items',
+            required: false,
+            hint: 'Comma-separated schedule item ids. Each is priced at the median compliant rate, visibly.',
+          },
+          { name: 'technicalScore', label: 'Technical score out of 100', type: 'number', required: false },
+        ],
+      });
+      if (result) {
+        toast('Return recorded', `${result.supplierName} — ${result.lines.length} lines`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'lock' || which === 'award') {
+      const options = (factory.error ? [] : factory.packages)
+        .filter((entry) => entry.returns > 0)
+        .map((entry) => ({
+          value: entry.id,
+          label: `${entry.reference} ${entry.title} — ${entry.lockedReturns} of ${entry.returns} locked`,
+        }));
+      if (options.length === 0) {
+        toast('No returns', 'Nothing has been returned against any package yet.', 'warn');
+        return;
+      }
+
+      if (which === 'award') {
+        const result = await command({
+          title: 'Recommend an award',
+          intent:
+            'Eligibility from the supply-chain register, the normalised price with every exclusion priced into it, the ' +
+            'worst sensitivity case and the delivery risk. Refused while any return is unlocked or any award-blocking ' +
+            'clarification stands — each of those is a question whose answer changes the answer.',
+          path: `/v1/projects/${state.session.projectId}/site-services/award`,
+          submitLabel: 'Recommend',
+          fields: [{ name: 'packageId', label: 'Which package', type: 'select', options }],
+        });
+        if (result) {
+          toast(
+            result.recommended ? 'Recommended' : 'No recommendation',
+            result.recommended ? result.recommended.supplierName : result.refusedBecause,
+            result.recommended ? 'ok' : 'warn',
+          );
+          await again();
+        }
+        return;
+      }
+
+      // The lock needs a specific return, and the returns live behind the
+      // normalisation read rather than on the register — a rate is
+      // commercial-in-confidence and the register is not.
+      const chosen = options[0].value;
+      const normalisation = await api
+        .get(`/v1/projects/${state.session.projectId}/site-services/normalisation/${chosen}`)
+        .catch(() => null);
+      const unlocked = (normalisation?.bids ?? []).filter((entry) => !entry.locked);
+      if (unlocked.length === 0) {
+        toast('Nothing to lock', 'Every return against that package is already locked.', 'ok');
+        return;
+      }
+      const result = await command({
+        title: 'Lock a clarified return',
+        intent:
+          'The sixth normalisation step. Award analysis run on an unacknowledged return is analysis of what the buyer ' +
+          'believes the bidder meant, and the first thing that happens after award is a conversation about what was ' +
+          'actually priced.',
+        path: `/v1/projects/${state.session.projectId}/site-services/bid/lock`,
+        submitLabel: 'Lock',
+        fields: [
+          {
+            name: 'bidId',
+            label: 'Which return',
+            type: 'select',
+            options: unlocked.map((entry) => ({ value: entry.bidId, label: entry.supplierName })),
+          },
+          { name: 'acknowledgedBy', label: 'Acknowledged by', hint: 'Who at the supplier agreed the clarified position' },
+        ],
+      });
+      if (result) {
+        toast('Locked', `${result.supplierName} — ${result.acknowledgedBy}`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'engage') {
+      const options = (factory.error ? [] : factory.packages).map((entry) => ({
+        value: entry.id,
+        label: `${entry.reference} ${entry.title}`,
+      }));
+      if (options.length === 0) {
+        toast('No packages', 'There is no package for a supplier to be engaged on.', 'warn');
+        return;
+      }
+      const result = await command({
+        title: 'Engage a supplier',
+        intent:
+          'Opens the engagement at Prospect. This is where a firm stands on *this package* — the same firm can be ' +
+          'operational on welfare and tendering on cleaning on the same Tuesday, and a single status field cannot say so. ' +
+          'Whether they may be used at all is the supply-chain register’s question, and it is read rather than repeated.',
+        path: `/v1/projects/${state.session.projectId}/site-services/engagement`,
+        submitLabel: 'Engage',
+        fields: [
+          { name: 'packageId', label: 'On which package', type: 'select', options },
+          { name: 'supplierId', label: 'Supplier id', hint: 'From the supply-chain register' },
+          { name: 'supplierName', label: 'Supplier' },
+        ],
+      });
+      if (result) {
+        toast('Engaged', `${result.supplierName} at prospect`, 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'advance' || which === 'suspend') {
+      const suspending = which === 'suspend';
+      const options = (factory.error ? [] : factory.packages).flatMap((entry) =>
+        entry.engagements
+          .filter((engagement) => (suspending ? engagement.state !== 'SUSPENDED_RECOVERY' : engagement.nextState))
+          .map((engagement) => ({
+            value: engagement.id,
+            label: `${engagement.supplierName} on ${entry.reference}${
+              suspending ? '' : ` — ${engagement.nextState}${engagement.nextBlocked ? ' (blocked)' : ''}`
+            }`,
+          })),
+      );
+      if (options.length === 0) {
+        toast(
+          suspending ? 'Nothing to suspend' : 'Nothing to advance',
+          suspending
+            ? 'No supplier is engaged and unsuspended on any package.'
+            : 'No engagement has a next state to move to.',
+          'warn',
+        );
+        return;
+      }
+
+      const result = await command({
+        title: suspending ? 'Suspend a supplier' : 'Advance a supplier',
+        intent: suspending
+          ? 'Blocks new work and starts the recovery. Name the material failure or the evidence that lapsed — a ' +
+            'suspension with no cause cannot be recovered from, because nobody can say what would fix it.'
+          : 'Moves the engagement to the next control state, and only if the platform’s own records meet the entry ' +
+            'criteria. Contracted because somebody typed contracted is the control that fails in the month it matters.',
+        path: suspending
+          ? `/v1/projects/${state.session.projectId}/site-services/engagement/suspend`
+          : `/v1/projects/${state.session.projectId}/site-services/engagement/advance`,
+        submitLabel: suspending ? 'Suspend' : 'Advance',
+        fields: [
+          { name: 'engagementId', label: 'Which engagement', type: 'select', options },
+          ...(suspending
+            ? [{ name: 'reason', label: 'What failed, or what lapsed', type: 'textarea' }]
+            : [
+                {
+                  name: 'to',
+                  label: 'To which state',
+                  type: 'select',
+                  options: (factory.error ? [] : factory.states)
+                    .filter((entry) => entry.id !== 'SUSPENDED_RECOVERY')
+                    .map((entry) => ({ value: entry.id, label: `${entry.label} — ${entry.entryCriteria}` })),
+                },
+              ]),
+        ],
+      });
+      if (result) {
+        toast(
+          suspending ? 'Suspended' : 'Advanced',
+          `${result.supplierName} — ${result.state.replaceAll('_', ' ').toLowerCase()}`,
+          suspending ? 'warn' : 'ok',
+        );
+        await again();
+      }
+      return;
+    }
+
     if (which === 'modelfit') {
       const result = await command({
         title: 'Model fit assessment',
@@ -1271,6 +1703,168 @@ function sbsCard(structure) {
             ${demand.notDerivable.map((entry) => `${entry.label} (needs ${entry.missing.join(', ')})`).join(' · ')}
           </div>`
         : ''}
+    </div>
+  `;
+}
+
+/** Where a firm stands on a package, and how urgent that is to look at. */
+const STATE_TONE = {
+  PROSPECT: 'info',
+  PREQUALIFIED: 'info',
+  TENDERING: 'warn',
+  PREFERRED: 'warn',
+  CONTRACTED: 'ok',
+  MOBILISING: 'ok',
+  OPERATIONAL: 'ok',
+  SUSPENDED_RECOVERY: 'bad',
+  CLOSED: 'info',
+};
+
+/**
+ * The procurement factory: packages, the argument behind them, and where every
+ * supplier stands on each.
+ *
+ * Three things are deliberately given the space rather than the summary.
+ *
+ * **The packaging argument, in full.** A bundling recommendation that says
+ * "recommended" and nothing else is a preference. The argument names the
+ * interfaces bundling would remove, or the bidder counts splitting would
+ * protect, and it is shown as the sentence it would be defended in.
+ *
+ * **The twelve minimum fields, one row each.** Not a completeness percentage:
+ * eleven of twelve reads as *nearly there*, which is the opposite of true when
+ * the missing one is the change mechanism. Each row says what its absence
+ * causes, because that is what makes somebody go and fill it in.
+ *
+ * **The next control state and what is blocking it.** A register showing only
+ * where a firm is now leaves "why has this not moved" to a conversation.
+ */
+function factoryCard(factory) {
+  const { packages, unpackaged, strategy, states, competitionFloor } = factory;
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>Procurement factory</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">
+        ${packages.length} package${packages.length === 1 ? '' : 's'} against the composed systems. Packaging is an
+        argument rather than a preference, and a package cannot be issued while any of its twelve minimum fields is
+        silent — the moment of issue is the last moment they are free to fix.
+      </div>
+
+      ${unpackaged.length > 0
+        ? html`<div class="notice warn" style="margin-bottom:14px">
+            <div>
+              <b>${unpackaged.length} composed system${unpackaged.length === 1 ? '' : 's'} nothing buys.</b>
+              ${unpackaged.map((entry) => `${entry.label} (${entry.zone})`).join(' · ')}. A system with no package is a
+              service nobody has been asked to price.
+            </div>
+          </div>`
+        : ''}
+
+      ${strategy
+        ? html`<div style="margin-bottom:14px">
+            <h2>The packaging argument — ${date(strategy.assessedAt)}</h2>
+            <div class="metric-sub" style="margin:6px 0 10px">
+              ${strategy.modelEffect} Competition floor ${competitionFloor} bidders.
+            </div>
+            ${strategy.options.map(
+              (option) => html`<div style="padding:12px 0;border-top:1px solid var(--line)">
+                <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+                  <b>${option.label}</b>
+                  ${option.recommendation === 'BUNDLE' ? badge('bundle', 'ok') : badge('split', 'warn')}
+                </div>
+                <div class="metric-sub" style="margin-top:6px">${option.argument}</div>
+                <div class="metric-sub" style="margin-top:6px">
+                  ${option.internalised.length} interface${option.internalised.length === 1 ? '' : 's'} internalised ·
+                  ${option.externalRemaining} external either way · ${option.biddersIfBundled} bidders bundled
+                </div>
+                ${option.factors.map(
+                  (factor) => html`<div class="metric-sub" style="margin-top:4px">
+                    <b>${factor.label}.</b> ${factor.says}
+                  </div>`,
+                )}
+              </div>`,
+            )}
+          </div>`
+        : html`<div class="notice" style="margin-bottom:14px">
+            <div>
+              No packaging argument has been made. Whether welfare and cleaning are one package or two decides how many
+              interfaces exist and how many firms can bid, and it is worth arguing before it is assumed.
+            </div>
+          </div>`}
+
+      ${packages.map(
+        (record) => html`<div style="padding:14px 0;border-top:1px solid var(--line)">
+          <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+            <b>${record.reference} — ${record.title}</b>
+            <span>
+              ${record.tenderedAt ? badge('at tender', 'warn') : badge('drafting', 'info')}
+              ${record.outstanding > 0
+                ? badge(`${record.outstanding} of 12 outstanding`, 'bad')
+                : badge('twelve fields complete', 'ok')}
+              ${record.returns > 0 ? badge(`${record.lockedReturns}/${record.returns} returns locked`, 'info') : ''}
+            </span>
+          </div>
+          <div class="metric-sub" style="margin-top:4px">
+            Buys ${record.systems.map((entry) => `${entry.label} (${entry.zone})`).join(' · ')}
+          </div>
+
+          ${table({
+            headers: ['Minimum field', 'From', 'Position'],
+            rows: record.requirements.map((requirement) => [
+              html`${requirement.label}
+                <div class="metric-sub">${requirement.matters}</div>`,
+              requirement.kind === 'DERIVED' ? badge('derived', 'info') : badge('stated', 'warn'),
+              html`${requirement.satisfied ? badge('in place', 'ok') : badge('outstanding', 'bad')}
+                <div class="metric-sub">${requirement.detail}</div>`,
+            ]),
+          })}
+
+          ${record.engagements.length > 0
+            ? html`<div style="margin-top:12px">
+                <h2>Where each supplier stands</h2>
+                ${table({
+                  headers: ['Supplier', 'State', 'What is being watched', 'Next'],
+                  rows: record.engagements.map((engagement) => [
+                    engagement.supplierName,
+                    html`${badge(
+                      engagement.state.replaceAll('_', ' ').toLowerCase(),
+                      STATE_TONE[engagement.state] ?? 'info',
+                    )}
+                      ${engagement.suspendedReason
+                        ? html`<div class="metric-sub bad">${engagement.suspendedReason}</div>`
+                        : ''}`,
+                    engagement.controls.join(' · '),
+                    engagement.nextState
+                      ? html`${engagement.nextState}
+                          ${engagement.nextBlocked
+                            ? html`<div class="metric-sub bad">${engagement.nextBlocked}</div>`
+                            : html`<div class="metric-sub ok">Entry criteria met.</div>`}`
+                      : html`<span class="metric-sub">Nothing further on this package.</span>`,
+                  ]),
+                })}
+              </div>`
+            : html`<div class="metric-sub" style="margin-top:10px">
+                No supplier is engaged on this package yet.
+              </div>`}
+        </div>`,
+      )}
+
+      <div style="padding:14px 0 0;border-top:1px solid var(--line)">
+        <h2>The nine control states</h2>
+        <div class="metric-sub" style="margin:6px 0 10px">
+          Where a firm stands on a package, not what the business thinks of the firm. Whether they may be used at all is
+          the supply-chain register’s question, and this reads it rather than repeating it.
+        </div>
+        ${table({
+          headers: ['State', 'Entered when', 'What is watched'],
+          rows: states.map((entry) => [
+            html`${badge(entry.label.toLowerCase(), STATE_TONE[entry.id] ?? 'info')}`,
+            entry.entryCriteria,
+            entry.automatedControls.join(' · '),
+          ]),
+        })}
+      </div>
     </div>
   `;
 }
