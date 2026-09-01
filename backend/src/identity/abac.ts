@@ -36,8 +36,17 @@ export type AccessDecision = {
 
 /** Roles cleared for Legal-L4 (contract text, claims strategy, disputes). */
 const LEGAL_L4_ROLES = new Set<Role>(['OWNER', 'EPC', 'QS', 'PM', 'ENTERPRISE_ADMIN']);
-/** Roles cleared for Commercial-L3 (prices, margins, bid comparisons). */
-const COMMERCIAL_L3_ROLES = new Set<Role>(['OWNER', 'EPC', 'QS', 'PM', 'ENTERPRISE_ADMIN']);
+/**
+ * Roles cleared for Commercial-L3 (prices, margins, bid comparisons).
+ *
+ * `COMMERCIAL_MANAGER` belongs here and was missing. The omission was invisible
+ * for as long as a Commercial-L3 *read* did not actually refuse — the gate
+ * returned REDACT and nothing acted on it — so the person whose whole function
+ * is the commercial position was excluded from it on paper and admitted in
+ * practice. Once the gate started refusing, every commercial screen refused the
+ * commercial manager, which is how the gap surfaced.
+ */
+const COMMERCIAL_L3_ROLES = new Set<Role>(['OWNER', 'EPC', 'QS', 'PM', 'ENTERPRISE_ADMIN', 'COMMERCIAL_MANAGER']);
 
 /**
  * Whether these roles are cleared for a classification.
@@ -181,7 +190,23 @@ export function evaluateAccess(
   return { decision: 'ALLOW', policyId };
 }
 
-/** Throwing wrapper for command handlers. REDACT is a deny for a write. */
+/**
+ * Throwing wrapper for command handlers. A REDACT is a refusal.
+ *
+ * It refuses on a read as well as on a write, and that is a correction rather
+ * than a tightening. Until this changed, `assertAccess` threw on REDACT only
+ * for a write code, so a read that asked to be gated at Commercial-L3 or
+ * Legal-L4 — forty-six call sites across estimating, claims, tendering and
+ * every ETABLIX commercial position — evaluated the gate, produced a REDACT,
+ * and returned it to a caller that ignored it. Every one of those reads looked
+ * classified in the source and was open in fact.
+ *
+ * The redaction path that *does* want a non-throwing answer already calls
+ * `evaluateAccess` directly, which is the whole reason the two functions are
+ * separate: this one asserts, that one decides. So the fix belongs here, and it
+ * removes the possibility of a call site declaring a sensitivity and quietly
+ * getting nothing for it.
+ */
 export function assertAccess(
   auth: AuthContext,
   area: CapabilityArea,
@@ -190,7 +215,7 @@ export function assertAccess(
   options: { rbacEnabled: boolean; scopesEnabled: boolean; abacEnabled: boolean },
 ): AccessDecision {
   const decision = evaluateAccess(auth, area, code, attributes, options);
-  if (decision.decision === 'DENY' || (decision.decision === 'REDACT' && WRITE_CODES.has(code))) {
+  if (decision.decision === 'DENY' || decision.decision === 'REDACT') {
     throw new ForbiddenError(decision.reason ?? 'Not permitted', 'ACCESS_DENIED');
   }
   return decision;

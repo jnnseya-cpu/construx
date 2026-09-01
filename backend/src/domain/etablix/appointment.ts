@@ -634,7 +634,14 @@ export type AppointmentPosition = {
 
 export function appointmentPosition(ctx: EngineContext): AppointmentPosition {
   requireModule(ctx.grantedModules, 'ETABLIX');
-  authorise(ctx, 'SITE_SERVICES', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+  // Not Commercial-L3. The position carries the model, the RACI and the seven
+  // control points — who contracts, who pays, who may enforce — and no price,
+  // margin or bid comparison anywhere in it. Classifying it as commercial shut
+  // the planner, the safety lead and the site manager out of the one answer
+  // every discipline on the job has to work from, which is the opposite of
+  // what §2 exists for. It was declared L3 while an L3 read did not actually
+  // refuse, so the misclassification cost nothing and hid.
+  authorise(ctx, 'SITE_SERVICES', 'R');
 
   const appointment = currentAppointment(ctx);
   const assessments = ctx.ledger

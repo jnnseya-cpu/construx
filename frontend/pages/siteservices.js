@@ -51,6 +51,22 @@ const FIT_FIELDS = [
 
 const SCALE_HINT = '0 = not at all · 2 = partly · 4 = strongly. Score what the evidence says, not what would be convenient.';
 
+/**
+ * Which of §13's eight command centres is on screen, and for whom.
+ *
+ * Module-level rather than in `state` because it is a view preference on one
+ * page, not something any other screen or the API needs to know. It survives a
+ * re-render of this page, which is exactly its job, and nothing else.
+ *
+ * The default is the control tower: it is the workspace that needs no
+ * commercial standing and no subject to be chosen, so it is the one that
+ * renders for the widest set of people on first load.
+ */
+let chosenWorkspace = 'CONTROL_TOWER';
+let portalSupplier = '';
+
+const PANEL_TONE = { CRITICAL: 'bad', WARNING: 'warn', INFO: 'info', OK: 'ok' };
+
 export async function siteservices(root) {
   const [position, readiness, structure, tower, factory, live, commercial, changes, closeout] = await Promise.all([
     api.get(`/v1/projects/${state.session.projectId}/site-services/appointment`).catch((error) => ({ error })),
@@ -62,6 +78,20 @@ export async function siteservices(root) {
     api.get(`/v1/projects/${state.session.projectId}/site-services/commercial`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/change`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/demobilisation`).catch((error) => ({ error })),
+  ]);
+
+  // §13 and §17. Separate from the block above because the workspace is chosen
+  // on this page and the supplier portal will not answer without a subject —
+  // firing it inside the parallel block would mean re-firing all nine every
+  // time somebody switched workspace.
+  const [centre, automation] = await Promise.all([
+    api
+      .get(
+        `/v1/projects/${state.session.projectId}/site-services/command-centre/${chosenWorkspace}` +
+          (chosenWorkspace === 'SUPPLIER_PORTAL' && portalSupplier ? `?supplierId=${encodeURIComponent(portalSupplier)}` : ''),
+      )
+      .catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/automation`).catch((error) => ({ error })),
   ]);
 
   // The reconciliation itself, for the valuation that is actually live. It is
@@ -544,6 +574,10 @@ export async function siteservices(root) {
         })}
       </div>
 
+      ${commandCentreCard(centre, factory)}
+
+      ${automation.error ? refusal('The automation measure', automation.error) : automationCard(automation)}
+
       ${readiness.error ? refusal('Brief readiness', readiness.error) : briefCard(readiness)}
 
       ${structure.error ? refusal('The system breakdown structure', structure.error) : sbsCard(structure)}
@@ -565,6 +599,23 @@ export async function siteservices(root) {
   );
 
   const again = () => siteservices(root);
+
+  // Switching workspace re-fetches rather than filtering what is already here.
+  // The eight command centres do not read the same positions — the control
+  // tower is not entitled to the commercial ones — so a client-side filter over
+  // one fetch would either over-fetch for everybody or show the wrong refusal.
+  root.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-workspace]');
+    if (!button) return;
+    chosenWorkspace = button.dataset.workspace;
+    if (chosenWorkspace !== 'SUPPLIER_PORTAL') portalSupplier = '';
+    again();
+  });
+
+  root.querySelector('[data-portal-supplier]')?.addEventListener('change', (event) => {
+    portalSupplier = event.target.value;
+    again();
+  });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
@@ -3663,6 +3714,304 @@ const QUESTIONS = {
   packageCount: 'How many separate service packages will be let, and by whom?',
   firstMobilisationDate: 'When does the first service have to be operational on site?',
 };
+
+/**
+ * §13's eight command centres, and §13.1's universal panel.
+ *
+ * The panel is the point of this card, and it is deliberately not a wall of
+ * tiles. Every entry carries the rule that produced it, the record it was read
+ * from, the decision somebody has to take, who takes it, by when, and what
+ * happens if nobody does. A tile that says "3 amber" is a screen you have to
+ * trust; this is a screen you can check, and §13.1 asks for the second one in
+ * as many words.
+ *
+ * What each workspace *cannot* answer is shown at the bottom of it rather than
+ * left out. A command centre that silently omits the questions it has no
+ * records for is a command centre that reads as complete, and the first person
+ * to rely on it finds the gap at the worst possible moment.
+ */
+function commandCentreCard(centre, factory) {
+  if (centre.error && centre.error.code !== 'SUPPLIER_REQUIRED') {
+    return html`<div class="card" style="margin-bottom:14px">
+      ${workspaceChooser(centre.workspaces)} ${refusal('This command centre', centre.error)}
+    </div>`;
+  }
+
+  // The chooser has to render even when the fetch refused, or somebody who
+  // lands on a workspace they cannot see has no way back to one they can.
+  const workspaces = centre.workspaces ?? FALLBACK_WORKSPACES;
+
+  if (centre.error) {
+    const suppliers = supplierOptions(factory);
+    return html`<div class="card" style="margin-bottom:14px">
+      <h2>Command centres</h2>
+      ${workspaceChooser(workspaces)}
+      <div class="notice info" style="margin-top:12px">
+        <div>
+          <b>The supplier portal is one supplier’s obligations.</b> Choose which — an unscoped portal would show every
+          supplier their competitors’ position.
+        </div>
+      </div>
+      ${suppliers.length === 0
+        ? html`<div class="metric-sub" style="margin-top:10px">
+            No supplier is engaged on any package yet, so there is nobody to open a portal for.
+          </div>`
+        : html`<div class="field" style="margin-top:10px">
+            <label for="portal-supplier">Supplier</label>
+            <select id="portal-supplier" data-portal-supplier>
+              <option value="">Choose a supplier…</option>
+              ${suppliers.map(
+                (entry) => html`<option value="${entry.id}" ${entry.id === portalSupplier ? 'selected' : ''}>
+                  ${entry.name}
+                </option>`,
+              )}
+            </select>
+          </div>`}
+    </div>`;
+  }
+
+  const { workspace, now, next, unanswered, statement } = centre;
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>${workspace.label}</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">${workspace.mustAnswer}</div>
+      ${workspaceChooser(workspaces)}
+
+      <div class="metric-sub" style="margin:12px 0">${statement}</div>
+
+      <div style="padding:12px 0 0;border-top:1px solid var(--line)">
+        <h2>Now</h2>
+        <div class="metric-sub" style="margin:4px 0 10px">
+          Service health, active critical events, capacity against demand, and today’s mobilisation and delivery
+          constraints.
+        </div>
+        ${now.length === 0
+          ? html`<div class="notice ok"><div>Nothing outstanding on this workspace today.</div></div>`
+          : now.map((entry) => panelEntry(entry))}
+      </div>
+
+      <div style="padding:14px 0 0;border-top:1px solid var(--line);margin-top:14px">
+        <h2>Next</h2>
+        <div class="metric-sub" style="margin:4px 0 10px">
+          Falling due within 2, 7 or 30 days, and needing evidence, space, utilities, supplier action, approval or
+          funding.
+        </div>
+        ${next.length === 0
+          ? html`<div class="notice ok"><div>Nothing falls due on this workspace inside the month.</div></div>`
+          : next.map((entry) => panelEntry(entry))}
+      </div>
+
+      ${unanswered.length > 0
+        ? html`<div style="padding:14px 0 0;border-top:1px solid var(--line);margin-top:14px">
+            <h2>What this workspace cannot answer</h2>
+            <div class="metric-sub" style="margin:4px 0 10px">
+              Stated rather than left out. Each is a record that does not exist, not a screen that has not been drawn.
+            </div>
+            ${table({
+              headers: ['Question', 'Why not'],
+              rows: unanswered.map((question) => [html`<b>${question.question}</b>`, question.basis]),
+            })}
+          </div>`
+        : ''}
+    </div>
+  `;
+}
+
+/**
+ * The eight workspaces, as a row of doors.
+ *
+ * §13's own sentence sits under each as the title attribute rather than on the
+ * screen: eight paragraphs of "must answer immediately" is not a navigation
+ * control, and the chosen one shows its sentence in full above the panel.
+ */
+function workspaceChooser(workspaces) {
+  return html`<div style="display:flex;flex-wrap:wrap;gap:6px">
+    ${workspaces.map(
+      (entry) => html`<button
+        type="button"
+        class="btn ${entry.id === chosenWorkspace ? '' : 'ghost'}"
+        data-workspace="${entry.id}"
+        title="${entry.mustAnswer}"
+      >
+        ${entry.label}
+      </button>`,
+    )}
+  </div>`;
+}
+
+/**
+ * The eight, for a chooser that has to render when the fetch refused.
+ *
+ * Labels only. The authoritative list, the questions and the sensitivity of
+ * each all live server-side in `commandcentre.ts`; this is a way back to a
+ * workspace the reader can see, not a second copy of §13.
+ */
+const FALLBACK_WORKSPACES = [
+  { id: 'EXECUTIVE_PORTFOLIO', label: 'Executive Portfolio', mustAnswer: '' },
+  { id: 'CUSTOMER_PROJECT', label: 'Customer Project', mustAnswer: '' },
+  { id: 'CONTROL_TOWER', label: 'ETABLIX Control Tower', mustAnswer: '' },
+  { id: 'COMMERCIAL', label: 'Commercial', mustAnswer: '' },
+  { id: 'PROCUREMENT', label: 'Procurement', mustAnswer: '' },
+  { id: 'SUPPLIER_PORTAL', label: 'Supplier Portal', mustAnswer: '' },
+  { id: 'FIELD_MOBILE', label: 'Field Mobile', mustAnswer: '' },
+  { id: 'ACCOMMODATION_DESK', label: 'Accommodation Desk', mustAnswer: '' },
+];
+
+/** Suppliers the page already holds, so the chooser cannot offer one that is not engaged. */
+function supplierOptions(factory) {
+  if (!factory || factory.error) return [];
+  const seen = new Map();
+  for (const pack of factory.packages ?? []) {
+    for (const engagement of pack.engagements ?? []) seen.set(engagement.supplierId, engagement.supplierName);
+  }
+  return [...seen.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * One panel entry, with §13.1's four parts on it.
+ *
+ * WHY and ACTION are rendered every time, without a disclosure control. A rule
+ * behind a chevron is a rule most people never read, and the entire argument
+ * for this panel is that the reader can check the status rather than trust it.
+ */
+function panelEntry(entry) {
+  const owner = entry.action.owner;
+  const named = owner.named ?? [];
+  return html`<div style="padding:12px 0;border-top:1px solid var(--line)">
+    <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+      <b>${entry.headline}</b>
+      <span>
+        ${entry.overdue ? badge('overdue', 'bad') : entry.withinDays ? badge(`${entry.withinDays}d`, 'warn') : ''}
+        ${badge((entry.subject ?? entry.need).replaceAll('_', ' ').toLowerCase(), PANEL_TONE[entry.tone] ?? 'info')}
+      </span>
+    </div>
+
+    <div class="metric-sub" style="margin-top:6px"><b>Why.</b> ${entry.why.rule}</div>
+    <div class="metric-sub" style="margin-top:4px">
+      ${entry.why.evidence}
+      ${entry.why.source
+        ? html`<span class="metric-sub"> · ${entry.why.source.refType} ${entry.why.source.refId}</span>`
+        : ''}
+    </div>
+
+    <div class="metric-sub" style="margin-top:8px"><b>Action.</b> ${entry.action.decision}</div>
+    <div class="metric-sub" style="margin-top:4px">
+      <b>Owner:</b>
+      ${named.length > 0
+        ? named.map((person) => `${person.name} (${person.role.replaceAll('_', ' ').toLowerCase()})`).join(' · ')
+        : `nobody on this project holds ${owner.roles.join(' or ').replaceAll('_', ' ').toLowerCase()}`}
+      — ${owner.basis}
+    </div>
+    <div class="metric-sub" style="margin-top:4px">
+      <b>By:</b> ${entry.action.dueAt ? date(entry.action.dueAt) : 'no date'} — ${entry.action.deadlineBasis}
+    </div>
+    <div class="metric-sub ${entry.tone === 'CRITICAL' ? 'bad' : ''}" style="margin-top:4px">
+      <b>If nobody does:</b> ${entry.action.consequence}
+    </div>
+    <div class="metric-sub" style="margin-top:4px"><b>Already prepared:</b> ${entry.action.prepared}</div>
+  </div>`;
+}
+
+/**
+ * §17 — "90% AI-driven", measured by workflow touch rather than claimed.
+ *
+ * The card leads with the denominator, because that is where this measure is
+ * usually made dishonest. Class C is human-controlled by design and is excluded
+ * from the ratio, and saying so on the screen is what stops the figure being
+ * read as "the platform decides 90% of things" — which is the opposite of what
+ * the governance model does.
+ *
+ * A metric with no records behind it shows what is missing rather than zero.
+ * Zero and "nothing has happened yet" look identical on a gauge and mean
+ * opposite things.
+ */
+function automationCard(measure) {
+  const { classes, metrics, byWorkflow, target, totals, statement } = measure;
+  const headline = metrics.find((metric) => metric.id === 'AGENT_DRIVEN_RATIO');
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>Automation measure</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">${statement}</div>
+
+      <section class="grid g3" style="margin-bottom:14px">
+        <div class="card">
+          <h2>Agent-driven</h2>
+          <div class="metric ${headline?.value === undefined ? '' : headline.value >= target ? 'ok' : 'warn'}">
+            ${headline?.value === undefined ? '—' : pct(headline.value / 100)}
+          </div>
+          <div class="metric-sub">Against a ${target}% target</div>
+        </div>
+        <div class="card">
+          <h2>Eligible activities</h2>
+          <div class="metric">${totals.eligible}</div>
+          <div class="metric-sub">Class A and B, of ${totals.recorded} recorded</div>
+        </div>
+        <div class="card">
+          <h2>Human-controlled</h2>
+          <div class="metric">${totals.humanControlled}</div>
+          <div class="metric-sub">Class C — excluded from the ratio by design</div>
+        </div>
+      </section>
+
+      <div style="padding:12px 0 0;border-top:1px solid var(--line)">
+        <h2>The automation boundary</h2>
+        ${table({
+          headers: ['Class', 'AI authority', 'Examples'],
+          rows: classes.map((entry) => [
+            html`<b>${entry.id} — ${entry.label}</b>`,
+            entry.authority,
+            html`<span class="metric-sub">${entry.examples}</span>`,
+          ]),
+        })}
+      </div>
+
+      <div style="padding:14px 0 0;border-top:1px solid var(--line);margin-top:14px">
+        <h2>By workflow</h2>
+        <div class="metric-sub" style="margin:4px 0 10px">
+          Never one blended figure. A platform automated at recording facts and manual at valuation reports well
+          overall, and the manual half is where the money is.
+        </div>
+        ${table({
+          headers: ['Workflow', 'Eligible', 'Autonomous', 'Agent-prepared', 'Human', 'Ratio', 'Straight through'],
+          rows: byWorkflow.map((row) => [
+            html`<b>${row.label}</b> <span class="metric-sub">${row.section}</span>`,
+            row.eligible,
+            row.autonomous,
+            row.agentPrepared,
+            row.human,
+            row.ratioPercent === undefined
+              ? html`<span class="metric-sub">nothing yet</span>`
+              : html`<span class="${row.ratioPercent >= target ? 'ok' : 'warn'}">${row.ratioPercent}%</span>`,
+            row.straightThroughPercent === undefined
+              ? html`<span class="metric-sub">—</span>`
+              : `${row.straightThroughPercent}%`,
+          ]),
+        })}
+      </div>
+
+      <div style="padding:14px 0 0;border-top:1px solid var(--line);margin-top:14px">
+        <h2>The ten metrics</h2>
+        ${metrics.map(
+          (metric) => html`<div style="padding:10px 0;border-top:1px solid var(--line)">
+            <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+              <b>${metric.label}</b>
+              <span>
+                ${metric.value === undefined
+                  ? badge('not measurable yet', 'info')
+                  : badge(`${metric.value}${metric.unit === 'days' ? ' days' : '%'}`, 'ok')}
+              </span>
+            </div>
+            <div class="metric-sub" style="margin-top:4px">${metric.definition}</div>
+            <div class="metric-sub" style="margin-top:4px"><b>Target:</b> ${metric.target}</div>
+            <div class="metric-sub" style="margin-top:4px"><b>Basis:</b> ${metric.basis}</div>
+          </div>`,
+        )}
+      </div>
+    </div>
+  `;
+}
 
 /** A contribution reads as a direction, not a magnitude, so the sign is kept. */
 function signed(value) {

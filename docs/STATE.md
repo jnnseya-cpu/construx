@@ -13414,3 +13414,142 @@ Two defects the tests could not see, both fixed:
 And three domain sentences carried bare minor units to a reader — *"worth
 4000000 at face"* for a £40,000 change. A minor-unit integer in a sentence gets
 misread by a factor of a hundred exactly once, expensively.
+
+### The command centre answers questions, and says which it cannot
+
+§13 and §17 — `backend/src/domain/etablix/commandcentre.ts`, `GET
+/v1/projects/:id/site-services/command-centre/:workspaceId` and
+`.../site-services/automation`, both on the Site Services screen.
+
+§13's table is eight *questions*, not eight route names. "Which projects are
+unsafe, late, under-capacity, overspending or cash-exposed?" is a question a
+dashboard either answers or does not, and a wall of coloured tiles that looks
+like an answer is worse than an empty screen — an empty screen sends somebody to
+find out. So each workspace decomposes its §13 sentence into the individual
+questions inside it, and every question declares either the position it is
+answered from or exactly what is not built. **`answered: false` is a first-class
+result**, rendered on the screen under *what this workspace cannot answer*.
+
+Five of the eight carry a real gap, and each is an entity family that does not
+exist rather than a screen nobody drew:
+
+| Workspace | What it cannot answer |
+|---|---|
+| Accommodation Desk | Room and bed inventory, allocations, arrivals, housekeeping. §4 sizes an accommodation system against demand; there is no room, bed or allocation record beneath it. Also transport: a service family with a reported KPI, no journey or booking record. |
+| Field Mobile | QR asset scan (no per-asset register under a composed system), delivery check, individual occupancy. |
+| Supplier Portal | Valuation and payment state. There is no supplier account layer with its own authentication, so this is an internal view of one supplier's obligations, not a portal that supplier logs into. |
+| Commercial | Paid, accrual and cash — §10 certifies value and does not record payment against a certificate. Contingency and EAC — change exposure is an input to an EAC, not an EAC. |
+| Executive Portfolio | The cross-project roll-up. Every position is project-scoped by construction. |
+
+**§13.1 read properly.** "NOW / NEXT / WHY / ACTION" looks like four lists and is
+not. NOW and NEXT are the two lists — what is true today, and what falls due in
+2, 7 or 30 days. WHY and ACTION are *required fields on every entry in both*:
+the rule that produced the status, the record it can be opened at, and the owner,
+decision, deadline and consequence attached to it. That reading is the one that
+costs something to implement, which is why it is the right one — it makes it
+impossible to add a signal to this panel without saying which rule produced it
+and who has to do something about it. §13.1's own words, *"users can open the
+source, not merely trust a coloured tile"*, are an instruction to whoever builds
+the panel.
+
+Where no deadline exists, the panel says so and says why: *"No date can exist: an
+unowned interface has nobody to owe one."* A blank date and a date that cannot
+exist look identical and mean opposite things.
+
+**One derivation, eight views.** Every entry is derived once from the positions
+§2–§12 already publish, and tagged with the workspaces it belongs on — eight
+separate assemblers would be eight places for the same signal to be phrased
+differently, and the first time the control tower and the customer project
+disagreed about a gate, both would be believed by somebody. Each entry records
+the position it came from, and a test proves no entry is listed on a workspace
+whose declared sources do not include it: a tag with no fetch behind it is dead
+code that looks like a feature.
+
+#### §17: ninety percent, measured rather than claimed
+
+*"90% AI-driven" is measured by workflow touch, not by claiming 90% of
+decisions.* The measure is read from the ledger rather than from entities,
+because the events say who did each thing and in what order, and that is the only
+version that cannot be improved by editing a record.
+
+All 54 ETABLIX activities are classified into §1.2's three classes — A
+autonomous, B supervised, C human-controlled — and into the nine workflows.
+Two invariants keep the classification honest against the event catalogue: **no
+Class A activity may sit on an event an agent is forbidden to author**, and **no
+Class C activity may sit on one an agent is permitted to author**. A test parses
+the catalogue's own ETABLIX block and fails if a code is classified twice, not at
+all, or invented — a §6 event added later with no class would otherwise fall
+silently out of the denominator, which is exactly how an automation metric
+becomes marketing.
+
+Class C is excluded from the denominator and the screen says so. Counting the
+supplier award, the payment certificate and the mobilisation acceptance
+certificate would make 90% unreachable by construction rather than by
+performance, and would also imply the platform decides things the governance
+model says it never will.
+
+The ten metrics each report a figure or say what record is missing. **A metric
+with no records behind it never reports zero**: zero and "nothing has happened
+yet" look identical on a gauge and mean opposite things. Forecast accuracy is
+declared not measurable on a live project at all — it compares a prior estimate
+at completion against a final outturn, and reporting it before close-out would be
+reporting the forecast against itself, which is always 100%.
+
+**22 of 27 mutations caught.** Three of the five survivors are equivalent
+mutants; two are the module and commercial gates at each entry point, which are
+deliberately the same checks the positions underneath make — they sit at the top
+so a refusal happens before any position is read, and removing either still
+refuses because every position repeats it.
+
+#### A confidentiality gate that never fired
+
+Found while building this, fixed at the root: `assertAccess` threw on a `REDACT`
+decision only for a *write* code. So a **read** that asked to be gated at
+Commercial-L3 or Legal-L4 — forty-six call sites across estimating, claims,
+tendering and every ETABLIX commercial position — evaluated the gate, produced a
+REDACT, and returned it to a caller that ignored it. Every one of those reads
+looked classified in the source and was open in fact.
+
+The redaction path that genuinely wants a non-throwing answer already calls
+`evaluateAccess` directly — that is why the two functions are separate: one
+asserts, the other decides. `assertAccess` now refuses on REDACT for any code.
+
+Two things surfaced the moment it started refusing, and both were themselves
+defects:
+
+- **`COMMERCIAL_MANAGER` was not in `COMMERCIAL_L3_ROLES`.** The person whose
+  whole function is the commercial position was excluded from it on paper and
+  admitted in practice. Added.
+- **§2's appointment position was classified Commercial-L3 and holds no money.**
+  It carries the model, the RACI and the seven control points — who contracts,
+  who pays, who may enforce — and no price, margin or bid comparison anywhere in
+  it. Classifying it as commercial shut the planner, the safety lead and the site
+  manager out of the one answer every discipline on the job works from. Now an
+  ordinary read.
+
+#### What driving §13 and §17 in a browser found
+
+Five things, all fixed:
+
+- **A P1 could never breach its acknowledgement window.** §9 guarded the check
+  with `acknowledgeWithinMinutes > 0`, and P1's window is zero — acknowledge on
+  receipt. Reading zero as "no window" made the one severity with no grace the
+  only one that could never be late, and §17's service-restoration metric then
+  reported **100%** against an unacknowledged P1 an hour old. Zero now means what
+  it says.
+- **A change under a notice-bearing trigger with no date recorded** said *"this
+  trigger bears no contractual notice period"*. It bears one; nobody had recorded
+  the date. The two sentences send a reader to opposite places, and the wrong one
+  loses the entitlement.
+- **Eight identical paragraphs** — one per unowned interface, each saying "name
+  the counterparty" — collapsed into the one decision they actually are, with
+  every name still in it.
+- **A P1 showed "By: no date"** on the one thing with no grace period at all. It
+  is now dated to the day it was raised, which is when it was due.
+- **"The brief opened -1 days ago"** — elapsed time measured against midnight of
+  the current day put the reference point before events recorded that morning. A
+  negative elapsed time reads as a broken clock rather than as a new project.
+
+Plus two plural mismatches — *"1 further activities are Class C"*, *"1 of this
+workspace's questions are not answerable"* — which are the kind of thing that
+makes a reader stop trusting the numbers beside them.

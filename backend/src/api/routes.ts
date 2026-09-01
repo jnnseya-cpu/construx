@@ -74,6 +74,7 @@ import * as siteOperations from '../domain/etablix/operations.ts';
 import * as siteCommercial from '../domain/etablix/commercial.ts';
 import * as siteChange from '../domain/etablix/change.ts';
 import * as siteDemob from '../domain/etablix/demobilisation.ts';
+import * as siteCommand from '../domain/etablix/commandcentre.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
 import * as programmereview from '../domain/programmereview.ts';
@@ -5404,6 +5405,39 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => siteDemob.acceptWorkstream(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/command-centre/:workspaceId',
+    description:
+      'One of the eight §13 command centres: the questions it must answer, what is true now, what falls due in 2, 7 or 30 days, and the rule, evidence, owner and consequence behind every entry',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const supplierId = ctx.query.get('supplierId') ?? undefined;
+      const centre = siteCommand.commandCentre(projectContext(platform, ctx), ctx.params.workspaceId as string, {
+        ...(supplierId === undefined ? {} : { supplierId }),
+      });
+
+      // §13.1 asks for a *named* owner. The domain resolves the capability;
+      // only this layer holds the tenancy's identity directory, so the two are
+      // joined here rather than by giving the engine context a user list it
+      // would then be tempted to authorise against.
+      const identities = platform
+        .users(actor.tenantId)
+        .map((user) => ({ id: user.id, name: user.name, email: user.email, roles: user.roles }));
+      return {
+        ...centre,
+        now: siteCommand.nameOwners(centre.now, identities),
+        next: siteCommand.nameOwners(centre.next, identities),
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/automation',
+    description:
+      'The §17 automation measure: activity counts by Class A/B/C and by workflow, the agent-driven ratio against the 90% target, and the ten metrics with what each is measured from',
+    handler: (platform, ctx) => siteCommand.automationMeasure(projectContext(platform, ctx)),
   },
 
   {

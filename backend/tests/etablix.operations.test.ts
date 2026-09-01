@@ -199,6 +199,17 @@ describe('§9.1 the loop and the four severities', () => {
     const { event: request } = welfareEvent('P4');
     const stillFine = operationsPosition(as('pm'), later).events.find((entry) => entry.id === request.id)!;
     assert.equal(stillFine.acknowledgementBreached, false);
+
+    // P1's window is zero minutes: acknowledge on receipt. A guard reading zero
+    // as "no window" made the one severity with no grace the only one that
+    // could never be late, and §17's service-restoration metric then reported
+    // a perfect score against an unacknowledged critical event.
+    const { event: critical } = welfareEvent('P1');
+    const hourLater = new Date(Date.parse(critical.raisedAt) + 60 * 60_000).toISOString();
+    const unacknowledged = operationsPosition(as('pm'), hourLater).events.find(
+      (entry) => entry.id === critical.id,
+    )!;
+    assert.equal(unacknowledged.acknowledgementBreached, true, 'a P1 unacknowledged for an hour is late');
   });
 
   it('refuses attendance recorded before acknowledgement', () => {

@@ -1026,10 +1026,20 @@ function viewOf(record: ServiceEvent, now: number): EventView {
     minutesOpen: minutesBetween(record.raisedAt, record.closedAt ?? new Date(now).toISOString()),
     // An unacknowledged event past its window is breached now, not once
     // somebody gets round to acknowledging it.
+    //
+    // The `> 0` guard that used to sit here excluded P1 from breaching at all.
+    // P1's window is zero minutes — acknowledge on receipt — and a guard that
+    // reads zero as "no window" made the one severity with no grace the only
+    // one that could never be late. It surfaced on the §17 service-restoration
+    // metric, which reported 100% against an unacknowledged P1 an hour old.
+    //
+    // Zero now means what it says. While the event is unacknowledged the clock
+    // is running against the window; once it is acknowledged the question is
+    // how long that took, and an acknowledgement inside the same minute as the
+    // event satisfies a zero-minute window rather than failing it.
     acknowledgementBreached:
-      severity.acknowledgeWithinMinutes > 0 &&
       (minutesToAcknowledge ?? minutesBetween(record.raisedAt, new Date(now).toISOString()) - pausedMinutes) >
-        severity.acknowledgeWithinMinutes,
+      severity.acknowledgeWithinMinutes,
     pausedMinutes,
     blocking,
   };
