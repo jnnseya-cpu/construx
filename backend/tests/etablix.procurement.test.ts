@@ -384,12 +384,13 @@ describe('§7.1 the twelve minimum fields', () => {
     assert.match(String(error.message), /drawn by whoever is under the most pressure/);
   });
 
-  it('says why a complete package cannot be issued on a project past procurement', () => {
-    // The demonstration flagship is in Operations, where the platform's own
-    // phase gate closes procurement. Left to `openEnquiry`, the buyer would get
-    // "PROCUREMENT_AWARD cannot be written during the OPERATIONS phase" — a
-    // true sentence about a capability area they never chose. This says what
-    // actually happened and what the window is.
+  it('issues a package on a project already in operations', () => {
+    // Site services are not the main works. Welfare is bought before the first
+    // pour, cleaning is re-let in month twenty, security runs past practical
+    // completion and the compound is demobilised after handover. The enquiry is
+    // raised under SITE_SERVICES, so the main-works procurement window — Tender
+    // and Construction, and rightly closed afterwards — does not close the
+    // wrong door on it.
     seed.projectId = FLAGSHIP;
     assert.equal(
       platform.ledger.get({ refType: 'Project', refId: FLAGSHIP })!.state.phase,
@@ -401,13 +402,15 @@ describe('§7.1 the twelve minimum fields', () => {
     const welfare = compose('WELFARE_ACCOMMODATION', 'Operations compound');
     const record = completePackage([welfare], 'Welfare, re-let');
 
-    const error = throwsCode(
-      () => openPackageTender(as('pm'), { packageId: record.id, returnDeadline: '2026-10-01' }),
-      'SERVICE_PACKAGE_PHASE_CLOSED',
-    );
-    assert.match(String(error.message), /cannot be issued while this project is at OPERATIONS/);
-    assert.match(String(error.message), /open at TENDER and CONSTRUCTION/);
-    assert.match(String(error.message), /a change to a live package rather than a new competition/);
+    const issued = openPackageTender(as('pm'), { packageId: record.id, returnDeadline: '2027-02-01' });
+    assert.match(issued.reference, /^ENQ-\d{3}$/);
+    // And the enquiry says which authority it was raised under, so a reader can
+    // tell a site-services enquiry from a main-works one.
+    const enquiry = platform.ledger
+      .list(FLAGSHIP, 'Enquiry')
+      .map((entry) => entry.state as unknown as { id: string; area?: string })
+      .find((entry) => entry.id === issued.enquiryId)!;
+    assert.equal(enquiry.area, 'SITE_SERVICES');
   });
 
   it('issues a complete package as a controlled enquiry, once', () => {

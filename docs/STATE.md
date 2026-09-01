@@ -13209,13 +13209,25 @@ never proven to block, a suspended firm on the register was never proven
 ineligible, the standstill note was never checked, and the singular case of the
 bundling sentence read as a mail merge. All six now have tests.
 
-#### What §7 cannot do, and why
+#### Whose window the enquiry is opened under
 
-A package can only be issued while the project is in a phase where the platform
-permits procurement — Tender or Construction, from `WRITE_PHASE_GATES`. On a
-project already in Operations the issue is refused, and the refusal says so in
-those words rather than reporting a capability area the buyer never chose. That
-is CONSTRUX's phase discipline applying to a module that reuses its enquiry
-machinery, and it is a real constraint: re-letting a service mid-operations is a
-change to a live package rather than a new competition, and the change mechanism
-for that is §11's, not this one's.
+`openEnquiry` now takes the capability area whose authority the enquiry is
+raised under, defaulting to `PROCUREMENT_AWARD` so every existing caller is
+unchanged, and recording it on the enquiry so a reader can tell one kind from
+the other.
+
+The first version of §7 inherited the main-works window, and a package on a
+project in Operations was refused with "PROCUREMENT_AWARD cannot be written
+during the OPERATIONS phase" — a true sentence about an area the buyer never
+chose. The gate itself is right for what it gates: buying the frame in O&M is a
+process error. Site services are not that. Welfare is bought before the first
+pour, cleaning is re-let in month twenty, security runs past practical
+completion and the whole compound is demobilised after handover, so a window
+drawn around the main works closes the wrong door on all four.
+
+So the ETABLIX package raises its enquiry under `SITE_SERVICES`, which has no
+phase gate because site services span every phase. The machinery is identical —
+controlled recipients, addenda, acknowledgement, audit log — and only the
+authority to buy differs. A package can now be issued on a project in Operations,
+which is proven by a test against the demonstration flagship, and the main-works
+window is untouched.

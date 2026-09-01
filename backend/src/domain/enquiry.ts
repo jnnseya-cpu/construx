@@ -2,6 +2,7 @@ import { hashEvidence } from '../core/canonical.ts';
 import { DomainError, ForbiddenError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, registerEvidence, write, type EngineContext } from '../engines/context.ts';
+import type { CapabilityArea } from '../identity/roles.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
 import { tenderReadinessFor } from './designbaseline.ts';
 
@@ -163,9 +164,29 @@ function latestRevision(state: EnquiryState): PackRevision | undefined {
 
 export function openEnquiry(
   ctx: EngineContext,
-  input: { packageReference: string; title: string; returnDeadline: string },
+  input: {
+    packageReference: string;
+    title: string;
+    returnDeadline: string;
+    /**
+     * The capability area whose authority this enquiry is raised under.
+     *
+     * Defaults to `PROCUREMENT_AWARD`, which is the main works and is gated to
+     * the Tender and Construction phases — buying the frame in O&M is a process
+     * error and the gate is right to say so.
+     *
+     * ETABLIX passes `SITE_SERVICES`, which is not the same question. Welfare,
+     * cleaning, security and transport are bought before construction starts,
+     * re-let while it runs and demobilised after handover, so a phase window
+     * drawn around the main works closes the wrong door. The enquiry machinery
+     * is identical either way; only the authority to buy differs, and stating
+     * it is more honest than letting one module inherit another's window.
+     */
+    area?: CapabilityArea;
+  },
 ): { enquiryId: string; reference: string } {
-  authorise(ctx, 'PROCUREMENT_AWARD', 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+  const area = input.area ?? 'PROCUREMENT_AWARD';
+  authorise(ctx, area, 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
 
   if (!input.packageReference.trim() || !input.title.trim()) {
     throw new DomainError('ENQUIRY_UNNAMED', 'An enquiry names the package it buys and what it is.');
@@ -188,6 +209,9 @@ export function openEnquiry(
       packageReference: input.packageReference,
       title: input.title,
       returnDeadline: input.returnDeadline,
+      // On the record, so a reader can tell a site-services enquiry from a
+      // main-works one without inferring it from the package reference.
+      area,
       revisions: [],
       issues: [],
       lateReturns: [],

@@ -1,7 +1,6 @@
-import { DomainError, ForbiddenError } from '../../core/errors.ts';
+import { DomainError } from '../../core/errors.ts';
 import { ulid } from '../../core/ids.ts';
-import { authorise, currentPhase, write, type EngineContext } from '../../engines/context.ts';
-import { WRITE_PHASE_GATES } from '../../identity/abac.ts';
+import { authorise, write, type EngineContext } from '../../engines/context.ts';
 import { requireModule } from '../../identity/modules.ts';
 import { openEnquiry } from '../enquiry.ts';
 import { appointmentPosition, profileFor } from './appointment.ts';
@@ -65,14 +64,6 @@ import { FAMILY_DESIGN, type ServiceInterface, type ServiceSystem } from './comp
  * argument this module makes.
  */
 export const COMPETITION_FLOOR = 3;
-
-/**
- * The lifecycle phases in which a package can actually be issued.
- *
- * Read from the platform's own phase gate rather than restated, so the sentence
- * a buyer gets cannot drift from the rule that produces the refusal.
- */
-export const PROCUREMENT_PHASES = WRITE_PHASE_GATES.PROCUREMENT_AWARD ?? [];
 
 export type PackagingFactorId =
   | 'interfaceDensity'
@@ -980,24 +971,21 @@ export function openPackageTender(
     );
   }
 
-  // The platform's procurement window, said in words rather than left to a
-  // bare capability-area refusal from inside `openEnquiry`. A site-services
-  // package is bought through the same governed enquiry as everything else, and
-  // that machinery is open at Tender and Construction and closed afterwards.
-  // Stated here because "PROCUREMENT_AWARD cannot be written during the
-  // OPERATIONS phase" is a true sentence about an area the buyer never chose.
-  const phase = currentPhase(ctx);
-  if (phase && !PROCUREMENT_PHASES.includes(phase)) {
-    throw new ForbiddenError(
-      `${record.reference} cannot be issued while this project is at ${phase}. A service package is bought through the platform's governed enquiry — controlled recipients, addenda, acknowledgement and the audit log — and that machinery is open at ${PROCUREMENT_PHASES.join(' and ')}. Re-letting a service during operations is a change to a live package rather than a new competition.`,
-      'SERVICE_PACKAGE_PHASE_CLOSED',
-    );
-  }
-
+  // Raised under `SITE_SERVICES`, not under `PROCUREMENT_AWARD`.
+  //
+  // The enquiry machinery is the same either way — controlled recipients,
+  // addenda, acknowledgement, the audit log — and it is called rather than
+  // copied. What differs is the authority to buy. Main-works procurement is
+  // gated to Tender and Construction, and rightly: buying the frame in O&M is a
+  // process error. Site services are not that. Welfare is bought before the
+  // first pour, cleaning is re-let in month twenty, security runs past practical
+  // completion and the whole compound is demobilised after handover. A window
+  // drawn around the main works closes the wrong door on all four.
   const enquiry = openEnquiry(ctx, {
     packageReference: record.reference,
     title: record.title,
     returnDeadline: input.returnDeadline,
+    area: 'SITE_SERVICES',
   });
 
   const updated: ServicePackage = {
