@@ -151,6 +151,8 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // The most damaging thing on the project to leak into the supply chain, and
   // every supplier is an identity on this platform.
   IntermediationPosition: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
+  Calendar: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
+  ScheduleRun: { area: 'PROGRAMME_BASELINES', sensitivity: 'INTERNAL' },
   Task: { area: 'WORKPACKAGES_TASKS' },
   Dependency: { area: 'PROGRAMME_BASELINES' },
   ProgrammeBaseline: { area: 'PROGRAMME_BASELINES' },

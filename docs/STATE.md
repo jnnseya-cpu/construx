@@ -12066,3 +12066,65 @@ rather than for the exception.
 **Not yet placed**: the sparkline, histogram and stacked bar have no callers, and
 the Gantt has nothing to draw until the schedule engine has a domain record and a
 route. Named here rather than implied by the section above.
+
+
+### The programme gets a door, a screen and a Gantt
+
+The dated scheduler had no way in. `domain/programme.ts` is the way in, and it is
+built on the records the platform already has rather than a parallel activity
+model: `WorkPackage` and `ScopePackage` are the breakdown, `Task` is the
+activity, `Dependency` is the relationship. What was missing from a `Task` was
+the half-dozen fields that make it schedulable in dates — a calendar, a type, a
+constraint, actual dates and a remaining duration — and those are **added to it**
+rather than copied into a second table that would immediately start to disagree.
+
+Genuinely new: the **calendar**, which nothing owned, and the **schedule run**.
+
+**A run is a record.** A programme is not a calculation, it is the statement the
+team works to and the one an extension of time is argued against. Recomputing on
+every read would mean the dates changed under whoever was reading them, and "what
+did the programme say on the 15th" would have no answer. The run stores its dates,
+its data date and the options it used — two runs of the same network under
+different out-of-sequence settings are two different statements.
+
+The view is **live** and reports the last run beside it. Both are needed: the run
+to argue against, the live one to decide what to do this week.
+
+Four commands, four doors on the Programme page: schedule the programme, set an
+activity's calendar and constraint, update its status, define a calendar. Plus
+the **Gantt** — bars on a date axis with the data date, the baseline underneath,
+milestones as diamonds and the longest path in the accent.
+
+#### Two defects the walkthrough found that no test would have
+
+**The breakdown was empty on real data.** The platform has *two* package concepts
+— `WorkPackage` with a code and `ScopePackage` with a name — and the demonstration
+project's activities reference the second. Reading only the first left every
+activity with no breakdown path and the roll-up table blank. Both are resolved
+now, and activities under neither are **counted**, because an empty breakdown and
+a project whose activities were never filed under anything look identical on
+screen and only one is somebody's job to fix.
+
+**Two records of "done" that disagree, with nothing saying so.** Every seeded
+activity is 100% complete in the field and has no actual dates. `recordProgress`
+is the field record — a foreman claiming against evidence — and it writes a
+percentage; the schedule needs a *date*. Without one the programme forecasts work
+that has already happened, and the roll-up rendered it as **"0 of 8 complete,
+100% done"** — the shape of the disagreement rather than a report of it.
+
+It is now a named finding with the consequence spelt out: every date after those
+activities is pessimistic, and an extension of time argued off this programme is
+unarguable in the wrong direction. It clears when the dates are recorded, so it
+is a thing to fix rather than a permanent scold.
+
+**Verified over HTTP and in a browser**: 8 activities dated on the flagship
+project with 7 on the longest path; two bank holidays moving the finish from
+2027-11-30 to **2027-12-02**, which is the entire point of calendars; F9 storing
+the run; all four refusals firing; and the Gantt rendering 8 bars, 7 driving, a
+data-date line, no `NaN` in any attribute and no page errors.
+
+#### Still not built
+
+Resources and levelling, activity codes as a grouping dimension, multiple float
+paths, and review-and-comment for every participant. The charts remain fitted to
+two panels rather than across the console.

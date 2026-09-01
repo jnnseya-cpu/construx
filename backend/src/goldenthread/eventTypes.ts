@@ -359,6 +359,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('INTERMEDIATION_DEFENCE_RECORDED', 'IntermediationPosition', 'UPDATE', 'COMMERCIAL', { creates: true }),
   def('DIRECT_APPROACH_RECORDED', 'IntermediationPosition', 'UPDATE', 'COMMERCIAL', { creates: true }),
   def('CLIENT_CONTACT_RECORDED', 'IntermediationPosition', 'UPDATE', 'COMMERCIAL', { creates: true }),
+
+  // The planner's programme: calendars, the attributes that make a task
+  // schedulable in dates, and the run that turns a network into a statement.
+  def('CALENDAR_DEFINED', 'Calendar', 'CREATE', 'PROJECT_CONTROL'),
+  def('CALENDAR_UPDATED', 'Calendar', 'UPDATE', 'PROJECT_CONTROL'),
+  def('ACTIVITY_ATTRIBUTES_SET', 'Task', 'UPDATE', 'PROJECT_CONTROL'),
+  def('ACTIVITY_STATUS_RECORDED', 'Task', 'UPDATE', 'PROJECT_CONTROL'),
+  def('SCHEDULE_RUN', 'ScheduleRun', 'CREATE', 'PROJECT_CONTROL'),
   def('CONTINGENCY_DRAWN', 'IntegrationAccount', 'APPROVE', 'COMMERCIAL'),
   def('RESPONSIBILITY_ASSIGNED', 'ResponsibilityItem', 'CREATE', 'PROJECT_CONTROL'),
   def('RESPONSIBILITY_REASSIGNED', 'ResponsibilityItem', 'UPDATE', 'PROJECT_CONTROL'),

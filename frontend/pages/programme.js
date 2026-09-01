@@ -1,6 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { badge, date, days, html, humanise, metric, modal, pct, positionReport, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
+import { ganttChart, sparkline } from '../lib/chart.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -12,10 +13,175 @@ import { blockedReason, can, draw, state } from '../app.js';
  * why" answerable: the inputs that produced the dates are all in the ledger.
  */
 
+/**
+ * The dated programme.
+ *
+ * Everything else on this page is computed on abstract day indices and answers
+ * "how long". This answers "what date", which is the only version of the
+ * question anybody on site can act on — and it is the only panel here that can
+ * show a bank holiday, a seven-day cure or an activity that started before its
+ * predecessor finished.
+ */
+function datedPanel(view) {
+  if (view?.error) {
+    return html`<div class="card" style="margin-bottom:14px">
+      <h2>The programme in dates</h2>
+      <p class="metric-sub">This could not be read: ${view.error.message}</p>
+    </div>`;
+  }
+  if (!view) return '';
+
+  const activities = view.activities ?? [];
+  const late = (view.constraintDriven ?? []).filter((entry) => entry.totalFloat < 0);
+
+  return html`
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">The programme in dates</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">${view.summary ?? ''}</p>
+
+      ${
+        activities.length === 0
+          ? ''
+          : html`
+            <div class="grid g4" style="padding:13px 17px 0">
+              <div class="card">
+                <h2>Finish</h2>
+                <div class="metric">${date(view.finishDate)}</div>
+                <div class="metric-sub">
+                  ${
+                    view.lastRun
+                      ? `Last run ${date(view.lastRun.ranAt)} at a data date of ${view.lastRun.options.dataDate}.`
+                      : 'Live calculation. The programme has never been formally run.'
+                  }
+                </div>
+              </div>
+              <div class="card">
+                <h2>On the longest path</h2>
+                <div class="metric">${(view.longestPath ?? []).length}</div>
+                <div class="metric-sub">
+                  The chain that moves the finish date. Not the same set as zero float once calendars and constraints
+                  are in play.
+                </div>
+              </div>
+              <div class="card">
+                <h2>Out of sequence</h2>
+                <div class="metric ${raw(view.outOfSequenceCount > 0 ? 'warn' : '')}">${view.outOfSequenceCount ?? 0}</div>
+                <div class="metric-sub">
+                  Started before a predecessor finished, scheduled under
+                  ${humanise(view.lastRun?.options?.outOfSequence ?? 'RETAINED_LOGIC').toLowerCase()}.
+                </div>
+              </div>
+              <div class="card">
+                <h2>Constraints not met</h2>
+                <div class="metric ${raw(late.length > 0 ? 'bad' : '')}">${late.length}</div>
+                <div class="metric-sub">
+                  Dates the current logic cannot reach. Reported as negative float rather than refused.
+                </div>
+              </div>
+            </div>
+
+            ${
+              (view.progressDisagreement ?? []).length > 0
+                ? html`<div style="padding:11px 17px 0"><div class="notice warn"><div>
+                    <b>${view.progressDisagreement.length} activity(ies) are recorded complete in the field and have no
+                    actual finish date.</b> The schedule needs a date, not a percentage — without one it is still
+                    forecasting work that is done, so every date after them is pessimistic and an extension of time
+                    argued off this programme is unarguable in the wrong direction.
+                    ${view.progressDisagreement.slice(0, 6).map((entry) => entry.activityCode).join(', ')}${
+                      view.progressDisagreement.length > 6 ? ` and ${view.progressDisagreement.length - 6} more` : ''
+                    }. Fix it with “Update activity status”.
+                  </div></div></div>`
+                : ''
+            }
+
+            <div style="padding:13px 17px 0">
+              ${ganttChart({
+                bars: activities.slice(0, 60).map((activity) => ({
+                  id: activity.id,
+                  name: `${activity.activityCode} ${activity.name}`,
+                  start: activity.earlyStart,
+                  finish: activity.earlyFinish,
+                  baselineStart: activity.baselineStart,
+                  baselineFinish: activity.baselineFinish,
+                  milestone: activity.type === 'START_MILESTONE' || activity.type === 'FINISH_MILESTONE',
+                  longestPath: activity.longestPath,
+                  critical: activity.critical,
+                  percentComplete: activity.percentComplete,
+                })),
+                dataDate: view.lastRun?.options?.dataDate,
+              })}
+              ${
+                activities.length > 60
+                  ? html`<p style="font-size:12px;color:var(--text-3);margin:6px 0 0">
+                      Showing the first 60 of ${activities.length} activities. A chart with six hundred bars is a grey
+                      block, not a programme.
+                    </p>`
+                  : ''
+              }
+            </div>
+
+            ${table({
+              headers: ['Code', 'Activity', 'Calendar', 'Start', 'Finish', 'Total float', 'Status'],
+              align: ['', '', '', '', '', 'num', ''],
+              rows: activities.slice(0, 60).map((activity) => [
+                activity.activityCode,
+                html`${activity.name}${activity.longestPath ? html` ${badge('Longest path', 'warn')}` : ''}${
+                  activity.outOfSequence ? html` ${badge('Out of sequence', 'bad')}` : ''
+                }${activity.constraint ? html` ${badge(humanise(activity.constraint.type), 'info')}` : ''}`,
+                activity.calendarId === 'STANDARD_5_DAY' ? '5-day' : activity.calendarId === 'CONTINUOUS_7_DAY' ? '7-day' : activity.calendarId,
+                date(activity.earlyStart),
+                date(activity.earlyFinish),
+                html`<span class="${raw(activity.totalFloat < 0 ? 'bad' : activity.totalFloat === 0 ? 'warn' : '')}">${activity.totalFloat}d</span>`,
+                badge(humanise(activity.status), activity.status === 'COMPLETE' ? 'ok' : activity.status === 'IN_PROGRESS' ? 'info' : 'neutral'),
+              ]),
+            })}
+
+            <h2 style="padding:15px 17px 0">The breakdown, rolled up</h2>
+            <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+              Progress weighted by duration, not counted. Counting activities makes a two-day snagging item worth as
+              much as a forty-day pour, and reports a branch as half done when a tenth of the work is.
+            </p>
+            ${
+              view.unassignedActivities > 0
+                ? html`<div style="padding:9px 17px 0"><div class="notice"><div>
+                    ${view.unassignedActivities} activity(ies) sit under no package, so they appear in no branch
+                    below. An empty breakdown and a project whose activities were never filed under anything look
+                    identical, and only one of them is somebody's job to fix.
+                  </div></div></div>`
+                : ''
+            }
+            ${table({
+              headers: ['Breakdown', 'Activities', 'Start', 'Finish', 'Worst float', 'Complete'],
+              align: ['', 'num', '', '', 'num', 'num'],
+              rows: (view.wbs ?? []).map((node) => [
+                node.path,
+                `${node.complete} of ${node.activities}`,
+                date(node.earlyStart),
+                date(node.earlyFinish),
+                html`<span class="${raw(node.totalFloat < 0 ? 'bad' : node.totalFloat === 0 ? 'warn' : '')}">${node.totalFloat}d</span>`,
+                `${node.percentComplete}%`,
+              ]),
+            })}
+
+            <h2 style="padding:15px 17px 0">Working calendars</h2>
+            ${table({
+              headers: ['Calendar', 'Working week', 'Exceptions'],
+              align: ['', 'num', 'num'],
+              rows: (view.calendars ?? []).map((calendar) => [
+                calendar.name,
+                `${calendar.workingDaysPerWeek} days`,
+                String(calendar.exceptions),
+              ]),
+            })}
+          `
+      }
+    </div>`;
+}
+
 export async function programme(root) {
   const projectId = state.session.projectId;
 
-  const [calc, bundle, ppc, logic, control] = await Promise.all([
+  const [calc, bundle, ppc, logic, control, dated] = await Promise.all([
     api.get(`/v1/projects/${projectId}/programme?contractualDurationDays=400`).catch((error) => ({ error })),
     entityBundle(projectId, ['Task', 'ProgrammeBaseline', 'DelayRiskSnapshot', 'Dependency', 'Constraint', 'LookaheadPlan', 'WorkPackage', 'ScopePackage']),
     // Percent Plan Complete and the constraints log. The critical path says
@@ -28,6 +194,11 @@ export async function programme(root) {
     // network nobody has checked.
     api.get(`/v1/projects/${projectId}/programme/logic`).catch((error) => ({ error })),
     api.get(`/v1/projects/${projectId}/programme/control`).catch((error) => ({ error })),
+    // The dated programme: every activity on its own calendar, against a data
+    // date, with the longest path traced back from what finishes last. The
+    // critical path above is computed on abstract day indices and answers a
+    // different question — this one answers "what date".
+    api.get(`/v1/projects/${projectId}/programme/schedule`).catch((error) => ({ error })),
   ]);
 
   // The simulated distribution, alongside the analytic figure rather than
@@ -72,11 +243,19 @@ export async function programme(root) {
             { id: 'clear', label: 'Clear constraint', permitted: can('LOOKAHEAD_CONSTRAINTS', 'U'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'U') },
           ]))}
           ${can('PROGRAMME_BASELINES', 'X') ? html`<button class="btn ghost" id="forecast">Run delay forecast</button>` : ''}
+          ${raw(commandBar([
+            { id: 'schedule', label: 'Schedule the programme', permitted: can('PROGRAMME_BASELINES', 'U'), reason: blockedReason('PROGRAMME_BASELINES', 'U') },
+            { id: 'activityAttributes', label: 'Activity calendar & constraint', permitted: can('PROGRAMME_BASELINES', 'U'), reason: blockedReason('PROGRAMME_BASELINES', 'U') },
+            { id: 'activityStatus', label: 'Update activity status', permitted: can('PROGRAMME_BASELINES', 'U'), reason: blockedReason('PROGRAMME_BASELINES', 'U') },
+            { id: 'calendar', label: 'Define a calendar', permitted: can('PROGRAMME_BASELINES', 'U'), reason: blockedReason('PROGRAMME_BASELINES', 'U') },
+          ]))}
           ${can('PROGRAMME_BASELINES', 'R') ? html`<button class="btn quiet" id="whatif">What-if analysis</button>` : ''}
         </div>
       </div>
 
       ${calc.error ? html`<div class="notice err">${calc.error.message}</div>` : ''}
+
+      ${datedPanel(dated)}
 
       ${
         sim
@@ -394,6 +573,217 @@ export async function programme(root) {
   });
 
   const COMMANDS = {
+    schedule: {
+      title: 'Schedule the programme',
+      intent:
+        'Press F9 and keep the answer. The data date is the line between what happened and what is forecast: nothing ' +
+        'unstarted is scheduled before it, and running work is forecast from it on what remains rather than on what ' +
+        'was planned. The out-of-sequence setting changes the completion date, so the run records which was used.',
+      path: () => `/v1/projects/${projectId}/programme/run`,
+      submitLabel: 'Schedule it',
+      fields: [
+        { name: 'dataDate', label: 'Data date', type: 'date', hint: 'Progress is true up to this day and forecast after it.' },
+        { name: 'projectStart', label: 'Project start', type: 'date', required: false, hint: 'Where the programme begins if nothing constrains it earlier.' },
+        {
+          name: 'outOfSequence',
+          label: 'Work that started before its predecessor finished',
+          type: 'select',
+          options: [
+            { value: 'RETAINED_LOGIC', label: 'Retained logic — the remainder still waits for the predecessor' },
+            { value: 'PROGRESS_OVERRIDE', label: 'Progress override — the spent logic no longer holds it back' },
+          ],
+          hint: 'Both are defensible and they give different completion dates. The run records which produced this one.',
+        },
+        {
+          name: 'lagCalendar',
+          label: 'Calendar that measures relationship lag',
+          type: 'select',
+          options: [
+            { value: 'PREDECESSOR', label: 'The predecessor’s calendar' },
+            { value: 'SUCCESSOR', label: 'The successor’s calendar' },
+            { value: 'CONTINUOUS', label: 'Seven-day — a lag that counts weekends' },
+          ],
+          hint: 'A two-day lag means something different on a five-day calendar than on a seven-day one.',
+        },
+      ],
+      transform: (v) => ({
+        dataDate: v.dataDate,
+        ...(v.projectStart ? { projectStart: v.projectStart } : {}),
+        outOfSequence: v.outOfSequence,
+        lagCalendar: v.lagCalendar,
+      }),
+    },
+    activityAttributes: {
+      title: 'Activity calendar and constraint',
+      intent:
+        'What makes an activity schedulable in dates. A cure on a seven-day calendar runs through the weekend the ' +
+        'site does not work; a milestone marks a moment and has no duration whatever its record says. A constraint ' +
+        'that the logic cannot meet is scheduled anyway and reported as negative float, which is what a planner ' +
+        'needs to see rather than a rejection.',
+      path: () => `/v1/projects/${projectId}/programme/activity`,
+      submitLabel: 'Apply',
+      fields: [
+        {
+          name: 'taskId',
+          label: 'Activity',
+          type: 'select',
+          options: (dated?.activities ?? []).map((activity) => ({
+            value: activity.id,
+            label: `${activity.activityCode} ${activity.name}`,
+          })),
+        },
+        {
+          name: 'type',
+          label: 'Activity type',
+          type: 'select',
+          options: [
+            { value: 'TASK_DEPENDENT', label: 'Task' },
+            { value: 'START_MILESTONE', label: 'Start milestone' },
+            { value: 'FINISH_MILESTONE', label: 'Finish milestone' },
+            { value: 'RESOURCE_DEPENDENT', label: 'Resource dependent' },
+            { value: 'LEVEL_OF_EFFORT', label: 'Level of effort' },
+            { value: 'WBS_SUMMARY', label: 'WBS summary' },
+          ],
+        },
+        {
+          name: 'calendarId',
+          label: 'Calendar',
+          type: 'select',
+          // From the calendars the project actually has, so the form cannot
+          // offer one that would be refused.
+          options: (dated?.calendars ?? []).map((calendar) => ({
+            value: calendar.id,
+            label: `${calendar.name} — ${calendar.workingDaysPerWeek} day week`,
+          })),
+        },
+        {
+          name: 'constraintType',
+          label: 'Constraint',
+          type: 'select',
+          required: false,
+          options: [
+            { value: '', label: 'None' },
+            { value: 'CLEAR', label: 'Remove the existing constraint' },
+            { value: 'START_ON', label: 'Start on' },
+            { value: 'START_ON_OR_AFTER', label: 'Start on or after' },
+            { value: 'START_ON_OR_BEFORE', label: 'Start on or before' },
+            { value: 'FINISH_ON', label: 'Finish on' },
+            { value: 'FINISH_ON_OR_AFTER', label: 'Finish on or after' },
+            { value: 'FINISH_ON_OR_BEFORE', label: 'Finish on or before' },
+            { value: 'MANDATORY_START', label: 'Mandatory start — overrides the logic' },
+            { value: 'MANDATORY_FINISH', label: 'Mandatory finish — overrides the logic' },
+            { value: 'AS_LATE_AS_POSSIBLE', label: 'As late as possible' },
+          ],
+          hint: 'The two mandatory types break the network rather than bounding it. A programme full of them is a bar chart.',
+        },
+        { name: 'constraintDate', label: 'Constraint date', type: 'date', required: false },
+      ],
+      transform: (v) => ({
+        taskId: v.taskId,
+        type: v.type,
+        calendarId: v.calendarId,
+        // Leaving the constraint alone, clearing it and setting one are three
+        // different intentions, and the middle one has to be sayable.
+        ...(v.constraintType === 'CLEAR'
+          ? { constraint: null }
+          : v.constraintType && v.constraintDate
+            ? { constraint: { type: v.constraintType, date: v.constraintDate } }
+            : {}),
+      }),
+    },
+    activityStatus: {
+      title: 'Update activity status',
+      intent:
+        'The planner’s monthly update: actual dates and what is left. A percentage is what gets reported and a ' +
+        'remaining duration is what schedules, and the two disagree constantly — an activity can be ninety per cent ' +
+        'complete with three weeks left, and only one of those numbers moves the finish date.',
+      path: () => `/v1/projects/${projectId}/programme/activity-status`,
+      submitLabel: 'Record it',
+      fields: [
+        {
+          name: 'taskId',
+          label: 'Activity',
+          type: 'select',
+          options: (dated?.activities ?? []).map((activity) => ({
+            value: activity.id,
+            label: `${activity.activityCode} ${activity.name} — ${humanise(activity.status).toLowerCase()}`,
+          })),
+        },
+        { name: 'actualStart', label: 'Actual start', type: 'date', required: false },
+        { name: 'actualFinish', label: 'Actual finish', type: 'date', required: false, hint: 'A finish with no start is refused: the schedule could not say how long the work took.' },
+        { name: 'remainingDuration', label: 'Working days remaining', type: 'number', required: false, step: '1' },
+        { name: 'percentComplete', label: 'Percent complete', type: 'number', required: false, step: '1' },
+      ],
+      transform: (v) => ({
+        taskId: v.taskId,
+        ...(v.actualStart ? { actualStart: v.actualStart } : {}),
+        ...(v.actualFinish ? { actualFinish: v.actualFinish } : {}),
+        ...(v.remainingDuration !== '' && v.remainingDuration !== undefined ? { remainingDuration: Number(v.remainingDuration) } : {}),
+        ...(v.percentComplete !== '' && v.percentComplete !== undefined ? { percentComplete: Number(v.percentComplete) } : {}),
+      }),
+    },
+    calendar: {
+      title: 'Define a working calendar',
+      intent:
+        'Which days the site works, and the days it does not. A bank holiday taken out moves every date after it; a ' +
+        'Saturday pour put in pulls them back. Redefining a calendar by its own id replaces it, because a correction ' +
+        'is not a new calendar and two differing by one holiday is how half a programme ends up on the wrong one.',
+      path: () => `/v1/projects/${projectId}/programme/calendar`,
+      submitLabel: 'Define it',
+      fields: [
+        { name: 'id', label: 'Calendar id', type: 'text', placeholder: 'STANDARD_5_DAY' },
+        { name: 'name', label: 'Name', type: 'text', placeholder: 'Five-day week' },
+        {
+          name: 'week',
+          label: 'Working week',
+          type: 'select',
+          options: [
+            { value: '5', label: 'Monday to Friday' },
+            { value: '6', label: 'Monday to Saturday' },
+            { value: '7', label: 'Every day' },
+          ],
+        },
+        {
+          name: 'exceptionDate',
+          label: 'Exception date',
+          type: 'date',
+          required: false,
+          hint: 'One at a time. A holiday out, or an extra shift in.',
+        },
+        {
+          name: 'exceptionWorking',
+          label: 'That day is',
+          type: 'select',
+          required: false,
+          options: [
+            { value: 'no', label: 'Not worked — a holiday or shutdown' },
+            { value: 'yes', label: 'Worked — an extra shift' },
+          ],
+        },
+        { name: 'exceptionReason', label: 'Why', type: 'text', required: false, placeholder: 'August bank holiday' },
+      ],
+      transform: (v) => ({
+        id: v.id,
+        name: v.name,
+        workingWeekdays:
+          v.week === '7'
+            ? [true, true, true, true, true, true, true]
+            : v.week === '6'
+              ? [false, true, true, true, true, true, true]
+              : [false, true, true, true, true, true, false],
+        ...(v.exceptionDate
+          ? {
+              exceptions: [
+                {
+                  date: v.exceptionDate,
+                  working: v.exceptionWorking === 'yes',
+                  ...(v.exceptionReason ? { reason: v.exceptionReason } : {}),
+                },
+              ],
+            }
+          : {}),
+      }),
+    },
     task: {
       title: 'Create activity',
       intent: 'Duration drives the critical path. Optimistic and pessimistic durations are what make the P80 forecast meaningful rather than a single guess.',

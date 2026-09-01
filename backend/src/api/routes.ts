@@ -63,6 +63,7 @@ import * as control from '../domain/control.ts';
 import * as radar from '../domain/radar.ts';
 import * as integrator from '../domain/integrator.ts';
 import * as intermediation from '../domain/intermediation.ts';
+import * as programme from '../domain/programme.ts';
 import * as responsibility from '../domain/responsibility.ts';
 import * as sitecapture from '../domain/sitecapture.ts';
 import * as sitelayout from '../domain/sitelayout.ts';
@@ -4427,6 +4428,121 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => integrator.recordTradingTerms(projectContext(platform, ctx), body(ctx)),
+  },
+  // ------------------------------------------------------------- the programme
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/programme/schedule',
+    description: 'The programme scheduled in dates: activities, float, the longest path and the breakdown roll-up',
+    handler: (platform, ctx) =>
+      programme.programmeView(
+        projectContext(platform, ctx),
+        ctx.query.get('asAt') ? String(ctx.query.get('asAt')) : undefined,
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/calendar',
+    description: 'Define a working calendar — the working week, plus the holidays and extra shifts that move dates',
+    schema: {
+      type: 'object',
+      required: ['id', 'name', 'workingWeekdays'],
+      properties: {
+        id: stringField,
+        name: stringField,
+        // Seven booleans, Sunday first, matching Date#getUTCDay. Six or eight is
+        // a caller sending something else, and guessing which day they meant
+        // would move every date on the programme.
+        workingWeekdays: { type: 'array', minItems: 7, maxItems: 7, items: { type: 'boolean' } },
+        exceptions: {
+          type: 'array',
+          maxItems: 400,
+          items: {
+            type: 'object',
+            required: ['date', 'working'],
+            properties: { date: stringField, working: { type: 'boolean' }, reason: { type: 'string' } },
+            additionalProperties: false,
+          },
+        },
+        hoursPerDay: { type: 'number', exclusiveMinimum: 0, maximum: 24 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => programme.defineCalendar(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/activity',
+    description: 'Give an activity its calendar, type and constraint, so it can be scheduled in dates',
+    schema: {
+      type: 'object',
+      required: ['taskId'],
+      properties: {
+        taskId: stringField,
+        type: {
+          type: 'string',
+          enum: ['TASK_DEPENDENT', 'RESOURCE_DEPENDENT', 'START_MILESTONE', 'FINISH_MILESTONE', 'LEVEL_OF_EFFORT', 'WBS_SUMMARY'],
+        },
+        calendarId: stringField,
+        // Null clears the constraint; omitting the field leaves it alone, so a
+        // planner changing a calendar does not silently drop a negotiated date.
+        constraint: {
+          type: ['object', 'null'],
+          required: ['type', 'date'],
+          properties: {
+            type: {
+              type: 'string',
+              enum: [
+                'START_ON', 'START_ON_OR_AFTER', 'START_ON_OR_BEFORE',
+                'FINISH_ON', 'FINISH_ON_OR_AFTER', 'FINISH_ON_OR_BEFORE',
+                'MANDATORY_START', 'MANDATORY_FINISH', 'AS_LATE_AS_POSSIBLE',
+              ],
+            },
+            date: stringField,
+          },
+          additionalProperties: false,
+        },
+        wbsPath: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => programme.setActivityAttributes(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/activity-status',
+    description: 'Record an activity’s actual dates and what is left of it, as a planner transcribes a marked-up programme',
+    schema: {
+      type: 'object',
+      required: ['taskId'],
+      properties: {
+        taskId: stringField,
+        actualStart: stringField,
+        actualFinish: stringField,
+        remainingDuration: { type: 'number', minimum: 0, maximum: 9999 },
+        percentComplete: { type: 'number', minimum: 0, maximum: 100 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => programme.recordActivityStatus(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/run',
+    description: 'Schedule the programme and keep the answer, with the options it was run under',
+    schema: {
+      type: 'object',
+      required: ['dataDate'],
+      properties: {
+        dataDate: stringField,
+        projectStart: stringField,
+        outOfSequence: { type: 'string', enum: ['RETAINED_LOGIC', 'PROGRESS_OVERRIDE'] },
+        lagCalendar: { type: 'string', enum: ['PREDECESSOR', 'SUCCESSOR', 'CONTINUOUS'] },
+        defaultCalendarId: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => programme.runSchedule(projectContext(platform, ctx), body(ctx)),
   },
   // --------------------------------------------- staying between client and panel
   {
