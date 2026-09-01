@@ -371,7 +371,7 @@ img, svg { max-width: 100%; }
 .chain-row .join { width: 10px; height: 1px; background: var(--line-strong); }
 
 .hero-stats { position: relative; z-index: 1; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: rgba(0, 0, 0, .28); }
-.hero-stats .wrap { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; padding-block: 20px; }
+.hero-stats .wrap { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; padding-block: 20px; }
 /* Hairline between the columns rather than a gap. A rule says these four
    belong to one table; whitespace says they are four unrelated boasts. */
 .hero-stats .wrap > div { padding: 2px 26px; border-left: 1px solid var(--line); }
@@ -729,6 +729,7 @@ img, svg { max-width: 100%; }
   .proof-grid, .cards.g3, .cards.g2 { grid-template-columns: 1fr; }
   .foot-grid { grid-template-columns: 1fr 1fr; }
   .hero-stats .wrap { grid-template-columns: 1fr 1fr; row-gap: 20px; }
+  /* Three cells over two columns: the third starts a row, so it loses its rule. */
   .hero-stats .wrap > div:nth-child(3) { padding-left: 0; border-left: 0; }
 }
 

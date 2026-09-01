@@ -12396,7 +12396,9 @@ are untouched.
 - Four enormous numerals across the foot of the hero became a **specification
   strip**: label, then value in mono, hairline between each. These are not a
   growth metric, they are the dimensions of a system, and a dimension is read
-  after the thing it dimensions.
+  after the thing it dimensions. Three of them, not four: the
+  communication-event count was dropped — a number that means nothing to a buyer
+  and competes with the three that do.
 
 **A documentary spine on the prose pages.** A centred 760px column of headings
 and paragraphs is what every generated documentation page looks like, and it is

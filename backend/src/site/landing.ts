@@ -1,6 +1,5 @@
 import { esc } from '../messaging/render.ts';
 import { EVENT_TYPES } from '../goldenthread/eventTypes.ts';
-import { NOTIFICATION_EVENTS } from '../notifications/catalogue.ts';
 import { ROUTES } from '../api/routes.ts';
 import { page } from './layout.ts';
 import { MEDIA_SLOTS, slotFile } from './media.ts';
@@ -82,7 +81,6 @@ function figure(id: string): string {
 export function landing(): string {
   const routes = ROUTES.length;
   const ledgerEvents = EVENT_TYPES.length;
-  const commsEvents = NOTIFICATION_EVENTS.length;
 
   return page(
     {
@@ -254,7 +252,6 @@ export function landing(): string {
     <div class="wrap">
       <div><span>Event catalogue</span><b>${ledgerEvents}</b><em>closed, versioned</em></div>
       <div><span>API surface</span><b>${routes}</b><em>documented endpoints</em></div>
-      <div><span>Communication events</span><b>${commsEvents}</b><em>every one on the record</em></div>
       <div><span>Runtime dependencies</span><b>0</b><em>nothing to patch at 3am</em></div>
     </div>
   </div>
