@@ -52,12 +52,13 @@ const FIT_FIELDS = [
 const SCALE_HINT = '0 = not at all · 2 = partly · 4 = strongly. Score what the evidence says, not what would be convenient.';
 
 export async function siteservices(root) {
-  const [position, readiness, structure, tower, factory] = await Promise.all([
+  const [position, readiness, structure, tower, factory, live] = await Promise.all([
     api.get(`/v1/projects/${state.session.projectId}/site-services/appointment`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/brief`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/sbs`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/mobilisation`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/procurement`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/operations`).catch((error) => ({ error })),
   ]);
 
   if (position.error) {
@@ -231,6 +232,54 @@ export async function siteservices(root) {
             permitted: can('SITE_SERVICES', 'A'),
             reason: blockedReason('SITE_SERVICES', 'A'),
           },
+          {
+            id: 'raise',
+            label: 'Raise a service event',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'progress',
+            label: 'Move an event on',
+            permitted: can('SITE_SERVICES', 'U'),
+            reason: blockedReason('SITE_SERVICES', 'U'),
+          },
+          {
+            id: 'evidence',
+            label: 'Record closure evidence',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'closeevent',
+            label: 'Close an event',
+            permitted: can('SITE_SERVICES', 'A'),
+            reason: blockedReason('SITE_SERVICES', 'A'),
+          },
+          {
+            id: 'pause',
+            label: 'Pause the response clock',
+            permitted: can('SITE_SERVICES', 'A'),
+            reason: blockedReason('SITE_SERVICES', 'A'),
+          },
+          {
+            id: 'resume',
+            label: 'Resume the clock',
+            permitted: can('SITE_SERVICES', 'U'),
+            reason: blockedReason('SITE_SERVICES', 'U'),
+          },
+          {
+            id: 'reroute',
+            label: 'Route a request to change',
+            permitted: can('SITE_SERVICES', 'U'),
+            reason: blockedReason('SITE_SERVICES', 'U'),
+          },
+          {
+            id: 'period',
+            label: 'Record a service period',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
         ]),
       })}
 
@@ -394,6 +443,8 @@ export async function siteservices(root) {
       ${readiness.error ? refusal('Brief readiness', readiness.error) : briefCard(readiness)}
 
       ${structure.error ? refusal('The system breakdown structure', structure.error) : sbsCard(structure)}
+
+      ${live.error ? refusal('Live operations', live.error) : operationsCard(live)}
 
       ${factory.error ? refusal('The procurement factory', factory.error) : factoryCard(factory)}
 
@@ -880,6 +931,309 @@ export async function siteservices(root) {
       });
       if (result) {
         toast('Declaration recorded', result.moves, 'warn');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'raise') {
+      const systems = (structure.error ? [] : structure.systems).map((system) => ({
+        value: system.id,
+        label: `${system.label} — ${system.zone}`,
+      }));
+      if (systems.length === 0) {
+        toast('Nothing composed', 'An event against nothing cannot be sized, priced or learned from.', 'warn');
+        return;
+      }
+      const result = await command({
+        title: 'Raise a service event',
+        intent:
+          'The sense step. What happened, where it came from, and how bad it is — and the severity decides what the ' +
+          'platform does about it, not just what colour it is. A P1 gets an immediate acknowledgement, an incident ' +
+          'command and a temporary control it cannot be closed without.',
+        path: `/v1/projects/${state.session.projectId}/site-services/event`,
+        submitLabel: 'Raise',
+        fields: [
+          { name: 'systemId', label: 'Against which service', type: 'select', options: systems },
+          {
+            name: 'defectType',
+            label: 'What has gone wrong',
+            type: 'select',
+            options: (live.error ? [] : live.defectTypes).map((entry) => ({
+              value: entry.id,
+              label: `${entry.label} — closes on ${entry.closure.join(', ').toLowerCase().replaceAll('_', ' ')}`,
+            })),
+          },
+          {
+            name: 'severity',
+            label: 'Severity',
+            type: 'select',
+            options: (live.error ? [] : live.severities).map((entry) => ({
+              value: entry.id,
+              label: `${entry.id} ${entry.label} — ${entry.definition}`,
+            })),
+          },
+          { name: 'summary', label: 'What happened', type: 'textarea' },
+          {
+            name: 'source',
+            label: 'Where it came from',
+            hint: 'The call, the inspection, the meter, the roster. An event with no source reconciles against nothing.',
+          },
+          { name: 'zone', label: 'Zone', required: false, hint: 'Leave blank for the whole service' },
+        ],
+      });
+      if (result) {
+        toast('Raised', `${result.reference} — ${result.severity}`, result.severity === 'P1' ? 'bad' : 'warn');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'progress' || which === 'evidence' || which === 'closeevent' || which === 'pause' || which === 'resume' || which === 'reroute') {
+      const openEvents = (live.error ? [] : live.events).filter((entry) => entry.status !== 'CLOSED');
+      const options = openEvents.map((entry) => ({
+        value: entry.id,
+        label: `${entry.reference} ${entry.defectLabel} (${entry.severity}, ${entry.status.replaceAll('_', ' ').toLowerCase()})`,
+      }));
+      if (options.length === 0) {
+        toast('Nothing open', 'Every service event on this project is closed.', 'ok');
+        return;
+      }
+
+      if (which === 'progress') {
+        const result = await command({
+          title: 'Move an event on',
+          intent:
+            'Acknowledged, then attended, then temporarily restored — in that order, because the response clock is ' +
+            'measured between them. Attendance recorded before acknowledgement makes the response time read zero, ' +
+            'which is how a response measure stops measuring anything.',
+          path: `/v1/projects/${state.session.projectId}/site-services/event/progress`,
+          submitLabel: 'Record it',
+          fields: [
+            { name: 'eventId', label: 'Which event', type: 'select', options },
+            {
+              name: 'to',
+              label: 'To',
+              type: 'select',
+              options: [
+                { value: 'ACKNOWLEDGED', label: 'Acknowledged — somebody owns it' },
+                { value: 'ATTENDED', label: 'Attended — somebody is there' },
+                { value: 'TEMPORARILY_RESTORED', label: 'Temporarily restored — there is an interim measure' },
+              ],
+            },
+            {
+              name: 'note',
+              label: 'The temporary control',
+              type: 'textarea',
+              required: false,
+              hint: 'Required when temporarily restoring. The next shift has to know what they are relying on.',
+            },
+          ],
+        });
+        if (result) {
+          toast('Recorded', `${result.reference} — ${result.status.replaceAll('_', ' ').toLowerCase()}`, 'ok');
+          await again();
+        }
+        return;
+      }
+
+      if (which === 'evidence') {
+        const chosen = openEvents[0];
+        const result = await command({
+          title: 'Record closure evidence',
+          intent:
+            'The verify step, and the one every service desk skips. The defect type decides which kinds count — a ' +
+            'photograph of a tap proves nothing about the water temperature, and a supplier signing off their own ' +
+            'cleaning is not an inspection. Evidence of a kind the defect does not close on is refused.',
+          path: `/v1/projects/${state.session.projectId}/site-services/event/evidence`,
+          submitLabel: 'Record',
+          fields: [
+            { name: 'eventId', label: 'Which event', type: 'select', options },
+            {
+              name: 'kind',
+              label: 'Kind',
+              type: 'select',
+              options: (chosen?.closure ?? []).map((entry) => ({
+                value: entry.kind,
+                label: `${entry.kind.replaceAll('_', ' ').toLowerCase()}${entry.satisfied ? ' — already held' : ''}`,
+              })),
+              hint: 'The kinds listed are the ones the first open event needs; another event may need different ones.',
+            },
+            { name: 'reference', label: 'Reference', hint: 'The photograph, the reading, the sheet. Never a tick.' },
+          ],
+        });
+        if (result) {
+          toast('Recorded', `${result.reference} — ${result.evidence.length} pieces held`, 'ok');
+          await again();
+        }
+        return;
+      }
+
+      if (which === 'closeevent') {
+        const result = await command({
+          title: 'Close an event',
+          intent:
+            'Refused while any evidence the defect type demands is missing, while a critical event has no temporary ' +
+            'control recorded, or while the clock is still stopped. A closure is the moment the service is declared ' +
+            'restored, and it is the last moment any of that is cheap to notice.',
+          path: `/v1/projects/${state.session.projectId}/site-services/event/close`,
+          submitLabel: 'Close',
+          fields: [
+            { name: 'eventId', label: 'Which event', type: 'select', options },
+            { name: 'note', label: 'What was actually done', type: 'textarea' },
+          ],
+        });
+        if (result) {
+          toast('Closed', result.reference, 'ok');
+          await again();
+        }
+        return;
+      }
+
+      if (which === 'pause') {
+        const result = await command({
+          title: 'Pause the response clock',
+          intent:
+            'The clock is what the service credit is calculated from, so a pause needs a reason and the customer who ' +
+            'agreed it. A P1 clock does not pause at all: the pause on a critical event is always agreed in the room ' +
+            'where the pressure is, and recording it would measure the pressure rather than the response.',
+          path: `/v1/projects/${state.session.projectId}/site-services/event/pause`,
+          submitLabel: 'Pause',
+          fields: [
+            {
+              name: 'eventId',
+              label: 'Which event',
+              type: 'select',
+              options: options.filter((entry) => !entry.label.includes('(P1')),
+            },
+            { name: 'reason', label: 'Why it is stopping', type: 'textarea' },
+            { name: 'approvedBy', label: 'Approved by', hint: 'The customer, by name' },
+          ],
+        });
+        if (result) {
+          toast('Paused', `${result.reference} — ${result.pauses.at(-1).approvedBy}`, 'warn');
+          await again();
+        }
+        return;
+      }
+
+      if (which === 'resume') {
+        const paused = openEvents.filter((entry) => entry.pauses.some((pause) => !pause.to));
+        if (paused.length === 0) {
+          toast('Nothing paused', 'No response clock is stopped.', 'ok');
+          return;
+        }
+        const result = await command({
+          title: 'Resume the clock',
+          intent: 'The clock starts again from now, and the paused minutes come out of the response time rather than out of the record.',
+          path: `/v1/projects/${state.session.projectId}/site-services/event/resume`,
+          submitLabel: 'Resume',
+          fields: [
+            {
+              name: 'eventId',
+              label: 'Which event',
+              type: 'select',
+              options: paused.map((entry) => ({ value: entry.id, label: `${entry.reference} ${entry.defectLabel}` })),
+            },
+          ],
+        });
+        if (result) {
+          toast('Resumed', result.reference, 'ok');
+          await again();
+        }
+        return;
+      }
+
+      const requests = openEvents.filter((entry) => entry.severity === 'P4' && !entry.routedToChange);
+      if (requests.length === 0) {
+        toast('No requests', 'Nothing open is a P4. A defect routed to change control is a defect nobody fixed.', 'warn');
+        return;
+      }
+      const result = await command({
+        title: 'Route a request to change control',
+        intent:
+          'A move, add or change is not a failure of the service and does not belong in the availability figure. ' +
+          'Fulfilled as if it were a defect it is scope delivered for nothing.',
+        path: `/v1/projects/${state.session.projectId}/site-services/event/route`,
+        submitLabel: 'Route it',
+        fields: [
+          {
+            name: 'eventId',
+            label: 'Which request',
+            type: 'select',
+            options: requests.map((entry) => ({ value: entry.id, label: `${entry.reference} ${entry.summary}` })),
+          },
+          { name: 'reason', label: 'What makes this a change rather than an entitlement', type: 'textarea' },
+        ],
+      });
+      if (result) {
+        toast('Routed', result.reference, 'warn');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'period') {
+      const systems = (structure.error ? [] : structure.systems).map((system) => ({
+        value: system.id,
+        label: `${system.label} — ${system.zone}`,
+      }));
+      if (systems.length === 0) {
+        toast('Nothing composed', 'There is no service to measure availability against.', 'warn');
+        return;
+      }
+      const result = await command({
+        title: 'Record a service period',
+        intent:
+          'Available minutes over required minutes. Degraded minutes are a separate figure and are never counted as ' +
+          'available. A planned exclusion counts only if it was approved before the outage began — approved ' +
+          'afterwards it is a failure with a note on it, and counting it as planned is the commonest way an ' +
+          'availability figure stops meaning anything.',
+        path: `/v1/projects/${state.session.projectId}/site-services/period`,
+        submitLabel: 'Record',
+        transform: (values) => ({
+          systemId: values.systemId,
+          from: values.from,
+          to: values.to,
+          requiredMinutes: Number(values.requiredMinutes),
+          availableMinutes: Number(values.availableMinutes),
+          ...(values.degradedMinutes ? { degradedMinutes: Number(values.degradedMinutes) } : {}),
+          ...(values.exclusionFrom
+            ? {
+                plannedExclusions: [
+                  {
+                    from: values.exclusionFrom,
+                    to: values.exclusionTo,
+                    reason: values.exclusionReason,
+                    approvedAt: values.exclusionApprovedAt,
+                    approvedBy: values.exclusionApprovedBy,
+                  },
+                ],
+              }
+            : {}),
+        }),
+        fields: [
+          { name: 'systemId', label: 'Which service', type: 'select', options: systems },
+          { name: 'from', label: 'Period from', type: 'date' },
+          { name: 'to', label: 'Period to', type: 'date' },
+          { name: 'requiredMinutes', label: 'Minutes required', type: 'number' },
+          { name: 'availableMinutes', label: 'Minutes available', type: 'number' },
+          { name: 'degradedMinutes', label: 'Minutes degraded', type: 'number', required: false },
+          { name: 'exclusionFrom', label: 'Planned exclusion from', type: 'date', required: false },
+          { name: 'exclusionTo', label: 'Planned exclusion to', type: 'date', required: false },
+          { name: 'exclusionReason', label: 'Exclusion reason', required: false },
+          {
+            name: 'exclusionApprovedAt',
+            label: 'Exclusion approved on',
+            type: 'date',
+            required: false,
+            hint: 'Must be before the outage started, or it is not a planned exclusion.',
+          },
+          { name: 'exclusionApprovedBy', label: 'Exclusion approved by', required: false },
+        ],
+      });
+      if (result) {
+        toast('Recorded', `${result.window.availableMinutes} of ${result.window.requiredMinutes} minutes`, 'ok');
         await again();
       }
       return;
@@ -1703,6 +2057,173 @@ function sbsCard(structure) {
             ${demand.notDerivable.map((entry) => `${entry.label} (needs ${entry.missing.join(', ')})`).join(' · ')}
           </div>`
         : ''}
+    </div>
+  `;
+}
+
+const SEVERITY_TONE = { P1: 'bad', P2: 'warn', P3: 'info', P4: '' };
+const EVENT_TONE = { OPEN: 'bad', ACKNOWLEDGED: 'warn', ATTENDED: 'warn', TEMPORARILY_RESTORED: 'info', CLOSED: 'ok' };
+
+/**
+ * Live operations, and the one number that is not on it.
+ *
+ * There is no "tickets closed this week". Every helpdesk dashboard leads with
+ * one and it is the least informative figure in the building: it counts how
+ * quickly people pressed buttons. What is here instead is what is *blocking*
+ * each closure — the evidence the defect type demands and does not have — so
+ * the screen answers "why is this still open" rather than "how many are".
+ *
+ * Availability is shown twice on purpose. Once net of the exclusions the
+ * customer approved before the outage, and once raw. The gap between the two is
+ * the size of the argument about what was actually planned, and a screen
+ * showing only the first is a screen the supplier writes.
+ */
+function operationsCard(live) {
+  const { events, open, severities, kpis, availability, patterns, measuredUnder, steps } = live;
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>Live operations</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">
+        ${open} event${open === 1 ? '' : 's'} open of ${events.length}. The loop is
+        ${steps.map((step) => step.label.toLowerCase()).join(' · ')} — and the fourth is the one that decides whether
+        any of the rest meant anything, so nothing closes on a tick.
+      </div>
+
+      ${patterns.length > 0
+        ? html`<div style="margin-bottom:14px">
+            ${patterns.map(
+              (pattern) => html`<div class="notice warn" style="margin-bottom:8px">
+                <div><b>${pattern.label} — ${pattern.zone}.</b> ${pattern.statement}</div>
+              </div>`,
+            )}
+          </div>`
+        : ''}
+
+      ${availability.length > 0
+        ? html`<div style="margin-bottom:14px">
+            <h2>Availability</h2>
+            <div class="metric-sub" style="margin:6px 0 10px">
+              Net of exclusions the customer approved <b>before</b> the outage, and raw beside it. Degraded minutes are
+              counted separately and never as available.
+            </div>
+            ${table({
+              headers: ['System', 'Net', 'Raw', 'Required', 'Excluded', 'Degraded', 'Periods'],
+              align: ['', 'num', 'num', 'num', 'num', 'num', 'num'],
+              rows: availability.map((entry) => [
+                html`${entry.label}<div class="metric-sub">${entry.zone}</div>`,
+                entry.periods > 0 ? pct(entry.availabilityPercent) : html`<span class="metric-sub">no periods</span>`,
+                entry.periods > 0 ? pct(entry.rawPercent) : '—',
+                entry.requiredMinutes,
+                entry.excludedMinutes,
+                entry.degradedMinutes > 0 ? badge(String(entry.degradedMinutes), 'warn') : '0',
+                entry.periods,
+              ]),
+            })}
+          </div>`
+        : ''}
+
+      ${events.length > 0
+        ? events.map(
+            (event) => html`<div style="padding:12px 0;border-top:1px solid var(--line)">
+              <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+                <b>${event.reference} — ${event.defectLabel}</b>
+                <span>
+                  ${badge(event.severityLabel, SEVERITY_TONE[event.severity] ?? 'info')}
+                  ${badge(event.status.replaceAll('_', ' ').toLowerCase(), EVENT_TONE[event.status] ?? 'info')}
+                  ${event.acknowledgementBreached ? badge('acknowledgement late', 'bad') : ''}
+                </span>
+              </div>
+              <div class="metric-sub" style="margin-top:4px">
+                ${event.zone} · ${event.summary} · from ${event.source} · open ${event.minutesOpen} minutes${
+                  event.pausedMinutes > 0 ? `, ${event.pausedMinutes} of them paused` : ''
+                }
+              </div>
+              ${event.temporaryControl
+                ? html`<div class="metric-sub ok" style="margin-top:4px">
+                    <b>Temporary control.</b> ${event.temporaryControl}
+                  </div>`
+                : ''}
+              ${event.routedToChange
+                ? html`<div class="metric-sub" style="margin-top:4px"><b>Routed to change.</b> ${event.routedToChange}</div>`
+                : ''}
+              ${event.pauses.map(
+                (pause) => html`<div class="metric-sub warn" style="margin-top:4px">
+                  Clock paused ${date(pause.from)}${pause.to ? ` to ${date(pause.to)}` : ' — still stopped'} —
+                  ${pause.reason}, approved by ${pause.approvedBy}
+                </div>`,
+              )}
+              <div class="metric-sub" style="margin-top:6px">
+                ${event.closure.map(
+                  (entry) => html`${badge(
+                    entry.kind.replaceAll('_', ' ').toLowerCase(),
+                    entry.satisfied ? 'ok' : 'bad',
+                  )}
+                  ${entry.reference ? html`<span class="metric-sub">${entry.reference}</span> ` : ''}`,
+                )}
+              </div>
+              ${event.blocking.length > 0
+                ? html`<div class="metric-sub bad" style="margin-top:4px">
+                    <b>Cannot close:</b> ${event.blocking.join(' · ')}
+                  </div>`
+                : ''}
+              ${event.behaviour.length > 0 && event.status !== 'CLOSED'
+                ? html`<div class="metric-sub" style="margin-top:4px">
+                    <b>What a ${event.severity} gets.</b> ${event.behaviour.join(' · ')}
+                  </div>`
+                : ''}
+            </div>`,
+          )
+        : html`<div class="notice" style="margin-bottom:14px">
+            <div>
+              Nothing has been raised against any service. That is either a very good week or a helpdesk nobody is
+              feeding — and the difference matters, because an availability figure with no events behind it is a figure
+              nobody has tested.
+            </div>
+          </div>`}
+
+      <div style="padding:14px 0 0;border-top:1px solid var(--line)">
+        <h2>The KPI contract</h2>
+        <div class="metric-sub" style="margin:6px 0 10px">
+          Every measure carries the control that stops it being gamed, and whether the platform enforces that control or
+          only reports it. A screen implying enforcement the code does not do is worse than no screen.
+        </div>
+        ${table({
+          headers: ['Family', 'Measured by', 'Anti-gaming control', ''],
+          rows: kpis.map((family) => [
+            html`<b>${family.label}</b>`,
+            family.method,
+            family.antiGaming,
+            family.enforcement === 'ENFORCED' ? badge('enforced', 'ok') : badge('reported', 'warn'),
+          ]),
+        })}
+        ${measuredUnder.length > 0
+          ? html`<div class="metric-sub" style="margin-top:10px">
+              ${measuredUnder
+                .map((entry) => `${entry.label}: ${entry.kpis.map((kpi) => kpi.label.toLowerCase()).join(', ') || 'none'}`)
+                .join(' · ')}
+            </div>`
+          : ''}
+      </div>
+
+      <div style="padding:14px 0 0;border-top:1px solid var(--line)">
+        <h2>What each severity gets</h2>
+        ${table({
+          headers: ['Severity', 'When', 'What happens'],
+          rows: severities.map((entry) => [
+            html`${badge(`${entry.id} ${entry.label}`, SEVERITY_TONE[entry.id] ?? 'info')}
+              <div class="metric-sub">
+                ${entry.acknowledgeWithinMinutes === 0
+                  ? 'Acknowledged immediately'
+                  : `Acknowledged within ${entry.acknowledgeWithinMinutes} minutes`}${
+                  entry.clockUnpausable ? ' · clock never pauses' : ''
+                }
+              </div>`,
+            entry.definition,
+            entry.behaviour.join(' · '),
+          ]),
+        })}
+      </div>
     </div>
   `;
 }

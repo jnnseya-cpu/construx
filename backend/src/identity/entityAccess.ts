@@ -100,6 +100,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // Where a firm stands on a package. Not commercial-in-confidence: the people
   // who need it are the ones chasing the evidence and running the operation.
   SupplierEngagement: { area: 'SITE_SERVICES' },
+  // §9. The service position: what failed, when, and whether it is actually
+  // fixed. Not commercial-in-confidence — the people who need it are the ones
+  // standing in the compound.
+  ServiceEvent: { area: 'SITE_SERVICES' },
+  ServicePeriod: { area: 'SITE_SERVICES' },
 
   // Design and information
   Specification: { area: 'DESIGN_INFORMATION' },

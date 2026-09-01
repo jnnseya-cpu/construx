@@ -70,6 +70,7 @@ import * as siteMobilisation from '../domain/etablix/mobilisation.ts';
 // `domain/procurement.ts` for the main works, and the two answer different
 // questions. This one buys site services against a composed system breakdown.
 import * as sitePackages from '../domain/etablix/procurement.ts';
+import * as siteOperations from '../domain/etablix/operations.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
 import * as programmereview from '../domain/programmereview.ts';
@@ -4934,6 +4935,156 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => sitePackages.suspendEngagement(projectContext(platform, ctx), body(ctx)),
+  },
+
+  // §9 — live operations and service assurance.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/operations',
+    description:
+      'The service position: every event with what still blocks its closure, availability net of approved exclusions, and what has failed more than once',
+    handler: (platform, ctx) => siteOperations.operationsPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/event',
+    description: 'Raise a service event against a composed system, at P1 to P4',
+    schema: {
+      type: 'object',
+      required: ['systemId', 'defectType', 'severity', 'summary', 'source'],
+      properties: {
+        systemId: { type: 'string', minLength: 6 },
+        defectType: { type: 'string', minLength: 3 },
+        severity: { type: 'string', enum: ['P1', 'P2', 'P3', 'P4'] },
+        summary: { type: 'string', minLength: 3 },
+        source: { type: 'string', minLength: 3 },
+        zone: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteOperations.raiseEvent(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/event/progress',
+    description: 'Acknowledge, attend or temporarily restore — in that order, because the clock depends on it',
+    schema: {
+      type: 'object',
+      required: ['eventId', 'to'],
+      properties: {
+        eventId: { type: 'string', minLength: 6 },
+        to: { type: 'string', enum: ['ACKNOWLEDGED', 'ATTENDED', 'TEMPORARILY_RESTORED'] },
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteOperations.progressEvent(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/event/evidence',
+    description: 'Record a piece of closure evidence of the kind the defect type actually demands',
+    schema: {
+      type: 'object',
+      required: ['eventId', 'kind', 'reference'],
+      properties: {
+        eventId: { type: 'string', minLength: 6 },
+        kind: {
+          type: 'string',
+          enum: ['PHOTO', 'METER_READING', 'SIGNATURE', 'TEST_RESULT', 'USER_CONFIRMATION', 'REINSPECTION'],
+        },
+        reference: { type: 'string', minLength: 2 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteOperations.recordClosureEvidence(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/event/close',
+    description: 'Close an event — refused while any required closure evidence is missing',
+    schema: {
+      type: 'object',
+      required: ['eventId', 'note'],
+      properties: { eventId: { type: 'string', minLength: 6 }, note: { type: 'string', minLength: 3 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteOperations.closeEvent(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/event/pause',
+    description: 'Pause the response clock, with the reason and the customer who approved it. A P1 clock does not pause',
+    schema: {
+      type: 'object',
+      required: ['eventId', 'reason', 'approvedBy'],
+      properties: {
+        eventId: { type: 'string', minLength: 6 },
+        reason: { type: 'string', minLength: 3 },
+        approvedBy: { type: 'string', minLength: 2 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteOperations.pauseClock(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/event/resume',
+    description: 'Resume a paused response clock',
+    schema: {
+      type: 'object',
+      required: ['eventId'],
+      properties: { eventId: { type: 'string', minLength: 6 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteOperations.resumeClock(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/event/route',
+    description: 'Route a P4 request to change control rather than fulfilling it as a defect',
+    schema: {
+      type: 'object',
+      required: ['eventId', 'reason'],
+      properties: { eventId: { type: 'string', minLength: 6 }, reason: { type: 'string', minLength: 3 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteOperations.routeToChange(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/period',
+    description:
+      'Record a service period: required, available and degraded minutes, with any exclusion approved before the outage began',
+    schema: {
+      type: 'object',
+      required: ['systemId', 'from', 'to', 'requiredMinutes', 'availableMinutes'],
+      properties: {
+        systemId: { type: 'string', minLength: 6 },
+        from: { type: 'string', minLength: 8 },
+        to: { type: 'string', minLength: 8 },
+        requiredMinutes: { type: 'number', minimum: 1 },
+        availableMinutes: { type: 'number', minimum: 0 },
+        degradedMinutes: { type: 'number', minimum: 0 },
+        plannedExclusions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['from', 'to', 'reason', 'approvedAt', 'approvedBy'],
+            properties: {
+              from: { type: 'string' },
+              to: { type: 'string' },
+              reason: { type: 'string' },
+              approvedAt: { type: 'string' },
+              approvedBy: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteOperations.recordPeriod(projectContext(platform, ctx), body(ctx)),
   },
 
   {

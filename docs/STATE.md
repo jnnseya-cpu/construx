@@ -13231,3 +13231,70 @@ controlled recipients, addenda, acknowledgement, audit log — and only the
 authority to buy differs. A package can now be issued on a project in Operations,
 which is proven by a test against the demonstration flagship, and the main-works
 window is untouched.
+
+### Verify is a step, not a formality
+
+§9, live operations and service assurance —
+`backend/src/domain/etablix/operations.ts`, its tests in
+`backend/tests/etablix.operations.test.ts`, and a panel on the Site Services
+screen with eight doors.
+
+Not CONSTRUX's quality control or its incident register. Those are the permanent
+works and people getting hurt. This is the service position: whether the welfare
+block had hot water this morning, whether the bus ran, whether the gate cleared
+120 people an hour.
+
+**The loop is five steps and the fourth is the one everybody skips.** Sense,
+interpret, act, verify, learn. Every helpdesk does sense and act; almost none
+verify, because verification means refusing to close a ticket somebody has
+already said is finished. Twelve defect types each declare the closure evidence
+they demand and why that evidence and not something cheaper — a hot-water loss
+closes on a *test result*, because a photograph of a tap proves nothing about
+what came out of it; a cleaning failure closes on a *reinspection*, because
+cleaning is the one service where the supplier marking their own homework is
+standard practice. Evidence of a kind the defect does not close on is refused,
+and the register shows what is blocking each closure before anybody tries.
+
+A P1 additionally cannot be closed without a temporary control on the record. A
+critical event closed with no interim measure is a critical event nobody
+controlled, and the closure is the last moment that is cheap to notice.
+
+**§9.2's second column is the load-bearing one.** Each of the seven KPI families
+carries its anti-gaming control, and each says honestly whether the platform
+*enforces* it or only reports it — a screen implying enforcement the code does
+not do is worse than no screen. Five are enforced:
+
+- **Availability.** A planned exclusion approved after the outage began is
+  refused: *"an exclusion approved after the event is not a planned exclusion —
+  it is a failure with a note on it"*. Degraded minutes are a separate field and
+  are never counted as available. The screen shows the figure net of approved
+  exclusions and the raw figure beside it, because the gap between the two is
+  the size of the argument about what was planned.
+- **Response and restoration.** A clock pause needs a reason *and* a named
+  customer approval, because the clock is what the service credit is calculated
+  from. A **P1 clock does not pause at all** — the pause on a critical event is
+  always agreed in the room where the pressure is, and recording it would
+  measure the pressure rather than the response. An event cannot be closed with
+  its clock still stopped.
+- Attendance recorded before acknowledgement is refused, because a response
+  measure whose clock starts at attendance measures nothing.
+
+Two are reported rather than enforced and say so: security and access needs a
+roster feed to reconcile against invoiced staffing, and transport needs booking
+or positional evidence. Neither exists on this platform yet.
+
+**P4 is a request, not a failure.** A move-add-change routed as a defect is
+scope delivered for nothing, and it does not belong in the availability figure.
+Routing a P2 to change control is refused — *"a defect routed to change control
+is a defect nobody fixed"*.
+
+**Learn** is the second occurrence: a failure of one thing in one place twice is
+a question about the regime or the asset, not about the last repair.
+
+**30 mutations, 30 caught.** Eight survived the first pass and each named a real
+gap rather than a redundant guard — idempotence on acknowledgement, attendance
+and closure was asserted on a timestamp two calls in the same millisecond would
+share rather than counted in the ledger; the acknowledgement breach was never
+checked while an event was still unacknowledged, which is the only time it
+matters; and the paused-clock blocker never appeared in a test. All eight now
+have tests.

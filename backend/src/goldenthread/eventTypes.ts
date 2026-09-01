@@ -1692,6 +1692,23 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // is a decision with a commercial consequence and it needs the authority that
   // goes with one.
   def('SUPPLIER_ENGAGEMENT_SUSPENDED', 'SupplierEngagement', 'APPROVE', 'PROCUREMENT'),
+
+  // §9 — live operations and service assurance.
+  //
+  // The five-step loop. Raising, progressing and evidencing are all things an
+  // agent may do; closing is not. Closure is the moment the service is declared
+  // to have been restored, and §5's mandate ladder puts no ETABLIX agent above
+  // OBSERVE — but the ledger enforces it here too rather than trusting that.
+  def('SERVICE_EVENT_RAISED', 'ServiceEvent', 'CREATE', 'DELIVERY', { aiAllowed: true, creates: true }),
+  def('SERVICE_EVENT_PROGRESSED', 'ServiceEvent', 'UPDATE', 'DELIVERY', { aiAllowed: true }),
+  def('SERVICE_EVIDENCE_RECORDED', 'ServiceEvent', 'UPDATE', 'DELIVERY', { aiAllowed: true }),
+  def('SERVICE_EVENT_CLOSED', 'ServiceEvent', 'APPROVE', 'DELIVERY'),
+  def('SERVICE_EVENT_ROUTED', 'ServiceEvent', 'UPDATE', 'DELIVERY', { aiAllowed: true }),
+  // The clock the service credit is calculated from. Pausing it is an
+  // adjustment to a commercial measure, so it is not an agent's act.
+  def('SERVICE_CLOCK_PAUSED', 'ServiceEvent', 'APPROVE', 'DELIVERY'),
+  def('SERVICE_CLOCK_RESUMED', 'ServiceEvent', 'UPDATE', 'DELIVERY', { aiAllowed: true }),
+  def('SERVICE_PERIOD_RECORDED', 'ServicePeriod', 'CREATE', 'DELIVERY', { aiAllowed: true, creates: true }),
 ];
 
 /**
