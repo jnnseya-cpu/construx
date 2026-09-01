@@ -451,10 +451,43 @@ img, svg { max-width: 100%; }
 /* ------------------------------------------------------------------- prose */
 
 .prose { padding: 46px 0; }
-.prose h2 { font-size: 21px; letter-spacing: -.4px; margin: 34px 0 11px; }
+
+/* A documentary spine down the prose column.
+ *
+ * A centred 760px column of headings and paragraphs is what every generated
+ * documentation page looks like, and it is the same page whatever it is about.
+ * A hairline down the left with each section marked against it is how a
+ * standard, a specification or a contract is set — which is what this product
+ * is about, so the page is set the way the thing it describes is set.
+ *
+ * The rule is one pixel and the marks are four. Nothing here is decoration
+ * competing with the text; it is the structure of the document made visible. */
+.prose > .wrap.narrow {
+  border-left: 1px solid var(--line);
+  padding-left: 32px;
+}
+.prose > .wrap.narrow > h2 { position: relative; }
+.prose > .wrap.narrow > h2::before {
+  content: ""; position: absolute; left: -33px; top: .62em;
+  width: 5px; height: 1px; background: var(--line-strong);
+}
+
+@media (max-width: 720px) {
+  /* The rule costs 32px of a phone's measure, which is a word a line. It goes. */
+  .prose > .wrap.narrow { border-left: 0; padding-left: 0; }
+  .prose > .wrap.narrow > h2::before { display: none; }
+}
+.prose h2 {
+  font-family: var(--display);
+  font-size: 23px; font-weight: 700; letter-spacing: -.1px; margin: 36px 0 11px;
+  text-wrap: balance;
+}
 .prose h2:first-child { margin-top: 0; }
-.prose h3 { font-size: 16px; margin-bottom: 6px; }
-.prose p { color: var(--text-2); margin-bottom: 13px; }
+.prose h3 { font-family: var(--display); font-size: 17px; font-weight: 600; margin-bottom: 6px; }
+/* Running text stops at 68 characters. Past that the eye loses the start of
+   the next line, which is the measure problem every wide column has and the
+   reason a book is the width it is. */
+.prose p { color: var(--text-2); margin-bottom: 13px; max-width: 68ch; }
 /*
  * Body links are orange and underlined — but a button inside prose is not a
  * body link. Without the :not(), `.prose a` at (0,1,1) beats `.btn` at (0,1,0)

@@ -12398,6 +12398,24 @@ are untouched.
   growth metric, they are the dimensions of a system, and a dimension is read
   after the thing it dimensions.
 
+**A documentary spine on the prose pages.** A centred 760px column of headings
+and paragraphs is what every generated documentation page looks like, and it is
+the same page whatever it is about. There is now a hairline down the left with
+each section marked against it — how a standard, a specification or a contract
+is set, which is what this product is about, so the page is set the way the
+thing it describes is set. Running text stops at 68 characters, and the rule
+goes on a phone where it would cost a word a line.
+
 **Verified**: the faces load and the variable weight axis measurably works (400
-and 700 render at different widths); every page renders with no console error;
-the full suite is green at 4,532.
+and 700 render at different widths); the landing, how-it-works, developers, demo
+and get-started pages plus the console render with no console error; the full
+suite is green at 4,532.
+
+#### What this pass did not reach
+
+Every page now carries the type system, and the landing page and the prose pages
+have had their structure reworked. The console's own screens have the faces and
+the condensed page title, and no further layout work: the briefing's four-figure
+row is still uncontained and two of its four values are accent-coloured, which
+is more accent than the palette's own rule allows. Named here rather than
+implied by the section above.
