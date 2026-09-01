@@ -4,7 +4,7 @@ import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 import * as agents from '../src/agents/runtime.ts';
 import type { AgentRunReport } from '../src/agents/types.ts';
-import { AGENTS, deployedAgents } from '../src/agents/registry.ts';
+import { AGENTS, deployedAgents, runnableAgents } from '../src/agents/registry.ts';
 
 /**
  * Trigger routing — the contract's `triggers`, enforced.
@@ -23,6 +23,14 @@ import { AGENTS, deployedAgents } from '../src/agents/registry.ts';
  * saying *look at everything now*. Narrowing it to `CONTINUOUS` agents would
  * have silently taken eighteen agents off the one path the whole product
  * already uses, which is a regression dressed as a feature.
+ *
+ * "Everything" means every agent *this tenancy may run*, which is the deployed
+ * fleet minus any agent belonging to a private module the tenancy has not been
+ * granted. That narrowing happens before the run rather than inside it, and the
+ * distinction matters: the phase gate reports the agents it skipped, and a
+ * module agent reported as skipped would tell a company a module exists that it
+ * has not been given. So it is absent from the fleet, not absent from the run —
+ * and a sweep still covers, exactly, the fleet.
  *
  * **A routed run is a strict subset, and the report says why each agent is in
  * it.** A run listing four agents out of forty-eight has to be readable as a
@@ -50,7 +58,28 @@ describe('a sweep is still a sweep', () => {
   it('runs the whole deployed fleet, as it always has', async () => {
     const report = await agents.runAgents(ctx());
     assert.equal(report.because, 'full sweep');
-    assert.equal(report.agents.length, deployedAgents().length, 'the sweep no longer covers the deployed fleet');
+    assert.equal(
+      report.agents.length,
+      runnableAgents(ctx().grantedModules).length,
+      'the sweep no longer covers the fleet this tenancy may run',
+    );
+  });
+
+  it('leaves a module agent out of the fleet entirely for a tenancy without the grant', async () => {
+    // Not "reports it as skipped" — out. A tenancy that has not been granted a
+    // private module is never told it exists, and a run report naming an agent
+    // called `etablix-welfare` would say so plainly.
+    const withModule = runnableAgents(['ETABLIX']);
+    const without = runnableAgents([]);
+    assert.ok(withModule.length > without.length, 'no module agents to prove the point with');
+    assert.ok(without.every((agent) => agent.module === undefined));
+
+    const report = await agents.runAgents(ctx());
+    assert.equal(ctx().grantedModules.length, 0, 'the demonstration tenancy holds no module');
+    assert.ok(
+      !report.agents.some((entry) => entry.agent.startsWith('etablix-')),
+      'a module agent appeared in the report of a tenancy that does not hold the module',
+    );
   });
 
   it('still runs agents that declare no continuous trigger', async () => {

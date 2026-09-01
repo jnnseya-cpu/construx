@@ -12797,3 +12797,101 @@ superseded records, and no mutation of that exclusion fails the suite, because
 is the rule that is actually true and the ordering is not — the day anything
 supersedes a fact without replacing it, "newest wins" alone would resurrect the
 figure that was retired.
+
+
+### Sixteen specialists, and the authority none of them has
+
+§5. The product mandate is to automate at least 90% of the repeatable
+coordination, analysis, documentation, monitoring and administration work
+**while retaining explicit human authority over legal commitment,
+safety-critical acceptance, supplier award, payment certification and
+contingency release.** The second half is the part that needed building.
+
+**Built on the fleet that already exists.** `agents/runtime.ts` is already a
+governed framework — mandate, autonomy ladder, confidence floor, ACU tier,
+trigger routing, proposal queue, approval by a named role, and the rule that an
+agent never writes project state. None of it is rebuilt. These are sixteen
+`AgentDefinition`s in the same registry, so they appear in the same manifest,
+the same autopilot queue and the same audit trail as everything else.
+
+They carry one thing no CONSTRUX agent does: `module: 'ETABLIX'`.
+
+#### The automation boundary maps onto the ladder that already enforces it
+
+| Spec class | Ladder level |
+|---|---|
+| A — autonomous, inside an approved baseline | `ACT`, inside a granted envelope |
+| B — supervised: prepare, a role approves, then execute | `PROPOSE` |
+| C — human-controlled: AI advises, a named authority decides | `OBSERVE` / `DRAFT` |
+
+No new mechanism was needed, and **no ETABLIX agent exceeds `OBSERVE`.** Every
+one has `proposes: []` — they report, and the commands that follow are somebody
+recording a fact or placing a package. An agent proposing "record this figure"
+would be an agent inventing the figure.
+
+#### The gate had to move, and the invariant caught it
+
+The first version checked the module inside the run loop and `continue`d. The
+existing invariant — *a sweep runs the whole deployed fleet* — failed
+immediately at 49 against 60, and it was right to: the loop **reports every
+agent it considered**, including the ones it skipped for the lifecycle phase,
+and that report goes to the customer. A module agent reported as "skipped" tells
+a company the module exists.
+
+So the fleet is narrowed **before** the loop by `runnableAgents(granted)`, and
+the invariant now reads *a sweep runs everything this tenancy may run* — which
+preserves the property that mattered (a sweep does not route by trigger) while
+making the absence total. A test asserts the run report of an ungranted tenancy
+contains the string "ETABLIX" nowhere at all.
+
+#### One problem, one agent
+
+The obvious failure of a sixteen-agent fleet is five of them reporting the same
+contradiction from five angles, which trains everybody to stop reading all five.
+The cross-checks live in `domain/etablix/brief.ts`, each tagged with the service
+families it sits between, and **each specialist reports only the conflicts
+belonging to its own family**. A check added there appears under its owner with
+nobody wiring it up.
+
+HSE reads across families and reports **only the two exposures that carry a
+statutory consequence** — welfare below Schedule 1, and a site operating
+unguarded — and says them differently from the family agent. Welfare says *seven
+WCs are needed and five exist*; HSE says *the site cannot be occupied at this
+headcount*, and cites Regulation 20. Two readers, two acts, one arithmetic.
+
+Severity carries through from the check rather than being re-graded by the
+agent: a shortfall that stops the site on day one and one that degrades over
+weeks are different things, and grading them the same trains people to ignore
+both.
+
+#### Eleven run, five are declared
+
+| Running | Declared, and what it waits on |
+|---|---|
+| Orchestrator, Brief Intelligence, Site Layout, Temporary Civils, Temporary MEP, Welfare & Village, FM & Living Services, Security & Logistics, Procurement, Commercial, HSE & Compliance | Supplier Assurance (§7.3), Mobilisation (§8), Operations Sentinel (§9), Change & Claims (§11), Demobilisation (§12) |
+
+Each declared agent names the specification section that must exist before it
+has anything to read, and the test asserts it does — a manifest listing sixteen
+running agents when five read from records that do not exist would be a lie told
+in a table.
+
+**An agent with nothing to read reports nothing.** The first version raised "N
+unanswered" on every project the moment the module was granted — seven agents,
+seven findings, on a job nobody had started. A specialist now returns nothing at
+all until there is an appointment or at least one recorded fact.
+
+**9 mutations, 9 caught.** Two survived first: severity flattening, and HSE
+restating every shortfall rather than the two it owns. Both were single-conflict
+fixtures where the wrong behaviour and the right one produce the same output; a
+fixture with a blocking conflict *and* a material one in different families
+kills both.
+
+#### What §5.1's execution contract carries, and what it does not
+
+Recorded on every agent action: tenant and project (the event), role
+(`roleAtAction`), objective (`purpose`), authorised tools (`mandate.proposes`),
+input evidence ids (`finding.evidence`), confidence (`confidenceFloor`),
+cost budget (`acuTier`), approval class (`maxUnattended`) and the audit event
+itself. **Not yet carried: the appointment model and the baseline version on
+the finding record**, and the versioned prompt/rule identity — the last needs
+model governance that is a separate piece of work. Stated rather than implied.

@@ -5,7 +5,7 @@ import { rolesAllow } from '../identity/roles.ts';
 import { tierCost } from '../billing/acu.ts';
 import { liveEnvelope, mayActUnattended } from './mandate.ts';
 import { executeAct } from './acts.ts';
-import { AGENTS, agentByName, deployedAgents } from './registry.ts';
+import { AGENTS, agentByName, runnableAgents } from './registry.ts';
 import { exceeds, type AcuTier, type AgentDefinition, type AgentProposal, type AgentRunReport, type Finding } from './types.ts';
 
 /**
@@ -179,7 +179,10 @@ export async function runAgents(
   // Trigger routing. A person naming agents is not routed — they asked.
   const fleet: Array<{ agent: AgentDefinition; because: string }> = named
     ? named.map((agent) => ({ agent, because: 'asked for by name' }))
-    : deployedAgents()
+    // `runnableAgents`, not `deployedAgents`: a module agent is excluded here,
+      // before anything reports on it, so a tenancy without the grant is never
+      // shown an agent it does not have — not even as one that was skipped.
+    : runnableAgents(ctx.grantedModules)
         .map((agent) => ({ agent, because: wakesOn(agent, trigger) }))
         .filter((entry): entry is { agent: AgentDefinition; because: string } => entry.because !== undefined);
 

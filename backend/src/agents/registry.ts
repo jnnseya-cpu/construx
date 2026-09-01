@@ -1,6 +1,7 @@
 import { abbreviateMoney } from '../domain/locale.ts';
 import type { EngineContext } from '../engines/context.ts';
 import { LIFECYCLE_AGENTS } from './lifecycle.ts';
+import { ETABLIX_AGENTS } from './etablix.ts';
 import { PLATFORM_AGENTS } from './platform.ts';
 import type { AgentDefinition, AgentOutput, Finding, ProposedCommand } from './types.ts';
 
@@ -987,6 +988,11 @@ export const AGENTS: AgentDefinition[] = [
   // a third of them only ever run before a spade goes in the ground.
   ...LIFECYCLE_AGENTS,
   ...PLATFORM_AGENTS,
+  // The ETABLIX site-services fleet. In the same registry as everything else,
+  // so it is governed by the same runtime, appears in the same manifest and
+  // leaves the same audit trail — and carries `module: 'ETABLIX'`, which is
+  // what stops the runtime running it for a tenancy without the grant.
+  ...ETABLIX_AGENTS,
 ];
 
 export function agentsByDivision(division: AgentDefinition['division']): AgentDefinition[] {
@@ -1008,4 +1014,21 @@ export function agentByName(name: string): AgentDefinition | undefined {
  */
 export function deployedAgents(): AgentDefinition[] {
   return AGENTS.filter((agent) => agent.deployment !== 'DECLARED' && typeof agent.evaluate === 'function');
+}
+
+/**
+ * The deployed agents a particular tenancy may run.
+ *
+ * A module agent is not in this list for a tenancy without the grant, and the
+ * exclusion happens here rather than inside the run loop for a specific reason:
+ * the loop reports every agent it considered — including the ones it skipped
+ * for the lifecycle phase — and that report is shown to the customer. Listing a
+ * module agent as "skipped" would tell a company the module exists, which is
+ * the one thing a private module must never do.
+ *
+ * So the fleet is narrowed *before* the loop, and "a sweep runs everything"
+ * stays exactly true — of the fleet this tenancy has.
+ */
+export function runnableAgents(granted: readonly string[]): AgentDefinition[] {
+  return deployedAgents().filter((agent) => !agent.module || granted.includes(agent.module));
 }

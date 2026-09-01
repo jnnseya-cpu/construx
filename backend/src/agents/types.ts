@@ -1,5 +1,6 @@
 import type { EngineContext } from '../engines/context.ts';
 import type { CapabilityArea, PermissionCode, Role } from '../identity/roles.ts';
+import type { ModuleId } from '../identity/modules.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
 
 /**
@@ -327,7 +328,9 @@ export type AgentDivision =
   | 'SECURITY'
   | 'REVENUE'
   | 'CUSTOMER'
-  | 'COMPLIANCE';
+  | 'COMPLIANCE'
+  /** ETABLIX site services. Reachable only by a tenancy holding the module. */
+  | 'SITE_SERVICES';
 
 export const AGENT_DIVISIONS: Array<{ division: AgentDivision; label: string; question: string }> = [
   { division: 'MARKET_INTEL', label: 'Market intelligence', question: 'What work is out there, and which of it could we actually win?' },
@@ -339,6 +342,11 @@ export const AGENT_DIVISIONS: Array<{ division: AgentDivision; label: string; qu
   { division: 'REVENUE', label: 'Revenue', question: 'Is what the customer bought still what the customer needs?' },
   { division: 'CUSTOMER', label: 'Customer', question: 'Is the customer getting the outcome they bought, and can we tell before they leave?' },
   { division: 'COMPLIANCE', label: 'Compliance', question: 'Are the obligations that carry a statutory date still current?' },
+  {
+    division: 'SITE_SERVICES',
+    label: 'Site services',
+    question: 'Is the temporary infrastructure and the living environment sized, contradiction-free and ready before the work needs it?',
+  },
 ];
 
 /**
@@ -393,6 +401,17 @@ export type AgentDefinition = {
   acuTier: AcuTier;
   /** Which memory layers it may read and write. */
   memory: MemoryAccess;
+  /**
+   * The private module this agent belongs to, where it belongs to one.
+   *
+   * Absent on every CONSTRUX agent, which is the normal case. Present on a
+   * module agent, and the runtime then refuses to run it for a tenancy without
+   * the grant — not as an optimisation but as the same gate every module route
+   * carries. An agent is a caller like any other, and one that ran for a
+   * company holding no grant would be reading and proposing against capability
+   * that company was never given.
+   */
+  module?: ModuleId;
   /** Running, or declared and waiting. Defaults to running. */
   deployment?: AgentDeployment;
   /** What a `DECLARED` agent is waiting on. Required for one, and tested. */
