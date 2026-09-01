@@ -137,7 +137,19 @@ export function landing(): string {
   <div class="wrap hero-inner">
     <div class="hero-copy">
       <div class="eyebrow"><span class="dot"></span> Construction AI Operating System</div>
-      <h1>The record of <span class="accent">how your asset<br>came to exist</span>.</h1>
+      <!--
+        One colour.
+
+        This headline used to put its second and third lines in Signal Orange.
+        That is the most recognisable machine-made-landing-page gesture there
+        is after the gradient fill, and it also broke the rule this palette is
+        built on: orange means something on every other screen in the product —
+        a value at risk, a path that drives the date — and a headline wearing it
+        teaches the reader it means nothing.
+
+        The emphasis is now typographic, which is what typography is for.
+      -->
+      <h1>The record of how your asset came to exist.</h1>
       <p class="lede">
         One governed spine from concept to the thirtieth year of operation. Every state change is an append-only,
         hash-chained event. Every figure is computed from the record rather than typed into it. Every claim on this
@@ -158,20 +170,38 @@ export function landing(): string {
         <a class="btn lg ghost" href="/get-started">Start free</a>
       </div>
 
-      <div class="rail" role="list" aria-label="Asset lifecycle">
-        ${['Concept', 'Design', 'Tender', 'Construction', 'Commissioning', 'Handover', '30-yr O&amp;M']
-          .map((phase, i) => `<div role="listitem" style="--i:${i}">${phase}</div>`)
+      <!--
+        A spine, not a row of pills.
+
+        Seven rounded chips in a wrapping row is the default way to render a
+        list of anything, and it says nothing about what the list is. This is a
+        *sequence* — thirty years of one asset, in order, with no break at the
+        point every other toolchain hands over — so it is drawn as a continuous
+        rule with a tick at each stage. The form is the argument.
+      -->
+      <ol class="lifespan" aria-label="Asset lifecycle">
+        ${['Concept', 'Design', 'Tender', 'Construction', 'Commissioning', 'Handover', 'Operation']
+          .map((phase, i) => `<li style="--i:${i}"><span>${phase}</span></li>`)
           .join('')}
-      </div>
-      <p class="rail-cap">One system across all seven. No migration at handover, because there is nothing to migrate to.</p>
+      </ol>
+      <p class="rail-cap">
+        One system across all seven, and the last of them runs for thirty years. There is no migration at handover
+        because there is nothing to migrate to.
+      </p>
     </div>
 
     <!-- The console, drawn to the shape of the real seeded project rather than
          an invented dashboard with rounder numbers. -->
     <div class="hero-panel" aria-hidden="true">
       <div class="panel">
+        <!--
+          No red-amber-green window buttons. This is not a screenshot of a Mac,
+          it is the product's own chrome, and three coloured dots are a costume
+          worn by every mocked-up panel on the internet. The bar carries what
+          the real console's bar carries: where you are, and whether the record
+          verifies.
+        -->
         <div class="panel-top">
-          <span class="tl r"></span><span class="tl a"></span><span class="tl g"></span>
           <div class="crumb">Meridian Infrastructure &rsaquo; National Water Resilience &rsaquo; <b>Ashworth WTW — Phase 2</b></div>
           <div class="pill live">CHAIN VERIFIED</div>
         </div>
@@ -210,12 +240,22 @@ export function landing(): string {
     </div>
   </div>
 
+  <!--
+    A specification strip, not a counter row.
+
+    Four enormous numerals across the foot of a hero is the house style of every
+    generated marketing page, and it flatters figures that do not need
+    flattering: these are not a growth metric, they are the dimensions of a
+    system. So they are set the way dimensions are set — label first, value in
+    mono at a readable size, hairline between each. It reads as a data sheet,
+    which is what it is.
+  -->
   <div class="hero-stats">
     <div class="wrap">
-      <div><b>${ledgerEvents}</b><span>event types, closed catalogue</span></div>
-      <div><b>${routes}</b><span>API endpoints</span></div>
-      <div><b>${commsEvents}</b><span>communication events</span></div>
-      <div><b>0</b><span>runtime dependencies</span></div>
+      <div><span>Event catalogue</span><b>${ledgerEvents}</b><em>closed, versioned</em></div>
+      <div><span>API surface</span><b>${routes}</b><em>documented endpoints</em></div>
+      <div><span>Communication events</span><b>${commsEvents}</b><em>every one on the record</em></div>
+      <div><span>Runtime dependencies</span><b>0</b><em>nothing to patch at 3am</em></div>
     </div>
   </div>
 </section>

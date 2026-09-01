@@ -12345,3 +12345,59 @@ Decisions worth stating:
 **Verified**: 6 domain tests, driven over HTTP and read in a browser — two codes
 across seven activities, a refused value, codes surviving an unrelated calendar
 change, and the door offering both codes with all their values.
+
+
+### Making it look like a product somebody built
+
+Three changes, in descending order of how much they mattered.
+
+**A real typeface, self-hosted.** The stylesheet said there could be no webfont
+because the server sends `font-src 'self'` and a font CDN would be blocked. The
+first half was right and the conclusion was one step short: **a file served from
+this origin is `'self'`.** Nothing about the header changed, no third party is
+contacted, and no security posture was traded for it.
+
+IBM Plex — sans, condensed and mono — is now served from `/fonts`, 130KB for the
+whole family (the sans is one variable file covering 100–700). Plex rather than
+Inter or Space Grotesk, which are the two faces every generated interface reaches
+for and which therefore read as one; Plex was drawn for an engineering company
+and looks it. Three roles: `--sans` for what is read, `--display` (Condensed) for
+headings, `--mono` for every number in a column. Both stylesheets declare the
+faces, because the site and the console are independent files that already
+restate the palette for the same reason. Every stack still ends in the native
+faces — a font that fails to load should degrade to the interface it replaced.
+
+**The demonstration team has names.** The seeded identities were called after
+their own job titles: `Project Manager`, `Quantity Surveyor`, `Site Manager`. The
+role is already carried separately and rendered beside the name wherever the
+console shows one, so the name said nothing twice and left every screen — owner
+of a decision, author of a comment, who signed the permit — reading like an org
+chart with nobody in it. The morning briefing made it plainest: it greeted the
+signed-in user by first name and said **"Good morning, Project."** It now says
+"Good morning, Tom." Roles, permissions and every assertion that turns on them
+are untouched.
+
+**The landing page's generated gestures, removed.**
+
+- The headline put its second and third lines in Signal Orange. That is the most
+  recognisable machine-made-landing-page move after the gradient fill, and it
+  broke the rule the palette is built on — orange means something on every other
+  screen, and a headline wearing it teaches the reader it means nothing. The
+  emphasis is now typographic, which is what typography is for.
+- Seven rounded chips in a wrapping row became a **drawn spine**: a rule with a
+  tick at each stage and the last one marked, because the claim is a
+  thirty-year sequence with no break at handover and the form should carry the
+  argument. The first attempt divided it into seven equal columns, which broke
+  COMMISSIONING across two lines; distributing the ticks and letting each label
+  take the width it needs reads as a scale, which is what it is.
+- The mock console wore macOS red-amber-green window buttons. It shows the
+  product's own chrome now — a breadcrumb and a verification state — because
+  three coloured dots are a costume every mocked-up panel on the internet wears.
+- Four enormous numerals across the foot of the hero became a **specification
+  strip**: label, then value in mono, hairline between each. These are not a
+  growth metric, they are the dimensions of a system, and a dimension is read
+  after the thing it dimensions.
+
+**Verified**: the faces load and the variable weight axis measurably works (400
+and 700 render at different widths); every page renders with no console error;
+the full suite is green at 4,532.

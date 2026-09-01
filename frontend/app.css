@@ -18,17 +18,37 @@
    much shadow is under it.
 
    -------------------------------------------------------------- typography
-   There is no webfont, and that is a decision rather than an omission. This
-   server sends `font-src 'self'`, so a face from a font CDN would be blocked
-   by the platform's own content-security-policy, and loosening a security
-   header to change how the headings look is not a trade worth making. The
-   identity comes instead from two things that cost nothing: a deliberate
-   native stack, and every number in the interface set in tabular mono.
+   IBM Plex, served from this origin.
 
-   That second rule is what separates an instrument from a web page. Currency,
+   The earlier note here said there could be no webfont, because the server
+   sends `font-src 'self'` and a font CDN would be blocked. The first half was
+   right and the conclusion was one step short: a file served from this origin
+   *is* `'self'`. Nothing about the header changes, no third party is contacted,
+   and the browser fetches the face from the same place it fetched the page.
+
+   Plex rather than Inter or Space Grotesk, which are the two faces every
+   generated interface reaches for and which therefore read as one. Plex was
+   drawn for an engineering company and looks it: the flat-sided bowls, the
+   squared terminals, the unmistakable `a` and `g`. It also comes as a matched
+   family — sans, condensed and mono share one skeleton — so the interface can
+   change voice without changing typeface, which is what makes a type system
+   rather than a font choice.
+
+   Three roles, and each one earns its place:
+     --sans     everything that is read
+     --display  headings and the numbers that carry a headline, in Condensed:
+                narrower, so a real sentence fits at a size worth setting, and
+                it gives a heading a different texture from the paragraph under
+                it without a second family
+     --mono     every number in a column
+
+   That last rule is what separates an instrument from a web page. Currency,
    durations, counts, percentages, references and timestamps are data, they sit
    in columns, and digits that do not line up are the reason a dashboard looks
    like a website with numbers on it.
+
+   The stack still ends in the native faces. A font file that fails to load
+   should degrade to the interface it replaced, not to Times.
    =========================================================================== */
 
 :root {
@@ -105,12 +125,67 @@
 
   --sidebar: 244px;
 
-  /* Led by the faces a workstation actually has, chosen in order rather than
-     falling through to whatever turns up. */
-  --sans: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
-    "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: "SF Mono", ui-monospace, SFMono-Regular, "JetBrains Mono", "IBM Plex Mono",
+  /* Plex first, then the faces a workstation actually has — chosen in order
+     rather than falling through to whatever turns up. */
+  --sans: "IBM Plex Sans", "SF Pro Text", -apple-system, BlinkMacSystemFont,
+    "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --display: "IBM Plex Sans Condensed", "IBM Plex Sans", "SF Pro Display",
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", "SF Mono", ui-monospace, SFMono-Regular, "JetBrains Mono",
     "Roboto Mono", Menlo, Consolas, monospace;
+}
+
+/* ------------------------------------------------------------------ faces */
+/*
+ * `font-display: swap` on every one: the interface is legible in the fallback
+ * from the first paint and reflows once. A control room that shows nothing for
+ * 300ms because a font is in flight has traded the thing that matters for the
+ * thing that looks nice.
+ *
+ * The sans is a single variable file covering the whole weight range, which is
+ * why there is one `@font-face` for four weights and 45KB for all of them.
+ */
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/plex-sans.woff2") format("woff2");
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans Condensed";
+  src: url("/fonts/plex-cond-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans Condensed";
+  src: url("/fonts/plex-cond-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/plex-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/plex-mono-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/plex-mono-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -382,7 +457,13 @@ button { font: inherit; }
 
 .view { padding: 28px 24px 64px; flex: 1; }
 .view-head { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
-.view-head h1 { font-size: 21px; font-weight: 650; letter-spacing: -0.5px; text-wrap: balance; }
+/* The page title in the condensed face, so a screen has two voices: a heading
+   that is narrow and set tight, and a body that is open. One family at four
+   sizes is what an interface looks like when nobody chose a second voice. */
+.view-head h1 {
+  font-family: var(--display);
+  font-size: 23px; font-weight: 700; letter-spacing: -0.2px; text-wrap: balance;
+}
 .view-head p { color: var(--text-3); font-size: 12.5px; margin-top: 4px; max-width: 74ch; }
 /* `flex-wrap` because the number of commands is a property of the screen, not
    of the layout. Concept carries seven and pushed the page sideways on a phone;

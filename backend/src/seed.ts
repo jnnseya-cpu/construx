@@ -781,7 +781,7 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
   const operator =
     platform.operators()[0] ??
     platform.createOperator({
-      name: 'Platform Operator',
+      name: 'Ruth Okafor',
       email: 'operator@construx.example',
     });
   step(`Platform operator account: ${operator.name}`);
@@ -823,28 +823,43 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
   const demoUser = (input: { name: string; email: string; roles: Role[] }) =>
     platform.createUser({ ...input, tenantId: tenant.id, demonstration: true });
 
+  // People have names, and the demonstration team used to be called after its
+  // own job titles: `Project Manager`, `Quantity Surveyor`, `Site Manager`.
+  //
+  // That is not a cosmetic point. The role is already carried separately on
+  // every identity and rendered beside the name wherever the console shows one,
+  // so a name that repeats it says nothing twice and leaves every screen —
+  // owner of a decision, author of a comment, who signed the permit — reading
+  // like a org chart with nobody in it. The morning briefing made it plainest:
+  // it greeted the signed-in user by their first name and said
+  // "Good morning, Project."
+  //
+  // These are ordinary names for an ordinary UK infrastructure team. Nothing
+  // else about the seed changed; the roles, permissions and every assertion
+  // that turns on them are untouched.
+
   const admin = demoUser({
     name: 'Amara Osei',
     email: 'amara.osei@meridian.example',
     roles: ['ENTERPRISE_ADMIN'],
   });
-  const owner = demoUser({ name: 'Client Representative', email: 'owner@meridian.example', roles: ['OWNER'] });
-  const pm = demoUser({ name: 'Project Manager', email: DEMO_TENANCY.primaryEmail, roles: ['PM'] });
-  const qs = demoUser({ name: 'Quantity Surveyor', email: 'qs@meridian.example', roles: ['QS'] });
-  const planner = demoUser({ name: 'Planning Manager', email: 'planner@meridian.example', roles: ['PLANNER'] });
-  const safetyLead = demoUser({ name: 'HSE Manager', email: 'hse@meridian.example', roles: ['SAFETY'] });
-  const bimLead = demoUser({ name: 'BIM Manager', email: 'bim@meridian.example', roles: ['BIM'] });
+  const owner = demoUser({ name: 'Priya Raghunathan', email: 'owner@meridian.example', roles: ['OWNER'] });
+  const pm = demoUser({ name: 'Tom Bramall', email: DEMO_TENANCY.primaryEmail, roles: ['PM'] });
+  const qs = demoUser({ name: 'Nadia Hussain', email: 'qs@meridian.example', roles: ['QS'] });
+  const planner = demoUser({ name: 'Gareth Lloyd', email: 'planner@meridian.example', roles: ['PLANNER'] });
+  const safetyLead = demoUser({ name: 'Marie Okonkwo', email: 'hse@meridian.example', roles: ['SAFETY'] });
+  const bimLead = demoUser({ name: 'Callum Frazer', email: 'bim@meridian.example', roles: ['BIM'] });
   // The demonstration had no design approver at all. `DESIGNER` and
   // `PRINCIPAL_DESIGNER` both hold approve on design information and neither was
   // on the project, so a design could be authored, marked up and questioned —
   // and never accepted by anybody. The review cycle made that visible; it was
   // true before it.
   const designLead = demoUser({
-    name: 'Design Manager',
+    name: 'Elena Vasquez',
     email: 'design@meridian.example',
     roles: ['DESIGNER'],
   });
-  const qaqc = demoUser({ name: 'QA/QC Engineer', email: 'qaqc@meridian.example', roles: ['QAQC'] });
+  const qaqc = demoUser({ name: 'Rob Whitfield', email: 'qaqc@meridian.example', roles: ['QAQC'] });
   // The person who runs the site.
   //
   // Missing, and its absence was the reason the Construction screen looked shut
@@ -854,7 +869,7 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
   // This is the seat that approves the method statement, issues the permit and
   // sequences the week — and answers for the site to an inspector who walks on.
   const constructionManager = demoUser({
-    name: 'Construction Manager',
+    name: 'Ade Fowler',
     email: 'construction@meridian.example',
     roles: ['CONSTRUCTION_MANAGER'],
   });
@@ -865,12 +880,12 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
   // non-conformances. Every one of those paths existed in the matrix and could
   // not be walked by anybody on the demonstration project.
   const siteManager = demoUser({
-    name: 'Site Manager',
+    name: 'Steve Mullen',
     email: 'site@meridian.example',
     roles: ['SUPERVISOR'],
   });
-  const fm = demoUser({ name: 'Facilities Manager', email: 'fm@meridian.example', roles: ['FM'] });
-  const regulator = demoUser({ name: 'Building Safety Regulator', email: 'regulator@meridian.example', roles: ['REGULATOR'] });
+  const fm = demoUser({ name: 'Janet Kirkbride', email: 'fm@meridian.example', roles: ['FM'] });
+  const regulator = demoUser({ name: 'Helen Marsh', email: 'regulator@meridian.example', roles: ['REGULATOR'] });
   step('Eleven named identities assigned across the delivery team');
 
   const adminAuth = authOf(platform, admin.id);
