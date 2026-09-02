@@ -14478,3 +14478,39 @@ The blocking item for general availability is that the ledger is in-process. The
 schema and the client are both verified against a real Postgres 16, so it is
 wiring rather than design — but it is wiring nobody has done, and one process
 holding several customers' records is a risk nobody can watch.
+
+
+---
+
+## The blueprint, strengthened where it was weakest
+
+`docs/ai-os-blueprint.md` described what the platform is and where the market
+fails, and had no section saying where **this** fails. A market analysis with no
+losing column is marketing, so three were added.
+
+- **§2.1 the beachhead, named.** UK water framework contractors under AMP8: the
+  frameworks are finite and countable, the duty-holder regime is heaviest there,
+  the payment regime is the one this platform computes, and the flagship
+  demonstration project is a water treatment works — so a prospect walks through
+  their own kind of job rather than a generic one. Expansion is by adjacency of
+  contract form, not by sector noun.
+- **§2.2 where CONSTRUX loses.** Six situations where a real contractor rightly
+  picks somebody else: an incumbent document control system mid-framework, a
+  buyer whose actual problem is document management, portfolio resource
+  levelling, an ERP requirement, the absence of a reference to call, and a
+  procurement gate that wants an ISO 27001 certificate rather than the controls
+  the certificate attests to.
+- **§2.3 the three honest weaknesses.** The record's value is back-loaded and the
+  costs are all in month one. The refusals will cost deals — and softening them
+  under sales pressure leaves nothing worth buying. One process holds the record
+  today.
+- **§17.1 how a well-funded competitor attacks.** Not by copying the ledger: by
+  shipping "audit trail" as a checkbox feature, by bundling it free inside a
+  suite already deployed, and by waiting, since the value is back-loaded.
+- **§17.2 what the moat does not cover.** It is not a moat on day one, it does
+  not stop a customer leaving — by design, since the record verifies without us —
+  and it is not a network effect. The benchmark is the only candidate and is
+  deliberately capped by k-anonymity and consent.
+
+The appendix now points at `docs/LAUNCH_AUDIT.md`, so the document that makes the
+claims and the document that attacked them are linked in both directions.

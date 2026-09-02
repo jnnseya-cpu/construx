@@ -73,6 +73,61 @@ verify is a category difference, not a feature. `[BUILT]`
 provider cost until unit economics break. Reserve-before-execute with hard caps
 is the difference between a feature and a business. `[BUILT]`
 
+### 2.1 The beachhead, named
+
+"Construction" is too wide to win from a standing start, and a platform that
+addresses everybody is bought by nobody first.
+
+**UK water framework contractors under AMP8.** The frameworks are named and
+finite, so the total addressable set is countable rather than estimated. The
+duty-holder regime is at its heaviest, which makes the evidentiary argument land
+rather than sound abstract. The payment regime is the one this platform computes.
+And the flagship demonstration project is a water treatment works, so a
+prospective customer walks through their own kind of job on their first visit
+instead of a generic one.
+
+Expansion from there is by adjacency of contract form rather than by sector
+noun: highways and rail frameworks share the notice regime, the duty-holder
+position and the assurance culture. Selling to housebuilding next would be
+selling to a different buyer with a different problem.
+
+### 2.2 Where CONSTRUX loses
+
+Stated because a market analysis with no losing column is marketing. Each of
+these is a real reason a real contractor picks somebody else, and none of them
+is answered by building harder.
+
+| Situation | Who wins, and why |
+|---|---|
+| **The team already lives in Procore or Autodesk Build** | They do. Switching a working document control system mid-framework is a cost with no offsetting benefit until a dispute arrives, and disputes are not scheduled. CONSTRUX wins here on a *new* project or after a loss, not by displacement. |
+| **The buyer wants document management** | They do. This platform is a governed record with documents attached to it, not a document store, and a buyer whose actual problem is "where is the latest drawing" is better served elsewhere and will say so. |
+| **Deep resource levelling and multi-project resource optimisation** | P6 does. The programme engine here does CPM, float, PERT and Monte Carlo honestly; it does not level resources across a portfolio, and pretending otherwise would be found out in the first month. |
+| **The buyer needs finance, payroll and plant hire in one system** | SAP or an ERP does. This is deliberately not a general ledger, and the integration story is a change feed and an API rather than a module. |
+| **The buyer has no reference to call** | Every incumbent does. This is the largest single obstacle and it is not technical. It is answered by founding-partner terms and by the exit guarantee, not by another feature. |
+| **Procurement requires an ISO 27001 certificate on the day** | Certified competitors do. The controls exist and are tested; the certificate does not, and a framework client's assurance gate does not accept "the controls exist". |
+
+### 2.3 The three honest weaknesses
+
+1. **The record's value is back-loaded.** Everything that makes this platform
+   worth more than its competitors — a chronology that survives an adjudication,
+   thirty years of asset provenance, a document a stranger can verify — pays out
+   at the moment of a dispute, an insurance renewal or a handover. The costs are
+   all in month one. That is the wrong shape for an easy sale and the right shape
+   for a durable one, and the pricing has to survive the gap.
+
+2. **The refusals will cost deals.** The platform declines to approve a plan with
+   gaps, declines to sign in a name that is not competent, declines to invent a
+   figure. Every one of those is a moment where a competitor's product says yes
+   and this one says no, and some buyers will choose the one that says yes. That
+   is the position, taken deliberately, and it should not be quietly softened
+   under sales pressure — the day it is, there is nothing left worth buying.
+
+3. **One process holds the record today.** The store is in-process with a durable
+   journal beside it. The Postgres schema and the wire client are both verified
+   against a real database, so this is wiring rather than design — but it is not
+   done, and it is the reason `docs/LAUNCH_AUDIT.md` says GO for a controlled
+   pilot and NO-GO for general availability.
+
 ---
 
 ## 3. Complete user ecosystem
@@ -849,6 +904,39 @@ provider outage, export recovery, suspected tamper (isolate, replay, report).
 | Lifecycle | Ends at handover | Same spine through thirty years of operation |
 | Trust | Asserted | Demonstrated: run the demo and it tampers with its own record to prove detection |
 
+### 17.1 How a well-funded competitor attacks this
+
+An incumbent with a large engineering team and an existing customer base does not
+copy the ledger. They do three cheaper things:
+
+1. **Ship "audit trail" as a feature and call it equivalent.** An append-only
+   table with a timestamp column satisfies most procurement checklists. The
+   difference — that the chain can be recomputed by a third party holding the log
+   and that a document verifies without the vendor existing — is real and is a
+   sentence long, and a sentence is what has to win the meeting.
+2. **Bundle.** Give the record away inside a suite the customer already pays for.
+   Nothing here can outprice a free feature attached to a system already deployed.
+3. **Wait.** The value is back-loaded, so a competitor can watch which customers
+   have a dispute and approach the rest.
+
+The answers are: a beachhead where the evidentiary argument is not optional, a
+demonstration a prospect can run themselves in ten minutes, and reference
+customers who have been through an adjudication with it. Two of the three are
+built; the third cannot be built.
+
+### 17.2 What the moat does not cover
+
+- **It is not a moat on day one.** A customer three weeks in has a record worth
+  little more than a folder. The moat accrues; it does not arrive.
+- **It does not stop a customer leaving.** By design — the record exports whole,
+  verifies without us, and the log replays wherever it is held. That is the
+  reason to trust the platform and it is also the reason nobody is locked in. It
+  is a deliberate trade of retention for credibility.
+- **It is not a patent, a dataset or a network effect.** Nothing here gets better
+  because another customer joined. The cross-company benchmark is the one
+  exception and it is deliberately k-anonymous, consented and refusable, which
+  caps how much of a network effect it can ever be.
+
 **The defensible position.** Features are copyable. A thirty-year, cryptographically
 verifiable record of how an asset came to exist is not — because it cannot be
 back-filled. Every month a project runs on CONSTRUX, the cost of leaving rises,
@@ -866,3 +954,9 @@ npm start       # gateway, landing page, application at /app, API at /v1/routes
 
 Requirement-by-requirement mapping, including what is deliberately not built:
 [`docs/traceability.md`](traceability.md).
+
+The adversarial audit — sixteen attacks against a running server, what held, what
+did not, and the GO/NO-GO verdict that follows from it:
+[`docs/LAUNCH_AUDIT.md`](LAUNCH_AUDIT.md). Its conclusion is **GO for a
+controlled pilot, NO-GO for general availability**, and the blocking item is the
+storage layer rather than anything in this document.
