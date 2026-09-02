@@ -6,6 +6,7 @@ import { issueTag } from '../evidence/envelope.ts';
 import type { GoldenThreadLedger } from '../goldenthread/ledger.ts';
 import { replayProject, replayTimeline } from '../goldenthread/replay.ts';
 import type { AuthContext } from '../identity/auth.ts';
+import { evaluateAccess } from '../identity/abac.ts';
 import { formatMoney } from '../domain/locale.ts';
 import { renderDocx } from './docx.ts';
 import { renderPdf, type ImageResolver } from './pdf.ts';
@@ -570,8 +571,44 @@ export class ExportService {
     const delay = delays[delays.length - 1]?.state;
     const risks = this.#ledger.list(projectId, 'RiskRegisterItem').filter((r) => r.state.status === 'OPEN');
 
-    // Commercial detail is withheld from audiences that have no entitlement to it.
-    const commercialVisible = input.audience !== 'REGULATOR' && input.audience !== 'SUPPLIER';
+    // Commercial detail is withheld on two independent grounds, and it needs
+    // both. This is a defect that shipped and was found by crossing a read
+    // route with an export rather than by testing either alone.
+    //
+    // The audience rule was here already: a regulator and a supplier have no
+    // entitlement to the contractor's commercial position, so those bundles
+    // never carry it.
+    //
+    // What was missing is the *caller*. Nothing checked whether the person
+    // asking may see commercial detail at all — so a site supervisor, who is
+    // refused `/v1/projects/:id/commercial-control` with 403 ACCESS_DENIED,
+    // obtained CPI, SPI and the cost position by asking for the same report
+    // addressed to a court. The audience decided the redaction; the identity
+    // decided nothing. That is broken function-level authorisation: one door
+    // enforcing a capability and another beside it that does not.
+    //
+    // Checked through `evaluateAccess`, which is the same call every other
+    // read makes, so an export and a read cannot disagree about who may see a
+    // budget.
+    const mayReadCommercial =
+      evaluateAccess(
+        auth,
+        'BUDGET_COST',
+        'R',
+        {
+          tenantId: auth.tenantId,
+          projectId,
+          dataSensitivity: 'COMMERCIAL_L3',
+        },
+        {
+          rbacEnabled: config.authz.rbac,
+          scopesEnabled: config.authz.scopes,
+          abacEnabled: config.authz.abac,
+        },
+      ).decision === 'ALLOW';
+
+    const audiencePermits = input.audience !== 'REGULATOR' && input.audience !== 'SUPPLIER';
+    const commercialVisible = audiencePermits && mayReadCommercial;
 
     // The project's own currency, not the platform's default. A report on a
     // Gulf or Japanese job showing sterling would be wrong in a way nobody

@@ -57,6 +57,43 @@ on the half that has never been tested in anger.
 | **D-06** | P2 | Availability | Rate-limit buckets are keyed on the socket address, not the forwarded client | Behind a reverse proxy every anonymous request in the world shares one 1,000/minute bucket. One client can deny service to all, and the 20/minute login budget becomes global | `applyRateLimit` builds `rl:ip:${remoteAddress}:${group}` from `req.socket.remoteAddress`; `deploy/compose.edge.yaml` documents an edge proxy in front | Rate-limit at the edge proxy, **or** implement trusted-proxy client-IP resolution against the `TRUSTED_PROXY_CIDRS` that already exists in config | **OPEN — see §13 for why it was not fixed here** |
 | **D-07** | P3 | Legal | No refund or cancellation policy on a platform that takes card and mobile-money payments | A paid subscription with no stated cancellation terms is a consumer-law exposure and a support burden | `/policies` lists eight policies; none covers refunds or cancellation. `/terms` contains no match for "refund" or "cancellation" | Publish both before the first paid customer | **OPEN — before first payment** |
 
+### A P1 this audit missed, found by driving a journey rather than probing a route
+
+**Broken function-level authorisation on the export.** Phase 5 probed read
+routes and Phase 6 probed request shapes. Neither crossed the two, and the
+defect lived in the gap.
+
+`GET /v1/projects/:id/commercial-control` answers **403 ACCESS_DENIED** to a
+site supervisor — the capability model working exactly as designed. The same
+identity, asking for `POST /v1/projects/:id/exports/report` with
+`audience: 'COURT'`, received **201 with the Commercial section in it**: cost
+performance, schedule performance, the cost position.
+
+The export redacted by **audience** and never asked who was holding it. A
+regulator and a supplier were correctly refused commercial detail; a supervisor
+addressing a bundle to a court was not, because the audience decided the
+redaction and the identity decided nothing. One door enforcing a capability and
+another beside it that did not.
+
+Fixed by clamping the section to *both* grounds — the audience must permit it
+**and** the caller must pass the same `evaluateAccess` check every other read
+makes, so an export and a read cannot disagree about who may see a budget. The
+export is still produced: a supervisor may legitimately export the project, and
+refusing outright would remove a capability they hold. What they no longer
+receive is the part they cannot read.
+
+Three mutants, all killed: ignoring the caller's capability again (the original
+defect) fails the new journey test; dropping the audience rule fails three
+tests in `exports.test.ts`, where that rule has always been covered; and
+removing the section from everybody fails the assertion that a PM still gets
+it, because closing a hole by breaking the feature is not closing it.
+
+**The lesson for the method, which is why this is written up rather than just
+patched:** every control in this platform was probed alone and held. This one
+was found by asking whether two controls agreed with each other. An audit that
+tests each door and never asks whether two doors lead to the same room will
+keep missing this class.
+
 ### Correction to D-01, made after trying it
 
 This audit repeated `docs/STATE.md`'s claim that Postgres is **"wiring rather
@@ -176,7 +213,7 @@ launch and is the whole reason this is CONDITIONAL GO.**
 | — failed and then fixed | 3 |
 | API surface | 901 routes declared; **~40 exercised adversarially**. Coverage of the route table by the automated suite is broad; coverage by *this* audit is deliberately concentrated on auth, money, tenancy and the feed |
 | Role coverage | 6 of 15 seeded identities signed in and used: PM, site supervisor, QS, enterprise admin, platform operator, regulator |
-| Critical journey coverage | Sign-in (6 roles), settlement lifecycle, change-feed consumption, exposure calculator, console navigation across 8 screens. **Registration, verification, password recovery, subscription purchase, invitation, export, upload and account deletion were not driven end to end** |
+| Critical journey coverage | Sign-in (6 roles), settlement lifecycle, change-feed consumption, exposure calculator, console navigation across 8 screens — and, since this verdict was first written, **registration, account recovery, invitation, export and account deletion driven end to end** in `backend/tests/journeys.test.ts` (18 tests). Driving the export journey found a P1 authorisation bypass this audit had missed; see §6. **Subscription purchase and upload remain NOT TESTED** |
 | Browser / device coverage | Chromium only, at 1440×1000 and 390×844. **Safari, Firefox, Edge, real iOS and real Android: NOT TESTED** |
 | Network conditions | Loopback only. **Slow 3G, high latency, packet loss, offline→online: NOT TESTED** |
 
