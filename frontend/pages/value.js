@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { barChart } from '../lib/chart.js';
+import { barChart } from '../lib/charts.js';
 import { gb, head, refusal, runway } from '../lib/estate.js';
 import { badge, date, html, money, pct, raw, render, table, time } from '../lib/ui.js';
 
@@ -112,7 +112,8 @@ export async function value(root) {
           <h2>By lifetime revenue</h2>
           <div class="metric-sub" style="margin-bottom:12px">Settled receipts only. Largest first.</div>
           ${barChart({
-            bars: paying.slice(0, 8).map((row) => ({
+            horizontal: true,
+            data: paying.slice(0, 8).map((row) => ({
               label: row.legalName,
               sub: `${row.tier} · ${row.identities} ${row.identities === 1 ? 'person' : 'people'} · ${row.seatsUsed} of ${row.seatsIncluded ?? '∞'} seats`,
               value: row.lifetimeRevenueMinor,
@@ -128,7 +129,8 @@ export async function value(root) {
             where they disagree is where the pricing is wrong in one direction or the other.
           </div>
           ${barChart({
-            bars: rows
+            horizontal: true,
+            data: rows
               .filter((row) => row.billedMinor > 0)
               .slice(0, 8)
               .map((row) => ({

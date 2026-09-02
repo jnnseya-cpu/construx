@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { barChart } from '../lib/chart.js';
+import { barChart } from '../lib/charts.js';
 import { head, refusal } from '../lib/estate.js';
 import { badge, html, humanise, pct, raw, render, table, time } from '../lib/ui.js';
 
@@ -83,7 +83,8 @@ export async function performance(root) {
             has a terrible p95 and costs nobody anything. This is where the waiting actually happens.
           </div>
           ${barChart({
-            bars: (position.tailAttribution ?? []).map((entry) => ({
+            horizontal: true,
+            data: (position.tailAttribution ?? []).map((entry) => ({
               label: entry.route,
               sub: `${pct(entry.share * 100, 1)} of everything past p95`,
               value: entry.callsOverP95,
@@ -127,7 +128,8 @@ export async function performance(root) {
             and putting one at the top of this list would send somebody to fix nothing.
           </div>
           ${barChart({
-            bars: (position.slowest ?? []).map((route) => bar(route, (r) => r.p95DurationMs)),
+            horizontal: true,
+            data: (position.slowest ?? []).map((route) => bar(route, (r) => r.p95DurationMs)),
             format: (value) => `${value}ms`,
             empty: 'Not enough traffic on this process to rank anything.',
           })}
@@ -138,7 +140,8 @@ export async function performance(root) {
             Where the load is. A slow route nobody calls costs less than a fast route called constantly.
           </div>
           ${barChart({
-            bars: (position.busiest ?? []).map((route) => bar(route, (r) => r.calls)),
+            horizontal: true,
+            data: (position.busiest ?? []).map((route) => bar(route, (r) => r.calls)),
             format: (value) => `${value}`,
             empty: 'No request has been recorded on this process.',
           })}

@@ -1,7 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { badge, date, days, html, humanise, metric, modal, pct, positionReport, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
-import { ganttChart, histogram } from '../lib/chart.js';
+import { ganttChart, histogram } from '../lib/charts.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -96,7 +96,8 @@ function datedPanel(view) {
 
             <div style="padding:13px 17px 0">
               ${ganttChart({
-                bars: activities.slice(0, 60).map((activity) => ({
+                title: 'Programme against baseline',
+                tasks: activities.slice(0, 60).map((activity) => ({
                   id: activity.id,
                   name: `${activity.activityCode} ${activity.name}`,
                   start: activity.earlyStart,

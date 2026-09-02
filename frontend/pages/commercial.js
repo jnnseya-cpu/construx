@@ -1,5 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
-import { donut, sparkline, waterfall } from '../lib/chart.js';
+import { donutChart, sparkline, waterfallChart } from '../lib/charts.js';
 import { command, commandBar } from '../lib/command.js';
 import { today } from '../lib/enums.js';
 import { badge, date, exact, html, humanise, metric, money, pct, positionReport, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
@@ -244,8 +244,9 @@ function exposurePanel(view) {
       ${
         (view.suppliers ?? []).length > 0
           ? html`<div style="padding:11px 17px 0">
-              ${donut({
-                slices: view.suppliers.map((supplier) => ({
+              ${donutChart({
+                title: 'Committed spend by supplier',
+                data: view.suppliers.map((supplier) => ({
                   label: supplier.supplierName,
                   value: supplier.committedMinor / 100,
                 })),
@@ -540,13 +541,16 @@ function integrationPanel(position) {
               step they are actually objecting to.
             </p>
             <div style="padding:6px 17px 4px">
-              ${waterfall({
+              ${waterfallChart({
+                title: 'How the contract price is built',
                 steps: [
-                  { label: 'Supplier cost', value: price.directSupplierCostMinor / 100, kind: 'BASE' },
+                  { label: 'Supplier cost', value: price.directSupplierCostMinor / 100 },
                   ...price.components
                     .filter((component) => component.amountMinor > 0)
-                    .map((component) => ({ label: component.label, value: component.amountMinor / 100, kind: 'ADD' })),
-                  { label: 'Contract price', value: price.contractPriceMinor / 100, kind: 'TOTAL' },
+                    .map((component) => ({ label: component.label, value: component.amountMinor / 100 })),
+                  // `total` rather than a `kind` string: the last step is the
+                  // running sum, not another addition to it.
+                  { label: 'Contract price', value: price.contractPriceMinor / 100, total: true },
                 ],
                 format: (value) => money(Math.round(value * 100)),
               })}
@@ -1055,9 +1059,9 @@ export async function commercial(root) {
                     forward.periods.length > 1
                       ? html`<div style="padding:12px 17px 0;display:flex;align-items:center;gap:11px">
                           ${sparkline({
-                            points: forward.periods.map((period) => period.cumulativeMinor),
-                            tone: forward.periods.some((period) => period.cumulativeMinor < 0) ? 'bad' : 'good',
-                            label: 'Cumulative cash position across the forecast periods',
+                            values: forward.periods.map((period) => period.cumulativeMinor),
+                            tone: forward.periods.some((period) => period.cumulativeMinor < 0) ? 'bad' : 'ok',
+                            format: (value) => money(Math.round(Number(value))),
                           })}
                           <span class="metric-sub">
                             Cumulative position across ${forward.periods.length} period(s).

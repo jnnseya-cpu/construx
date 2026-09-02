@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { barChart, lineChart } from '../lib/chart.js';
+import { barChart, lineChart } from '../lib/charts.js';
 import { axisDay, head, providerName, refusal, runway } from '../lib/estate.js';
 import { badge, html, money, pct, raw, render, table } from '../lib/ui.js';
 
@@ -80,11 +80,17 @@ export async function economy(root) {
             charged rising while cost stays flat is a provider getting cheaper or a routing change.
           </div>
           ${lineChart({
-            labels: burn.daily.map((day) => axisDay(day.date)),
+            title: 'AI spend, day by day',
+            data: burn.daily.map((day) => ({
+              label: axisDay(day.date),
+              billed: day.billedMinor,
+              cost: day.rawCostMinor,
+              margin: day.marginMinor,
+            })),
             series: [
-              { label: 'Charged', points: burn.daily.map((day) => day.billedMinor) },
-              { label: 'Provider cost', points: burn.daily.map((day) => day.rawCostMinor) },
-              { label: 'Margin', points: burn.daily.map((day) => day.marginMinor) },
+              { key: 'billed', label: 'Charged' },
+              { key: 'cost', label: 'Provider cost' },
+              { key: 'margin', label: 'Margin' },
             ],
             format: (value) => money(value),
             empty: 'No AI spend in this window.',
@@ -123,7 +129,8 @@ export async function economy(root) {
             looking at the routing table.
           </div>
           ${barChart({
-            bars: burn.providers.map((provider) => ({
+            horizontal: true,
+            data: burn.providers.map((provider) => ({
               label: providerName(provider.provider),
               sub: `${provider.executions} execution${provider.executions === 1 ? '' : 's'} · ${pct(provider.share * 100, 1)}`,
               value: provider.billedMinor,
@@ -136,7 +143,8 @@ export async function economy(root) {
           <h2>Heaviest tenancies</h2>
           <div class="metric-sub" style="margin-bottom:12px">By AI charged over the window, largest first.</div>
           ${barChart({
-            bars: burn.tenants
+            horizontal: true,
+            data: burn.tenants
               .filter((tenant) => tenant.billedMinor > 0)
               .slice(0, 6)
               .map((tenant) => ({

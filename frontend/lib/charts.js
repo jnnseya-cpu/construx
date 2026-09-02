@@ -51,7 +51,15 @@ import { esc, html, raw } from './ui.js';
  * @typedef {{x: Scalar, y: Scalar, z?: Scalar, label?: string, tone?: string}} Point
  * @typedef {{label: string, values: number[], tone?: string}} Group
  * @typedef {{label: string, value: number, tone?: string, total?: boolean}} Step
- * @typedef {{label: string, start: string, end: string, percentComplete?: number, milestone?: boolean, tone?: string}} Task
+ * @typedef {{label?: string, name?: string, start: string, end?: string, finish?: string,
+ *   baselineStart?: string, baselineFinish?: string, baselineEnd?: string,
+ *   percentComplete?: number, milestone?: boolean, critical?: boolean, longestPath?: boolean,
+ *   tone?: string, id?: string, wbsPath?: string}} Task
+ *
+ * `name`/`finish` are accepted beside `label`/`end` because a programme record
+ * calls them that. Translating at every call site is how one call site
+ * eventually gets it wrong.
+ * @typedef {{label: string, count: number, marked?: boolean}} Bucket
  * @typedef {(value: Scalar) => string} Formatter
  */
 
@@ -405,10 +413,22 @@ function horizontalBars({ rows, keys, title, desc, format, footnote }) {
       const value = num(row[keys[0].key]);
       const top = area.y + index * band + band * 0.18;
       const height = band * 0.64;
+      // A second line under the label, where the caller gave one. Bar lists in
+      // this product routinely carry a qualifier the bar itself cannot say —
+      // "6 executions · 41%", "runway 12 days" — and dropping it would make the
+      // chart shorter and the screen less informative.
+      const sub = typeof row.sub === 'string' && row.sub.trim() !== '' ? row.sub : undefined;
+      const labelY = sub ? top + height / 2 - 1 : top + height / 2 + 4;
+
       return html`<g>
-        <text class="chart-cat" x="${raw(r2(area.x - 10))}" y="${raw(r2(top + height / 2 + 4))}" text-anchor="end">
+        <text class="chart-cat" x="${raw(r2(area.x - 10))}" y="${raw(r2(labelY))}" text-anchor="end">
           <title>${row.label}</title>${fitLabel(row.label, pad.left - 12)}
         </text>
+        ${sub
+          ? html`<text class="chart-foot" x="${raw(r2(area.x - 10))}" y="${raw(r2(labelY + 11))}" text-anchor="end">
+              ${fitLabel(sub, pad.left - 12, 9)}
+            </text>`
+          : ''}
         <rect
           class="chart-bar"
           x="${raw(r2(area.x))}"
@@ -621,7 +641,7 @@ export const donutChart = (options) => pieChart({ ...options, donut: true });
  * histogram completely, so it is derived from the data rather than left at a
  * default of ten — which is how a bimodal distribution gets drawn as a hump.
  */
-/** @param {{values?: Scalar[], title?: string, desc?: string, format?: Formatter, bins?: number, empty?: string, tone?: string, footnote?: string}} options */
+/** @param {{values?: Scalar[], buckets?: Bucket[], title?: string, desc?: string, format?: Formatter, bins?: number, empty?: string, emptyDetail?: string, tone?: string, limit?: number, limitLabel?: string, markLabel?: string, markPast?: 'above'|'below', footnote?: string}} options */
 export function histogram({
   values = [],
   buckets: given,
@@ -645,17 +665,26 @@ export function histogram({
   // a Monte Carlo run whose distribution is computed server-side and whose raw
   // trials were never sent. Rebinning a summary would invent a shape the
   // simulation did not produce.
+  // `limit` means two different things because the two inputs are two different
+  // charts, and conflating them would mis-mark whichever came second.
+  //
+  // With raw `values` the picture is a *distribution* and the limit is a
+  // threshold on the measured quantity — a P80 duration — so it is a vertical
+  // line and it marks the bins holding values beyond it.
+  //
+  // With pre-binned `buckets` the picture is almost always a *profile* over
+  // time, and the limit is a ceiling on the bar height — the labour available
+  // per day — so it is a horizontal line and it marks the bars that exceed it.
   const preBinned = Array.isArray(given) && given.length > 0;
   if (!preBinned && values.filter(finite).length < 2) return emptyChart(empty, emptyDetail);
 
   const sample = preBinned ? [] : values.filter(finite).map(Number).sort((a, b) => a - b);
   const bucketList = preBinned
-    ? given.map((bucket) => ({
-        from: bucket.label,
-        to: bucket.label,
-        n: num(bucket.count),
-        marked: bucket.marked === true,
-      }))
+    ? given.map((bucket) => {
+        const n = num(bucket.count);
+        const over = finite(limit) && (markPast === 'below' ? n < Number(limit) : n > Number(limit));
+        return { from: bucket.label, to: bucket.label, n, marked: bucket.marked === true || over };
+      })
     : (() => {
         const min = sample[0];
         const max = sample[sample.length - 1];
@@ -673,12 +702,17 @@ export function histogram({
           const index = Math.min(count - 1, Math.floor((value - min) / width));
           made[index].n += 1;
         }
-        // A threshold marks every bucket past it, so the reader can see how much
-        // of the distribution sits the wrong side of the line rather than
-        // reading a line across bars and estimating.
+        // A threshold marks every bucket that *contains* a value past it, not
+        // only those starting past it.
+        //
+        // The strict reading marks nothing whenever the limit falls inside a
+        // bucket, which is the common case — the reader then sees a threshold
+        // line with no marking and concludes nothing is beyond it, which is
+        // false. A bucket straddling the line does hold values past it, and
+        // saying so overstates far less than saying nothing does.
         if (finite(limit)) {
           for (const bucket of made) {
-            bucket.marked = markPast === 'below' ? bucket.to <= Number(limit) : bucket.from >= Number(limit);
+            bucket.marked = markPast === 'below' ? bucket.from < Number(limit) : bucket.to > Number(limit);
           }
         }
         return made;
@@ -690,7 +724,13 @@ export function histogram({
   const max = preBinned ? 0 : sample[sample.length - 1];
   const median = preBinned ? undefined : sample[Math.floor(sample.length / 2)];
 
-  const axis = niceScale(0, Math.max(...buckets.map((b) => b.n)));
+  // The ceiling includes the limit even where no bar reaches it. A chart scaled
+  // only to its bars would draw the capacity line off the top and tell the
+  // reader nothing is near it — which is the opposite of what the chart is for.
+  const axis = niceScale(
+    0,
+    Math.max(...buckets.map((b) => b.n), preBinned && finite(limit) ? Number(limit) : 0),
+  );
   const area = plot();
   const y = scale(axis.min, axis.max, area.y + area.h, area.y);
   const band = area.w / count;
@@ -725,9 +765,24 @@ export function histogram({
       )}
       <line class="chart-axis" x1="${raw(r2(area.x))}" y1="${raw(r2(y(0)))}" x2="${raw(r2(area.x + area.w))}" y2="${raw(r2(y(0)))}" />
       ${
-        // The threshold itself, drawn where the marked bucket begins. Only for
-        // binned input, where the x scale is a real number line — on pre-binned
-        // labels there is no position to put it at that would mean anything.
+        // A capacity line, across the bars, where the input was pre-binned.
+        preBinned && finite(limit)
+          ? html`<g class="chart-ref">
+              <line
+                x1="${raw(r2(area.x))}"
+                y1="${raw(r2(y(Number(limit))))}"
+                x2="${raw(r2(area.x + area.w))}"
+                y2="${raw(r2(y(Number(limit))))}"
+              />
+              <text class="chart-axis-label" x="${raw(r2(area.x + 4))}" y="${raw(r2(y(Number(limit)) - 5))}">
+                ${limitLabel || format(Number(limit))}
+              </text>
+            </g>`
+          : ''
+      }
+      ${
+        // A threshold on the measured quantity, where the values were binned
+        // here and the x scale is a real number line.
         !preBinned && finite(limit) && Number(limit) >= min && Number(limit) <= max
           ? html`<g class="chart-ref">
               <line
@@ -1490,29 +1545,46 @@ function squarify(values, area, total) {
  * milestone, and a dependency line only where a dependency is stated. A Gantt
  * that draws inferred links is a Gantt that argues with the programme.
  */
-/** @param {{tasks?: Task[], title?: string, desc?: string, today?: string, empty?: string, footnote?: string}} options */
+/** @param {{tasks?: Task[], title?: string, desc?: string, today?: string, dataDate?: string, empty?: string, footnote?: string}} options */
 export function ganttChart({
   tasks = [],
   title = 'Programme',
   desc,
   today,
+  /** The line between what happened and what is forecast. Alias of `today`. */
+  dataDate,
   empty = 'No dated activities to plot',
   footnote,
 }) {
+  // `finish` alongside `end`, and `name` alongside `label`, because a
+  // programme record calls them that and translating at every call site is how
+  // one of the call sites eventually gets it wrong.
   const bars = tasks
+    .map((task) => ({ ...task, label: task.label ?? task.name, end: task.end ?? task.finish }))
     .filter((task) => task && task.start && task.end)
-    .map((task) => ({ ...task, from: Date.parse(task.start), to: Date.parse(task.end) }))
+    .map((task) => ({
+      ...task,
+      from: Date.parse(task.start),
+      to: Date.parse(task.end),
+      baseFrom: task.baselineStart ? Date.parse(task.baselineStart) : NaN,
+      baseTo: task.baselineFinish ?? task.baselineEnd ? Date.parse(task.baselineFinish ?? task.baselineEnd) : NaN,
+    }))
     .filter((task) => Number.isFinite(task.from) && Number.isFinite(task.to) && task.to >= task.from);
   if (bars.length === 0) return emptyChart(empty);
 
-  const min = Math.min(...bars.map((bar) => bar.from));
-  const max = Math.max(...bars.map((bar) => bar.to));
+  // Baselines are inside the extent. A task that slipped has a baseline earlier
+  // than every current date, and leaving it out of the scale draws the
+  // comparison off the left edge — losing exactly the bar the reader opened the
+  // chart for.
+  const dates = bars.flatMap((bar) => [bar.from, bar.to, bar.baseFrom, bar.baseTo].filter(Number.isFinite));
+  const min = Math.min(...dates);
+  const max = Math.max(...dates);
   const rowHeight = 30;
   const left = 210;
   const box = { w: 760, h: Math.max(120, bars.length * rowHeight + 56) };
   const right = box.w - 20;
   const x = scale(min, max, left, right);
-  const nowAt = today ? Date.parse(today) : Date.now();
+  const nowAt = today ?? dataDate ? Date.parse(today ?? dataDate) : Date.now();
 
   // Month gridlines, because a Gantt with no calendar behind it is a set of
   // floating rectangles.
@@ -1552,11 +1624,40 @@ export function ganttChart({
       const from = x(bar.from);
       const to = x(bar.to);
       const width = Math.max(3, to - from);
-      const colour = paint(bar.tone, index);
+      // Critical and longest-path work is toned by what it *is*, overriding any
+      // tone the caller passed: on a programme, "this drives the completion
+      // date" outranks whatever colour a category would have given it.
+      const colour = paint(bar.critical || bar.longestPath ? 'bad' : bar.tone, index);
       const milestone = bar.milestone === true || bar.to === bar.from;
       const done = finite(bar.percentComplete) ? Math.max(0, Math.min(100, Number(bar.percentComplete))) : undefined;
+      const baseline =
+        Number.isFinite(bar.baseFrom) && Number.isFinite(bar.baseTo) && bar.baseTo >= bar.baseFrom
+          ? { from: x(bar.baseFrom), to: x(bar.baseTo) }
+          : undefined;
+      const slipDays = baseline ? Math.round((bar.to - bar.baseTo) / 86_400_000) : 0;
+
       return html`<g>
-        <text class="chart-cat" x="${raw(left - 12)}" y="${raw(y + 15)}" text-anchor="end">${bar.label}</text>
+        <text class="chart-cat" x="${raw(left - 12)}" y="${raw(y + 15)}" text-anchor="end">
+          <title>${bar.label}</title>${fitLabel(bar.label, left - 22)}
+        </text>
+        ${
+          // The baseline as a hairline under the bar rather than a second solid
+          // bar: the current dates are what somebody acts on, and two bars of
+          // equal weight make the reader work out which is which every row.
+          baseline
+            ? html`<g class="chart-ref">
+                <line
+                  x1="${raw(r2(baseline.from))}"
+                  y1="${raw(y + 24)}"
+                  x2="${raw(r2(Math.max(baseline.from + 2, baseline.to)))}"
+                  y2="${raw(y + 24)}"
+                />
+                <title>${bar.label}: baseline ${raw(String(bar.baselineStart).slice(0, 10))} to ${raw(
+                  String(bar.baselineFinish ?? bar.baselineEnd).slice(0, 10),
+                )}${slipDays === 0 ? '' : ` · ${Math.abs(slipDays)} days ${slipDays > 0 ? 'late' : 'early'}`}</title>
+              </g>`
+            : ''
+        }
         ${milestone
           ? html`<path
               class="chart-milestone"

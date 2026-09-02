@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { lineChart } from '../lib/chart.js';
+import { lineChart } from '../lib/charts.js';
 import { axisDay, head, refusal } from '../lib/estate.js';
 import { badge, html, humanise, pct, raw, render, table, time } from '../lib/ui.js';
 
@@ -85,8 +85,9 @@ export async function eventstore(root) {
             something that has stopped working, not of a quiet week.
           </div>
           ${lineChart({
-            labels: (position.daily ?? []).map((day) => axisDay(day.date)),
-            series: [{ label: 'Events', points: (position.daily ?? []).map((day) => day.count) }],
+            title: 'Events written, day by day',
+            data: (position.daily ?? []).map((day) => ({ label: axisDay(day.date), value: day.count })),
+            series: [{ key: 'value', label: 'Events' }],
             format: (value) => String(value),
             empty: 'Nothing has been written in this window.',
           })}

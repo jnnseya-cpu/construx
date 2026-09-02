@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { lineChart } from '../lib/chart.js';
+import { lineChart } from '../lib/charts.js';
 import { axisDay, gb, head, movement, providerName, refusal } from '../lib/estate.js';
 import { badge, html, humanise, money, pct, raw, render, table, time, track } from '../lib/ui.js';
 import { navigate } from '../app.js';
@@ -225,11 +225,17 @@ export async function admin(root) {
                 routing split and every tenancy's consumption are on the ACU Economy screen.
               </div>
               ${lineChart({
-                labels: burn.daily.map((day) => axisDay(day.date)),
+                title: 'AI spend, day by day',
+                data: burn.daily.map((day) => ({
+                  label: axisDay(day.date),
+                  billed: day.billedMinor,
+                  cost: day.rawCostMinor,
+                  margin: day.marginMinor,
+                })),
                 series: [
-                  { label: 'Charged', points: burn.daily.map((day) => day.billedMinor) },
-                  { label: 'Provider cost', points: burn.daily.map((day) => day.rawCostMinor) },
-                  { label: 'Margin', points: burn.daily.map((day) => day.marginMinor) },
+                  { key: 'billed', label: 'Charged' },
+                  { key: 'cost', label: 'Provider cost' },
+                  { key: 'margin', label: 'Margin' },
                 ],
                 format: (value) => money(value),
                 empty: 'No AI spend in this window.',

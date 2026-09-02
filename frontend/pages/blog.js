@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { lineChart } from '../lib/chart.js';
+import { lineChart } from '../lib/charts.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { axisDay, head, refusal } from '../lib/estate.js';
 import { badge, html, raw, render, table, time, toast, track } from '../lib/ui.js';
@@ -167,8 +167,9 @@ export async function blog(root) {
               <h2>Page requests — last ${views.windowDays} days</h2>
               <div class="metric-sub" style="margin-bottom:12px">${views.note}</div>
               ${lineChart({
-                labels: views.daily.map((day) => axisDay(day.date)),
-                series: [{ label: 'Requests', points: views.daily.map((day) => day.views) }],
+                title: 'Requests, day by day',
+                data: views.daily.map((day) => ({ label: axisDay(day.date), value: day.views })),
+                series: [{ key: 'value', label: 'Requests' }],
                 format: (value) => String(value),
                 empty: 'No page has been requested in this window.',
               })}

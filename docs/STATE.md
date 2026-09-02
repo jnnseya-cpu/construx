@@ -3461,7 +3461,7 @@ shares sum to 100% over part of the money. Every day inside the window appears i
 the series including the quiet ones, because a series that omits them draws a
 rising line out of a flat month.
 
-The console reads it through `frontend/lib/chart.js` — inline SVG, no library,
+The console reads it through `frontend/lib/charts.js` — inline SVG, no library,
 since zero runtime dependencies is settled and a line over a bounded series does
 not need one. The axis is never auto-scaled to invent activity out of zeroes, an
 empty series renders its empty state rather than an axis around blank space, and
@@ -12055,7 +12055,8 @@ of them a delivery or commercial page. Every figure elsewhere was a number,
 which answers "what is it" and never "which way is it going" or "what is it made
 of".
 
-Six added to `frontend/lib/chart.js`, all inline SVG on the settled
+Six added to the chart kit (then `frontend/lib/chart.js`, since merged into
+`frontend/lib/charts.js`), all inline SVG on the settled
 zero-dependency decision, all holding to the three rules the file already had:
 no invented axis, an empty series draws its empty state rather than an axis
 around blank space, and nothing is smoothed.
@@ -14566,14 +14567,49 @@ than by anything failing:
 All of them rendered without a console error, which is why a browser walk that
 only counts errors is not a check. Reading the page is.
 
-### Two chart libraries, and why both remain
+### Two chart libraries became one
 
-`frontend/lib/chart.js` (8 types, used by 8 screens) predates
-`frontend/lib/charts.js` (15 types). The second is a superset and is what new
-work uses. The first is **not being removed**: eight screens depend on it, their
-signatures differ (`bars` versus `data`), and rewriting working screens to change
-which module draws the same picture is the refactor rule 3 exists to prevent.
-Recorded here rather than left for somebody to discover.
+`frontend/lib/chart.js` (8 types, 8 screens) predated `frontend/lib/charts.js`
+(24 exports). An earlier entry here recorded a decision to keep both, on the
+grounds that rewriting working screens to change which module draws the same
+picture is the refactor rule 3 exists to prevent. That decision was overturned
+deliberately: one concept with two implementations is what rule 6 forbids, and
+the cost was already visible — a page importing the wrong one silently dropped
+props, which is how seven KPI cards lost their explanatory line.
+
+The merge was done capability-first, so nothing was lost in it. Three things the
+old library could do and the new one could not were **ported and tested before a
+single call site moved**:
+
+- **Pre-binned histogram buckets.** `histogram` now takes either `buckets`
+  (already counted) or `values` (raw). The two carry *different* limit
+  semantics and conflating them was caught in review: against pre-binned
+  buckets `limit` is a ceiling on `bucket.count` and draws a horizontal line;
+  against raw values it is a threshold on the measured quantity and draws a
+  vertical one. Marking uses `to > limit`, not `from >= limit` — a limit falling
+  inside a bucket marked nothing under the old test, so a reader saw a line with
+  nothing past it and concluded, wrongly, that nothing was past it.
+- **Gantt baselines and critical path.** `ganttChart` accepts `name`/`finish`
+  as well as `label`/`end`, plus `baselineStart`/`baselineFinish`, `critical`,
+  `longestPath` and `dataDate`. The drawing extent includes the baselines: a
+  slipped task's baseline sits before the whole current programme, and leaving
+  it out of the extent drew the one bar the reader opened the chart for off the
+  left edge.
+- **Per-row captions on horizontal bars**, and a label that fits. `fitLabel`
+  truncates to the gutter with the full text in a `<title>`. Previously a long
+  row label overflowed the viewBox and lost its *beginning* — the part that says
+  which row it is.
+
+`frontend/lib/chart.js` is deleted. Every one of its 17 call sites across
+`admin`, `blog`, `commercial`, `economy`, `eventstore`, `performance`,
+`programme` and `value` now imports `charts.js`, all eight were walked in a
+browser under an identity that can actually see them, and `stackedBarChart` —
+its one export nothing called — went with it. The capability register above is
+what survived; the file was the duplicate.
+
+93 tests in `backend/tests/charts.test.ts`, 15 of them written against the
+ported behaviour specifically, so a regression in any of the three shows up as a
+failure rather than as a picture nobody looks at.
 
 
 ---

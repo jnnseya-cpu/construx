@@ -39,9 +39,20 @@ import {
 
 const svg = (content: unknown): string => resolveHtml(content);
 
-/** Every `<rect y=…>` in draw order, as numbers. */
+/** Every `<rect y=…>` in draw order, as numbers. Geometry only — see `paints`. */
 const attrs = (markup: string, attribute: string): number[] =>
   [...markup.matchAll(new RegExp(`${attribute}="(-?[\\d.]+)"`, 'g'))].map((found) => Number(found[1]));
+
+/**
+ * Every value of a non-numeric attribute, in draw order.
+ *
+ * `attrs` deliberately matches numbers only, because its job is geometry. A
+ * colour is `var(--orange)`, which that pattern silently skips — so an
+ * assertion about fills written against `attrs` compares two empty arrays and
+ * passes whatever the chart did.
+ */
+const paints = (markup: string, attribute = 'fill'): string[] =>
+  [...markup.matchAll(new RegExp(`${attribute}="([^"]+)"`, 'g'))].map((found) => String(found[1]));
 
 const CHART_SOURCE = readFileSync(resolve(import.meta.dirname, '../../frontend/lib/charts.js'), 'utf8');
 const CSS = readFileSync(resolve(import.meta.dirname, '../../frontend/app.css'), 'utf8');
@@ -691,5 +702,149 @@ describe('horizontal bars, and the labels they exist for', () => {
   it('leaves a short label alone', () => {
     const markup = svg(barChart({ data: longRows, horizontal: true, title: 'Drivers' }));
     assert.match(markup, />Short one</, 'a label that fits must not be truncated');
+  });
+});
+
+describe('the capabilities carried over when the two chart libraries became one', () => {
+  /**
+   * `lib/chart.js` could do two things `lib/charts.js` could not, and both were
+   * load-bearing on real screens. They were ported before any call site moved,
+   * because a merge that quietly drops a capability is a regression wearing a
+   * refactor's clothes.
+   */
+
+  describe('a histogram of data somebody else binned', () => {
+    const buckets = [
+      { label: '320d', count: 4 },
+      { label: '330d', count: 18 },
+      { label: '340d', count: 9, marked: true },
+      { label: '350d', count: 2, marked: true },
+    ];
+
+    it('draws pre-binned buckets rather than demanding raw values', () => {
+      // A Monte Carlo distribution is computed where the trials are, and the
+      // trials are never sent. Rebinning a summary would invent a shape the
+      // simulation did not produce.
+      const markup = svg(histogram({ buckets, title: 'Completion' }));
+      assert.equal(attrs(markup, 'height').filter((h) => Number(h) > 0).length >= 4, true);
+    });
+
+    it('carries each bucket’s own label onto the axis', () => {
+      const markup = svg(histogram({ buckets, title: 'Completion' }));
+      assert.match(markup, /320d/);
+      assert.match(markup, /350d/);
+    });
+
+    it('distinguishes a marked bucket from an unmarked one', () => {
+      const markup = svg(histogram({ buckets, title: 'Completion' }));
+      const fills = new Set(paints(markup));
+      assert.equal(fills.size, 2, 'a marked bucket must not look identical to an unmarked one');
+    });
+
+    it('treats a limit on pre-binned buckets as a ceiling on the bars', () => {
+      // A resource profile: the limit is the labour available per day, and the
+      // bars that exceed it are the days that cannot be worked as planned.
+      // Reading it as a threshold on the x axis — correct for a distribution —
+      // would mark the wrong bars entirely.
+      const profile = [
+        { label: 'w1', count: 4 },
+        { label: 'w2', count: 12 },
+        { label: 'w3', count: 3 },
+      ];
+      const markup = svg(histogram({ buckets: profile, limit: 6, limitLabel: 'available' }));
+      const fills = paints(markup);
+      assert.equal(fills.filter((fill) => fill === 'var(--warning)').length, 1, 'only w2 exceeds the ceiling');
+      assert.match(markup, /available/);
+    });
+
+    it('keeps a ceiling nothing reaches inside the scale', () => {
+      // Otherwise the capacity line is drawn off the top and the chart says
+      // nothing is near it — the opposite of what it is for.
+      const markup = svg(histogram({ buckets: [{ label: 'w1', count: 2 }], limit: 40, limitLabel: 'available' }));
+      for (const y of attrs(markup, 'y1')) assert.ok(y >= 0, `the capacity line was drawn at y=${y}`);
+      assert.match(markup, /available/);
+    });
+
+    it('says nothing about a median it cannot know', () => {
+      // With pre-binned input there is no sample to take a median from, and
+      // computing one off bucket midpoints would be a figure nobody measured.
+      const markup = svg(histogram({ buckets, title: 'Completion' }));
+      assert.ok(!/Median/.test(markup));
+    });
+
+    it('still bins raw values when given them', () => {
+      const markup = svg(histogram({ values: [1, 2, 2, 3, 3, 3, 4, 4, 5], title: 'Spread' }));
+      assert.match(markup, /Median/);
+    });
+
+    it('marks every bin past a threshold, and draws the threshold', () => {
+      const markup = svg(histogram({ values: Array.from({ length: 40 }, (_, i) => i), limit: 30, limitLabel: 'P80' }));
+      assert.match(markup, /P80/);
+      assert.ok(new Set(paints(markup)).size > 1, 'bins past the limit must be distinguishable');
+    });
+
+    it('marks the bucket the threshold falls inside, not only those beyond it', () => {
+      // The bug this replaced: with the limit inside the last bucket, a strict
+      // "starts past the limit" rule marked nothing at all — a threshold line
+      // with no marking, which reads as "nothing is past this" when values
+      // beyond it plainly exist.
+      const markup = svg(histogram({ values: Array.from({ length: 40 }, (_, i) => i), limit: 30, limitLabel: 'P80' }));
+      assert.ok(new Set(paints(markup)).has('var(--warning)'), 'the straddling bucket must be marked');
+    });
+
+    it('lets the empty state say why there is nothing, when "not recorded" is wrong', () => {
+      const markup = histogram({ values: [], empty: 'Nothing simulated yet', emptyDetail: 'Run the simulation.' });
+      assert.match(resolveHtml(markup), /Run the simulation\./);
+      assert.ok(!/Nothing has been recorded/.test(resolveHtml(markup)));
+    });
+  });
+
+  describe('a programme with a baseline to compare against', () => {
+    // Declared apart from the array so a single task can be varied on its own.
+    // Spreading `tasks[0]` instead would take the union of two differently
+    // shaped literals, which is not one task.
+    const piling = {
+      name: 'Piling',
+      start: '2026-03-01',
+      finish: '2026-04-15',
+      baselineStart: '2026-02-01',
+      baselineFinish: '2026-03-10',
+      critical: true,
+      percentComplete: 60,
+    };
+    const tasks = [piling, { name: 'Inlet works', start: '2026-04-16', finish: '2026-06-01' }];
+
+    it('accepts the field names a programme record actually uses', () => {
+      // `name`/`finish`, not `label`/`end`. Translating at every call site is
+      // how one call site eventually gets it wrong.
+      const markup = svg(ganttChart({ tasks, title: 'Programme' }));
+      assert.match(markup, /Piling/);
+      assert.match(markup, /Inlet works/);
+    });
+
+    it('keeps a baseline earlier than every current date inside the drawing', () => {
+      // A slipped task has a baseline before the whole current programme.
+      // Leaving it out of the extent draws it off the left edge — losing the
+      // one bar the reader opened the chart for.
+      const markup = svg(ganttChart({ tasks, title: 'Programme' }));
+      for (const x of attrs(markup, 'x1')) assert.ok(Number(x) >= 0, `a mark was drawn at x=${x}`);
+    });
+
+    it('says how far the work has slipped against its baseline', () => {
+      const markup = svg(ganttChart({ tasks, title: 'Programme' }));
+      assert.match(markup, /days late/);
+    });
+
+    it('tones critical work by what it is, not by its category', () => {
+      const plain = svg(ganttChart({ tasks: [{ ...piling, critical: false }], title: 'P' }));
+      const critical = svg(ganttChart({ tasks: [{ ...piling, critical: true }], title: 'P' }));
+      assert.notDeepEqual(paints(plain), paints(critical));
+      assert.ok(paints(critical).includes('var(--critical)'), 'critical work should read as critical');
+    });
+
+    it('takes a data date as the line between actual and forecast', () => {
+      const markup = svg(ganttChart({ tasks, dataDate: '2026-04-01', title: 'Programme' }));
+      assert.match(markup, /chart-today/);
+    });
   });
 });
