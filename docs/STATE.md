@@ -13643,3 +13643,73 @@ too late to change, and it sits on the command centre's NEXT list until then.
 **10 mutations, 10 caught**, after two survivors named real gaps: an authority
 missing its reference was accepted, and a certificate could be issued under no
 appointment at all.
+
+### The nine stages, derived rather than declared
+
+§6 — `backend/src/domain/etablix/workflow.ts`, `GET
+/v1/projects/:id/site-services/workflow`, on the Site Services screen.
+
+Nine stages, each with an entry gate, the agent-driven work, and an exit gate
+naming an authoritative record. The table is in the specification; what makes it
+an engine rather than a diagram is one rule:
+
+**A gate is derived, never set.** There is no command to move a project to a
+stage and no stage field on any record. Every gate is a question asked of the
+records §2–§12 already hold, answered fresh on every read. A test asserts against
+the module's own source that it contains no `write(` and no `eventType:` at all —
+because a command to declare a stage reached is exactly the failure §6 exists to
+prevent, and the first serious argument on a job is about whether something had
+been done or merely marked done.
+
+The console panel therefore has **no controls on it**, and says so: there is
+nothing to click because there is no way to move a stage other than by making the
+records behind it true.
+
+#### Three answers, not two
+
+A condition is **satisfied**, **outstanding**, or **not derivable**, and the
+third is what keeps it honest.
+
+Stage 8's exit is "sanitised knowledge promoted to the ETABLIX library", and
+there is no library: no site-services supplier score is written back from an
+engagement, no price benchmark is promoted out of a normalisation, no reusable
+package template exists. §7 normalises bids inside a project and nothing carries
+the result forward. Reporting that as outstanding would tell somebody they have
+work to do; *not derivable* tells them the platform cannot answer the question.
+**It is the one stage of the nine with no authoritative record behind it**, and a
+test asserts it is the only one — so building the library makes that assertion
+fail and forces the count down.
+
+The same distinction carries the commercial gates. A site manager reading the
+workflow gets "the month is commercially accepted" as withheld rather than as
+passed, and the stage is correctly reported as not complete: telling somebody the
+month is closed on the strength of a gate they may not read is worse than telling
+them they may not read it.
+
+#### Stage 6 is a loop, not a step
+
+The specification numbers Change/Recover between Operate and Demobilise, and on a
+real job it is neither: it runs whenever a variance is detected, alongside
+whatever else is happening. It is marked `concurrent` and excluded from the
+furthest-stage calculation, so a project at Operate with three live changes is
+reported as at Operate with change running — not as having left Operate.
+
+The furthest-stage rule is strictly sequential for the other eight. A later gate
+that happens to pass while an earlier one has not does not move the project
+forward: Demobilise's entry passes on a project where every composed system has a
+removal plan, and if nothing has been packaged that project is at Define, because
+the records Demobilise is about were never built.
+
+**11 of 13 mutations caught.** The two survivors are the module gate, which every
+position underneath repeats, and a comparison that only differs once a withheld
+condition appears on an *entry* gate, which none does today.
+
+The end-to-end test walks a real project the whole way — brief answered, both a
+welfare system and the temporary MEP that supplies it composed in the same zone,
+one package let to a prequalified firm under a recorded authority to proceed,
+both systems taken through G0 to G6, a service period measured, removal plans
+agreed and all seven demobilisation workstreams accepted. Written out rather than
+shortcut, because a project jumped to that state would prove the later gates
+against a fiction. It also found that a welfare compound alone cannot pass G3 —
+"utilities available at the boundary" derives from a composed MEP system in the
+same zone — which is correct, and is the kind of thing a shortcut fixture hides.

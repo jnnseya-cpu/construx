@@ -75,6 +75,7 @@ import * as siteCommercial from '../domain/etablix/commercial.ts';
 import * as siteChange from '../domain/etablix/change.ts';
 import * as siteDemob from '../domain/etablix/demobilisation.ts';
 import * as siteCommand from '../domain/etablix/commandcentre.ts';
+import * as siteWorkflow from '../domain/etablix/workflow.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
 import * as programmereview from '../domain/programmereview.ts';
@@ -5450,6 +5451,13 @@ export const ROUTES: Route[] = [
         next: siteCommand.nameOwners(centre.next, identities),
       };
     },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/workflow',
+    description:
+      'The nine-stage workflow: which stage the project is actually at, every entry and exit gate derived from the records rather than set, and what each gate is waiting on',
+    handler: (platform, ctx) => siteWorkflow.workflowPosition(projectContext(platform, ctx)),
   },
   {
     method: 'GET',

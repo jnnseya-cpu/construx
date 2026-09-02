@@ -84,7 +84,7 @@ export async function siteservices(root) {
   // on this page and the supplier portal will not answer without a subject —
   // firing it inside the parallel block would mean re-firing all nine every
   // time somebody switched workspace.
-  const [centre, automation] = await Promise.all([
+  const [centre, automation, workflow] = await Promise.all([
     api
       .get(
         `/v1/projects/${state.session.projectId}/site-services/command-centre/${chosenWorkspace}` +
@@ -92,6 +92,7 @@ export async function siteservices(root) {
       )
       .catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/automation`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/workflow`).catch((error) => ({ error })),
   ]);
 
   // The reconciliation itself, for the valuation that is actually live. It is
@@ -585,6 +586,8 @@ export async function siteservices(root) {
           rows: controlPointRows(models),
         })}
       </div>
+
+      ${workflow.error ? refusal('The workflow engine', workflow.error) : workflowCard(workflow)}
 
       ${commandCentreCard(centre, factory)}
 
@@ -3755,6 +3758,77 @@ const QUESTIONS = {
   packageCount: 'How many separate service packages will be let, and by whom?',
   firstMobilisationDate: 'When does the first service have to be operational on site?',
 };
+
+/**
+ * §6 — the nine stages, and where the project actually is.
+ *
+ * Every gate on this card is derived from the records rather than set, so the
+ * card has no controls on it at all: there is nothing to click, because there is
+ * no way to move a stage other than by making the underlying records true. That
+ * is the point of the panel and it is worth the reader noticing.
+ *
+ * A condition that cannot be answered is shown as neither passed nor
+ * outstanding. Outstanding says somebody has work to do; not derivable says the
+ * platform cannot answer the question, which is a different conversation.
+ */
+function workflowCard(position) {
+  const { stages, at, changeRunning, statement } = position;
+  const tone = { SATISFIED: 'ok', OUTSTANDING: 'warn', NOT_DERIVABLE: 'info' };
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>The nine stages</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">${statement}</div>
+      <div class="notice info" style="margin-bottom:14px">
+        <div>
+          <b>Every gate below is derived, never set.</b> There is no control on this card because there is no way to
+          move a stage other than by making the records behind it true.
+        </div>
+      </div>
+
+      ${stages.map(
+        (stage) => html`<div style="padding:12px 0;border-top:1px solid var(--line)">
+          <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+            <b>${stage.order} ${stage.label}</b>
+            <span>
+              ${stage.concurrent ? badge('concurrent', 'info') : ''}
+              ${
+                // One state badge, not two. "here entered" read as a pair of
+                // words rather than as a status, and "here" already says the
+                // stage has been entered.
+                stage.complete
+                  ? badge('complete', 'ok')
+                  : stage.id === at
+                    ? badge('here', 'ai')
+                    : stage.entered
+                      ? badge('entered', 'warn')
+                      : badge('not entered', '')
+              }
+            </span>
+          </div>
+          <div class="metric-sub" style="margin-top:4px">${stage.work}</div>
+          <div class="metric-sub" style="margin-top:4px"><b>Authoritative record.</b> ${stage.authoritativeRecord}</div>
+          ${table({
+            headers: ['Gate', 'What it prevents', 'Read'],
+            rows: [...stage.entry, ...stage.exit].map((gate) => [
+              html`<b>${gate.label}</b>
+                ${badge(gate.outcome.replaceAll('_', ' ').toLowerCase(), tone[gate.outcome] ?? 'info')}`,
+              html`<span class="metric-sub">${gate.matters}</span>`,
+              gate.detail,
+            ]),
+          })}
+        </div>`,
+      )}
+
+      ${changeRunning
+        ? html`<div class="metric-sub" style="padding-top:12px;border-top:1px solid var(--line)">
+            Change and recovery is running alongside whatever stage the project is at. It is entered by something
+            happening, not by somebody deciding to enter it.
+          </div>`
+        : ''}
+    </div>
+  `;
+}
 
 /**
  * §13's eight command centres, and §13.1's universal panel.
