@@ -1231,3 +1231,86 @@ describe('the operator moves a tenancy between packages', () => {
     assert.match(squeezed.body.detail, /\d+ identities are assigned/);
   });
 });
+
+describe('the baseline security headers and the landing page budget', () => {
+  before(() => rateLimiter.reset());
+
+  /**
+   * Three headers were absent from every surface at once — `Permissions-Policy`,
+   * `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy` — because
+   * each sender wrote its own header list and all three lists drifted the same
+   * way. They are named in one place now, and this asserts every sender uses it.
+   */
+  const BASELINE = [
+    'x-content-type-options',
+    'referrer-policy',
+    'permissions-policy',
+    'cross-origin-opener-policy',
+    'cross-origin-resource-policy',
+  ];
+
+  it('sends the baseline headers on the public site', async () => {
+    const response = await call('GET', '/');
+    for (const name of BASELINE) {
+      assert.ok(response.headers.get(name), `${name} missing from the landing page`);
+    }
+  });
+
+  it('sends the baseline headers on a JSON response', async () => {
+    const response = await call('GET', '/healthz');
+    for (const name of BASELINE) {
+      assert.ok(response.headers.get(name), `${name} missing from a JSON response`);
+    }
+  });
+
+  it('sends the baseline headers on robots.txt', async () => {
+    const response = await call('GET', '/robots.txt');
+    for (const name of BASELINE) {
+      assert.ok(response.headers.get(name), `${name} missing from a plain document response`);
+    }
+  });
+
+  it('permits the features the field app actually uses, and denies the rest', async () => {
+    // Denying a feature the product needs is worse than not sending the header:
+    // the refusal is silent and reads as a broken camera. The field app
+    // photographs work and stamps where it was taken.
+    const policy = (await call('GET', '/')).headers.get('permissions-policy') ?? '';
+    assert.match(policy, /camera=\(self\)/);
+    assert.match(policy, /geolocation=\(self\)/);
+    assert.match(policy, /payment=\(\)/, 'a feature this origin never uses should be denied outright');
+    assert.match(policy, /usb=\(\)/);
+  });
+
+  it('rate limits the landing page like every other public surface', async () => {
+    // `/` is answered by an early return above `matchRoute`, so it sat above
+    // `applyRateLimit` too — the highest-traffic public surface was the one
+    // with no budget at all. Found because a regression test kept passing for
+    // the wrong reason: hammering `/` spent nothing.
+    let refused = 0;
+    for (let i = 0; i < 1400; i += 1) {
+      const response = await fetch(`${base}/`);
+      await response.text();
+      if (response.status === 429) refused += 1;
+    }
+    assert.ok(refused > 0, 'the landing page has no rate-limit budget');
+  });
+});
+
+describe('the public site states its cancellation and refund terms', () => {
+  // The landing-page burst above deliberately spends the default bucket, and
+  // this reads a page in the same group. Third suite in this file to need
+  // this: a test that shares a process with one that exhausts a limiter has
+  // to reset it, or it fails with a 429 that has nothing to do with its name.
+  before(() => rateLimiter.reset());
+
+  it('publishes both, because a paid subscription without them is an exposure', async () => {
+    const response = await call('GET', '/policies');
+    assert.equal(response.status, 200);
+    assert.match(response.text, /Cancellation/);
+    assert.match(response.text, /Refunds/);
+    // The two things a customer most needs to know, and the two a support
+    // queue answers repeatedly when they are not written down.
+    assert.match(response.text, /read-only and stays exportable/);
+    assert.match(response.text, /Statutory rights are unaffected/);
+  });
+});

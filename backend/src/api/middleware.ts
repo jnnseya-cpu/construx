@@ -441,6 +441,38 @@ export function resetIdempotency(): void {
   idempotencyCache.clear();
 }
 
+/**
+ * The three headers every response carries, whatever it is.
+ *
+ * Named once rather than repeated across `sendJson`, `sendHtml` and
+ * `sendDocument`, which is how the last set drifted: `Permissions-Policy`,
+ * `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy` were absent
+ * from all three, and a scanner reports that on every surface at once.
+ *
+ * - **Permissions-Policy** switches off the powerful features this origin never
+ *   uses. The console does use the camera and geolocation — the field app
+ *   photographs work and stamps where it was taken — so those are `self`
+ *   rather than off, and everything else is denied outright. Denying a feature
+ *   the product needs is worse than not sending the header: the refusal is
+ *   silent and looks like a broken camera.
+ * - **Cross-Origin-Opener-Policy** severs the `window.opener` link, so a page
+ *   this one opens cannot reach back into it.
+ * - **Cross-Origin-Resource-Policy** stops another site embedding this
+ *   origin's responses. `same-site` rather than `same-origin` because the
+ *   public site and the console are one origin today and may not always be.
+ */
+const BASELINE_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+  'Permissions-Policy':
+    'accelerometer=(), autoplay=(), browsing-topics=(), camera=(self), display-capture=(), encrypted-media=(), ' +
+    'fullscreen=(self), gamepad=(), geolocation=(self), gyroscope=(), hid=(), idle-detection=(), ' +
+    'local-fonts=(), magnetometer=(), microphone=(self), midi=(), payment=(), picture-in-picture=(), ' +
+    'publickey-credentials-get=(self), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-site',
+} as const;
+
 // --- Response helpers -------------------------------------------------------
 
 export function sendJson(res: ServerResponse, ctx: RequestContext, status: number, body: unknown): void {
@@ -452,8 +484,7 @@ export function sendJson(res: ServerResponse, ctx: RequestContext, status: numbe
     'x-correlation-id': ctx.correlationId,
     // Zero-trust posture: no caching of authorised responses by intermediaries.
     'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'no-referrer',
+    ...BASELINE_HEADERS,
     'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
   });
   res.end(payload);
@@ -551,8 +582,7 @@ export function sendHtml(
     'x-correlation-id': ctx.correlationId,
     'Cache-Control': cacheControl,
     'Content-Security-Policy': CSP[policy],
-    'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'no-referrer',
+    ...BASELINE_HEADERS,
     'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
   });
   res.end(html);
@@ -582,7 +612,7 @@ export function sendDocument(
     'x-trace-id': ctx.traceId,
     'x-correlation-id': ctx.correlationId,
     'Cache-Control': 'public, max-age=3600',
-    'X-Content-Type-Options': 'nosniff',
+    ...BASELINE_HEADERS,
   });
   res.end(body);
 }

@@ -168,6 +168,21 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     // route table and the event catalogues, so a landing page cannot drift
     // into claiming a number the product does not have.
     if (ctx.method === 'GET' && (ctx.path === '/' || ctx.path === '/landing')) {
+      // Limited like everything else. This early return sits above `matchRoute`
+      // and therefore above `applyRateLimit`, so the single highest-traffic
+      // public surface on the platform was the one surface with no budget at
+      // all — found while writing a regression test that kept passing because
+      // hammering `/` spent nothing. Inert today (it is a pure render holding
+      // no state) and exactly the wrong shape to leave in place.
+      //
+      // `matchRoute` has not run, so there is no `routeId` yet; the limiter
+      // keys on the group derived from the path, which for `/` is `default` —
+      // the same bucket every other public page uses, which is what makes one
+      // client hammering the landing page count against the budget it is
+      // actually consuming.
+      ctx.remote = truncateAddress(clientAddress(req.socket.remoteAddress, header(req, 'x-forwarded-for')));
+      await applyRateLimit(ctx, clientAddress(req.socket.remoteAddress, header(req, 'x-forwarded-for')));
+
       // Through the same helper as the rest of the site so it gets the same
       // security headers. It was writing its own head with none of them.
       sendHtml(res, ctx, 200, renderLanding(), 'PUBLIC_SITE');

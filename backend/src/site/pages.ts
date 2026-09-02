@@ -1006,6 +1006,22 @@ export function policies(): string {
       'Report a vulnerability to contact@construxvg.com with SECURITY in the subject. We will not pursue anybody acting in good faith within their own tenancy, and we will credit you unless you ask us not to.',
     ],
     [
+      'Cancellation',
+      '/policies',
+      'Cancel at any time from the console, or by writing to contact@construxvg.com. The subscription runs to the end ' +
+        'of the period already paid for and is not renewed. Nothing is deleted on cancellation: the record goes ' +
+        'read-only and stays exportable, because an evidential chain a customer cannot take with them is a chain ' +
+        'that was never theirs.',
+    ],
+    [
+      'Refunds',
+      '/policies',
+      'A period is refunded in full where the platform did not provide the service it was charged for. Unused time ' +
+        'in a period a customer chose to leave part-way through is not refunded, and the period is not renewed. ' +
+        'AI credit that has been spent is spent — it was passed to a provider who has already been paid for it — ' +
+        'and unspent credit is refundable on request. Statutory rights are unaffected and none of this displaces them.',
+    ],
+    [
       'Data retention',
       '/policies',
       'The event chain is retained for the life of the tenancy. Notification delivery records are retained because "we told you on the 14th" must stay answerable. Bounded operational logs rotate and are never the source of a metric.',
