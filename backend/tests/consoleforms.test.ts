@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { matchRoute, ROUTES } from '../src/api/routes.ts';
 import { WRITE_PHASE_GATES } from '../src/identity/abac.ts';
+import { Platform } from '../src/platform.ts';
 
 /**
  * Every input form in the console posts to a route that exists.
@@ -231,4 +232,77 @@ describe('the route table itself', () => {
     const duplicated = [...seen.entries()].filter(([, count]) => count > 1).map(([key]) => key);
     assert.deepEqual(duplicated, [], `duplicate routes:\n  ${duplicated.join('\n  ')}`);
   });
+});
+
+describe('an HTML route must declare a policy its own page can live under', () => {
+  /**
+   * The defect this exists for, in full, because it shipped and nothing caught
+   * it.
+   *
+   * `POST /exposure` returns a complete site page — header, footer and a
+   * `<link>` to `/site.css`. It declared no `htmlPolicy`, so `sendHtml` used
+   * its default of `SELF_CONTAINED`, whose `default-src 'none'` forbids an
+   * external stylesheet. The browser blocked the stylesheet and rendered the
+   * page as bare markup: every label, hint and input running together in one
+   * paragraph, in the browser's default serif.
+   *
+   * Nothing failed anywhere. The route answered 200 with the correct
+   * arithmetic in it, the markup assertions in `exposure.test.ts` all passed
+   * because they read the HTML rather than the rendering, and the only person
+   * who ever saw the broken version was a visitor who actually used the
+   * calculator — the GET renders fine.
+   *
+   * So the check is on the pair, not on either half: a route that emits a link
+   * or a script tag must declare a policy that permits it. A genuinely
+   * self-contained page — `/verify`, `/verify-document`, `/unsubscribe` —
+   * emits neither and stays under the tight default, which is the point of
+   * having a tight default.
+   */
+  const platform = new Platform();
+
+  const htmlRoutes = ROUTES.filter((route) => route.html === true);
+
+  it('has HTML routes to check', () => {
+    assert.ok(htmlRoutes.length >= 8, `${htmlRoutes.length} html routes found — the filter has stopped matching`);
+  });
+
+  for (const route of htmlRoutes) {
+    it(`${route.method} ${route.pattern} declares a policy that permits what it emits`, async () => {
+      let markup: string;
+      try {
+        markup = String(
+          await route.handler(platform, {
+            method: route.method,
+            path: route.pattern,
+            params: {},
+            query: {},
+            body: {},
+            headers: {},
+            correlationId: 'test',
+            traceId: 'test',
+          } as never),
+        );
+      } catch {
+        // A handler that needs real state to render is out of scope here: this
+        // asserts a property of the pairing, not that every page can be built
+        // from an empty platform.
+        return;
+      }
+
+      const policy = route.htmlPolicy ?? 'SELF_CONTAINED';
+      const linksStylesheet = /<link\b[^>]*rel=["']?stylesheet/i.test(markup);
+      const loadsScript = /<script\b[^>]*\bsrc=/i.test(markup);
+
+      if (linksStylesheet || loadsScript) {
+        assert.notEqual(
+          policy,
+          'SELF_CONTAINED',
+          `${route.method} ${route.pattern} emits ${linksStylesheet ? 'a stylesheet link' : ''}` +
+            `${linksStylesheet && loadsScript ? ' and ' : ''}${loadsScript ? 'a script src' : ''} ` +
+            'under SELF_CONTAINED, whose `default-src \'none\'` blocks both. The page will render unstyled ' +
+            "in a browser and pass every markup assertion. Set `htmlPolicy: 'PUBLIC_SITE'`.",
+        );
+      }
+    });
+  }
 });

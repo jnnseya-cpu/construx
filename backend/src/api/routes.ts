@@ -4132,6 +4132,18 @@ export const ROUTES: Route[] = [
     pattern: '/exposure',
     public: true,
     html: true,
+    // The page this returns is a full site page — header, footer and
+    // `/site.css`. Without this it fell to `sendHtml`'s default of
+    // SELF_CONTAINED, whose `default-src 'none'` forbids an external
+    // stylesheet, and the browser silently blocked it: the GET rendered
+    // correctly and the POST — the only version a visitor who actually used
+    // the calculator ever saw — came back as unstyled markup, labels, hints
+    // and inputs running together in one paragraph of Times New Roman.
+    //
+    // Nothing failed. The route answered 200 with the right numbers in it.
+    // `consoleforms.test.ts` now refuses an HTML route that links a stylesheet
+    // its own policy blocks, so the next one is caught before it ships.
+    htmlPolicy: 'PUBLIC_SITE' as const,
     readOnly: true,
     description: 'Compute what the payment notice regime puts at stake on a visitor’s own turnover',
     schema: {

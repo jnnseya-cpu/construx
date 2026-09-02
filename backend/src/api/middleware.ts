@@ -483,7 +483,12 @@ export function sendJson(res: ServerResponse, ctx: RequestContext, status: numbe
  * unstyled while the markup tests passed.
  */
 const CSP = {
-  SELF_CONTAINED: "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+  // `frame-ancestors 'none'` for the same reason the other two carry it: this
+  // page is reached from a link in an email and it carries a form that acts on
+  // the reader's behalf. A page that can be framed is a page whose button can
+  // be clicked by somebody else's, and unsubscribing somebody is a small harm
+  // that costs nothing to close.
+  SELF_CONTAINED: "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
   /**
    * The marketing pages, which load a stylesheet and scripts from this origin
    * and — only if an operator configured a measurement id — from the two
