@@ -930,7 +930,11 @@ img, svg { max-width: 100%; }
 
 /* ----------------------------------------------------------- the calculator */
 
-.exposure-form { display: grid; gap: 18px; margin-top: 8px; }
+/* Constrained on the form itself rather than by a centred `narrow` wrap, so
+   the fields share a left edge with the page heading above them and the result
+   lines below. A centred column between two left-aligned ones reads as a
+   mistake, because it is one. */
+.exposure-form { display: grid; gap: 18px; margin-top: 8px; max-width: 620px; }
 .exposure-field { display: grid; gap: 4px; }
 .exposure-label { font-size: 14px; font-weight: 600; color: var(--text); }
 .exposure-hint { font-size: 13px; color: var(--text-3); }

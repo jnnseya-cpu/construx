@@ -1446,15 +1446,41 @@ export function exposure(position?: ExposurePosition): string {
     retentionPercent: 5,
   };
 
-  const field = (name: string, label: string, hint: string, value: number, step: string) =>
+  /**
+   * One field.
+   *
+   * `grouped` switches the turnover field from `type="number"` to a numeric
+   * text input carrying thousands separators, because `40000000` is eight
+   * digits a person cannot read at a glance and `40,000,000` is a figure they
+   * can. A number input cannot hold a formatted value — browsers reject it —
+   * so the type has to change with the formatting.
+   *
+   * This is safe rather than clever: `readExposureInput` already strips commas,
+   * pound signs and spaces before parsing, because somebody pasting out of a
+   * spreadsheet was always going to bring them.
+   */
+  const field = (
+    name: string,
+    label: string,
+    hint: string,
+    value: number,
+    step: string,
+    grouped = false,
+  ) =>
     `<label class="exposure-field">
        <span class="exposure-label">${esc(label)}</span>
        <span class="exposure-hint">${esc(hint)}</span>
-       <input type="number" name="${esc(name)}" value="${esc(String(value))}" step="${esc(step)}" min="0" required>
+       ${
+         grouped
+           ? `<input type="text" inputmode="numeric" name="${esc(name)}" ` +
+             `value="${esc(value.toLocaleString('en-GB'))}" required>`
+           : `<input type="number" name="${esc(name)}" value="${esc(String(value))}" ` +
+             `step="${esc(step)}" min="0" required>`
+       }
      </label>`;
 
   const form = `<form method="post" action="/exposure" class="exposure-form">
-      ${field('turnover', 'Annual turnover', 'In pounds. Group or division, whichever you are answering for.', shown.turnover, '1000')}
+      ${field('turnover', 'Annual turnover', 'In pounds. Group or division, whichever you are answering for.', shown.turnover, '1000', true)}
       ${field('liveContracts', 'Live contracts', 'Being applied against at any one time.', shown.liveContracts, '1')}
       ${field('applicationsPerMonth', 'Applications per contract, per month', 'One is the ordinary cycle.', shown.applicationsPerMonth, '0.25')}
       ${field('gapPercent', 'Applied-to-certified gap (%)', 'The typical difference between what you apply for and what is certified.', shown.gapPercent, '0.5')}
@@ -1512,7 +1538,7 @@ export function exposure(position?: ExposurePosition): string {
     })}
 
 <section class="prose">
-  <div class="wrap narrow">
+  <div class="wrap">
     ${form}
   </div>
 </section>

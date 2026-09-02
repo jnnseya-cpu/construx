@@ -184,6 +184,26 @@ describe('the page, over HTTP', () => {
     assert.match(html, /industry average/);
   });
 
+  it('shows the turnover with thousands separators, because eight bare digits cannot be read', async () => {
+    const response = await fetch(`${base}/exposure`);
+    const html = await response.text();
+    // 40000000 is a run of digits a person has to count. 40,000,000 is a figure.
+    assert.match(html, /value="40,000,000"/);
+    assert.ok(!/value="40000000"/.test(html));
+  });
+
+  it('accepts the separated figure it printed, round-tripping its own form', async () => {
+    // The field is only safe to format because the parser strips separators.
+    // If that ever stopped being true, this is what would catch it.
+    const response = await fetch(`${base}/exposure`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ turnover: '40,000,000', liveContracts: '8', gapPercent: '8' }).toString(),
+    });
+    const html = await response.text();
+    assert.match(html, /£40,000,000\.00 ÷ 96 windows/);
+  });
+
   it('keeps the submitted figures in the form, so a visitor can adjust one and resubmit', async () => {
     const response = await fetch(`${base}/exposure`, {
       method: 'POST',
@@ -191,7 +211,7 @@ describe('the page, over HTTP', () => {
       body: new URLSearchParams({ turnover: '123456789', gapPercent: '12' }).toString(),
     });
     const html = await response.text();
-    assert.match(html, /value="123456789"/);
+    assert.match(html, /value="123,456,789"/);
     assert.match(html, /value="12"/);
   });
 });
