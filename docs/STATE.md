@@ -7038,6 +7038,45 @@ variable nobody can discover is worse than one somebody sets wrongly.
 
 ---
 
+### What the probe stopped telling strangers
+
+The commit above made `/readyz` the way to check a deploy from a browser, which
+is what put it in front of a pair of eyes. Its live output read:
+
+```
+{"status":"ok","env":"production","commit":"e6dc014…",
+ "tenants":3,"events":3164,
+ "controlPlane":{…every provider, its health, the routing matrix,
+  and every engine contract…}}
+```
+
+Unauthenticated, to anybody who asked for it. Two disclosures, neither of which
+a probe needs. `tenants` is the customer count, and in an industry that buys on
+references it is the number you least want on a public URL — a competitor can
+watch it move week to week. `controlPlane` names the AI sub-processors holding
+customer material and says which are reachable right now: reconnaissance, and a
+sub-processor disclosure made by accident rather than by policy.
+
+`/v1/admin/readiness` was already operator-only, and the reason written on it
+applies here word for word — it is a map of which locks on this deployment are
+unlocked. That argument had simply never been carried across to the probe.
+
+So the figures moved rather than went. `platform.health()` now returns
+`status`, `env` and `commit`: what a container HEALTHCHECK, a load balancer and
+a deploy check actually consume. `platform.operationalHealth()` returns that
+plus `aiMode`, `tenants`, `events` and the control plane, and is reached
+through `/v1/admin/readiness` — one operator-only door onto both the capability
+map and the operational picture, instead of a second public one. `healthReport`
+in `ops/reports.ts` follows it, so the operator's own report is unchanged.
+
+`publicsurface.test.ts` pins both halves: the probe must answer with a status
+and a commit and must not carry `tenants`, `events`, `controlPlane` or
+`aiMode`; and a `PLATFORM_ADMIN` must still see every one of those figures
+under `running`. The second test is the one that matters — without it this is a
+deletion dressed up as a fix.
+
+---
+
 ### An error that names the wrong house
 
 Found from a live 404, not from the code. Two requests against the running

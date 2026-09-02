@@ -286,7 +286,11 @@ function economicsReport(platform: Platform): { sections: ReportSection[]; exclu
 
 function healthReport(platform: Platform): { sections: ReportSection[]; excludes: string[] } {
   const performance = performancePosition();
-  const health = platform.health();
+  // The operational view, not the public probe. `health()` is what `/readyz`
+  // serves to anybody and now carries only status, environment and commit —
+  // an operator's report needs the tenant count, the event count and the
+  // control plane, which is what this is for.
+  const health = platform.operationalHealth();
 
   return {
     sections: [

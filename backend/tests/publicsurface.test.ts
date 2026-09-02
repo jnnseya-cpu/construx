@@ -5,6 +5,7 @@ import { createGateway } from '../src/api/gateway.ts';
 import { ROUTES } from '../src/api/routes.ts';
 import { POST_PAGES, SITE_PAGES } from '../src/site/index.ts';
 import { Platform } from '../src/platform.ts';
+import { issueTokens } from '../src/identity/auth.ts';
 
 /**
  * The unauthenticated surface, and what it is allowed to hand out.
@@ -27,12 +28,30 @@ import { Platform } from '../src/platform.ts';
 
 let server: Server;
 let base: string;
+let platform: Platform;
 
 before(async () => {
-  server = createGateway(new Platform());
+  platform = new Platform();
+  server = createGateway(platform);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
+
+/**
+ * A platform operator's access token. `createOperator` is the only thing in the
+ * codebase that mints a `PLATFORM_ADMIN`, so this is the same identity the
+ * bootstrap produces rather than a role list assembled for a test.
+ */
+function operatorToken(): string {
+  const operator = platform.createOperator({ name: 'Operator', email: 'ops@construxvg.com' });
+  return issueTokens({
+    actorId: operator.id,
+    tenantId: operator.tenantId,
+    partyId: operator.partyId,
+    roles: operator.roles,
+    mfaSatisfied: true,
+  }).accessToken;
+}
 
 after(() => server.close());
 
@@ -351,5 +370,60 @@ describe('landing imagery', () => {
     // img-src is 'self' and data:. An absolute URL to any other host would be
     // blocked by the browser silently, which is the worst way to find out.
     assert.equal(/<img[^>]+src="https?:\/\//.test(html), false, 'an image is referenced from another host');
+  });
+});
+
+describe('the readiness probe publishes what a probe needs and nothing else', () => {
+  /**
+   * Found by reading a live deployment's own `/readyz`, which answered:
+   *
+   *     {"status":"ok","env":"production","commit":"e6dc014...",
+   *      "tenants":3,"events":3164,
+   *      "controlPlane":{...every provider, its health, the routing matrix,
+   *       and every engine contract...}}
+   *
+   * — unauthenticated, to anybody who asked.
+   *
+   * Two disclosures, neither of which a probe needs. `tenants` is the customer
+   * count, and in an industry that buys on references that is the number you
+   * least want on a public URL; a competitor can watch it move. The control
+   * plane names the sub-processors that hold customer material and says which
+   * are reachable right now, which is reconnaissance and is a sub-processor
+   * disclosure made by accident rather than by policy.
+   *
+   * `/v1/admin/readiness` is operator-only precisely because "it is a map of
+   * which locks on this deployment are unlocked". That argument was never
+   * applied here.
+   */
+  it('answers a probe without publishing the customer count', async () => {
+    const response = await fetch(`${base}/readyz`);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    assert.equal(response.status, 200);
+    // What a probe is for, and what makes a deploy checkable from a browser.
+    assert.equal(body.status, 'ok');
+    assert.equal(typeof body.commit, 'string');
+    assert.equal(typeof body.env, 'string');
+
+    assert.equal(body.tenants, undefined, 'the customer count is on an unauthenticated URL');
+    assert.equal(body.events, undefined, 'the event count is on an unauthenticated URL');
+    assert.equal(body.controlPlane, undefined, 'the AI sub-processors are named on an unauthenticated URL');
+    assert.equal(body.aiMode, undefined);
+  });
+
+  it('still gives the operator every figure, behind the gate it belongs to', async () => {
+    const operator = operatorToken();
+    const response = await fetch(`${base}/v1/admin/readiness`, {
+      headers: { authorization: `Bearer ${operator}` },
+    });
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { running?: Record<string, unknown> };
+
+    // Moved, not removed. An operator who could see these before must still
+    // see them, or this would be a deletion dressed up as a fix.
+    assert.ok(body.running, 'the operational figures went missing rather than moving');
+    assert.equal(typeof body.running.tenants, 'number');
+    assert.equal(typeof body.running.events, 'number');
+    assert.ok(body.running.controlPlane, 'the operator lost sight of the AI control plane');
   });
 });

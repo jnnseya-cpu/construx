@@ -1945,11 +1945,60 @@ export class Platform {
     };
   }
 
-  /** Operator health view. */
+  /**
+   * The readiness probe, and only what a probe needs.
+   *
+   * This is served unauthenticated at `/readyz`, and it used to carry the
+   * tenant count, the event count and the whole AI control plane with it. On a
+   * live deployment that read:
+   *
+   *     {"tenants":3,"events":3164,"controlPlane":{...every provider, its
+   *      health, the routing matrix and every engine contract...}}
+   *
+   * — published to anybody who asked. Two things wrong with that, and neither
+   * is hypothetical:
+   *
+   *   - **`tenants` is the customer count.** In an industry that buys on
+   *     references, how many customers you have is the number you least want
+   *     on an unauthenticated URL, and a competitor can watch it move.
+   *   - **The control plane names your sub-processors.** Which AI vendors hold
+   *     customer material, and which are reachable right now, is
+   *     reconnaissance for somebody choosing a target and a sub-processor
+   *     disclosure made by accident rather than by policy.
+   *
+   * `/v1/admin/readiness` is operator-only precisely because "it is a map of
+   * which locks on this deployment are unlocked". The same argument applies
+   * here and was not being applied.
+   *
+   * What stays public is what a probe is for. `status` answers the
+   * orchestrator. `env` and `commit` answer "is what I am looking at the build
+   * we shipped" — deliberately public, and useless if only somebody with a
+   * shell on the host can read it. Everything else moved behind the gate it
+   * was already available behind: `/v1/admin/readiness` and
+   * `/v1/ai/control-plane`.
+   */
   health(): {
     status: 'ok';
     env: string;
     /** The commit this process is running, or `unknown` if the deployer did not say. */
+    commit: string;
+  } {
+    return {
+      status: 'ok',
+      env: config.env,
+      commit: config.buildCommit || 'unknown',
+    };
+  }
+
+  /**
+   * The same picture with the operational detail in it, for the operator.
+   *
+   * Everything `health()` used to publish. Reached through
+   * `/v1/admin/readiness`, which is already operator-only.
+   */
+  operationalHealth(): {
+    status: 'ok';
+    env: string;
     commit: string;
     aiMode: string;
     tenants: number;
@@ -1957,12 +2006,7 @@ export class Platform {
     controlPlane: ReturnType<AIOrchestrator['controlPlaneStatus']>;
   } {
     return {
-      status: 'ok',
-      env: config.env,
-      // Public on purpose. This is the answer to "is what I am looking at the
-      // build we shipped", and it is useless if only somebody with a shell on
-      // the host can read it.
-      commit: config.buildCommit || 'unknown',
+      ...this.health(),
       aiMode: config.ai.mode,
       tenants: this.#tenants.size,
       events: this.ledger.size,

@@ -204,7 +204,7 @@ launch and is the whole reason this is CONDITIONAL GO.**
 
 | | |
 |---|---|
-| Automated suite | **5,359 tests, 1,152 suites, 0 failures, 0 skipped** |
+| Automated suite | **5,420 tests, 1,168 suites, 0 failures, 0 skipped** |
 | Adversarial probes this pass | **112 executed** |
 | — held / passed | 96 |
 | — partial | 6 |
@@ -213,7 +213,7 @@ launch and is the whole reason this is CONDITIONAL GO.**
 | — failed and then fixed | 3 |
 | API surface | 901 routes declared; **~40 exercised adversarially**. Coverage of the route table by the automated suite is broad; coverage by *this* audit is deliberately concentrated on auth, money, tenancy and the feed |
 | Role coverage | 6 of 15 seeded identities signed in and used: PM, site supervisor, QS, enterprise admin, platform operator, regulator |
-| Critical journey coverage | Sign-in (6 roles), settlement lifecycle, change-feed consumption, exposure calculator, console navigation across 8 screens — and, since this verdict was first written, **registration, account recovery, invitation, export and account deletion driven end to end** in `backend/tests/journeys.test.ts` (18 tests). Driving the export journey found a P1 authorisation bypass this audit had missed; see §6. **Subscription purchase and upload remain NOT TESTED** |
+| Critical journey coverage | Sign-in (6 roles), settlement lifecycle, change-feed consumption, exposure calculator, console navigation across 8 screens — and, since this verdict was first written, **registration, account recovery, invitation, export and account deletion driven end to end** in `backend/tests/journeys.test.ts` (18 tests). Driving the export journey found a P1 authorisation bypass this audit had missed; see §2. **Subscription purchase and upload remain NOT TESTED** |
 | Browser / device coverage | Chromium only, at 1440×1000 and 390×844. **Safari, Firefox, Edge, real iOS and real Android: NOT TESTED** |
 | Network conditions | Loopback only. **Slow 3G, high latency, packet loss, offline→online: NOT TESTED** |
 
@@ -263,8 +263,9 @@ truth, and invariant suites enforce that they stay so.
 
 **P0: none. P1: none.**
 
-**P2 — Rate-limit bucket shared behind a proxy (D-06).** Open, with a named
-remedy. See §2 and §13.
+**P2 — Rate-limit bucket shared behind a proxy (D-06) — FIXED after the
+verdict.** Open at the time this was written, with a named remedy; closed since
+by the CIDR matcher in §13, F-05.
 
 **P2 — Production gates open without a signal — FIXED this pass.** Every check
 in `assertProductionSafety` sat inside `if (config.env === 'production')`. With
@@ -282,15 +283,35 @@ token from the console route, and **zero warnings** from readiness. Both gates
 were correct; nothing said they were open. Now a live-looking deployment outside
 production is warned, naming the consequence rather than the setting.
 
-**P3 — Missing response headers.** `Permissions-Policy`,
-`Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy` are absent from
+**P2 — `/readyz` disclosed the customer count and the AI sub-processors —
+FIXED after launch of this audit.** Found in the live output, not in the code,
+and not by me: the probe answered any anonymous caller with `tenants: 3`,
+`events: 3164`, every AI provider with its current health, the routing matrix
+and every engine contract. The customer count is the number a competitor most
+wants and can watch move; the control plane is both reconnaissance and a
+sub-processor disclosure made by accident rather than by policy.
+
+`/v1/admin/readiness` is operator-only for a reason written on the route — it
+is a map of which locks are unlocked — and that reason was never carried across
+to the probe. The figures moved rather than went: `health()` now answers
+`status`, `env`, `commit`, which is everything a HEALTHCHECK, a load balancer
+and a deploy check consume; `operationalHealth()` carries the rest and is
+reached through the operator-only route. Tested both ways, because moving a
+disclosure behind a gate and deleting it look identical from outside: the probe
+must not carry the four fields, and a `PLATFORM_ADMIN` must still see all four.
+Restoring the counts to `health()` fails the first test.
+
+**P3 — Missing response headers — FIXED after the verdict** (§13, F-06).
+`Permissions-Policy`, `Cross-Origin-Opener-Policy` and
+`Cross-Origin-Resource-Policy` were absent from
 every surface. `frame-ancestors 'none'` was present on the public site and the
 console shell and **has been added to the self-contained policy** this pass.
 JSON responses carry no CSP, which is inert for `application/json` under
 `nosniff` but is a gap a scanner will report.
 
-**P4 — The landing page bypasses the rate limiter entirely.** `/` is answered
-before `applyRateLimit` runs. Inert today — it is a pure render holding no state
+**P4 — The landing page bypassed the rate limiter entirely — FIXED after the
+verdict** (§13, F-06). `/` was answered
+before `applyRateLimit` ran. Inert today — it is a pure render holding no state
 — but it is the highest-traffic public surface and it is unmetered. Found while
 writing a regression test that kept passing for the wrong reason.
 
@@ -513,14 +534,68 @@ developer's machine gets warned.
 **F-04 — `frame-ancestors 'none'` added to `SELF_CONTAINED`**, which the other
 two policies already carried.
 
-**Deliberately not fixed: D-06, the proxy rate-limit bucket.** Closing it means
+**Deliberately not fixed in the audit pass: D-06, the proxy rate-limit bucket.**
+Closing it means
 resolving the client IP from `X-Forwarded-For` against a trusted CIDR list.
 `TRUSTED_PROXY_CIDRS` exists in config but no CIDR matcher does, and trusting a
 forwarded header without one lets any caller bypass the limiter entirely by
 forging a header. Writing a new IP-trust parser into the security path during an
 audit pass is how an audit introduces the vulnerability it was meant to find.
 Recorded with two remedies instead: rate-limit at the edge proxy, or implement
-the matcher deliberately with its own tests.
+the matcher deliberately with its own tests. **Taken deliberately afterwards —
+see F-05.**
+
+### After the verdict
+
+Everything below was done after this document was first written, closing the
+items that produced the CONDITIONAL GO. The verdict in §17 and §1 still stands
+as issued; §14 and §15 record what these leave open.
+
+**F-05 — D-06 closed: the client IP behind a trusted proxy.** A CIDR matcher in
+its own file, `api/clientaddress.ts`, with 21 tests. It reads the
+`X-Forwarded-For` chain **from the right**, stopping at the first hop not in
+`TRUSTED_PROXY_CIDRS`, which is what makes a forged header worthless — a caller
+can prepend anything, and everything they prepend sits left of the trusted
+proxy that appended their real address. An empty trusted list means the socket
+address, so the default behaviour is exactly what it was before this existed.
+Bracketed IPv6 and zone indices are normalised so one client keys one bucket
+rather than several.
+
+**F-06 — the three small findings** (§6, P3 and P4). The missing response
+headers are named once in `BASELINE_HEADERS` and asserted on all three senders;
+`Permissions-Policy` denies what this origin never uses and permits
+`camera=(self)` and `geolocation=(self)`, because the field app photographs
+work and stamps where it was taken — a mutant that denies the camera fails.
+The landing page now goes through the limiter. Cancellation and refund policies
+are published: the record goes read-only rather than being deleted, spent AI
+credit is spent, unspent credit is refundable.
+
+**F-07 — logout.** Reported by the account holder, not found by the audit. The
+words "sign out" appeared nowhere in the console — the only path was an
+unlabelled name chip behind a `confirm()` — and there was no server-side logout
+at all: `revokeToken()` existed and no route called it, so a token stayed valid
+after "signing out". Now a visible `⏻ Sign out` control, and
+`POST /v1/auth/logout` that revokes. One test pins the thing that makes it a
+logout rather than a gesture: the refresh token must also stop minting
+sessions. Verifying this taught the lesson recorded in §12 — the first
+verification ran against a server three commits stale, which returned 200 on
+`/healthz` while 404ing the new route.
+
+**F-08 — Gate 8, an alert that reaches a person.** The audit claimed no
+alerting configuration existed in the repository. That was wrong — six rules
+existed and fired — and the correction is at §12. What was actually missing was
+the last hop, which is now closed and tested by causing a failure rather than
+by reading a config file.
+
+**F-09 — the five untested journeys, and the P1 they found.** Registration,
+recovery, invitation, export and account deletion were marked NOT TESTED in
+§4 rather than assumed working. Driven end to end now, 18 tests in
+`journeys.test.ts`. The export journey found the P1 at §2: a commercial figure
+crossing an audience boundary. Subscription purchase and upload remain NOT
+TESTED and are still recorded as such.
+
+**F-10 — `/readyz` disclosure** (§6). The finding, the fix and the reason both
+halves are tested are recorded there.
 
 ---
 

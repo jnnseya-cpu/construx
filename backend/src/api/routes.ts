@@ -1744,7 +1744,7 @@ export const ROUTES: Route[] = [
     pattern: '/v1/admin/readiness',
     description: 'What this deployment has configured, by capability (platform operator only)',
     readOnly: true,
-    handler: (_platform, ctx) => {
+    handler: (platform, ctx) => {
       // Operator-only, and it would be operator-only even though it carries no
       // secret: it is a map of which locks on this deployment are unlocked, and
       // that is exactly the reconnaissance an attacker wants. Whether a value is
@@ -1752,7 +1752,10 @@ export const ROUTES: Route[] = [
       if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
         throw new ForbiddenError('Only the platform operator may see deployment readiness', 'PLATFORM_ADMIN_REQUIRED');
       }
-      return readiness();
+      // The operational picture the public probe used to carry, alongside the
+      // capability map. One operator-only door onto both, rather than a
+      // readiness probe quietly serving business figures to the internet.
+      return { ...readiness(), running: platform.operationalHealth() };
     },
   },
   {
