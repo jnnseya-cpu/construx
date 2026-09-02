@@ -1,4 +1,5 @@
 import { assertProductionSafety, config, environmentReport, isProduction } from '../config.ts';
+import { parseTrustedProxies } from './clientaddress.ts';
 
 /**
  * What this deployment actually has configured.
@@ -170,6 +171,28 @@ export function readiness(now = new Date()): Readiness {
           ? 'No signing key, so every signature request is refused. Generating one at boot would be worse: every signature ever made would fail verification after the next restart.'
           : 'An Ed25519 key is loaded. The platform can witness a signature and the witness survives a restart.',
       env: ['SIGNING_PRIVATE_KEY_PEM'],
+    },
+    {
+      key: 'transport.trustedProxies',
+      label: 'Client address behind a proxy',
+      critical: false,
+      state:
+        parseTrustedProxies(config.transport.trustedProxyCidrs).rejected.length > 0
+          ? 'DEGRADED'
+          : config.transport.trustedProxyCidrs === ''
+            ? 'NOT_SET'
+            : 'CONFIGURED',
+      detail:
+        parseTrustedProxies(config.transport.trustedProxyCidrs).rejected.length > 0
+          ? `Some entries could not be read: ${parseTrustedProxies(config.transport.trustedProxyCidrs).rejected.join(', ')}. ` +
+            'Those ranges are not trusted, so requests arriving through them are rate limited as if they came from the proxy.'
+          : config.transport.trustedProxyCidrs === ''
+            ? 'Rate limits are keyed on the socket address. Correct with nothing in front of this process — but behind a ' +
+              'reverse proxy every request in the world shares one bucket, so one client can exhaust the budget for ' +
+              'everybody and the login limit stops being per-address.'
+            : `${parseTrustedProxies(config.transport.trustedProxyCidrs).blocks.length} range(s) trusted. Requests through ` +
+              'them are rate limited on the forwarded client address rather than on the proxy.',
+      env: ['TRUSTED_PROXY_CIDRS'],
     },
     pair(
       'payments.card',

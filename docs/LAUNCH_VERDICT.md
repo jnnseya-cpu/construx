@@ -49,13 +49,56 @@ on the half that has never been tested in anger.
 
 | ID | Sev | Area | Defect | Impact | Evidence | Correction | Status |
 |---|---|---|---|---|---|---|---|
-| **D-01** | P1 | Data durability | The ledger is one process's memory plus an append-only journal on one volume. No Postgres is live | One host loses every customer's record. The schema and client are verified against Postgres 16 but nothing runs on it | `docs/STATE.md` register; `readyz` reports `ledger.journal` as the durability capability, with no database capability at all | Move the ledger to Postgres with the append-only rules and RLS the schema already carries; rehearse a restore | **OPEN — blocks GA** |
+| **D-01** | P1 | Data durability | The ledger is one process's memory plus an append-only journal on one volume. No Postgres is live, and **it cannot be made live by wiring** — see the correction below | One host loses every customer's record | Schema verified 19/19 against a real Postgres 16 this session. `Connection.query` is `async`; `Journal.append` and `GoldenThreadLedger.commit` are synchronous, with 55 direct call sites and the whole domain layer above them | Make the ledger's commit path asynchronous — a scoped project, not a wiring task | **OPEN — blocks GA** |
 | **D-02** | P1 | Deployment | No reproducible deployment. Terraform, gateway and topology do not exist | Going live is a manual act somebody performs and nobody can repeat. Rollback is therefore theoretical | `deploy/` holds a Dockerfile, two compose files, a systemd unit and `env-check.sh`. No infrastructure definition | Define the topology as code; perform a deploy, a rollback and a redeploy against it | **OPEN — blocks GA** |
 | **D-03** | P1 | Incident response | No alert has ever fired at a person. No incident owner is named | A failure can happen silently. The platform records everything and tells nobody | No alerting configuration in the repository; `readiness()` reports posture but routes nowhere | Name an on-call owner; wire one alert; cause a controlled failure and confirm it arrives | **OPEN — blocks GA** |
 | **D-04** | P2 | Data protection | `EVIDENCE_MASTER_KEY` unset in the shipped configuration | A stolen volume is a readable archive of site photographs, signed instructions and scanned contracts | `GET /v1/admin/data-protection` returns standing **WEAK** | Set it from a secret manager, not from a file on the evidence volume | **OPEN — pilot precondition** |
 | **D-05** | P2 | Transport | `TLS_TERMINATION` is `NOT_DECLARED` as shipped | The platform will not claim a certificate it has not been given, so posture is honestly reported as unproven | `transportPosture()` findings; `PUBLIC_BASE_URL` defaults to `http://localhost:8080` | Terminate TLS in front of the process and set the variable to match | **OPEN — pilot precondition** |
 | **D-06** | P2 | Availability | Rate-limit buckets are keyed on the socket address, not the forwarded client | Behind a reverse proxy every anonymous request in the world shares one 1,000/minute bucket. One client can deny service to all, and the 20/minute login budget becomes global | `applyRateLimit` builds `rl:ip:${remoteAddress}:${group}` from `req.socket.remoteAddress`; `deploy/compose.edge.yaml` documents an edge proxy in front | Rate-limit at the edge proxy, **or** implement trusted-proxy client-IP resolution against the `TRUSTED_PROXY_CIDRS` that already exists in config | **OPEN — see §13 for why it was not fixed here** |
 | **D-07** | P3 | Legal | No refund or cancellation policy on a platform that takes card and mobile-money payments | A paid subscription with no stated cancellation terms is a consumer-law exposure and a support burden | `/policies` lists eight policies; none covers refunds or cancellation. `/terms` contains no match for "refund" or "cancellation" | Publish both before the first paid customer | **OPEN — before first payment** |
+
+### Correction to D-01, made after trying it
+
+This audit repeated `docs/STATE.md`'s claim that Postgres is **"wiring rather
+than design"**. Having gone and looked at the seam, that is wrong, and the
+correction matters because it changes the estimate for the single biggest
+launch blocker.
+
+What is genuinely done, and was re-proven this session rather than taken from
+the register: `deploy/postgres/verify.sh` stands up a throwaway Postgres 16
+cluster, applies `schema.sql`, and then tries to break each property it
+claims. **19 checks, 19 passed** — append-only against UPDATE, DELETE and
+TRUNCATE; row-level security that a connection setting no tenancy sees nothing
+under and that the table owner is subject to because it is FORCEd; a chain
+trigger that refuses an event built on a stale head; evidence required at the
+database rather than only in the application; and two concurrent writers where
+exactly one extends the chain and the loser's event is not in the log.
+
+What is missing is not a connection string. The ledger's durability seam is
+`attachJournal(journal: Journal)`, and `Journal.append` is **synchronous** —
+deliberately, and the file says why: the event is appended and flushed *before*
+the ledger mutates anything, so a failed write throws and no state changed. A
+write-behind journal acknowledges a commit that is not durable to somebody who
+has already been told their payment notice was issued.
+
+`Connection.query` is `async`, as any socket client in Node must be. So a
+Postgres-backed `Journal` cannot satisfy the synchronous contract, and there is
+no synchronous TCP in Node to make it. Closing D-01 properly means making
+`commit()` asynchronous, and with it the ~55 domain functions that call it. The
+route handlers above them are already async, so the change is mechanical rather
+than conceptual — but it is a mechanical change to the most load-bearing code
+in the platform, and CLAUDE.md names `backend/src/goldenthread/` as the first
+place to be careful.
+
+**It was not attempted in this pass, and that is a decision rather than an
+omission.** A rewrite of the ledger's commit path, landed without a staging
+environment to soak it in, is precisely the change that turns a careful
+platform into an unreliable one. It is a scoped project with its own plan, its
+own review and its own soak — not a task to slip into an audit.
+
+The interim posture, unchanged and now stated accurately: one process, one
+journal, one volume, a restore proven at about twelve seconds, and a refusal to
+run a second writer rather than a chain that interleaves.
 
 Nothing above is a P0. No authentication bypass, authorisation bypass,
 cross-tenant leak, injection, or financial-integrity defect survived testing.

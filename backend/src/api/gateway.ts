@@ -22,6 +22,7 @@ import {
 } from './middleware.ts';
 import { resolveLocale } from '../domain/locale.ts';
 import { truncateAddress } from './telemetry.ts';
+import { clientAddress } from './clientaddress.ts';
 import { matchRoute, ROUTES } from './routes.ts';
 import { renderLanding } from '../site/index.ts';
 import { robots, sitemap } from '../site/discovery.ts';
@@ -283,7 +284,14 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     if (!matched) throw new NotFoundError(`No route for ${ctx.method} ${ctx.path}`);
 
     ctx.params = matched.params;
-    ctx.remote = truncateAddress(req.socket.remoteAddress);
+    // Who the request is from, for rate limiting and telemetry.
+    //
+    // The socket address unless the socket is a proxy the operator has named,
+    // in which case the forwarded chain is read from the right. With no
+    // configured proxies — the default — this is the socket address, exactly
+    // as it was before `clientaddress.ts` existed.
+    const remote = clientAddress(req.socket.remoteAddress, header(req, 'x-forwarded-for'));
+    ctx.remote = truncateAddress(remote);
     // Metrics group by route pattern, never by path: a path carries ids and
     // would produce one series per project.
     ctx.routeId = `${matched.route.method} ${matched.route.pattern}`;
@@ -309,14 +317,14 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     // says. Every other route, `/v1/auth/*` included, is limited exactly as
     // before.
     if (!IS_PROBE.has(ctx.routeId)) {
-      await applyRateLimit(ctx, req.socket.remoteAddress ?? 'unknown');
+      await applyRateLimit(ctx, remote);
     }
 
     authenticate(req, ctx, isPublic);
 
     // Re-apply post-auth so the tenant-aware key takes effect once known.
     if (ctx.auth && !IS_PROBE.has(ctx.routeId)) {
-      await applyRateLimit(ctx, req.socket.remoteAddress ?? 'unknown');
+      await applyRateLimit(ctx, remote);
     }
 
     // The account layer, before the body is looked at.

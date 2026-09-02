@@ -1076,3 +1076,35 @@ describe('logout, over real HTTP', () => {
     assert.equal(anonymous.status, 401, 'an unauthenticated revoke endpoint is a denial-of-service primitive');
   });
 });
+
+describe('rate limiting behind a reverse proxy', () => {
+  /**
+   * Driven through the socket, because the defect was in the gateway rather
+   * than in the address parser.
+   *
+   * With no trusted proxy configured — the default, and what this suite runs
+   * under — the forwarded header must change nothing at all. That is the
+   * property that keeps the naive fix from being worse than the defect: a
+   * caller who can reach the process must not be able to hand themselves a
+   * private rate-limit bucket by writing a header.
+   */
+  before(() => rateLimiter.reset());
+
+  it('ignores a forged forwarded header when no proxy is trusted', async () => {
+    // Two bursts under two different forged client addresses. If the header
+    // were believed, each would get its own budget and neither would ever be
+    // refused. Sharing one budget is the correct behaviour here.
+    let refused = 0;
+    for (let i = 0; i < 1400; i += 1) {
+      const response = await fetch(`${base}/exposure`, {
+        headers: { 'x-forwarded-for': `203.0.113.${i % 200}` },
+      });
+      await response.text();
+      if (response.status === 429) refused += 1;
+    }
+    assert.ok(
+      refused > 0,
+      'a forged x-forwarded-for bought an unlimited number of private rate-limit buckets',
+    );
+  });
+});
