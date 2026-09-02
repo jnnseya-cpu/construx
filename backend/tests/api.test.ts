@@ -1314,3 +1314,90 @@ describe('the public site states its cancellation and refund terms', () => {
     assert.match(response.text, /Statutory rights are unaffected/);
   });
 });
+
+describe('an alert can fire at a person, and an operator can see that it did', () => {
+  /**
+   * The launch audit recorded "no alerting configuration in the repository".
+   * That was wrong, and the correction matters: `ops/watch.ts` holds six rules,
+   * `main.ts` starts the evaluator on a timer, and a breach dispatches
+   * `system.watch_alert` through the notification engine to every operator.
+   *
+   * Verified by causing the failure rather than by reading the rules: eighty
+   * forged tokens in one window produced `started: ["auth_failures"]` and
+   * `notified: 1`.
+   *
+   * The real gap was the half after that. `/v1/notifications/deliveries` is
+   * tenant-scoped and answers 403 to an operator, whose alert recipients sit
+   * under the `platform` tenancy — so there was no way to see whether an alert
+   * had ever reached anybody without reading the source. "Was anybody told" is
+   * the question an incident review opens with.
+   */
+  before(() => rateLimiter.reset());
+
+  it('fires a rule when the platform actually misbehaves, and records who was told', async () => {
+    const operator = await (async () => {
+      const login = await call('POST', '/v1/auth/login', {
+        body: { email: platform.user(seed.users.operator!.id).email },
+      });
+      const verified = await call('POST', '/v1/auth/mfa/verify', {
+        body: { actorId: login.body.actorId, challengeId: login.body.challengeId, code: login.body.devCode },
+      });
+      return (verified.body as { accessToken: string }).accessToken;
+    })();
+
+    // Clear the window, then fail hard inside a single one.
+    await call('POST', '/v1/admin/watch/evaluate', { token: operator, body: {} });
+    await Promise.all(
+      Array.from({ length: 80 }, async () => {
+        const response = await fetch(`${base}/v1/projects`, { headers: { authorization: 'Bearer forged' } });
+        await response.text();
+      }),
+    );
+
+    const report = await call('POST', '/v1/admin/watch/evaluate', { token: operator, body: {} });
+    assert.equal(report.status, 201, report.text);
+    assert.ok(
+      (report.body.started as string[]).includes('auth_failures'),
+      `the auth-failure rule did not fire on 80 forged tokens: ${report.text}`,
+    );
+    assert.ok(report.body.notified > 0, 'the rule fired and nobody was told');
+
+    // The half that was missing: an operator can see it happened.
+    const position = await call('GET', '/v1/admin/watch', { token: operator });
+    assert.equal(position.status, 200, position.text);
+    // `raisedAlerts` is what the watch queued, and it is present the instant a
+    // rule fires. Asserting on deliveries alone failed here on the first run,
+    // and correctly: a dispatch is queued to the outbox and becomes a delivery
+    // only once that drains — so a position showing deliveries alone shows
+    // nothing at exactly the moment an operator is looking.
+    const raised = position.body.raisedAlerts as Array<{ code: string; status: string; recipients: number }>;
+    assert.ok(raised.length > 0, 'an alert was dispatched and the operator has no way to see it');
+    assert.ok(raised.some((alert) => alert.code === 'system.watch_alert'));
+    for (const alert of raised) {
+      assert.ok(alert.recipients > 0, 'an alert queued to nobody');
+    }
+
+    // And the delivered half, which is what actually left the building. A
+    // deployment with no relay records rather than sends, and that is counted
+    // rather than counted as sent.
+    assert.ok(Array.isArray(position.body.recentAlerts));
+    assert.equal(typeof position.body.recordedNotSent, 'number');
+  });
+
+  it('says plainly when there is nobody to alert', async () => {
+    // A deployment with no operator is watching itself in silence, and the
+    // position says so rather than reporting alerts sent to nobody.
+    const operator = await (async () => {
+      const login = await call('POST', '/v1/auth/login', {
+        body: { email: platform.user(seed.users.operator!.id).email },
+      });
+      const verified = await call('POST', '/v1/auth/mfa/verify', {
+        body: { actorId: login.body.actorId, challengeId: login.body.challengeId, code: login.body.devCode },
+      });
+      return (verified.body as { accessToken: string }).accessToken;
+    })();
+    const position = await call('GET', '/v1/admin/watch', { token: operator });
+    assert.equal(typeof position.body.operators, 'number');
+    assert.ok(position.body.rules.length >= 6, 'the watch rules have gone missing');
+  });
+});

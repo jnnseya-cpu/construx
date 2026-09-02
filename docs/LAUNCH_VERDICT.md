@@ -51,7 +51,7 @@ on the half that has never been tested in anger.
 |---|---|---|---|---|---|---|---|
 | **D-01** | P1 | Data durability | The ledger is one process's memory plus an append-only journal on one volume. No Postgres is live, and **it cannot be made live by wiring** — see the correction below | One host loses every customer's record | Schema verified 19/19 against a real Postgres 16 this session. `Connection.query` is `async`; `Journal.append` and `GoldenThreadLedger.commit` are synchronous, with 55 direct call sites and the whole domain layer above them | Make the ledger's commit path asynchronous — a scoped project, not a wiring task | **OPEN — blocks GA** |
 | **D-02** | P1 | Deployment | No reproducible deployment. Terraform, gateway and topology do not exist | Going live is a manual act somebody performs and nobody can repeat. Rollback is therefore theoretical | `deploy/` holds a Dockerfile, two compose files, a systemd unit and `env-check.sh`. No infrastructure definition | Define the topology as code; perform a deploy, a rollback and a redeploy against it | **OPEN — blocks GA** |
-| **D-03** | P1 | Incident response | No alert has ever fired at a person. No incident owner is named | A failure can happen silently. The platform records everything and tells nobody | No alerting configuration in the repository; `readiness()` reports posture but routes nowhere | Name an on-call owner; wire one alert; cause a controlled failure and confirm it arrives | **OPEN — blocks GA** |
+| **D-03** | P1 | Incident response | **Partly wrong as first written — see the correction below.** Alerting exists and fires. What is missing is a named human on call | An alert that reaches an address nobody watches is an alert nobody acts on | Six watch rules; 80 forged tokens in one window fired `auth_failures` and dispatched to the operator; `raisedAlerts` now shows it on `/v1/admin/watch` | Name an on-call owner and confirm the address is watched. The mechanism is built and tested | **OPEN — the person, not the code** |
 | **D-04** | P2 | Data protection | `EVIDENCE_MASTER_KEY` unset in the shipped configuration | A stolen volume is a readable archive of site photographs, signed instructions and scanned contracts | `GET /v1/admin/data-protection` returns standing **WEAK** | Set it from a secret manager, not from a file on the evidence volume | **OPEN — pilot precondition** |
 | **D-05** | P2 | Transport | `TLS_TERMINATION` is `NOT_DECLARED` as shipped | The platform will not claim a certificate it has not been given, so posture is honestly reported as unproven | `transportPosture()` findings; `PUBLIC_BASE_URL` defaults to `http://localhost:8080` | Terminate TLS in front of the process and set the variable to match | **OPEN — pilot precondition** |
 | **D-06** | P2 | Availability | Rate-limit buckets are keyed on the socket address, not the forwarded client | Behind a reverse proxy every anonymous request in the world shares one 1,000/minute bucket. One client can deny service to all, and the 20/minute login budget becomes global | `applyRateLimit` builds `rl:ip:${remoteAddress}:${group}` from `req.socket.remoteAddress`; `deploy/compose.edge.yaml` documents an edge proxy in front | Rate-limit at the edge proxy, **or** implement trusted-proxy client-IP resolution against the `TRUSTED_PROXY_CIDRS` that already exists in config | **OPEN — see §13 for why it was not fixed here** |
@@ -100,6 +100,44 @@ The interim posture, unchanged and now stated accurately: one process, one
 journal, one volume, a restore proven at about twelve seconds, and a refusal to
 run a second writer rather than a chain that interleaves.
 
+### Correction to D-03, made after causing a failure
+
+This audit recorded **"no alerting configuration in the repository"**. That was
+wrong, and it was wrong in the way an audit most needs to avoid: I searched for
+a configuration file rather than causing a failure and watching what happened.
+
+`backend/src/ops/watch.ts` holds six rules — server errors, authentication
+failures, rate limiting, an abandoned outbox, an unreachable scanner, and
+configuration. `main.ts` starts the evaluator on a timer. A breach dispatches
+`system.watch_alert` to every operator through the notification engine, and the
+catalogue marks it mandatory so an operator cannot mute the platform telling
+them it is broken.
+
+Verified by breaking it: eighty forged tokens inside one window produced
+`window: { requests: 81, authFailures: 80 }`, `started: ["auth_failures"]` and
+`notified: 1`.
+
+**The real gap was the half after that, and it was genuine.** An operator had
+no way to see whether an alert had ever reached anybody.
+`/v1/notifications/deliveries` is tenant-scoped and answers **403** to an
+operator, whose alert recipients sit under the `platform` tenancy — so the only
+way to confirm the alerting worked was to read the source. "Was anybody told"
+is the question an incident review opens with, and a platform that can answer
+every question except that one has alerting nobody has checked.
+
+`/v1/admin/watch` now carries both halves, and they answer different questions.
+`raisedAlerts` is what the watch queued — present the instant a rule fires,
+which is when somebody is looking. `recentAlerts` is what actually left, which
+exists only once the outbox has drained. Asserting on deliveries alone failed
+on the first run, correctly, and that failure is why both are reported:
+deliveries alone show nothing at the moment of the alert, and queued alone
+would say "told" when nothing had left the building. `recordedNotSent` counts
+the deployment with no relay, which records every alert and sends none —
+correct behaviour, and an operator who will never be woken.
+
+**What remains under D-03 is not code.** No human is named on call, and an
+alert that arrives at an address nobody watches is an alert nobody acts on.
+
 Nothing above is a P0. No authentication bypass, authorisation bypass,
 cross-tenant leak, injection, or financial-integrity defect survived testing.
 
@@ -116,7 +154,7 @@ cross-tenant leak, injection, or financial-integrity defect survived testing.
 | **5 — Financial integrity** | **PASS** | Server-authoritative amounts: a client-supplied balance and a negative top-up were both refused (400) and the wallet did not move. £20,000,000 carried → fee exactly 75,000 minor units, the cap. `RECORDED` rail → fee 0. Negative amount → 422. Lower-privilege roles → 403. **Reconciliation difference: 0** | Stripe and Koda webhooks are configured-absent in this environment, so signature verification and webhook idempotency are **NOT TESTED** here — they are covered by `tests/payments.test.ts` |
 | **6 — Performance** | **PASS for the tested profile** | 20 concurrent: 3,020 rps, p50 5ms, p95 13ms, p99 18ms, 0% 5xx. 60 concurrent spike: 2,961 rps, p50 20ms, p95 33ms, p99 43ms, 0% 5xx. Post-spike p95 recovered to 3ms | Single process, single host, seeded dataset, six-to-eight-second runs. No soak, no production-sized data, no measured breaking point. A capacity figure must not be sold from these numbers |
 | **7 — Reliability** | **PARTIAL** | An AI evaluation against providers that are not configured degrades rather than throwing. The journal refuses a second writer with a message naming why. Probe starvation fixed and regression-tested | **Rollback is untested** (D-02). No circuit breaker was exercised. Dependency-failure injection was limited to the AI provider |
-| **8 — Observability** | **FAIL** | Every response carries `x-trace-id` and `x-correlation-id`; a caller-supplied correlation id is honoured and returned; errors are RFC 7807; `readiness()` reports six blocking capabilities by name | **No alert has ever fired at a person, and no incident owner is named** (D-03). Traceability is excellent; detection is absent |
+| **8 — Observability** | **PARTIAL** (was FAIL; see the D-03 correction) | Every response carries `x-trace-id` and `x-correlation-id`; a caller-supplied correlation id is honoured and returned; errors are RFC 7807; `readiness()` reports six blocking capabilities by name | An alert **was** fired at a person this session and the dispatch is visible to an operator. **No human is named on call** (D-03), so detection is built and unattended |
 | **9 — Privacy and compliance** | **PARTIAL** | No cookie is set by the public site or the console. Analytics is consent-gated *before* the script runs, not by a banner over a running tag. `/policies` states eight policies including sub-processors, retention, AI usage and an accessibility statement that explicitly declines to claim untested conformance. Data-protection posture reports **WEAK** honestly rather than claiming encryption is on | A data-subject deletion workflow was **NOT TESTED** end to end this pass. No refund or cancellation policy (D-07) |
 | **10 — Operational readiness** | **FAIL** | A runbook and `deploy/env-check.sh` exist | No named on-call owner, no tested rollback, no incident process rehearsed, no reproducible infrastructure (D-02, D-03) |
 

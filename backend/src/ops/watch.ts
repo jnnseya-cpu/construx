@@ -1,7 +1,8 @@
 import { assertProductionSafety, config } from '../config.ts';
 import { counters } from '../api/telemetry.ts';
 import { ping, scannerAddress, scannerConfigured } from '../evidence/scanner.ts';
-import { outboxPosition, queue } from '../notifications/outbox.ts';
+import { entriesByCodePrefix, outboxPosition, queue } from '../notifications/outbox.ts';
+import { deliveries } from '../notifications/notify.ts';
 import type { Platform } from '../platform.ts';
 
 /**
@@ -437,11 +438,69 @@ export type WatchPosition = {
   firing: RuleState[];
   clear: RuleState[];
   rules: Array<{ id: string; what: string; because: string; severity: WatchSeverity }>;
+  /**
+   * What the platform actually sent, and what happened to it.
+   *
+   * This was the gap, and it was not that alerting did not exist — the rules
+   * fire and the dispatch is queued. It was that an operator had no way to see
+   * whether an alert had ever reached anybody. `/v1/notifications/deliveries`
+   * is tenant-scoped and answers 403 to an operator, whose recipients sit under
+   * the `platform` tenancy, so the only way to confirm the alerting worked was
+   * to read the source.
+   *
+   * "Was anybody told" is the question an incident review opens with, and a
+   * platform that can answer every question except that one is a platform whose
+   * alerting nobody has checked.
+   */
+  /**
+   * Alerts the watch has queued, whether or not they have gone out yet.
+   *
+   * Present the instant a rule fires. `recentAlerts` below is what actually
+   * left, and only exists once the outbox has drained — so a position showing
+   * deliveries alone shows nothing at the moment somebody is looking.
+   */
+  raisedAlerts: Array<{
+    at: string;
+    code: string;
+    status: string;
+    attempts: number;
+    recipients: number;
+    lastError?: string;
+  }>;
+  recentAlerts: Array<{
+    at: string;
+    code: string;
+    channel: string;
+    status: string;
+    /** The address used, or the reason there was none. Never invented. */
+    destination: string;
+    /** Which transport answered, so an alert can be traced to a provider. */
+    transport: string;
+    detail: string;
+  }>;
+  /**
+   * Deliveries recorded but not transmitted, because no relay is configured.
+   *
+   * Counted separately and named, rather than folded into the total. A
+   * deployment with no SMTP host records every alert and sends none — which is
+   * correct behaviour and is also an operator who will never be woken.
+   */
+  recordedNotSent: number;
 };
 
 /** What is firing, what is clear, and whether anybody would be told. */
 export function watchPosition(platform: Platform): WatchPosition {
   const all = watchStates();
+  // The platform's own notices live under the `platform` tenancy, which is why
+  // the tenant-scoped delivery route cannot show them to an operator.
+  // Both halves, and they answer different questions. `raised` is what the
+  // watch queued — present the instant a rule fires, which is when an operator
+  // is looking. `delivered` is what actually went out, which only exists once
+  // the outbox has drained. Showing deliveries alone would have shown nothing
+  // at the moment of the alert; showing queued alone would say "told" when
+  // nothing had left the building.
+  const raised = entriesByCodePrefix(platform, 'system.watch', 25);
+  const alerts = deliveries(platform, 'platform', 200).filter((delivery) => delivery.code.startsWith('system.watch'));
   return {
     enabled: config.ops.watchEnabled,
     intervalSeconds: config.ops.watchIntervalSeconds,
@@ -454,6 +513,24 @@ export function watchPosition(platform: Platform): WatchPosition {
       because: rule.because,
       severity: rule.severity,
     })),
+    raisedAlerts: raised.map((entry) => ({
+      at: entry.queuedAt,
+      code: entry.code,
+      status: entry.status,
+      attempts: entry.attempts,
+      recipients: entry.recipients.length,
+      ...(entry.lastError ? { lastError: entry.lastError } : {}),
+    })),
+    recentAlerts: alerts.map((delivery) => ({
+      at: delivery.at,
+      code: delivery.code,
+      channel: delivery.channel,
+      status: delivery.status,
+      destination: delivery.destination,
+      transport: delivery.transport,
+      detail: delivery.detail,
+    })),
+    recordedNotSent: alerts.filter((delivery) => delivery.status === 'RECORDED').length,
   };
 }
 

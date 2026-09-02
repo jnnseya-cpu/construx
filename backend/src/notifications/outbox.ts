@@ -284,6 +284,22 @@ export type OutboxPosition = {
  * Scoped across every tenancy, because the outbox is a platform chain and the
  * question it answers — "is anything failing to go out" — is an operator's.
  */
+/**
+ * Entries whose code starts with `prefix`, newest first.
+ *
+ * Exported for the platform watch, which needs to answer "was anybody told"
+ * and cannot do it from `deliveries` alone: a dispatch is *queued* here first
+ * and becomes a delivery only when the outbox drains. An operator reading a
+ * position that showed deliveries alone would see nothing at the moment an
+ * alert had just been raised, which is exactly the moment they are looking.
+ */
+export function entriesByCodePrefix(platform: Platform, prefix: string, limit = 25): OutboxEntry[] {
+  return entriesOf(platform)
+    .filter((entry) => entry.code.startsWith(prefix))
+    .reverse()
+    .slice(0, limit);
+}
+
 export function outboxPosition(platform: Platform): OutboxPosition {
   const all = entriesOf(platform);
   const queued = all.filter((entry) => entry.status === 'QUEUED');
