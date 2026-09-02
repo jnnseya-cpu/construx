@@ -1,5 +1,6 @@
 import { esc } from '../messaging/render.ts';
 import { PACKAGES } from '../billing/seats.ts';
+import type { ExposurePosition } from './exposure.ts';
 import { config } from '../config.ts';
 import { formatMoney } from '../domain/locale.ts';
 import { NOTIFICATION_EVENTS, CATEGORIES } from '../notifications/catalogue.ts';
@@ -1418,5 +1419,104 @@ ${cta({
   primary: { href: '/get-started', label: 'Start free' },
   secondary: { href: '/how-it-works', label: 'How verification works' },
 })}`,
+  );
+}
+
+/**
+ * The exposure page: what the payment notice regime puts at stake, on the
+ * visitor's own turnover.
+ *
+ * Every other page on this site argues from the product outwards. This one
+ * argues from the reader's balance sheet inwards, which is the order a managing
+ * director actually asks the questions in — "what does this get me" comes before
+ * "how does it work", and a site that only answers the second is answering a
+ * question nobody asked yet.
+ *
+ * A form POST rather than a script, for the same reason the booking form is:
+ * the CSP admits no inline script, and putting the arithmetic in the browser
+ * would put it in two places. `site/exposure.ts` holds it, is tested, and is the
+ * only implementation.
+ */
+export function exposure(position?: ExposurePosition): string {
+  const shown = position?.input ?? {
+    turnover: 40_000_000,
+    liveContracts: 8,
+    applicationsPerMonth: 1,
+    gapPercent: 8,
+    retentionPercent: 5,
+  };
+
+  const field = (name: string, label: string, hint: string, value: number, step: string) =>
+    `<label class="exposure-field">
+       <span class="exposure-label">${esc(label)}</span>
+       <span class="exposure-hint">${esc(hint)}</span>
+       <input type="number" name="${esc(name)}" value="${esc(String(value))}" step="${esc(step)}" min="0" required>
+     </label>`;
+
+  const form = `<form method="post" action="/exposure" class="exposure-form">
+      ${field('turnover', 'Annual turnover', 'In pounds. Group or division, whichever you are answering for.', shown.turnover, '1000')}
+      ${field('liveContracts', 'Live contracts', 'Being applied against at any one time.', shown.liveContracts, '1')}
+      ${field('applicationsPerMonth', 'Applications per contract, per month', 'One is the ordinary cycle.', shown.applicationsPerMonth, '0.25')}
+      ${field('gapPercent', 'Applied-to-certified gap (%)', 'The typical difference between what you apply for and what is certified.', shown.gapPercent, '0.5')}
+      ${field('retentionPercent', 'Retention (%)', 'Held against the works.', shown.retentionPercent, '0.5')}
+      <button class="btn lg" type="submit">Show my position</button>
+    </form>`;
+
+  const result = position
+    ? `<section class="prose">
+  <div class="wrap">
+    <h2 class="section-h">Your position</h2>
+    <div class="exposure-lines">
+      ${position.lines
+        .map(
+          (line) => `<article class="exposure-line${line.emphasis ? ' emphasis' : ''}">
+        <div class="exposure-line-head">
+          <span class="exposure-line-label">${esc(line.label)}</span>
+          <b class="exposure-line-value">${esc(line.value)}</b>
+        </div>
+        <p class="exposure-line-meaning">${esc(line.meaning)}</p>
+        <p class="exposure-line-working">${esc(line.working)}</p>
+      </article>`,
+        )
+        .join('\n      ')}
+    </div>
+
+    <h3>What this page does not claim</h3>
+    <ul class="exposure-not">
+      ${position.notClaimed.map((limit) => `<li>${esc(limit)}</li>`).join('')}
+    </ul>
+
+    <div class="cta-row">
+      <a class="btn lg" href="/demo">See it computed on a live £17.6M job</a>
+      <a class="btn lg ghost" href="/get-started">Start free</a>
+    </div>
+  </div>
+</section>`
+    : '';
+
+  return page(
+    {
+      title: 'What the payment notice regime puts at stake',
+      description:
+        'Arithmetic on your own turnover: how many payment windows you run a year, what passes through one, and what a ' +
+        'single missed pay less notice is worth under s.111 of the Construction Act.',
+      path: '/exposure',
+    },
+    `${pageHead({
+      eyebrow: 'HGCRA 1996 · s.111',
+      title: 'What one missed notice is worth',
+      standfirst:
+        'Where the payer gives no payment notice and no pay less notice in time, the sum applied for becomes payable in ' +
+        'full — however optimistic the application was. Five figures of yours, and the arithmetic below is all yours too. ' +
+        'There is no industry average anywhere on this page.',
+    })}
+
+<section class="prose">
+  <div class="wrap narrow">
+    ${form}
+  </div>
+</section>
+
+${result}`,
   );
 }

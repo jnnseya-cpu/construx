@@ -865,3 +865,100 @@ img, svg { max-width: 100%; }
 .post-more a { color: var(--orange); text-decoration: none; font-weight: 500; }
 .post-more a:hover { text-decoration: underline; }
 .post-date { color: var(--text-3); font-size: 13.5px; margin: 0 0 18px; }
+
+/* ------------------------------------------------- money, refusal and exit */
+
+/* The three sections added when the page stopped leading with its architecture.
+   They reuse the existing tokens and the existing card texture rather than
+   introducing a fourth surface treatment — the palette already says everything
+   these need, and a new colour here would be a new colour that means nothing. */
+
+.money, .refusal, .exit { padding: 76px 0; border-top: 1px solid var(--line); }
+
+/* The scene, then the verdict. Set apart from ordinary body copy because the
+   whole argument of the section is that these two sentences are the product. */
+.money-scene { margin-top: 16px; font-size: clamp(17px, 2vw, 21px); line-height: 1.55; color: var(--text-2); }
+.money-scene b { color: var(--text); font-family: var(--mono); font-size: .95em; }
+.money-verdict {
+  margin-top: 20px; padding: 20px 22px;
+  border: 1px solid var(--line-strong); border-left: 3px solid var(--orange); border-radius: var(--radius);
+  background: rgba(255, 255, 255, .026);
+  font-size: clamp(16px, 1.8vw, 19px); line-height: 1.6; color: var(--text-2);
+}
+.money-verdict b { color: var(--text); }
+.money-note { margin-top: 18px; font-size: 14px; color: var(--text-3); max-width: 66ch; }
+.money .cta-row { margin-top: 24px; }
+
+/* Six refusals, two rows of three on a wide screen. Same card as .proof-grid
+   because they are the same class of claim, differently pointed. */
+.refusal { background: linear-gradient(180deg, rgba(255, 255, 255, .014), transparent); }
+.refusal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); gap: 16px; margin-top: 34px; }
+.refusal-grid article {
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .026), transparent);
+}
+.refusal-grid h3 { font-size: 16px; letter-spacing: -.3px; margin-bottom: 8px; }
+.refusal-grid p { color: var(--text-2); font-size: 14px; }
+.refusal-grid b { color: var(--text); }
+
+/* Numbered, and the numbers earn it: three properties in the order somebody
+   would test them, not three features in a row. */
+.exit-list { margin: 28px 0 0; padding: 0; list-style: none; counter-reset: exit; }
+.exit-list li {
+  counter-increment: exit; position: relative; padding: 0 0 22px 46px;
+  color: var(--text-2); font-size: 15px; line-height: 1.65;
+}
+.exit-list li::before {
+  content: counter(exit); position: absolute; left: 0; top: 1px;
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 1px solid var(--line-strong); background: rgba(255, 255, 255, .03);
+  font-family: var(--mono); font-size: 12px; color: var(--orange);
+  display: grid; place-items: center;
+}
+.exit-list b { color: var(--text); }
+.exit-note {
+  margin-top: 6px; padding-left: 15px; border-left: 2px solid var(--line-strong);
+  font-size: 14px; color: var(--text-3); max-width: 66ch;
+}
+.exit .cta-row { margin-top: 26px; }
+
+/* The second line of the hero lede, quieter than the first: the first is what
+   it costs you, this is what the thing is. */
+.lede-second { margin-top: 12px; color: var(--text-3); font-size: 15px; max-width: 60ch; }
+.cta-note { margin-top: 14px; font-size: 13.5px; color: var(--text-3); }
+.cta-note a { color: var(--text-2); text-decoration: underline; text-underline-offset: 3px; }
+
+/* ----------------------------------------------------------- the calculator */
+
+.exposure-form { display: grid; gap: 18px; margin-top: 8px; }
+.exposure-field { display: grid; gap: 4px; }
+.exposure-label { font-size: 14px; font-weight: 600; color: var(--text); }
+.exposure-hint { font-size: 13px; color: var(--text-3); }
+.exposure-field input {
+  margin-top: 4px; padding: 11px 13px;
+  font-family: var(--mono); font-size: 15px;
+  color: var(--text); background: rgba(255, 255, 255, .03);
+  border: 1px solid var(--line-strong); border-radius: 8px;
+}
+.exposure-field input:focus { outline: 2px solid var(--orange); outline-offset: 1px; }
+
+.exposure-lines { display: grid; gap: 14px; margin-top: 30px; }
+.exposure-line {
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .022), transparent);
+}
+/* One figure is the argument and the other four are its context, so exactly one
+   carries the accent. Five emphasised numbers would be none. */
+.exposure-line.emphasis { border-left: 3px solid var(--orange); background: rgba(255, 255, 255, .04); }
+.exposure-line-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; justify-content: space-between; }
+.exposure-line-label { font-size: 14px; color: var(--text-2); }
+.exposure-line-value { font-family: var(--mono); font-size: clamp(20px, 2.6vw, 28px); color: var(--text); font-variant-numeric: tabular-nums; }
+.exposure-line.emphasis .exposure-line-value { color: var(--orange); }
+.exposure-line-meaning { margin-top: 10px; font-size: 14px; color: var(--text-2); line-height: 1.6; }
+.exposure-line-working { margin-top: 8px; font-family: var(--mono); font-size: 12px; color: var(--text-3); }
+.exposure-not { margin-top: 16px; color: var(--text-3); font-size: 14px; line-height: 1.65; }
+.exposure-not li { margin-bottom: 8px; }
+
+@media (max-width: 720px) {
+  .exposure-line-head { flex-direction: column; align-items: flex-start; gap: 2px; }
+}

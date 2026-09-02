@@ -16,6 +16,7 @@ import {
   demo,
   type DemoInput,
   developers,
+  exposure,
   getStarted,
   growth,
   howItWorks,
@@ -42,6 +43,7 @@ type Renderer = (platform: Platform, ctx: RequestContext) => string;
 const RENDERERS: Record<string, Renderer> = {
   '/about': () => about(),
   '/how-it-works': () => howItWorks(),
+  '/exposure': () => exposure(),
   '/industries': () => industries(),
   '/blog': (platform) => blog(platform),
   // One concrete route per post rather than a `:slug` pattern. It keeps the

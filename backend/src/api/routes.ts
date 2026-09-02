@@ -174,6 +174,8 @@ import {
   previewFor,
 } from '../messaging/newsletter.ts';
 import { documentVerificationPage, unsubscribePage, verificationPage } from '../messaging/render.ts';
+import { exposurePosition, readExposureInput } from '../site/exposure.ts';
+import { exposure as exposurePage } from '../site/pages.ts';
 import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { MODULES, isModuleId } from '../identity/modules.ts';
 import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
@@ -3835,6 +3837,33 @@ export const ROUTES: Route[] = [
           ],
         },
       };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/exposure',
+    public: true,
+    html: true,
+    readOnly: true,
+    description: 'Compute what the payment notice regime puts at stake on a visitor’s own turnover',
+    schema: {
+      type: 'object',
+      properties: {
+        turnover: { type: 'string' },
+        liveContracts: { type: 'string' },
+        applicationsPerMonth: { type: 'string' },
+        gapPercent: { type: 'string' },
+        retentionPercent: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (_platform, ctx) => {
+      // Nothing is stored and nothing is sent anywhere. A page that asked a
+      // managing director for their turnover and then held it would be a lead
+      // capture form wearing a calculator's clothes, and the arithmetic would
+      // be the price of the address rather than the point.
+      const input = readExposureInput(body<Record<string, unknown>>(ctx));
+      return exposurePage(exposurePosition(input));
     },
   },
   {

@@ -14160,3 +14160,84 @@ exporter; all twenty killed after these two fixes.
 - **No key is generated at boot.** A deployment with no master key behaves
   exactly as it did before this existed. Generating one would produce a system
   whose evidence becomes unreadable on the next restart.
+
+---
+
+## The public argument: what a buyer sees before they see the product
+
+The site was arguing from the product outwards — hash-chained, append-only,
+closed catalogue, replay — which is the answer to "can this be trusted". That is
+the *second* question a managing director asks. The first is what any of it is
+worth, and the site never answered it.
+
+### What changed on the landing page
+
+- **The lede leads with consequence.** A missed pay less notice, an
+  unsubstantiated extension of time, margin eroding between the event and the
+  review that finds it. The architecture is still there, one paragraph down and
+  quieter, where it belongs.
+- **One primary call to action** instead of three of equal weight, and it says
+  what the visitor will see rather than "Try it now".
+- **A money section, above the proof sections.** The s.111 scenario in the terms
+  somebody feels it: an application, a valuation, a notice two days late, and the
+  whole application payable in full. Explicitly labelled as running on the seeded
+  demonstration project rather than dressed as a customer outcome.
+- **"It refuses"** — six behaviours that are in the codebase with tests behind
+  them: no double certification, no approval of a plan with gaps, no signature in
+  a name that is not competent, no AI spend without a ledger entry, no agent
+  above `PROPOSE`, and authorship marked on every AI-written line. Every
+  competitor in this market sells generation; the useful moments here are the
+  declines, and none of them were on the site.
+- **An exit section.** The objection nobody in this market answers out loud is
+  "will you exist in three years". The answer is not a reassurance, it is three
+  testable properties: exports leave whole, documents verify without us, and the
+  log verifies on its own terms. The middle one only became true today.
+
+### `/exposure` — arithmetic on the reader's own numbers
+
+Five inputs, five outputs, and the working shown on every line.
+`backend/src/site/exposure.ts` holds the arithmetic; the page is a form POST
+because the CSP admits no inline script and a browser copy would be a second
+implementation.
+
+The discipline that makes it worth having rather than a lead magnet:
+
+- **No industry average, no assumed miss rate, no "companies like yours
+  typically recover".** One invented number would be the largest figure on the
+  page and would make a reader discount every real one beside it. A test asserts
+  that doubling turnover doubles every money figure exactly, which is what makes
+  "nothing is smuggled into the sums" checkable rather than claimed.
+- **It does not claim a saving.** It sizes the exposure the Act creates and
+  leaves the reader to judge how often it bites them, because only they know.
+- **Nothing is stored and nothing is sent anywhere.** A page that asked a
+  managing director for their turnover and kept it would be a lead-capture form
+  wearing a calculator's clothes.
+- The three things it will not claim are printed on the page itself.
+
+One defect found by testing: an empty field became zero rather than falling back,
+so a visitor who cleared a box would have been shown a page of £0 figures and
+would reasonably have concluded the calculator was broken.
+
+### `/verify-document`, promoted from a utility to a proof
+
+Linked from the footer and from the landing page's exit section, and made
+indexable — it is a public utility a recipient may search for, unlike the
+unsubscribe and signup-confirmation pages that share its renderer and correctly
+stay out of the index. Its `default-src 'none'` policy is unchanged.
+
+### What only a human can supply, and what its absence costs
+
+Recorded because the gap is real and no amount of building closes it:
+
+- **No customer reference, logo, quote or case study exists on the site.**
+  Construction is the most reference-driven industry there is, and a contractor
+  will not be the first onto an unproven system that holds the record they defend
+  themselves with. This is the single largest remaining obstacle to conversion
+  and it cannot be built — it has to be earned, or reframed honestly as founding
+  terms for the first customers.
+- **No named founder, address or company history.** A buyer is being asked to
+  trust an anonymous supplier with their evidence.
+- **No video.** The strongest asset here is a live £17.6M job somebody can walk
+  through, and it is currently described rather than shown.
+
+Nothing invented has been put in their place.

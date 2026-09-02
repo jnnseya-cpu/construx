@@ -149,9 +149,13 @@ export function landing(): string {
       -->
       <h1>The record of how your asset came to exist.</h1>
       <p class="lede">
-        One governed spine from concept to the thirtieth year of operation. Every state change is an append-only,
-        hash-chained event. Every figure is computed from the record rather than typed into it. Every claim on this
-        page is checkable by replaying the log.
+        A missed pay less notice makes the application payable in full. An extension of time you cannot substantiate is
+        an extension you do not get. Margin erodes in the four weeks between the thing happening and the review that
+        finds it. This platform computes all three on the day they happen — not at the month end.
+      </p>
+      <p class="lede-second">
+        One governed record from concept to the thirtieth year of operation, and every figure on it computed from that
+        record rather than typed into it.
       </p>
       <!--
         Three, and the order is the argument.
@@ -163,10 +167,14 @@ export function landing(): string {
         never shows it.
       -->
       <div class="cta-row">
-        <a class="btn lg" href="/demo">Try it now <span aria-hidden="true">→</span></a>
-        <a class="btn lg ghost" href="/demo#book">Book a 20-min demo</a>
-        <a class="btn lg ghost" href="/get-started">Start free</a>
+        <a class="btn lg" href="/demo">Walk a live £17.6M job <span aria-hidden="true">→</span></a>
+        <a class="btn lg ghost" href="/exposure">What one missed notice costs you</a>
       </div>
+      <p class="cta-note">
+        Real programme, real notices, real money, no signup. Or
+        <a href="/get-started">start free</a> and
+        <a href="/demo#book">book twenty minutes</a> when you want somebody on the call.
+      </p>
 
       <!--
         A spine, not a row of pills.
@@ -259,6 +267,106 @@ export function landing(): string {
 
 ${figure('command-centre')}
 
+<!--
+  The money section, and it goes first.
+
+  Everything below this argues that the record can be trusted, which is the
+  second question. The first is what any of it is worth, and it has one answer
+  in this industry that everybody has felt: a notice window that closed while
+  nobody was counting.
+
+  The figures are the seeded demonstration project's own — the same ones the
+  walkthrough opens on — and they are labelled as a demonstration rather than
+  dressed as a customer outcome we have not earned.
+-->
+<section class="money">
+  <div class="wrap narrow">
+    <div class="statute-mark">HGCRA 1996 · s.111</div>
+    <h2 class="section-h">The notice nobody was counting</h2>
+    <p class="money-scene">
+      Application 14 goes in at <b>£1.42M</b>. The valuation says <b>£1.19M</b>. The client's pay less notice is served
+      two days after the window shuts.
+    </p>
+    <p class="money-verdict">
+      On that day the whole <b>£1.42M</b> became the notified sum and payable in full — whatever the valuation said.
+      The QS found out at the month-end review, three weeks later. <b>The platform computes it the day the window
+      closes</b>, names the notice that established the sum, and states what has to be served next.
+    </p>
+    <p class="money-note">
+      That scenario runs on the seeded demonstration project, not on a customer's job. Put your own turnover into
+      <a href="/exposure">the arithmetic</a> and it will tell you what one window is worth on your books — with no
+      industry average anywhere in it, because we have not got one and would not print one if we had.
+    </p>
+    <div class="cta-row">
+      <a class="btn" href="/exposure">Work it out on my numbers</a>
+    </div>
+  </div>
+</section>
+
+<!--
+  The argument nothing else on this site was making.
+
+  Every product in this market sells generation: it writes your method
+  statement, drafts your RFI, summarises your drawings. This one is most useful
+  at the moments it declines, and for a duty-holder that is the whole of the
+  difference. The examples are behaviours in the codebase with tests behind
+  them, not aspirations.
+-->
+<section class="refusal">
+  <div class="wrap">
+    <h2 class="section-h">It refuses</h2>
+    <p class="section-lede">
+      Every other platform in this market generates. The useful moments here are the ones where this one declines —
+      because a document the system was willing to invent is a document you cannot stand behind.
+    </p>
+    <div class="refusal-grid">
+      <article>
+        <h3>It will not certify the same payment twice</h3>
+        <p>
+          Over-certification, double certification and overpayment are refused by the payment cycle itself, not caught
+          by a report afterwards. A refusal arrives as a refusal, never as a zero.
+        </p>
+      </article>
+      <article>
+        <h3>It will not approve a plan with gaps in it</h3>
+        <p>
+          A Construction Phase Plan missing its judgement sections cannot be approved, and while it is unapproved the
+          platform refuses to record an induction against it. The paperwork order is the safety order.
+        </p>
+      </article>
+      <article>
+        <h3>It will not sign in a name that is not competent</h3>
+        <p>
+          Six of the sixteen CDM documents need a principal contractor's appointed approver. Where nobody holds that
+          duty, those documents sit complete and unsigned rather than carrying a signature the platform had to invent.
+        </p>
+      </article>
+      <article>
+        <h3>It will not spend on AI it cannot account for</h3>
+        <p>
+          No provider is called on an empty wallet, and no charge is taken without a ledger entry. Where a model is
+          unavailable it falls back and says which one answered.
+        </p>
+      </article>
+      <article>
+        <h3>No agent decides anything</h3>
+        <p>
+          The whole fleet is capped at <b>propose</b>. Governance events are marked as closed to AI in the catalogue
+          itself, so a decision made by a model is not a permission that was withheld — it is a state the system cannot
+          reach.
+        </p>
+      </article>
+      <article>
+        <h3>Every AI-written line says so</h3>
+        <p>
+          Narrative sections carry their author and whether a model or the local stand-in produced them. An assurance
+          team asking who wrote the safety case gets a name, not a shrug.
+        </p>
+      </article>
+    </div>
+  </div>
+</section>
+
 <section class="proof">
   <div class="wrap">
     ${figure('broken-workflows')}
@@ -339,14 +447,57 @@ ${figure('command-centre')}
   </div>
 </section>
 
+<!--
+  The objection nobody in this market answers out loud.
+
+  A buyer is being asked to put the record they will defend themselves with
+  inside a company they have not heard of. "We will still be here" is what every
+  vendor says and none of them can prove. What *is* provable is that the record
+  does not need us — and after the verification work, that stopped being a
+  promise and became an endpoint anyone can call.
+-->
+<section class="exit">
+  <div class="wrap narrow">
+    <h2 class="section-h">If we disappeared tomorrow, you would keep the evidence</h2>
+    <p class="section-lede">
+      That is not a reassurance. It is three properties of the record, and you can test all three before you pay us
+      anything.
+    </p>
+    <ol class="exit-list">
+      <li>
+        <b>Every export leaves whole.</b> Branded, hashed and recorded, in PDF, Word, JSON or CSV. Nothing about a
+        document depends on this platform being reachable to read it.
+      </li>
+      <li>
+        <b>Every document proves itself without us — to a stranger.</b> A content hash proves nothing on its own:
+        whoever alters a document recomputes it. So each one carries a verification code only this platform can
+        produce, and <a href="/verify-document">anyone holding the document can check it</a> with no account and no
+        relationship to you. A client's solicitor. An adjudicator. An insurer.
+      </li>
+      <li>
+        <b>The log verifies on its own terms.</b> Replay every event, recompute the chain, and a single root hash falls
+        out that any party holding the same log can reproduce. That check does not run here — it runs wherever the log
+        is.
+      </li>
+    </ol>
+    <p class="exit-note">
+      Which is also the answer to the question behind it: an evidence trail whose truth depends on the supplier still
+      trading is not an evidence trail. It is a subscription.
+    </p>
+    <div class="cta-row">
+      <a class="btn ghost" href="/verify-document">Check a document now</a>
+    </div>
+  </div>
+</section>
+
 <section class="cta-band big">
   <div class="wrap">
     ${figure('founder')}
     <h2>Start with a record you can defend</h2>
     <p>A trial governs, records and computes. No card, no call, no sales qualification step.</p>
     <div class="cta-row">
-      <a class="btn lg" href="/demo">Try it now <span aria-hidden="true">→</span></a>
-      <a class="btn lg ghost" href="/demo#book">Book a 20-min demo</a>
+      <a class="btn lg" href="/demo">Walk a live £17.6M job <span aria-hidden="true">→</span></a>
+      <a class="btn lg ghost" href="/exposure">What it costs you</a>
       <a class="btn lg ghost" href="/get-started">Start free</a>
       <a class="btn lg ghost" href="/developers">Read the API</a>
     </div>

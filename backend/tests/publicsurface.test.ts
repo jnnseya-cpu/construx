@@ -114,6 +114,11 @@ describe('what an anonymous caller can obtain', () => {
       // creates the same record `POST /v1/booking` creates, through the same
       // code, and returns HTML rather than JSON.
       'POST /demo',
+      // The exposure calculator's form, submitted by a visitor with no account.
+      // It stores nothing and sends nothing anywhere: the five figures are used
+      // for the arithmetic on the page and then discarded, which is what stops
+      // a calculator being a lead-capture form in disguise.
+      'POST /exposure',
       'POST /unsubscribe',
       'POST /v1/auth/login',
       'POST /v1/auth/mfa/verify',

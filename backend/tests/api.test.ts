@@ -151,6 +151,11 @@ describe('the routing table itself', () => {
       // on these pages that did. It goes through the same booking code as
       // `POST /v1/booking` and returns HTML instead of JSON.
       'POST /demo',
+      // The exposure calculator's form, submitted by a visitor with no account.
+      // It stores nothing and sends nothing anywhere: the five figures are used
+      // for the arithmetic on the page and then discarded, which is what stops
+      // a calculator being a lead-capture form in disguise.
+      'POST /exposure',
       'POST /unsubscribe',
       'POST /v1/auth/login',
       'POST /v1/auth/mfa/verify',

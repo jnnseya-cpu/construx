@@ -26,6 +26,7 @@ export type NavLink = { href: string; label: string };
 export const SITE_PAGES = [
   { path: '/about', label: 'About', group: 'Company' },
   { path: '/how-it-works', label: 'How it works', group: 'Product' },
+  { path: '/exposure', label: 'What one missed notice is worth', group: 'Product' },
   { path: '/industries', label: 'Industries', group: 'Product' },
   { path: '/blog', label: 'Blog', group: 'Company' },
   { path: '/developers', label: 'Developers', group: 'Product' },
@@ -45,6 +46,9 @@ const PRIMARY: NavLink[] = [
   // somebody can walk through, and it was the one page with no way to reach it.
   { href: '/demo', label: 'Try it' },
   { href: '/how-it-works', label: 'How it works' },
+  // Second, because it is the only page on the site that argues with the
+  // reader's own numbers rather than with ours.
+  { href: '/exposure', label: 'What it costs you' },
   { href: '/industries', label: 'Industries' },
   { href: '/developers', label: 'Developers' },
   { href: '/about', label: 'About' },
@@ -196,7 +200,7 @@ function footer(): string {
     </div>
     <div class="foot-base">
       <span>&copy; ${new Date().getUTCFullYear()} CONSTRUX</span>
-      <span class="foot-links"><a href="/terms">Terms</a> <a href="/privacy">Privacy</a> <a href="/policies">Policies</a></span>
+      <span class="foot-links"><a href="/verify-document">Verify a document</a> <a href="/terms">Terms</a> <a href="/privacy">Privacy</a> <a href="/policies">Policies</a></span>
     </div>
   </div>
 </footer>

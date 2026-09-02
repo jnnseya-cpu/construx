@@ -223,13 +223,13 @@ export function renderCampaign(copy: CampaignCopy, recipient: Recipient): Render
  * with a browser that blocks third-party anything. The page has one job and
  * does it with a form and a button.
  */
-function plainPage(title: string, heading: string, bodyHtml: string): string {
+function plainPage(title: string, heading: string, bodyHtml: string, indexable = false): string {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow">
+${indexable ? '' : '<meta name="robots" content="noindex,nofollow">\n'}
 <!-- No favicon link, deliberately. These pages run under the SELF_CONTAINED
      policy, whose default-src of none forbids images because a page reached
      from a link in an email is the one most likely to be attacked. The browser
@@ -555,6 +555,12 @@ export function documentVerificationPage(input: {
          code cannot be recomputed by anyone but this platform, which is what makes the check worth performing.
        </p>
        ${form}`,
+      // Indexable, unlike the unsubscribe and signup-confirmation pages this
+      // helper also serves. Those are reached from a link in an email and have
+      // no business in a search index; this one is a public utility, and a
+      // recipient who has lost the link should be able to find it by searching
+      // for it.
+      true,
     );
   }
 
@@ -597,6 +603,7 @@ export function documentVerificationPage(input: {
          correct. It establishes issuance and integrity, which is narrower and more useful than either.
        </p>
        <a href="/verify-document" style="${BUTTON_QUIET}">Check another document</a>`,
+      true,
     );
   }
 
@@ -610,5 +617,6 @@ export function documentVerificationPage(input: {
        organisation named on it is the party to raise that with.
      </p>
      ${form}`,
+    true,
   );
 }
