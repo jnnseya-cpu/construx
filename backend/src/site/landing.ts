@@ -448,6 +448,40 @@ ${figure('command-centre')}
 </section>
 
 <!--
+  Who built this, and why that is the argument rather than a biography.
+
+  A buyer is being asked to trust the record they will defend themselves with to
+  a supplier they have not heard of. "About us" pages answer that with adjectives.
+  The only answer that lands in this market is that the person who built it has
+  stood on the site and met the problem — so the section leads with the failure
+  he met, not with his CV, and the CV is one line.
+-->
+<section class="origin">
+  <div class="wrap narrow">
+    <div class="statute-mark">Why it exists</div>
+    <h2 class="section-h">Built by someone who spent twenty years working without it</h2>
+    <p class="origin-lede">
+      CONSTRUX comes out of <b>Justin Nseya's</b> twenty years as an MCIOB construction professional and senior
+      project-management leader — and out of the same failure, met on project after project.
+    </p>
+    <p class="origin-body">
+      Design, programme, cost, procurement, contracts, delivery, commissioning and handover were each managed
+      competently, and each in a different system. Every one of them was fine on its own. What did not exist anywhere
+      was the join — so information arrived late rather than missing, risks were found after they had already become
+      variations, and the most expensive people on the project spent their time chasing updates instead of controlling
+      delivery.
+    </p>
+    <p class="origin-body">
+      That is not a people problem and no better version of any one of those systems fixes it. It is structural: there
+      was nowhere that recorded what happened once, at the moment it happened, in a form every discipline could read.
+    </p>
+    <div class="cta-row">
+      <a class="btn ghost" href="/about">The whole of why</a>
+    </div>
+  </div>
+</section>
+
+<!--
   The objection nobody in this market answers out loud.
 
   A buyer is being asked to put the record they will defend themselves with

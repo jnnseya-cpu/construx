@@ -966,3 +966,21 @@ img, svg { max-width: 100%; }
 @media (max-width: 720px) {
   .exposure-line-head { flex-direction: column; align-items: flex-start; gap: 2px; }
 }
+
+/* ------------------------------------------------------------- the origin */
+
+/* Sits between the refusals and the exit guarantee: the reader has just been
+   told what the platform declines to do, and the next question is who decided
+   that. Quieter than either neighbour — this section earns its place by being
+   the only first-person thing on the page, not by shouting. */
+.origin { padding: 76px 0; border-top: 1px solid var(--line); }
+.origin-lede {
+  margin-top: 16px;
+  font-size: clamp(16.5px, 1.9vw, 20px);
+  line-height: 1.6;
+  color: var(--text-2);
+  max-width: 64ch;
+}
+.origin-lede b { color: var(--text); }
+.origin-body { margin-top: 14px; font-size: 15px; line-height: 1.7; color: var(--text-3); max-width: 66ch; }
+.origin .cta-row { margin-top: 24px; }

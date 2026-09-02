@@ -14574,3 +14574,41 @@ work uses. The first is **not being removed**: eight screens depend on it, their
 signatures differ (`bars` versus `data`), and rewriting working screens to change
 which module draws the same picture is the refactor rule 3 exists to prevent.
 Recorded here rather than left for somebody to discover.
+
+
+---
+
+## Why CONSTRUX exists, on the site
+
+The launch audit and the landing-page critique both named the same gap and
+neither could close it: **no named founder**. A buyer was being asked to trust
+the record they defend themselves with to an anonymous supplier.
+
+That is now answered in two places, at two depths.
+
+**`/about` leads with it**, ahead of "what we build", because in this market the
+question comes first. Justin Nseya, twenty years, MCIOB. The section is built
+around the failure rather than the CV — design, programme, cost, procurement,
+contracts, delivery, commissioning and handover each managed competently and each
+in a different system, with nobody owning the join — and then the three symptoms
+that produces: information late rather than missing, risks found after they had
+become variations, and the most expensive people on the project reduced to a
+human integration layer.
+
+Two arguments are developed there that the source material implies and does not
+state:
+
+- **The gaps between stages are where projects fail**, because a project is a
+  sequence of handovers and each one loses context that has to be rebuilt from
+  memory. Every gap is survivable alone; together, over two years, they are where
+  the margin goes — and they are invisible on any one team's dashboard, because
+  no team owns a gap.
+- **`PROPOSE` follows from the diagnosis rather than being a policy bolted on.**
+  The failure was never that decisions were made badly. It was that the people
+  making them did not have what they needed in front of them. So the system's
+  job is to put it there, and the decision stays with whoever carries the duty.
+
+**The landing page carries the short form**, placed between "It refuses" and the
+exit guarantee — the reader has just been told what the platform declines to do,
+and who decided that is the next question. It leads with the failure and keeps
+the CV to one line, because an "about us" written in adjectives answers nothing.

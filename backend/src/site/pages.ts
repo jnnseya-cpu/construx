@@ -64,6 +64,95 @@ export function about(): string {
 
 <section class="prose">
   <div class="wrap narrow">
+    <h2>Why CONSTRUX was created</h2>
+    <p class="founder-lede">
+      CONSTRUX comes out of twenty years of <b>Justin Nseya's</b> work as an MCIOB construction professional and senior
+      project-management leader. It was not designed from a market gap. It was designed from the same failure, met
+      again and again, on project after project.
+    </p>
+
+    <h3>The failure, precisely</h3>
+    <p>
+      Design, programme, cost, procurement, contracts, field delivery, commissioning and handover were each managed
+      competently — and each in a different system, by a different team, on a different clock. Every one of those
+      systems was fine on its own. What did not exist anywhere was the join.
+    </p>
+    <p>
+      That produced the same three symptoms every time:
+    </p>
+    <ul>
+      <li>
+        <b>Critical information arrived late.</b> Not missing — late. The drawing revision that changed the pipework
+        interface was issued on time and reached the people pouring concrete a fortnight after they needed it.
+      </li>
+      <li>
+        <b>Risks were identified after they had already cost money.</b> A risk register reviewed monthly finds a risk
+        that landed three weeks ago. By then it is not a risk, it is a variation, and the argument is about who pays
+        for it.
+      </li>
+      <li>
+        <b>Experienced managers spent their time chasing updates rather than controlling delivery.</b> The most
+        expensive people on the project, reduced to a human integration layer between systems that would not talk to
+        each other.
+      </li>
+    </ul>
+    <p>
+      None of that is a people problem, and it is not solved by working harder or by buying a better version of any one
+      of those systems. It is a <em>structural</em> problem: there was no single place where what happened was
+      recorded once, in a form every discipline could read, at the moment it happened.
+    </p>
+
+    <h3>Why the gaps between stages are where projects fail</h3>
+    <p>
+      A construction project is not a sequence of stages. It is a sequence of <b>handovers between stages</b>, and every
+      one is a place where context is lost and has to be reconstructed from memory. The estimator's assumption about
+      ground conditions does not travel to the site manager who meets the ground. The reason a clause was negotiated
+      does not travel to the quantity surveyor who has to enforce it. The commissioning engineer inherits an asset and
+      not the decisions that shaped it.
+    </p>
+    <p>
+      Each of those gaps is survivable. Together, over a two-year programme, they are where the margin goes — and they
+      are invisible on any single team's dashboard, because no single team owns a gap.
+    </p>
+
+    <h3>What was built instead</h3>
+    <p>
+      A construction-specific operating system that connects every stage — concept and design through tender,
+      construction, commissioning, handover and thirty years of operation — into one auditable delivery environment.
+      One record, written once, readable by every discipline that needs it, and provable afterwards.
+    </p>
+    <p>
+      Its AI agents examine that evidence continuously rather than at the month end: identifying emerging risks,
+      coordinating the workflows between disciplines, and telling each person what has changed, what is at risk, what
+      is costing money, and what has to happen next. Continuously, because the month-end review is precisely the
+      instrument that finds things three weeks late.
+    </p>
+    <p>
+      That the agents only ever <em>propose</em> is not a limitation added afterwards. It follows directly from the
+      problem: the failure was never that decisions were made badly. It was that the people making them did not have
+      what they needed in front of them at the time. So the system's job is to put it there — and the decision stays
+      with the person carrying the duty for it.
+    </p>
+
+    <h3>Why it is built as a record rather than a workflow</h3>
+    <p>
+      Twenty years of adjudications, final accounts and insurance renewals teach the same lesson: at the moment it
+      matters, the only question is what was notified, on what date, supported by what evidence. Everything else is
+      recollection. A workflow tool helps you do the work. A governed record lets you prove you did it — and those are
+      different products, however similar the screens look.
+    </p>
+
+    <h3>What this is not</h3>
+    <p>
+      CONSTRUX was not created as another piece of construction software. There is no shortage of those, and adding to
+      the pile would have reproduced exactly the problem it exists to solve: another system, holding another fragment
+      of the truth, that somebody has to reconcile by hand.
+    </p>
+    <p>
+      It was created to be the integrated project control system that construction teams have been working without —
+      by someone who spent twenty years working without it.
+    </p>
+
     <h2>What we build</h2>
     <p>
       A single governed spine for an asset's whole life — concept, design, tender, construction, commissioning, handover

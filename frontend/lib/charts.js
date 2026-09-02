@@ -196,8 +196,14 @@ function tickLabel(value) {
  * Deliberately the same block `table` uses, so an empty chart and an empty
  * register look like the same kind of absence rather than two different bugs.
  */
-function emptyChart(empty) {
-  return html`<div class="empty"><b>${empty}</b>Nothing has been recorded that this can be drawn from.</div>`;
+function emptyChart(empty, detail) {
+  // The second sentence is overridable because the generic one is wrong for a
+  // chart whose data has to be *computed* rather than recorded: a distribution
+  // appears once the simulation has been run, and "nothing has been recorded"
+  // sends the reader looking for data entry that was never the problem.
+  return html`<div class="empty"><b>${empty}</b>${
+    detail ?? 'Nothing has been recorded that this can be drawn from.'
+  }</div>`;
 }
 
 /**
@@ -618,45 +624,90 @@ export const donutChart = (options) => pieChart({ ...options, donut: true });
 /** @param {{values?: Scalar[], title?: string, desc?: string, format?: Formatter, bins?: number, empty?: string, tone?: string, footnote?: string}} options */
 export function histogram({
   values = [],
+  buckets: given,
   title = 'Distribution',
   desc,
   format = tickLabel,
   bins,
   empty = 'Not enough measurements to show a distribution',
+  emptyDetail,
   tone = 'accent',
+  limit,
+  limitLabel = '',
+  markLabel = '',
+  markPast = 'above',
   footnote,
 }) {
-  const sample = values.filter(finite).map(Number).sort((a, b) => a - b);
-  if (sample.length < 2) return emptyChart(empty);
+  // Two ways in, one picture out.
+  //
+  // `values` is raw and this bins it. `buckets` is already binned, which is the
+  // only honest input where the binning happened somewhere this cannot see —
+  // a Monte Carlo run whose distribution is computed server-side and whose raw
+  // trials were never sent. Rebinning a summary would invent a shape the
+  // simulation did not produce.
+  const preBinned = Array.isArray(given) && given.length > 0;
+  if (!preBinned && values.filter(finite).length < 2) return emptyChart(empty, emptyDetail);
 
-  const min = sample[0];
-  const max = sample[sample.length - 1];
-  const count = bins ?? binCount(sample);
-  const width = (max - min) / count || 1;
-  const buckets = Array.from({ length: count }, (_, index) => ({
-    from: min + index * width,
-    to: min + (index + 1) * width,
-    n: 0,
-  }));
-  for (const value of sample) {
-    // The last bucket is closed at the top, so the maximum lands in it rather
-    // than in a bucket past the end of the array.
-    const index = Math.min(count - 1, Math.floor((value - min) / width));
-    buckets[index].n += 1;
-  }
+  const sample = preBinned ? [] : values.filter(finite).map(Number).sort((a, b) => a - b);
+  const bucketList = preBinned
+    ? given.map((bucket) => ({
+        from: bucket.label,
+        to: bucket.label,
+        n: num(bucket.count),
+        marked: bucket.marked === true,
+      }))
+    : (() => {
+        const min = sample[0];
+        const max = sample[sample.length - 1];
+        const count = bins ?? binCount(sample);
+        const width = (max - min) / count || 1;
+        const made = Array.from({ length: count }, (_, index) => ({
+          from: min + index * width,
+          to: min + (index + 1) * width,
+          n: 0,
+          marked: false,
+        }));
+        for (const value of sample) {
+          // The last bucket is closed at the top, so the maximum lands in it
+          // rather than in a bucket past the end of the array.
+          const index = Math.min(count - 1, Math.floor((value - min) / width));
+          made[index].n += 1;
+        }
+        // A threshold marks every bucket past it, so the reader can see how much
+        // of the distribution sits the wrong side of the line rather than
+        // reading a line across bars and estimating.
+        if (finite(limit)) {
+          for (const bucket of made) {
+            bucket.marked = markPast === 'below' ? bucket.to <= Number(limit) : bucket.from >= Number(limit);
+          }
+        }
+        return made;
+      })();
+
+  const buckets = bucketList;
+  const count = buckets.length;
+  const min = preBinned ? 0 : sample[0];
+  const max = preBinned ? 0 : sample[sample.length - 1];
+  const median = preBinned ? undefined : sample[Math.floor(sample.length / 2)];
 
   const axis = niceScale(0, Math.max(...buckets.map((b) => b.n)));
   const area = plot();
   const y = scale(axis.min, axis.max, area.y + area.h, area.y);
   const band = area.w / count;
-  const median = sample[Math.floor(sample.length / 2)];
+  const marked = buckets.filter((bucket) => bucket.marked).length;
+
+  const label = (bucket) => (preBinned ? String(bucket.from) : format(bucket.from));
 
   return frame({
     title,
     footnote,
     desc:
       desc ??
-      `${sample.length} measurements from ${format(min)} to ${format(max)} in ${count} bins. Median ${format(median)}.`,
+      (preBinned
+        ? `${count} bins${marked > 0 ? `, ${marked} past ${limitLabel || 'the threshold'}` : ''}.`
+        : `${sample.length} measurements from ${format(min)} to ${format(max)} in ${count} bins.` +
+          ` Median ${format(median)}.` +
+          (marked > 0 ? ` ${marked} bins past ${limitLabel || 'the threshold'}.` : '')),
     body: html`${valueAxis(area, axis.ticks, y, (t) => String(t))}
       ${buckets.map(
         (bucket, index) => html`<rect
@@ -665,15 +716,37 @@ export function histogram({
           y="${raw(r2(y(bucket.n)))}"
           width="${raw(r2(Math.max(1, band - 1.5)))}"
           height="${raw(r2(Math.max(0, y(0) - y(bucket.n))))}"
-          fill="${raw(paint(tone))}"
+          fill="${raw(paint(bucket.marked ? 'warn' : tone))}"
         >
-          <title>${format(bucket.from)} to ${format(bucket.to)}: ${raw(bucket.n)}</title>
+          <title>${label(bucket)}${preBinned ? '' : ` to ${format(bucket.to)}`}: ${raw(bucket.n)}${
+            bucket.marked && markLabel ? ` — ${markLabel}` : ''
+          }</title>
         </rect>`,
       )}
       <line class="chart-axis" x1="${raw(r2(area.x))}" y1="${raw(r2(y(0)))}" x2="${raw(r2(area.x + area.w))}" y2="${raw(r2(y(0)))}" />
+      ${
+        // The threshold itself, drawn where the marked bucket begins. Only for
+        // binned input, where the x scale is a real number line — on pre-binned
+        // labels there is no position to put it at that would mean anything.
+        !preBinned && finite(limit) && Number(limit) >= min && Number(limit) <= max
+          ? html`<g class="chart-ref">
+              <line
+                x1="${raw(r2(area.x + ((Number(limit) - min) / ((max - min) || 1)) * area.w))}"
+                y1="${raw(r2(area.y))}"
+                x2="${raw(r2(area.x + ((Number(limit) - min) / ((max - min) || 1)) * area.w))}"
+                y2="${raw(r2(y(0)))}"
+              />
+              <text
+                class="chart-axis-label"
+                x="${raw(r2(area.x + ((Number(limit) - min) / ((max - min) || 1)) * area.w + 4))}"
+                y="${raw(r2(area.y + 12))}"
+              >${limitLabel || format(Number(limit))}</text>
+            </g>`
+          : ''
+      }
       ${[0, Math.floor(count / 2), count - 1].map(
         (index) => html`<text class="chart-cat" x="${raw(r2(area.x + index * band + band / 2))}" y="${raw(r2(area.y + area.h + 20))}" text-anchor="middle">
-          ${format(buckets[index].from)}
+          ${label(buckets[index])}
         </text>`,
       )}`,
   });
