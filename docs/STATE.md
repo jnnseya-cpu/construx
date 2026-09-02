@@ -13949,3 +13949,96 @@ checking something was returned, because a chart defect produces a picture that
 looks entirely correct and says something false — a wrong scale, a dropped point,
 a bubble sized by radius instead of area, a treemap of slivers, a subtotal drawn
 from the running position instead of the axis.
+
+
+### All fifteen site documents, and the sixteen CDM duty documents
+
+The Site Documents screen reported **7 of 15 generatable**, with eight types
+"waiting on a record". The document engine was entirely right about all eight:
+each declares the records it is composed from and refuses by name where one is
+absent, rather than filling the section in from an assumption. What was missing
+was **the records**, not the engine — and the CDM duty set was worse: sixteen
+document types were declared with their approvers and required sections, and
+exactly one of them had a record behind it, which made that table a list of
+things that did not exist.
+
+Both are closed in the seed, through the ordinary domain commands. That matters
+twice over. A record written straight into the ledger would skip every rule the
+command enforces — a permit checks each named operative's ticket against the
+**permit's own end date**, an induction is refused without an approved
+Construction Phase Plan behind it — so the demonstration would show documents
+composed from records the platform itself would never have accepted. And several
+of these commands are phase-gated, so they had to be created at the point in the
+project's history where they really would have been.
+
+The phase gates did their job while this was being written. `BOQ_TAKEOFF` refuses
+a measurement schedule during construction — correctly, because a bill measured
+after the works started is measured against what was built rather than against
+what was priced — so the schedule moved to the tender stretch. `LOOKAHEAD_CONSTRAINTS`
+refused the PM the authority to open a meeting record, so the planner opens it
+and the PM still chairs it: who acts and who chairs are different facts and the
+minutes record both.
+
+#### The duty set is complete, and six documents are unsigned
+
+Drafting fifteen skeleton documents would have been worse than leaving them
+absent. `principalContractorPosition` reports an unfilled section as a **named
+breach**, so fifteen empty documents meant ninety-three breaches on a project
+whose paperwork was supposed to be in order. Every section a record cannot answer
+is therefore written out in `seed/dutydocuments.ts`, and each is specific to this
+site — the historic culvert of unknown location, the live plant 18m away, the
+inlet chamber the emergency services cannot effect a rescue from inside the
+exposure window. A COSHH assessment that says "wear appropriate PPE" is the thing
+this platform exists to stop being produced.
+
+**Nine are approved and six are not**, and that is the honest state rather than a
+tidier one. Six types are signed off by `EPC` rather than by `SAFETY` —
+temporary works, lifting, logistics, underground services, excavation and the
+equipment register — and `approveDocument` refuses an approver who does not hold
+that role, because competence under CDM is a legal requirement and not a routing
+preference. This tenancy has no EPC representative, so those six sit complete and
+awaiting signature, which is where a real project's paperwork spends most of its
+life. Approving them under the safety lead's name would have been recording a
+signature the platform had just refused.
+
+Zero breaches. All fifteen site document types generate — verified by generating
+all fifteen and reading back a reference, a section count and a content hash for
+each, not by reading the catalogue's own summary.
+
+#### Two defects the seed exposed
+
+Both are the same shape: a document that renders the *first* matching record
+rather than the right one, which is correct exactly once — on a project that has
+only ever had one.
+
+- **The Construction Phase Plan rendered the earliest plan ever drafted.** On a
+  project whose plan has been revised that issues last year's arrangements under
+  this year's date, over the current approver's name, with the current document
+  reference on it. Every field populated, every field real, and the whole thing
+  superseded. Now the latest **approved** plan, falling back to the latest draft
+  where none is approved — and the fallback matters as much as the rule, because
+  a project that has drafted a plan and not approved it must still be able to
+  produce it.
+
+- **The Bill of Quantities was project-scoped** and composed from whichever
+  measurement schedule came first. The moment a second package is measured, the
+  platform silently picks one and issues it to a client titled "Bill of
+  Quantities" with the wrong package on the page — and nobody downstream can
+  tell, because a civils bill and a mechanical bill look identical in structure.
+  It is now **record-scoped**, like Meeting Minutes and the Material Approval
+  Submittal: the caller names the schedule, the console offers only measurement
+  schedules, and a project with one behaves exactly as before.
+
+#### What the seeded records broke, and why each was the test's premise
+
+Six suites failed on the richer seed, and every one of them had been asserting a
+project-wide absolute that was only ever true of a thinner project — "exactly one
+open NCR", "the plan starts at version 1", "one site meeting". Each was corrected
+to assert what the test actually owns: the NCR *it* raised, the version *relative*
+to what was there, every subject offered rather than a count of them.
+
+One was different and is worth naming. `refuses construction-phase work while no
+plan is approved` is a real safety test, and the seed destroyed its premise by
+approving a plan. It now runs against the sibling project that is in construction
+and has drafted nothing — which is more honest anyway: the refusal is about a
+project that has not done the paperwork, and the flagship has.

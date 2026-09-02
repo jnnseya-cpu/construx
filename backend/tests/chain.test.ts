@@ -717,7 +717,13 @@ describe('10 · Quality is assurance, not a defect list', () => {
 
     assert.ok(result.ncrId, 'a failed inspection left no non-conformance behind it');
     assert.equal(result.stageReleased, false);
-    assert.equal(quality.qualityPosition(ctxFor('qaqc')).ncrs.open, 1);
+    // The NCR this inspection raised, found by its id rather than by being the
+    // only one. The seeded project carries a non-conformance of its own, and a
+    // test that asserted a project-wide total would be asserting something it
+    // does not own.
+    const raised = platform.ledger.list(seed.projectId, 'NCR').find((record) => record.refId === result.ncrId);
+    assert.ok(raised, 'the non-conformance the inspection reported is not on the register');
+    assert.equal(raised.state.status, 'OPEN');
   });
 
   it('holds the successor until the hold point is released, not merely passed', () => {
@@ -767,7 +773,14 @@ describe('10 · Quality is assurance, not a defect list', () => {
 
   it('closes a non-conformance with a disposition somebody owns', () => {
     const ctx = ctxFor('qaqc');
-    const ncr = platform.ledger.list(seed.projectId, 'NCR').find((r) => r.state.status === 'OPEN')!;
+    // This suite's own, identified by what it says. Taking the first open one
+    // would now take the seeded cover non-conformance and close somebody else's
+    // record — which is exactly the mistake the platform refuses to let a user
+    // make and a test should not make either.
+    const ncr = platform.ledger
+      .list(seed.projectId, 'NCR')
+      .find((r) => r.state.status === 'OPEN' && /Formwork set out 25mm/.test(String(r.state.description)))!;
+    assert.ok(ncr, 'the non-conformance this suite raised is not open');
 
     throwsCode(
       () => quality.closeNCR(ctx, ncr.refId, { disposition: 'USE_AS_IS', justification: '  ', evidenceHash: hashEvidence('x') }),
@@ -781,7 +794,11 @@ describe('10 · Quality is assurance, not a defect list', () => {
     });
 
     assert.equal(closed.status, 'CLOSED');
-    assert.equal(quality.qualityPosition(ctx).ncrs.open, 0);
+    assert.equal(
+      platform.ledger.get({ refType: 'NCR', refId: ncr.refId })!.state.status,
+      'CLOSED',
+      'the register still shows it open',
+    );
   });
 
   it('reports a conformance position rather than a feeling', () => {
@@ -841,10 +858,17 @@ describe('7 · CDM duties are enforced, not documented', () => {
   });
 
   it('refuses construction-phase work while no plan is approved', () => {
-    throwsCode(() => cdm.assertConstructionPhasePlan(ctxFor('safety')), 'CONSTRUCTION_PHASE_PLAN_REQUIRED');
+    // On a project that has not done the paperwork. The flagship has one
+    // approved — that is the whole point of it — so the refusal has to be
+    // demonstrated somewhere it genuinely applies, which is the sibling project
+    // that is in construction and has drafted nothing.
+    const bare = seed.workingProjects.find((project) => project.phase === 'CONSTRUCTION')!;
+    const onBare = platform.context(seed.users.safety!.auth, bare.projectId, { source: 'WEB' });
+
+    throwsCode(() => cdm.assertConstructionPhasePlan(onBare), 'CONSTRUCTION_PHASE_PLAN_REQUIRED');
     throwsCode(
       () =>
-        cdm.recordInduction(ctxFor('safety'), {
+        cdm.recordInduction(onBare, {
           personId: 'op-1', personName: 'A worker', employer: 'Northstone',
           inductedBy: 'HSE Manager', competenciesChecked: ['CSCS'],
         }),
@@ -924,9 +948,20 @@ describe('7 · CDM duties are enforced, not documented', () => {
     const position = cdm.principalContractorPosition(ctx);
 
     assert.equal(position.constructionPhasePlan.inPlace, true);
-    assert.equal(position.inductions.current, 1);
+    // Three: the two the seed records against the approved plan, and this
+    // suite's own. An absolute of one was only ever true of a thinner seed.
+    assert.equal(position.inductions.current, 3);
     assert.equal(position.toolboxTalks.attendances, 3);
-    // The incomplete first draft is still open, and the position says so by name.
+    // This suite drafts a document with two sections deliberately left out, and
+    // the position names it. The seeded duty set is complete, so the only
+    // breach on the register is the one this suite created — which is a
+    // stronger assertion than "at least one", because it also says the seed
+    // does not quietly carry breaches of its own.
+    assert.deepEqual(
+      position.breaches.filter((breach) => !breach.includes('unfilled required section')),
+      [],
+      'the project reports a breach that is not the deliberately incomplete document',
+    );
     assert.ok(
       position.breaches.some((b) => b.includes('unfilled required section')),
       'a document with holes in it did not appear as a breach',

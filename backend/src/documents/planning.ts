@@ -291,10 +291,11 @@ function boqBlocks(input: ComposeInput): DocumentBlock[] {
   const blocks: DocumentBlock[] = [];
   const currency = currencyOf(input);
 
-  // A frozen schedule where there is one, because a bill issued off an open
-  // schedule is a bill whose quantities can change after it is sent.
-  const schedules = input.sources.get('MeasurementSchedule') ?? [];
-  const schedule = schedules.find((row) => row.status === 'FROZEN') ?? schedules[0]!;
+  // The schedule the caller named. It used to be "a frozen one if there is one,
+  // otherwise the first", which quietly chose between packages; the caller now
+  // says which package this bill is of, and the document still warns further
+  // down where that schedule is not frozen.
+  const schedule = input.subject!;
   const items = (schedule.items as Row[]) ?? [];
   const rates = (schedule.rates as Row[]) ?? [];
   const rateFor = new Map(rates.map((rate) => [String(rate.reference), rate]));
@@ -547,16 +548,29 @@ const BILL_OF_QUANTITIES: DocumentDefinition = {
     'Sets out every measured item, its unit, its quantity, the basis that quantity was measured on and the rate built ' +
     'against it. Every dimension formula recorded against an item is re-evaluated when this document is composed, and any ' +
     'that no longer produces the quantity billed is named.',
-  scope: 'PROJECT',
+  /*
+   * Record-scoped: a bill is a bill **of one schedule**.
+   *
+   * It was project-scoped, and composed from whichever schedule happened to be
+   * first. That is correct exactly once — on a project that has measured a
+   * single package. The moment a second is measured the platform silently picks
+   * one and issues it to a client under the title "Bill of Quantities", with
+   * every figure real and the wrong package on the page. Nobody downstream can
+   * tell, because a bill of the civils package and a bill of the mechanical
+   * package look identical in structure.
+   *
+   * So the caller names the schedule, the console offers only measurement
+   * schedules to choose from, and a project with one schedule behaves exactly
+   * as it did before.
+   */
+  scope: 'RECORD',
+  subject: 'MeasurementSchedule',
+  subjectRecordedBy: 'the Tender & Procurement screen',
+  // The schedule's own reference on the face of the document, so a reader can
+  // tell one package's bill from another's without reading the items.
+  reference: (input) => shown(input.subject?.reference, ''),
   audience: 'CLIENT',
-  sources: [
-    {
-      refType: 'MeasurementSchedule',
-      contributes: 'the measured items, their quantities and the rates built against them',
-      recordedBy: 'the Tender & Procurement screen',
-      mandatory: true,
-    },
-  ],
+  sources: [],
   narrative: [
     {
       heading: 'Where the commercial risk in this bill actually sits',

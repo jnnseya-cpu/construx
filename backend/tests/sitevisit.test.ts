@@ -560,18 +560,22 @@ describe('site visit · the logistics checks arithmetic can settle', () => {
 
   it('supersedes rather than accumulating, and keeps the warnings that stood', () => {
     const ctx = asPlanner();
+    // Relative, not absolute. The claim is that a second plan supersedes the
+    // first rather than sitting beside it; the seeded project already has one,
+    // and the version it starts from is not what this test is about.
+    const before = Number(platform.ledger.list(seed.projectId, 'SiteLogisticsPlan')[0]?.state.version ?? 0);
     const first = sitevisit.setLogisticsPlan(ctx, {
       elements: [gate],
       cranes: [{ reference: 'TC1', type: 'TOWER', radiusMetres: 45, distanceToBoundaryMetres: 38, tipHeightMetres: 42 }],
     });
-    assert.equal(first.version, 1);
+    assert.equal(first.version, before + 1);
     assert.ok(first.warnings.length >= 2, 'no welfare and an oversail should both be reported');
 
     const second = sitevisit.setLogisticsPlan(ctx, {
       elements: [gate, welfare],
       cranes: [{ reference: 'TC1', type: 'TOWER', radiusMetres: 30, distanceToBoundaryMetres: 38, tipHeightMetres: 42 }],
     });
-    assert.equal(second.version, 2, 'a second plan was created rather than superseding the first');
+    assert.equal(second.version, before + 2, 'a second plan was created rather than superseding the first');
     assert.deepEqual(second.warnings, [], 'the corrected plan still reports warnings');
 
     // A site with two logistics plans has none.

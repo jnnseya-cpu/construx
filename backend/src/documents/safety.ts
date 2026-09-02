@@ -348,7 +348,25 @@ export const TRAFFIC_MANAGEMENT_PLAN: DocumentDefinition = {
 
 function cppBlocks(input: ComposeInput): DocumentBlock[] {
   const documents = input.sources.get('CDMDocument') ?? [];
-  const plan = documents.find((d) => String(d.type ?? '').includes('CONSTRUCTION_PHASE')) ?? documents[0]!;
+
+  /*
+   * The plan **in force**, not the first one ever drafted.
+   *
+   * `find` took the earliest match, which is correct exactly once — on a project
+   * whose plan has never been revised. Everywhere else it issues last year's
+   * plan under this year's date, over the current approver's name, with the
+   * current document reference on it. That is the quietest possible way for a
+   * safety document to be wrong: every field is populated, every field is real,
+   * and the whole thing describes arrangements that were superseded.
+   *
+   * So: the latest **approved** plan, falling back to the latest draft where
+   * none is approved yet. The fallback matters as much as the rule — a project
+   * that has drafted a plan and not approved it must still be able to produce
+   * it, and the document says plainly further down that it is not approved.
+   */
+  const plans = documents.filter((d) => String(d.type ?? '').includes('CONSTRUCTION_PHASE'));
+  const plan =
+    plans.filter((d) => d.status === 'APPROVED').at(-1) ?? plans.at(-1) ?? documents.at(-1)!;
   const who = people(input.ctx);
   const blocks: DocumentBlock[] = [];
 

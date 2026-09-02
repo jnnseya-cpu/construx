@@ -17,6 +17,12 @@ import * as cde from './domain/cde.ts';
 import * as control from './domain/control.ts';
 import * as procurement from './domain/procurement.ts';
 import * as radar from './domain/radar.ts';
+import * as cdm from './domain/cdm.ts';
+import { DUTY_SECTIONS } from './seed/dutydocuments.ts';
+import * as measurement from './domain/measurement.ts';
+import * as meetings from './domain/meetings.ts';
+import * as submittals from './domain/submittals.ts';
+import * as sitevisit from './engines/sitevisit.ts';
 import * as structure from './domain/structure.ts';
 import * as supplychain from './domain/supplychain.ts';
 import type { EngineContext } from './engines/context.ts';
@@ -2706,6 +2712,58 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
   });
   step('Dated obligations registered — insurance renewal, bond expiry and the quarterly review cycle');
 
+  // The measurement schedule the bill of quantities is composed from, with
+  // items whose formulae are re-evaluated when the bill is built. One is
+  // deliberately provisional, because a bill of entirely firm quantities is not
+  // one anybody has ever seen.
+  //
+  // Here rather than with the other seven records below, and the reason is the
+  // platform's own: `BOQ_TAKEOFF` cannot be written during construction, and it
+  // is right about that — a bill measured after the works started is a bill
+  // measured against what was built rather than against what was priced.
+  const schedule = measurement.openSchedule(qsCtx, {
+    packageReference: 'CIV-01',
+    title: 'Civils and process structures — measured works',
+    measurementRule: 'NRM2',
+  });
+  measurement.recordItems(qsCtx, schedule.scheduleId, [
+    {
+      reference: 'C.10.1',
+      description: 'Excavate to reduce levels, depth not exceeding 2m, disposal off site',
+      unit: 'm3',
+      quantity: 4620,
+      basis: 'MEASURED',
+      source: { drawing: 'C-1001', revision: 'P03', sheet: '1 of 4' },
+      formula: '55 * 28 * 3',
+    },
+    {
+      reference: 'C.20.1',
+      description: 'In situ concrete, C32/40, to clarifier base slab',
+      unit: 'm3',
+      quantity: 812,
+      basis: 'MEASURED',
+      source: { drawing: 'C-1001', revision: 'P03', sheet: '2 of 4' },
+      formula: '29 * 28 * 1',
+    },
+    {
+      reference: 'C.20.2',
+      description: 'Reinforcement, high yield bar, to base slab and walls',
+      unit: 't',
+      quantity: 97.4,
+      basis: 'MEASURED',
+      source: { drawing: 'C-1002', revision: 'P02' },
+    },
+    {
+      reference: 'C.30.1',
+      description: 'Break out and remove historic culvert where encountered',
+      unit: 'm',
+      quantity: 60,
+      basis: 'PROVISIONAL',
+      source: { allowanceBasis: 'Culvert survey indicates a run of unknown construction across zone 3' },
+    },
+  ]);
+  step('Measurement schedule opened with four items, one provisional against the culvert of unknown location');
+
   structure.transitionPhase(ownerCtx, { to: 'CONSTRUCTION', justification: 'Contract executed and estimate frozen; works may commence' });
 
   // --- CONSTRUCTION ----------------------------------------------------------
@@ -2789,6 +2847,329 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
     expiresAt: '2029-03-01',
     certificateHash: hash('op001-cpcs'),
   });
+
+  /*
+   * The eight records the document set is composed from.
+   *
+   * The Site Documents screen showed **7 of 15 types generatable**, and the
+   * document engine was entirely right about the other eight: each declares the
+   * records it is composed from, and refuses by name where one is absent rather
+   * than filling the section in from an assumption. What was missing was the
+   * records, not the engine.
+   *
+   * They are created **here**, at the point in this project's history where they
+   * would really have been created, and through the ordinary domain commands.
+   * That matters twice over. A record written directly into the ledger would
+   * skip every rule the command enforces — a permit checks each operative's
+   * ticket against the permit's own end date, an induction refuses without an
+   * approved Construction Phase Plan behind it — so the demonstration would show
+   * documents composed from records the platform would never have accepted. And
+   * several of these commands are phase-gated: creating them once the project
+   * had reached Operations would be refused, correctly, which is why they sit in
+   * the construction stretch of the seed rather than at the end of it.
+   */
+
+  // The Construction Phase Plan comes first, because two of the others depend
+  // on it: an induction is refused without one, and a permit is a formality if
+  // there are no site rules to brief.
+  //
+  // Twelve required sections. `draftDocument` fills what project state can
+  // answer — the description, the programme, the significant risks, the duty
+  // holders — and reports the rest as gaps rather than inventing them. The ones
+  // supplied here are the ones no record can answer, because they are decisions
+  // somebody makes about how this site will be run, not facts the platform
+  // holds. Approval is refused while any gap remains, which is why they are
+  // written out rather than left for the engine to guess at.
+  const cpp = cdm.draftDocument(safetyCtx, {
+    type: 'CONSTRUCTION_PHASE_PLAN',
+    title: 'Construction Phase Plan — Ashworth WTW Phase 2',
+    workPackageId: packageId,
+    sections: [
+      {
+        heading: 'Management of the work',
+        body:
+          'Meridian Infrastructure Group is Principal Contractor. Day-to-day control sits with the site manager, who holds ' +
+          'the authority to stop any activity. Work is released package by package against an approved method statement, ' +
+          'and no activity starts until its RAMS has been briefed and acknowledged by the people carrying it out. ' +
+          'High-risk activities — excavation, lifting, hot work, confined space — additionally require a permit issued ' +
+          'against that method statement, and the permit checks each named operative’s ticket against the permit’s own end ' +
+          'date rather than against the day it is issued.',
+      },
+      {
+        heading: 'Duty holders and organisational structure',
+        body:
+          'Client: Meridian Infrastructure Group. Principal Designer and Principal Contractor: Meridian Infrastructure ' +
+          'Group. Project Manager: Tom Bramall, accountable for delivery and the single point of contact for the client. ' +
+          'Safety lead: accountable for the health and safety arrangements in this plan and the approver of every document ' +
+          'in the CDM set. Site manager: day-to-day control of the site and the person who signs the daily closing walk. ' +
+          'Designers issue information through the CDE; no design reaches site outside it.',
+      },
+      {
+        heading: 'Health and safety aims',
+        body:
+          'No person is injured on this project. Every activity is carried out under an approved method statement that has ' +
+          'been briefed to the people doing the work. Where a control cannot be maintained, work stops until it can.',
+      },
+      {
+        heading: 'Site rules',
+        body:
+          'Full site induction before first entry, no exceptions and no visitors unaccompanied. Hard hat, boots and hi-vis ' +
+          'across the whole site; eye and hearing protection in the plant exclusion zones. Speed limit 5mph. All plant ' +
+          'movements within 5m of an open excavation under a banksman. No lone working after 18:00. Report every near miss ' +
+          'the same day — a near miss reported is the one that does not become the next incident.',
+      },
+      {
+        heading: 'Welfare facilities',
+        body:
+          'A 40-person welfare unit adjacent to the site office (W1 on the logistics plan): heated drying room, mess room ' +
+          'with hot water and means of heating food, and separate WC provision. Cleaned daily and inspected weekly by the ' +
+          'site manager. Located inside the pedestrian route so nobody crosses a haul road to reach it.',
+      },
+      {
+        heading: 'Fire and emergency procedures',
+        body:
+          'Muster point at the main gate (G1), with G2 as the emergency egress to the north lane and kept clear at all ' +
+          'times. Continuous alarm sounded from the site office. Roll call against the induction register and the daily ' +
+          'signing-in sheet. Nearest emergency department: Calderdale Royal Hospital, 11 minutes. Hot work under permit ' +
+          'only, with a one-hour fire watch after the work finishes.',
+      },
+      {
+        heading: 'Site induction arrangements',
+        body:
+          'Delivered by the site manager or the safety lead before first entry, and recorded against the person rather than ' +
+          'against a signature sheet. Covers these site rules, the logistics plan, the emergency arrangements and the ' +
+          'site-specific culvert briefing. Competencies are checked and recorded at induction, not asserted.',
+      },
+      {
+        heading: 'Consultation with workers',
+        body:
+          'Weekly point-of-work briefing at the start of each shift, and a monthly safety meeting open to every operative ' +
+          'on site including subcontractors. Anybody may stop work on safety grounds without needing to justify it first; ' +
+          'the justification comes afterwards and the stop stands until it is resolved.',
+      },
+      {
+        heading: 'Site security',
+        body:
+          'Perimeter hoarding to the full boundary with the two controlled gates on the logistics plan. Out-of-hours ' +
+          'monitored alarm on the office and the container store. Excavations covered or fenced at the end of every shift ' +
+          'and checked on the closing walk — the site adjoins a public footpath and a school route.',
+      },
+    ],
+  });
+  if (cpp.gaps.length > 0) {
+    // Loud rather than silent. A plan with an unfilled section cannot be
+    // approved, an induction cannot be recorded without an approved plan, and
+    // the failure that follows would otherwise surface three commands later as
+    // something unrelated.
+    throw new Error(
+      `The Construction Phase Plan has ${cpp.gaps.length} unfilled section(s) and cannot be approved: ${cpp.gaps.join('; ')}`,
+    );
+  }
+  cdm.approveDocument(safetyCtx, cpp.documentId, {
+    comments: 'Reviewed against the site-specific culvert survey condition and the approved RAMS.',
+  });
+  step('Construction Phase Plan drafted from project state, its seven judgement sections written, and approved');
+
+  // The rest of the CDM duty set. Sixteen types are declared and one was real,
+  // which made the catalogue on the screen a list of things that did not exist.
+  // Every one is drafted from the same state the plan above was.
+  //
+  // Drafted *and completed*, not drafted empty. `principalContractorPosition`
+  // reports an unfilled section as a named breach, so fifteen skeleton
+  // documents would have produced ninety-three breaches on a project whose
+  // paperwork is meant to be in order — an accurate report of a demonstration
+  // set up badly. The sections a record cannot answer are in
+  // `seed/dutydocuments.ts`, written for this site rather than in general.
+  //
+  // RAMS is excluded because it is already held as its own richer entity —
+  // `safety.draftRAMS` above produces steps, hazards and controls. Two records
+  // for one method statement would leave a reader asking which is the one.
+  const dutySet = cdm.CDM_DOCUMENTS.filter((spec) => spec.type !== 'CONSTRUCTION_PHASE_PLAN' && spec.type !== 'RAMS');
+  let approvedDuties = 0;
+  for (const spec of dutySet) {
+    const drafted = cdm.draftDocument(safetyCtx, {
+      type: spec.type,
+      title: `${spec.label} — Ashworth WTW Phase 2`,
+      workPackageId: packageId,
+      sections: DUTY_SECTIONS[spec.type] ?? [],
+    });
+    if (drafted.gaps.length > 0) {
+      throw new Error(`${spec.label} has ${drafted.gaps.length} unfilled section(s): ${drafted.gaps.join('; ')}`);
+    }
+
+    /*
+     * Approved only where somebody on this project holds the role the document
+     * type requires.
+     *
+     * Six of the sixteen are signed off by EPC rather than by SAFETY —
+     * temporary works, lifting, logistics, underground services, excavation and
+     * the equipment register — and `approveDocument` refuses an approver who
+     * does not hold that role. Competence under CDM is a legal requirement, not
+     * a routing preference, and this demonstration tenancy has no EPC
+     * representative.
+     *
+     * So those six are left **complete and awaiting signature**, which is a
+     * real state a real project is in for most of its life, and the position
+     * screen shows them as such. They are not breaches: a breach is an
+     * *unfilled* section, and there are none. Approving them under the safety
+     * lead's name to make the demonstration look tidier would have been
+     * recording a signature the platform had just refused.
+     */
+    if (safetyLead.roles.includes(spec.approver as never)) {
+      cdm.approveDocument(safetyCtx, drafted.documentId, {
+        comments: 'Reviewed against the site conditions at Ashworth and the approved Construction Phase Plan.',
+      });
+      approvedDuties += 1;
+    }
+  }
+  step(
+    `CDM duty set: all ${dutySet.length + 1} of ${cdm.CDM_DOCUMENTS.length} types drafted complete, ` +
+      `${approvedDuties + 1} approved and ${dutySet.length - approvedDuties} awaiting the EPC signature they require`,
+  );
+
+  // A permit, under the approved RAMS, for the operative whose ticket is on
+  // record above. The command checks that ticket against the permit's end date.
+  safety.issuePermit(safetyCtx, {
+    activity: 'EXCAVATION',
+    location: 'Zone 2, clarifier base, grid C3–D5',
+    operativeIds: ['OP-001'],
+    validFrom: '2026-08-17T07:00:00.000Z',
+    validTo: '2026-08-21T17:00:00.000Z',
+    ramsId: rams.ramsId,
+    precautions:
+      'Culvert survey complete and marked out. Trench support to any face over 1.2m. Edge protection to the full perimeter. ' +
+      'Banksman present for every plant movement within 5m of an open face.',
+    evidenceHash: hash('permit-excavation-zone2'),
+  });
+  step('Permit to work issued for excavation, checked against the operative’s CPCS expiry');
+
+  // Two inductions, so the register has somebody on it and the document has a
+  // gap to name — the people the platform knows about with no induction.
+  for (const person of [
+    { personId: 'OP-001', personName: 'Danny Whitworth', employer: 'Northstone Civils Ltd' },
+    { personId: 'OP-002', personName: 'Karen Ferris', employer: 'Northstone Civils Ltd' },
+  ]) {
+    cdm.recordInduction(safetyCtx, {
+      ...person,
+      inductedBy: safetyLead.name,
+      competenciesChecked: ['CSCS', 'Site-specific culvert briefing'],
+    });
+  }
+  step('Site inductions recorded against the approved Construction Phase Plan');
+
+  // The logistics plan the traffic management document is made of. The routes
+  // and the largest delivery are what the plan's arithmetic runs against.
+  sitevisit.setLogisticsPlan(plannerCtx, {
+    elements: [
+      { type: 'GATE', reference: 'G1', description: 'Main site entrance from Ashworth Road, banksman controlled' },
+      { type: 'GATE', reference: 'G2', description: 'Emergency egress to the north lane, kept clear at all times' },
+      { type: 'WELFARE', reference: 'W1', description: 'Welfare unit, 40 person, adjacent to the site office' },
+      { type: 'SITE_OFFICE', reference: 'O1', description: 'Site office and meeting room' },
+      { type: 'STORAGE', reference: 'S1', description: 'Secure container store for plant and small tools' },
+      { type: 'LAYDOWN', reference: 'L1', description: 'Reinforcement and formwork laydown, hard standing' },
+      { type: 'WHEEL_WASH', reference: 'WW1', description: 'Wheel wash on the exit leg of G1' },
+      { type: 'PEDESTRIAN_ROUTE', reference: 'P1', description: 'Segregated pedestrian route from the car park to the welfare unit' },
+    ],
+    routes: [
+      { reference: 'R1', description: 'Delivery route, G1 to the laydown area', maxVehicleLengthMetres: 16.5, maxHeightMetres: 4.8, maxWeightTonnes: 44 },
+      { reference: 'R2', description: 'Haul road, laydown to the clarifier base', maxVehicleLengthMetres: 12, maxWeightTonnes: 32 },
+    ],
+    largestDelivery: {
+      description: 'Reinforcement cage delivery, articulated flatbed',
+      lengthMetres: 16.5,
+      heightMetres: 4.2,
+      weightTonnes: 44,
+    },
+    notes: 'Deliveries booked in through the site office. No delivery movements during the school run, 08:15 to 08:45.',
+  });
+  step('Site logistics plan set — gates, routes, welfare and the largest delivery the routes have to take');
+
+  // The progress meeting the minutes are written from, with an action carried
+  // from an earlier one so the document has an overdue item to age properly.
+  const meeting = meetings.openMeeting(plannerCtx, {
+    type: 'PROGRESS',
+    title: 'Monthly progress meeting no. 4',
+    heldAt: '2026-08-12T10:00:00.000Z',
+    location: 'Site office, Ashworth WTW',
+    chair: pm.name,
+    attendees: [
+      { name: pm.name, organisation: 'Meridian Infrastructure Group', role: 'Project Manager', attended: true },
+      { name: qs.name, organisation: 'Meridian Infrastructure Group', role: 'Quantity Surveyor', attended: true },
+      { name: siteManager.name, organisation: 'Meridian Infrastructure Group', role: 'Site Manager', attended: true },
+      { name: designLead.name, organisation: 'Meridian Infrastructure Group', role: 'Lead Designer', attended: false },
+    ],
+  });
+  meetings.recordAgendaItem(plannerCtx, meeting.meetingId, {
+    subject: 'Progress against the approved baseline',
+    discussion:
+      'Zone 2 excavation complete to formation. The clarifier base pour is held pending release of the reinforcement ' +
+      'inspection hold point. Zone 3 remains behind the culvert survey.',
+  });
+  meetings.recordAgendaItem(plannerCtx, meeting.meetingId, {
+    subject: 'Design information',
+    discussion: 'The builder’s work opening at grid C4 is still unresolved. The RFI has been open beyond its response period.',
+  });
+  meetings.recordAction(plannerCtx, meeting.meetingId, {
+    what: 'Issue the culvert survey report and the revised zone 3 sequence',
+    owner: siteManager.name,
+    ownerOrganisation: 'Meridian Infrastructure Group',
+    by: '2026-08-26',
+    // Given at the meeting before this one. `originallyDue` is why the minutes
+    // age it from the date it was first given rather than from the date it was
+    // last restated — an action raised in July and restated monthly is months
+    // overdue, not due next week.
+    originallyDue: '2026-07-24',
+  });
+  meetings.recordAction(plannerCtx, meeting.meetingId, {
+    what: 'Close the grid C4 builder’s work opening with the structural engineer',
+    owner: designLead.name,
+    ownerOrganisation: 'Meridian Infrastructure Group',
+    by: '2026-08-26',
+  });
+  step('Progress meeting minuted with two actions, one carried from the previous meeting and overdue');
+
+  // A material submittal against a clause the specification ingestion produced,
+  // with a real departure on it so the document has something to state.
+  const mixClause = concreteSpec.clauseIds[1] ?? concreteSpec.clauseIds[0];
+  if (mixClause) {
+    submittals.raiseSubmittal(designCtx, {
+      kind: 'MATERIAL',
+      title: 'Concrete mix design, C32/40 to clarifier base',
+      clauseId: mixClause,
+      manufacturer: 'Pennine Readymix Ltd',
+      productReference: 'PRM-C3240-GGBS50',
+      claims: [
+        { requirement: 'Strength class', specified: 'C32/40', offered: 'C32/40', compliant: true },
+        { requirement: 'Conformity certification', specified: 'Third party product conformity', offered: 'BSI Kitemark, plant AS-114', compliant: true },
+        {
+          requirement: 'Cement replacement',
+          specified: 'Not stated',
+          offered: '50% GGBS',
+          compliant: false,
+          justification:
+            'Offered to reduce early heat of hydration in a 1m base pour. Slower strength gain extends the striking time, ' +
+            'which is accepted in the pour sequence.',
+        },
+      ],
+      procurementLeadTimeDays: 20,
+      requiredOnSiteBy: '2026-09-28',
+      reviewPeriodDays: 10,
+    });
+    step('Material submittal raised against specification clause E10, with one departure justified');
+  }
+
+  // A non-conformance, raised the way most of them are: found by an inspection
+  // rather than reported by anybody.
+  quality.raiseNCR(qaqcCtx, {
+    description: 'Cover to reinforcement measured at 32mm against a specified 40mm over a 3m2 area of the north wall kicker',
+    severity: 'MAJOR',
+    proposedAction: 'Break out and recast the affected section of kicker before the wall pour proceeds',
+    workPackageId: packageId,
+    evidenceHash: hash('ncr-cover-north-kicker'),
+  });
+  step('Non-conformance raised against the reinforcement cover on the north wall kicker');
+
+
 
   // Risks, quantified.
   safety.registerRisk(safetyCtx, {

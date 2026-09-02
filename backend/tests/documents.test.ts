@@ -644,3 +644,77 @@ describe('documents · branding is a precondition, not decoration', () => {
     });
   });
 });
+
+describe('every declared document type generates from the seeded project', () => {
+  /**
+   * The whole catalogue, actually produced.
+   *
+   * The screen reported **7 of 15 generatable** and the engine was entirely
+   * right about the other eight: each declares the records it is composed from
+   * and refuses by name where one is absent. What was missing was the records.
+   *
+   * This test is deliberately the blunt one — generate all fifteen and assert
+   * every one comes back with a reference, sections and a content hash. It
+   * exists because "the engine refuses correctly" and "a customer can actually
+   * produce this document" are different claims, and the first was thoroughly
+   * tested while the second was not tested at all. A seed that stops creating
+   * one of these records fails here rather than on somebody's screen.
+   */
+  it('produces all fifteen, each with a reference, sections and a content hash', async () => {
+    const ctx = asPM();
+    const catalogue = documents.documentCatalogue(ctx);
+
+    assert.equal(catalogue.documents.length, 15, 'the catalogue changed size');
+    const blocked = catalogue.documents.filter((entry) => !entry.generable);
+    assert.deepEqual(
+      blocked.map((entry) => `${entry.title}: ${(entry.missing ?? []).map((gap) => gap.refType).join(', ')}`),
+      [],
+      'a document type cannot be generated because a record it is composed from is missing from the seed',
+    );
+
+    for (const entry of catalogue.documents) {
+      const result = await documents.generateDocument(ctx, platform.exports, {
+        code: entry.code,
+        control: { status: 'ISSUED', preparedBy: 'Tom Bramall' },
+        correlationId: 'documents-catalogue-test',
+        ...(entry.scope === 'RECORD' ? { subjectId: entry.subjects?.[0]?.id } : {}),
+      });
+
+      assert.ok(result.control.reference.length > 3, `${entry.title} produced no document reference`);
+      assert.ok(result.document.blocks.length > 8, `${entry.title} produced only ${result.document.blocks.length} sections`);
+      assert.match(result.document.contentHash, /^sha256:[0-9a-f]{64}$/, `${entry.title} produced no usable content hash`);
+      // Branded, or it should have refused. An unbranded document reaching a
+      // client is the thing the refusal exists to prevent.
+      assert.match(JSON.stringify(result.document.blocks), /Meridian Infrastructure Group/);
+    }
+  });
+
+  it('holds a record for every declared CDM document type', async () => {
+    // Sixteen types were declared and one existed, which made the duty set on
+    // the screen a list of things that did not exist.
+    const held = new Set(
+      platform.ledger.list(seed.projectId, 'CDMDocument').map((record) => String(record.state.type)),
+    );
+    // RAMS is the exception, and deliberately: `safety.draftRAMS` produces a
+    // `RAMS` entity carrying steps, hazards and controls, which is a richer
+    // record than a `CDMDocument` shell of the same name. Drafting both would
+    // put two records behind one thing and leave a reader asking which is the
+    // method statement.
+    const held2 = new Set([...held, 'RAMS']);
+    assert.ok(platform.ledger.list(seed.projectId, 'RAMS').length > 0, 'RAMS is held as its own entity and there is none');
+    const missing = cdm.CDM_DOCUMENTS.map((spec) => spec.type).filter((type) => !held2.has(type));
+    assert.deepEqual(missing, [], `CDM types declared with no record behind them: ${missing.join(', ')}`);
+  });
+
+  it('has an approved Construction Phase Plan, because everything else depends on it', () => {
+    // An induction is refused without one and a permit is a formality; the plan
+    // is the gate the rest of the safety set stands behind.
+    const approved = platform.ledger
+      .list(seed.projectId, 'CDMDocument')
+      .filter((record) => record.state.type === 'CONSTRUCTION_PHASE_PLAN' && record.state.status === 'APPROVED');
+    assert.ok(approved.length >= 1, 'the Construction Phase Plan is not approved, so no induction could be recorded');
+    for (const plan of approved) {
+      assert.deepEqual((plan.state.gaps as string[]) ?? [], [], 'a plan was approved with an unfilled section');
+    }
+  });
+});

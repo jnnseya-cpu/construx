@@ -320,7 +320,9 @@ describe('documents · the bill re-evaluates its own dimensions', () => {
   let rendered: string;
 
   before(() => {
-    rendered = compose('BILL_OF_QUANTITIES');
+    // The bill is record-scoped now: a bill is a bill of one schedule, and this
+    // suite's schedule is the one with the disagreeing dimension in it.
+    rendered = compose('BILL_OF_QUANTITIES', scheduleId);
   });
 
   it('finds the item whose formula no longer produces the quantity billed', () => {
@@ -603,11 +605,15 @@ describe('documents · the O&M manual crosses warranties against open defects', 
 // ── The refusal still governs the ten new types ─────────────────────────────
 
 describe('documents · the ten new types refuse as loudly as the five original ones', () => {
-  it('refuses a bill of quantities on a project with no measurement schedule', async () => {
-    const bare = new Platform();
-    const other = await seedDemoProject(bare);
+  it('refuses a bill of quantities on a project with no measurement schedule', () => {
+    // A sibling project that has measured nothing. The flagship now carries a
+    // schedule of its own — a bill has to be producible somewhere for the
+    // catalogue to mean anything — so the refusal is demonstrated where it
+    // genuinely applies rather than by seeding a second copy of the whole
+    // tenancy to keep one project empty.
+    const bare = seed.workingProjects.find((project) => project.phase === 'TENDER')!;
     const catalogue = documents.documentCatalogue(
-      bare.context(other.users.admin!.auth, other.projectId, { source: 'WEB' }),
+      platform.context(seed.users.admin!.auth, bare.projectId, { source: 'WEB' }),
     );
     const bill = catalogue.documents.find((document) => document.code === 'BILL_OF_QUANTITIES')!;
     assert.equal(bill.generable, false);
@@ -657,7 +663,12 @@ describe('documents · the ten new types refuse as loudly as the five original o
     const catalogue = documents.documentCatalogue(asAdmin());
     const minutes = catalogue.documents.find((document) => document.code === 'MEETING_MINUTES')!;
     assert.equal(minutes.generable, true);
-    assert.equal(minutes.subjects.length, 1);
-    assert.match(minutes.subjects[0]!.label, /^PROGRESS-\d{3}$/);
+    // Every meeting on the project, not a fixed count — the seed minutes a
+    // progress meeting of its own, and the claim here is that the chooser is
+    // offered the records that exist rather than that there is exactly one.
+    assert.ok(minutes.subjects.length >= 1);
+    for (const subject of minutes.subjects) {
+      assert.match(subject.label, /^[A-Z_]+-\d{3}$/, 'a subject was offered with no reference to pick it out by');
+    }
   });
 });
