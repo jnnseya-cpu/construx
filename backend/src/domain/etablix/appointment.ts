@@ -178,9 +178,26 @@ export type AppointmentProfile = {
   mayInstructSupplier: boolean;
   /** Whether ETABLIX may enforce a service level itself, or only administer somebody else's remedy. */
   mayEnforceDirectly: boolean;
-  /** Whether supplier cost is funded out of ETABLIX's account. From `TRADING_MODEL`. */
+  /**
+   * Whether ETABLIX holds and funds the supplier contracts under this
+   * appointment.
+   *
+   * Answered from `CONTROL_POINTS` above — this module's own table — and **not**
+   * from `TRADING_MODEL`, which was where it came from and which gave the wrong
+   * answer for Management.
+   *
+   * The two disagree because they are two different arrangements that share a
+   * name. CONSTRUX's `MANAGEMENT_INTEGRATOR` is "supplier cost passes through at
+   * cost, plus a fee": the integrator pays the suppliers and recovers it.
+   * ETABLIX's Management Integrator appointment is the opposite on this point —
+   * §2's table says the customer holds the contracts and pays the suppliers, and
+   * ETABLIX values, recommends and administers the customer's remedies. Copying
+   * the first answer into the second made the platform believe ETABLIX funded a
+   * supply chain it is not a party to, which is precisely the confusion §20's
+   * third rule exists to prevent. §19's second scenario is what surfaced it.
+   */
   fundsSupplierCost: boolean;
-  /** Whether ETABLIX invoices the customer for supplier cost. From `TRADING_MODEL`. */
+  /** Whether ETABLIX invoices the customer for supplier cost. Follows the same table. */
   invoicesClientForSupplierCost: boolean;
   /**
    * The highest approval class an agent may act at without a person.
@@ -402,8 +419,11 @@ export function profileFor(model: TradingModel): AppointmentProfile {
     // and a platform that let it act as though it were would be manufacturing
     // an authority that does not exist.
     mayEnforceDirectly: model === 'PRINCIPAL_SERVICE_CONTRACTOR',
-    fundsSupplierCost: trading.fundsSupplierCost,
-    invoicesClientForSupplierCost: trading.invoicesClientForSupplierCost,
+    // §2's own control points, not CONSTRUX's integrator model. See the field
+    // comments: under ETABLIX's Management appointment the customer holds the
+    // contracts and pays the suppliers, and only Prime puts either on ETABLIX.
+    fundsSupplierCost: model === 'PRINCIPAL_SERVICE_CONTRACTOR',
+    invoicesClientForSupplierCost: model === 'PRINCIPAL_SERVICE_CONTRACTOR',
     agentCeiling: model === 'PRINCIPAL_SERVICE_CONTRACTOR' ? 'A' : 'B',
     approvals: APPROVALS[model],
     insuranceRequired: INSURANCE_REQUIRED[model],
@@ -434,6 +454,30 @@ export type Appointment = {
   setBy: string;
   setAt: string;
   basis: string;
+  /**
+   * The customer's authority to proceed, and the funding behind it.
+   *
+   * Only meaningful under Prime Service Contractor, where ETABLIX places the
+   * supplier contracts and pays them out of its own account before the customer
+   * pays anything. Under that model an award ahead of this is a commitment
+   * ETABLIX has made with nobody's authority and nobody's money, which is the
+   * failure §19's third scenario exists to make impossible.
+   *
+   * Absent under Advisory and Management because there is nothing to authorise:
+   * the customer is the contracting party and its own order is the authority.
+   */
+  authority?: {
+    /** The customer's instruction. A document reference, not "verbally agreed". */
+    reference: string;
+    /** Who at the customer gave it. */
+    grantedBy: string;
+    grantedOn: string;
+    /** The facility that funds the supply chain until the first customer payment. */
+    creditFacilityMinor: number;
+    currency: string;
+    recordedBy: string;
+    recordedAt: string;
+  };
   /** Every model this appointment has been under, oldest first. */
   history: readonly {
     model: TradingModel;
@@ -445,6 +489,17 @@ export type Appointment = {
     commercialBasis?: string;
   }[];
 };
+
+/**
+ * The appointment in force, or nothing.
+ *
+ * Exported because §7 and §10 both have to answer "whose contract is this and
+ * whose money pays it", and the answer is this record. A second copy of the
+ * question anywhere else would be a second answer.
+ */
+export function appointmentInForce(ctx: EngineContext): Appointment | undefined {
+  return currentAppointment(ctx);
+}
 
 function currentAppointment(ctx: EngineContext): Appointment | undefined {
   const held = ctx.ledger.list(ctx.projectId, 'SiteServicesAppointment');
@@ -561,6 +616,74 @@ export function baselineAgreed(ctx: EngineContext): Appointment {
  * - **A transition after baseline with no commercial basis.** The whole reason
  *   this is not a settings toggle.
  */
+/**
+ * Record the customer's authority to proceed, and the facility behind it.
+ *
+ * Two things at once because they fail together. An instruction with no funding
+ * is an instruction ETABLIX cannot carry out; a facility with no instruction is
+ * money against work nobody has asked for. §19's third scenario is exactly the
+ * gap between them: an award placed under Prime before either exists.
+ *
+ * Refused under Advisory and Management rather than stored and ignored. Under
+ * those two the customer is the contracting party and its own purchase order is
+ * the authority — recording a separate one here would create a second answer to
+ * "who authorised this", and the two would disagree the first time somebody
+ * changed one.
+ */
+export function recordAuthorityToProceed(
+  ctx: EngineContext,
+  input: { reference: string; grantedBy: string; grantedOn: string; creditFacilityMinor: number; currency?: string },
+): Appointment {
+  requireModule(ctx.grantedModules, 'ETABLIX');
+  authorise(ctx, 'SITE_SERVICES', 'A', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const appointment = currentAppointment(ctx);
+  if (!appointment) {
+    throw new DomainError('SITE_SERVICES_NOT_APPOINTED', 'Nothing is appointed on this project yet', 404);
+  }
+  const profile = profileFor(appointment.model);
+  if (!profile.fundsSupplierCost) {
+    throw new DomainError(
+      'AUTHORITY_NOT_APPLICABLE',
+      `Under ${profile.label.split(' — ')[0]} the customer holds the supplier contracts and its own purchase order is the authority. Recording a second one here would create a second answer to who authorised the work.`,
+    );
+  }
+  const missing: string[] = [];
+  if (!input.reference?.trim()) missing.push('the customer instruction reference — not "verbally agreed"');
+  if (!input.grantedBy?.trim()) missing.push('who at the customer gave it');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.grantedOn ?? '') || Number.isNaN(Date.parse(input.grantedOn))) {
+    missing.push('the date it was given, as YYYY-MM-DD');
+  }
+  if (!Number.isFinite(input.creditFacilityMinor) || input.creditFacilityMinor <= 0) {
+    missing.push('the credit facility that funds the supply chain until the first customer payment');
+  }
+  if (missing.length > 0) {
+    throw new DomainError(
+      'AUTHORITY_INCOMPLETE',
+      `An authority to proceed needs ${missing.join('; ')}. An instruction with no funding cannot be carried out, and a facility with no instruction is money against work nobody asked for.`,
+    );
+  }
+
+  const updated: Appointment = {
+    ...appointment,
+    authority: {
+      reference: input.reference.trim(),
+      grantedBy: input.grantedBy.trim(),
+      grantedOn: input.grantedOn,
+      creditFacilityMinor: input.creditFacilityMinor,
+      currency: input.currency ?? 'GBP',
+      recordedBy: ctx.auth.actorId,
+      recordedAt: new Date().toISOString(),
+    },
+  };
+  write(ctx, {
+    eventType: 'SITE_SERVICES_AUTHORITY_RECORDED',
+    entity: { refType: 'SiteServicesAppointment', refId: appointment.id },
+    nextState: updated as unknown as Record<string, unknown>,
+  });
+  return updated;
+}
+
 export function transitionAppointment(
   ctx: EngineContext,
   input: { model: TradingModel; basis: string; commercialBasis?: string },

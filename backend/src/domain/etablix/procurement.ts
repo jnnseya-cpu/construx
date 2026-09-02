@@ -3,7 +3,7 @@ import { ulid } from '../../core/ids.ts';
 import { authorise, write, type EngineContext } from '../../engines/context.ts';
 import { requireModule } from '../../identity/modules.ts';
 import { openEnquiry } from '../enquiry.ts';
-import { appointmentPosition, profileFor } from './appointment.ts';
+import { appointmentInForce, appointmentPosition, profileFor } from './appointment.ts';
 import { SERVICE_FAMILIES, type ServiceFamily } from './brief.ts';
 import { FAMILY_DESIGN, type ServiceInterface, type ServiceSystem } from './composer.ts';
 
@@ -1930,13 +1930,52 @@ export function entryCheck(
         .map((entry) => entry.state as unknown as AwardRecommendation)
         .filter((entry) => entry.packageId === record.id)
         .at(-1);
-      return recommendation?.recommended?.supplierId === engagement.supplierId
-        ? { permitted: true, because: `Named in the award recommendation of ${recommendation.recommendedAt.slice(0, 10)}.` }
-        : {
-            permitted: false,
-            because:
-              'No award recommendation names this firm for this package. A contract placed ahead of the recommendation is a contract nobody can point at a decision for.',
-          };
+      if (recommendation?.recommended?.supplierId !== engagement.supplierId) {
+        return {
+          permitted: false,
+          because:
+            'No award recommendation names this firm for this package. A contract placed ahead of the recommendation is a contract nobody can point at a decision for.',
+        };
+      }
+
+      // §19's second and third scenarios, and §20's third bullet: the platform
+      // never confuses "ETABLIX coordinates" with "ETABLIX contracts". Which of
+      // the three appointments is in force decides whose contract this is, and
+      // under Prime it decides whether ETABLIX may commit at all.
+      const appointment = appointmentInForce(ctx);
+      if (!appointment) {
+        return {
+          permitted: false,
+          because:
+            'Nothing is appointed on this project, so there is no answer to whose contract this is. A contracted supplier under no appointment is a liability with no owner.',
+        };
+      }
+      const profile = profileFor(appointment.model);
+      const modelName = profile.label.split(' — ')[0];
+
+      if (!profile.fundsSupplierCost) {
+        // Advisory and Management. The customer signs, so what this state
+        // records is the customer's contract — and it may only be recorded
+        // once the customer's own order reference exists. ETABLIX carries no
+        // payment liability here and the record has to say so, because a
+        // register that shows a contracted supplier with no holder reads as
+        // ETABLIX's supplier to everybody who opens it afterwards.
+        return {
+          permitted: true,
+          because: `Awarded under ${modelName}: the customer holds this contract and pays this supplier direct. ETABLIX carries no payment liability against it.`,
+        };
+      }
+
+      if (!appointment.authority) {
+        return {
+          permitted: false,
+          because: `Under ${modelName} ETABLIX signs this contract and funds it out of its own account. No customer authority to proceed is recorded, and no credit facility is named against it. Both are missing, and a commitment made without either is one ETABLIX has given with nobody's authority and nobody's money.`,
+        };
+      }
+      return {
+        permitted: true,
+        because: `Awarded under ${modelName} against the customer's authority ${appointment.authority.reference} of ${appointment.authority.grantedOn}, given by ${appointment.authority.grantedBy}.`,
+      };
     }
 
     case 'MOBILISING': {

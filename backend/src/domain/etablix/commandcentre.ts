@@ -162,6 +162,7 @@ export const ACTIVITIES: Record<string, ActivityDefinition> = {
   SITE_SERVICES_APPOINTED: { class: 'C', workflow: 'APPOINTMENT' },
   SITE_SERVICES_BASELINE_AGREED: { class: 'C', workflow: 'APPOINTMENT' },
   SITE_SERVICES_APPOINTMENT_TRANSITIONED: { class: 'C', workflow: 'APPOINTMENT' },
+  SITE_SERVICES_AUTHORITY_RECORDED: { class: 'C', workflow: 'APPOINTMENT' },
   // The paper, not the decision. Producing it is exactly an agent's job.
   SITE_SERVICES_MODEL_FIT_ASSESSED: { class: 'A', workflow: 'APPOINTMENT' },
 

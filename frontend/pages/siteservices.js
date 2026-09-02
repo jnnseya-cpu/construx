@@ -144,6 +144,18 @@ export async function siteservices(root) {
                 reason: blockedReason('SITE_SERVICES', 'A'),
               }
             : null,
+          // Only under Prime. Under the other two the customer's own purchase
+          // order is the authority, and the command refuses rather than storing
+          // a second answer to who authorised the work — so the door is absent
+          // rather than present-and-refused.
+          appointment?.model === 'PRINCIPAL_SERVICE_CONTRACTOR'
+            ? {
+                id: 'authority',
+                label: 'Record the authority to proceed',
+                permitted: can('SITE_SERVICES', 'A'),
+                reason: blockedReason('SITE_SERVICES', 'A'),
+              }
+            : null,
           {
             id: 'modelfit',
             label: 'Run model fit',
@@ -665,6 +677,35 @@ export async function siteservices(root) {
       });
       if (result) {
         toast('Baseline agreed', 'A change of model from here needs a commercial basis.', 'ok');
+        await again();
+      }
+      return;
+    }
+
+    if (which === 'authority') {
+      const result = await command({
+        title: 'Authority to proceed',
+        intent:
+          'The customer’s instruction and the facility that funds the supply chain until the first customer payment. ' +
+          'Under Prime Service Contractor no supplier may be moved to Contracted ahead of both — a commitment without ' +
+          'them is one ETABLIX has given with nobody’s authority and nobody’s money.',
+        path: `/v1/projects/${state.session.projectId}/site-services/authority`,
+        submitLabel: 'Record',
+        fields: [
+          { name: 'reference', label: 'Customer instruction reference', required: true, hint: 'A document reference, not “verbally agreed”.' },
+          { name: 'grantedBy', label: 'Given by', required: true, hint: 'Who at the customer instructed it.' },
+          { name: 'grantedOn', label: 'Date given', type: 'date', required: true },
+          {
+            name: 'creditFacilityMinor',
+            label: 'Credit facility',
+            type: 'money',
+            required: true,
+            hint: 'What funds the supply chain until the first customer payment lands.',
+          },
+        ],
+      });
+      if (result) {
+        toast('Authority recorded', 'Prime awards may now be placed against it.', 'ok');
         await again();
       }
       return;

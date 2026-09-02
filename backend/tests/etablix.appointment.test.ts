@@ -137,13 +137,36 @@ describe('the three appointments', () => {
     assert.equal(profileFor('MANAGEMENT_INTEGRATOR').agentCeiling, 'B');
   });
 
-  it('takes the commercial half from the integrator model rather than restating it', () => {
+  it('takes the risk narrative from the integrator model rather than restating it', () => {
     // One source of truth for what each model costs a business. A second copy
     // would disagree the first time either was corrected.
     for (const model of Object.keys(TRADING_MODEL) as (keyof typeof TRADING_MODEL)[]) {
       assert.equal(profileFor(model).cashRisk, TRADING_MODEL[model].cashRisk);
-      assert.equal(profileFor(model).fundsSupplierCost, TRADING_MODEL[model].fundsSupplierCost);
+      assert.equal(profileFor(model).marginRisk, TRADING_MODEL[model].marginRisk);
     }
+  });
+
+  it('answers who funds the supply chain from §2’s own table, which disagrees with the integrator model', () => {
+    // This was copied from `TRADING_MODEL.fundsSupplierCost` and was wrong for
+    // Management. The two are different arrangements that share a name:
+    // CONSTRUX's Management is "supplier cost passes through at cost, plus a
+    // fee", so the integrator pays. ETABLIX's Management Integrator is the
+    // opposite on this point — §2's control points say the customer holds the
+    // contracts and pays the suppliers, and ETABLIX values and recommends.
+    //
+    // The copy made the platform believe ETABLIX funded a supply chain it is
+    // not a party to, which is the exact confusion §20's third rule exists to
+    // prevent. §19's second scenario surfaced it.
+    assert.equal(profileFor('ADVISORY').fundsSupplierCost, false);
+    assert.equal(profileFor('MANAGEMENT_INTEGRATOR').fundsSupplierCost, false);
+    assert.equal(profileFor('PRINCIPAL_SERVICE_CONTRACTOR').fundsSupplierCost, true);
+    assert.equal(TRADING_MODEL.MANAGEMENT_INTEGRATOR.fundsSupplierCost, true, 'the integrator model is unchanged');
+
+    // And the control-point table is what the answer is checked against, so the
+    // two cannot drift apart again.
+    const payment = CONTROL_POINTS.find((point) => point.id === 'SUPPLIER_PAYMENT')!;
+    assert.match(payment.answers.MANAGEMENT_INTEGRATOR, /^Customer/);
+    assert.match(payment.answers.PRINCIPAL_SERVICE_CONTRACTOR, /^ETABLIX/);
   });
 });
 

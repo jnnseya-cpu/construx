@@ -13553,3 +13553,93 @@ Five things, all fixed:
 Plus two plural mismatches — *"1 further activities are Class C"*, *"1 of this
 workspace's questions are not answerable"* — which are the kind of thing that
 makes a reader stop trusting the numbers beside them.
+
+### The ten acceptance scenarios, executed
+
+§19 — `backend/tests/etablix.acceptance.test.ts`. Each of the ten is the
+specification's own *test action* run against the real commands, asserting the
+specification's own *pass condition*, written so a reader with the spec open can
+check it line for line.
+
+They exist because a module can pass every test it wrote for itself and still
+fail the thing the customer bought. **Three of the ten did exactly that**, and
+the behaviour that makes them pass was built because they refused to.
+
+#### Whose contract, and whose money
+
+The platform had no answer to the question §20's third rule turns on: *ETABLIX
+coordinates, ETABLIX contracts and ETABLIX pays are three different things.* A
+supplier could be moved to Contracted under Advisory, where ETABLIX is not a
+party to any supplier contract at all, and a Prime award could be placed with no
+customer instruction and no facility behind it. Three things now close it:
+
+- **The Contracted entry check consults the appointment.** Under Advisory and
+  Management the state records the customer's contract and says so in the basis
+  written onto the engagement history — *"the customer holds this contract and
+  pays this supplier direct; ETABLIX carries no payment liability against it"* —
+  because a register showing a contracted supplier with no holder reads as
+  ETABLIX's supplier to everybody who opens it afterwards. Under no appointment
+  at all it refuses: a contracted supplier under no appointment is a liability
+  with no owner.
+- **Under Prime it requires the customer's authority to proceed.**
+  `recordAuthorityToProceed` takes the instruction reference, who at the customer
+  gave it, the date, and the credit facility that funds the supply chain until
+  the first customer payment — all four, because an instruction with no funding
+  cannot be carried out and a facility with no instruction is money against work
+  nobody asked for. Refused under the other two models rather than stored and
+  ignored: there the customer's own purchase order is the authority, and a second
+  record would be a second answer to who authorised the work.
+- **The payment certificate names its payer.** Recorded on the certificate rather
+  than derived when somebody reads it, because a certificate outlives the
+  appointment and a document extracted into a final account two years later has
+  to carry whose obligation it was on the day it was issued.
+
+#### Two answers to one question, in one file
+
+Making §19.2 pass surfaced a defect in §2 itself. `AppointmentProfile.fundsSupplierCost`
+was copied from `TRADING_MODEL`, and the two disagree about Management because
+they are **different arrangements that share a name**. CONSTRUX's
+`MANAGEMENT_INTEGRATOR` is *"supplier cost passes through at cost, plus a fee"* —
+the integrator pays the suppliers and recovers it. ETABLIX's Management
+Integrator appointment is the opposite on this point, and §2's own control-point
+table in the same file says so: the customer holds the contracts and pays the
+suppliers, and ETABLIX values, recommends and administers the customer's
+remedies.
+
+The copy made the platform believe ETABLIX funded a supply chain it is not a
+party to — the exact confusion §20's third rule exists to prevent — and it
+reached §7's packaging argument as well, which told a buyer that a bundle under
+Management was ETABLIX's own cash exposure. The profile now answers from §2's
+table; `TRADING_MODEL` is untouched, because it is CONSTRUX's integrator model
+and other code correctly depends on it. A test checks the profile against the
+control-point table so they cannot drift apart again.
+
+#### A P1 that could never be late
+
+§19.7 also found that §9 guarded its acknowledgement check with
+`acknowledgeWithinMinutes > 0`. P1's window is zero — acknowledge on receipt —
+so reading zero as "no window" made the one severity with no grace the only one
+that could never breach. Fixed with §13's work, and asserted here from the
+scenario as well as from the unit.
+
+#### What §19.10 can and cannot do
+
+Stated rather than dressed up. The platform holds the whole mechanism the
+scenario needs: `engines/perception.ts` turns a file into a `PerceptionDraft`
+that changes nothing until a person confirms it, refuses a provider that cannot
+actually see the file rather than asking it anyway, and refuses to confirm an
+extraction the model could not read — all proved in `tests/perception.test.ts`
+and not repeated. What does not exist is an ETABLIX-specific extraction task:
+**no perception task reads a workforce curve or a welfare schedule into the brief
+register.** So the scenario's trigger cannot be run end to end, and its pass
+condition — the baseline is unchanged — holds by construction rather than by
+behaviour. The test asserts the fact that makes it true, so the day somebody adds
+the task it fails and has to be rewritten against the real path.
+
+The nearest thing the module does have is §3's provisional value: a figure
+nobody has confirmed carries its basis, its owner and the date after which it is
+too late to change, and it sits on the command centre's NEXT list until then.
+
+**10 mutations, 10 caught**, after two survivors named real gaps: an authority
+missing its reference was accepted, and a certificate could be issued under no
+appointment at all.

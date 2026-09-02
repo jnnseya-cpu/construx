@@ -1587,6 +1587,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // A transition, not an edit: after baseline this is ETABLIX taking on — or
   // putting down — a supply chain and the cash exposure behind it.
   def('SITE_SERVICES_APPOINTMENT_TRANSITIONED', 'SiteServicesAppointment', 'APPROVE', 'GOVERNANCE'),
+  // The customer's authority to proceed and the facility behind it, under Prime.
+  // `aiAllowed: false` for the same reason as the three above: this is the act
+  // that lets ETABLIX commit its own money to a supply chain, and no agent may
+  // author the record that unlocks it.
+  def('SITE_SERVICES_AUTHORITY_RECORDED', 'SiteServicesAppointment', 'APPROVE', 'GOVERNANCE'),
   // The Model Fit agent's decision paper. `aiAllowed`, unlike the three above,
   // because producing the assessment is exactly the work an agent does; what it
   // may not do is act on it.

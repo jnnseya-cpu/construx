@@ -2,7 +2,7 @@ import { DomainError } from '../../core/errors.ts';
 import { ulid } from '../../core/ids.ts';
 import { authorise, write, type EngineContext } from '../../engines/context.ts';
 import { requireModule } from '../../identity/modules.ts';
-import { appointmentPosition, profileFor } from './appointment.ts';
+import { appointmentInForce, appointmentPosition, profileFor } from './appointment.ts';
 import type { ServicePackage } from './procurement.ts';
 
 /**
@@ -221,6 +221,20 @@ export type Valuation = {
   certifiedMinor?: number;
   openedBy: string;
   openedAt: string;
+  /**
+   * Who owes the supplier the certified sum, from the appointment in force.
+   *
+   * Recorded on the certificate rather than derived when somebody reads it,
+   * because the certificate outlives the appointment: a document extracted into
+   * a final account two years later has to carry whose obligation it was on the
+   * day it was issued. Under Advisory and Management this is a payment
+   * *recommendation* to the customer and ETABLIX owes nothing against it — §20's
+   * third rule, which the platform must enforce in data rather than assert in a
+   * heading.
+   */
+  payer?: 'CUSTOMER' | 'ETABLIX';
+  /** The sentence a reader of the certificate needs. Never derived from `payer` alone. */
+  payerBasis?: string;
 };
 
 export type ServiceCredit = {
@@ -913,12 +927,32 @@ export function certifyValuation(
     throw new DomainError('VALUATION_NOT_CERTIFIABLE', assessment.blockedBecause ?? 'This valuation cannot be certified.');
   }
 
+  // Whose obligation this certificate is, decided by the appointment and not by
+  // whoever is certifying. §19's second scenario: approving a recommendation
+  // under Management must leave the contract and the payment with the customer,
+  // and a certificate that does not say so is one somebody will later read as
+  // ETABLIX's debt.
+  const appointment = appointmentInForce(ctx);
+  if (!appointment) {
+    throw new DomainError(
+      'SITE_SERVICES_NOT_APPOINTED',
+      'Nothing is appointed on this project, so there is no answer to who owes the certified sum. A certificate with no payer is a liability with no owner.',
+      404,
+    );
+  }
+  const profile = profileFor(appointment.model);
+  const modelName = profile.label.split(' — ')[0];
+
   const updated: Valuation = {
     ...record,
     status: 'CERTIFIED',
     certifiedAt: new Date().toISOString(),
     certifiedBy: ctx.auth.actorId,
     certifiedMinor: assessment.netMinor,
+    payer: profile.fundsSupplierCost ? 'ETABLIX' : 'CUSTOMER',
+    payerBasis: profile.fundsSupplierCost
+      ? `Under ${modelName} ETABLIX holds the supplier contract and pays it, recovering through one customer invoice.`
+      : `Under ${modelName} the customer holds the supplier contract and pays this supplier direct. This is a payment recommendation to the customer, and ETABLIX owes nothing against it.`,
   };
   write(ctx, {
     eventType: 'SERVICE_VALUATION_CERTIFIED',

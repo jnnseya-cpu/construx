@@ -4525,6 +4525,25 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/authority',
+    description:
+      'Record the customer’s authority to proceed and the credit facility behind it — the gate a Prime award cannot be placed ahead of',
+    schema: {
+      type: 'object',
+      required: ['reference', 'grantedBy', 'grantedOn', 'creditFacilityMinor'],
+      properties: {
+        reference: { type: 'string', minLength: 3 },
+        grantedBy: { type: 'string', minLength: 3 },
+        grantedOn: { type: 'string', minLength: 10 },
+        creditFacilityMinor: { type: 'integer', minimum: 1 },
+        currency: { type: 'string', minLength: 3, maxLength: 3 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => appointment.recordAuthorityToProceed(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/site-services/appointment/transition',
     description: 'Move to a different appointment model — a governed commercial transition, never a settings change',
     schema: {
