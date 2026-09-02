@@ -5,6 +5,11 @@ import * as stripe from '../billing/stripe.ts';
 import * as koda from '../billing/koda.ts';
 import * as signup from '../identity/signup.ts';
 import * as erasure from '../identity/erasure.ts';
+import { issueTokens } from '../identity/auth.ts';
+import { DEVICE_PLATFORMS, enrolDevice, publicView as devicePublicView, revokeDevice, type DevicePlatform } from '../identity/devices.ts';
+import { beginAuthentication, beginRegistration, completeRegistration, publicView as passkeyPublicView, revokePasskey, verifyAssertion } from '../identity/passkeys.ts';
+import { recordStepUp } from '../identity/risk.ts';
+import { posture, tenantSecurity } from '../identity/securityposition.ts';
 import * as site from '../site/index.ts';
 // Read from the data module rather than through the site barrel: `pages.ts`
 // reads this route table, so importing the posts through it would make this
@@ -3466,6 +3471,262 @@ export const ROUTES: Route[] = [
       return { areas: ownershipMap(platform.users(actor.tenantId)) };
     },
   },
+  // ---------------------------------------------------------------- security
+  //
+  // A person's own credentials, and the tenancy's exposure. Two audiences, two
+  // endpoints: what a person may do to their own devices and what an
+  // administrator may see across everybody's are different questions, and one
+  // endpoint answering both is one `if` away from answering the wrong one.
+  {
+    method: 'GET',
+    pattern: '/v1/me/security',
+    description: 'This person’s devices, passkeys, this session’s risk assessment and the published risk model',
+    readOnly: true,
+    handler: (_platform, ctx) => posture(auth(ctx), ctx.device),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/me/devices',
+    description: 'Enrol this machine as a device, returning a secret shown exactly once',
+    schema: {
+      type: 'object',
+      required: ['label'],
+      properties: {
+        label: stringField,
+        platform: { type: 'string', enum: [...DEVICE_PLATFORMS] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      // Enrolment requires a satisfied second factor, and this is the one place
+      // that check cannot be delegated: a session that never proved who it
+      // belonged to must not be able to mint a credential that then proves it.
+      if (!actor.mfaSatisfied) {
+        throw new DomainError(
+          'DEVICE_ENROLMENT_NEEDS_MFA',
+          'Enrolling a device mints a credential that stands for this account. Verify this session first.',
+          403,
+        );
+      }
+      const input = body<{ label: string; platform?: DevicePlatform }>(ctx);
+      const enrolled = enrolDevice({
+        actorId: actor.actorId,
+        tenantId: actor.tenantId,
+        label: input.label,
+        platform: input.platform,
+        remote: ctx.remote,
+      });
+      const user = platform.user(actor.actorId);
+      return {
+        device: devicePublicView(enrolled.device),
+        // Shown once and never again. The server keeps only its digest, so
+        // there is no route that could return it a second time.
+        deviceSecret: enrolled.deviceSecret,
+        /*
+         * A fresh pair, bound to the device that was just enrolled.
+         *
+         * Without this the person enrols a device and their *current* session
+         * stays unbound until they next sign in — so the control appears not to
+         * have worked, and the risk model goes on charging them thirty points
+         * for a device sitting right there in the register. Re-minting here is
+         * the only moment the platform can bind a live session, because a `did`
+         * claim can only be put into a token as it is signed.
+         *
+         * `authenticatedAt` is carried forward rather than reset: enrolling a
+         * device is not a fresh ceremony, and treating it as one would let
+         * anybody refresh their way out of a stale sign-in.
+         */
+        ...issueTokens({
+          actorId: user.id,
+          tenantId: user.tenantId,
+          partyId: user.partyId,
+          roles: user.roles,
+          mfaSatisfied: actor.mfaSatisfied,
+          deviceId: enrolled.device.id,
+          authenticatedAt: actor.authenticatedAt,
+        }),
+        howToUse:
+          'Keep this secret on this device only. Send `x-device-id` and `x-device-proof` on every request, where the proof is ' +
+          'HMAC-SHA256 of the access token’s id keyed by SHA-256 of this secret. It is shown once.',
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/me/devices/:deviceId/revoke',
+    description: 'Revoke a device, ending every session bound to it on its next request',
+    schema: { type: 'object', required: ['reason'], properties: { reason: stringField }, additionalProperties: false },
+    handler: (_platform, ctx) => {
+      const actor = auth(ctx);
+      const revoked = revokeDevice({
+        deviceId: ctx.params.deviceId!,
+        actorId: actor.actorId,
+        by: actor.actorId,
+        reason: body<{ reason: string }>(ctx).reason,
+      });
+      return { device: devicePublicView(revoked) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/me/passkeys/register/begin',
+    description: 'Start a WebAuthn registration ceremony',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const user = platform.user(actor.actorId);
+      return beginRegistration({ actorId: user.id, email: user.email, displayName: user.name });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/me/passkeys/register/complete',
+    description: 'Finish a WebAuthn registration ceremony and store the credential',
+    schema: {
+      type: 'object',
+      required: ['label', 'credentialId', 'clientDataJSON', 'attestationObject'],
+      properties: {
+        label: stringField,
+        credentialId: stringField,
+        clientDataJSON: stringField,
+        attestationObject: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (_platform, ctx) => {
+      const actor = auth(ctx);
+      const input = body<{ label: string; credentialId: string; clientDataJSON: string; attestationObject: string }>(ctx);
+      return { passkey: passkeyPublicView(completeRegistration({ ...input, actorId: actor.actorId, tenantId: actor.tenantId })) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/me/passkeys/:passkeyId/revoke',
+    description: 'Revoke a passkey',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (_platform, ctx) => {
+      const actor = auth(ctx);
+      return { passkey: passkeyPublicView(revokePasskey({ passkeyId: ctx.params.passkeyId!, actorId: actor.actorId, by: actor.actorId })) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/auth/passkey/begin',
+    public: true,
+    description: 'Start a WebAuthn sign-in ceremony',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: () => beginAuthentication(),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/auth/passkey/complete',
+    public: true,
+    description: 'Sign in with a passkey, with no one-time code in the loop at all',
+    schema: {
+      type: 'object',
+      required: ['credentialId', 'clientDataJSON', 'authenticatorData', 'signature'],
+      properties: {
+        credentialId: stringField,
+        clientDataJSON: stringField,
+        authenticatorData: stringField,
+        signature: stringField,
+        deviceId: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const input = body<{
+        credentialId: string;
+        clientDataJSON: string;
+        authenticatorData: string;
+        signature: string;
+        deviceId?: string;
+      }>(ctx);
+      const result = verifyAssertion(input);
+      const user = platform.user(result.actorId);
+
+      // A passkey satisfies the second factor outright. It is a possession
+      // factor the authenticator itself often pairs with a biometric, and
+      // asking for an emailed code afterwards would add a phishable step to a
+      // ceremony chosen because it is not phishable.
+      const tokens = issueTokens({
+        actorId: user.id,
+        tenantId: user.tenantId,
+        partyId: user.partyId,
+        roles: user.roles,
+        mfaSatisfied: true,
+        deviceId: input.deviceId,
+        authenticatedAt: Date.now(),
+      });
+      return { user: { id: user.id, name: user.name, roles: user.roles }, passkey: result.label, ...tokens };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/me/step-up',
+    description: 'Satisfy a step-up demand for this session with a fresh verification',
+    schema: {
+      type: 'object',
+      required: ['challengeId', 'code'],
+      properties: { challengeId: stringField, code: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const { challengeId, code } = body<{ challengeId: string; code: string }>(ctx);
+      if (!verifyMfaChallenge(actor.actorId, challengeId, code)) {
+        // The same refusal a first-factor failure gives, for the same reason:
+        // distinguishing "wrong code" from "locked" rebuilds the enumeration
+        // oracle the login route closes.
+        throw new DomainError('MFA_FAILED', 'Verification failed', 401);
+      }
+      recordStepUp(actor.tokenId);
+      // Recorded, because a step-up is a governance act: it is the moment a
+      // person asserted, a second time and against a named risk, that a
+      // high-risk act was theirs.
+      platform.ledger.commit({
+        projectId: `${actor.tenantId}-credentials`,
+        tenantId: actor.tenantId,
+        eventType: 'STEP_UP_SATISFIED',
+        entity: { refType: 'StepUp', refId: `${actor.actorId}:${actor.tokenId}` },
+        actor: { refType: 'User', refId: actor.actorId },
+        source: 'WEB',
+        correlationId: ctx.correlationId,
+        nextState: { id: `${actor.actorId}:${actor.tokenId}`, actorId: actor.actorId, steppedUpAt: new Date().toISOString(), tokenId: actor.tokenId },
+      });
+      return { steppedUp: true, holdsForMinutes: config.auth.stepUpWindowMinutes };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/me/step-up/challenge',
+    description: 'Ask for a fresh verification code to satisfy a step-up',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const challenge = createMfaChallenge(actor.actorId);
+      return {
+        ...shapeMfaResponse(challenge),
+        ...(isProduction() ? {} : { devCode: challenge.code }),
+        ...(isProduction() && isDemonstrationIdentity(platform, actor.actorId) ? { demoCode: challenge.code } : {}),
+      };
+    },
+  },
+  {
+    method: 'GET',
+    // `/v1/admin/security` is already taken by the gateway's audit stream —
+    // auth failures, denials, rate limits — which is a different subject with a
+    // different audience. This is the tenancy's own credential posture.
+    pattern: '/v1/admin/credentials',
+    description: 'The tenancy’s credential posture: who holds what, roll-out over time, and what has gone stale',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      return tenantSecurity(actor.tenantId, platform.users(actor.tenantId).map((user) => user.id));
+    },
+  },
+
   {
     method: 'GET',
     pattern: '/v1/me/erasure',

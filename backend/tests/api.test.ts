@@ -145,6 +145,13 @@ describe('the routing table itself', () => {
       'POST /unsubscribe',
       'POST /v1/auth/login',
       'POST /v1/auth/mfa/verify',
+      // Signing in with a passkey. Public for exactly the reason the code path
+      // is: it is the sign-in. The ceremony's own challenge is server-issued
+      // and single-use, and `beginAuthentication` deliberately returns an empty
+      // `allowCredentials` so that neither route can be used to ask whether an
+      // address has an account.
+      'POST /v1/auth/passkey/begin',
+      'POST /v1/auth/passkey/complete',
       'POST /v1/auth/refresh',
       // Booking one. Public for the same reason, and it creates a record rather
       // than an account — a stranger's name and address, not an identity that

@@ -871,6 +871,25 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // could mint one wider than itself and act through it.
   def('API_KEY_ISSUED', 'ApiKey', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('API_KEY_REVOKED', 'ApiKey', 'APPROVE', 'GOVERNANCE'),
+
+  // --- Devices and passkeys.
+  //
+  // In the ledger rather than in memory for one reason: a revoked device that
+  // came back after a restart would be a security defect. A lock is state about
+  // the last few minutes and `identity/lockout.ts` keeps it in the process;
+  // a revocation is a fact about the business.
+  def('DEVICE_ENROLLED', 'Device', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('DEVICE_SEEN', 'Device', 'UPDATE', 'GOVERNANCE'),
+  def('DEVICE_REVOKED', 'Device', 'APPROVE', 'GOVERNANCE'),
+  def('PASSKEY_REGISTERED', 'Passkey', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('PASSKEY_USED', 'Passkey', 'UPDATE', 'GOVERNANCE'),
+  def('PASSKEY_REVOKED', 'Passkey', 'APPROVE', 'GOVERNANCE'),
+  // Its own entity, not `User`. A user record already lives in the tenancy's
+  // own project, and the ledger refuses to move an entity between projects —
+  // correctly, because an entity that could change project is one that could
+  // be moved out of the tenancy that owns it. So the step-up is its own record
+  // in the credential register rather than an update to the person.
+  def('STEP_UP_SATISFIED', 'StepUp', 'APPROVE', 'GOVERNANCE', { creates: true }),
   // Where a customer's data is sent is equally governance. A subscription is an
   // egress route out of the platform, chosen by somebody who can be asked why.
   def('WEBHOOK_SUBSCRIBED', 'WebhookSubscription', 'CREATE', 'GOVERNANCE', { creates: true }),

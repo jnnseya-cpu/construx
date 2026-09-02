@@ -281,9 +281,18 @@ export function metric({ label, value, sub, tone = '', sources }) {
   </div>`;
 }
 
-export function table({ headers, rows, empty = 'Nothing recorded yet', align = [] }) {
+/**
+ * @param {{headers: unknown[], rows: unknown[][], empty?: string, emptyDetail?: string, align?: string[]}} options
+ */
+export function table({ headers, rows, empty = 'Nothing recorded yet', emptyDetail = undefined, align = [] }) {
   if (!rows || rows.length === 0) {
-    return html`<div class="empty"><b>${empty}</b>This becomes populated as the project progresses.</div>`;
+    // `emptyDetail` exists because the default sentence is about a *project*,
+    // and not every register is one. "This becomes populated as the project
+    // progresses" under an empty passkey list is untrue in a way a reader
+    // notices: passkeys have nothing to do with the project, and a screen that
+    // says something obviously wrong about one thing is not believed about the
+    // next.
+    return html`<div class="empty"><b>${empty}</b>${emptyDetail ?? 'This becomes populated as the project progresses.'}</div>`;
   }
   return html`<div class="table-scroll"><table>
     <thead><tr>${headers.map((h, i) => html`<th class="${raw(align[i] === 'num' ? 'num' : '')}">${h}</th>`)}</tr></thead>

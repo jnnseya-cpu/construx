@@ -31,6 +31,7 @@ import { ulid } from './core/ids.ts';
 import type { EngineContext } from './engines/context.ts';
 import { GoldenThreadLedger } from './goldenthread/ledger.ts';
 import type { EventSource } from './goldenthread/types.ts';
+import { bindCredentialStores } from './identity/credentialstore.ts';
 import type { AuthContext } from './identity/auth.ts';
 import { issueTokens, type TokenPair } from './identity/auth.ts';
 import type { Role } from './identity/roles.ts';
@@ -182,6 +183,12 @@ export class Platform {
     this.evidence = evidence;
     this.signing = signing;
     this.sync = new SyncEngine(this.ledger);
+    // Devices and passkeys resolve out of this ledger from here on. Bound in
+    // the constructor rather than at first use because the failure mode of
+    // forgetting is a *silent* one: `identity/devices.ts` falls back to an
+    // in-process store, so an unbound build would appear to work and would
+    // forget every revocation on restart.
+    bindCredentialStores(this.ledger);
 
     // The platform's own tenancy exists from the start, not from the first
     // operator being created.

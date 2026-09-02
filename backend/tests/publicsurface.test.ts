@@ -114,6 +114,13 @@ describe('what an anonymous caller can obtain', () => {
       'POST /unsubscribe',
       'POST /v1/auth/login',
       'POST /v1/auth/mfa/verify',
+      // Signing in with a passkey. Public because it *is* the sign-in, and
+      // narrower than the code path it replaces: the challenge is server-issued
+      // and single-use, the origin is signed over, and `beginAuthentication`
+      // returns an empty `allowCredentials` precisely so that neither route can
+      // be asked whether an address has an account.
+      'POST /v1/auth/passkey/begin',
+      'POST /v1/auth/passkey/complete',
       'POST /v1/auth/refresh',
       // Booking one. Public for the same reason, and it creates a record rather
       // than an account — a stranger's name and address, not an identity that
@@ -164,7 +171,14 @@ describe('what an anonymous caller can obtain', () => {
     //
     // Anything that presents credentials is exempt by name, so a new public
     // route returning a token has to be added here deliberately.
-    const mayIssueTokens = new Set(['POST /v1/auth/mfa/verify', 'POST /v1/auth/refresh']);
+    const mayIssueTokens = new Set([
+      'POST /v1/auth/mfa/verify',
+      'POST /v1/auth/refresh',
+      // A verified assertion is a completed second factor, so this issues a
+      // pair like the code path does. Named here deliberately, which is the
+      // point of the list.
+      'POST /v1/auth/passkey/complete',
+    ]);
 
     await asProduction(async () => {
       for (const route of ROUTES.filter((r) => r.public)) {

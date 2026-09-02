@@ -201,6 +201,11 @@ export const NAV = [
       // Outside the capability matrix — see `visible()`. Asking to be erased is
       // not a permission somebody else grants you, and the mobile stores
       // require the route to exist for every account.
+      // Outside the capability matrix, like Account and for the same reason:
+      // your own devices and passkeys are not a permission somebody else
+      // grants you. The tenancy-wide half of the screen *is* gated, by the
+      // route that serves it.
+      { id: 'security', label: 'Security', area: 'PLATFORM_ADMINISTRATION', icon: 'shield', tenantScoped: true },
       { id: 'account', label: 'Account', area: 'PROJECT_SETUP', icon: 'cog', tenantScoped: true },
     ],
   },
@@ -285,6 +290,7 @@ export const OPERATOR_NAV = [
       { id: 'influencers', label: 'Influencers', area: 'PLATFORM_ADMINISTRATION', icon: 'target' },
       { id: 'company', label: 'Company Profile', area: 'PLATFORM_ADMINISTRATION', icon: 'grid' },
       { id: 'settings', label: 'Settings', area: 'PLATFORM_ADMINISTRATION', icon: 'cog' },
+      { id: 'security', label: 'Security', area: 'PLATFORM_ADMINISTRATION', icon: 'shield' },
       { id: 'account', label: 'My Account', area: 'PROJECT_SETUP', icon: 'cog' },
     ],
   },
@@ -763,7 +769,7 @@ function reachable(item) {
   // administers the platform was the one identity that could not reach its own
   // account page. The mobile stores also require the route to exist for every
   // account, which it did not.
-  if (item.id === 'account') return true;
+  if (item.id === 'account' || item.id === 'security') return true;
   // Communications is the platform's own event architecture — 177 events and
   // which channels actually carry them — and its catalogue is readable by any
   // authenticated identity. Hiding it from the operator was wrong: whether a

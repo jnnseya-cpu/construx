@@ -582,6 +582,42 @@ export const config = {
     maxIdentityFailures: num('GATEWAY_AUTH_MAX_IDENTITY_FAILURES', 10),
     failureWindowMinutes: num('GATEWAY_AUTH_FAILURE_WINDOW_MINUTES', 15),
     lockoutMinutes: num('GATEWAY_AUTH_LOCKOUT_MINUTES', 15),
+
+    /**
+     * Whether every session must be bound to an enrolled device.
+     *
+     * Off by default, and that default is a migration decision rather than a
+     * security opinion. Turning it on refuses every session minted before a
+     * device existed, which on a live deployment signs everybody out at once —
+     * so it is the operator's switch to throw once their people have enrolled,
+     * and the security screen shows them how far through that they are.
+     *
+     * With it off, an unbound session is not refused; it is *scored*, and
+     * `identity/risk.ts` charges it thirty points, which is enough that an
+     * unbound session doing anything serious is asked to verify again.
+     */
+    requireDeviceBinding: bool('GATEWAY_AUTH_REQUIRE_DEVICE_BINDING', false),
+
+    /**
+     * How long a step-up lasts, and how old a sign-in may be before an
+     * ordinary act starts counting as stale.
+     *
+     * Fifteen minutes: long enough that a person doing a run of related work is
+     * asked once, short enough that a session left open on a desk over lunch is
+     * not still trusted to certify a payment.
+     */
+    stepUpWindowMinutes: num('GATEWAY_AUTH_STEP_UP_WINDOW_MINUTES', 15),
+
+    /**
+     * The amount past which committing money is a step-up signal, in minor
+     * units. £50,000 by default.
+     *
+     * A business value, so it is here rather than in the risk model — a
+     * tenancy whose smallest package is a million pounds and one whose largest
+     * is twenty thousand should not share a threshold, and neither of them
+     * should have to edit code to say so.
+     */
+    stepUpValueMinor: num('GATEWAY_AUTH_STEP_UP_VALUE_MINOR', 5_000_000),
   },
 
   authz: {

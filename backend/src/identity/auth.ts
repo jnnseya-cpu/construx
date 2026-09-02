@@ -25,6 +25,25 @@ export type AuthContext = {
   scopes: string[];
   tokenId: string;
   mfaSatisfied: boolean;
+  /**
+   * The device this session was minted for, where it was minted for one.
+   *
+   * Absent on a session created before the person enrolled anything, which is
+   * not a failure — `identity/risk.ts` scores an unbound session rather than
+   * refusing it, and `GATEWAY_AUTH_REQUIRE_DEVICE_BINDING` is the operator's
+   * switch for making it a refusal once their people have enrolled.
+   */
+  deviceId?: string;
+  /**
+   * When the MFA ceremony behind this session happened, in epoch milliseconds.
+   *
+   * Carried in the token rather than held server-side so that it survives a
+   * restart along with the session it describes. The risk model reads it to
+   * decide whether a sign-in is old enough to count as stale, and a session
+   * whose age the platform had forgotten would be scored as fresh — which is
+   * the wrong way for that uncertainty to fall.
+   */
+  authenticatedAt?: number;
   /** Owners may explicitly enable AI execution for a regulator. Off by default. */
   regulatorAiEnabled: boolean;
   expiresAt: number;
@@ -39,6 +58,8 @@ type TokenClaims = {
   scopes: string[];
   jti: string;
   mfa: boolean;
+  did?: string;
+  aat?: number;
   rai?: boolean;
   typ: 'access' | 'refresh';
   iat: number;
@@ -106,6 +127,8 @@ export type IssueInput = {
   /** Explicit scope grant; defaults to the roles' full derived scope set. */
   scopes?: string[];
   mfaSatisfied?: boolean;
+  deviceId?: string;
+  authenticatedAt?: number;
   regulatorAiEnabled?: boolean;
 };
 
@@ -133,6 +156,8 @@ export function issueTokens(input: IssueInput, now = Date.now()): TokenPair {
     scopes,
     jti: tokenId,
     mfa: input.mfaSatisfied ?? false,
+    did: input.deviceId,
+    aat: input.authenticatedAt ?? now,
     rai: input.regulatorAiEnabled ?? false,
     iat: issuedAt,
     iss: ISSUER,
@@ -192,6 +217,8 @@ export function verifyToken(
     scopes: claims.scopes ?? [],
     tokenId: claims.jti,
     mfaSatisfied: claims.mfa === true,
+    deviceId: claims.did,
+    authenticatedAt: claims.aat,
     regulatorAiEnabled: claims.rai === true,
     expiresAt: claims.exp * 1000,
   };
@@ -216,6 +243,12 @@ export function refreshTokens(refreshToken: string, now = Date.now()): TokenPair
       partyId: context.partyId,
       roles: context.roles,
       mfaSatisfied: context.mfaSatisfied,
+      // Carried across the rotation. A refresh buys a new access token; it is
+      // not a new ceremony, so it must not reset the clock the risk model
+      // reads — otherwise a session refreshed every fifteen minutes would
+      // never be stale and step-up would never fire on a long-lived one.
+      deviceId: context.deviceId,
+      authenticatedAt: context.authenticatedAt,
       regulatorAiEnabled: context.regulatorAiEnabled,
     },
     now,

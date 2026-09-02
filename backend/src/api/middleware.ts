@@ -5,6 +5,7 @@ import { AuthError, RateLimitError, ValidationError, toProblem, DomainError } fr
 import { assertValid, type Schema } from '../core/validate.ts';
 import { counters, latency, recordSecurityEvent, truncateAddress } from './telemetry.ts';
 import { verifyToken, type AuthContext } from '../identity/auth.ts';
+import { checkBinding, type DeviceRecord } from '../identity/devices.ts';
 import { resolveKey } from '../developer/keys.ts';
 import { analyticsCspHosts } from '../site/analytics.ts';
 import type { SharedLimiter } from './sharedlimiter.ts';
@@ -35,6 +36,15 @@ export type RequestContext = {
   /** The `Content-Type` the caller sent, on an upload route. Metadata, not trust. */
   contentType?: string;
   auth?: AuthContext;
+  /**
+   * The enrolled device this request proved it came from.
+   *
+   * Present only where the token named a device *and* the request produced that
+   * device's proof, so a handler that reads it is reading a verified fact
+   * rather than a header. Absent on an unbound session, which is why the risk
+   * model treats absence as a signal rather than as an error.
+   */
+  device?: DeviceRecord;
   idempotencyKey?: string;
   /**
    * The signature on an inbound webhook, for the routes that take one.
@@ -290,6 +300,47 @@ export function authenticate(req: IncomingMessage, ctx: RequestContext, routeIsP
       error instanceof Error ? error.message : 'Token rejected',
     );
   }
+
+  /*
+   * Device binding.
+   *
+   * A valid token is not sufficient on a bound session: the request must also
+   * carry a proof computed from a secret that never travels in the same header
+   * the token does. So a token lifted from a log, a proxy, a screenshot or a
+   * support ticket is not enough on its own, and revoking a device ends every
+   * session on it here, on the next request.
+   *
+   * Three outcomes, and the middle one is the reason this is not a single
+   * boolean:
+   *
+   *   - **Bound and proved.** The device is recorded as seen, from this
+   *     network, which is what the risk model's "somewhere it has been before"
+   *     is built from.
+   *   - **Not bound at all.** No `did` on the token, so this is a session from
+   *     before the person enrolled anything. Refused only where the deployment
+   *     has turned binding on; otherwise it is *scored* by `identity/risk.ts`,
+   *     which charges thirty points and asks for a step-up as soon as the
+   *     session tries anything serious.
+   *   - **Bound and not proved.** Refused, always, whatever the configuration.
+   *     A token that names a device and cannot produce that device's proof is
+   *     the exact case binding exists to catch, and making it configurable
+   *     would make the control optional at the moment it fires.
+   */
+  const binding = checkBinding({
+    tokenDeviceId: ctx.auth!.deviceId,
+    tokenId: ctx.auth!.tokenId,
+    presentedDeviceId: header(req, 'x-device-id'),
+    presentedProof: header(req, 'x-device-proof'),
+    remote: ctx.remote,
+  });
+  if (!binding.ok) {
+    fail(binding.reason, 'This session is bound to a device, and this request did not prove it came from that device');
+  } else if (binding.bound) {
+    ctx.device = binding.device;
+  } else if (config.auth.requireDeviceBinding) {
+    fail('DEVICE_BINDING_REQUIRED', 'This deployment requires every session to be bound to an enrolled device');
+  }
+
   ctx.authResult = { ok: true };
 }
 

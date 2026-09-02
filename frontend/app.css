@@ -1111,3 +1111,284 @@ input:focus, select:focus, textarea:focus {
 }
 .account-cover.has-image { border-style: solid; }
 .account-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* ------------------------------------------------------------------ charts */
+/*
+ * The chart kit's styling. Everything geometric lives in `lib/charts.js`; this
+ * file owns colour, weight and type, so a chart is restyled by the design
+ * system rather than by editing arithmetic.
+ *
+ * Series colours are passed as attributes rather than classes, because a
+ * categorical series is data and there is no fixed set of it. Everything that
+ * *is* fixed — grid, axis, tick text, the tooltip surface — is here.
+ */
+
+.chart {
+  margin: 0;
+  width: 100%;
+}
+
+.chart-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+/* Grid and axes sit behind the data and must never compete with it. */
+.chart-grid line {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.chart-grid text,
+.chart-cat {
+  fill: var(--text-3);
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.chart-axis {
+  stroke: var(--line-strong);
+  stroke-width: 1.25;
+}
+.chart-axis-label {
+  fill: var(--text-3);
+  font-family: var(--sans);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.chart-value {
+  fill: var(--text-2);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A hovered mark lifts slightly. The native <title> tooltip does the rest. */
+.chart-bar,
+.chart-slice,
+.chart-cell,
+.chart-tile,
+.chart-funnel,
+.chart-gantt,
+.chart-gantt-done,
+.chart-milestone {
+  transition: opacity 0.12s ease, filter 0.12s ease;
+  cursor: default;
+}
+.chart-bar:hover,
+.chart-slice:hover,
+.chart-cell:hover,
+.chart-tile:hover,
+.chart-funnel:hover,
+.chart-gantt:hover,
+.chart-milestone:hover {
+  filter: brightness(1.18);
+}
+
+.chart-line {
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.chart-dot {
+  stroke: var(--carbon);
+  stroke-width: 1.2;
+}
+.chart-fit {
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  opacity: 0.8;
+}
+.chart-ref line {
+  stroke-width: 1.25;
+  stroke-dasharray: 4 4;
+  opacity: 0.85;
+}
+.chart-ref text {
+  font-family: var(--sans);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+
+.chart-bubble {
+  stroke: var(--carbon);
+  stroke-width: 1;
+}
+
+/* Box plot: the median is the heaviest line on the chart, deliberately. */
+.chart-whisker { stroke-width: 1.25; }
+.chart-box { stroke-width: 1.25; }
+.chart-median { stroke-width: 2.5; }
+.chart-outlier { stroke: var(--carbon); stroke-width: 1; }
+
+/* Donut and pie */
+.chart-slice { stroke: var(--carbon); stroke-width: 1.5; }
+.chart-centre {
+  fill: var(--text);
+  font-family: var(--display);
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.chart-centre-sub {
+  fill: var(--text-3);
+  font-family: var(--sans);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.chart-key-svg text {
+  fill: var(--text-2);
+  font-family: var(--sans);
+  font-size: 11px;
+}
+
+/* Gauge */
+.chart-gauge-track {
+  stroke: var(--line-strong);
+  stroke-width: 14;
+  stroke-linecap: round;
+}
+.chart-gauge-fill {
+  stroke-width: 14;
+  stroke-linecap: round;
+}
+.chart-gauge-target {
+  stroke: var(--text);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+.chart-gauge-value {
+  fill: var(--text);
+  font-family: var(--display);
+  font-size: 30px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.chart-gauge-label {
+  fill: var(--text-3);
+  font-family: var(--sans);
+  font-size: 11px;
+}
+
+/* Funnel, treemap, Gantt labels */
+.chart-funnel-label,
+.chart-tile-label {
+  fill: var(--text);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+}
+.chart-funnel-value,
+.chart-tile-value {
+  fill: var(--text-3);
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.chart-tile { stroke: var(--carbon); stroke-width: 1; }
+.chart-connector {
+  stroke: var(--text-3);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.6;
+}
+.chart-today {
+  stroke: var(--orange);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+
+/* Legend below the plot, wrapping rather than clipping. */
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.chart-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.chart-key i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+}
+.chart-key b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.chart-foot {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.55;
+}
+
+/* Sparkline — sized by its container, never by a viewBox aspect. */
+.spark {
+  width: 100%;
+  height: 34px;
+  display: block;
+  margin-top: 10px;
+  overflow: visible;
+}
+.spark-target {
+  stroke: var(--text-3);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0.7;
+}
+
+.proportion {
+  width: 100%;
+  height: 10px;
+  display: block;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+/* KPI card: the delta is the only thing that carries direction. */
+.kpi-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 7px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.kpi-delta.up { color: var(--success); }
+.kpi-delta.down { color: var(--critical); }
+.kpi-delta.flat { color: var(--text-3); }
+
+/* A row of charts that reflows rather than scrolling sideways. */
+.chart-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.chart-row.wide {
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chart-bar,
+  .chart-slice,
+  .chart-cell,
+  .chart-tile,
+  .chart-funnel,
+  .chart-gantt,
+  .chart-gantt-done,
+  .chart-milestone {
+    transition: none;
+  }
+}

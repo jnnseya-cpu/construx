@@ -319,6 +319,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   TenderPackage: { area: 'PROCUREMENT_AWARD' },
   RFQ: { area: 'PROCUREMENT_AWARD' },
   SupplierSubmission: { area: 'SUPPLIER_SUBMISSION', sensitivity: 'COMMERCIAL_L3' },
+  // A person's own credentials. Classified under platform administration
+  // because reading somebody else's device register is an administrative act,
+  // and every route that serves a person their *own* devices resolves them by
+  // actor rather than through the generic entity read.
+  Device: { area: 'PLATFORM_ADMINISTRATION' },
+  Passkey: { area: 'PLATFORM_ADMINISTRATION' },
+  StepUp: { area: 'PLATFORM_ADMINISTRATION' },
   BidEvaluation: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Adjudication: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   // The settlement meeting on our own bid. Estimating rather than procurement:

@@ -1,4 +1,5 @@
 import { account } from './account.js';
+import { security } from './security.js';
 import { permissions } from './permissions.js';
 import { admin } from './admin.js';
 import { aiengine } from './aiengine.js';
@@ -60,6 +61,7 @@ export const PAGES = {
   // link straight here with the package in the query string.
   signup,
   account,
+  security,
   permissions,
   overview,
   copilot,

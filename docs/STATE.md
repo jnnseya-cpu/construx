@@ -13803,3 +13803,149 @@ flagship is in operations, where the phase gates close planning and procurement
 to everybody — so what the agents find is something a project could actually get
 itself into. Publishing a lookahead against constrained work was refused by the
 platform mid-writing, which is Last Planner working exactly as intended.
+
+
+### Security: device binding, risk-based step-up and passkeys
+
+Three controls the register listed as absent, built as one vertical: a device
+register, a risk model that decides when to interrupt somebody, and WebAuthn.
+Each is reachable from a **Security** screen every role can open.
+
+#### Device binding, and what it actually defeats
+
+Stated first because a control whose limits are not written down is one people
+over-trust.
+
+A session may be **bound** to an enrolled device. The device holds a secret shown
+exactly once and stored only as a SHA-256 digest, and every request must carry
+`x-device-proof: HMAC(secret, tokenId)` alongside the token.
+
+- **It defeats a leaked token.** An access token in a log, a proxy, a screenshot
+  or a support ticket is not enough on its own: the proof travels in a header
+  the token does not travel in, and it is bound to that one token id, so a proof
+  lifted from one session is worthless against another.
+- **It defeats a session that outlives its machine.** Revoking a device refuses
+  every token bound to it, at the gateway, on the next request. That is the
+  control behind "sign my lost laptop out" — and without a device register there
+  is no such instruction to give, because there is no password here to change.
+- **It does not defeat malware on the enrolled device.** Something with the
+  browser's own storage has both halves. What it buys against that attacker is
+  attribution and a kill switch, and nothing here claims more.
+- **It does not defeat a stolen database.** The stored verifier can forge a
+  proof. This is written down in `verifyProof` rather than left implied: a
+  database that yields the verifier has already yielded every user record and
+  the whole ledger, and storing the raw secret to close it would trade a defence
+  against the attacker who has everything for a gift to the one who has a table.
+
+`GATEWAY_AUTH_REQUIRE_DEVICE_BINDING` is **off by default**, and that is a
+migration decision rather than a security opinion: turning it on refuses every
+session minted before a device existed, which signs a live deployment out all at
+once. With it off an unbound session is not refused — it is **scored**.
+
+#### The risk model, published rather than described
+
+Nine signals, each worth points and a full sentence. Bands at **35** and **60**,
+set by the cases they must catch and the cases they must not:
+
+- **No single signal reaches HIGH.** The heaviest is 35. A person on a new
+  network is not a threat, and interrupting them there is how people learn to
+  click through prompts without reading them.
+- **Two heavy signals do.** An unbound session certifying £840,000 scores 65; a
+  governance change from an unbound session scores 60. A first calibration at 70
+  let the first of those through as merely "worth noting", which is the failure
+  that matters — a threshold nothing trips is one nobody notices is broken.
+
+A step-up is a fresh verification that holds for fifteen minutes. It is **not** a
+lock and not something an administrator clears: a control somebody else has to
+unblock is a denial of service anybody can perform on anybody by travelling. An
+API key is never asked to step up, because it cannot — an integration that may
+not do something is told it may not, rather than being refused under a
+misleading name.
+
+Nothing here calls a model, calls a reputation service, or fingerprints a
+browser. A fingerprint is a tracking identifier that would have to be disclosed,
+retained and defended, and it buys less than the device register already gives.
+Networks are remembered coarsely — the /24 or the /48 — which is the coarsest
+thing still useful as "somewhere this device has been" and the finest thing that
+is not a location history of a named employee.
+
+#### Passkeys, verified here rather than by a library
+
+Zero runtime dependencies is settled, and what a WebAuthn library does is three
+things this does in about four hundred lines: decode a small CBOR structure,
+read a COSE key out of it, and check one signature with primitives `node:crypto`
+already ships. Seven checks, in order, each of which is a real attack if skipped:
+challenge issued-by-us and now spent; ceremony type; **origin, compared exactly**;
+RP ID hash; user presence; the signature; and the counter, which never goes
+backwards.
+
+Two things are deliberately **not** done and are stated rather than implied:
+
+- **Attestation is not requested.** A certificate chain with no root store to
+  verify against and no metadata service to resolve the AAGUID would be stored,
+  shown and believed without ever being checked. Asking for evidence nobody
+  verifies is worse than not asking.
+- **`allowCredentials` is always empty.** A list keyed off an email address is
+  precisely the account-enumeration oracle `POST /v1/auth/login` goes to such
+  lengths to close.
+
+The tests build **real ceremonies** — a real P-256 key pair, real CBOR, real
+authenticator data, a real ECDSA signature over the bytes WebAuthn defines — so
+every refusal is a real attack with one byte changed, not a malformed blob.
+
+#### What driving it over HTTP found
+
+Three defects the module tests could not see:
+
+- **A step-up wrote against the `User` entity**, which already lives in the
+  tenancy's own project, and the ledger correctly refuses to move an entity
+  between projects. `STEP_UP_SATISFIED` now has its own `StepUp` entity.
+- **The tenancy view was gated on `PLATFORM_ADMINISTRATION`**, which an
+  enterprise administrator does not hold — so the one person who should see
+  their company's exposure was the one person refused it. Now
+  `ENTERPRISE_STRUCTURE`, the same authority that issues API keys.
+- **Enrolment did not bind the session it was performed from.** A person enrolled
+  a device and stayed unbound until their next sign-in, so the control looked as
+  though it had not worked and the risk model went on charging them thirty points
+  for a device sitting in the register. Enrolment now re-mints the pair with the
+  `did` claim — the only moment a live session can be bound, because a claim can
+  only enter a token as it is signed. `authenticatedAt` is carried across rather
+  than reset, so nobody can refresh their way out of a stale sign-in.
+
+**All 40 mutations caught** across the three modules, the gateway wiring and the
+routes — including every skipped check, every reversed comparison and every
+threshold. 69 tests, of which 30 are real WebAuthn ceremonies and 13 go through
+the socket.
+
+### A chart kit, and the defect it was built with
+
+Fifteen chart types as inline SVG — bar, line, area, pie, donut, histogram,
+scatter, bubble, box plot, gauge, KPI card, sparkline, heatmap, funnel,
+waterfall, treemap, Gantt and a proportion bar. No library, for the same reason
+there is no WebAuthn library: what it would buy is a few hundred lines of
+arithmetic, and what it would cost is a bundle, a theming layer fighting this
+one, and an upgrade treadmill on a product whose premise is an auditable record.
+
+Four rules every chart keeps, and each is a way a chart lies:
+
+- **A chart with no data is not a blank box.** It returns the design system's
+  empty state with the caller's own sentence. An axis drawn over nothing reads
+  as "zero", and zero and "never measured" are different facts.
+- **A chart never invents a number.** No interpolation across gaps, no smoothing
+  that moves a point. A line with a hole in it is drawn with a hole in it.
+- **A value axis includes zero.** An axis starting at 4,000 makes 4,100 look
+  twice 4,050, which is the commonest way a chart lies without a wrong number.
+- **Colour is never the only channel.** Roughly one man in twelve cannot
+  separate the red from the green.
+
+**The kit shipped with the exact defect its own rules forbid, and the tests
+found it.** `Number(null)` is `0`, `Number('')` is `0` and `Number(true)` is `1`,
+so a week nobody measured, a blank heatmap cell and a boolean were all plotted as
+real values — a gap in a line drawn as a drop to zero, and an unrecorded cell
+drawn as a recorded zero. Fixed at the root in one predicate.
+
+**19 of 19 mutations caught**, 74 tests. The tests read the geometry rather than
+checking something was returned, because a chart defect produces a picture that
+looks entirely correct and says something false — a wrong scale, a dropped point,
+a bubble sized by radius instead of area, a treemap of slivers, a subtotal drawn
+from the running position instead of the axis.
