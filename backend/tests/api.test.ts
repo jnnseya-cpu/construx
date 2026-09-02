@@ -135,6 +135,15 @@ describe('the routing table itself', () => {
       // person has no account yet, and inert on GET so a mail scanner cannot
       // spend the single-use token before its owner clicks.
       'GET /verify',
+      // The page and the API a document's *recipient* uses. Public because the
+      // audience is a solicitor, an adjudicator or an insurer holding a PDF and
+      // nothing else — a check behind a login is a check nobody performs, and a
+      // verification nobody performs is not a control. It discloses nothing to
+      // a caller who does not already hold a document this platform issued:
+      // without a valid HMAC over the reference, the content hash and the
+      // issuing tenancy, every request gets one identical refusal, and that is
+      // tested.
+      'GET /verify-document',
       // The demonstration page, re-rendered with the outcome of a booking on
       // it. A POST rather than a fetch because the booking form has to work
       // with scripting switched off: the public site's only script opens the
@@ -165,6 +174,9 @@ describe('the routing table itself', () => {
       // holds no credential of ours, so the HMAC over the raw body is the
       // credential. It signs no timestamp, so there is no tolerance window to
       // fall back on and replay is stopped by the payment reference alone.
+      // The same check as the page below, for an integrator rather than a
+      // person: a client's own system confirming a document it was sent.
+      'POST /v1/verify/document',
       'POST /v1/webhooks/koda',
       // Stripe cannot hold a credential of ours either, so the payment
       // notification arrives unauthenticated and the signature stands in: an
@@ -176,6 +188,10 @@ describe('the routing table itself', () => {
       // The button on that page: the same activation, answering with a page
       // rather than JSON because the caller is a browser, not a client.
       'POST /verify',
+      // The recipient's check, from the page. Same handler as the JSON route
+      // above, so a solicitor and an integrator cannot be told different things
+      // about the same document.
+      'POST /verify-document',
     ]);
 
     // Every marketing page is public and none of them is an API surface. They

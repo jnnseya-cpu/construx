@@ -1,3 +1,4 @@
+import { config } from '../config.ts';
 import * as geo from '../domain/geometry.ts';
 import { decodeImage, decodeLogo, UnsupportedImageError, type DecodedImage } from './image.ts';
 import { documentOrigin, type DocumentBlock, type ExportDocument } from './exporter.ts';
@@ -972,6 +973,15 @@ export function renderPdf(document: ExportDocument, resolveImage?: ImageResolver
     sheet.advance(14);
     sheet.text(`Content hash ${document.contentHash}`, { font: 'Courier', size: 7, colour: [0.55, 0.55, 0.58] });
 
+    // The hash proves the document against itself, which is worth nothing to
+    // somebody handed a forgery — the forger recomputes it. The verification
+    // code is the part a recipient can actually check, and it is only checkable
+    // if they know where, so the address goes on the cover next to it.
+    sheet.advance(11);
+    sheet.text(`Verification ${document.verification}`, { font: 'Courier', size: 7, colour: [0.55, 0.55, 0.58] });
+    sheet.advance(11);
+    sheet.text(`Check this document at ${config.publicBaseUrl}/verify-document`, { size: 7, colour: [0.55, 0.55, 0.58] });
+
     if (document.redactionNotice) {
       sheet.advance(24);
       sheet.text(document.redactionNotice, { size: 8, colour: [0.55, 0.35, 0.1] });
@@ -1000,6 +1010,10 @@ export function renderPdf(document: ExportDocument, resolveImage?: ImageResolver
   const footerOps = (pageNumber: number, pageCount: number): string[] => {
     const left = `${document.reference} · ${document.audience} · generated ${document.generatedAt.slice(0, 16).replace('T', ' ')}`;
     const right = `Page ${pageNumber} of ${pageCount}`;
+    // The content hash alone, in the running band. The verification code is on
+    // the cover in full rather than repeated here: at Courier 7pt the two
+    // together run past the right margin, and a verification code truncated to
+    // fit is one nobody can check — worse than one printed once, properly.
     const hash = `Content hash ${document.contentHash}`;
     return [
       `0.72 0.72 0.74 RG`,

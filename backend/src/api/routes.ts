@@ -173,7 +173,7 @@ import {
   listCampaigns,
   previewFor,
 } from '../messaging/newsletter.ts';
-import { unsubscribePage, verificationPage } from '../messaging/render.ts';
+import { documentVerificationPage, unsubscribePage, verificationPage } from '../messaging/render.ts';
 import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { MODULES, isModuleId } from '../identity/modules.ts';
 import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
@@ -203,7 +203,9 @@ import { authorise, AUTHZ_OPTIONS, currentPhase, registerEvidence, write } from 
 import { ulid } from '../core/ids.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import type { Platform } from '../platform.ts';
-import type { ExportAudience, ExportFormat } from '../export/exporter.ts';
+import { parseVerification, VERIFICATION_SCHEME, type ExportAudience, type ExportFormat } from '../export/exporter.ts';
+import { posture as envelopePosture, verifyTag } from '../evidence/envelope.ts';
+import { transportPosture } from '../ops/transport.ts';
 import { metrics, recentLogs, type HtmlPolicy, type RequestContext } from './middleware.ts';
 import { gatewayMetrics, recordSecurityEvent, securityEvents, securitySummary, type SecurityEventKind } from './telemetry.ts';
 import { readiness } from './readiness.ts';
@@ -274,6 +276,79 @@ export type Route = {
 
 function body<T>(ctx: RequestContext): T {
   return (ctx.body ?? {}) as T;
+}
+
+/**
+ * Check a document against the code printed on it.
+ *
+ * One implementation behind two doors: the public JSON endpoint an integrator
+ * calls, and the HTML page a solicitor lands on holding a PDF. They answer the
+ * same question and a second implementation would eventually answer it
+ * differently, which on this particular question means one of them calling a
+ * genuine document a forgery.
+ *
+ * Every failure returns the same sentence. A mistyped code, a tenancy that does
+ * not exist and a figure altered in the document are indistinguishable in the
+ * response on purpose: separating them would tell somebody assembling a forgery
+ * which half of their attempt was already right.
+ */
+function verifyDocument(
+  platform: Platform,
+  input: { reference: string; contentHash: string; verification: string },
+):
+  | { verified: false; finding: string }
+  | {
+      verified: true;
+      reference: string;
+      contentHash: string;
+      issuedBy: string;
+      issuedAt: string;
+      audience: string;
+      title: string;
+      recorded: boolean;
+      proves: string;
+      doesNotProve: string;
+    } {
+  const refused = {
+    verified: false as const,
+    finding:
+      'This does not match a document issued by this platform. Either the code was mistyped, or the document has been ' +
+      'altered since it was issued — a single changed character moves the content hash and the code stops matching.',
+  };
+
+  const parts = parseVerification(input.verification);
+  if (!parts) return refused;
+  if (!verifyTag({ contentHash: input.contentHash, reference: input.reference, tenantId: parts.issuer }, parts.tag)) {
+    return refused;
+  }
+
+  // Only past a valid tag is anything disclosed, and then only to somebody who
+  // has demonstrably been given a document this platform issued. What comes
+  // back is what they are already holding, confirmed against the record.
+  const record = platform.ledger
+    .listByTenant(parts.issuer, 'Export')
+    .find((entity) => entity.state.reference === input.reference);
+
+  return {
+    verified: true as const,
+    reference: input.reference,
+    contentHash: input.contentHash,
+    issuedBy: record ? String(record.state.clientName ?? '') : '',
+    issuedAt: record ? String(record.state.generatedAt ?? '') : '',
+    audience: record ? String(record.state.audience ?? '') : '',
+    title: record ? String(record.state.title ?? '') : '',
+    // A valid tag with no matching record means this deployment's export
+    // register was restored from a shorter journal than the document is old.
+    // Saying so beats an unexplained blank, and beats a refusal that would call
+    // a genuine document a forgery.
+    recorded: record !== undefined,
+    proves:
+      'This platform issued a document with this reference and this exact content. Any alteration since would have ' +
+      'moved the content hash and this code would not have matched.',
+    doesNotProve:
+      'That this is the current revision, or that the statements in it are correct. It proves issuance and integrity, ' +
+      'which is a narrower and more useful claim than either.',
+  };
 }
 
 function auth(ctx: RequestContext) {
@@ -3725,6 +3800,120 @@ export const ROUTES: Route[] = [
       const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
       return tenantSecurity(actor.tenantId, platform.users(actor.tenantId).map((user) => user.id));
     },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/data-protection',
+    description: 'What protects customer data at rest and in flight, stated as claims and non-claims',
+    readOnly: true,
+    handler: (_platform, ctx) => {
+      // Read by an enterprise admin rather than the operator, because the
+      // question this answers — "what do we tell our client's security team" —
+      // is asked of the customer, not of us, and an answer they have to request
+      // from a supplier is one they will write from memory instead.
+      authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      const rest = envelopePosture();
+      const flight = transportPosture();
+      return {
+        atRest: rest,
+        inFlight: flight,
+        // The one line that goes at the top of a questionnaire response. It is
+        // the worst of the two rather than an average, because a customer's
+        // data is as protected as its weakest leg.
+        standing: !rest.enabled || flight.findings.some((f) => f.severity === 'CRITICAL') ? 'WEAK' : 'ADEQUATE',
+        exportVerification: {
+          scheme: VERIFICATION_SCHEME,
+          endpoint: `${config.publicBaseUrl}/v1/verify/document`,
+          page: `${config.publicBaseUrl}/verify-document`,
+          proves: [
+            'That this platform issued a document with that reference and that content hash, for that tenancy.',
+            'That the document has not been altered since — any change moves the content hash and the code stops matching.',
+          ],
+          doesNotProve: [
+            'That the document is still current. A superseded revision verifies exactly as well as the live one.',
+            'That the facts in it are true. It proves issuance and integrity, which is a different claim.',
+          ],
+        },
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/verify-document',
+    public: true,
+    html: true,
+    description: 'The page a document’s recipient uses to check it, holding nothing but the document',
+    handler: (_platform, ctx) =>
+      // Prefilled from the query where a link carried the values, so an issuer
+      // can send "check it here" as one URL rather than three fields to retype.
+      documentVerificationPage({
+        state: 'FORM',
+        reference: ctx.query.get('reference') ?? '',
+        contentHash: ctx.query.get('contentHash') ?? '',
+        verification: ctx.query.get('verification') ?? '',
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/verify-document',
+    public: true,
+    html: true,
+    description: 'Check a document from the recipient’s page and render the outcome',
+    // The three fields are optional at the schema level and mandatory in the
+    // browser, because a form submitted with one blank should come back as the
+    // page's own refusal rather than a problem+json document that a person who
+    // clicked a button cannot read.
+    schema: {
+      type: 'object',
+      properties: { reference: { type: 'string' }, contentHash: { type: 'string' }, verification: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const input = body<{ reference?: string; contentHash?: string; verification?: string }>(ctx);
+      const outcome = verifyDocument(platform, {
+        reference: input.reference ?? '',
+        contentHash: input.contentHash ?? '',
+        verification: input.verification ?? '',
+      });
+
+      if (!outcome.verified) {
+        return documentVerificationPage({
+          state: 'REFUSED',
+          reference: input.reference ?? '',
+          contentHash: input.contentHash ?? '',
+          verification: input.verification ?? '',
+          finding: outcome.finding,
+        });
+      }
+      return documentVerificationPage({
+        state: 'VERIFIED',
+        reference: outcome.reference,
+        issuedBy: outcome.issuedBy,
+        issuedAt: outcome.issuedAt,
+        audience: outcome.audience,
+        documentTitle: outcome.title,
+        recorded: outcome.recorded,
+      });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/verify/document',
+    public: true,
+    // A POST because the three strings are long and belong in a body rather
+    // than a URL that ends up in an access log — but it creates nothing, so it
+    // answers 200 rather than 201. A caller told "Created" would reasonably ask
+    // what was created.
+    readOnly: true,
+    description: 'Check a document that has left the platform against the code printed on it',
+    schema: {
+      type: 'object',
+      required: ['reference', 'contentHash', 'verification'],
+      properties: { reference: stringField, contentHash: stringField, verification: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      verifyDocument(platform, body<{ reference: string; contentHash: string; verification: string }>(ctx)),
   },
 
   {

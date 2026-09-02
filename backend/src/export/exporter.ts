@@ -1,6 +1,8 @@
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
+import { config } from '../config.ts';
+import { issueTag } from '../evidence/envelope.ts';
 import type { GoldenThreadLedger } from '../goldenthread/ledger.ts';
 import { replayProject, replayTimeline } from '../goldenthread/replay.ts';
 import type { AuthContext } from '../identity/auth.ts';
@@ -183,9 +185,49 @@ export type ExportDocument = {
   blocks: DocumentBlock[];
   /** Hash over the branded content — this is what proves the document later. */
   contentHash: string;
+  /**
+   * The verification code printed on the document, and what a recipient does
+   * with it.
+   *
+   * The content hash alone proves nothing to a recipient. It is a hash of the
+   * document computed from the document, so anybody who alters a page can
+   * recompute it and print the new value in the footer; a reader comparing the
+   * two finds them agreeing on a forgery. That is not a defect in the hash —
+   * it is what a hash is for, which is detecting accidental corruption of bytes
+   * you already trust.
+   *
+   * What makes a document checkable by somebody with no access to the platform
+   * is a tag only the platform can produce over the reference, the hash and the
+   * issuing tenancy. `POST /v1/verify/document` is public and takes exactly the
+   * three strings printed on the page. An altered document produces a different
+   * hash, the tag no longer matches, and the endpoint says so.
+   *
+   * `CXV1:<issuer>:<tag>` — the scheme so a later one can be told apart, the
+   * issuing tenancy so the endpoint knows whose key to check against without
+   * having to search every customer, and the tag itself.
+   */
+  verification: string;
   /** Anything withheld from this audience, stated on the document itself. */
   redactionNotice?: string;
 };
+
+/** The scheme prefix on every verification code this build issues. */
+export const VERIFICATION_SCHEME = 'CXV1';
+
+/**
+ * Split a printed verification code back into its parts.
+ *
+ * Returns `undefined` rather than throwing on anything malformed, because the
+ * public endpoint's job is to answer "is this document genuine" with a plain
+ * no, not to distinguish for a caller which of their guesses was better formed.
+ */
+export function parseVerification(code: string): { issuer: string; tag: string } | undefined {
+  const parts = code.trim().split(':');
+  if (parts.length !== 3) return undefined;
+  const [scheme, issuer, tag] = parts as [string, string, string];
+  if (scheme !== VERIFICATION_SCHEME || !issuer || !tag) return undefined;
+  return { issuer, tag };
+}
 
 function brandedHeader(branding: ClientBranding, title: string, subtitle?: string): DocumentBlock[] {
   const blocks: DocumentBlock[] = [{ kind: 'HEADING', level: 1, text: title }];
@@ -401,6 +443,7 @@ export class ExportService {
 
     const id = ulid();
     const reference = `${branding.documentReferencePrefix}-${String(this.#sequence).padStart(5, '0')}`;
+    const contentHash = hashEvidence(JSON.stringify({ branding, blocks }));
 
     const document: ExportDocument = {
       id,
@@ -414,7 +457,8 @@ export class ExportService {
       generatedBy: auth.actorId,
       projectId,
       blocks,
-      contentHash: hashEvidence(JSON.stringify({ branding, blocks })),
+      contentHash,
+      verification: `${VERIFICATION_SCHEME}:${auth.tenantId}:${issueTag({ contentHash, reference, tenantId: auth.tenantId })}`,
       redactionNotice: input.redactionNotice,
     };
 
@@ -786,6 +830,7 @@ ${body}
 <footer>
   <div>${escape(document.reference)} · generated ${escape(document.generatedAt)} · audience ${escape(document.audience)}</div>
   <div>Content hash <code>${escape(document.contentHash)}</code></div>
+  <div>Verification <code>${escape(document.verification)}</code> — check this document at ${escape(config.publicBaseUrl)}/verify-document</div>
 </footer>
 </body></html>`;
   }

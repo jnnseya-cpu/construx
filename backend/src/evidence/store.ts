@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { dirname, join } from 'node:path';
 import { DomainError } from '../core/errors.ts';
 import { config } from '../config.ts';
+import * as envelope from './envelope.ts';
 import { S3Client } from '../store/s3.ts';
 
 /**
@@ -188,13 +189,15 @@ export class EvidenceStore {
     if (!held) {
       throw new DomainError('EVIDENCE_NOT_STORED', 'The platform holds no bytes for this evidence', 404);
     }
+    const bytes = envelope.decrypt(tenantId, held.bytes);
+
     // Re-verified on read exactly as the filesystem path does. An object store
     // is more reliable than a volume and it is still somewhere else's disk, and
     // the whole point of the record is that it can be trusted years later.
-    if (hashBytes(held.bytes) !== hash) {
+    if (hashBytes(bytes) !== hash) {
       throw new DomainError('EVIDENCE_CORRUPT', 'The stored bytes no longer match their hash', 500);
     }
-    return held;
+    return { bytes, contentType: held.contentType };
   }
 
   /** Store the bytes in whichever store is in use. */
@@ -222,7 +225,7 @@ export class EvidenceStore {
       );
     }
 
-    await remote.put(this.#keyFor(tenantId, claimedHash), bytes, contentType);
+    await remote.put(this.#keyFor(tenantId, claimedHash), envelope.encrypt(tenantId, bytes), contentType);
     this.#usage.delete(tenantId);
     return { hash: claimedHash, bytes: bytes.length, contentType, storedAt: new Date().toISOString() };
   }
@@ -294,7 +297,12 @@ export class EvidenceStore {
     // Write beside and rename, so a reader never sees a half-written object
     // under a hash that claims to describe it. Same discipline as the journal.
     const temporary = `${target}.partial`;
-    writeFileSync(temporary, bytes);
+    // Encrypted on the way to disk, where a master key is configured. The hash
+    // was checked against the *plaintext* above and the address is still the
+    // plaintext hash — which is deliberate: an address derived from ciphertext
+    // would change every time the key rotated, and every record naming that
+    // evidence would stop resolving.
+    writeFileSync(temporary, envelope.encrypt(tenantId, bytes));
     renameSync(temporary, target);
     // The content type is metadata, not content, and it is deliberately not
     // part of the address: the same bytes are the same object however they were
@@ -340,7 +348,10 @@ export class EvidenceStore {
     if (!existsSync(target)) {
       throw new DomainError('EVIDENCE_NOT_STORED', 'The platform holds no bytes for this evidence', 404);
     }
-    const bytes = readFileSync(target);
+    // Decrypted on the way back, and a file written before the key existed
+    // passes through untouched — which is what makes turning encryption on a
+    // non-event rather than a migration.
+    const bytes = envelope.decrypt(tenantId, readFileSync(target));
 
     // Re-verify on read. Cheap insurance against a corrupted volume serving
     // something that is no longer the evidence anybody recorded — and the whole

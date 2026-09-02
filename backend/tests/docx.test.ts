@@ -51,6 +51,7 @@ function documentWith(overrides: Partial<ExportDocument> = {}): ExportDocument {
     generatedBy: 'qs',
     projectId: 'project-1',
     contentHash: 'abc123',
+    verification: 'CXV1:t-1:unchecked',
     blocks: [
       { kind: 'HEADING', level: 1, text: 'Project Quality Plan' },
       { kind: 'PARAGRAPH', text: 'How quality is assured on the spillway works.' },

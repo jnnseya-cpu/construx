@@ -39,9 +39,12 @@ export async function security(root) {
   const administers = (session.get()?.user?.roles ?? []).some((role) =>
     ['ENTERPRISE_ADMIN', 'PLATFORM_ADMIN', 'OWNER'].includes(role),
   );
-  const [mine, tenancy] = await Promise.all([
+  const [mine, tenancy, protection] = await Promise.all([
     api.get('/v1/me/security'),
     administers ? api.get('/v1/admin/credentials').catch((error) => ({ error })) : Promise.resolve({ error: 'not asked' }),
+    administers
+      ? api.get('/v1/admin/data-protection').catch((error) => ({ error }))
+      : Promise.resolve({ error: 'not asked' }),
   ]);
 
   const mayAdminister = !tenancy.error;
@@ -58,12 +61,13 @@ export async function security(root) {
         <div class="actions">
           ${mayAdminister
             ? html`<button class="btn ${raw(chosenTab === 'mine' ? '' : 'ghost')}" data-tab="mine">My credentials</button>
-                <button class="btn ${raw(chosenTab === 'tenancy' ? '' : 'ghost')}" data-tab="tenancy">Across the company</button>`
+                <button class="btn ${raw(chosenTab === 'tenancy' ? '' : 'ghost')}" data-tab="tenancy">Across the company</button>
+                <button class="btn ${raw(chosenTab === 'protection' ? '' : 'ghost')}" data-tab="protection">Data protection</button>`
             : ''}
         </div>
       </div>
 
-      ${chosenTab === 'mine' ? mineView(mine) : tenancyView(tenancy)}
+      ${chosenTab === 'mine' ? mineView(mine) : chosenTab === 'protection' ? protectionView(protection) : tenancyView(tenancy)}
     `,
   );
 
@@ -491,3 +495,135 @@ const toBase64Url = (buffer) =>
   btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 export const _internals = { humanSignal, fromBase64Url, toBase64Url };
+
+/**
+ * What protects customer data at rest and in flight.
+ *
+ * This is the screen an enterprise admin opens with a client's security
+ * questionnaire beside them, so it is written to be read out rather than
+ * interpreted: what is protected, what is explicitly not, and what an operator
+ * still has to do about it.
+ *
+ * Two decisions shape it.
+ *
+ * **The non-claims are as prominent as the claims.** "Encrypted at rest: yes"
+ * is the answer every product gives and tells a security team nothing. What
+ * this control does *not* do — protect a live process, survive a stolen master
+ * key, hide file sizes — sits in the same card at the same weight, because a
+ * customer who discovers a limit later treats every other claim as suspect.
+ *
+ * **Nothing is inferred.** The transport section reports what this process can
+ * actually see and names what it cannot. A page that printed "TLS: enabled"
+ * from a certificate path in a variable would be worse than one that said
+ * nothing, because somebody would believe it.
+ */
+function protectionView(protection) {
+  if (protection.error) {
+    return notice(
+      'This part of the page needs enterprise administrator access, which this identity does not hold.',
+      'warn',
+    );
+  }
+
+  const rest = protection.atRest;
+  const flight = protection.inFlight;
+  const findings = flight.findings ?? [];
+  const severityTone = { CRITICAL: 'bad', WARNING: 'warn', NOTE: 'info' };
+
+  // Severity counts, so the shape of the transport position reads before any of
+  // it is read word by word.
+  const counts = ['CRITICAL', 'WARNING', 'NOTE'].map((severity) => ({
+    label: severity,
+    value: findings.filter((finding) => finding.severity === severity).length,
+  }));
+
+  return html`
+    <div class="chart-row">
+      ${kpiCard({
+        label: 'Overall standing',
+        value: protection.standing,
+        detail: protection.standing === 'ADEQUATE' ? 'Both legs in place' : 'A leg is missing or failing',
+        tone: protection.standing === 'ADEQUATE' ? 'ok' : 'bad',
+      })}
+      ${kpiCard({
+        label: 'Evidence at rest',
+        value: rest.enabled ? rest.cipher : 'Not encrypted',
+        detail: rest.enabled ? `Key version ${rest.keyVersion}, from ${rest.keySource.toLowerCase()}` : 'No master key configured',
+        tone: rest.enabled ? 'ok' : 'bad',
+      })}
+      ${gauge({
+        label: 'Transport findings',
+        value: findings.filter((finding) => finding.severity === 'CRITICAL').length,
+        max: Math.max(3, findings.length),
+        target: 0,
+        caption: flight.summary,
+      })}
+    </div>
+
+    <section class="card">
+      <h2>Evidence at rest</h2>
+      <p class="muted">${rest.enabled
+        ? 'Every file written to the evidence store is encrypted before it reaches the disk or the bucket.'
+        : 'Evidence is written in clear. A stolen volume is a readable archive.'}</p>
+
+      <h3>What this protects against</h3>
+      ${rest.protects.length
+        ? html`<ul>${raw(rest.protects.map((claim) => `<li>${escapeText(claim)}</li>`).join(''))}</ul>`
+        : notice('Nothing, while no master key is configured.', 'bad')}
+
+      <h3>What it does not</h3>
+      <ul>${raw(rest.doesNotProtect.map((limit) => `<li>${escapeText(limit)}</li>`).join(''))}</ul>
+
+      ${rest.actions.length
+        ? html`${rest.actions.map((action) => notice(action, 'bad'))}`
+        : ''}
+    </section>
+
+    <section class="card">
+      <h2>In flight</h2>
+      <p class="muted">${flight.summary}</p>
+
+      ${barChart({
+        title: 'Findings by severity',
+        data: counts,
+        valueKey: 'value',
+        labelKey: 'label',
+      })}
+
+      ${table({
+        headers: ['Severity', 'Finding', 'Why it matters', 'What to do'],
+        rows: findings.map((finding) => [
+          badge(finding.severity, severityTone[finding.severity] ?? 'info'),
+          finding.finding,
+          finding.because,
+          finding.action,
+        ]),
+        empty: 'Nothing outstanding on transport.',
+        emptyDetail: 'The public address is https, HSTS is sent, cookies are Secure and TLS termination is declared.',
+      })}
+
+      <h3>What this platform cannot see from inside itself</h3>
+      <ul>${raw(flight.notVisibleFromHere.map((limit) => `<li>${escapeText(limit)}</li>`).join(''))}</ul>
+    </section>
+
+    <section class="card">
+      <h2>Documents that have left the platform</h2>
+      <p class="muted">
+        Every exported document carries a verification code. Anyone holding the document — a client's solicitor, an
+        adjudicator, an insurer — can check it at
+        <code>${protection.exportVerification.page}</code> without an account.
+      </p>
+
+      <h3>What a check establishes</h3>
+      <ul>${raw(protection.exportVerification.proves.map((claim) => `<li>${escapeText(claim)}</li>`).join(''))}</ul>
+
+      <h3>What it does not</h3>
+      <ul>${raw(protection.exportVerification.doesNotProve.map((limit) => `<li>${escapeText(limit)}</li>`).join(''))}</ul>
+    </section>
+  `;
+}
+
+/** Text into an HTML-safe string, for the list items built as raw markup. */
+function escapeText(value) {
+  return String(value).replace(/[&<>"]/g, (character) => `&#${character.charCodeAt(0)};`);
+}

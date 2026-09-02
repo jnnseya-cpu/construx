@@ -392,6 +392,57 @@ export const config = {
     maxBytes: num('EVIDENCE_MAX_BYTES', 50 * 1_048_576),
     /** How long a signed link stays good. Short: it is a link to open now. */
     linkTtlSeconds: num('EVIDENCE_LINK_TTL_SECONDS', 300),
+
+    /**
+     * The master key for envelope encryption of evidence at rest. 32 bytes as
+     * hex or base64.
+     *
+     * Empty means evidence is stored as plaintext, which is the honest default:
+     * generating a key at boot would produce a deployment whose evidence becomes
+     * unreadable on the next restart, and that is a worse failure than an
+     * unencrypted volume because it is silent until somebody needs a file.
+     *
+     * It must not live on the same volume as the evidence. A key kept beside
+     * the ciphertext makes the control worth nothing, and `evidence/envelope.ts`
+     * says so in the posture rather than reporting "encryption: on".
+     */
+    masterKey: str('EVIDENCE_MASTER_KEY', ''),
+  },
+
+  /**
+   * What protects data in flight.
+   *
+   * This process serves plain HTTP, which is correct behind a load balancer and
+   * wrong when exposed directly — and the difference is not visible from inside
+   * the process. So these are **declarations** an operator makes, checked
+   * against the things that are checkable, and reported by `ops/transport.ts`
+   * with the unverifiable parts named as unverifiable.
+   */
+  transport: {
+    /** LOAD_BALANCER, REVERSE_PROXY, SERVICE_MESH, THIS_PROCESS, NOT_DECLARED. */
+    termination: str('TLS_TERMINATION', 'NOT_DECLARED'),
+    /** 180 days. Zero disables the header, which is only right on localhost. */
+    hstsMaxAgeSeconds: num('HSTS_MAX_AGE_SECONDS', 15_552_000),
+    hstsIncludeSubDomains: bool('HSTS_INCLUDE_SUBDOMAINS', true),
+    /**
+     * Off by default and deliberately: preload is a one-way door. Once a domain
+     * is on the browser preload list, removing it takes months, and every
+     * subdomain must be https from that moment — including ones nobody
+     * remembered.
+     */
+    hstsPreload: bool('HSTS_PRELOAD', false),
+    cookiesSecure: bool('COOKIES_SECURE', true),
+    /**
+     * Whether `x-forwarded-proto` is believed.
+     *
+     * Off by default. Trusting it from anywhere lets anything that can reach
+     * this process assert that its request arrived over https, which turns a
+     * header into an authentication bypass wherever that decides a redirect or
+     * a cookie attribute.
+     */
+    trustForwardedProto: bool('TRUST_FORWARDED_PROTO', false),
+    /** The ranges the header is believed from. Empty with trust on is a finding. */
+    trustedProxyCidrs: str('TRUSTED_PROXY_CIDRS', ''),
   },
 
   /**

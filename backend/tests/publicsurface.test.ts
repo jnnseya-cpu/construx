@@ -103,6 +103,9 @@ describe('what an anonymous caller can obtain', () => {
       // it provisions nothing on GET, so a mail scanner prefetching the link
       // cannot spend the single-use token before its owner clicks it.
       'GET /verify',
+      // The document-verification page, reached by a recipient holding a PDF
+      // and no account. It renders a form and discloses nothing.
+      'GET /verify-document',
       // The demonstration page re-rendered with a booking outcome on it. It is
       // the same page `GET /demo` serves and it is public for the same reason,
       // but it is a POST because the booking form has to work with scripting
@@ -138,6 +141,8 @@ describe('what an anonymous caller can obtain', () => {
       // KODA signs the raw body only. With no timestamp there is no tolerance
       // window, so replay is stopped by the payment reference alone — worth
       // knowing before anybody relaxes it.
+      // A client's own system confirming a document it was sent.
+      'POST /v1/verify/document',
       'POST /v1/webhooks/koda',
       // Stripe signs timestamp and body, so a stale capture is refused on age
       // as well. Verification happens over the raw bytes, in constant time,
@@ -149,6 +154,8 @@ describe('what an anonymous caller can obtain', () => {
       // page rather than JSON, because the caller is a browser that followed a
       // link out of an inbox.
       'POST /verify',
+      // The recipient's check, submitted from that page.
+      'POST /verify-document',
     ]);
 
     // Every marketing page is public and none of them is an API surface. They

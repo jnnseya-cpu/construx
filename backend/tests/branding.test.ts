@@ -95,6 +95,7 @@ const documentFor = (brand: ClientBranding): ExportDocument => ({
   projectId: 'project-1',
   blocks: [{ kind: 'PARAGRAPH', text: 'Issued under clause 4.10.' }],
   contentHash: 'sha256:abc',
+  verification: 'CXV1:t-1:unchecked',
 });
 
 describe('the right client is on the document', () => {

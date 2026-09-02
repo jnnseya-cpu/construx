@@ -39,6 +39,7 @@ function sampleDocument(over: Partial<ExportDocument> = {}): ExportDocument {
     generatedBy: 'user-1',
     projectId: 'project-1',
     contentHash: 'sha256:a56ec17ba0c50be01a88d3ec1ad4e84ce111f113a6b39af2783666253eabeff7',
+    verification: 'CXV1:t-1:unchecked',
     blocks: [
       { kind: 'HEADING', level: 1, text: 'Project status report' },
       { kind: 'PARAGRAPH', text: 'Ashworth Water Treatment Works — Phase 2' },

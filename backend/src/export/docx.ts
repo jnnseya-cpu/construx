@@ -385,6 +385,16 @@ export function renderDocx(document: ExportDocument, resolveImage?: ImageResolve
       run(branding.legalFooter, '<w:rPr><w:sz w:val="14"/><w:color w:val="6B7680"/></w:rPr>'),
       '<w:pPr><w:pBdr><w:top w:val="single" w:sz="4" w:space="6" w:color="D5DBE0"/></w:pBdr><w:spacing w:before="240"/></w:pPr>',
     ) +
+    // A Word file is the one form of a document that is *expected* to be edited
+    // — that is why it is offered. The verification line is what lets the
+    // recipient of an edited copy tell it apart from the issued one, so it is
+    // printed on the page rather than only in the file properties.
+    para(
+      run(
+        `Content hash ${document.contentHash} · verification ${document.verification}`,
+        '<w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/><w:sz w:val="13"/><w:color w:val="8A94A0"/></w:rPr>',
+      ),
+    ) +
     `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>` +
     `<w:pgMar w:top="1418" w:right="1134" w:bottom="1418" w:left="1134" w:header="709" w:footer="709" w:gutter="0"/>` +
     `</w:sectPr></w:body></w:document>`;
@@ -485,6 +495,7 @@ export function renderDocx(document: ExportDocument, resolveImage?: ImageResolve
     // its covering email still says which record it is and what it commits to.
     `<cp:category>${esc(document.reference)}</cp:category>` +
     `<cp:contentStatus>${esc(document.contentHash)}</cp:contentStatus>` +
+    `<cp:keywords>${esc(document.verification)}</cp:keywords>` +
     `<dcterms:created xsi:type="dcterms:W3CDTF">${esc(document.generatedAt)}</dcterms:created>` +
     `<dcterms:modified xsi:type="dcterms:W3CDTF">${esc(document.generatedAt)}</dcterms:modified>` +
     `</cp:coreProperties>`;

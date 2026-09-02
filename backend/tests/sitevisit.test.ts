@@ -686,7 +686,7 @@ describe('site visit · the report, with the photographs', () => {
           documentReferencePrefix: 'REP',
         },
         audience: 'INTERNAL', format: 'PDF', generatedAt: '2027-04-19T09:00:00.000Z', generatedBy: 'u',
-        projectId: seed.projectId, blocks: report.blocks, contentHash: 'sha256:x',
+        projectId: seed.projectId, blocks: report.blocks, contentHash: 'sha256:x', verification: 'CXV1:t-1:unchecked',
       },
       undefined,
     );
@@ -724,7 +724,7 @@ describe('site visit · the report, with the photographs', () => {
           documentReferencePrefix: 'REP',
         },
         audience: 'INTERNAL', format: 'PDF', generatedAt: '2027-04-19T09:00:00.000Z', generatedBy: 'u',
-        projectId: seed.projectId, blocks: twice, contentHash: 'sha256:x',
+        projectId: seed.projectId, blocks: twice, contentHash: 'sha256:x', verification: 'CXV1:t-1:unchecked',
       },
       () => ({ mime: 'image/jpeg', bytes: jpeg }),
     );
@@ -757,7 +757,7 @@ describe('site visit · the report title survives the trip into the file', () =>
         legalFooter: 'Registered in England', documentReferencePrefix: 'REP',
       },
       audience: 'INTERNAL' as const, format: 'PDF' as const, generatedAt: '2027-04-19T09:00:00.000Z',
-      generatedBy: 'u', projectId: seed.projectId, blocks: [], contentHash: 'sha256:x',
+      generatedBy: 'u', projectId: seed.projectId, blocks: [], contentHash: 'sha256:x', verification: 'CXV1:t-1:unchecked',
     };
 
     const text = Buffer.from(renderPdf(document)).toString('latin1');
@@ -775,7 +775,7 @@ describe('site visit · the report title survives the trip into the file', () =>
         legalFooter: 'Registered in England', documentReferencePrefix: 'REP',
       },
       audience: 'INTERNAL' as const, format: 'PDF' as const, generatedAt: '2027-04-19T09:00:00.000Z',
-      generatedBy: 'u', projectId: seed.projectId, blocks: [], contentHash: 'sha256:x',
+      generatedBy: 'u', projectId: seed.projectId, blocks: [], contentHash: 'sha256:x', verification: 'CXV1:t-1:unchecked',
     };
 
     const text = Buffer.from(renderPdf(document)).toString('latin1');

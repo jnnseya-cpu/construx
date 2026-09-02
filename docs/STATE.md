@@ -14042,3 +14042,121 @@ plan is approved` is a real safety test, and the seed destroyed its premise by
 approving a plan. It now runs against the sibling project that is in construction
 and has drafted nothing — which is more honest anyway: the refusal is about a
 project that has not done the paperwork, and the flagship has.
+
+---
+
+## Data protection: keys at rest, transport posture, and a document that verifies without us
+
+Three separate protections, each answering a threat the platform could previously
+only describe.
+
+### Evidence at rest — `backend/src/evidence/envelope.ts`
+
+Envelope encryption over the whole evidence store, wired into all four paths of
+`backend/src/evidence/store.ts` (filesystem write and read, object-store write
+and read). AES-256-GCM, format `CXE1 ‖ version ‖ iv ‖ tag ‖ ciphertext`. Data
+keys are **derived, not stored** — HKDF-SHA256 from the master with the tenancy
+as the info parameter and the key version in the salt — so the key register is
+empty and there is nothing extra to back up, lose or leak.
+
+Two properties are load-bearing and both are tested:
+
+- **The tenancy is bound in as additional authenticated data.** The store is
+  content-addressed and its paths are predictable, so moving a file between
+  customers' prefixes is a copy command. With AAD, such a file fails to
+  authenticate instead of decrypting into the wrong customer's evidence.
+- **Turning encryption on is a non-event.** A file that is not an envelope passes
+  through `decrypt` untouched, so files written before the key existed stay
+  readable and new ones are encrypted. There is no migration and no window in
+  which the store is half readable. Turning it *off* is the asymmetric direction
+  and `posture()` says so rather than implying otherwise.
+
+Plaintext hashing is unchanged: the hash remains the address, so nothing about
+content addressing or evidence linking moves.
+
+### Transport — `backend/src/ops/transport.ts`
+
+A report, not an implementation, and the file says why: this process serves
+plain HTTP by design because it runs behind a load balancer, and from inside the
+process both arrangements look like a socket. So it checks what is checkable —
+whether the public address is https, whether HSTS is sent and for how long,
+whether cookies are Secure, whether a forwarded-protocol header is trusted and
+from where — and **names what it cannot see** rather than inventing an answer.
+Cipher suites, protocol versions and the certificate chain belong to whatever
+terminates TLS and are listed as not visible from here.
+
+A declaration of `TLS_TERMINATION=THIS_PROCESS` is reported as CRITICAL, because
+this process has never been given a certificate and a false declaration is worse
+than none — it is the answer somebody will give an auditor.
+
+### A document that proves itself to somebody with no access
+
+`sha256:…` on a document proves nothing to a recipient. It is a hash of the
+document computed from the document, so anyone who alters a page recomputes it,
+prints the new value in the footer, and a reader comparing the two finds them
+agreeing on a forgery.
+
+Every export now carries `CXV1:<issuer>:<tag>` — an HMAC over the tenancy, the
+reference and the content hash, keyed to this deployment. It is printed on the
+PDF cover, in the HTML footer, on the last page of a Word file and in its
+document properties.
+
+- `GET|POST /verify-document` — public, server-rendered, three fields, no account.
+  The audience is a solicitor, an adjudicator or an insurer holding a PDF: a check
+  behind a login is a check nobody performs, and a check nobody performs is not a
+  control.
+- `POST /v1/verify/document` — the same answer for an integrator. `readOnly`, so
+  it answers 200: it creates nothing.
+- Both call one `verifyDocument` helper. Two implementations would eventually
+  disagree, and on this question disagreeing means one of them calling a genuine
+  document a forgery.
+
+**Every failure returns one identical sentence.** A mistyped code, an invented
+tenancy, an altered figure and an unknown reference are indistinguishable in the
+response, because grading an attempt tells a forger which half of it was right.
+Nothing is disclosed until a valid tag has been presented; past that, the reply
+carries what the holder is already looking at, confirmed against the register.
+
+What a verification establishes, and what it does not, is stated on the page and
+in the API: it proves **issuance and integrity**, not that the document is the
+current revision or that its contents are true.
+
+### Where it is visible
+
+`GET /v1/admin/data-protection` returns both postures plus the verification
+position, gated on `ENTERPRISE_STRUCTURE:R` — read by the enterprise admin,
+because the question it answers ("what do we tell our client's security team") is
+asked of the customer, not of the operator. Its console door is a third tab on
+the existing **Security** screen, with KPI cards, a severity gauge and a bar
+chart, and with the non-claims given the same weight as the claims.
+
+`standing` is the **worse** of the two legs, never an average: a customer's data
+is as protected as its weakest one.
+
+### Two defects found by mutation testing, not by the suite
+
+- **The verification tag's field separators were NUL bytes**, invisible in the
+  source. Functionally sound, but any tool that normalised them would silently
+  invalidate every code ever issued — and the failure would present as genuine
+  documents being reported as forgeries. Replaced with `|`, which cannot occur in
+  a ULID, a document reference or a `sha256:` hash.
+- **The disclosed detail was not pinned to the matching record.** A mutant that
+  returned the *first* export in the tenancy survived the suite, which means a
+  recipient could have been shown another document's issue date beside a
+  "genuine" verdict. Now tested against two documents issued in sequence.
+
+Twenty mutants across the envelope, the transport report, the routes and the
+exporter; all twenty killed after these two fixes.
+
+### What this does not do, recorded so it is not mistaken for compliance
+
+- **A live process is not protected.** Anything that can call the decrypt path
+  reads plaintext, because it must. This is encryption at rest and nothing else.
+- **A stolen master key is a stolen archive.** Where `EVIDENCE_MASTER_KEY` is set
+  from a file on the same volume as the evidence, this control does nothing at
+  all, and `posture()` says that rather than reporting "encryption: on".
+- **Metadata is not hidden.** File sizes, content hashes and which tenancy holds
+  how many objects are visible without the key.
+- **No key is generated at boot.** A deployment with no master key behaves
+  exactly as it did before this existed. Generating one would produce a system
+  whose evidence becomes unreadable on the next restart.

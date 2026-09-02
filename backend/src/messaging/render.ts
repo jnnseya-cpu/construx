@@ -492,3 +492,123 @@ export function buildMime(input: MimeInput): string {
 
   return [...headers, ...body].join('\r\n');
 }
+
+/**
+ * The page somebody lands on holding a document and nothing else.
+ *
+ * This is the only screen in the product with no signed-in identity behind it
+ * and no relationship to the person reading it. Its whole audience is somebody
+ * on the other side of a transaction — a client's solicitor, an adjudicator, an
+ * insurer, a framework auditor — who has been handed a PDF and wants to know
+ * whether it is the document that was issued.
+ *
+ * The three fields are the three strings printed on the document. Nothing else
+ * is asked for, because anything else would be a barrier between a document and
+ * the check that makes it worth anything, and a check nobody performs is a
+ * check that does not exist.
+ *
+ * A failure says one thing for every cause. A code that was mistyped, a
+ * tenancy that does not exist and a document with a figure altered in it all
+ * produce the same sentence, because a page that distinguished them would tell
+ * somebody working on a forgery which half of their attempt was right.
+ */
+export function documentVerificationPage(input: {
+  state: 'FORM' | 'VERIFIED' | 'REFUSED';
+  reference?: string;
+  contentHash?: string;
+  verification?: string;
+  /** On VERIFIED, what the record says about the document being checked. */
+  issuedBy?: string;
+  issuedAt?: string;
+  audience?: string;
+  documentTitle?: string;
+  recorded?: boolean;
+  /** On REFUSED, the single sentence every failure gets. */
+  finding?: string;
+}): string {
+  const field = (name: string, label: string, hint: string, value: string) =>
+    `<label style="display:block;margin:0 0 16px 0">
+       <span style="display:block;font-size:13px;font-weight:700;color:#3c4046;margin-bottom:4px">${esc(label)}</span>
+       <span style="display:block;font-size:12px;color:${BRAND.muted};margin-bottom:6px">${esc(hint)}</span>
+       <input name="${esc(name)}" value="${esc(value)}" required
+              style="width:100%;box-sizing:border-box;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;
+                     font-size:13px;border:1px solid #d5dbe0;border-radius:6px">
+     </label>`;
+
+  const form = `<form method="post" action="/verify-document" style="margin:0">
+       ${field('reference', 'Document reference', 'Top of the page, beside the issuer’s name.', input.reference ?? '')}
+       ${field('contentHash', 'Content hash', 'Begins sha256: — on the cover and in the footer.', input.contentHash ?? '')}
+       ${field('verification', 'Verification code', 'Begins CXV1: — printed beside the content hash.', input.verification ?? '')}
+       <button type="submit" style="${BUTTON}">Check this document</button>
+     </form>`;
+
+  if (input.state === 'FORM') {
+    return plainPage(
+      'Verify a document',
+      'Check a document you have been given',
+      `<p style="${PARAGRAPH}">
+         Documents issued through this platform carry a verification code. It proves the document came from the
+         organisation named on it and that not one character has changed since.
+       </p>
+       <p style="${QUIET}">
+         The content hash on its own proves nothing — anyone who alters a document can recompute it. The verification
+         code cannot be recomputed by anyone but this platform, which is what makes the check worth performing.
+       </p>
+       ${form}`,
+    );
+  }
+
+  if (input.state === 'VERIFIED') {
+    const rows: Array<[string, string]> = [
+      ['Reference', input.reference ?? ''],
+      ['Issued by', input.issuedBy ?? ''],
+      ['Issued', (input.issuedAt ?? '').slice(0, 16).replace('T', ' ')],
+      ['Prepared for', input.audience ?? ''],
+      ['Title', input.documentTitle ?? ''],
+    ].filter((row): row is [string, string] => row[1] !== '');
+
+    return plainPage(
+      'Document verified',
+      'This document is genuine',
+      `<p style="${PARAGRAPH}">
+         <b>${esc(input.reference ?? '')}</b> was issued by this platform with exactly this content. Any alteration
+         since would have moved the content hash, and this code would not have matched.
+       </p>
+       <table style="width:100%;border-collapse:collapse;margin:0 0 20px 0;font-size:14px">
+         ${rows
+           .map(
+             ([label, value]) =>
+               `<tr><td style="padding:6px 0;color:${BRAND.muted};width:140px">${esc(label)}</td>` +
+               `<td style="padding:6px 0;color:#3c4046"><b>${esc(value)}</b></td></tr>`,
+           )
+           .join('')}
+       </table>
+       ${
+         input.recorded === false
+           ? `<p style="${QUIET}">
+                The code is valid, but this deployment’s export register does not hold a matching entry — it has been
+                restored from a shorter record than this document is old. The document is genuine; only the
+                surrounding detail above is unavailable.
+              </p>`
+           : ''
+       }
+       <p style="${QUIET}">
+         What this does <b>not</b> establish: that this is the current revision, or that the statements in it are
+         correct. It establishes issuance and integrity, which is narrower and more useful than either.
+       </p>
+       <a href="/verify-document" style="${BUTTON_QUIET}">Check another document</a>`,
+    );
+  }
+
+  return plainPage(
+    'Document not verified',
+    'This does not match an issued document',
+    `<p style="${PARAGRAPH}">${esc(input.finding ?? '')}</p>
+     <p style="${QUIET}">
+       Codes are long and easy to mistype — check the three fields against the document before concluding anything
+       about it. If they are right and this page still refuses, the document is not what it claims to be, and the
+       organisation named on it is the party to raise that with.
+     </p>
+     ${form}`,
+  );
+}
