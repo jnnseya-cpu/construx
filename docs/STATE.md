@@ -14567,6 +14567,69 @@ than by anything failing:
 All of them rendered without a console error, which is why a browser walk that
 only counts errors is not a check. Reading the page is.
 
+### The adversarial launch audit, and what it changed
+
+`docs/LAUNCH_VERDICT.md` is the record: 112 probes against running servers, 25
+phases, and a **CONDITIONAL GO** — restricted launch only, general availability
+refused. Three mandatory gates fail or are partial (reliability, observability,
+operational readiness) and no score offsets a failed gate.
+
+The verdict is not about the code. Every authentication, authorisation,
+tenant-isolation and financial control that was attacked held: 24 auth attacks,
+24 held; ten concurrent attempts to settle one settlement produced one 201 and
+nine 409s; a £20,000,000 carried transaction was charged exactly the cap; the
+reconciliation difference is zero. It is about the half of production nobody has
+rehearsed — one process holding the record, a deployment nobody can reproduce,
+and nothing watching.
+
+Three defects were found by attacking rather than reading, and all three shared
+a shape: **nothing failed.**
+
+- **`POST /exposure` rendered unstyled.** It returns a full site page and
+  declared no `htmlPolicy`, so it fell to `SELF_CONTAINED`, whose
+  `default-src 'none'` blocks `/site.css`. The route answered 200 with correct
+  arithmetic and every markup assertion passed, because they read the HTML
+  rather than the rendering. The GET was fine, so the only person who saw it
+  broken was a visitor who pressed the button. Now covered by an invariant that
+  refuses any HTML route emitting a stylesheet or script under a policy that
+  blocks it.
+- **The orchestrator probes shared the request budget.** 400 calls to
+  `/healthz` spent the anonymous bucket and 195 of the next 200 calls to
+  `/readyz` came back 429 — and the container HEALTHCHECK polls `/readyz` and
+  treats non-2xx as failure. A burst of ordinary traffic would have restarted
+  healthy containers at the worst possible moment. Both probes are now exempt.
+  The regression test took three attempts to kill its mutant: the obvious
+  version passed with the fix reverted, and so did the version that flooded
+  `/v1/auth/*`, because limiter buckets are per-group and that is a bucket the
+  probes never touch.
+- **Every production-safety warning was gated on being production.** With
+  `NODE_ENV` unset the platform stops warning about the published development
+  signing secret and about an in-memory ledger, at exactly the moment it also
+  returns the live one-time sign-in code to any anonymous caller and hands out
+  an access token with no credential. Both gates were correct; nothing said
+  they were open. Verified against two servers: production answers 403
+  DEMO_DISABLED with identical login shapes, non-production returned
+  `"devCode":"A777DF"` and a working token with zero warnings.
+
+**Recovery is now proven rather than asserted.** A server with a durable
+journal, five identifiable records, SIGKILL, restore from a backup copy alone,
+fresh process: 600 events replayed, all five records intact, fee+net unbroken,
+reconciliation still zero, **RTO about 12 seconds**. It also surfaced a property
+worth knowing: after an unclean kill the replacement refuses to start until the
+dead writer's heartbeat ages out — up to 30 seconds — which is the right trade
+and is a floor under the recovery time.
+
+**One finding was deliberately not fixed.** Rate-limit buckets key on the socket
+address, so behind a reverse proxy every anonymous request shares one bucket.
+Closing it means resolving the client IP from `X-Forwarded-For` against a
+trusted CIDR list; `TRUSTED_PROXY_CIDRS` exists in config but no matcher does,
+and trusting a forwarded header without one lets any caller bypass the limiter
+by forging a header. Writing a new IP-trust parser into the security path during
+an audit is how an audit introduces the vulnerability it was meant to find. It
+is recorded with two remedies instead.
+
+---
+
 ### Two chart libraries became one
 
 `frontend/lib/chart.js` (8 types, 8 screens) predated `frontend/lib/charts.js`
