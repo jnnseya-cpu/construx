@@ -1417,5 +1417,52 @@ export function assertProductionSafety(): string[] {
   if (config.smtp.host && config.smtp.pass === '' && config.smtp.user !== '') {
     warnings.push('SMTP_USER is set without SMTP_PASS — authentication will fail');
   }
+
+  // The check that had to live outside the block above, and why.
+  //
+  // Every warning in this function sat inside `if (config.env === 'production')`
+  // — so the deployment that most needs them is the one that gets none. Unset
+  // `NODE_ENV` and the platform stops warning about the development signing
+  // secret, stops warning about an in-memory ledger, and stops warning about
+  // anything else, at exactly the moment it also:
+  //
+  //   - returns `devCode` — the live one-time sign-in code — in the login
+  //     response, to any anonymous caller, for any address on the deployment;
+  //   - serves `POST /v1/console/session`, which hands a PM access token to
+  //     anyone who asks, with no credential and no challenge.
+  //
+  // Both gates read `isProduction()` and both are correct. The defect was that
+  // nothing said the gates were open. An audit reproduced it: with `NODE_ENV`
+  // unset and everything else configured like a real deployment, the login
+  // route returned a working code and the console route returned a working
+  // token, and readiness reported zero warnings.
+  //
+  // `deploy/Dockerfile` sets `NODE_ENV=production`, `deploy/compose.yaml` sets
+  // it, and `deploy/env-check.sh` reports it as critical — so the shipped path
+  // is covered. This is for the deployment that does not use them: somebody
+  // running `npm start` behind a reverse proxy, which is the ordinary way a
+  // first deployment happens.
+  //
+  // Deliberately not an error. Refusing to boot would brick a legitimate
+  // staging environment that is https and non-production on purpose. It says
+  // what is open and lets an operator decide.
+  if (config.env !== 'production') {
+    const looksPublic: string[] = [];
+    if (/^https:\/\//.test(config.publicBaseUrl)) looksPublic.push('PUBLIC_BASE_URL is https');
+    if (config.transport.termination !== 'NOT_DECLARED') looksPublic.push('TLS_TERMINATION is declared');
+    if (config.smtp.host !== '') looksPublic.push('SMTP_HOST is set');
+    if (config.ledger.journalPath !== '') looksPublic.push('LEDGER_JOURNAL_PATH is set');
+    if (config.auth.jwtSecret !== 'construx-development-secret') looksPublic.push('a deployment-specific signing secret is set');
+
+    if (looksPublic.length >= 2) {
+      warnings.push(
+        `NODE_ENV is "${config.env}", not "production", on a deployment that looks live (${looksPublic.join('; ')}). ` +
+          'While it stays that way the login route returns the one-time sign-in code to any anonymous caller for any ' +
+          'address, and POST /v1/console/session hands out a working access token with no credential at all. Every ' +
+          'other warning this function raises is also suppressed. Set NODE_ENV=production.',
+      );
+    }
+  }
+
   return warnings;
 }

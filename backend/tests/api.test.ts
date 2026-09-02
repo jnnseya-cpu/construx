@@ -931,3 +931,101 @@ describe('the separation-of-duties control survives the gateway', () => {
     assert.match(certified.body.detail, /may not certify it/);
   });
 });
+
+describe('the orchestrator probes stay answerable under load', () => {
+  /**
+   * The failure this stands against, reproduced against a running server
+   * before it was fixed.
+   *
+   * `/healthz` and `/readyz` shared the ordinary per-IP request budget with
+   * every other route. Four hundred calls to `/healthz` consumed it, and 195
+   * of the next 200 calls to `/readyz` came back 429.
+   *
+   * That is not an abstract problem. `deploy/Dockerfile` runs
+   *
+   *     HEALTHCHECK ... CMD fetch('.../readyz').then(r => exit(r.ok ? 0 : 1))
+   *
+   * every thirty seconds with three retries, and the rate-limit key is the
+   * *socket's* address — so behind a reverse proxy every request in the world
+   * shares one bucket, the probe included. A burst of ordinary traffic
+   * therefore starves the health check, Docker marks a healthy container
+   * unhealthy, restarts it, capacity drops, and the load moves to the
+   * containers still standing. A restart loop assembled entirely out of a
+   * working rate limiter and a working health check.
+   *
+   * Neither probe reads a body, touches the ledger or names an identity. The
+   * most an attacker gets from an unlimited one is confirmation that the
+   * process is running, which a TCP handshake already gives them.
+   */
+  /**
+   * The test has to spend the budget first, which is the whole point.
+   *
+   * Written the obvious way — burst the probe on a fresh limiter — it passes
+   * whether the exemption is there or not, because the default budget is
+   * larger than any reasonable burst. The production failure is not "the probe
+   * is called a lot"; it is "the probe is called while *something else* has
+   * spent the budget". So this exhausts the anonymous bucket against an
+   * ordinary public route and only then asks whether the orchestrator can
+   * still get an answer.
+   */
+  async function exhaustTheAnonymousBudget(): Promise<number> {
+    // Against a route in the *same* limiter group as the probes. Buckets are
+    // keyed `rl:ip:<address>:<group>`, and `/v1/auth/*` is its own group with
+    // its own much tighter budget — so flooding the login surface exhausts a
+    // bucket the probes never touch and proves nothing about them. The public
+    // A routed public page is group `default`, which is where the probes sit.
+    // Not `/`: the landing page is answered before the limiter runs at all, so
+    // hammering it spends nothing.
+    let spent = 0;
+    for (let i = 0; i < 1400; i += 1) {
+      const response = await fetch(`${base}/exposure`);
+      await response.text();
+      if (response.status === 429) spent += 1;
+    }
+    return spent;
+  }
+
+  it('answers the liveness probe after the request budget is spent', async () => {
+    const refused = await exhaustTheAnonymousBudget();
+    assert.ok(refused > 0, 'the budget was never exhausted, so this proves nothing');
+
+    let limited = 0;
+    for (let i = 0; i < 40; i += 1) {
+      const response = await fetch(`${base}/healthz`);
+      await response.text();
+      if (response.status === 429) limited += 1;
+    }
+    assert.equal(limited, 0, `${limited} of 40 liveness probes were rate limited after a traffic burst`);
+  });
+
+  it('answers the readiness probe after the request budget is spent', async () => {
+    // The one the container's HEALTHCHECK actually calls. Without the
+    // exemption this is 429 and Docker restarts a healthy container.
+    const refused = await exhaustTheAnonymousBudget();
+    assert.ok(refused > 0, 'the budget was never exhausted, so this proves nothing');
+
+    let limited = 0;
+    for (let i = 0; i < 40; i += 1) {
+      const response = await fetch(`${base}/readyz`);
+      await response.text();
+      if (response.status === 429) limited += 1;
+    }
+    assert.equal(limited, 0, `${limited} of 40 readiness probes were rate limited after a traffic burst`);
+  });
+
+  it('still rate limits everything else', async () => {
+    // The exemption must be the two probes and nothing else. If this stops
+    // failing, the limiter has been switched off rather than narrowed.
+    let limited = 0;
+    for (let i = 0; i < 200; i += 1) {
+      const response = await fetch(`${base}/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: `burst${i}@example.invalid` }),
+      });
+      await response.text();
+      if (response.status === 429) limited += 1;
+    }
+    assert.ok(limited > 0, 'the login surface is no longer rate limited at all');
+  });
+});

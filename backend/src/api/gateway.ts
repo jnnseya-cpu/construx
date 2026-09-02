@@ -46,6 +46,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..', '..');
 const WEB_ROOT = join(REPO_ROOT, 'frontend');
 const APP_SHELL = join(WEB_ROOT, 'index.html');
+
+/**
+ * The routes an orchestrator polls to decide whether this process is alive and
+ * whether it should receive traffic. Exempt from rate limiting — see the note
+ * at the call site for the restart loop that exemption prevents.
+ */
+const IS_PROBE = new Set(['GET /healthz', 'GET /readyz']);
 // The canonical vocabulary, served as the same bytes the route schemas
 // validate against. Mounted separately rather than copied into the frontend:
 // a copy is the thing this is meant to prevent.
@@ -283,12 +290,34 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     const isPublic = matched.route.public === true;
 
     // Pre-auth limiting keyed by IP protects the login surface.
-    await applyRateLimit(ctx, req.socket.remoteAddress ?? 'unknown');
+    //
+    // The two orchestrator probes are exempt, and the reason is a failure this
+    // audit reproduced rather than a theoretical one. `/healthz` and `/readyz`
+    // shared the ordinary per-IP budget with every other request: 400 calls to
+    // `/healthz` consumed it, and 195 of the next 200 calls to `/readyz` came
+    // back 429. The container's own HEALTHCHECK polls `/readyz` and treats a
+    // non-2xx as a failure, so a burst of traffic from one address — which is
+    // *every* address once a reverse proxy is in front, since the key is the
+    // socket's — marks a perfectly healthy container unhealthy, restarts it,
+    // and drops capacity at exactly the moment the load arrives. The remaining
+    // containers then take more of it. That is a restart loop built out of a
+    // working rate limiter and a working health check.
+    //
+    // Neither probe reads a body, touches the ledger or names an identity, so
+    // exempting them costs nothing an attacker can use: the worst available is
+    // to learn that the process is running, which any TCP connection already
+    // says. Every other route, `/v1/auth/*` included, is limited exactly as
+    // before.
+    if (!IS_PROBE.has(ctx.routeId)) {
+      await applyRateLimit(ctx, req.socket.remoteAddress ?? 'unknown');
+    }
 
     authenticate(req, ctx, isPublic);
 
     // Re-apply post-auth so the tenant-aware key takes effect once known.
-    if (ctx.auth) await applyRateLimit(ctx, req.socket.remoteAddress ?? 'unknown');
+    if (ctx.auth && !IS_PROBE.has(ctx.routeId)) {
+      await applyRateLimit(ctx, req.socket.remoteAddress ?? 'unknown');
+    }
 
     // The account layer, before the body is looked at.
     //
