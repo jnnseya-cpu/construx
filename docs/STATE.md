@@ -14444,3 +14444,37 @@ reasoning is recorded in the file, because the equivalence depends on the scan
 reaching the end, and a future change that bounded it would turn the weaker
 version into a stall with no test standing against it. A contrived test was
 written and then removed rather than left asserting something untrue.
+
+
+---
+
+## The launch audit and its verdict
+
+`docs/LAUNCH_AUDIT.md`. Sixteen attacks against a running server rather than a
+reading of the code that implements the controls.
+
+**Controlled pilot: GO. General availability: NO-GO.** The product is not the
+risk; the deployment is.
+
+Every authentication, isolation, authorisation and financial control held: 401
+on seven anonymous and forged-token attempts including `alg=none`, 403 on two
+privilege attempts, 409 on a double settlement, £750 on a £20M transaction
+against the cap, 429 under 400 rapid logins, and a document verification that
+discloses nothing to an invented code.
+
+One finding was graded a breach by the probe and disproved on inspection: a
+cross-tenancy read returned **200 with zero events**, which is the tenancy filter
+holding and returning an empty set rather than a 403 that would confirm the
+project exists. It is recorded in the audit along with why it was not a breach,
+because an audit that quietly drops its false positives is one nobody can check.
+
+Two real gaps, both correct behaviour and both open: `EVIDENCE_MASTER_KEY` is
+unset and TLS termination is undeclared in the shipped configuration. The
+platform refuses to generate a key at boot or claim a certificate it has not been
+given, and reports the tenancy's standing as WEAK rather than "encryption: on".
+Until an operator sets both, a stolen volume is a readable archive.
+
+The blocking item for general availability is that the ledger is in-process. The
+schema and the client are both verified against a real Postgres 16, so it is
+wiring rather than design — but it is wiring nobody has done, and one process
+holding several customers' records is a risk nobody can watch.
