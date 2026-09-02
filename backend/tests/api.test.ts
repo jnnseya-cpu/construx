@@ -1108,3 +1108,126 @@ describe('rate limiting behind a reverse proxy', () => {
     );
   });
 });
+
+describe('the operator moves a tenancy between packages', () => {
+  /**
+   * Two rules, and the second is the one worth writing tests for.
+   *
+   * An operator may give a company a better package for nothing — that is a
+   * commercial decision they are entitled to make, and it costs the platform
+   * nothing per request. The company still funds its own AI spend, because a
+   * credited wallet is money spent against providers who invoice this platform
+   * for it, and it would arrive in the burn figures as revenue nobody received.
+   *
+   * So: the package moves, the wallet does not.
+   */
+  before(() => rateLimiter.reset());
+
+  async function operatorToken(): Promise<string> {
+    const login = await call('POST', '/v1/auth/login', {
+      body: { email: platform.user(seed.users.operator!.id).email },
+    });
+    const verified = await call('POST', '/v1/auth/mfa/verify', {
+      body: { actorId: login.body.actorId, challengeId: login.body.challengeId, code: login.body.devCode },
+    });
+    return (verified.body as { accessToken: string }).accessToken;
+  }
+
+  it('changes the package, records a reason, and leaves the wallet alone', async () => {
+    const token = await operatorToken();
+    const tenantId = seed.tenantId;
+    const walletBefore = platform.wallet(tenantId).snapshot().balanceMinor;
+
+    const moved = await call('POST', `/v1/admin/tenants/${tenantId}/package`, {
+      token,
+      body: { package: 'ENTERPRISE', reason: 'Agreed at the pilot review', grantFree: true },
+    });
+
+    assert.equal(moved.status, 201, moved.text);
+    assert.equal(moved.body.package, 'ENTERPRISE');
+    assert.equal(moved.body.grantedFree, true);
+    assert.equal(moved.body.monthlyPriceMinor, 0, 'a free grant must raise no monthly charge');
+    assert.ok(moved.body.listPriceMinor > 0, 'the list price is still stated, so the discount is visible');
+
+    // The rule.
+    assert.equal(
+      platform.wallet(tenantId).snapshot().balanceMinor,
+      walletBefore,
+      'a package grant credited the wallet — the tenancy must fund its own AI spend',
+    );
+    assert.equal(moved.body.wallet.unchanged, true);
+    assert.match(moved.body.wallet.note, /topping up|funds its own/i);
+  });
+
+  it('states the list price when the package is not being given away', async () => {
+    const token = await operatorToken();
+    const paid = await call('POST', `/v1/admin/tenants/${seed.tenantId}/package`, {
+      token,
+      // Professional Delivery holds 25, and the seeded tenancy carries 12. A
+      // package that could not hold them is what the seat guard below is for,
+      // and picking one here would be testing that instead of this.
+      body: { package: 'PROFESSIONAL_DELIVERY', reason: 'Moved at renewal on request' },
+    });
+    assert.equal(paid.status, 201, paid.text);
+    assert.equal(paid.body.grantedFree, false, 'a package change nobody said was free is one the customer pays for');
+    assert.equal(paid.body.monthlyPriceMinor, paid.body.listPriceMinor);
+  });
+
+  it('refuses a reason nobody wrote', async () => {
+    const token = await operatorToken();
+    const bare = await call('POST', `/v1/admin/tenants/${seed.tenantId}/package`, {
+      token,
+      body: { package: 'ENTERPRISE' },
+    });
+    assert.equal(bare.status, 400, 'a free package handed to a named company with no stated basis is unreviewable');
+  });
+
+  it('refuses a reason that is only whitespace, which the schema lets through', async () => {
+    // Mutation testing found this gap: removing the domain's reason guard broke
+    // nothing, because the test above sends no `reason` at all and the schema
+    // rejects that before the handler runs. Three spaces satisfy `minLength: 3`
+    // and reach the domain, which is the only thing standing between an
+    // operator and an unreviewable free grant.
+    const token = await operatorToken();
+    const blank = await call('POST', `/v1/admin/tenants/${seed.tenantId}/package`, {
+      token,
+      body: { package: 'ENTERPRISE', reason: '   ', grantFree: true },
+    });
+    assert.equal(blank.status, 422, blank.text);
+    assert.equal(blank.body.title, 'SUBSCRIPTION_REASON_REQUIRED');
+  });
+
+  it('refuses anybody who is not the platform operator', async () => {
+    // A tenant administrator upgrading their own package free of charge is the
+    // same class of escalation as granting themselves a module.
+    const login = await call('POST', '/v1/auth/login', {
+      body: { email: platform.user(seed.users.admin!.id).email },
+    });
+    const verified = await call('POST', '/v1/auth/mfa/verify', {
+      body: { actorId: login.body.actorId, challengeId: login.body.challengeId, code: login.body.devCode },
+    });
+    const attempt = await call('POST', `/v1/admin/tenants/${seed.tenantId}/package`, {
+      token: (verified.body as { accessToken: string }).accessToken,
+      body: { package: 'ENTERPRISE', reason: 'I would like this', grantFree: true },
+    });
+    assert.equal(attempt.status, 403, attempt.text);
+    assert.equal(attempt.body.title, 'PLATFORM_ADMIN_REQUIRED');
+  });
+
+  it('refuses a downgrade that would leave more identities than the package holds', async () => {
+    const token = await operatorToken();
+    // The seeded tenancy carries a full team. Moving it to a one-seat package
+    // would otherwise leave every existing identity working and the next
+    // assignment refused against a cap nobody knowingly crossed.
+    const squeezed = await call('POST', `/v1/admin/tenants/${seed.tenantId}/package`, {
+      token,
+      body: { package: 'SOLO', reason: 'Testing the seat cap' },
+    });
+    assert.equal(squeezed.status, 422, squeezed.text);
+    assert.equal(squeezed.body.title, 'PACKAGE_SEATS_EXCEEDED');
+    assert.match(squeezed.body.detail, /Revoke seats first/);
+    // The numbers, so an operator knows how many seats to revoke rather than
+    // being told only that they cannot do this.
+    assert.match(squeezed.body.detail, /\d+ identities are assigned/);
+  });
+});

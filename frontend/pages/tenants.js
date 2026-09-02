@@ -131,6 +131,7 @@ export async function tenants(root) {
             money(tenant.wallet.availableMinor),
             date(tenant.renewsAt),
             html`<button class="btn quiet sm" data-credit="${tenant.id}">Credit</button>
+              <button class="btn quiet sm" data-package="${tenant.id}">Package</button>
               <button class="btn quiet sm" data-status="${tenant.id}">Status</button>
               <button class="btn quiet sm" data-modules="${tenant.id}">Modules</button>`,
           ]),
@@ -294,6 +295,58 @@ export async function tenants(root) {
             ? 'That reference was already settled — nothing was credited twice.'
             : `${money(result.receipt.amountMinor)} · available ${money(result.wallet.availableMinor)}`,
           result.alreadyRecorded ? 'warn' : 'ok',
+        );
+        await again();
+      }
+    });
+  }
+
+  for (const button of root.querySelectorAll('[data-package]')) {
+    button.addEventListener('click', async () => {
+      const tenantId = button.getAttribute('data-package');
+      const tenant = byId.get(tenantId);
+      const result = await command({
+        title: `Package — ${tenant?.legalName ?? 'tenancy'}`,
+        intent:
+          'What this company is entitled to do: seats, storage, export, API access. It may be given away — tick ' +
+          '"grant free of charge" and no monthly charge is raised at renewal. The reason is required and is recorded ' +
+          'as evidence, because a free package handed to a named company with no stated basis is indistinguishable ' +
+          'from a mistake when somebody reviews the discount list a year later. ' +
+          'This does not credit the wallet and never will: the package is what they may do, the wallet is money they ' +
+          'have put in to spend on AI, and this tenancy still tops up its own account before an engine will run.',
+        path: `/v1/admin/tenants/${tenantId}/package`,
+        submitLabel: 'Move package',
+        fields: [
+          {
+            name: 'package',
+            label: 'Package',
+            type: 'select',
+            value: tenant?.package,
+            options: [
+              { value: 'FREE_TRIAL', label: 'Trial — 1 seat, 1 GB, no export' },
+              { value: 'SOLO', label: 'Solo — sole traders and single-project consultants' },
+              { value: 'CORE_PROJECT', label: 'Core Project' },
+              { value: 'PROFESSIONAL_DELIVERY', label: 'Professional Delivery' },
+              { value: 'ENTERPRISE', label: 'Enterprise' },
+            ],
+          },
+          {
+            name: 'grantFree',
+            label: 'Grant free of charge',
+            type: 'checkbox',
+            hint: 'No monthly charge is raised for this package at renewal',
+          },
+          { name: 'reason', label: 'Reason', hint: 'Recorded as evidence against this decision' },
+        ],
+      });
+
+      if (result) {
+        toast(
+          `${tenant?.legalName ?? 'Tenancy'} — ${result.package}`,
+          `${result.grantedFree ? 'Granted free of charge. ' : `${money(result.monthlyPriceMinor)} a month. `}` +
+            `${result.includedSeats === null ? 'Unlimited' : result.includedSeats} seats, ${result.storageGb} GB. ` +
+            'The wallet is untouched — this tenancy still funds its own AI spend.',
+          'ok',
         );
         await again();
       }

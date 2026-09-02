@@ -1106,6 +1106,137 @@ export class Platform {
     return updated;
   }
 
+  /**
+   * Move a tenancy to a different package, at whatever price the operator has
+   * agreed — including none.
+   *
+   * ## What this does and does not touch
+   *
+   * It changes the **package**: the seat cap, the storage allowance, whether
+   * the tenancy may export, whether it has API access and an isolated tenancy,
+   * and what the monthly charge will be at the next renewal.
+   *
+   * It does **not** touch the ACU wallet, and that is the load-bearing rule
+   * rather than an omission. The package is what a company is entitled to do;
+   * the wallet is money it has put in to spend on AI. An operator handing a
+   * customer a better package free of charge is a commercial decision they are
+   * entitled to make. An operator crediting a customer's wallet is spending
+   * money against providers who invoice this platform for it, and it would
+   * arrive in the burn figures as revenue nobody received.
+   *
+   * So a free grant makes the platform more useful and costs the operator
+   * nothing per request, and the customer still tops up their own wallet
+   * before an engine will run. `chargeSubscription` reads the package at
+   * renewal, so `grantFree` also decides whether the next monthly charge is
+   * raised at all.
+   *
+   * ## Why a downgrade can be refused
+   *
+   * Seats already assigned may exceed the smaller package's cap. Moving anyway
+   * would leave a tenancy silently over its limit — every existing identity
+   * still working, and the next assignment refused with a message about a cap
+   * nobody knowingly crossed. Refused with the numbers in it instead, so the
+   * operator revokes seats first or picks a different package.
+   */
+  setSubscriptionPackage(input: {
+    tenantId: string;
+    package: PackageTier;
+    reason: string;
+    /** The operator who decided. */
+    decidedBy: string;
+    /**
+     * True where the operator is giving this package away — no monthly charge
+     * is raised for it at renewal. Recorded on the event either way, because
+     * "was this paid for" is the question a revenue reconciliation asks.
+     */
+    grantFree: boolean;
+  }): Subscription {
+    if (!input.reason.trim()) {
+      throw new DomainError('SUBSCRIPTION_REASON_REQUIRED', 'Changing a package requires a reason');
+    }
+
+    const subscription = this.subscription(input.tenantId);
+    if (subscription.package === input.package && !input.grantFree) return subscription;
+
+    const target = PACKAGES[input.package];
+    const assigned = subscription.assignedIdentities.length;
+    // `null` is unlimited, which can never be exceeded.
+    if (target.includedSeats !== null && assigned > target.includedSeats) {
+      throw new DomainError(
+        'PACKAGE_SEATS_EXCEEDED',
+        `${assigned} identities are assigned and the ${target.label} package includes ${target.includedSeats}. ` +
+          'Revoke seats first, or choose a package that holds them — moving anyway would leave this tenancy over ' +
+          'its cap with every existing identity still working and the next assignment refused.',
+      );
+    }
+
+    // Only the package moves. `tier` is a different vocabulary —
+    // `SubscriptionTier` has TEAM, BUSINESS and SOVEREIGN where `PackageTier`
+    // has CORE_PROJECT and PROFESSIONAL_DELIVERY — so assigning one to the
+    // other would write a value that is not a member of the type, and the
+    // seat and price lookups read `package` anyway.
+    const updated: Subscription = { ...subscription, package: input.package };
+    this.#subscriptions.set(input.tenantId, updated);
+
+    const evidenceId = ulid();
+    const projectId = `${input.tenantId}-governance`;
+    const decidedAt = new Date().toISOString();
+
+    this.ledger.commit({
+      tenantId: input.tenantId,
+      projectId,
+      actor: { refType: 'User', refId: input.decidedBy },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'EVIDENCE_REGISTERED',
+      entity: { refType: 'EvidenceItem', refId: evidenceId },
+      nextState: {
+        id: evidenceId,
+        type: 'SUBSCRIPTION_PACKAGE_AUTHORITY',
+        hash: hashEvidence(
+          JSON.stringify({
+            tenantId: input.tenantId,
+            from: subscription.package,
+            to: input.package,
+            grantFree: input.grantFree,
+            decidedAt,
+          }),
+        ),
+        description:
+          `Package ${subscription.package} → ${input.package}` +
+          `${input.grantFree ? ', granted free of charge' : ''}: ${input.reason}`,
+        linkedEntities: [],
+        capturedAt: decidedAt,
+        capturedBy: input.decidedBy,
+      },
+    });
+
+    this.ledger.commit({
+      tenantId: input.tenantId,
+      projectId,
+      actor: { refType: 'User', refId: input.decidedBy },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'SUBSCRIPTION_PACKAGE_CHANGED',
+      entity: { refType: 'Subscription', refId: updated.id },
+      nextState: {
+        ...updated,
+        previousPackage: subscription.package,
+        packageChangedAt: decidedAt,
+        packageChangedBy: input.decidedBy,
+        packageReason: input.reason,
+        grantedFree: input.grantFree,
+        // The figure that would otherwise have to be reconstructed from the
+        // price list at whatever version it was on the day.
+        monthlyPriceMinor: input.grantFree ? 0 : target.monthlyPriceMinor,
+        listPriceMinor: target.monthlyPriceMinor,
+      },
+      evidenceRefs: [{ refType: 'EvidenceItem', refId: evidenceId }],
+    });
+
+    return updated;
+  }
+
   // --- Private modules -------------------------------------------------------
 
   /**

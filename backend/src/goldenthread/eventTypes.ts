@@ -125,6 +125,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // period simply ended. Reusing SUBSCRIPTION_STATUS_CHANGED would put a
   // routine monthly tick into the evidenced record of decisions somebody made
   // about an account, and would need evidence that does not exist for it.
+  // Moving a tenancy between packages, including a free grant.
+  //
+  // Evidence is required for the same reason a status change needs it, and
+  // more so for the free case: the operator is handing a named company
+  // capability it is not paying for, and "who decided, when, and on what
+  // basis" is the first question an auditor asks about a discount. A grant
+  // with no stated reason is indistinguishable from a mistake.
+  def('SUBSCRIPTION_PACKAGE_CHANGED', 'Subscription', 'UPDATE', 'GOVERNANCE', { requiresEvidence: true }),
   def('SUBSCRIPTION_RENEWAL_ADVANCED', 'Subscription', 'UPDATE', 'GOVERNANCE'),
   def('SUBSCRIPTION_CHARGE_RAISED', 'SubscriptionCharge', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('SUBSCRIPTION_CHARGE_SETTLED', 'SubscriptionCharge', 'UPDATE', 'GOVERNANCE'),

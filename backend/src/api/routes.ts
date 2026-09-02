@@ -43,7 +43,7 @@ import { centreCatalogue, commandCentre, type CentreFunctionId } from '../comman
 import { grantableScopes, issueKey, keyRegister, revokeKey } from '../developer/keys.ts';
 import { subscribe, subscriptionRegister, unsubscribe, webhookPosition } from '../developer/webhooks.ts';
 import type { ACUCaps } from '../billing/acu.ts';
-import { ACU_BUNDLES, PACKAGES, SEATS } from '../billing/seats.ts';
+import { ACU_BUNDLES, PACKAGES, SEATS, type PackageTier } from '../billing/seats.ts';
 import { seatEconomics, TIERS, type SubscriptionTier } from '../billing/subscription.ts';
 import { config, demonstrationEnabled, isProduction } from '../config.ts';
 import * as consistency from '../domain/consistency.ts';
@@ -1329,6 +1329,97 @@ export const ROUTES: Route[] = [
           updated.status === 'ACTIVE'
             ? 'Writes, AI execution, top-ups and export are permitted.'
             : 'The record is read-only. No writes, no AI execution, no top-ups and no export until reactivated.',
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:tenantId/package',
+    description: 'Move a tenancy to another package, free of charge if the operator says so (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['package', 'reason'],
+      properties: {
+        // The package vocabulary, which is deliberately not the subscription
+        // tier vocabulary — `PackageTier` and `SubscriptionTier` are
+        // different sets and conflating them is how a package change would
+        // silently rewrite a tenancy's tier to a value that is not one.
+        package: { type: 'string', enum: ['FREE_TRIAL', 'SOLO', 'CORE_PROJECT', 'PROFESSIONAL_DELIVERY', 'ENTERPRISE'] },
+        // Required, and recorded as evidence. An operator handing a named
+        // company a package it is not paying for is a commercial decision, and
+        // a record of one with no stated basis is indistinguishable from a
+        // mistake when somebody reviews the discount list a year later.
+        reason: { type: 'string', minLength: 3 },
+        /**
+         * Whether this package is being given away.
+         *
+         * Explicit rather than inferred from the price, because "free" is a
+         * decision and £0 is a consequence. Default false: a package change
+         * that nobody said was free is a package change the customer pays for
+         * at renewal, which is the safer way round to be wrong.
+         */
+        grantFree: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      // Operator-only, and there is no second path. A tenant administrator
+      // upgrading their own package free of charge is the same class of
+      // escalation as granting themselves a module, and is refused in the same
+      // place for the same reason.
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may change a package', 'PLATFORM_ADMIN_REQUIRED');
+      }
+
+      const input = body<{ package: PackageTier; reason: string; grantFree?: boolean }>(ctx);
+      const tenantId = ctx.params.tenantId!;
+      const before = platform.subscription(tenantId);
+      // Read before and after so the response can state what actually moved,
+      // and so the wallet figure below is this tenancy's own rather than a
+      // number this route invented.
+      const walletBefore = platform.wallet(tenantId).snapshot().balanceMinor;
+
+      const updated = platform.setSubscriptionPackage({
+        tenantId,
+        package: input.package,
+        reason: input.reason,
+        decidedBy: actor.actorId,
+        grantFree: input.grantFree === true,
+      });
+
+      const definition = PACKAGES[updated.package];
+      return {
+        tenantId,
+        previousPackage: before.package,
+        package: updated.package,
+        grantedFree: input.grantFree === true,
+        monthlyPriceMinor: input.grantFree === true ? 0 : definition.monthlyPriceMinor,
+        listPriceMinor: definition.monthlyPriceMinor,
+        // `null` is unlimited, and is returned as null rather than as a
+        // number this route invented.
+        includedSeats: definition.includedSeats,
+        assignedIdentities: updated.assignedIdentities.length,
+        storageGb: definition.storageGb,
+        export: definition.export,
+        apiAccess: definition.apiAccess,
+        /**
+         * Stated back on every response, whether or not the package was free.
+         *
+         * The package is what the company may do; the wallet is money it has
+         * put in to spend on AI. Changing one has never changed the other and
+         * must not start to — a credited wallet is spend against providers who
+         * invoice this platform for it. An operator who has just given a
+         * customer a package away should see, in the same response, that the
+         * customer still has to fund their own account.
+         */
+        wallet: {
+          balanceMinor: walletBefore,
+          unchanged: platform.wallet(tenantId).snapshot().balanceMinor === walletBefore,
+          note:
+            'A package grant does not credit the wallet and never has. This tenancy funds its own AI spend by ' +
+            'topping up, and no engine will run for it on an empty balance.',
+        },
       };
     },
   },
