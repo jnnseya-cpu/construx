@@ -14514,3 +14514,63 @@ losing column is marketing, so three were added.
 
 The appendix now points at `docs/LAUNCH_AUDIT.md`, so the document that makes the
 claims and the document that attacked them are linked in both directions.
+
+---
+
+## Charts on the screens that had data and no picture
+
+Five screens gained a chart, and each was chosen because it answers a question
+the table beside it does not.
+
+- **Risk** — the three contingency positions as bars (expected, P80, worst case)
+  and the top drivers as horizontal bars. The point of the first is the *gap*
+  between P80 and worst case, which is the part nobody has priced and which
+  three numbers in a row do not show.
+- **Pipeline** — bid decisions as a donut. Deliberately **not** a funnel:
+  `byStage` is `{BID, NO_BID}`, two outcomes of one decision rather than stages
+  an opportunity passes through, and a narrowing funnel would draw a sequence
+  that does not exist.
+- **Billing** — billed spend by module as a donut, with the footnote naming it
+  as billed rather than provider cost, since the difference is the platform's
+  margin and has its own column below.
+- **Handover** — requirement completeness as a gauge, by weight rather than
+  count. On the flagship project it renders **nothing**, because `weightTotal`
+  is zero: a gauge at 0 of 0 is a dial pointing at nothing, and the existing
+  "—" is the honest answer.
+- **Construction** — stages passed as a gauge, stating that a stage not yet
+  reached counts the same as one that failed.
+
+### A chart-kit defect the screenshot found
+
+Horizontal bars clipped any label wider than the 168px gutter — drawn at a
+negative x and cut off by the viewBox edge, which loses the *beginning* of the
+label, the part that identifies the row. Long labels are exactly why anybody
+reaches for horizontal bars, so this was broken for its main use.
+
+`fitLabel` now cuts the label to its gutter and puts the whole string in a
+`<title>`, so nothing is lost to a hover or a screen reader. Four tests cover
+it, and reverting the fix fails three of them.
+
+### Four options that were being silently dropped
+
+Found by checking every option passed against the kit's actual signatures rather
+than by anything failing:
+
+- **`kpiCard` takes `sub`, not `detail`.** Seven KPI cards across Security, Your
+  account with us and Golden Thread were rendering with no explanatory line at
+  all. Nothing errored; the text simply never appeared.
+- **`gauge` takes `footnote`, not `caption`.** Three gauges the same.
+- **`labelKey` / `valueKey` are not options anywhere** — `barChart` reads
+  `row.label` and `row.value` directly. Six ignored props removed.
+
+All of them rendered without a console error, which is why a browser walk that
+only counts errors is not a check. Reading the page is.
+
+### Two chart libraries, and why both remain
+
+`frontend/lib/chart.js` (8 types, used by 8 screens) predates
+`frontend/lib/charts.js` (15 types). The second is a superset and is what new
+work uses. The first is **not being removed**: eight screens depend on it, their
+signatures differ (`bars` versus `data`), and rewriting working screens to change
+which module draws the same picture is the refactor rule 3 exists to prevent.
+Recorded here rather than left for somebody to discover.

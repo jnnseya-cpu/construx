@@ -542,13 +542,13 @@ function protectionView(protection) {
       ${kpiCard({
         label: 'Overall standing',
         value: protection.standing,
-        detail: protection.standing === 'ADEQUATE' ? 'Both legs in place' : 'A leg is missing or failing',
+        sub: protection.standing === 'ADEQUATE' ? 'Both legs in place' : 'A leg is missing or failing',
         tone: protection.standing === 'ADEQUATE' ? 'ok' : 'bad',
       })}
       ${kpiCard({
         label: 'Evidence at rest',
         value: rest.enabled ? rest.cipher : 'Not encrypted',
-        detail: rest.enabled ? `Key version ${rest.keyVersion}, from ${rest.keySource.toLowerCase()}` : 'No master key configured',
+        sub: rest.enabled ? `Key version ${rest.keyVersion}, from ${rest.keySource.toLowerCase()}` : 'No master key configured',
         tone: rest.enabled ? 'ok' : 'bad',
       })}
       ${gauge({
@@ -556,7 +556,7 @@ function protectionView(protection) {
         value: findings.filter((finding) => finding.severity === 'CRITICAL').length,
         max: Math.max(3, findings.length),
         target: 0,
-        caption: flight.summary,
+        footnote: flight.summary,
       })}
     </div>
 
@@ -586,8 +586,6 @@ function protectionView(protection) {
       ${barChart({
         title: 'Findings by severity',
         data: counts,
-        valueKey: 'value',
-        labelKey: 'label',
       })}
 
       ${table({

@@ -2,6 +2,7 @@ import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { today as todayIso } from '../lib/enums.js';
 import { badge, date, html, humanise, positionReport, raw, render, statusTone, table, toast } from '../lib/ui.js';
+import { gauge } from '../lib/charts.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -367,6 +368,21 @@ export async function construction(root) {
             ? ''
             : ` ${quality.conformancePercent}% of stages have passed.`}
         </p>
+        ${
+          quality && (quality.stagesTotal ?? 0) > 0
+            ? html`<div style="padding:4px 17px 0">
+                ${gauge({
+                  title: 'Stages passed',
+                  value: quality.stagesPassed ?? 0,
+                  max: quality.stagesTotal,
+                  format: (value) => `${value} of ${quality.stagesTotal}`,
+                  footnote:
+                    'A stage that has not been reached counts the same as one that failed, because neither has been ' +
+                    'passed. This rises as the work is inspected, not as it is built.',
+                })}
+              </div>`
+            : ''
+        }
         ${table({
           headers: ['Plan', 'Title', 'Discipline', 'Spec', 'Stages', 'Hold points', 'Agreed', 'Status'],
           align: ['', '', '', '', 'num', 'num', '', ''],

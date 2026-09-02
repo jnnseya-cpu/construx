@@ -655,3 +655,41 @@ describe('the kit as a whole', () => {
     assert.equal(new Set(CHART_TYPES).size, CHART_TYPES.length);
   });
 });
+
+describe('horizontal bars, and the labels they exist for', () => {
+  /**
+   * The bug this block was written against: a risk title, a package name or a
+   * supplier name is exactly why somebody reaches for horizontal bars, and a
+   * label wider than the gutter was drawn at a negative x and clipped by the
+   * viewBox edge — losing the *beginning* of the label, which is the part that
+   * identifies the row.
+   */
+  const longRows = [
+    { label: 'Unforeseen ground conditions in zone 3 requiring additional excavation', value: 124_500 },
+    { label: 'Short one', value: 40_000 },
+  ];
+
+  it('keeps every label inside the drawing', () => {
+    const markup = svg(barChart({ data: longRows, horizontal: true, title: 'Drivers' }));
+    for (const x of attrs(markup, 'x')) {
+      assert.ok(Number(x) >= 0, `a label or mark was placed at x=${x}, outside the viewBox`);
+    }
+  });
+
+  it('truncates a label too long for its gutter rather than clipping it', () => {
+    const markup = svg(barChart({ data: longRows, horizontal: true, title: 'Drivers' }));
+    assert.match(markup, /…/, 'a label longer than the gutter should be visibly truncated');
+  });
+
+  it('keeps the whole label available, so nothing is actually lost', () => {
+    const markup = svg(barChart({ data: longRows, horizontal: true, title: 'Drivers' }));
+    // The full text survives in a <title>, which is what a hover and a screen
+    // reader both read.
+    assert.match(markup, /<title>Unforeseen ground conditions in zone 3 requiring additional excavation<\/title>/);
+  });
+
+  it('leaves a short label alone', () => {
+    const markup = svg(barChart({ data: longRows, horizontal: true, title: 'Drivers' }));
+    assert.match(markup, />Short one</, 'a label that fits must not be truncated');
+  });
+});

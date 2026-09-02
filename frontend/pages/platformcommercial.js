@@ -118,13 +118,13 @@ function positionView(position) {
       ${kpiCard({
         label: 'Package',
         value: position.expansion.tier,
-        detail: position.expansion.largerPackageExists ? 'A larger package exists' : 'The largest package there is',
+        sub: position.expansion.largerPackageExists ? 'A larger package exists' : 'The largest package there is',
         tone: 'neutral',
       })}
       ${kpiCard({
         label: 'Engagement',
         value: engagement.band.replace(/_/g, ' '),
-        detail:
+        sub:
           engagement.decay === null
             ? 'Not enough history to read a change'
             : `${Math.round(Math.abs(engagement.decay) * 100)}% ${engagement.decay > 0 ? 'down' : 'up'} on the period before`,
@@ -134,7 +134,7 @@ function positionView(position) {
         label: 'Days with work on them',
         value: engagement.window.activeDays,
         max: engagement.window.periodDays,
-        caption: `Work happened on ${engagement.window.activeDays} of the last ${engagement.window.periodDays} days.`,
+        footnote: `Work happened on ${engagement.window.activeDays} of the last ${engagement.window.periodDays} days.`,
       })}
     </div>
 
@@ -161,8 +161,6 @@ function positionView(position) {
           { label: 'Previous', value: engagement.window.prior },
           { label: 'Latest', value: engagement.window.recent },
         ],
-        labelKey: 'label',
-        valueKey: 'value',
       })}
 
       <h3>What was measured</h3>
@@ -194,19 +192,19 @@ function revenueView(revenue) {
       ${kpiCard({
         label: 'Fees settled',
         value: money(position.earnedMinor, position.currency),
-        detail: `${position.settlements.settled} settlement${position.settlements.settled === 1 ? '' : 's'}`,
+        sub: `${position.settlements.settled} settlement${position.settlements.settled === 1 ? '' : 's'}`,
         tone: 'ok',
       })}
       ${kpiCard({
         label: 'Value carried',
         value: money(position.facilitatedMinor, position.currency),
-        detail: 'Money the platform took in, held and paid out',
+        sub: 'Money the platform took in, held and paid out',
         tone: 'neutral',
       })}
       ${kpiCard({
         label: 'Take rate',
         value: position.takeRate === null ? '—' : `${(position.takeRate * 100).toFixed(3)}%`,
-        detail: position.takeRate === null ? 'Nothing carried yet' : 'Fees as a share of value carried',
+        sub: position.takeRate === null ? 'Nothing carried yet' : 'Fees as a share of value carried',
         tone: 'info',
       })}
     </div>

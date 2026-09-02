@@ -1,6 +1,7 @@
 import { api } from '../lib/api.js';
 import { command } from '../lib/command.js';
 import { badge, exact, html, humanise, money, pct, positionReport, raw, render, table, toast, track } from '../lib/ui.js';
+import { donutChart } from '../lib/charts.js';
 import { can, refreshContext, state } from '../app.js';
 
 /**
@@ -172,6 +173,22 @@ export async function billing(root) {
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
           <h2 style="padding:15px 17px 0">Where the spend went</h2>
+          ${
+            totalBilled > 0
+              ? html`<div style="padding:4px 17px 0">
+                  ${donutChart({
+                    title: 'Billed spend by module',
+                    data: attribution.attribution
+                      .filter((a) => a.billedMinor > 0)
+                      .map((a) => ({ label: humanise(a.module), value: a.billedMinor / 100 })),
+                    format: (value) => money(Math.round(value * 100)),
+                    footnote:
+                      'Billed, not provider cost. The difference between the two is this platform’s margin and is ' +
+                      'shown as its own column in the table below.',
+                  })}
+                </div>`
+              : ''
+          }
           ${table({
             headers: ['Module', 'Ran on', 'Runs', 'Provider cost', 'Billed', 'Share'],
             align: ['', '', 'num', 'num', 'num', ''],

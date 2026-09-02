@@ -496,13 +496,13 @@ function graphPanel(graph) {
         ${kpiCard({
           label: 'Records',
           value: String(graph.counts.nodes),
-          detail: `${graph.counts.orphans} connected to nothing`,
+          sub: `${graph.counts.orphans} connected to nothing`,
           tone: 'neutral',
         })}
         ${kpiCard({
           label: 'Connections',
           value: String(graph.counts.edges),
-          detail: `${graph.counts.withheld} records not readable by you`,
+          sub: `${graph.counts.withheld} records not readable by you`,
           tone: 'neutral',
         })}
         ${gauge({
@@ -510,7 +510,7 @@ function graphPanel(graph) {
           value: declared,
           max: 100,
           target: 20,
-          caption:
+          footnote:
             'Evidence and AI inputs somebody committed to at the time, as a share of all connections. The rest were ' +
             'inferred by noticing one record’s id inside another — real, but weaker.',
         })}
@@ -519,8 +519,6 @@ function graphPanel(graph) {
       ${donutChart({
         title: 'Connections by how they were established',
         data: graph.counts.byKind.filter((entry) => entry.edges > 0),
-        labelKey: 'kind',
-        valueKey: 'edges',
       })}
 
       ${table({

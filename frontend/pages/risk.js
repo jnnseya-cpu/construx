@@ -3,6 +3,7 @@ import { command, commandBar, confirmCost } from '../lib/command.js';
 import { OBSERVATION_TYPE, RISK_CATEGORY } from '../lib/enums.js';
 import { badge, date, days, drillable, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
+import { barChart } from '../lib/charts.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -92,6 +93,41 @@ export async function risk(root) {
           <div class="metric-sub">work must not start before acknowledgement</div>
         </div>
       </div>
+
+      ${
+        contingency
+          ? html`<div class="card" style="margin-bottom:14px">
+              <h2>What the contingency is being asked to cover</h2>
+              <p class="muted">
+                The three figures are not alternatives. The expected cost is what the risks are worth on average,
+                the P80 is the figure to hold, and the worst case is what happens if every open risk lands. The
+                gap between the second and the third is the part nobody has priced.
+              </p>
+              ${barChart({
+                title: 'Contingency positions',
+                data: [
+                  { label: 'Expected', value: contingency.expectedMinor / 100 },
+                  { label: 'P80', value: contingency.p80Minor / 100 },
+                  { label: 'Worst case', value: contingency.worstCaseMinor / 100 },
+                ],
+                format: (value) => money(Math.round(value * 100)),
+              })}
+              ${
+                (contingency.topDrivers ?? []).length > 0
+                  ? barChart({
+                      title: 'What drives it, by expected cost',
+                      horizontal: true,
+                      data: contingency.topDrivers.map((driver) => ({
+                        label: driver.title,
+                        value: driver.expectedCostMinor / 100,
+                      })),
+                      format: (value) => money(Math.round(value * 100)),
+                    })
+                  : ''
+              }
+            </div>`
+          : ''
+      }
 
       <div id="risk-insight" style="margin-bottom:14px"></div>
 

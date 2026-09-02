@@ -1,6 +1,7 @@
 import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, table, toast } from '../lib/ui.js';
+import { donutChart } from '../lib/charts.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, openProject, phaseGates, state } from '../app.js';
 
@@ -613,6 +614,29 @@ export async function pipeline(root) {
           <div class="metric-sub">${money(summary.wonValueMinor)} converted to projects.</div>
         </div>
       </div>
+
+      ${
+        Object.keys(summary.byStage ?? {}).length > 0
+          ? html`<div class="card" style="margin-bottom:14px">
+              <h2>Every opportunity that reached a decision</h2>
+              <p class="metric-sub" style="margin-bottom:10px">
+                A split, not a funnel. Bid and no-bid are two outcomes of one decision rather than stages an
+                opportunity passes through, and drawing them as a narrowing funnel would imply a sequence that
+                does not exist.
+              </p>
+              ${donutChart({
+                title: 'Bid decisions',
+                data: Object.entries(summary.byStage).map(([stage, count]) => ({
+                  label: humanise(stage),
+                  value: count,
+                })),
+                footnote:
+                  'A high no-bid share is not a failure. Declining work that does not fit is the discipline this ' +
+                  'screen exists to hold; the observations below say whether it is being held.',
+              })}
+            </div>`
+          : ''
+      }
 
       ${
         discipline.observations.length > 0

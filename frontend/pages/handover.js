@@ -2,6 +2,7 @@ import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { today as todayIso } from '../lib/enums.js';
 import { badge, date, drillable, esc, html, humanise, money, pct, positionReport, raw, render, resolveHtml, shortHash, statusTone, table, toast, track } from '../lib/ui.js';
+import { gauge } from '../lib/charts.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -113,6 +114,23 @@ function stageWorkspace(acceptance, gate) {
         <div class="row"><span class="lbl">Overdue residual items</span><span class="val">${overdue.length}</span></div>
         <div class="row"><span class="lbl">Permitted next command</span><span class="val" style="font-family:inherit">${nextCommand}</span></div>
       </div>
+
+      ${
+        readiness && (readiness.weightTotal ?? 0) > 0
+          ? html`<div style="padding:14px 18px 0">
+              ${gauge({
+                title: 'Requirement completeness',
+                value: readiness.percent ?? 0,
+                max: 100,
+                target: 100,
+                footnote:
+                  `${readiness.weightAccepted} of ${readiness.weightTotal} by weight. Weight, not count — a ` +
+                  'commissioning certificate and a spare parts list are both one item and are not both worth the ' +
+                  'same at handover.',
+              })}
+            </div>`
+          : ''
+      }
 
       <div style="padding:14px 18px 18px">
         ${

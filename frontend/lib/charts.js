@@ -356,6 +356,26 @@ export function barChart({
 }
 
 /** The horizontal variant — for long category names, which is most of them. */
+/**
+ * A category label cut to the gutter it has to live in.
+ *
+ * Horizontal bars are the chart type you reach for *because* the labels are
+ * long — risk titles, package names, supplier names — and a label wider than
+ * the gutter is drawn at a negative x and clipped by the viewBox edge, which
+ * loses the beginning of the word rather than the end. Truncating keeps the
+ * part that identifies the row and puts the whole label in a `<title>`, so it
+ * is still there on hover and for a screen reader.
+ *
+ * 0.55em per character is a deliberate over-estimate for this face at this
+ * size: a budget that is slightly too tight leaves a gap, and one that is too
+ * loose clips again.
+ */
+function fitLabel(label, gutterPx, fontPx = 10.5) {
+  const text = String(label ?? '');
+  const budget = Math.max(4, Math.floor(gutterPx / (fontPx * 0.55)));
+  return text.length <= budget ? text : `${text.slice(0, budget - 1).trimEnd()}…`;
+}
+
 function horizontalBars({ rows, keys, title, desc, format, footnote }) {
   const box = { w: 720, h: Math.max(120, 34 * rows.length + 40) };
   const pad = { top: 12, right: 60, bottom: 26, left: 168 };
@@ -381,7 +401,7 @@ function horizontalBars({ rows, keys, title, desc, format, footnote }) {
       const height = band * 0.64;
       return html`<g>
         <text class="chart-cat" x="${raw(r2(area.x - 10))}" y="${raw(r2(top + height / 2 + 4))}" text-anchor="end">
-          ${row.label}
+          <title>${row.label}</title>${fitLabel(row.label, pad.left - 12)}
         </text>
         <rect
           class="chart-bar"
