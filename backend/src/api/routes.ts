@@ -179,7 +179,7 @@ import { exposure as exposurePage } from '../site/pages.ts';
 import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { ENTITY_ACCESS } from '../identity/entityAccess.ts';
 import { MODULES, isModuleId } from '../identity/modules.ts';
-import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
+import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, revokeToken, shapeMfaResponse, verifyMfaChallenge, verifyToken, type AuthContext } from '../identity/auth.ts';
 import { lockedSubjects } from '../identity/lockout.ts';
 import { renderAndCharge, quoteRender, type RenderableFormat } from '../export/render.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
@@ -1134,6 +1134,59 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (_platform, ctx) => refreshTokens(body<{ refreshToken: string }>(ctx).refreshToken),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/auth/logout',
+    description: 'End this session: revoke the token pair so neither half is accepted again',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (_platform, ctx) => {
+      // There was no server-side logout at all. `revokeToken` existed and no
+      // route called it, so signing out cleared the browser's storage and left
+      // the token valid on the server until it expired.
+      //
+      // That is a real exposure for this product in particular. A site handset
+      // changes hands between operatives and the console is an installed PWA
+      // on it. "I signed out" has to mean the token stops working, not that
+      // one browser stopped presenting it — anybody who had captured it still
+      // held a working session for the rest of its life.
+      //
+      // One revocation ends both halves, and that is a property of
+      // `issueTokens` rather than an assumption made here: the access token and
+      // the refresh token are minted from one `base` object and therefore carry
+      // the same `jti`, which is what `revoked` is keyed on. So this route takes
+      // no refresh token and does not need one — asking for it would imply the
+      // access token alone was not enough, and a client that had already
+      // discarded it would be told, wrongly, that its session was still open.
+      // `identity.test.ts` pins the shared id, because if it ever stopped being
+      // shared this route would silently start leaving refresh tokens alive.
+      //
+      // Authenticated on purpose. A caller with no token has nothing to revoke,
+      // and an unauthenticated revoke endpoint is a denial-of-service
+      // primitive: anybody could end anybody's session by naming a token id.
+      const session = auth(ctx);
+      revokeToken(session.tokenId);
+
+      recordSecurityEvent({
+        kind: 'SESSION_ENDED',
+        reason: 'LOGOUT',
+        method: ctx.method,
+        path: ctx.routeId ?? ctx.path,
+        traceId: ctx.traceId,
+        correlationId: ctx.correlationId,
+        tenantId: session.tenantId,
+        actorId: session.actorId,
+        remote: ctx.remote,
+        status: 200,
+      });
+
+      return {
+        signedOut: true,
+        detail:
+          'This session is over. The access token and the refresh token issued with it share one identifier, so ' +
+          'neither will be accepted again and no new access token can be minted from the pair.',
+      };
+    },
   },
 
   // ------------------------------------------------------------------- admin

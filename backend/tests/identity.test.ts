@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import { evaluateAccess, assertAccess, type AccessAttributes } from '../src/identity/abac.ts';
-import type { AuthContext } from '../src/identity/auth.ts';
+import { issueTokens, refreshTokens, revokeToken, verifyToken, type AuthContext } from '../src/identity/auth.ts';
 import { EVENT_TYPES } from '../src/goldenthread/eventTypes.ts';
 import { ENTITY_ACCESS, classifyEntity } from '../src/identity/entityAccess.ts';
 import { accountLayerFor, PERMISSION_MATRIX, rolesAllow, type Role } from '../src/identity/roles.ts';
@@ -276,5 +276,87 @@ describe('platform operator accounts', () => {
     assert.deepEqual(user.roles, ['PLATFORM_ADMIN']);
     assert.ok(tokens.accessToken.length > 0);
     assert.ok(!scopesForRoles(user.roles).some((scope) => scope.startsWith('field:')));
+  });
+});
+
+describe('signing out actually ends the session', () => {
+  /**
+   * There was no server-side logout. `revokeToken` existed and no route called
+   * it, so the console cleared `localStorage` and navigated away while the
+   * token stayed valid on the server until it expired.
+   *
+   * For this product that is not a theoretical exposure. A site handset changes
+   * hands between operatives and the console is an installed PWA on it. "I
+   * signed out" has to mean the token stops working, not that one browser
+   * stopped presenting it.
+   */
+  it('revokes the presented token, so it is refused afterwards', () => {
+    const pair = issueTokens({
+      actorId: 'usr_logout',
+      tenantId: 'ten_logout',
+      partyId: 'pty_logout',
+      roles: ['PM'],
+      mfaSatisfied: true,
+    });
+
+    const before = verifyToken(pair.accessToken);
+    assert.equal(before.actorId, 'usr_logout');
+
+    revokeToken(before.tokenId);
+
+    assert.throws(() => verifyToken(pair.accessToken), /revoked/i);
+  });
+
+  /**
+   * The property the logout route is built on, pinned here because the route
+   * depends on it and would fail silently if it changed.
+   *
+   * `issueTokens` mints both halves from one `base` object, so they carry the
+   * same `jti` — and `jti` is what the revocation set is keyed on. That is why
+   * `POST /v1/auth/logout` takes no refresh token: revoking the access token
+   * ends the pair.
+   *
+   * If somebody gave the two tokens separate ids, the route would keep
+   * answering 200, the access token would still die, and the refresh token
+   * would quietly stay alive — a logout that leaves the holder able to mint a
+   * fresh session immediately. Nothing else in the suite would notice.
+   */
+  it('mints the pair under one identifier, which is what makes one revocation enough', () => {
+    const pair = issueTokens({
+      actorId: 'usr_pair',
+      tenantId: 'ten_pair',
+      partyId: 'pty_pair',
+      roles: ['PM'],
+      mfaSatisfied: true,
+    });
+
+    const access = verifyToken(pair.accessToken, 'access');
+    const refresh = verifyToken(pair.refreshToken, 'refresh');
+    assert.equal(
+      access.tokenId,
+      refresh.tokenId,
+      'the access and refresh tokens no longer share an id — /v1/auth/logout must revoke both explicitly',
+    );
+
+    // And therefore: one revocation kills both halves.
+    revokeToken(access.tokenId);
+    assert.throws(() => verifyToken(pair.accessToken, 'access'), /revoked/i);
+    assert.throws(() => verifyToken(pair.refreshToken, 'refresh'), /revoked/i);
+  });
+
+  it('refuses to mint a new access token from a revoked refresh token', () => {
+    // The whole point: a logout that leaves the refresh token working is not a
+    // logout, because the holder rotates straight back into a live session.
+    const pair = issueTokens({
+      actorId: 'usr_rotate',
+      tenantId: 'ten_rotate',
+      partyId: 'pty_rotate',
+      roles: ['PM'],
+      mfaSatisfied: true,
+    });
+
+    revokeToken(verifyToken(pair.accessToken).tokenId);
+
+    assert.throws(() => refreshTokens(pair.refreshToken), /revoked/i);
   });
 });

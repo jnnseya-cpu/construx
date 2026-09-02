@@ -630,7 +630,31 @@ export async function signIn(identity) {
   navigate(isOperator() ? 'admin' : 'overview');
 }
 
-export function signOut() {
+/**
+ * End the session — on the server first, then here.
+ *
+ * This used to clear `localStorage` and navigate away, which is not signing
+ * out: the access token stayed valid on the server until it expired, so
+ * anybody who had captured it still held a working session. On a site handset
+ * that changes hands between operatives, "I signed out" has to mean the token
+ * stops working rather than that one browser stopped presenting it.
+ *
+* The local half runs whatever the server says. A logout that fails because
+ * the device is offline, or because the token had already expired, must still
+ * take the identity off this handset — refusing to would leave somebody signed
+ * in *because* the network was down, which is precisely backwards.
+ */
+export async function signOut() {
+  try {
+    // No refresh token is sent, and none is needed: the pair shares one
+    // identifier, so revoking the access token ends both halves.
+    await api.post('/v1/auth/logout', {});
+  } catch {
+    // Offline, expired, or already revoked. Nothing here changes what happens
+    // next, and telling somebody their sign-out "failed" while taking them to
+    // the sign-in screen is a message that describes nothing they can act on.
+  }
+
   session.clear();
   state.session = null;
   state.project = null;
@@ -639,6 +663,23 @@ export function signOut() {
   // token would attribute one person's record to another.
   void outbox.clear();
   navigate('login');
+}
+
+/**
+ * Bind both ways out of a session.
+ *
+ * Two call sites render the shell — once with a skeleton before the project
+ * context loads, once with it — and both bind, because somebody who decides to
+ * sign out during a slow load must not have to wait for the load to finish.
+ */
+function bindSignOut() {
+  const end = () => {
+    if (confirm('Sign out of this account?')) void signOut();
+  };
+  document.getElementById('sign-out')?.addEventListener('click', end);
+  // The chip keeps working, because people have learnt it. It is no longer the
+  // only way, which is what was wrong with it.
+  document.getElementById('user-chip')?.addEventListener('click', end);
 }
 
 /**
@@ -919,13 +960,26 @@ function topbar() {
     </div>
     <div class="spacer"></div>
     ${isOperator() ? html`<span class="phase-tag">OPERATOR</span>` : state.project ? html`<span class="phase-tag">${state.project.phase}</span>` : ''}
-    <button class="user-chip" id="user-chip">
+    <button class="user-chip" id="user-chip" aria-label="Signed in as ${user?.name ?? 'this identity'}. Sign out.">
       <span class="avatar">${
         user?.pictureHash
           ? html`<img src="/v1/users/${user.id}/picture" alt="" width="26" height="26" />`
           : initials(user?.name)
       }</span>
       <span><span class="nm">${user?.name}</span><br><span class="rl">${(user?.roles ?? []).join(', ')}</span></span>
+    </button>
+    <!--
+      A sign-out control that says "Sign out".
+
+      There was none. The only way to end a session was to click the name chip,
+      which is a button with no label, no title and no accessible name, and
+      which most people read as an account badge rather than a control. The
+      words "sign out" appeared nowhere in the console — confirmed by reading
+      the rendered DOM, not the source — so the honest description of the state
+      was that the account could not be signed out.
+    -->
+    <button class="btn ghost sign-out" id="sign-out" type="button" title="Sign out of this account">
+      <span aria-hidden="true">⏻</span> Sign out
     </button>
   </header>`;
 }
@@ -1067,9 +1121,7 @@ async function draw() {
     </div>`,
   );
 
-  document.getElementById('user-chip')?.addEventListener('click', () => {
-    if (confirm('Sign out and choose a different identity?')) signOut();
-  });
+  bindSignOut();
 
   try {
     if (!state.project) await loadContext();
@@ -1081,9 +1133,7 @@ async function draw() {
         <main class="main">${topbar()}<div class="view" id="view"></div></main>
       </div>`,
     );
-    document.getElementById('user-chip')?.addEventListener('click', () => {
-      if (confirm('Sign out and choose a different identity?')) signOut();
-    });
+    bindSignOut();
     // Bound after the second render, which is the one that has the project list
     // to build the picker from. The first render happens before `loadContext`
     // and shows the skeleton.

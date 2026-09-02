@@ -1392,3 +1392,13 @@ input:focus, select:focus, textarea:focus {
     transition: none;
   }
 }
+
+/* The sign-out control.
+
+   Ghost rather than solid: it sits beside the identity chip in the topbar and
+   is not the action anybody came to the console to take. It is styled at all —
+   rather than being a bare link — because for a long time there was no
+   sign-out control of any kind, and the only way out was an unlabelled chip
+   nobody could be expected to guess at. */
+.sign-out { margin-left: 8px; white-space: nowrap; }
+.sign-out span[aria-hidden] { opacity: .7; margin-right: 2px; }

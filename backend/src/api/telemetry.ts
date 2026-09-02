@@ -153,7 +153,16 @@ export type SecurityEventKind =
   /** An administrative endpoint was reached, successfully or not. */
   | 'ADMIN_ACCESS'
   /** A request body or parameters failed schema validation. */
-  | 'VALIDATION_REJECT';
+  | 'VALIDATION_REJECT'
+  /**
+   * A session was deliberately ended and its tokens revoked.
+   *
+   * Not a failure, and recorded for the same reason a successful admin access
+   * is: "when did this identity stop being able to act" is a question an
+   * investigation asks, and an audit trail that only holds refusals cannot
+   * answer it.
+   */
+  | 'SESSION_ENDED';
 
 export type SecurityEvent = {
   timestamp: string;

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import type { Server } from 'node:http';
 import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
+import { rateLimiter } from '../src/api/middleware.ts';
 import { ROUTES } from '../src/api/routes.ts';
 import { POST_PAGES, SITE_PAGES } from '../src/site/index.ts';
 import { issueTokens } from '../src/identity/auth.ts';
@@ -1027,5 +1028,51 @@ describe('the orchestrator probes stay answerable under load', () => {
       if (response.status === 429) limited += 1;
     }
     assert.ok(limited > 0, 'the login surface is no longer rate limited at all');
+  });
+});
+
+describe('logout, over real HTTP', () => {
+  // The probe-exemption suite above deliberately spends the auth bucket, and
+  // this one signs in. Without the reset it fails with a 429 that has nothing
+  // to do with logout — a green suite that went red for a reason no reader
+  // would connect to the test's name.
+  before(() => rateLimiter.reset());
+
+  /**
+   * The console had no way to end a session on the server. This drives the
+   * whole thing through the socket: sign in, confirm the token works, sign
+   * out, confirm both halves are dead.
+   */
+  it('ends the session so neither half of the pair is accepted again', async () => {
+    const login = await call('POST', '/v1/auth/login', { body: { email: platform.user(seed.users.pm!.id).email } });
+    assert.equal(login.status, 201, login.text);
+    const verified = await call('POST', '/v1/auth/mfa/verify', { body: {
+      actorId: login.body.actorId,
+      challengeId: login.body.challengeId,
+      code: login.body.devCode,
+    } });
+    assert.equal(verified.status, 201, verified.text);
+    const { accessToken, refreshToken } = verified.body as { accessToken: string; refreshToken: string };
+
+    const working = await call('GET', '/v1/projects', { token: accessToken });
+    assert.equal(working.status, 200, 'the session should work before signing out');
+
+    const out = await call('POST', '/v1/auth/logout', { body: {}, token: accessToken });
+    assert.equal(out.status, 201, out.text);
+    assert.equal(out.body.signedOut, true);
+
+    const afterAccess = await call('GET', '/v1/projects', { token: accessToken });
+    assert.equal(afterAccess.status, 401, 'the access token still works after signing out');
+
+    // The half that makes it a logout rather than a gesture. A live refresh
+    // token means the holder mints a fresh session immediately.
+    const afterRefresh = await call('POST', '/v1/auth/refresh', { body: { refreshToken } });
+    assert.equal(afterRefresh.status, 401, 'the refresh token still mints a session after signing out');
+    assert.match(afterRefresh.body.detail, /revoked/i);
+  });
+
+  it('cannot be called without a session, so it is not a way to end somebody else’s', async () => {
+    const anonymous = await call('POST', '/v1/auth/logout', { body: {} });
+    assert.equal(anonymous.status, 401, 'an unauthenticated revoke endpoint is a denial-of-service primitive');
   });
 });
