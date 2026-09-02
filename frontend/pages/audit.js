@@ -1,5 +1,6 @@
 import { api, hashFile } from '../lib/api.js';
-import { badge, html, positionReport, raw, render, shortHash, table, time, toast } from '../lib/ui.js';
+import { badge, html, notice, positionReport, raw, render, shortHash, table, time, toast } from '../lib/ui.js';
+import { donutChart, gauge, kpiCard } from '../lib/charts.js';
 import { can, state } from '../app.js';
 
 /**
@@ -13,7 +14,7 @@ import { can, state } from '../app.js';
 
 export async function audit(root) {
   const projectId = state.session.projectId;
-  const [data, timeline, sync, quote, evidence] = await Promise.all([
+  const [data, timeline, sync, quote, evidence, graph, changes] = await Promise.all([
     api.get(`/v1/projects/${projectId}/audit/events`),
     // The same events told as a narrative rather than as rows, and the sync
     // cursor a device pulls from. Both had engines and no screen — the timeline
@@ -29,6 +30,15 @@ export async function audit(root) {
     // hashes describe, and until this screen showed both, that difference was
     // invisible from inside the product.
     api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
+    // The same relationships the lineage walk uses, projected across the whole
+    // project rather than out from one record — which is what answers "what is
+    // everything hanging off" and "what is floating unconnected", neither of
+    // which a walk from a root can see.
+    api.get(`/v1/projects/${projectId}/graph`).catch((error) => ({ error })),
+    // The feed an integrator's own system reads to stay in step. On this screen
+    // it is the honest answer to "what would somebody else see of this", which
+    // is a question about the record and belongs beside it.
+    api.get('/v1/changes?limit=10').catch((error) => ({ error })),
   ]);
   const events = data.events;
 
@@ -261,6 +271,9 @@ export async function audit(root) {
         error: sync?.error,
         sections: [{ key: 'events', label: 'Since the cursor', empty: 'A device pulling now would receive nothing new.' }],
       })}
+
+      ${graphPanel(graph)}
+      ${feedPanel(changes)}
     `,
   );
 
@@ -456,4 +469,121 @@ export async function audit(root) {
     button.disabled = false;
     button.textContent = 'Export audit pack';
   });
+}
+
+/**
+ * The project's knowledge graph, as a shape rather than as a walk.
+ *
+ * The lineage control above answers "what caused this record" from a root. This
+ * answers the questions that are about the record as a whole and that a walk
+ * cannot reach: what everything hangs off, what is floating unconnected, and —
+ * the figure that decides whether any of it is worth relying on — how much of
+ * the graph somebody actually declared rather than the platform inferring it
+ * from a field that happened to contain an id.
+ */
+function graphPanel(graph) {
+  if (!graph || graph.error) {
+    return notice('The project graph could not be read with this identity.', 'warn');
+  }
+
+  const declared = Math.round(graph.declaredShare * 100);
+
+  return html`
+    <section class="card">
+      <h2>How this project is connected</h2>
+
+      <div class="chart-row">
+        ${kpiCard({
+          label: 'Records',
+          value: String(graph.counts.nodes),
+          detail: `${graph.counts.orphans} connected to nothing`,
+          tone: 'neutral',
+        })}
+        ${kpiCard({
+          label: 'Connections',
+          value: String(graph.counts.edges),
+          detail: `${graph.counts.withheld} records not readable by you`,
+          tone: 'neutral',
+        })}
+        ${gauge({
+          label: 'Declared, not inferred',
+          value: declared,
+          max: 100,
+          target: 20,
+          caption:
+            'Evidence and AI inputs somebody committed to at the time, as a share of all connections. The rest were ' +
+            'inferred by noticing one record’s id inside another — real, but weaker.',
+        })}
+      </div>
+
+      ${donutChart({
+        title: 'Connections by how they were established',
+        data: graph.counts.byKind.filter((entry) => entry.edges > 0),
+        labelKey: 'kind',
+        valueKey: 'edges',
+      })}
+
+      ${table({
+        headers: ['Record', 'Connections'],
+        rows: graph.hubs.map((hub) => [hub.label ?? `${hub.ref.refType} ${String(hub.ref.refId).slice(-8)}`, String(hub.edges)]),
+        empty: 'Nothing in this project is connected to anything else yet.',
+        emptyDetail: 'Connections appear as evidence is declared and records begin to name each other.',
+      })}
+
+      ${graph.findings.map((finding) => notice(finding, 'info'))}
+    </section>
+  `;
+}
+
+/**
+ * What an integrator's own system would see of this project.
+ *
+ * Shown here because "what does somebody else receive of our record" is a
+ * question about the record, and because the feed's contract — ordered, at
+ * least once, no state, access checked per entry — is a set of promises the
+ * customer should be able to read rather than discover.
+ */
+function feedPanel(changes) {
+  if (!changes || changes.error) {
+    return notice('The change feed could not be read with this identity.', 'warn');
+  }
+
+  return html`
+    <section class="card">
+      <h2>What an integration would receive</h2>
+      <p class="muted">
+        The feed a connected system reads to stay in step with this record. Pull, not push: a webhook that failed
+        while their server was down is a hole nobody can fill, and this is how it gets filled without anybody being
+        on call.
+      </p>
+
+      ${table({
+        headers: ['When', 'Event', 'Record', 'Idempotency key'],
+        rows: changes.entries.map((entry) => [
+          time(entry.occurredAt),
+          entry.eventType,
+          `${entry.entity.refType} ${String(entry.entity.refId).slice(-8)}`,
+          shortHash(entry.idempotencyKey),
+        ]),
+        empty: 'Nothing has changed in this tenancy yet.',
+        emptyDetail: 'Every committed event appears here, in the order it was committed.',
+      })}
+
+      ${changes.withheld > 0
+        ? notice(
+            `${changes.withheld} changes in this window are not readable by your identity and were left out of the ` +
+              'page. They are counted rather than hidden, so a count that does not reconcile has a visible reason.',
+            'info',
+          )
+        : ''}
+
+      <h3>What the feed promises</h3>
+      <ul>${raw(changes.contract.map((line) => `<li>${escapeFeedText(line)}</li>`).join(''))}</ul>
+    </section>
+  `;
+}
+
+/** Text into an HTML-safe string, for the list items built as raw markup. */
+function escapeFeedText(value) {
+  return String(value).replace(/[&<>"]/g, (character) => `&#${character.charCodeAt(0)};`);
 }

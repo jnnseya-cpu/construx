@@ -177,6 +177,7 @@ import { documentVerificationPage, unsubscribePage, verificationPage } from '../
 import { exposurePosition, readExposureInput } from '../site/exposure.ts';
 import { exposure as exposurePage } from '../site/pages.ts';
 import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
+import { ENTITY_ACCESS } from '../identity/entityAccess.ts';
 import { MODULES, isModuleId } from '../identity/modules.ts';
 import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, shapeMfaResponse, verifyMfaChallenge, type AuthContext } from '../identity/auth.ts';
 import { lockedSubjects } from '../identity/lockout.ts';
@@ -208,6 +209,10 @@ import type { Platform } from '../platform.ts';
 import { parseVerification, VERIFICATION_SCHEME, type ExportAudience, type ExportFormat } from '../export/exporter.ts';
 import { posture as envelopePosture, verifyTag } from '../evidence/envelope.ts';
 import { transportPosture } from '../ops/transport.ts';
+import { changePage } from '../datalayer/changefeed.ts';
+import { projectGraph } from '../datalayer/graph.ts';
+import { embeddingProvider } from '../datalayer/embedding.ts';
+import { passagesFrom, retrieve } from '../datalayer/vectorindex.ts';
 import { CONSENT_SCOPE } from '../commercial/benchmark.ts';
 import { commercialPosition } from '../commercial/position.ts';
 import {
@@ -3995,6 +4000,94 @@ export const ROUTES: Route[] = [
         nextState: consent,
       });
       return { consent };
+    },
+  },
+
+  {
+    method: 'GET',
+    pattern: '/v1/changes',
+    description: 'An ordered, resumable feed of what changed in this tenancy, with idempotency keys',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      // Any authenticated identity. There is no capability area for "the feed"
+      // — what a caller may see is decided per entry, on the entity, by the
+      // same check every other read uses. Gating the feed itself would be a
+      // second permission model beside the one that already works.
+      const actor = auth(ctx);
+      return changePage(platform.ledger, actor, {
+        ...(ctx.query.get('after') ? { after: ctx.query.get('after') as string } : {}),
+        ...(ctx.query.get('projectId') ? { projectId: ctx.query.get('projectId') as string } : {}),
+        ...(ctx.query.get('limit') ? { limit: Number(ctx.query.get('limit')) } : {}),
+        authzOptions: AUTHZ_OPTIONS,
+      });
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/graph',
+    description: 'The project’s knowledge graph: typed edges, hubs, orphans, and how much of it was declared',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      return projectGraph(platform.ledger, actor, ctx.params.projectId!, {
+        authzOptions: AUTHZ_OPTIONS,
+        ...(ctx.query.get('hubs') ? { hubs: Number(ctx.query.get('hubs')) } : {}),
+      });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/semantic-search',
+    description: 'Search the record by meaning, or state plainly why it cannot',
+    readOnly: true,
+    schema: {
+      type: 'object',
+      required: ['query'],
+      properties: { query: stringField, limit: { type: 'number' } },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      const projectId = ctx.params.projectId!;
+      const { query, limit } = body<{ query: string; limit?: number }>(ctx);
+
+      // Passages are gathered only from records this identity may read, using
+      // the same per-entity check the feed and the graph use. Embedding
+      // everything and filtering the hits afterwards would send another
+      // customer's prose to a provider before deciding the caller could not
+      // see it.
+      const passages = [];
+      for (const event of platform.ledger.events({ projectId, tenantId: actor.tenantId })) {
+        const classification = ENTITY_ACCESS[event.entity.refType];
+        if (classification) {
+          const decision = evaluateAccess(
+            actor,
+            classification.area,
+            'R',
+            { tenantId: actor.tenantId, projectId, dataSensitivity: classification.sensitivity },
+            AUTHZ_OPTIONS,
+          );
+          if (decision.decision !== 'ALLOW') continue;
+        }
+        const record = platform.ledger.get(event.entity);
+        if (!record) continue;
+        passages.push(...passagesFrom(event.entity, projectId, record.state as Record<string, unknown>));
+      }
+
+      // Deduplicated: an entity that changed forty times contributes its
+      // current prose once, not forty times weighted forty-fold.
+      const unique = new Map(passages.map((passage) => [`${passage.ref.refType}:${passage.ref.refId}:${passage.field}`, passage]));
+
+      return retrieve({
+        query,
+        passages: [...unique.values()],
+        ...(limit ? { limit } : {}),
+        // No provider is configured here, and that is the honest state: the
+        // orchestrator routes reasoning, not embeddings, and inventing vectors
+        // to make this endpoint answer would be the exact failure the module
+        // exists to refuse. It returns a stated refusal until one exists.
+        ...(embeddingProvider() ? { provider: embeddingProvider()! } : {}),
+      });
     },
   },
 

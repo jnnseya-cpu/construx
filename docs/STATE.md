@@ -14344,3 +14344,103 @@ customer names what they pay for and do not use.
 
 25 mutants across all four files, all killed after the two defects above were
 fixed. 5,262 tests pass.
+
+---
+
+## The data layer: change feed, projected graph, and retrieval that refuses
+
+Three things in `backend/src/datalayer/`, and one of them is mostly a refusal.
+
+### The change feed — `changefeed.ts`
+
+`GET /v1/changes`. Ordered, resumable, at least once, with an idempotency key on
+every entry.
+
+Not the notification outbox (push to a person) and not the webhook register
+(push to a system). **Pull** is what an integrator actually needs: a webhook that
+failed while their server was down is a hole nobody can fill, and asking a
+customer to reconcile from a dashboard is asking them to write this file
+themselves.
+
+- **Ordered by `(timestamp, eventId)`** — the ledger's own total order. Mutation
+  testing showed why the id tiebreak is load-bearing: a command writes several
+  events in one millisecond, and a cursor comparing timestamps alone resumes
+  past all of them. A consumer would never learn they existed.
+- **At least once, said out loud.** Read a page, crash before storing the
+  cursor, read again, and you see it twice. That is inherent to a pull feed and
+  cannot be engineered away, so the contract names it rather than claiming
+  exactly-once — a promise a customer would design against and be burnt by.
+- **No entity state.** Each entry says what changed and where to read it. A
+  snapshot in the feed is stale on arrival, and streaming state past the
+  per-entity check is how a feed becomes the widest hole in the platform.
+- **Access per entry, not once at the feed**, using the same fallback `lineage`
+  uses so the two cannot disagree about the same record. Withheld entries are
+  counted, so a count that does not reconcile has a visible reason.
+- **A malformed cursor is refused**, never treated as "start from the
+  beginning" — a consumer silently sent back to the start reprocesses its whole
+  history and, unless their idempotency is perfect, acts on all of it again.
+
+### The projected graph — `graph.ts`
+
+`GET /v1/projects/:projectId/graph`. The same typed edges `lineage.ts` walks,
+projected across a whole project instead of outward from one record — which is
+what answers "what is everything hanging off" and "what is floating
+unconnected", neither of which a walk from a root can see.
+
+`buildIdIndex`, `referencesIn` and `labelOf` are **imported from lineage**, not
+reimplemented. Two derivations of "what caused this" would disagree the first
+time either was touched, and on a graph that means the platform giving two
+answers to one question. Still no graph store, for lineage's reason.
+
+**`declaredShare` is the number that matters**: the proportion of edges somebody
+declared (evidence, AI inputs) rather than the platform inferring from a field
+that happened to contain an id. A project at 5% declared has a graph assembled
+by pattern matching, and arguing a dispute from it would be a mistake. Presenting
+inferred and declared edges as the same line is the whole problem with knowledge
+graphs nobody can audit.
+
+### Retrieval — `vectorindex.ts` and `embedding.ts`
+
+`POST /v1/projects/:projectId/semantic-search`, and today it **refuses**.
+
+A vector index always returns neighbours. There is no such thing as an empty
+result unless something refuses to produce one — so the refusals are the design:
+
+- **No embeddings, no retrieval.** It never falls back to keyword matching
+  dressed as semantic search. A cheaper answer wearing the expensive one's
+  clothes is the worst outcome available, because nobody can tell which they got.
+- **Below `MINIMUM_SIMILARITY`, nothing is returned.** That floor is what turns
+  "here are the four closest things in the corpus" into "there is nothing here
+  about that" — a true and useful answer an unfiltered index can never give.
+- **Every passage keeps its record.** A retrieved sentence with no `refType`/
+  `refId` is unverifiable, which is what this platform exists not to produce.
+- **Retrieval is not an answer.** Passages come back as they stand. A summary of
+  retrieved passages is a new claim with nobody's name on it.
+- **A provider returning the wrong number of vectors is refused**, because
+  scoring passages against vectors that may belong to different text produces
+  plausible rankings out of nothing.
+
+**There is deliberately no local stand-in**, and `embedding.ts` exists to say so
+in one place. Every other stand-in here is visibly a stand-in on its output. A
+stand-in *embedding* is a vector, which nobody can read, and hashed tokens rank
+and score exactly like real ones — the one stand-in in this codebase that could
+not be labelled honestly enough to be safe. Wiring a real one up changes one
+function; the refusal discipline does not move.
+
+The endpoint answers **200 with `answered: false`** — it worked and declined,
+which is a different thing from failing.
+
+### Where it is visible
+
+Two panels on the Golden Thread screen, which already hosts the lineage walk:
+how the project is connected (with the declared-share gauge) and what an
+integration would receive.
+
+21 mutants; 20 killed. The survivor — taking the cursor from the last returned
+entry rather than the last examined one — was verified as **equivalent**: a page
+is only ever entirely withheld at the tail, where `more` is already false, so
+nothing is lost or repeated either way. The stronger version is kept and the
+reasoning is recorded in the file, because the equivalence depends on the scan
+reaching the end, and a future change that bounded it would turn the weaker
+version into a stall with no test standing against it. A contrived test was
+written and then removed rather than left asserting something untrue.

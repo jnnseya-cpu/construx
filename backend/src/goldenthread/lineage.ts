@@ -50,6 +50,17 @@ import type { EntityRef, GoldenThreadEvent } from './types.ts';
  * honest, and a chain silently reconnected around the hole is not.
  */
 
+/**
+ * `labelOf`, `buildIdIndex` and `referencesIn` are exported for
+ * `datalayer/graph.ts`, which projects the whole project's graph rather than
+ * walking outward from one record. They are the same derivation, and a second
+ * copy of it would disagree with this one the first time either was changed —
+ * which on a graph means two answers to "what caused this".
+ *
+ * Nothing else should use them: they are the mechanics of edge derivation, not
+ * an API for reading relationships. `lineage()` and `projectGraph()` are.
+ */
+
 export type LineageEdgeKind = 'EVIDENCE' | 'AI_INPUT' | 'SAME_COMMAND' | 'REFERENCE';
 
 export type LineageEdge = {
@@ -116,7 +127,7 @@ const IGNORED_FIELDS = new Set(['id', 'projectId', 'tenantId', 'correlationId'])
  * order matters: a reference is what a person would quote, a title is what they
  * would recognise, and an id is the fallback that means the record has neither.
  */
-function labelOf(state: Record<string, unknown>): string | undefined {
+export function labelOf(state: Record<string, unknown>): string | undefined {
   for (const field of ['reference', 'drawingNumber', 'activityCode', 'wbsCode', 'title', 'name', 'description']) {
     const value = state[field];
     if (typeof value === 'string' && value.trim().length > 0) return value.length > 90 ? `${value.slice(0, 90)}…` : value;
@@ -125,7 +136,7 @@ function labelOf(state: Record<string, unknown>): string | undefined {
 }
 
 /** Every entity id in a project, so a state field naming one can be recognised. */
-function buildIdIndex(ledger: GoldenThreadLedger, projectId: string): Map<string, EntityRef> {
+export function buildIdIndex(ledger: GoldenThreadLedger, projectId: string): Map<string, EntityRef> {
   const index = new Map<string, EntityRef>();
   for (const event of ledger.events({ projectId })) {
     index.set(event.entity.refId, event.entity);
@@ -134,7 +145,7 @@ function buildIdIndex(ledger: GoldenThreadLedger, projectId: string): Map<string
 }
 
 /** Ids named anywhere in a record's state, with the field that named them. */
-function referencesIn(state: Record<string, unknown>, index: Map<string, EntityRef>): Array<{ ref: EntityRef; via: string }> {
+export function referencesIn(state: Record<string, unknown>, index: Map<string, EntityRef>): Array<{ ref: EntityRef; via: string }> {
   const found: Array<{ ref: EntityRef; via: string }> = [];
 
   const walk = (value: unknown, path: string, depth: number): void => {
