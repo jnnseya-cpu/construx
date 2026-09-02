@@ -876,6 +876,308 @@ const supplyChainAgent: AgentDefinition = {
   },
 };
 
+// ----------------------------------------------------------------- lookahead
+
+/**
+ * Watches the constraint log and the weekly promise.
+ *
+ * `LOOKAHEAD_CONSTRAINTS` had no agent, and it is the one capability area where
+ * the record going stale is silent by construction. A delay forecast that is
+ * out of date reads as out of date. A constraint that nobody cleared reads
+ * exactly like a constraint somebody is working on, and a frozen week that was
+ * never reviewed reads exactly like a week that went well — PPC is computed
+ * over reviewed weeks, so an unreviewed one does not lower it, it disappears
+ * from it.
+ *
+ * Four things are found here, and each is a thing the record can answer on its
+ * own without asking a person to remember anything.
+ *
+ * It observes and does not propose. The obvious proposal — raise a constraint
+ * against a blocked task — needs a `needByDate`, and nothing in a blocked task
+ * says when the block has to be gone by. An agent that invented one would be
+ * putting a date into the constraint log that no person chose and that the
+ * whole Last Planner measurement then runs against.
+ */
+const lookaheadAgent: AgentDefinition = {
+  name: 'lookahead',
+  agentId: 'AGT-LOOKAHEAD',
+  activeIn: ['CONSTRUCTION', 'COMMISSIONING'],
+  triggers: [
+    { kind: 'SCHEDULE', at: '06:00' },
+    { kind: 'EVENT', eventType: 'CONSTRAINT_RAISED' },
+    { kind: 'EVENT', eventType: 'LOOKAHEAD_PUBLISHED' },
+  ],
+  inputs: ['Constraint log', 'Lookahead plans and their commitments', 'Task status'],
+  outputs: ['Constraints past their need-by date', 'Blocks that never became constraints', 'Weeks never reviewed'],
+  emits: ['CONSTRAINT_RAISED'],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.7,
+  acuTier: 'LOW',
+  memory: { reads: ['PROJECT'], writes: ['PROJECT'] },
+  division: 'DELIVERY',
+  purpose:
+    'Watches the constraint log and the weekly promise — what was needed by a date that has passed, what is blocked with nobody clearing it, and which weeks were never measured.',
+  mandate: {
+    reads: ['LOOKAHEAD_CONSTRAINTS', 'WORKPACKAGES_TASKS'],
+    proposes: [],
+    approvers: ['PM', 'PLANNER', 'CONSTRUCTION_MANAGER', 'SUPERVISOR'],
+    maxUnattended: 'OBSERVE',
+  },
+  evaluate(ctx) {
+    const findings: Finding[] = [];
+    const today = new Date().toISOString().slice(0, 10);
+
+    const constraints = list(ctx, 'Constraint');
+    const open = constraints.filter((c) => c.state.status !== 'CLOSED');
+
+    // 1. Past its need-by date and still open. The date was somebody's answer to
+    //    "when does this stop being clearable and start being a delay", and it
+    //    has gone by.
+    const overdue = open.filter((c) => String(c.state.needByDate ?? '') < today);
+    const onCriticalPath = overdue.filter((c) => c.state.blocksCriticalPath === true);
+    if (overdue.length > 0) {
+      findings.push({
+        key: `lookahead:constraints-overdue:${overdue.length}`,
+        severity: onCriticalPath.length > 0 ? 'URGENT' : 'ATTENTION',
+        summary:
+          `${overdue.length} open constraint${overdue.length === 1 ? ' is' : 's are'} past the date ${overdue.length === 1 ? 'it was' : 'they were'} needed by` +
+          (onCriticalPath.length > 0 ? `, and ${onCriticalPath.length} of those ${onCriticalPath.length === 1 ? 'sits' : 'sit'} on the critical path.` : '.'),
+        consequence:
+          'The need-by date is the date the constraint stops being clearable and becomes a delay. Past it, the work it blocks cannot be promised, so it drops out of the weekly plan without anybody deciding that it should.',
+        evidence: overdue.slice(0, 5).map((c) => ({
+          refType: 'Constraint',
+          refId: c.refId,
+          note: `${String(c.state.reference)} (${String(c.state.category).toLowerCase()}) — needed by ${String(c.state.needByDate)}, owner ${String(c.state.owner)}`,
+        })),
+      });
+    }
+
+    // 2. Blocked in the field, never entered in the constraint log. The block is
+    //    recorded — `updateTaskStatus` refuses BLOCKED without a reason, an
+    //    owner, an impact and a next action — but only the constraint log has a
+    //    date against it, and only the constraint log stops the work being
+    //    promised.
+    const constrainedTaskIds = new Set(open.map((c) => String(c.state.taskId)));
+    const blockedUnlogged = list(ctx, 'Task').filter(
+      (task) => task.state.status === 'BLOCKED' && !constrainedTaskIds.has(task.refId),
+    );
+    if (blockedUnlogged.length > 0) {
+      findings.push({
+        key: `lookahead:blocked-unlogged:${blockedUnlogged.length}`,
+        severity: 'URGENT',
+        summary: `${blockedUnlogged.length} task${blockedUnlogged.length === 1 ? ' is' : 's are'} blocked on site with no constraint raised against ${blockedUnlogged.length === 1 ? 'it' : 'them'}.`,
+        consequence:
+          'A block recorded only against the task has no need-by date and no owner in the constraint log, so nothing chases it and nothing stops the work being promised next week. It is the commonest way a lookahead commits to work that cannot start.',
+        evidence: blockedUnlogged.slice(0, 5).map((task) => {
+          const blocked = task.state.blocked as { reason?: string; owner?: string } | undefined;
+          return {
+            refType: 'Task',
+            refId: task.refId,
+            note: `${String(task.state.name ?? task.refId)} — ${blocked?.reason ?? 'blocked'}, with ${blocked?.owner ?? 'nobody'} named`,
+          };
+        }),
+      });
+    }
+
+    // 3. The week ended and nobody reviewed it. PPC is the mean over reviewed
+    //    weeks, so an unreviewed week does not pull the figure down — it leaves
+    //    it, and the reasons the promises were missed are never counted.
+    const stale = list(ctx, 'LookaheadPlan').filter((plan) => {
+      if (plan.state.status === 'REVIEWED') return false;
+      const weekEnding =
+        typeof plan.state.weekEnding === 'string'
+          ? plan.state.weekEnding
+          : new Date(Date.parse(String(plan.state.weekStarting)) + 7 * 86_400_000).toISOString().slice(0, 10);
+      return weekEnding < today;
+    });
+    if (stale.length > 0) {
+      findings.push({
+        key: `lookahead:unreviewed-weeks:${stale.length}`,
+        severity: stale.length > 1 ? 'ATTENTION' : 'INFO',
+        summary: `${stale.length} week${stale.length === 1 ? ' has' : 's have'} ended without the promises being reviewed.`,
+        consequence:
+          'PPC is the mean across reviewed weeks. An unreviewed week does not lower it — it vanishes from it, and so do the reasons the promises were missed, which are the part that makes the next plan better.',
+        evidence: stale.slice(0, 5).map((plan) => ({
+          refType: 'LookaheadPlan',
+          refId: plan.refId,
+          note: `Week starting ${String(plan.state.weekStarting)} — ${((plan.state.commitments as unknown[]) ?? []).length} promises, still ${String(plan.state.status)}`,
+        })),
+      });
+    }
+
+    // 4. In construction with no lookahead at all. Not a stale plan — no plan.
+    if (list(ctx, 'LookaheadPlan').length === 0) {
+      const projectPhase = String((latest(ctx, 'Project') as Record<string, unknown> | undefined)?.phase ?? '');
+      if (projectPhase === 'CONSTRUCTION') {
+        findings.push({
+          key: 'lookahead:none',
+          severity: 'ATTENTION',
+          summary: 'The project is in construction and no lookahead has ever been published.',
+          consequence:
+            'Without a weekly promise there is no PPC, no constraint clearing rhythm and no record of why work did not happen — the programme is being reported against, not run.',
+          evidence: [{ refType: 'Project', refId: ctx.projectId, note: `Project is in ${projectPhase}` }],
+        });
+      }
+    }
+
+    return { findings, proposals: [] };
+  },
+};
+
+// ------------------------------------------------------------------- returns
+
+/**
+ * Watches the enquiries out in the market and what came back against them.
+ *
+ * `SUPPLIER_SUBMISSION` had no agent either, and it is the area where the
+ * platform's own refusals create the exposure. A return after the deadline is
+ * rejected outright — correctly, because accepting one is how an award gets
+ * overturned — which means the only moment anybody can do anything about a thin
+ * enquiry is *before* the deadline. After it the position is fixed and the
+ * choice is a single-bid award or going back to market.
+ *
+ * `reconcileTenderResponses` already derives all of this for one RFQ, and it is
+ * a good screen. Nobody opens forty of them. That is the whole job here: sweep
+ * every open enquiry, and raise the ones where the window is still open.
+ *
+ * Observes and does not propose. The action on a thin enquiry is to phone three
+ * firms, and there is no command for that.
+ */
+const returnsAgent: AgentDefinition = {
+  name: 'returns',
+  agentId: 'AGT-RETURNS',
+  activeIn: ['TENDER', 'CONSTRUCTION'],
+  triggers: [
+    { kind: 'SCHEDULE', at: '06:00' },
+    { kind: 'EVENT', eventType: 'SUBMISSION_RECEIVED' },
+    { kind: 'EVENT', eventType: 'RFQ_ISSUED' },
+  ],
+  inputs: ['Enquiries and their return deadlines', 'Supplier returns', 'Supplier register', 'Adjudications'],
+  outputs: ['Enquiries closing without competition', 'Returns from unregistered firms', 'Returns going stale'],
+  emits: ['SUBMISSION_RECEIVED'],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.7,
+  acuTier: 'LOW',
+  memory: { reads: ['PROJECT', 'ORGANISATION'], writes: ['PROJECT'] },
+  division: 'SUPPLY_CHAIN',
+  purpose:
+    'Watches every open enquiry against its deadline, and says which ones are heading for a single-bid award while there is still time to do something about it.',
+  mandate: {
+    reads: ['SUPPLIER_SUBMISSION', 'PROCUREMENT_AWARD'],
+    proposes: [],
+    approvers: ['QS', 'PM', 'EPC', 'OWNER'],
+    maxUnattended: 'OBSERVE',
+  },
+  evaluate(ctx) {
+    const findings: Finding[] = [];
+    const now = new Date().toISOString();
+
+    const submissions = list(ctx, 'SupplierSubmission');
+    const returnsFor = (rfqId: string) => submissions.filter((s) => s.state.rfqId === rfqId);
+    const rfqStatus = new Map(list(ctx, 'RFQ').map((rfq) => [rfq.refId, String(rfq.state.status)]));
+
+    // `RFQ_DEADLINE_PASSED` refuses a late return, so an enquiry still short of
+    // competition is only fixable while the deadline is ahead of it. Three is
+    // the conventional floor, and the same one `reconcileTenderResponses` uses.
+    const OPEN_STATUSES = ['ISSUED', 'CLARIFICATION', 'RETURNS_RECEIVED'];
+    const COMPETITIVE = 3;
+
+    for (const rfq of list(ctx, 'RFQ')) {
+      const status = String(rfq.state.status);
+      if (!OPEN_STATUSES.includes(status)) continue;
+
+      const deadline = String(rfq.state.returnDeadline ?? '');
+      if (!deadline) continue;
+      const returned = returnsFor(rfq.refId).length;
+      const invited = ((rfq.state.invitedSupplierIds as string[]) ?? []).length;
+      const daysLeft = Math.ceil((Date.parse(deadline) - Date.parse(now)) / 86_400_000);
+
+      if (daysLeft >= 0 && daysLeft <= 5 && returned < COMPETITIVE) {
+        findings.push({
+          key: `returns:thin:${rfq.refId}`,
+          severity: returned === 0 ? 'URGENT' : 'ATTENTION',
+          summary: `${String(rfq.state.reference)} closes in ${daysLeft} day${daysLeft === 1 ? '' : 's'} with ${returned} of ${invited} invited firms returned.`,
+          consequence:
+            'A return after the deadline is refused outright, so this is the last of the time in which anything can be done about it. After it the choice is awarding on what came back or issuing the enquiry again and paying the lead time twice.',
+          evidence: [{ refType: 'RFQ', refId: rfq.refId, note: `Deadline ${deadline.slice(0, 10)}, ${returned} returned` }],
+        });
+      }
+
+      if (daysLeft < 0) {
+        findings.push({
+          key: `returns:closed-thin:${rfq.refId}`,
+          severity: returned === 0 ? 'URGENT' : returned === 1 ? 'ATTENTION' : 'INFO',
+          summary:
+            returned === 0
+              ? `${String(rfq.state.reference)} closed with nothing returned.`
+              : `${String(rfq.state.reference)} closed with ${returned} return${returned === 1 ? '' : 's'} and has not been adjudicated.`,
+          consequence:
+            returned === 0
+              ? 'There is nothing here to award. The package goes back to market or the requirement changes, and the enquiry period is spent either way.'
+              : returned === 1
+                ? 'One return is a negotiation, not a competition. Awarding on it is defensible only where the reason is recorded now rather than reconstructed at audit.'
+                : 'Tendered prices carry a validity period. A comparison left long enough has to be re-sought, and firms do not re-offer the same number.',
+          evidence: [{ refType: 'RFQ', refId: rfq.refId, note: `Deadline ${deadline.slice(0, 10)} passed, status ${status}` }],
+        });
+      }
+    }
+
+    // A return whose party never resolved to a register entry cannot be checked
+    // against the prequalification the enquiry itself required.
+    const unregistered = submissions.filter((s) => typeof s.state.supplierId !== 'string');
+    if (unregistered.length > 0) {
+      findings.push({
+        key: `returns:unregistered:${unregistered.length}`,
+        severity: 'ATTENTION',
+        summary: `${unregistered.length} return${unregistered.length === 1 ? '' : 's'} came from a firm that does not resolve to the supplier register.`,
+        consequence:
+          'The enquiry refused to go out to a firm without live prequalification. A return that does not join back to the register cannot be checked against it, so the award would rest on a check nobody can show was made.',
+        evidence: unregistered.slice(0, 5).map((s) => ({
+          refType: 'SupplierSubmission',
+          refId: s.refId,
+          note: `${String(s.state.supplierName)} — party ${String(s.state.supplierPartyId)}, no register entry`,
+        })),
+      });
+    }
+
+    // Exceptions and exclusions are what make two headline prices different
+    // prices. Until the returns are normalised, the cheapest is whoever left
+    // most out.
+    //
+    // The question closes when the enquiry does. Once an RFQ is awarded the
+    // levelling either happened in the adjudication that awarded it or it did
+    // not, and raising it afterwards is asking somebody to re-open a decision
+    // rather than take one. Read off the RFQ's own status rather than the
+    // presence of an `Adjudication`, which records the evaluation it selected
+    // from and not the enquiry it belongs to.
+    const carrying = submissions.filter((s) => {
+      if (typeof s.state.normalisedAt === 'string') return false;
+      if (!OPEN_STATUSES.includes(rfqStatus.get(String(s.state.rfqId)) ?? '')) return false;
+      const exclusions = ((s.state.exclusions as string[]) ?? []).length;
+      const exceptions = ((s.state.contractExceptions as string[]) ?? []).length;
+      return exclusions + exceptions > 0;
+    });
+    if (carrying.length > 0) {
+      findings.push({
+        key: `returns:unnormalised:${carrying.length}`,
+        severity: 'ATTENTION',
+        summary: `${carrying.length} return${carrying.length === 1 ? ' carries' : 's carry'} exclusions or contract exceptions and ${carrying.length === 1 ? 'has' : 'have'} not been normalised.`,
+        consequence:
+          'Compared on headline price, the cheapest return is whichever firm excluded most. The scope each one actually priced has to be levelled before the numbers mean the same thing.',
+        evidence: carrying.slice(0, 5).map((s) => ({
+          refType: 'SupplierSubmission',
+          refId: s.refId,
+          note:
+            `${String(s.state.supplierName)} — ${((s.state.exclusions as string[]) ?? []).length} exclusion(s), ` +
+            `${((s.state.contractExceptions as string[]) ?? []).length} contract exception(s)`,
+        })),
+      });
+    }
+
+    return { findings, proposals: [] };
+  },
+};
+
 // ---------------------------------------------------------------------- HSEQ
 
 /**
@@ -976,8 +1278,10 @@ export const AGENTS: AgentDefinition[] = [
   fieldAgent,
   handoverAgent,
   hseqAgent,
+  lookaheadAgent,
   // Supply chain — can we still buy what we sell.
   supplyChainAgent,
+  returnsAgent,
   // Platform operations, security, revenue, customer and compliance. Kept in
   // their own module because they read the platform's own internals — gateway
   // counters, the security stream, the wallet — rather than a project, and

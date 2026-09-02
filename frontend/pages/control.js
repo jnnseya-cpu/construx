@@ -178,7 +178,12 @@ export async function control(root) {
   // how one firm becomes two rows on a matrix.
   const scopePackages = await entities(projectId, 'ScopePackage').catch(() => []);
   const suppliers = await api
-    .get('/v1/supply-chain/suppliers')
+    // `/v1/supply-chain`, not `/v1/supply-chain/suppliers` — the second is the
+    // POST that registers one. The wrong path 404'd, the catch below swallowed
+    // it, and the chooser was silently empty on every load: a typed party name
+    // is exactly how one firm becomes two rows on a matrix, which is the thing
+    // this chooser exists to prevent.
+    .get('/v1/supply-chain')
     .then((result) => result.suppliers ?? [])
     .catch(() => []);
 

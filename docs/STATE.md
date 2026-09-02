@@ -7093,16 +7093,15 @@ Specified in the source documents, deliberately absent, and **not to be claimed
 as present**. Most of it is perception and ingestion infrastructure — real ML and
 parsing work, not wiring.
 
-- **The ETABLIX AI Site Services module itself** — the entitlement gate is
-  built, tested and reachable from the operator console: an operator grants the
-  module to a named company, that company is told it holds it, everybody else is
-  never told it exists. What sits behind the gate is not built — the appointment
-  models, the brief intelligence gateway, the site-service system composer, the
-  sixteen specialist agents, the procurement factory, the mobilisation control
-  tower, live operations and the demobilisation workflows. There is currently no
-  `ETABLIX` capability area and no module screen, deliberately: an area in the
-  permission matrix that no route authorises against would be a permission that
-  means nothing
+- ~~**The ETABLIX AI Site Services module itself**~~ — **built.** This entry was
+  written when only the entitlement gate existed and is left visible, struck
+  through, rather than deleted: a register that quietly loses an entry is a
+  register nobody can audit. §2 to §13, §17 and §19 are now implemented,
+  tested and reachable from the Site Services screen under the `SITE_SERVICES`
+  capability area — see *Which of three businesses ETABLIX is on this job*
+  onwards. What remains genuinely absent inside the module is listed under
+  **What ETABLIX does not do** below, and each gap is reported on the screen
+  that would otherwise imply it
 - **OCR, and any semantic embedding** — the ingestion pipeline reports
   `NEEDS_OCR` for a PDF or a photograph and routes to the perception pipeline,
   which refuses where no multimodal provider is configured. The document index is
@@ -7138,6 +7137,26 @@ parsing work, not wiring.
   pipeline cannot look like a quiet one. Unset means local-only, and the boot
   banner says so in those words. What is absent is a collector and a dashboard
   to point it at, which is infrastructure rather than code
+
+### What ETABLIX does not do
+
+Every one of these is reported on the screen that would otherwise imply it, so
+the platform states the gap rather than leaving a reader to find it. They are
+collected here because a gap named in nine different places is a gap nobody can
+count.
+
+| Gap | Where it is stated | What is actually missing |
+|---|---|---|
+| **The knowledge library** (§6 stage 8, §1's stated advantage) | The workflow card, as `NOT DERIVABLE` — the only such gate in the nine | No site-services supplier score written back from an engagement, no price benchmark promoted out of a normalisation, no reusable package template. §7 normalises bids inside a project and nothing carries the result forward |
+| **Room, bed and allocation records** (§13 Accommodation Desk) | The workspace's *what this cannot answer* table | §4 composes an accommodation system sized against demand; there is no room, bed, allocation, arrival or housekeeping record beneath it. One entity family, not a screen |
+| **Transport journeys** (§13 Accommodation Desk) | The same table | Transport and logistics is a service family with a KPI that is reported rather than enforced; there is no journey, vehicle or booking record |
+| **QR asset scan and delivery check** (§13 Field Mobile) | The same table | A composed system is the unit; there is no per-asset register for a code to resolve to, and deliveries are attested as gate evidence rather than booked against a schedule |
+| **Supplier-side authentication** (§13 Supplier Portal) | The same table, and the portal refuses an unscoped read | External project invitations exist; a supplier account layer with its own login does not. The portal is an internal view of one supplier's obligations |
+| **Paid, accrual and cash** (§13 Commercial) | The same table | §10 certifies value and records who owes it; it does not record payment against a certificate. CONSTRUX holds a purchase ledger and the two are not joined |
+| **Contingency and EAC** (§13 Commercial) | The same table | Change exposure is an input to an EAC, not an EAC |
+| **The cross-project roll-up** (§13 Executive Portfolio) | The same table | Every position is project-scoped by construction |
+| **An ETABLIX perception task** (§19.10) | The acceptance test, which asserts the fact that makes its pass condition hold | The draft/confirm mechanism exists and is proved in `tests/perception.test.ts`; no perception task reads a workforce curve or a welfare schedule into the brief register, so nothing a model produces can reach the baseline |
+| **Forecast accuracy** (§17) | The automation card, as not measurable | It compares a prior estimate at completion against a final outturn. No site-services account has been closed out, and reporting it on a live project would compare the forecast against itself |
 
 ---
 
@@ -12501,6 +12520,12 @@ fitted on every screen where a fleet exists to fill it; the areas above would
 need agents built before a panel there would be anything but an empty box, and
 an empty panel on a screen nothing watches is worse than none.
 
+> Superseded in part. Every capability area now has an agent *reading* it — see
+> *The two capability areas nobody was watching* — which is what fills a panel.
+> Proposing into an area is a separate and narrower thing, and several areas
+> still have only observers by deliberate choice; the count above is left as
+> written because it was true of proposals when it was written.
+
 
 ### A module only some companies can see
 
@@ -13713,3 +13738,68 @@ shortcut, because a project jumped to that state would prove the later gates
 against a fiction. It also found that a welfare compound alone cannot pass G3 —
 "utilities available at the boundary" derives from a composed MEP system in the
 same zone — which is correct, and is the kind of thing a shortcut fixture hides.
+
+
+### The two capability areas nobody was watching
+
+The fleet is organised so that every agent declares, in `mandate.reads`, the
+capability areas it watches. Counting those declarations against the permission
+matrix found **24 of 26 areas covered** and two with nobody at all:
+`LOOKAHEAD_CONSTRAINTS` and `SUPPLIER_SUBMISSION`. Both are now watched, taking
+the fleet to **76 agents** and coverage to **26 of 26**.
+
+The gap mattered more than an even distribution would suggest, because both are
+areas where the record going stale is **silent by construction** rather than
+visible. A stale delay forecast reads as stale. These do not:
+
+- PPC is the mean across *reviewed* weeks. A week that ends without its promises
+  being reviewed does not lower the figure — it vanishes from it, along with the
+  reasons the promises were missed, which are the part that makes the next plan
+  better.
+- A return arriving after the deadline is refused outright, correctly, because
+  accepting one is how an award gets overturned. So the only moment anybody can
+  act on a thin enquiry is *before* it closes. After that the position is fixed.
+
+**`AGT-LOOKAHEAD`** raises four things: an open constraint past the date it was
+needed by (urgent where any of them sits on the critical path); a task blocked on
+site with no constraint raised against it; a week that ended unreviewed; and a
+project in construction that has never published a lookahead at all. The second
+is the one a screen cannot show — `updateTaskStatus` refuses `BLOCKED` without a
+reason, an owner, an impact and a next action, so the block *is* recorded, but
+only the constraint log carries a need-by date and only the constraint log stops
+the work being promised next week.
+
+**`AGT-RETURNS`** sweeps every open enquiry: one closing inside five days with
+fewer than three returns, one whose deadline passed without a competition, a
+return that never resolved to the supplier register, and returns carrying
+exclusions or contract exceptions that were never levelled.
+`reconcileTenderResponses` already derives all of this for one RFQ and is a good
+screen. Nobody opens forty of them; that sweep is the whole job.
+
+#### Both observe, and neither proposes
+
+The obvious proposal on a blocked task is to raise a constraint from it. It is
+not made, and the reason is worth stating: a constraint needs a `needByDate`, and
+nothing in a blocked task says when the block has to be gone by. An agent that
+invented one would be putting a date into the constraint log that no person
+chose, and the whole Last Planner measurement then runs against it. The action on
+a thin enquiry is to phone three firms, and there is no command for that either.
+An agent whose only honest output is a finding gets `proposes: []` and an
+`OBSERVE` ceiling rather than a proposal built on a guess.
+
+#### A defect the first draft carried
+
+The levelling finding was suppressed by checking for an `Adjudication` carrying
+the RFQ's id. `Adjudication` carries `evaluationId` and `selectedSubmissionId`
+and **no `rfqId` at all**, so the guard never fired once — the agent reported the
+flagship's settled, awarded enquiry as an open exposure. Fixed at the source by
+reading the RFQ's own status, which is the fact that actually settles it. The
+test that pins it asserts the agent says nothing about the awarded enquiry.
+
+**13 of 13 mutations caught**, including every threshold, every comparison
+direction and every suppression rule. The tests build their conditions through
+the ordinary domain commands on the seeded tender and construction projects — the
+flagship is in operations, where the phase gates close planning and procurement
+to everybody — so what the agents find is something a project could actually get
+itself into. Publishing a lookahead against constrained work was refused by the
+platform mid-writing, which is Last Planner working exactly as intended.

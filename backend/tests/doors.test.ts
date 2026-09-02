@@ -153,6 +153,71 @@ describe('every command has a door', () => {
     );
   });
 
+  it('fetches nothing the platform does not route', () => {
+    /*
+     * The other half of the door, and the half that was missing.
+     *
+     * Everything above proves each *route* is reachable from the console. Nothing
+     * proved the reverse: that every path the console actually fetches resolves
+     * to a route. It does not, and one did not — `control.js` asked for
+     * `/v1/supply-chain/suppliers`, which is the POST that registers a supplier
+     * and has no GET. The 404 was swallowed by the `.catch(() => [])` behind the
+     * chooser, so the supplier dropdown on the responsibility matrix was empty on
+     * every load, silently, for as long as it had existed. A typed party name is
+     * exactly how one firm becomes two rows on that matrix, which is the failure
+     * the chooser exists to prevent.
+     *
+     * Only literal paths are checked. A path built from a variable cannot be
+     * resolved here and is skipped rather than guessed at — a check that guessed
+     * would fail on working code, which is how a test gets deleted.
+     */
+    // A handful of paths are answered by the gateway itself rather than by the
+    // route table — the route catalogue, the service worker, the landing page.
+    // Read out of the gateway's own source rather than listed here, so the
+    // exemption cannot outlive the endpoint it exempts.
+    const gateway = readFileSync(join(REPO_ROOT, 'backend', 'src', 'api', 'gateway.ts'), 'utf8');
+    const servedDirectly = new Set(
+      [...gateway.matchAll(/ctx\.path === '([^']+)'/g)].map((found) => found[1]!),
+    );
+
+    const declared = ROUTES.map((route) => ({
+      method: route.method,
+      // A matcher for the path as written, with `:params` standing for one
+      // segment. Anchored at both ends: `/v1/supply-chain` must not satisfy a
+      // fetch of `/v1/supply-chain/suppliers`, which is the whole bug.
+      match: new RegExp(
+        `^${route.pattern
+          .split('/')
+          .filter(Boolean)
+          .map((segment) => (segment.startsWith(':') ? '[^/]+' : segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+          .map((segment) => `/${segment}`)
+          .join('')}$`,
+      ),
+    }));
+
+    const unrouted: string[] = [];
+    for (const file of consoleFiles()) {
+      const source = readFileSync(file, 'utf8');
+      // `api.get('/v1/...')` and the other verbs, with a wholly literal path:
+      // no `${}` anywhere in it, because a path with one cannot be resolved.
+      for (const found of source.matchAll(/\bapi\.(get|post|put|patch|del|delete)\(\s*'(\/[^'`$]*)'/g)) {
+        const verb = found[1]!.toUpperCase();
+        const method = verb === 'DEL' ? 'DELETE' : verb;
+        const path = found[2]!.split('?')[0]!;
+        if (servedDirectly.has(path)) continue;
+        if (declared.some((route) => route.method === method && route.match.test(path))) continue;
+        unrouted.push(`${method} ${path}  (${file.slice(file.indexOf('frontend'))})`);
+      }
+    }
+
+    assert.deepEqual(
+      unrouted,
+      [],
+      `The console fetches ${unrouted.length} path${unrouted.length === 1 ? '' : 's'} the platform does not route. ` +
+        `Each is an input or a panel that silently does nothing:\n  ${unrouted.join('\n  ')}`,
+    );
+  });
+
   it('gives a generated form something to render, or says it cannot', () => {
     // A route with no schema can only be offered as free text. That is a real
     // limitation and the console states it; what it must not do is present an
