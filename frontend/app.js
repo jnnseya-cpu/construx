@@ -162,6 +162,12 @@ export const NAV = [
     group: 'Platform',
     items: [
       { id: 'billing', label: 'ACU & Billing', area: 'BILLING_ACU', icon: 'meter', tenantScoped: true },
+      // Beside billing, and distinct from the Cost & Value screen that also
+      // carries the word "commercial". That one is the customer's money on
+      // their own jobs; this is their account with us — what we earned on money
+      // we carried for them, what they are against in their entitlement,
+      // whether the platform is still being used, and the benchmark consent.
+      { id: 'platformCommercial', label: 'Your account with us', area: 'ENTERPRISE_STRUCTURE', icon: 'coins', tenantScoped: true },
       // Under ENTERPRISE_STRUCTURE read, which is what the key register needs.
       // Issuing a credential needs G on the same area and the command bar reads
       // that separately, so the screen is visible to somebody who can see what

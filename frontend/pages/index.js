@@ -8,6 +8,7 @@ import { audit } from './audit.js';
 import { auditlogs } from './auditlogs.js';
 import { autopilot } from './autopilot.js';
 import { billing } from './billing.js';
+import { platformCommercial } from './platformcommercial.js';
 import { bookings } from './bookings.js';
 import { blog } from './blog.js';
 import { blueprint } from './blueprint.js';
@@ -87,6 +88,7 @@ export const PAGES = {
   handover,
   audit,
   billing,
+  platformCommercial,
   admin,
   operations,
   blog,

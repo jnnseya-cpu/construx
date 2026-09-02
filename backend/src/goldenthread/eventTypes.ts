@@ -129,6 +129,28 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SUBSCRIPTION_CHARGE_RAISED', 'SubscriptionCharge', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('SUBSCRIPTION_CHARGE_SETTLED', 'SubscriptionCharge', 'UPDATE', 'GOVERNANCE'),
   def('SUBSCRIPTION_COLLECTION_FAILED', 'SubscriptionCharge', 'UPDATE', 'GOVERNANCE'),
+  // Transaction revenue. Separate entities from SubscriptionCharge because they
+  // are a different commercial fact: a subscription charge is what a tenancy
+  // pays to hold the platform, a settlement is a fee taken on money the
+  // platform carried between two other parties. Folding them together would
+  // leave nobody able to answer "what did you charge me and for what".
+  // `Settlement` already means a tender settlement meeting in this catalogue,
+  // which is a wholly different thing. Named apart rather than reused: one
+  // entity type carrying two concepts is how a permission written for one ends
+  // up granting the other.
+  def('PLATFORM_SETTLEMENT_RAISED', 'PlatformSettlement', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('PLATFORM_SETTLEMENT_COMPLETED', 'PlatformSettlement', 'UPDATE', 'GOVERNANCE'),
+  // Evidenced: a reversal moves money back and gives the fee back with it, and
+  // "who decided, when, and why" is the first question asked about one.
+  def('PLATFORM_SETTLEMENT_REVERSED', 'PlatformSettlement', 'UPDATE', 'GOVERNANCE', { requiresEvidence: true }),
+  // Benchmark consent. Its own entity rather than a flag on the subscription,
+  // because it is a decision a named person made on a stated scope and has to
+  // be readable as of the day a benchmark was published — a boolean overwritten
+  // in place cannot answer "did they consent when we used it".
+  //
+  // Never AI-writable. Consent to share a company's figures with its
+  // competitors is not a state any model may reach.
+  def('BENCHMARK_CONSENT_SET', 'BenchmarkConsent', 'UPDATE', 'GOVERNANCE', { creates: true }),
   // Private modules. A grant is an operator's decision to hand a named company
   // capability that is not on the price list, so it is recorded the way the
   // subscription switch is: with the person who decided it and their reason.

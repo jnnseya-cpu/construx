@@ -14241,3 +14241,106 @@ Recorded because the gap is real and no amount of building closes it:
   through, and it is currently described rather than shown.
 
 Nothing invented has been put in their place.
+
+---
+
+## Commercial: transaction revenue, consented benchmarking, expansion and engagement
+
+Four things, in `backend/src/commercial/`. The three engines are pure — numbers
+in, findings out — and `position.ts` is the only seam that knows where a seat
+count or an event timestamp actually lives.
+
+### Transaction revenue — `settlement.ts`
+
+A fourth money path, deliberately not folded into the three that existed. A
+subscription charge is what a tenancy pays to hold the platform; ACU consumption
+is what they pay for AI; a payment certificate is the customer's own money moving
+to their supply chain. Transaction revenue is a fee on that third one **where the
+platform actually carried the money**.
+
+- **`RECORDED` earns nothing, and says so.** Recording a payment the parties made
+  directly is what the subscription buys. Those settlements exist with a zero fee
+  and a stated reason rather than not existing, because a silent absence is
+  indistinguishable from a bug.
+- **The fee is banded down and capped absolutely.** `FEE_CAP_MINOR` is the most
+  important number in the file: without it, revenue scales with the customer's
+  contract value rather than with what the platform did, and the first customer
+  to run a £20M certificate through it meets a five-figure fee for a bank
+  transfer. There is a floor for the mirror reason — a fee that loses money on
+  small transactions makes the platform hostile to small subcontractors.
+- **A reversal returns the fee.** Keeping a cut of a payment that was reversed is
+  charging for a service that did not complete, and the customer finds out from
+  their bank rather than from us.
+- Settling twice is refused in the domain, not the route, so a second door cannot
+  reintroduce it.
+
+### Benchmarking — `benchmark.ts`
+
+The most dangerous file in the module, and written that way: a benchmark is a
+disclosure mechanism wearing a statistic's clothes.
+
+- **Consent is filtered first.** Checking k against everybody and then averaging
+  only those who agreed reports a cohort of forty resting on three — the failure
+  that looks safest in review.
+- **k alone is not enough.** A cohort of five where one member is 94% of the
+  total is a cohort of one wearing a five, and k-anonymity says nothing about it.
+  `MAXIMUM_DOMINANCE` is checked separately, against **magnitude** rather than the
+  signed total — mutation testing found that a signed total lets an all-negative
+  cohort (every project loss-making, which is ordinary) produce a negative ratio
+  that walks straight through the check.
+- **No minimum, no maximum, and no median below twice k.** Each would be one
+  company's own figure; calling it "the lowest in the cohort" does not change
+  what it is.
+- **A cohort defined by more than three characteristics is refused.** "Water
+  contractors in Rochdale turning over £8–9m" names one company without using its
+  name and passes every count-based check.
+- **A non-contributing company is still told where it stands.** Withholding a
+  reading to extract a contribution would be a dark pattern.
+
+### Expansion — `expansion.ts`
+
+An expansion engine is a machine for generating reasons to charge more, so every
+proposal is derived from a limit the customer is **actually against** and carries
+the measurement that produced it.
+
+- On the largest package, hitting a ceiling produces `NOTHING_TO_PROPOSE`, not an
+  upsell for a package that does not exist.
+- **Downgrades are proposed too.** A tenancy paying for what it does not use is an
+  unhappy customer who has not noticed, and this is the cheapest retention there
+  is. An engine that only ever pointed upward would have told the reader what it
+  was for.
+- A company three weeks in is never told to downgrade — they have not finished
+  onboarding, and telling them to spend less is telling them to give up.
+
+### Engagement — `churn.ts`
+
+**No score, no probability, no model.** There is no cohort of past churn to have
+trained on, and a percentage produced without one is a decimal point with nothing
+behind it. What it produces is a decay measurement against the tenancy's *own*
+prior period, which is scale-free — a company that wrote 400 events a week and now
+writes 40 is in trouble at a volume another company thrives at.
+
+What was measured is kept apart from what it might mean, and the seasonal reading
+is always offered: a company between projects looks identical to a company
+leaving, and sending an account manager to ask an unhappy question of a customer
+who is simply quiet is itself a reason to leave.
+
+### Two name collisions the invariants caught
+
+`Settlement` already meant a tender settlement meeting, and
+`POST /v1/projects/:projectId/settlements` was already its route. Both are now
+`PlatformSettlement` / `/platform-settlements`. One entity type or one path
+carrying two concepts is how a permission written for one ends up granting the
+other.
+
+The console screen is `frontend/pages/platformcommercial.js` — **"Your account
+with us"** — named apart from the existing `commercial.js`, which is Cost & Value
+and is the customer's money on their own jobs.
+
+The screen is shown to the **customer**, not only the operator. A platform that
+computes "this account is decaying, propose an upgrade" and shows it only to its
+own sales team has built a file on somebody; the same reading handed to the
+customer names what they pay for and do not use.
+
+25 mutants across all four files, all killed after the two defects above were
+fixed. 5,262 tests pass.

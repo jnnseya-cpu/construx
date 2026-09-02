@@ -208,6 +208,20 @@ import type { Platform } from '../platform.ts';
 import { parseVerification, VERIFICATION_SCHEME, type ExportAudience, type ExportFormat } from '../export/exporter.ts';
 import { posture as envelopePosture, verifyTag } from '../evidence/envelope.ts';
 import { transportPosture } from '../ops/transport.ts';
+import { CONSENT_SCOPE } from '../commercial/benchmark.ts';
+import { commercialPosition } from '../commercial/position.ts';
+import {
+  FEE_BANDS,
+  FEE_CAP_MINOR,
+  FEE_FLOOR_MINOR,
+  feeFor,
+  raiseSettlement,
+  reverse,
+  settle,
+  transactionRevenue,
+  type SettlementRail,
+  type SettlementRecord,
+} from '../commercial/settlement.ts';
 import { metrics, recentLogs, type HtmlPolicy, type RequestContext } from './middleware.ts';
 import { gatewayMetrics, recordSecurityEvent, securityEvents, securitySummary, type SecurityEventKind } from './telemetry.ts';
 import { readiness } from './readiness.ts';
@@ -3803,6 +3817,187 @@ export const ROUTES: Route[] = [
       return tenantSecurity(actor.tenantId, platform.users(actor.tenantId).map((user) => user.id));
     },
   },
+  {
+    method: 'POST',
+    // `/v1/projects/:projectId/settlements` is the tender settlement meeting, the
+    // same collision the entity name had. Named apart rather than shared: one
+    // path carrying two subjects is how a permission written for one grants the
+    // other.
+    pattern: '/v1/projects/:projectId/platform-settlements',
+    description: 'Raise a settlement against a certificate or invoice, with the platform fee computed and shown',
+    schema: {
+      type: 'object',
+      required: ['againstRefType', 'againstRefId', 'amountMinor', 'rail'],
+      properties: {
+        againstRefType: stringField,
+        againstRefId: stringField,
+        amountMinor: { type: 'number' },
+        rail: { type: 'string', enum: ['FACILITATED', 'RECORDED'] },
+        currency: { type: 'string' },
+        externalReference: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'C');
+      const input = body<{
+        againstRefType: string;
+        againstRefId: string;
+        amountMinor: number;
+        rail: SettlementRail;
+        currency?: string;
+        externalReference?: string;
+      }>(ctx);
+
+      const record = raiseSettlement({
+        id: ulid(),
+        tenantId: actor.tenantId,
+        projectId: ctx.params.projectId!,
+        againstRef: { refType: input.againstRefType, refId: input.againstRefId },
+        amountMinor: input.amountMinor,
+        currency: input.currency ?? 'GBP',
+        rail: input.rail,
+        ...(input.externalReference ? { externalReference: input.externalReference } : {}),
+      });
+
+      platform.ledger.commit({
+        tenantId: actor.tenantId,
+        projectId: ctx.params.projectId!,
+        actor: { refType: 'User', refId: actor.actorId },
+        source: 'WEB',
+        correlationId: ctx.correlationId,
+        eventType: 'PLATFORM_SETTLEMENT_RAISED',
+        entity: { refType: 'PlatformSettlement', refId: record.id },
+        nextState: { ...record },
+      });
+      return { settlement: record, fee: feeFor(record.amountMinor, record.rail) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/platform-settlements/:settlementId/complete',
+    description: 'Record that a settlement’s money arrived',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'A');
+      const held = platform.ledger.require({ refType: 'PlatformSettlement', refId: ctx.params.settlementId! });
+      // The refusal of a second settlement lives in the domain, not here, so a
+      // second door onto the same record cannot reintroduce it.
+      const record = settle(held.state as unknown as SettlementRecord);
+      platform.ledger.commit({
+        tenantId: actor.tenantId,
+        projectId: ctx.params.projectId!,
+        actor: { refType: 'User', refId: actor.actorId },
+        source: 'WEB',
+        correlationId: ctx.correlationId,
+        eventType: 'PLATFORM_SETTLEMENT_COMPLETED',
+        entity: { refType: 'PlatformSettlement', refId: record.id },
+        nextState: { ...record },
+      });
+      return { settlement: record };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/platform-settlements/:settlementId/reverse',
+    description: 'Reverse a settlement and give the platform fee back with it',
+    schema: {
+      type: 'object',
+      required: ['reason', 'evidenceHash'],
+      properties: { reason: stringField, evidenceHash: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'A');
+      const { reason, evidenceHash } = body<{ reason: string; evidenceHash: string }>(ctx);
+      const held = platform.ledger.require({ refType: 'PlatformSettlement', refId: ctx.params.settlementId! });
+      const record = reverse(held.state as unknown as SettlementRecord, reason);
+      platform.ledger.commit({
+        tenantId: actor.tenantId,
+        projectId: ctx.params.projectId!,
+        actor: { refType: 'User', refId: actor.actorId },
+        source: 'WEB',
+        correlationId: ctx.correlationId,
+        eventType: 'PLATFORM_SETTLEMENT_REVERSED',
+        entity: { refType: 'PlatformSettlement', refId: record.id },
+        nextState: { ...record },
+        evidenceRefs: [{ refType: 'EvidenceItem', refId: evidenceHash }],
+      });
+      return { settlement: record };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/transaction-revenue',
+    description: 'What the platform has earned on money it carried, and the take rate against value carried',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      const records = platform.ledger
+        .listByTenant(actor.tenantId, 'PlatformSettlement')
+        .map((entity) => entity.state as unknown as SettlementRecord);
+      return {
+        revenue: transactionRevenue(records),
+        settlements: records,
+        bands: FEE_BANDS.map((band) => ({
+          uptoMinor: Number.isFinite(band.uptoMinor) ? band.uptoMinor : null,
+          rate: band.rate,
+        })),
+        floorMinor: FEE_FLOOR_MINOR,
+        capMinor: FEE_CAP_MINOR,
+      };
+    },
+  },
+
+  {
+    method: 'GET',
+    pattern: '/v1/admin/commercial',
+    description: 'Expansion proposals against entitlement, the engagement signal, and the benchmark consent position',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      return commercialPosition(platform, actor.tenantId);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/benchmark-consent',
+    description: 'Give or withdraw this company’s consent to contribute to cross-company benchmarks',
+    schema: {
+      type: 'object',
+      required: ['granted'],
+      properties: { granted: { type: 'boolean' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      // `G` rather than `A`: consenting to share this company's figures with
+      // its competitors is a governance decision, not an approval within a
+      // workflow, and the permission that grants it should read that way.
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'G');
+      const { granted } = body<{ granted: boolean }>(ctx);
+      const consent = {
+        tenantId: actor.tenantId,
+        granted,
+        decidedAt: new Date().toISOString(),
+        decidedBy: actor.actorId,
+        // Stored with the decision rather than referenced, so what somebody
+        // agreed to cannot be restated later by editing a constant.
+        scope: CONSENT_SCOPE,
+      };
+      platform.ledger.commit({
+        tenantId: actor.tenantId,
+        projectId: `${actor.tenantId}-commercial`,
+        actor: { refType: 'User', refId: actor.actorId },
+        source: 'WEB',
+        correlationId: ctx.correlationId,
+        eventType: 'BENCHMARK_CONSENT_SET',
+        entity: { refType: 'BenchmarkConsent', refId: actor.tenantId },
+        nextState: consent,
+      });
+      return { consent };
+    },
+  },
+
   {
     method: 'GET',
     pattern: '/v1/admin/data-protection',

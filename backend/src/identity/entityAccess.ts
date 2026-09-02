@@ -331,6 +331,12 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // The settlement meeting on our own bid. Estimating rather than procurement:
   // it is the price we are giving, not a price we are choosing between.
   Settlement: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
+  // Platform transaction revenue and the consent that governs benchmarking.
+  // Both are the tenancy's commercial relationship with this platform rather
+  // than with its own supply chain, so they sit under enterprise structure and
+  // not under the estimating area a tender Settlement belongs to.
+  PlatformSettlement: { area: 'ENTERPRISE_STRUCTURE', sensitivity: 'COMMERCIAL_L3' },
+  BenchmarkConsent: { area: 'ENTERPRISE_STRUCTURE', sensitivity: 'COMMERCIAL_L3' },
   BidSubmissionPack: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Subcontract: { area: 'PROCUREMENT_AWARD', sensitivity: 'LEGAL_L4' },
 
