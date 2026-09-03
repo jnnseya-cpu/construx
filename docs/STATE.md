@@ -7038,6 +7038,79 @@ variable nobody can discover is worse than one somebody sets wrongly.
 
 ---
 
+### The project on site now has a site record
+
+The demonstration estate carries four projects. Rossendale Trunk Main Diversion
+is the one at CONSTRUCTION, and it existed so that field execution, quality and
+the safety file — all gated to CONSTRUCTION and COMMISSIONING — were reachable
+at all. It was deliberately left empty, and the reasoning was written down: "the
+empty diary, the empty permit register and the empty inspection log are what
+somebody walking in has come to fill."
+
+That reasoning did not survive contact with a person. What it produced was a
+project at CONSTRUCTION with 31 events on it — a contract, a drawing, a frozen
+estimate, four phase transitions — and nothing operational. Every construction
+screen then reported the truth about it, and the truth was all zeros:
+
+- Programme: "Computed from 0 activities and 0 logic links", no baseline, PPC "—"
+- Field Execution: "64 of 64 working days have no diary"
+- Risk & Safety: "£0 across 0 open risks", and a contingency chart whose axis ran
+  from −£1.00 to £1.00 because a zero-value axis padded downwards
+- Project Control: 13.0% complete, 20 gaps, 2 of them blocking the phase gate
+- Construction: every register empty, every command padlocked
+
+Each of those was correct. Together they read as a product that had not been
+built, and a screen that is right and looks broken has failed. Accurate
+emptiness does not fix it.
+
+**So the site history is real now.** It is written through the same domain
+commands the API exposes, by the seat that holds the authority for each act —
+the planner baselines, the safety lead approves method statements, the QA
+engineer inspects and the project manager releases the hold point. Nothing is
+asserted: the duration, the P80, the PPC, the productivity, the earned value and
+the contingency are computed from these records by the engines that would
+compute them for a customer.
+
+Eleven activities with eleven logic links, including the start-to-start overlap
+that makes the trench the driver rather than the pipelaying. Both baselines
+approved, which closes the two gate blockers. A Construction Phase Plan, RAMS,
+five inductions and two competencies — one of which expires inside the works, so
+the permit check has something real to catch. Three quantified risks, ten
+consecutive diary days including two lost to weather and one to a duct strike,
+four progress measurements, an ITP inspected against with one pass and one
+failure that raises its own NCR, a released hold point, an RFI answered late,
+two posted actual costs and an earned-value snapshot. Rossendale went from 31
+events to 142.
+
+**Four refusals were hit writing it, and every one of them was the platform
+being right.** The CDM engine refused a Construction Phase Plan with 9 of its 12
+required sections unfilled. Last Planner refused a promise against work held by
+an open constraint — `COMMITMENT_CONSTRAINED` — which is why the second half of
+the trench appears in the lookahead with no promise against it rather than being
+promised and missed every week. Quality refused an inspection past a hold point
+that had passed but never been released, because "a hold point is a witness
+point with a stronger word on it" otherwise. And `createProject` refused the
+owner: no role of OWNER holds "C" on PROJECT_SETUP.
+
+**It broke seven tests in two suites, and that is the more useful finding.**
+`chain.test.ts` and `agents.lookahead.test.ts` both used Rossendale as their
+*empty* construction project — one to prove CDM refuses work with no approved
+plan, the other to prove the lookahead agent says nothing about a project that
+has merely never published one. Both were correct tests borrowing a fixture that
+happened to be poor. A test that depends on another fixture staying poor fails
+the moment the product improves, which is a bad trade for the setup it saved.
+`bareConstructionProject` in `backend/tests/helpers.ts` now builds one on
+demand, through the same gates, and both suites own their own.
+
+`deliveryrecord.test.ts` pins the result — not the exact figures, which move
+whenever the estate improves, but that the record exists and computes: a
+programme with logic, both baselines, a safety file that satisfies its own gate,
+no blocking gaps left at the phase gate, and a programme position that returns a
+duration and a P80 rather than refusing for want of activities. Disabling the
+seed block fails all seven.
+
+---
+
 ### What the probe stopped telling strangers
 
 The commit above made `/readyz` the way to check a deploy from a browser, which

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
-import { rejectsCode, throwsCode } from './helpers.ts';
+import { bareConstructionProject, rejectsCode, throwsCode } from './helpers.ts';
 import { hashEvidence } from '../src/core/canonical.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import * as business from '../src/domain/business.ts';
@@ -33,6 +33,8 @@ import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
 let platform: Platform;
 let seed: SeedResult;
+/** A construction project that has done none of its paperwork. See the helper. */
+let bareProjectId: string;
 
 const ctxFor = (who: string, projectId?: string) =>
   platform.context(seed.users[who]!.auth, projectId ?? seed.projectId, { source: 'WEB' });
@@ -43,6 +45,7 @@ const pipelineCtx = (who: string) => ctxFor(who, `${seed.tenantId}-governance`);
 before(async () => {
   platform = new Platform();
   seed = await seedDemoProject(platform);
+  bareProjectId = (await bareConstructionProject(platform, seed, 'Chain CDM Fixture')).projectId;
 });
 
 // ── 1 · Business development ────────────────────────────────────────────────
@@ -860,10 +863,13 @@ describe('7 · CDM duties are enforced, not documented', () => {
   it('refuses construction-phase work while no plan is approved', () => {
     // On a project that has not done the paperwork. The flagship has one
     // approved — that is the whole point of it — so the refusal has to be
-    // demonstrated somewhere it genuinely applies, which is the sibling project
-    // that is in construction and has drafted nothing.
-    const bare = seed.workingProjects.find((project) => project.phase === 'CONSTRUCTION')!;
-    const onBare = platform.context(seed.users.safety!.auth, bare.projectId, { source: 'WEB' });
+    // demonstrated somewhere it genuinely applies.
+    //
+    // This used to borrow the demonstration estate's sibling construction
+    // project, which worked only while that project stayed empty. It does not
+    // any more, so the fixture is built here instead: a test that depends on
+    // another fixture staying poor fails the moment the product improves.
+    const onBare = platform.context(seed.users.safety!.auth, bareProjectId, { source: 'WEB' });
 
     throwsCode(() => cdm.assertConstructionPhasePlan(onBare), 'CONSTRUCTION_PHASE_PLAN_REQUIRED');
     throwsCode(

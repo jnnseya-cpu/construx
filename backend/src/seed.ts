@@ -20,6 +20,7 @@ import * as radar from './domain/radar.ts';
 import * as cdm from './domain/cdm.ts';
 import { DUTY_SECTIONS } from './seed/dutydocuments.ts';
 import * as measurement from './domain/measurement.ts';
+import * as qualitycontrol from './domain/qualitycontrol.ts';
 import * as meetings from './domain/meetings.ts';
 import * as submittals from './domain/submittals.ts';
 import * as sitevisit from './engines/sitevisit.ts';
@@ -184,6 +185,16 @@ export async function ensureDemonstrationExtras(platform: Platform): Promise<{ t
   const admin = users.find((u) => u.roles.includes('ENTERPRISE_ADMIN'));
   if (!owner || !pm || !qs || !bimLead || !admin) return { timeline };
 
+  // The seats the site record is actually written by. Separated from the four
+  // above because the delivery record below has to be authored by whoever holds
+  // the authority for each act — the planner baselines, the safety lead
+  // approves method statements, the QA engineer inspects — and writing it all
+  // as the project manager would produce a record that passes every check and
+  // describes a project nobody could run.
+  const planner = byEmail('planner@meridian.example');
+  const safetyLead = byEmail('hse@meridian.example');
+  const qaqc = byEmail('qaqc@meridian.example');
+
   const ownerAuth = authOf(platform, owner.id);
   const pmAuth = authOf(platform, pm.id);
   const qsAuth = authOf(platform, qs.id);
@@ -233,9 +244,27 @@ export async function ensureDemonstrationExtras(platform: Platform): Promise<{ t
   // negotiated contract signed. Nothing is asserted that the platform would not
   // have refused.
   //
-  // It carries no site history. That is the point of it — the empty diary, the
-  // empty permit register and the empty inspection log are what somebody
-  // walking in has come to fill.
+  // It now carries a delivery record, and that is a reversal worth writing
+  // down. It was deliberately left empty — "the empty diary, the empty permit
+  // register and the empty inspection log are what somebody walking in has come
+  // to fill" — and on a live deployment that reasoning did not survive contact
+  // with a person.
+  //
+  // What it produced was a project at CONSTRUCTION with 31 events on it: a
+  // contract, a drawing, a frozen estimate and four phase transitions, and
+  // nothing operational at all. Every construction screen then reported the
+  // truth about it — Programme "0 activities, 0 logic links", Field "64 of 64
+  // working days have no diary", Risk "£0 across 0 open risks", Project Control
+  // 13.0% with 20 gaps — and the whole console read as unbuilt rather than as
+  // empty. A screen that is correct and looks broken is a screen that has
+  // failed, and no amount of accurate emptiness fixes it.
+  //
+  // So the site history below is real: written through the same domain commands
+  // the API exposes, in an order the platform would accept from a person, with
+  // every gate and refusal in force. Nothing here asserts a figure. The
+  // programme duration, the P80, the PPC, the productivity, the earned value
+  // and the contingency are all computed from these records by the same engines
+  // that would compute them for a customer.
   if (!projectNamed('Calderdale Reservoir Renewal')) {
     // --- A second project, parked where the work actually happens --------------
     //
@@ -720,9 +749,547 @@ export async function ensureDemonstrationExtras(platform: Platform): Promise<{ t
       to: 'CONSTRUCTION',
       justification: 'Contract executed and estimate frozen; works may commence',
     });
+    // --- The delivery record -------------------------------------------------
+    //
+    // Everything below is the site history. It is written only where the three
+    // delivery seats exist, because each act belongs to the authority that
+    // holds it and there is no honest way to write a safety file as a
+    // commercial manager.
+    if (planner && safetyLead && qaqc) {
+      const sitePlannerCtx = contextFor(platform, authOf(platform, planner.id), siteProject.projectId);
+      const siteSafetyCtx = contextFor(platform, authOf(platform, safetyLead.id), siteProject.projectId);
+      const siteQaqcCtx = contextFor(platform, authOf(platform, qaqc.id), siteProject.projectId);
+
+      // The programme. A linear job in a live carriageway, so the logic is
+      // mostly finish-to-start with one overlap: reinstatement follows the
+      // pipelaying gang down the trench rather than waiting for all of it.
+      const siteTasks = planning.createTasks(sitePlannerCtx, [
+        { activityCode: 'R100', name: 'Site establishment and traffic management', workPackageId: diversionPackageId, durationDays: 15, costCode: 'DIV.001' },
+        { activityCode: 'R200', name: 'Service location and trial holes', workPackageId: diversionPackageId, durationDays: 20, costCode: 'DIV.001', optimisticDays: 15, pessimisticDays: 45 },
+        { activityCode: 'R300', name: 'Open-cut trench — chainage 0 to 620', workPackageId: diversionPackageId, durationDays: 55, costCode: 'DIV.002', optimisticDays: 48, pessimisticDays: 85 },
+        { activityCode: 'R400', name: 'Lay DN600 main — chainage 0 to 620', workPackageId: diversionPackageId, durationDays: 50, costCode: 'DIV.002' },
+        { activityCode: 'R500', name: 'Open-cut trench — chainage 620 to 1240', workPackageId: diversionPackageId, durationDays: 55, costCode: 'DIV.002' },
+        { activityCode: 'R600', name: 'Lay DN600 main — chainage 620 to 1240', workPackageId: diversionPackageId, durationDays: 50, costCode: 'DIV.002' },
+        { activityCode: 'R700', name: 'Chamber construction and valve installation', workPackageId: diversionPackageId, durationDays: 35, costCode: 'DIV.003' },
+        { activityCode: 'R800', name: 'Pressure test, swab and chlorinate', workPackageId: diversionPackageId, durationDays: 18, costCode: 'DIV.004', optimisticDays: 12, pessimisticDays: 40 },
+        { activityCode: 'R900', name: 'Live tie-in — north, night shutdown', workPackageId: diversionPackageId, durationDays: 4, costCode: 'DIV.004', optimisticDays: 3, pessimisticDays: 14 },
+        { activityCode: 'R950', name: 'Live tie-in — south, night shutdown', workPackageId: diversionPackageId, durationDays: 4, costCode: 'DIV.004', optimisticDays: 3, pessimisticDays: 14 },
+        { activityCode: 'R980', name: 'Carriageway reinstatement to HAUC', workPackageId: diversionPackageId, durationDays: 40, costCode: 'DIV.005' },
+      ]);
+
+      planning.linkTasks(sitePlannerCtx, [
+        { predecessorId: siteTasks[0] as string, successorId: siteTasks[1] as string, type: 'FS', lag: 0 },
+        { predecessorId: siteTasks[1] as string, successorId: siteTasks[2] as string, type: 'FS', lag: 0 },
+        // Pipelaying starts fifteen days behind the excavation rather than
+        // after it. This is the overlap that makes the trench the driver.
+        { predecessorId: siteTasks[2] as string, successorId: siteTasks[3] as string, type: 'SS', lag: 15 },
+        { predecessorId: siteTasks[2] as string, successorId: siteTasks[4] as string, type: 'FS', lag: 0 },
+        { predecessorId: siteTasks[4] as string, successorId: siteTasks[5] as string, type: 'SS', lag: 15 },
+        { predecessorId: siteTasks[3] as string, successorId: siteTasks[6] as string, type: 'FS', lag: 0 },
+        { predecessorId: siteTasks[5] as string, successorId: siteTasks[6] as string, type: 'FS', lag: 0 },
+        { predecessorId: siteTasks[6] as string, successorId: siteTasks[7] as string, type: 'FS', lag: 0 },
+        { predecessorId: siteTasks[7] as string, successorId: siteTasks[8] as string, type: 'FS', lag: 0 },
+        { predecessorId: siteTasks[8] as string, successorId: siteTasks[9] as string, type: 'FS', lag: 5 },
+        { predecessorId: siteTasks[9] as string, successorId: siteTasks[10] as string, type: 'FS', lag: 0 },
+      ]);
+
+      const siteProgramme = planning.recalculateProgramme(sitePlannerCtx, { contractualDurationDays: 557 });
+      planning.approveBaseline(sitePlannerCtx, {
+        version: 'BL-01',
+        reason: 'Baseline agreed with the client at the pre-start meeting',
+        contractualCompletionDate: '2027-08-13',
+      });
+
+      cost.approveBudget(siteOwnerCtx, {
+        version: 'CB-01',
+        byCostCode: [
+          { costCode: 'DIV.001', description: 'Establishment and traffic management', budgetMinor: 48_000_000 },
+          { costCode: 'DIV.002', description: 'Excavation and pipelaying', budgetMinor: 189_000_000 },
+          { costCode: 'DIV.003', description: 'Chambers and valves', budgetMinor: 41_000_000 },
+          { costCode: 'DIV.004', description: 'Testing and tie-ins', budgetMinor: 33_000_000 },
+          { costCode: 'DIV.005', description: 'Carriageway reinstatement', budgetMinor: 62_000_000 },
+        ],
+        contingencyMinor: 21_000_000,
+        managementReserveMinor: 9_000_000,
+        tenderMarginPercent: 7,
+      });
+
+      // The two gates that were blocking this project are now met, which is the
+      // point: the stage gate refused it for a reason and the reason is gone.
+      const siteCpp = cdm.draftDocument(siteSafetyCtx, {
+        type: 'CONSTRUCTION_PHASE_PLAN',
+        title: 'Construction Phase Plan — Rossendale Trunk Main Diversion',
+        workPackageId: diversionPackageId,
+        // All twelve sections the regulation requires, written for this job.
+        // The engine refuses an approval with any of them unfilled, and it
+        // refused this plan the first time it was written with three — which is
+        // the rule doing exactly what it is for. A CPP with nine headings and no
+        // content is the document that gets a site shut down.
+        sections: [
+          {
+            heading: 'Project description and programme',
+            body:
+              'Diversion of 1.2km of DN600 potable trunk main around the proposed Bacup Road realignment, comprising ' +
+              'open-cut pipelaying in a live carriageway, two chamber constructions, two live tie-ins under night-time ' +
+              'shutdown, and full-width carriageway reinstatement to HAUC standards. Commencement 2 February 2026, ' +
+              'contractual completion 13 August 2027. The works are sequenced in two halves either side of chainage 620 ' +
+              'so that one running lane is maintained at all times.',
+          },
+          {
+            heading: 'Management of the work',
+            body:
+              'Meridian Infrastructure Group is Principal Contractor. The works run in a live carriageway under a ' +
+              'permanent traffic management arrangement, and no activity is released outside the signed limits of that ' +
+              'arrangement. Day-to-day control sits with the site manager, who holds the authority to stop any activity. ' +
+              'Work is released package by package against an approved method statement, and no activity starts until ' +
+              'its RAMS has been briefed and acknowledged by the people carrying it out. Both live tie-ins are carried ' +
+              'out under a night-time shutdown agreed with Ashworth Water Authority and are permitted separately from ' +
+              'the open-cut works.',
+          },
+          {
+            heading: 'Duty holders and organisational structure',
+            body:
+              'Client: Ashworth Water Authority. Principal Designer: Meridian Design. Principal Contractor: Meridian ' +
+              'Infrastructure Group Ltd. On site the construction manager holds overall control, supported by a site ' +
+              'manager for the works corridor, a site engineer for setting out and service location, and a streetworks ' +
+              'supervisor holding the NRSWA qualification the highway authority requires. The HSE lead reports outside ' +
+              'the delivery line, directly to the project director, so a stop-work decision is never taken by the person ' +
+              'carrying the programme.',
+          },
+          {
+            heading: 'Health and safety aims',
+            body:
+              'No person is to enter an unsupported excavation, and no excavation is to be broken out against a service ' +
+              'record older than seven days. Those two are stated as absolutes rather than as targets because they are ' +
+              'the two ways this particular job kills somebody. Beyond them: every operative inducted before first ' +
+              'shift, every high-risk activity permitted, every incident and near miss investigated to root cause, and ' +
+              'no reliance on a verbal instruction for anything that changes a method.',
+          },
+          {
+            heading: 'Site rules',
+            body:
+              'Hi-visibility clothing to the traffic management standard, safety footwear, helmet and gloves at all ' +
+              'times within the corridor. No pedestrian movement between the working corridor and the live lane except ' +
+              'at the two signed crossing points. Plant movements are banksman controlled. Mobile telephones are not to ' +
+              'be used by anyone on foot inside the corridor. Any person may stop the work; nobody is required to ' +
+              'explain a stop before it is taken.',
+          },
+          {
+            heading: 'Arrangements for controlling significant site risks',
+            body:
+              'Excavation deeper than 1.2m is supported and no person enters an unsupported trench. Lifting pipe ' +
+              'lengths into the trench is planned by an appointed person against a lift plan. Buried services are ' +
+              'located and proved by trial hole ahead of the face at 30m centres; the western verge records were never ' +
+              'returned by the statutory undertaker, so the ground there is treated as unknown and hand-dug to prove ' +
+              'each new chainage. The night shutdown tie-ins are confined-space adjacent and carry their own rescue ' +
+              'arrangement, briefed at the shift start rather than assumed from the daytime plan.',
+          },
+          {
+            heading: 'Welfare facilities',
+            body:
+              'A welfare unit for 20 persons is established at the compound at chainage 40, providing heated ' +
+              'accommodation, hot and cold running water, drying facilities, and separate toilets. It is within 250m of ' +
+              'the working face for the first half of the works; a second unit is established at chainage 700 before ' +
+              'excavation crosses that chainage, because a walk longer than five minutes is a welfare facility people ' +
+              'stop using.',
+          },
+          {
+            heading: 'Fire and emergency procedures',
+            body:
+              'The muster point is the compound gate at chainage 40, with a second at chainage 700 once that compound ' +
+              'opens. Emergency vehicle access is maintained along the running lane at all times and is the reason the ' +
+              'corridor is never fully closed without a signed diversion. Hot work requires a permit and a one-hour ' +
+              'fire watch. In an emergency in the trench, nobody enters to recover a casualty until the trench support ' +
+              'has been confirmed by the site manager or the streetworks supervisor.',
+          },
+          {
+            heading: 'Site induction arrangements',
+            body:
+              'Every person is inducted before first shift by the HSE lead or the site manager. The induction covers ' +
+              'the traffic management layout and the crossing points, the buried services regime and the western verge ' +
+              'condition, the trench support rule, the muster points, and who may stop the work. Attendance is recorded ' +
+              'against the person and their employer, and no permit names an operative with no induction recorded.',
+          },
+          {
+            heading: 'Consultation with workers',
+            body:
+              'A daily briefing is held at the compound before each shift and covers the day’s method, what changed ' +
+              'from the day before, and anything raised the previous day. A weekly safety meeting is held with the ' +
+              'gangs, minuted, with actions carried against a named owner and a date. Any operative may raise a concern ' +
+              'directly with the HSE lead, and the record of what was raised and what was done about it is kept whether ' +
+              'or not the concern was upheld.',
+          },
+          {
+            heading: 'Site security',
+            body:
+              'The working corridor is separated from the live carriageway by rigid barrier for its full length, and ' +
+              'from the footway by pedestrian barrier with tapping rail. Open excavations are covered or barriered and ' +
+              'lit outside working hours. The compound is fenced and locked, with plant keys held in the site office. ' +
+              'The site is in a residential area and the trench is an attraction to children, which is why open ' +
+              'excavation is not left overnight beyond the length that can be barriered and lit.',
+          },
+          {
+            heading: 'Existing site conditions and pre-construction information',
+            body:
+              'Bacup Road is a live single-carriageway A road with a bus route and residential frontage. Records show ' +
+              'gas, electricity, water and telecommunications within the highway. Statutory undertaker records for the ' +
+              'western verge between chainage 620 and 1240 were requested and never returned, and that is carried as a ' +
+              'live risk on the register rather than closed out on an assumption. An unrecorded disused BT subduct was ' +
+              'struck at chainage 362 on 10 August 2026 and removed under supervision, which is treated as evidence ' +
+              'that the records for the whole route are incomplete rather than as an isolated find.',
+          },
+        ],
+      });
+      cdm.approveDocument(siteSafetyCtx, siteCpp.documentId, {
+        comments: 'Approved. The unknown-services condition on the western verge is carried into every excavation permit.',
+      });
+
+      const siteRams = await safety.draftRAMS(siteSafetyCtx, {
+        workPackageId: diversionPackageId,
+        activityDescription: 'Open-cut excavation and DN600 pipelaying in a live carriageway',
+        location: 'Bacup Road, chainage 0 to 1240',
+        steps: [
+          { description: 'Set out and scan for buried services ahead of the face', activityType: 'EXCAVATION' },
+          { description: 'Break out carriageway and excavate in supported stages', activityType: 'EXCAVATION' },
+          { description: 'Install trench support before any person enters', activityType: 'EXCAVATION' },
+          { description: 'Lift and lower DN600 pipe lengths into the trench', activityType: 'LIFTING' },
+          { description: 'Joint, bed and surround the main', activityType: 'GENERAL' },
+        ],
+        companyHazardLibrary: [
+          {
+            activityType: 'EXCAVATION',
+            hazards: ['Unrecorded statutory services in the western verge'],
+            controls: ['Service location record no older than seven days before breaking ground at any new chainage'],
+          },
+        ],
+      });
+      safety.approveRAMS(siteSafetyCtx, siteRams.ramsId, 'Approved against the unknown-services condition on the western verge.');
+      safety.acknowledgeRAMS(siteSafetyCtx, siteRams.ramsId, ['RD-001', 'RD-002', 'RD-003', 'RD-004', 'RD-005'], hash('rossendale-rams-briefing'));
+
+      for (const person of [
+        { personId: 'RD-001', personName: 'Gareth Whitworth', employer: 'Meridian Civils' },
+        { personId: 'RD-002', personName: 'Ana Bujor', employer: 'Meridian Civils' },
+        { personId: 'RD-003', personName: 'Tomasz Nowicki', employer: 'Pennine Groundworks' },
+        { personId: 'RD-004', personName: 'Sean Duffy', employer: 'Pennine Groundworks' },
+        { personId: 'RD-005', personName: 'Marcus Hale', employer: 'Meridian Civils' },
+      ]) {
+        cdm.recordInduction(siteSafetyCtx, {
+          ...person,
+          inductedBy: safetyLead.name,
+          competenciesChecked: ['CSCS', 'Traffic management layout', 'Buried services regime'],
+        });
+      }
+
+      safety.recordCompetency(siteSafetyCtx, {
+        operativeId: 'RD-001',
+        qualification: 'CPCS 360 excavator (above 10t)',
+        issuedAt: '2023-06-14',
+        expiresAt: '2028-06-14',
+        certificateHash: hash('rd001-cpcs-360'),
+      });
+      safety.recordCompetency(siteSafetyCtx, {
+        operativeId: 'RD-003',
+        qualification: 'NRSWA Streetworks Supervisor',
+        issuedAt: '2022-11-02',
+        // Expires inside the works, which is the case the permit check exists
+        // to catch: it is checked against the permit's end date, not today's.
+        expiresAt: '2027-02-02',
+        certificateHash: hash('rd003-nrswa'),
+      });
+
+      // The risk register, quantified in money and days so contingency is
+      // computed rather than chosen. The first two are the ones this job
+      // actually turns on.
+      safety.registerRisk(siteSafetyCtx, {
+        id: '',
+        title: 'Unrecorded services in the western verge',
+        category: 'GROUND_CONDITIONS',
+        probability: 0.55,
+        costImpact: { optimistic: 1_200_000, mostLikely: 4_800_000, pessimistic: 16_000_000 },
+        scheduleImpactDays: { optimistic: 3, mostLikely: 12, pessimistic: 35 },
+        projectValueMinor: 410_000_000,
+        projectDurationDays: 557,
+        mitigations: [
+          { description: 'Trial holes at 30m centres ahead of the face', costMinor: 900_000, probabilityReduction: 0.45, impactReduction: 0.35 },
+        ],
+      });
+      const shutdownRisk = safety.registerRisk(siteSafetyCtx, {
+        id: '',
+        title: 'Night shutdown withdrawn or shortened by the water authority',
+        // A programme risk rather than a commercial one: the money in it is
+        // the standing time, and what it actually threatens is the tie-in
+        // dates that everything after them hangs on.
+        category: 'PROGRAMME',
+        probability: 0.4,
+        costImpact: { optimistic: 800_000, mostLikely: 3_600_000, pessimistic: 12_000_000 },
+        scheduleImpactDays: { optimistic: 7, mostLikely: 21, pessimistic: 56 },
+        projectValueMinor: 410_000_000,
+        projectDurationDays: 557,
+        mitigations: [
+          { description: 'Confirm both shutdown windows in writing 8 weeks ahead', costMinor: 0, probabilityReduction: 0.5, impactReduction: 0.2 },
+        ],
+      });
+      safety.registerRisk(siteSafetyCtx, {
+        id: '',
+        title: 'Highway authority refuses the reinstatement and requires full-width resurfacing',
+        category: 'REGULATORY',
+        probability: 0.25,
+        costImpact: { optimistic: 2_000_000, mostLikely: 9_000_000, pessimistic: 24_000_000 },
+        scheduleImpactDays: { optimistic: 4, mostLikely: 10, pessimistic: 25 },
+        projectValueMinor: 410_000_000,
+        projectDurationDays: 557,
+      });
+
+      // Progress, against evidence. The trench is ahead of the pipe, which is
+      // what makes the productivity figure worth reading.
+      planning.recordProgress(sitePmCtx, {
+        taskId: siteTasks[0] as string,
+        percentComplete: 100,
+        elapsedDays: 15,
+        evidenceDescription: 'Compound established, traffic management signed off by the highway authority',
+        evidenceHash: hash('rossendale-establishment'),
+      });
+      planning.recordProgress(sitePmCtx, {
+        taskId: siteTasks[1] as string,
+        percentComplete: 100,
+        elapsedDays: 26,
+        evidenceDescription: 'Trial holes complete to chainage 620; western verge remains unproven',
+        evidenceHash: hash('rossendale-trial-holes'),
+      });
+      planning.recordProgress(sitePmCtx, {
+        taskId: siteTasks[2] as string,
+        percentComplete: 62,
+        elapsedDays: 41,
+        evidenceDescription: 'Trench open to chainage 384, weekly survey',
+        evidenceHash: hash('rossendale-trench-survey-w8'),
+      });
+      planning.recordProgress(sitePmCtx, {
+        taskId: siteTasks[3] as string,
+        percentComplete: 40,
+        elapsedDays: 26,
+        evidenceDescription: 'DN600 laid and jointed to chainage 248',
+        evidenceHash: hash('rossendale-pipelaying-w8'),
+      });
+
+      // Ten working days of diary, unbroken. Two of them lost to weather and
+      // one to the thing that is actually holding the job up.
+      const siteDiary: Array<{ date: string; weather: planning.DiaryWeather; narrative: string; blockers?: string[] }> = [
+        { date: '2026-08-03', weather: { conditions: 'Dry, bright', temperatureC: 21, workingStopped: false }, narrative: 'Trench progressed to chainage 296. Pipe jointing following at chainage 210.' },
+        { date: '2026-08-04', weather: { conditions: 'Dry', temperatureC: 20, workingStopped: false }, narrative: 'Trench to chainage 318. Two pipe lengths lowered and jointed.' },
+        { date: '2026-08-05', weather: { conditions: 'Heavy rain from 07:00', temperatureC: 14, workingStopped: true }, narrative: 'Trench flooded overnight. Dewatering only; no excavation or jointing.', blockers: ['Standing water in the open trench — pumps run from 07:00'] },
+        { date: '2026-08-06', weather: { conditions: 'Showers, drying', temperatureC: 16, workingStopped: false }, narrative: 'Dewatering complete by 10:00. Trench resumed to chainage 334.' },
+        { date: '2026-08-07', weather: { conditions: 'Dry', temperatureC: 19, workingStopped: false }, narrative: 'Trench to chainage 358. Jointing to chainage 232.' },
+        { date: '2026-08-10', weather: { conditions: 'Dry, warm', temperatureC: 24, workingStopped: false }, narrative: 'Unrecorded duct struck at chainage 362. Excavation halted at the face pending the utility record.', blockers: ['Unrecorded duct at chainage 362 — statutory undertaker attending'] },
+        { date: '2026-08-11', weather: { conditions: 'Dry', temperatureC: 22, workingStopped: false }, narrative: 'Duct identified as a disused BT subduct and removed under supervision. Excavation resumed after 14:00.' },
+        { date: '2026-08-12', weather: { conditions: 'Dry', temperatureC: 21, workingStopped: false }, narrative: 'Trench to chainage 372. Chamber base blinded at chainage 300.' },
+        { date: '2026-08-13', weather: { conditions: 'Persistent rain', temperatureC: 15, workingStopped: true }, narrative: 'No work in the trench. Gang stood down at 09:00 after the morning briefing.', blockers: ['Rainfall exceeded the working limit for open trench operations'] },
+        { date: '2026-08-14', weather: { conditions: 'Dry, cloud', temperatureC: 18, workingStopped: false }, narrative: 'Trench to chainage 384. Jointing to chainage 248. Weekly survey taken.' },
+      ];
+
+      for (const day of siteDiary) {
+        planning.recordSiteDiary(
+          sitePmCtx,
+          {
+            diaryDate: day.date,
+            weather: day.weather,
+            labour: [
+              { trade: 'Groundworks', headcount: 8, hours: day.weather.workingStopped ? 3 : 9 },
+              { trade: 'Pipelaying', headcount: 5, hours: day.weather.workingStopped ? 3 : 9 },
+              { trade: 'Traffic management', headcount: 2, hours: 10 },
+              { trade: 'Site management', headcount: 2, hours: 10 },
+            ],
+            plant: [
+              { description: '13t excavator', hoursWorked: day.weather.workingStopped ? 2 : 9, hoursIdle: day.weather.workingStopped ? 7 : 0, downtimeReason: day.weather.workingStopped ? 'Weather' : undefined },
+              { description: 'Pipe handler', hoursWorked: day.weather.workingStopped ? 0 : 8, hoursIdle: day.weather.workingStopped ? 9 : 1 },
+              { description: 'Dewatering pumps x2', hoursWorked: day.weather.workingStopped ? 9 : 2, hoursIdle: 0 },
+            ],
+            progressNarrative: day.narrative,
+            workedTaskIds: [siteTasks[2] as string, siteTasks[3] as string],
+            deliveries: ['DN600 ductile iron — 6 lengths to the laydown'],
+            blockers: day.blockers,
+            visitors: day.date === '2026-08-10' ? ['Statutory undertaker — buried services engineer'] : [],
+            evidenceHash: hash(`rossendale-diary-${day.date}`),
+          },
+          new Date(`${day.date}T17:45:00.000Z`),
+        );
+      }
+
+      // The constraint the fleet found: the western verge records. Raised
+      // against the activity it actually holds up, and still open.
+      planning.raiseConstraint(
+        sitePlannerCtx,
+        {
+          taskId: siteTasks[4] as string,
+          category: 'INFORMATION',
+          description: 'Statutory undertaker records for the western verge not returned; chainage 620 to 1240 cannot be excavated to the approved method',
+          owner: 'Meridian Design — utilities coordinator',
+          needByDate: '2026-09-04',
+        },
+        new Date('2026-08-06T09:00:00.000Z'),
+      );
+      const tmConstraint = planning.raiseConstraint(
+        sitePlannerCtx,
+        {
+          taskId: siteTasks[10] as string,
+          category: 'ACCESS',
+          description: 'Full-width carriageway closure for reinstatement not yet granted by the highway authority',
+          owner: 'Meridian — site manager',
+          needByDate: '2027-04-19',
+        },
+        new Date('2026-08-11T09:00:00.000Z'),
+      );
+      planning.closeConstraint(sitePlannerCtx, {
+        constraintId: tmConstraint.constraintId,
+        resolution: 'Closure permit granted for the April 2027 window, reference RBC/TM/2027/0118',
+      });
+
+      // Three weeks of Last Planner, so PPC is a trend and the recurring reason
+      // is visible. It is the same reason as the open constraint above.
+      //
+      // The second half of the trench is never promised, because the platform
+      // refuses a commitment against constrained work — COMMITMENT_CONSTRAINED,
+      // naming the open information constraint. That refusal is the whole point
+      // of a constraint log: the work stays in the lookahead, visible, with no
+      // promise against it, rather than being promised and missed every week
+      // while the PPC quietly records somebody else's failure.
+      const siteWeeks: Array<{ start: string; commit: number[]; outcomes: Array<{ i: number; done: boolean; reason?: planning.NonCompletionReason }> }> = [
+        { start: '2026-08-03', commit: [2, 3], outcomes: [{ i: 2, done: true }, { i: 3, done: true }] },
+        // The duct strike on the 10th. Promised, not delivered, and the reason
+        // is the one the diary records rather than a tidier one.
+        { start: '2026-08-10', commit: [2, 3, 6], outcomes: [{ i: 2, done: false, reason: 'ACCESS' }, { i: 3, done: true }, { i: 6, done: true }] },
+        // Two days lost to rain in the same week.
+        { start: '2026-08-17', commit: [2, 3, 6], outcomes: [{ i: 2, done: false, reason: 'WEATHER' }, { i: 3, done: true }, { i: 6, done: false, reason: 'WEATHER' }] },
+      ];
+      let sitePpc = 0;
+      for (const week of siteWeeks) {
+        const plan = planning.publishLookahead(sitePlannerCtx, {
+          weekStarting: week.start,
+          plannedTaskIds: siteTasks.slice(0, 7) as string[],
+          commitments: week.commit.map((i) => ({
+            taskId: siteTasks[i] as string,
+            promise: `Complete the planned quantity on ${String(platform.ledger.require({ refType: 'Task', refId: siteTasks[i] as string }).state.name)}`,
+            promisedBy: 'Site manager',
+            dueDate: week.start,
+          })),
+        });
+        sitePpc = planning.reviewLookahead(sitePlannerCtx, {
+          lookaheadId: plan.lookaheadId,
+          outcomes: week.outcomes.map((o) => ({ taskId: siteTasks[o.i] as string, completed: o.done, reason: o.reason })),
+        }).ppcPercent;
+      }
+
+      // Quality. An ITP agreed by both sides, then inspected against — one
+      // pass, one failure that raises its own non-conformance.
+      const sitePlan = quality.createInspectionPlan(siteQaqcCtx, {
+        workPackageId: diversionPackageId,
+        title: 'DN600 trunk main — bedding, jointing and pressure test',
+        discipline: 'CIVILS',
+        specificationRef: 'WIS 4-01-01',
+        stages: [
+          { reference: 'T1', description: 'Trench formation and bedding before pipe is lowered', acceptanceCriteria: 'Formation firm, bedding 150mm Class S to WIS 4-08-02', type: 'HOLD', responsible: 'Engineer' },
+          { reference: 'T2', description: 'Joint inspection before surround', acceptanceCriteria: 'Push-fit joints witnessed home to the witness mark', type: 'WITNESS', responsible: 'QA engineer' },
+          { reference: 'T3', description: 'Pressure test to WIS 4-01-01', acceptanceCriteria: 'Hold 1.5x working pressure for 60 minutes with no measurable loss', type: 'HOLD', responsible: 'Engineer' },
+          { reference: 'T4', description: 'Reinstatement layer check', acceptanceCriteria: 'HAUC specification, layer depths to the approved detail', type: 'REVIEW', responsible: 'QA engineer' },
+        ],
+      });
+      quality.approveInspectionPlan(sitePmCtx, {
+        planId: sitePlan.planId,
+        approvedBy: pm.id,
+        approvingRole: "Employer's Representative",
+        note: 'Approved. Pressure test to be witnessed by the water authority as well as the Engineer.',
+        evidenceHash: hashEvidence('rossendale-itp-approval'),
+      });
+      quality.recordInspection(siteQaqcCtx, {
+        planId: sitePlan.planId,
+        stageReference: 'T1',
+        outcome: 'PASS',
+        inspectedBy: qaqc.name,
+        comments: 'Formation firm to chainage 248. Bedding depth checked at five points, all within tolerance.',
+        evidenceHash: hash('rossendale-t1-chainage-248'),
+      });
+      // The release, which is a different act from the inspection and a
+      // different authority. `recordInspection` refuses T2 outright while T1 is
+      // passed but unreleased — "a hold point is a witness point with a
+      // stronger word on it" otherwise — and the QA engineer who inspected it
+      // cannot release it, so this is the project manager.
+      qualitycontrol.releaseHoldPoint(sitePmCtx, {
+        planId: sitePlan.planId,
+        stageReference: 'T1',
+        basis: 'Formation and bedding accepted to chainage 248; pipe may be lowered over this length.',
+        evidenceHash: hash('rossendale-t1-release'),
+      });
+
+      quality.recordInspection(siteQaqcCtx, {
+        planId: sitePlan.planId,
+        stageReference: 'T2',
+        outcome: 'FAIL',
+        inspectedBy: qaqc.name,
+        comments: 'Two joints at chainage 214 and 220 not home to the witness mark.',
+        evidenceHash: hash('rossendale-t2-chainage-214'),
+        nonConformance: {
+          description: 'Two DN600 push-fit joints not fully home to the witness mark at chainage 214 and 220',
+          severity: 'MAJOR',
+          proposedAction: 'Excavate the surround, re-make both joints and re-witness before the section is pressure tested',
+        },
+      });
+
+      // An RFI off the drawing, raised and answered late — which is what makes
+      // the register worth keeping rather than a list of questions.
+      const siteMarkup = bim.addMarkup(siteBimCtx, {
+        drawingId: siteDrawing.drawingId,
+        author: bimLead.name,
+        note: 'Long section shows the main passing 300mm below the surface water sewer at chainage 596. Confirm clearance and whether a concrete surround is required.',
+        region: { x: 0.55, y: 0.4, width: 0.09, height: 0.07 },
+        convertTo: 'RFI',
+      });
+      if (siteMarkup.derivedId) {
+        bim.answerRFI(
+          siteBimCtx,
+          {
+            rfiId: siteMarkup.derivedId,
+            answer:
+              'Clearance is 300mm and is acceptable. Provide a full concrete surround to the trunk main for 3m either side of the crossing, detail per SK-118.',
+            answeredBy: 'Meridian Design — lead civil engineer',
+            changesDesign: true,
+            evidenceHash: hash('rossendale-rfi-596-answer'),
+          },
+          new Date(Date.now() + 9 * 86_400_000),
+        );
+      }
+
+      // Cost, against the baseline above. Two applications through the
+      // statutory cycle so the certified-against-applied position is real.
+      cost.postActualCost(siteQsCtx, { costCode: 'DIV.001', amountMinor: 44_600_000, date: '2026-08-31', sourceSystem: 'ERP', description: 'Establishment and traffic management to date' });
+      cost.postActualCost(siteQsCtx, { costCode: 'DIV.002', amountMinor: 71_200_000, date: '2026-08-31', sourceSystem: 'ERP', description: 'Excavation and pipelaying to date' });
+      cost.takeEVMSnapshot(siteQsCtx, { period: '2026-08', plannedValueMinor: 104_000_000 });
+
+      // The weather risk rescored against what the diary actually recorded.
+      // Two stopped days in ten is the evidence, and the contingency moves with
+      // it rather than staying at the tender figure.
+      safety.rescoreRisk(siteSafetyCtx, {
+        riskId: shutdownRisk.riskId,
+        probability: 0.3,
+        // The impact ranges are restated rather than inherited, because a
+        // rescore that carried them forward silently would let a probability
+        // move while the exposure behind it was never looked at again.
+        costImpact: { optimistic: 800_000, mostLikely: 3_600_000, pessimistic: 12_000_000 },
+        scheduleImpactDays: { optimistic: 7, mostLikely: 18, pessimistic: 42 },
+        reason: 'Both shutdown windows confirmed in writing by the water authority on 2026-08-12',
+        projectValueMinor: 410_000_000,
+        projectDurationDays: 557,
+      });
+
+      note(
+        `Rossendale delivery record: ${siteTasks.length} activities on an approved baseline ` +
+          `(${siteProgramme.projectDurationDays}d, P80 ${siteProgramme.p80DurationDays}d), cost baseline CB-01, ` +
+          `CPP and RAMS approved, 5 inductions, 3 risks quantified, 10 diaries, PPC ${sitePpc}% ` +
+          'in the latest week, an ITP with a failed stage and its NCR, and an RFI answered late',
+      );
+    }
+
     note(
       `Project on site: Rossendale Trunk Main Diversion (${siteProject.projectId}) at CONSTRUCTION — ` +
-        'permits, method statements, diaries, inspections and traffic management are writable here',
+        'programme, cost baseline, safety file, diaries, inspections and the commercial position are live here',
     );
   }
 

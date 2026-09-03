@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { agentByName } from '../src/agents/registry.ts';
+import { bareConstructionProject } from './helpers.ts';
 import type { AgentDefinition, Finding } from '../src/agents/types.ts';
 import { hashEvidence } from '../src/core/canonical.ts';
 import * as planning from '../src/engines/planning.ts';
@@ -59,9 +60,16 @@ describe('the lookahead agent watches the constraint log and the weekly promise'
   before(async () => {
     platform = new Platform();
     seed = await seedDemoProject(platform);
-    const construction = seed.workingProjects.find((project) => project.phase === 'CONSTRUCTION');
-    assert.ok(construction, 'the demonstration tenancy no longer holds a construction project');
-    ctx = platform.context(seed.users.planner!.auth, construction.projectId);
+    // A construction project of this suite's own, with an empty constraint log
+    // and no lookahead ever published.
+    //
+    // It used to borrow the demonstration estate's construction project, which
+    // held only while that project stayed empty. It does not: it now carries a
+    // full delivery record, and six tests here broke at once. A fixture that
+    // depends on another fixture staying poor fails the moment the product
+    // improves, which is a bad trade for the setup it saved.
+    const { projectId } = await bareConstructionProject(platform, seed, 'Lookahead Agent Fixture');
+    ctx = platform.context(seed.users.planner!.auth, projectId);
 
     const { workPackageId } = planning.createWorkPackage(ctx, {
       wbsCode: 'RTM-01',
