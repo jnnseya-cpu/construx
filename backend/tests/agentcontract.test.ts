@@ -35,6 +35,11 @@ const SPEC_AGENTS = [
   'AGT-PROG-DELAY', 'AGT-COMMERCIAL', 'AGT-SITE-PROGRESS', 'AGT-HSE', 'AGT-CONTRACT-OBS',
   'AGT-COMMISSIONING', 'AGT-PC-READINESS', 'AGT-OM-CHASE', 'AGT-COBIE', 'AGT-HANDOVER',
   'AGT-GOLDEN-THREAD', 'AGT-FM-ASSET', 'AGT-LESSONS', 'AGT-SPEC-INTEL',
+  // The field specification's E2 table. `AGT-SITE-PROGRESS` is already above:
+  // the field app's progress agent and the delivery fleet's are the same agent
+  // with the same id, and building a second one would have been the duplication
+  // the uniqueness check below exists to catch.
+  'AGT-VOICE-STRUCT', 'AGT-PHOTO-CLASS', 'AGT-FIELD-ANSWERS', 'AGT-HSE-FIELD', 'AGT-TODAY',
 ];
 
 describe('every agent the specification names exists', () => {

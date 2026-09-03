@@ -7184,6 +7184,94 @@ Eight tests in `syncvisibility.test.ts`. The mutant that matters: make
 
 ---
 
+### The field fleet: specification E2's six agents
+
+Five new agents in `backend/src/agents/field.ts`, and a sixth extended where it
+already was. They are separate from the delivery fleet in `registry.ts` for one
+reason that shows up in every one of them: **the delivery fleet watches a
+project and these watch a day.** A programme agent asks whether the job will
+finish late. These ask whether the thing that happened this morning reached the
+record before the person who saw it went home, and that answer decays — a voice
+note nobody confirmed by Friday is one whose speaker has forgotten what they
+meant.
+
+| Agent | What it reads | What it says |
+|---|---|---|
+| `AGT-VOICE-STRUCT` | Voice-note perception drafts; `VoiceSegment[]` on a daily log | Dictation nobody confirmed, and *why a confirmation would be refused* |
+| `AGT-PHOTO-CLASS` | Photograph perception drafts, by task | Readings never filed; the same file read twice; a PPE breach that never reached the safety log |
+| `AGT-FIELD-ANSWERS` | The eight registers a workface question lands on | Which questions come back empty, before somebody is standing there asking |
+| `AGT-HSE-FIELD` | Permits, approved RAMS, safety observations, this week's commitments | Permits expiring under promised work, areas never handed back, one hazard reported three times in one place |
+| `AGT-TODAY` | This week's commitments, daily logs, open permits | Promises due today with no answer; yesterday's log missing or still on a phone; what is authorised right now |
+| `AGT-SITE-PROGRESS` | *(extended)* the productivity engine, diary blockers | Productivity against baseline, planned-against-actual per activity, delay events with the diary attached |
+
+**`AGT-SITE-PROGRESS` was already built.** It is the `field` agent in
+`registry.ts`, and giving the field app a second agent under the same id is
+exactly the duplication the fleet's own uniqueness invariant exists to catch.
+What E2 asks of it and it did not do is the part that turns coverage into a
+position: productivity against the baseline, the planned-against-actual delta,
+and a delay event with an evidence link. All three are read from what already
+existed — `planning.productivityPosition` computes the earned-days-per-elapsed-day
+figure, weighted by planned duration, refusing to score an activity nobody has
+started, and **nothing was reading it**. The delay event is the blocker written
+into a daily log that never reached the constraint log: the strongest evidence a
+delay claim has, sitting where nothing chases it. Its schedule moved from 18:00
+to E2's 17:30.
+
+**Nothing in this fleet proposes a write.** Every one carries
+`maxUnattended: 'OBSERVE'` and an empty `proposes`, and that is not caution — it
+follows from what confirming means here. `perception.confirm` files the
+observation against `ctx.auth.actorId`, so a machine confirming a transcript
+would put a person's name on something that person never saw. The specification
+says the same thing about the photo agent in four words: *never auto-filed.* It
+is true of all of them, and `fieldagents.test.ts` asserts it rather than leaving
+it to the contract test, because it is the property the whole fleet is safe on.
+
+**What they mostly find is a refusal that has not happened yet.** A voice note
+the model read as requiring action cannot be confirmed at all until somebody
+supplies a date — `captureSiteObservation` requires one and a deadline is not
+audible. The platform refuses that correctly. What nobody had was the sentence
+in advance, and a person meeting it at the moment they press confirm learns it
+as a bug in the product.
+
+**Two things deliberately not built.** E2 asks `AGT-HSE-FIELD` for "toolbox talk
+drafts from active RAMS"; `recordToolboxTalk` refuses a talk with no attendance,
+correctly, because a talk that briefed nobody is not a talk — and an agent
+cannot know who will be standing there. So it names the approved method
+statement the talk is due from and leaves the briefing to the person giving it.
+And the duplicate check groups on `evidenceHash` **and** task together: the same
+photograph read once for progress and once for defects is two different
+questions of one image and entirely legitimate.
+
+Twenty-one tests. Six mutants killed: drop the actionable-note warning, key the
+duplicate check on the draft id instead of the file hash, treat two reports at
+one location as a pattern, ignore a permit expiring inside the promised week,
+stop reading unconfirmed log segments, and blank the empty-register search.
+A seventh survived and produced the test that was missing — removing the
+due-date filter on `AGT-TODAY` left everything passing, because the fixture only
+ever promised work in the past. An agent reporting the whole week's promises
+every morning as "due, with no outcome" trains its reader to close the card, and
+the one that had actually gone by goes with it.
+
+Driven through `runAgents` on the seeded site project rather than only in tests:
+five findings, all landing in the PM's own queue by the raising agent's
+declared approvers, each with evidence or a named absence —
+
+- `field` — "0.82 days earned per day spent across 4 measured activities, and 2
+  of the activities below 1.0 sit on the critical path" (URGENT)
+- `field` — "3 days recorded a blocker in the log with no constraint open
+  against the work" (URGENT)
+- `hse-field` — an approved method statement with no toolbox talk against it
+- `today` — no log recorded for yesterday
+- `field-answers` — 2 of the 8 workface registers empty
+
+`voice-structure` and `photo-classification` report nothing there, and that is
+the deployment being honest rather than the agents being broken: no perception
+draft exists on that project because the local engines compute, they do not
+perceive. Both are exercised in `fieldagents.test.ts` against a multimodal
+provider stub, which is what a deployment with a real one has.
+
+---
+
 ### The project on site now has a site record
 
 The demonstration estate carries four projects. Rossendale Trunk Main Diversion

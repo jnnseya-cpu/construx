@@ -1,7 +1,9 @@
 import { abbreviateMoney } from '../domain/locale.ts';
 import type { EngineContext } from '../engines/context.ts';
+import * as planning from '../engines/planning.ts';
 import { LIFECYCLE_AGENTS } from './lifecycle.ts';
 import { ETABLIX_AGENTS } from './etablix.ts';
+import { FIELD_AGENTS } from './field.ts';
 import { PLATFORM_AGENTS } from './platform.ts';
 import type { AgentDefinition, AgentOutput, Finding, ProposedCommand } from './types.ts';
 
@@ -459,13 +461,41 @@ const designAgent: AgentDefinition = {
 
 // ------------------------------------------------------------------- field
 
+/**
+ * `AGT-SITE-PROGRESS`, and what the field specification added to it.
+ *
+ * It watched two things: measurement coverage, and snags with no trade against
+ * them. Both are real and both stay. What specification E2 asks of this agent
+ * and it did not do is the part that turns coverage into a position —
+ * **planned against actual, productivity against the baseline, and a delay
+ * event detected with the evidence link on it.**
+ *
+ * All three are read from what already exists rather than recomputed here.
+ * `planning.productivityPosition` is the earned-days-per-elapsed-day figure,
+ * weighted by planned duration and refusing to score an activity nobody has
+ * started — it was built and nothing was reading it. The delay event is the
+ * blocker written into a daily log that never reached the constraint log: a
+ * contemporaneous record of work stopping, which is the strongest evidence a
+ * delay claim has, sitting in a diary where nothing chases it.
+ *
+ * Distinct from `AGT-LOOKAHEAD`'s "blocked with no constraint", which reads
+ * `Task.status`. A task marked BLOCKED is a status somebody set. A blocker in
+ * the diary is what the supervisor wrote down on the day, and the two do not
+ * always agree — which is itself worth knowing.
+ */
 const fieldAgent: AgentDefinition = {
   name: 'field',
   agentId: 'AGT-SITE-PROGRESS',
   activeIn: ['CONSTRUCTION', 'COMMISSIONING'],
-  triggers: [{ kind: 'SCHEDULE', at: '18:00' }, { kind: 'EVENT', eventType: 'SITE_DIARY_RECORDED' }],
-  inputs: ['Daily diaries', 'Progress measurement', 'Work orders', 'Site observations'],
-  outputs: ['Diary gaps', 'Progress against measure', 'Productivity drift'],
+  triggers: [{ kind: 'SCHEDULE', at: '17:30' }, { kind: 'EVENT', eventType: 'SITE_DIARY_RECORDED' }],
+  inputs: ['Daily diaries', 'Progress measurement', 'Work orders', 'Site observations', 'The programme baseline'],
+  outputs: [
+    'Diary gaps',
+    'Progress against measure',
+    'Productivity against baseline',
+    'Activities behind what their elapsed time bought',
+    'Delay events recorded in a diary and never raised as a constraint',
+  ],
   emits: ['PROGRESS_RECORDED'],
   hitl: 'REVIEW',
   confidenceFloor: 0.55,
@@ -506,6 +536,88 @@ const fieldAgent: AgentDefinition = {
         summary: `${stale.length} open snag${stale.length === 1 ? '' : 's'} with no responsible trade.`,
         consequence: 'A snag with no owner is a snag nobody closes; routing by cost code is what turns a list into work.',
         evidence: stale.slice(0, 3).map((s) => ({ refType: 'Snag', refId: s.refId, note: String(s.state.description ?? '') })),
+      });
+    }
+
+    // Productivity against the baseline, and the planned-against-actual delta
+    // underneath it. Read from the engine rather than recomputed: the weighting
+    // by planned duration and the three refusals that keep the figure honest
+    // live there, and a second arithmetic here would be a second answer to the
+    // same question.
+    const productivity = planning.productivityPosition(ctx);
+    if (productivity.projectFactor !== null && productivity.projectFactor < 0.9) {
+      const critical = productivity.activities.filter((activity) => activity.onCriticalPath && activity.factor < 1);
+      findings.push({
+        key: `field:productivity:${productivity.projectFactor}`,
+        severity: critical.length > 0 ? 'URGENT' : 'ATTENTION',
+        summary:
+          `${productivity.projectFactor.toFixed(2)} days earned per day spent across ${productivity.measured} measured ` +
+          `${productivity.measured === 1 ? 'activity' : 'activities'}` +
+          (critical.length > 0 ? `, and ${critical.length} of the activities below 1.0 ${critical.length === 1 ? 'sits' : 'sit'} on the critical path.` : '.'),
+        consequence:
+          'Below 1.0 the job is buying less programme than it is spending time on, and the gap compounds: the completion ' +
+          'date moves by the shortfall on the critical path, not by the average across everything.',
+        evidence: productivity.activities.slice(0, 5).map((activity) => ({
+          refType: 'Task',
+          refId: activity.taskId,
+          note:
+            `${activity.taskName} — ${activity.percentComplete}% in ${activity.elapsedDays} of ${activity.plannedDays} planned days, ` +
+            `${activity.daysBehind} ${activity.daysBehind === 1 ? 'day' : 'days'} behind${activity.onCriticalPath ? ', on the critical path' : ''}`,
+        })),
+      });
+    }
+
+    // Progress recorded against no elapsed time. Reported by the engine as
+    // unmeasurable rather than scored, and it is a data fault somebody can
+    // actually fix — the alternative is a productivity figure computed over a
+    // subset nobody was told about.
+    if (productivity.unmeasurable.length > 0) {
+      findings.push({
+        key: `field:unmeasurable:${productivity.unmeasurable.length}`,
+        severity: 'ATTENTION',
+        summary: `${productivity.unmeasurable.length} ${productivity.unmeasurable.length === 1 ? 'activity has' : 'activities have'} progress recorded against no elapsed time.`,
+        consequence:
+          'Neither productivity nor the delay forecast can use them, so both are computed over a smaller job than the one ' +
+          'being built. Progress without the days it took is a claim with no rate behind it.',
+        evidence: productivity.unmeasurable.slice(0, 5).map((entry) => ({
+          refType: 'Task',
+          refId: entry.taskId,
+          note: `${entry.taskName} — ${entry.reason}`,
+        })),
+      });
+    }
+
+    // A delay event written down on the day and never raised. The diary entry
+    // is the evidence link, which is what makes this worth more than the same
+    // observation made a month later from memory.
+    const constrainedTasks = new Set(
+      list(ctx, 'Constraint')
+        .filter((record) => record.state.status !== 'CLOSED')
+        .map((record) => String(record.state.taskId)),
+    );
+    const delayEvents = list(ctx, 'SiteDiary')
+      .filter((record) => ((record.state.blockers ?? []) as unknown[]).length > 0)
+      .filter((record) => {
+        const worked = (record.state.workedTaskIds ?? []) as string[];
+        // Raised where none of the activities the shift worked on carries an
+        // open constraint. A blocker on a day whose work is already constrained
+        // is the constraint log doing its job.
+        return worked.length === 0 || !worked.some((taskId) => constrainedTasks.has(taskId));
+      });
+    if (delayEvents.length > 0) {
+      findings.push({
+        key: `field:unraised-delay-events:${delayEvents.length}`,
+        severity: 'URGENT',
+        summary: `${delayEvents.length} ${delayEvents.length === 1 ? 'day' : 'days'} recorded a blocker in the log with no constraint open against the work.`,
+        consequence:
+          'A blocker written in the diary on the day it happened is the strongest evidence a delay claim has, and it is ' +
+          'sitting in a record nothing chases. Nobody clears it, nothing stops the work being promised again next week, ' +
+          'and the entitlement is argued a year later from a narrative instead.',
+        evidence: delayEvents.slice(0, 5).map((record) => ({
+          refType: 'SiteDiary',
+          refId: record.refId,
+          note: `${String(record.state.diaryDate ?? 'undated')} — ${((record.state.blockers ?? []) as string[]).join('; ').slice(0, 140)}`,
+        })),
       });
     }
 
@@ -1311,6 +1423,12 @@ export const AGENTS: AgentDefinition[] = [
   // twelve above because those are organised by division and these by stage —
   // a third of them only ever run before a spade goes in the ground.
   ...LIFECYCLE_AGENTS,
+  // The field fleet, in `field.ts`. Separate again, and for the reason written
+  // at the top of that file: everything above watches a project and these watch
+  // a day. `AGT-SITE-PROGRESS` is the sixth of the specification's field agents
+  // and is `fieldAgent` above — extended rather than rebuilt, because two
+  // agents holding one id is what the uniqueness invariant exists to catch.
+  ...FIELD_AGENTS,
   ...PLATFORM_AGENTS,
   // The ETABLIX site-services fleet. In the same registry as everything else,
   // so it is governed by the same runtime, appears in the same manifest and
