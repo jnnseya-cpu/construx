@@ -610,6 +610,16 @@ export const config = {
   auth: {
     required: bool('GATEWAY_REQUIRE_AUTH', true),
     exposeMfa: bool('GATEWAY_AUTH_EXPOSE_MFA', true),
+    /**
+     * Whether a platform operator must hold an authenticator app.
+     *
+     * On by default: the operator can credit wallets, move packages and close
+     * tenancies, and an emailed code is one mailbox compromise away from all of
+     * it. An operator without one is not refused — they are taken to enrol on
+     * their next sign-in and can do nothing else until they have. Tenancies
+     * set their own requirement on Team & Access.
+     */
+    operatorMfaRequired: bool('GATEWAY_AUTH_OPERATOR_MFA_REQUIRED', true),
     accessTtlMinutes: num('GATEWAY_AUTH_ACCESS_TTL_MINUTES', 15),
     refreshTtlDays: num('GATEWAY_AUTH_REFRESH_TTL_DAYS', 7),
     jwtSecret: str('GATEWAY_JWT_SECRET', 'construx-development-secret'),

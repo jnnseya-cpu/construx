@@ -140,6 +140,7 @@ describe('what an anonymous caller can obtain', () => {
       'POST /exposure',
       'POST /unsubscribe',
       'POST /v1/auth/login',
+      'POST /v1/auth/mfa/factor',
       'POST /v1/auth/mfa/verify',
       // Signing in with a passkey. Public because it *is* the sign-in, and
       // narrower than the code path it replaces: the challenge is server-issued
@@ -203,6 +204,7 @@ describe('what an anonymous caller can obtain', () => {
     // Anything that presents credentials is exempt by name, so a new public
     // route returning a token has to be added here deliberately.
     const mayIssueTokens = new Set([
+      'POST /v1/auth/mfa/factor',
       'POST /v1/auth/mfa/verify',
       'POST /v1/auth/refresh',
       // A verified assertion is a completed second factor, so this issues a

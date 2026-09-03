@@ -77,7 +77,7 @@ describe('the directory', () => {
     const people = team.body.people as Array<Record<string, unknown>>;
     const esi = people.find((person) => person.id === planner.id)!;
     assert.equal(esi.state, 'ACTIVE');
-    assert.deepEqual(esi.mfa, { passkey: false, device: false, label: 'Code only' });
+    assert.deepEqual(esi.mfa, { passkey: false, authenticator: false, device: false, label: 'Code only' });
     assert.ok((esi.risk as string[]).includes('No second factor enrolled'));
     assert.equal(esi.activity, 'NEVER', 'nobody has acted yet');
     const seats = team.body.seats as Record<string, unknown>;

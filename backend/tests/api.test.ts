@@ -8,6 +8,7 @@ import { POST_PAGES, SITE_PAGES } from '../src/site/index.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
+import { completeSignIn } from './helpers.ts';
 
 /**
  * The gateway, over real HTTP.
@@ -159,6 +160,7 @@ describe('the routing table itself', () => {
       'POST /exposure',
       'POST /unsubscribe',
       'POST /v1/auth/login',
+      'POST /v1/auth/mfa/factor',
       'POST /v1/auth/mfa/verify',
       // Signing in with a passkey. Public for exactly the reason the code path
       // is: it is the sign-in. The ceremony's own challenge is server-issued
@@ -1146,7 +1148,7 @@ describe('the operator moves a tenancy between packages', () => {
     const verified = await call('POST', '/v1/auth/mfa/verify', {
       body: { actorId: login.body.actorId, challengeId: login.body.challengeId, code: login.body.devCode },
     });
-    return (verified.body as { accessToken: string }).accessToken;
+    return completeSignIn(base, verified.body as Record<string, unknown>);
   }
 
   it('changes the package, records a reason, and leaves the wallet alone', async () => {
@@ -1358,7 +1360,7 @@ describe('an alert can fire at a person, and an operator can see that it did', (
       const verified = await call('POST', '/v1/auth/mfa/verify', {
         body: { actorId: login.body.actorId, challengeId: login.body.challengeId, code: login.body.devCode },
       });
-      return (verified.body as { accessToken: string }).accessToken;
+      return completeSignIn(base, verified.body as Record<string, unknown>);
     })();
 
     // Clear the window, then fail hard inside a single one.
@@ -1410,7 +1412,7 @@ describe('an alert can fire at a person, and an operator can see that it did', (
       const verified = await call('POST', '/v1/auth/mfa/verify', {
         body: { actorId: login.body.actorId, challengeId: login.body.challengeId, code: login.body.devCode },
       });
-      return (verified.body as { accessToken: string }).accessToken;
+      return completeSignIn(base, verified.body as Record<string, unknown>);
     })();
     const position = await call('GET', '/v1/admin/watch', { token: operator });
     assert.equal(typeof position.body.operators, 'number');

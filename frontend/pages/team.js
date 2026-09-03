@@ -244,8 +244,20 @@ export async function team(root) {
             <div class="row"><span class="lbl">Administration</span><span class="val">${governance.lastAdministrator}</span></div>
             <div class="row"><span class="lbl">AI</span><span class="val">${governance.aiMandateCeiling}</span></div>
             <div class="row"><span class="lbl">Deletion</span><span class="val">Erasure is carried out ${governance.erasureGraceDays} days after it is requested, and can be cancelled until then</span></div>
-            <div class="row"><span class="lbl">Sign-in</span><span class="val">${governance.deviceBindingRequired ? 'A bound device is required for every session' : 'One-time code by email; passkeys and device binding available on Account'}</span></div>
+            <div class="row"><span class="lbl">Sign-in</span><span class="val">${governance.deviceBindingRequired ? 'A bound device is required for every session' : 'One-time code by email; passkeys and device binding available on Security'}</span></div>
+            <div class="row"><span class="lbl">Second factor</span><span class="val">${
+              governance.mfaRequired === 'EVERYONE'
+                ? 'Everyone must hold an authenticator app; a session without one can only enrol'
+                : governance.mfaRequired === 'ADMINISTRATORS'
+                  ? 'Administrators must hold an authenticator app; a session without one can only enrol'
+                  : 'Not required — anyone may set one up on Security'
+            }${governance.mfaPolicySetAt ? html`<div class="metric-sub">set ${date(governance.mfaPolicySetAt)}</div>` : ''}</span></div>
           </div>
+          ${admin
+            ? html`<div class="actions" style="margin-top:12px">
+                <button class="btn quiet sm" data-mfa-policy>Change who must hold a second factor</button>
+              </div>`
+            : ''}
         </div>
       </div>
     `,
@@ -350,6 +362,36 @@ export async function team(root) {
       }
     } catch (error) {
       toast('Could not do that', error.message, 'err');
+    }
+  });
+
+  root.querySelector('[data-mfa-policy]')?.addEventListener('click', async () => {
+    try {
+      const done = await command({
+        title: 'Who must hold a second factor',
+        intent:
+          'Enforced at the gateway: a person this applies to who has no authenticator app is signed in to a session that can ' +
+          'do nothing but enrol. Set up your own first — the platform refuses to require of others what you have not done.',
+        path: '/v1/team/security-policy',
+        submitLabel: 'Apply',
+        fields: [
+          {
+            name: 'mfaRequired',
+            label: 'Required of',
+            type: 'select',
+            value: governance.mfaRequired,
+            options: [
+              { value: 'OFF', label: 'Nobody — optional for everyone' },
+              { value: 'ADMINISTRATORS', label: 'Administrators — enterprise admins and owners' },
+              { value: 'EVERYONE', label: 'Everyone in the tenancy' },
+            ],
+          },
+          reason('Why the requirement is changing; recorded against the decision.'),
+        ],
+      });
+      if (done) await refresh();
+    } catch (error) {
+      toast('Could not change the requirement', error.message, 'err');
     }
   });
 

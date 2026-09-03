@@ -1,5 +1,5 @@
 import { api, session } from '../lib/api.js';
-import { can } from '../app.js';
+import { can, state } from '../app.js';
 import { command } from '../lib/command.js';
 import { badge, date, html, notice, raw, render, table, time, toast } from '../lib/ui.js';
 import { barChart, donutChart, gauge, kpiCard, lineChart, proportionBar, treemap } from '../lib/charts.js';
@@ -139,6 +139,167 @@ export async function security(root) {
   }
 
   root.querySelector('[data-passkey]')?.addEventListener('click', () => addPasskey(root));
+
+  root.querySelector('[data-authenticator-enrol]')?.addEventListener('click', () => enrolAuthenticator(root));
+
+  root.querySelector('[data-authenticator-codes]')?.addEventListener('click', async () => {
+    const result = await command({
+      title: 'New recovery codes',
+      intent: 'Replaces every unused recovery code with a fresh set, shown once. Needs the current code from your app.',
+      path: '/v1/me/authenticator/recovery-codes',
+      submitLabel: 'Generate',
+      fields: [{ name: 'code', label: 'Code from the app', placeholder: '123456' }],
+    });
+    if (result) showRecoveryCodes(root, result.recoveryCodes, 'New codes. Every earlier code has stopped working.');
+  });
+
+  root.querySelector('[data-authenticator-revoke]')?.addEventListener('click', async () => {
+    const result = await command({
+      title: 'Remove the authenticator app',
+      intent:
+        'Sign-in goes back to the emailed code alone. Refused while your organisation requires a second factor. Needs the current code from your app.',
+      path: '/v1/me/authenticator/revoke',
+      submitLabel: 'Remove',
+      fields: [{ name: 'code', label: 'Code from the app', placeholder: '123456' }],
+    });
+    if (result) {
+      toast('Authenticator removed', 'Signing in is back to the emailed code alone.', 'warn');
+      security(root);
+    }
+  });
+}
+
+// --- The authenticator app -----------------------------------------------------
+
+/**
+ * Two-factor authentication with an authenticator app.
+ *
+ * The emailed code proves the person holds the mailbox; the app proves they
+ * hold a device with a secret shared once at enrolment. Enrolment is two steps
+ * — the secret is shown, then a code from the app confirms it — and the
+ * recovery codes are shown exactly once at the end. Where the organisation
+ * requires a second factor, this card is the one thing a new session can do.
+ */
+function authenticatorCard(mine) {
+  const enrolled = mine.authenticator;
+  const required = mine.secondFactor?.required;
+  const satisfied = mine.secondFactor?.satisfied;
+  return html`
+    <div class="card" style="margin-bottom:14px" data-authenticator>
+      <h2>Authenticator app ${enrolled ? badge('ENROLLED', 'ok') : badge('NOT SET UP', required ? 'bad' : 'warn')}</h2>
+      ${
+        required && !enrolled
+          ? notice(
+              'Your organisation requires a second factor. Until an authenticator app is enrolled, this session can do nothing else. It takes about a minute.',
+              'bad',
+            )
+          : ''
+      }
+      ${
+        required && enrolled && satisfied === false
+          ? notice('Enrolled. Sign out and back in to continue — the new session will ask for the app’s code.', 'warn')
+          : ''
+      }
+      <p class="muted">
+        Two-factor authentication: after the emailed code, sign-in asks for the six-digit code from an authenticator app
+        on your phone — Google Authenticator, Microsoft Authenticator, 1Password, Authy or any other. A code works once and
+        for thirty seconds. Recovery codes get you in if the phone is lost.
+      </p>
+      ${
+        enrolled
+          ? html`${table({
+              headers: ['Name', 'Enrolled', 'Last used', 'Recovery codes left', 'Secret at rest'],
+              rows: [
+                [
+                  enrolled.label,
+                  date(enrolled.enrolledAt),
+                  enrolled.lastUsedAt ? date(enrolled.lastUsedAt) : '—',
+                  html`${badge(String(enrolled.recoveryCodesLeft), enrolled.recoveryCodesLeft <= 2 ? 'bad' : 'ok')}`,
+                  enrolled.secretProtected ? badge('ENCRYPTED', 'ok') : badge('PLAIN — no evidence master key on this deployment', 'warn'),
+                ],
+              ],
+            })}
+            <div class="actions" style="margin-top:13px">
+              <button class="btn quiet" data-authenticator-codes>New recovery codes</button>
+              <button class="btn quiet danger" data-authenticator-revoke>Remove the authenticator</button>
+            </div>`
+          : html`<div class="actions" style="margin-top:13px"><button class="btn" data-authenticator-enrol>Set up an authenticator app</button></div>`
+      }
+    </div>`;
+}
+
+/**
+ * Enrolment: show the secret, take the code, show the recovery codes once.
+ * Kept as one panel rather than three toasts, because a secret and ten
+ * recovery codes are things to copy carefully, not read as they fade.
+ */
+async function enrolAuthenticator(root) {
+  let started;
+  try {
+    started = await api.post('/v1/me/authenticator/begin', {});
+  } catch (error) {
+    toast('Could not start', error.message, 'err');
+    return;
+  }
+  const host = root.querySelector('[data-authenticator]');
+  render(
+    host,
+    html`
+      <h2>Set up an authenticator app</h2>
+      <p class="muted">
+        1. Open your authenticator app and add an account. Scan is not offered here; choose <b>enter a key manually</b>
+        and type the key below, or open the link on the phone that has the app.
+      </p>
+      <div class="notice warn">
+        <div><b>Key — copy it into the app now.</b><br>
+          <code style="user-select:all;word-break:break-all;font-size:16px;letter-spacing:.12em">${started.secret.match(/.{1,4}/g).join(' ')}</code><br>
+          <span class="small">Time-based, SHA-1, 6 digits, 30 seconds — the defaults every app uses. Account: your email. Issuer: your organisation’s name.</span><br>
+          <a href="${started.uri}" class="small">Open in an authenticator app on this device</a>
+        </div>
+      </div>
+      <p class="muted" style="margin-top:12px">2. Enter the six-digit code the app now shows, to prove it holds the key. This expires at ${date(started.expiresAt)}.</p>
+      <form id="confirm-authenticator" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div class="field" style="margin:0"><label for="totp">Code from the app</label>
+          <input id="totp" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" required style="width:160px"></div>
+        <button class="btn" type="submit">Confirm and enrol</button>
+        <button class="btn quiet" type="button" data-authenticator-cancel>Cancel</button>
+      </form>
+      <div id="authenticator-error"></div>
+    `,
+  );
+  host.querySelector('[data-authenticator-cancel]')?.addEventListener('click', () => security(root));
+  host.querySelector('#confirm-authenticator')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const code = host.querySelector('#totp').value.trim();
+    try {
+      const result = await api.post('/v1/me/authenticator/confirm', { enrolmentId: started.enrolmentId, code });
+      // The session that owed a second factor now holds one: the platform
+      // minted fresh tokens saying so, and they replace the ones in hand.
+      if (result.accessToken) {
+        session.set({ ...session.get(), accessToken: result.accessToken, refreshToken: result.refreshToken });
+        state.session = session.get();
+      }
+      showRecoveryCodes(root, result.recoveryCodes, 'Enrolled. These are your recovery codes — the only time they are shown.');
+    } catch (error) {
+      render(host.querySelector('#authenticator-error'), html`<div class="notice err" style="margin-top:10px">${error.message}</div>`);
+    }
+  });
+}
+
+function showRecoveryCodes(root, codes, heading) {
+  const host = root.querySelector('[data-authenticator]');
+  render(
+    host,
+    html`
+      <h2>Recovery codes ${badge('SHOWN ONCE', 'warn')}</h2>
+      <p class="muted">${heading} Each works once, in place of the app’s code, when the phone is lost. Keep them where you keep passwords, not in your inbox.</p>
+      <div class="notice warn"><div>
+        <code style="user-select:all;display:block;font-size:15px;line-height:1.9;letter-spacing:.06em">${codes.join('\n')}</code>
+      </div></div>
+      <div class="actions" style="margin-top:13px"><button class="btn" data-authenticator-done>I have saved these</button></div>
+    `,
+  );
+  host.querySelector('[data-authenticator-done]')?.addEventListener('click', () => security(root));
 }
 
 // --- A person's own posture --------------------------------------------------
@@ -217,6 +378,8 @@ function mineView(mine) {
           </div>`
         : ''
     }
+
+    ${authenticatorCard(mine)}
 
     <div class="chart-row wide" style="margin-bottom:14px">
       <div class="card">

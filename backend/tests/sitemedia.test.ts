@@ -9,6 +9,7 @@ import { landing } from '../src/site/landing.ts';
 import { MEDIA_SLOTS, mediaDir, putSlotImage, refreshMedia, removeSlotImage, slotFile } from '../src/site/media.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject } from '../src/seed.ts';
+import { completeSignIn } from './helpers.ts';
 
 /**
  * Putting a picture on the landing page.
@@ -194,9 +195,9 @@ describe('who may change them', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ actorId: login.actorId, challengeId: login.challengeId, code: login.devCode }),
       })
-    ).json()) as { accessToken: string };
+    ).json()) as Record<string, unknown>;
 
-    return verified.accessToken;
+    return completeSignIn(base, verified);
   }
 
   it('refuses a customer, because the marketing site is not their tenancy’s', async () => {

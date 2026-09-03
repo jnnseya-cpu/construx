@@ -1,5 +1,6 @@
 import { ulid } from '../core/ids.ts';
 import type { GoldenThreadLedger } from '../goldenthread/ledger.ts';
+import { useAuthenticatorStore, type AuthenticatorRecord, type AuthenticatorStore } from './authenticators.ts';
 import { useDeviceStore, type DeviceRecord, type DeviceStore } from './devices.ts';
 import { usePasskeyStore, type PasskeyRecord, type PasskeyStore } from './passkeys.ts';
 
@@ -174,6 +175,42 @@ export function bindCredentialStores(ledger: GoldenThreadLedger): void {
     },
   };
 
+  // Authenticator apps, kept the same way and for the same reason: a second
+  // factor that vanished on restart would be a requirement the platform could
+  // not hold, and a revocation that came back would be a factor somebody
+  // believed they had removed.
+  // Read live from the ledger rather than through an index taken at bind
+  // time: the platform binds its stores in the constructor, before a journal
+  // is replayed into the ledger, so an index built here would miss everything
+  // a restart brought back.
+  const authenticatorIn = (tenantId: string) =>
+    ledger.listByTenant(tenantId, 'Authenticator').map((record) => record.state as unknown as AuthenticatorRecord);
+  const authenticators: AuthenticatorStore = {
+    forActor(actorId) {
+      return ledger
+        .entitiesOfType('Authenticator')
+        .map((record) => record.state as unknown as AuthenticatorRecord)
+        .find((record) => record.actorId === actorId && !record.revokedAt);
+    },
+    forTenant(tenantId) {
+      return authenticatorIn(tenantId);
+    },
+    put(record, event) {
+      const entry = {
+        refType: 'Authenticator',
+        refId: record.id,
+        tenantId: record.tenantId,
+        actorId: record.revokedBy ?? record.actorId,
+        state: record as unknown as Record<string, unknown>,
+      };
+      if (event === 'ENROLLED') commit(ledger, { eventType: 'AUTHENTICATOR_ENROLLED', ...entry });
+      else if (event === 'REVOKED') commit(ledger, { eventType: 'AUTHENTICATOR_REVOKED', ...entry });
+      else if (event === 'RECOVERY_CODES_ISSUED') commit(ledger, { eventType: 'AUTHENTICATOR_RECOVERY_CODES_ISSUED', ...entry });
+      else commit(ledger, { eventType: 'AUTHENTICATOR_USED', ...entry });
+    },
+  };
+
   useDeviceStore(devices);
   usePasskeyStore(passkeys);
+  useAuthenticatorStore(authenticators);
 }

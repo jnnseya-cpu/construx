@@ -46,6 +46,19 @@ import type { ACUCaps } from '../billing/acu.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS, TOP_UPS, type PackageTier } from '../billing/seats.ts';
 import { BILLING_CURRENCY } from '../billing/payments.ts';
 import {
+  authenticatorFor,
+  authenticatorsForTenant,
+  beginEnrolment,
+  confirmEnrolment,
+  confirmsWithCurrentCode,
+  currentCodeFor,
+  hasAuthenticator,
+  reissueRecoveryCodes,
+  revokeAuthenticator,
+  verifyFactor,
+} from '../identity/authenticators.ts';
+import { createFactorChallenge, takeFactorChallenge } from '../identity/auth.ts';
+import {
   purchasedSeatEntitlements,
   purchasedSeats,
   seatCap,
@@ -1062,6 +1075,12 @@ function teamPosition(platform: Platform, tenantId: string) {
   const security = tenantSecurity(tenantId, people.map((person) => person.id), now);
   const withDevice = new Set(security.devices.filter((device) => device.status === 'ACTIVE').map((device) => device.actorId));
   const withPasskey = new Set(security.passkeys.map((passkey) => passkey.actorId));
+  const withAuthenticator = new Set(
+    authenticatorsForTenant(tenantId)
+      .map((entry) => people.find((person) => authenticatorFor(person.id)?.id === entry.id)?.id)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const policy = platform.securityPolicy(tenantId);
   const staleDevice = new Set(
     security.devices
       .filter((device) => device.status === 'ACTIVE' && device.lastSeenAt && now - Date.parse(device.lastSeenAt) > 90 * DAY)
@@ -1099,11 +1118,16 @@ function teamPosition(platform: Platform, tenantId: string) {
           : 'ACTIVE';
     const passkey = withPasskey.has(person.id);
     const device = withDevice.has(person.id);
+    const authenticator = withAuthenticator.has(person.id);
+    const second = passkey || authenticator;
     const risk: string[] = [];
-    if (state === 'ACTIVE' && !passkey && !device) risk.push('No second factor enrolled');
+    if (state === 'ACTIVE' && !second && !device) risk.push('No second factor enrolled');
     if (staleDevice.has(person.id)) risk.push('A bound device unused for over 90 days');
     if (state === 'ACTIVE' && activity === 'DORMANT') risk.push('No activity for over 90 days');
-    if (state === 'ACTIVE' && person.roles.includes('ENTERPRISE_ADMIN') && !passkey) risk.push('Administrator without a passkey');
+    if (state === 'ACTIVE' && person.roles.includes('ENTERPRISE_ADMIN') && !second) risk.push('Administrator without a second factor');
+    if (state === 'ACTIVE' && !second && !person.demonstration && platform.secondFactorRequiredFor(person.id)) {
+      risk.push('Required to hold a second factor and has none — can only enrol');
+    }
     return {
       id: person.id,
       name: person.name,
@@ -1120,13 +1144,18 @@ function teamPosition(platform: Platform, tenantId: string) {
       reports: people.filter((other) => other.managerId === person.id).length,
       lastActivityAt,
       activity,
-      mfa: { passkey, device, label: passkey && device ? 'Passkey and device' : passkey ? 'Passkey' : device ? 'Bound device' : 'Code only' },
+      mfa: {
+        passkey,
+        device,
+        authenticator,
+        label: [passkey ? 'Passkey' : '', authenticator ? 'Authenticator app' : '', device ? 'Bound device' : ''].filter(Boolean).join(' + ') || 'Code only',
+      },
       risk,
     };
   });
 
   const active = rows.filter((row) => row.state === 'ACTIVE');
-  const second = active.filter((row) => row.mfa.passkey || row.mfa.device).length;
+  const second = active.filter((row) => row.mfa.passkey || row.mfa.authenticator).length;
   const roleCatalogue = TENANT_GRANTABLE_ROLES.map((role) => ({
     role,
     areas: Object.entries(PERMISSION_MATRIX[role]).map(([area, codes]) => ({ area, codes })),
@@ -1169,6 +1198,10 @@ function teamPosition(platform: Platform, tenantId: string) {
       erasureGraceDays: config.privacy.erasureGraceDays,
       aiMandateCeiling: 'No agent mandate exceeds PROPOSE; a person approves every AI proposal',
       deviceBindingRequired: security.bindingRequired,
+      // The one control on this card an administrator sets, because it is the
+      // one the gateway enforces: who must hold an authenticator app.
+      mfaRequired: policy.mfaRequired,
+      mfaPolicySetAt: policy.setAt ?? null,
     },
   };
 }
@@ -1394,7 +1427,235 @@ export const ROUTES: Route[] = [
       }
 
       const user = platform.user(actorId);
-      return { user: { id: user.id, name: user.name, roles: user.roles }, ...platform.login(user.email).tokens };
+      if (user.status !== 'ACTIVE') throw new DomainError('USER_SUSPENDED', 'This identity has been suspended', 403);
+
+      // The second factor. An account with an authenticator app is not signed in
+      // by the emailed code alone: it gets a challenge for the app's code, and
+      // nothing is minted until that is right. An account whose organisation
+      // requires a second factor and has none yet is signed in with a session
+      // that can only enrol — the gateway holds every other door shut.
+      if (hasAuthenticator(user.id)) {
+        const challenge = createFactorChallenge(user.id);
+        return {
+          secondFactorRequired: true,
+          actorId: user.id,
+          ...challenge,
+          methods: ['AUTHENTICATOR', 'RECOVERY_CODE'],
+          // Outside production only, like `devCode`: a laptop has no phone with
+          // the app on it. Never for a real deployment.
+          ...(isProduction() ? {} : { devFactorCode: currentCodeFor(user.id) }),
+        };
+      }
+      const enrolmentRequired = platform.secondFactorRequiredFor(user.id);
+      const tokens = issueTokens({
+        actorId: user.id,
+        tenantId: user.tenantId,
+        partyId: user.partyId,
+        roles: user.roles,
+        // Satisfied where nothing more is asked of this account; owed where the
+        // organisation requires a second factor it does not yet hold.
+        mfaSatisfied: !enrolmentRequired,
+        authenticatedAt: Date.now(),
+      });
+      return {
+        user: { id: user.id, name: user.name, roles: user.roles },
+        ...tokens,
+        ...(enrolmentRequired ? { enrolmentRequired: true } : {}),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/auth/mfa/factor',
+    public: true,
+    description: 'Offer the authenticator app’s code, or a recovery code, against a second-factor challenge and receive tokens',
+    schema: {
+      type: 'object',
+      required: ['actorId', 'factorChallengeId', 'code'],
+      properties: { actorId: stringField, factorChallengeId: stringField, code: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const { actorId, factorChallengeId, code } = body<{ actorId: string; factorChallengeId: string; code: string }>(ctx);
+      // The challenge is looked at before the code: a code offered against no
+      // live challenge is not verified at all, so nothing here can be used to
+      // probe an authenticator outside a sign-in that passed the first factor.
+      const outcome = verifyFactor(actorId, code);
+      const live = takeFactorChallenge(actorId, factorChallengeId, outcome.ok);
+      if (!live || !outcome.ok) {
+        // The same refusal for wrong, replayed, expired, locked or unknown, for
+        // the reason the first factor gives: only a real account has any of them.
+        throw new DomainError('MFA_FAILED', 'Verification failed', 401);
+      }
+      const user = platform.user(actorId);
+      if (user.status !== 'ACTIVE') throw new DomainError('USER_SUSPENDED', 'This identity has been suspended', 403);
+      const tokens = issueTokens({
+        actorId: user.id,
+        tenantId: user.tenantId,
+        partyId: user.partyId,
+        roles: user.roles,
+        mfaSatisfied: true,
+        authenticatedAt: Date.now(),
+      });
+      return {
+        user: { id: user.id, name: user.name, roles: user.roles },
+        ...tokens,
+        method: outcome.method,
+        recoveryCodesLeft: outcome.recoveryCodesLeft,
+      };
+    },
+  },
+  // ------------------------------------------------------ authenticator app (2FA)
+  {
+    method: 'GET',
+    pattern: '/v1/me/authenticator',
+    readOnly: true,
+    description: 'Whether this account holds an authenticator app, and whether the organisation requires one',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      return {
+        authenticator: authenticatorFor(actor.actorId) ?? null,
+        required: platform.secondFactorRequiredFor(actor.actorId),
+        satisfied: actor.mfaSatisfied,
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/me/authenticator/begin',
+    description: 'Start enrolling an authenticator app: the secret and its otpauth address, shown once. Nothing is recorded until a code confirms it',
+    schema: { type: 'object', properties: { label: { type: 'string' } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const user = platform.user(actor.actorId);
+      const issuer = platform.exports.brandingIfConfigured(user.tenantId)?.clientName ?? PLATFORM_BRANDING.clientName;
+      return beginEnrolment({ actorId: user.id, tenantId: user.tenantId, account: user.email, issuer, label: body<{ label?: string }>(ctx).label });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/me/authenticator/confirm',
+    description: 'Confirm enrolment with a code the app produced. Returns the recovery codes, once, and a session that satisfies the second factor',
+    schema: {
+      type: 'object',
+      required: ['enrolmentId', 'code'],
+      properties: { enrolmentId: stringField, code: stringField },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      const { enrolmentId, code } = body<{ enrolmentId: string; code: string }>(ctx);
+      const result = confirmEnrolment({ actorId: actor.actorId, enrolmentId, code });
+      const user = platform.user(actor.actorId);
+      await notifyEngine
+        .notify(platform, {
+          code: 'mfa.enabled',
+          recipients: [{ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }],
+          payload: { detail: 'An authenticator app was enrolled on your CONSTRUX account. Signing in now needs its code as well as the emailed one. If this was not you, sign in and remove it, then change your email password.' },
+          branding: platform.exports.brandingIfConfigured(user.tenantId) ?? PLATFORM_BRANDING,
+          actorId: user.id,
+          correlationId: ctx.correlationId,
+        })
+        .catch(() => undefined);
+      // A session that owed a second factor has now provided one. Fresh
+      // tokens say so, and the console swaps them in.
+      const tokens = issueTokens({
+        actorId: user.id,
+        tenantId: user.tenantId,
+        partyId: user.partyId,
+        roles: user.roles,
+        mfaSatisfied: true,
+        deviceId: actor.deviceId,
+        authenticatedAt: Date.now(),
+      });
+      return { ...result, ...tokens };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/me/authenticator/recovery-codes',
+    description: 'Replace every unused recovery code with a fresh set, shown once. Needs the app’s current code',
+    schema: { type: 'object', required: ['code'], properties: { code: stringField }, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!confirmsWithCurrentCode(actor.actorId, body<{ code: string }>(ctx).code)) {
+        throw new DomainError('AUTHENTICATOR_CODE_WRONG', 'That code did not match the authenticator app', 422);
+      }
+      const codes = reissueRecoveryCodes(actor.actorId);
+      const user = platform.user(actor.actorId);
+      await notifyEngine
+        .notify(platform, {
+          code: 'mfa.backup_code_generated',
+          recipients: [{ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }],
+          payload: { detail: 'New recovery codes were generated for your CONSTRUX account. Every earlier code has stopped working.' },
+          branding: platform.exports.brandingIfConfigured(user.tenantId) ?? PLATFORM_BRANDING,
+          actorId: user.id,
+          correlationId: ctx.correlationId,
+        })
+        .catch(() => undefined);
+      return { recoveryCodes: codes };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/me/authenticator/revoke',
+    description: 'Remove the authenticator app. Needs its current code, and is refused while the organisation requires one',
+    schema: { type: 'object', required: ['code'], properties: { code: stringField }, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      if (platform.secondFactorRequiredFor(actor.actorId)) {
+        throw new DomainError(
+          'MFA_REQUIRED_BY_POLICY',
+          'Your organisation requires a second factor, so the authenticator app cannot be removed. Enrol a new one first if you are changing phone — or ask an administrator to change the requirement.',
+          422,
+        );
+      }
+      if (!confirmsWithCurrentCode(actor.actorId, body<{ code: string }>(ctx).code)) {
+        throw new DomainError('AUTHENTICATOR_CODE_WRONG', 'That code did not match the authenticator app', 422);
+      }
+      const revoked = revokeAuthenticator({ actorId: actor.actorId, by: actor.actorId });
+      const user = platform.user(actor.actorId);
+      await notifyEngine
+        .notify(platform, {
+          code: 'mfa.disabled',
+          recipients: [{ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }],
+          payload: { detail: 'The authenticator app was removed from your CONSTRUX account. Signing in is back to the emailed code alone. If this was not you, sign in now and secure your email.' },
+          branding: platform.exports.brandingIfConfigured(user.tenantId) ?? PLATFORM_BRANDING,
+          actorId: user.id,
+          correlationId: ctx.correlationId,
+        })
+        .catch(() => undefined);
+      return revoked;
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/team/security-policy',
+    description: 'Who in this tenancy must hold a second factor: nobody, its administrators, or everyone',
+    schema: {
+      type: 'object',
+      required: ['mfaRequired', 'reason'],
+      properties: {
+        mfaRequired: { type: 'string', enum: ['OFF', 'ADMINISTRATORS', 'EVERYONE'] },
+        reason: { type: 'string', minLength: 3 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = requireTenantAdministrator(ctx, 'set the second-factor requirement');
+      const input = body<{ mfaRequired: 'OFF' | 'ADMINISTRATORS' | 'EVERYONE'; reason: string }>(ctx);
+      // An administrator who requires a second factor of administrators, or of
+      // everyone, without holding one would be requiring of others what they
+      // have not done themselves — and would be locked to enrolment on their
+      // next request. Refused with the remedy rather than allowed into that.
+      if (input.mfaRequired !== 'OFF' && !hasAuthenticator(actor.actorId)) {
+        throw new DomainError(
+          'ENROL_BEFORE_REQUIRING',
+          'Set up an authenticator app on your own account on Security first, then require one of others.',
+          422,
+        );
+      }
+      return platform.setSecurityPolicy(actor, input);
     },
   },
   {
@@ -4089,7 +4350,16 @@ export const ROUTES: Route[] = [
     pattern: '/v1/me/security',
     description: 'This person’s devices, passkeys, this session’s risk assessment and the published risk model',
     readOnly: true,
-    handler: (_platform, ctx) => posture(auth(ctx), ctx.device),
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      return {
+        ...posture(actor, ctx.device),
+        secondFactor: {
+          required: platform.secondFactorRequiredFor(actor.actorId),
+          satisfied: actor.mfaSatisfied,
+        },
+      };
+    },
   },
   {
     method: 'POST',

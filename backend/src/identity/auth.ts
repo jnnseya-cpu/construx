@@ -342,6 +342,41 @@ export function verifyMfaChallenge(actorId: string, challengeId: string, code: s
   return false;
 }
 
+// --- Second-factor challenge --------------------------------------------------
+
+/**
+ * The step between a verified emailed code and a session, for an account that
+ * holds an authenticator app. Nothing is minted until the app's code is offered
+ * against this; it dies after five minutes or five wrong codes, like the first
+ * challenge, and is single-use.
+ */
+type FactorChallenge = { id: string; expiresAt: number; attempts: number };
+
+const factorChallenges = new Map<string, FactorChallenge>();
+
+export function createFactorChallenge(actorId: string): { factorChallengeId: string; expiresAt: string } {
+  const challenge: FactorChallenge = { id: ulid(), expiresAt: Date.now() + 5 * 60 * 1000, attempts: 0 };
+  factorChallenges.set(`${actorId}:${challenge.id}`, challenge);
+  return { factorChallengeId: challenge.id, expiresAt: new Date(challenge.expiresAt).toISOString() };
+}
+
+/** Whether a live second-factor challenge exists for this attempt. A wrong code is counted against it. */
+export function takeFactorChallenge(actorId: string, factorChallengeId: string, succeeded: boolean): boolean {
+  const key = `${actorId}:${factorChallengeId}`;
+  const challenge = factorChallenges.get(key);
+  if (!challenge || challenge.expiresAt < Date.now()) {
+    factorChallenges.delete(key);
+    return false;
+  }
+  if (succeeded) {
+    factorChallenges.delete(key);
+    return true;
+  }
+  challenge.attempts += 1;
+  if (challenge.attempts >= config.auth.maxChallengeAttempts) factorChallenges.delete(key);
+  return true;
+}
+
 /**
  * Whether this identity is currently refused, and for how long.
  *

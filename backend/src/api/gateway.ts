@@ -54,6 +54,20 @@ const APP_SHELL = join(WEB_ROOT, 'index.html');
  * at the call site for the restart loop that exemption prevents.
  */
 const IS_PROBE = new Set(['GET /healthz', 'GET /readyz']);
+
+/**
+ * What a session that still owes a second factor may do: see its own standing,
+ * enrol, sign out, and read the matrix the console needs to draw at all.
+ */
+const ENROLMENT_ROUTES = new Set([
+  'GET /v1/me/security',
+  'GET /v1/me/authenticator',
+  'POST /v1/me/authenticator/begin',
+  'POST /v1/me/authenticator/confirm',
+  'POST /v1/auth/logout',
+  'POST /v1/auth/refresh',
+  'GET /v1/permissions/matrix',
+]);
 // The canonical vocabulary, served as the same bytes the route schemas
 // validate against. Mounted separately rather than copied into the frontend:
 // a copy is the thing this is meant to prevent.
@@ -349,6 +363,28 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     // Re-apply post-auth so the tenant-aware key takes effect once known.
     if (ctx.auth && !IS_PROBE.has(ctx.routeId)) {
       await applyRateLimit(ctx, remote);
+    }
+
+    // A second factor the person is required to hold and does not.
+    //
+    // Their sign-in succeeded on the emailed code and minted a session that
+    // says so (`mfaSatisfied: false`). That session may do exactly one thing:
+    // enrol. Everything else is refused here, on the route id, so no handler
+    // has to remember the rule and no screen can be reached around it. API
+    // keys are not people and never satisfy MFA by design; they are exempt
+    // from a requirement that is about people.
+    if (
+      ctx.auth &&
+      !ctx.auth.mfaSatisfied &&
+      !isPublic &&
+      !ENROLMENT_ROUTES.has(ctx.routeId) &&
+      !/^Bearer ck_(live|test)_/.test(req.headers.authorization ?? '') &&
+      platform.secondFactorRequiredFor(ctx.auth.actorId)
+    ) {
+      throw new ForbiddenError(
+        'Your organisation requires a second factor. Set up an authenticator app on Security before continuing.',
+        'MFA_ENROLMENT_REQUIRED',
+      );
     }
 
     // The account layer, before the body is looked at.

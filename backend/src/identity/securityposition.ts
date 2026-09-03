@@ -2,6 +2,7 @@ import { config } from '../config.ts';
 import { assessRisk, riskModel, stepUpSatisfied, type RiskAssessment } from './risk.ts';
 import { devicesFor, devicesForTenant, publicView as deviceView, type DeviceRecord } from './devices.ts';
 import { passkeysFor, passkeysForTenant, publicView as passkeyView, type PasskeyRecord } from './passkeys.ts';
+import { authenticatorFor, type PublicAuthenticator } from './authenticators.ts';
 import type { AuthContext } from './auth.ts';
 
 /**
@@ -25,6 +26,8 @@ export type SecurityPosture = {
   statement: string;
   devices: Array<Omit<DeviceRecord, 'secretHash'>>;
   passkeys: Array<Omit<PasskeyRecord, 'publicKey'>>;
+  /** The authenticator app enrolled as a second factor, or null. */
+  authenticator: PublicAuthenticator | null;
   /** This session's own assessment, with everything it counted. */
   session: RiskAssessment & { bound: boolean; steppedUp: boolean };
   /** Devices by platform, for the composition chart. */
@@ -48,6 +51,9 @@ export function posture(auth: AuthContext, verifiedDevice?: DeviceRecord, now = 
   const devices = devicesFor(auth.actorId);
   const active = devices.filter((device) => device.status === 'ACTIVE');
   const passkeys = passkeysFor(auth.actorId);
+  const authenticator = authenticatorFor(auth.actorId);
+  // A second factor of either kind: a passkey, or an authenticator app.
+  const secondFactor = passkeys.length > 0 || authenticator !== undefined;
 
   const session = assessRisk(
     {
@@ -65,14 +71,25 @@ export function posture(auth: AuthContext, verifiedDevice?: DeviceRecord, now = 
   );
 
   const standing: SecurityPosture['standing'] =
-    passkeys.length > 0 && active.length > 0 ? 'STRONG' : active.length > 0 || passkeys.length > 0 ? 'ADEQUATE' : 'WEAK';
+    secondFactor && active.length > 0 ? 'STRONG' : active.length > 0 || secondFactor ? 'ADEQUATE' : 'WEAK';
 
   const advice: SecurityPosture['advice'] = [];
-  if (passkeys.length === 0) {
+  if (!secondFactor) {
+    advice.push({
+      action: 'Set up an authenticator app or add a passkey',
+      because:
+        'A one-time code by email is a shared secret in transit, and every serious attack on an account like this ends with somebody reading one out. A second factor on a device you hold cannot be read out of a mailbox.',
+    });
+  } else if (passkeys.length === 0) {
     advice.push({
       action: 'Add a passkey',
-      because:
-        'A one-time code is a shared secret in transit, and every serious attack on an account like this ends with somebody reading one out. A passkey cannot be read out and cannot be used on a lookalike site.',
+      because: 'An authenticator code can still be typed into a lookalike site; a passkey will not sign for one, because the origin is part of what it signs.',
+    });
+  }
+  if (authenticator && authenticator.recoveryCodesLeft <= 2) {
+    advice.push({
+      action: authenticator.recoveryCodesLeft === 0 ? 'Generate new recovery codes' : `Generate new recovery codes (${authenticator.recoveryCodesLeft} left)`,
+      because: 'A recovery code is how you get in when the phone is lost. Running out of them is being locked out with the door in sight.',
     });
   }
   if (active.length === 0) {
@@ -100,12 +117,13 @@ export function posture(auth: AuthContext, verifiedDevice?: DeviceRecord, now = 
     standing,
     statement:
       standing === 'STRONG'
-        ? `A passkey and ${active.length} enrolled device${active.length === 1 ? '' : 's'}. Nothing here is a shared secret anybody could be talked into reading out.`
+        ? `A second factor and ${active.length} enrolled device${active.length === 1 ? '' : 's'}. Signing in takes something you hold as well as something sent to you.`
         : standing === 'ADEQUATE'
           ? 'Better than a code alone, and one step short of an account that cannot be phished.'
           : 'This account is protected by a code sent to an inbox and nothing else.',
     devices: devices.map(deviceView),
     passkeys: passkeys.map(passkeyView),
+    authenticator: authenticator ?? null,
     session: { ...session, bound: verifiedDevice !== undefined, steppedUp: stepUpSatisfied(auth.tokenId, now) },
     byPlatform: countBy(active, (device) => device.platform),
     activity: sightings(active, now),

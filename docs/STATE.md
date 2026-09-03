@@ -8114,6 +8114,83 @@ blocks the buttons with the same sentence before they are pressed. A key
 already held keeps working, as every other entitlement does across a package
 move.
 
+### Two-factor authentication on sign-in — an authenticator app
+
+Asked for as enterprise-grade 2FA/MFA on login. The emailed code proves the
+person holds the mailbox; a second factor proves they hold something else. The
+platform already had two — passkeys and bound devices — and neither was a
+second *step* at sign-in. This adds the one every enterprise security policy
+names: a **time-based one-time code from an authenticator app** (RFC 6238,
+SHA-1, six digits, thirty seconds — Google Authenticator, Microsoft
+Authenticator, 1Password, Authy or any other), with ten single-use recovery
+codes for the lost phone.
+
+**Sign-in becomes three steps for anyone who holds one.** Email, emailed code,
+then the app's code. `POST /v1/auth/mfa/verify` withholds tokens for an
+enrolled account and answers `secondFactorRequired` with a short-lived factor
+challenge; `POST /v1/auth/mfa/factor` takes the code (or a recovery code) and
+mints the session with `mfaSatisfied`. A code is accepted once: the counter it
+matched is recorded, and the same six digits again inside their thirty seconds
+are a replay and refused. Wrong, replayed, expired and unknown are refused
+identically (`MFA_FAILED`, 401) and each counts against the identity lock the
+first factor already uses, so guessing the second factor is stopped by the
+same control. `frontend/pages/login.js` shows the third field only when it is
+asked for; outside production the code is filled in, as the emailed code is.
+
+**Enrolment is two steps and shows the secret once.** Security → "Set up an
+authenticator app" starts an enrolment (`POST /v1/me/authenticator/begin`):
+the key is shown grouped in fours with an `otpauth://` link for a phone that
+has the app, and nothing is recorded until a code from the app confirms the
+secret (`.../confirm`). Confirmation records `AUTHENTICATOR_ENROLLED`, hands
+back the ten recovery codes — the only time they are shown; the ledger holds
+digests — and mints fresh tokens, because a session that owed a second factor
+now holds one. New recovery codes (`.../recovery-codes`) and removal
+(`.../revoke`) each need the current code from the app. The secret is stored
+under the tenancy's envelope key where `EVIDENCE_MASTER_KEY` is set and in
+clear where it is not; the record says which, and the readiness screen already
+says which the deployment is.
+
+**Who must hold one is a policy, not a default.** `SecurityPolicy.mfaRequired`
+is OFF, ADMINISTRATORS (ENTERPRISE_ADMIN and OWNER) or EVERYONE, set on Team &
+Access under "Governance in force" with a reason (`SECURITY_POLICY_SET`), and
+refused (`ENROL_BEFORE_REQUIRING`) until the administrator setting it has
+enrolled — a requirement that locks its author out is not a policy. Platform
+operators are required by deployment setting,
+`GATEWAY_AUTH_OPERATOR_MFA_REQUIRED`, on by default: an operator can credit
+wallets and close tenancies. Demonstration identities are never required —
+their addresses belong to nobody and there is no phone to enrol.
+
+**A required person without one can only enrol.** The gateway holds any
+session without `mfaSatisfied` for someone the policy covers to the routes
+enrolment needs (`GET /v1/me/security`, the authenticator routes, refresh,
+logout, the permission matrix) and refuses everything else with
+`MFA_ENROLMENT_REQUIRED` and the sentence that says what to do. The console
+lands such a session on Security and every other screen shows the same
+sentence. API keys are not sessions and are not gated: a key is issued by
+someone who was. Removing the authenticator while the policy requires one is
+refused (`MFA_REQUIRED_BY_POLICY`). Team & Access shows who holds an
+authenticator app beside passkeys and bound devices, flags an administrator
+without a second factor and a required person who has none, and states the
+requirement in force.
+
+`backend/src/identity/totp.ts` is the arithmetic (base32, HOTP, TOTP with a
+one-step window, the `otpauth` URI, recovery codes), verified against the RFC
+6238 test vectors. `backend/src/identity/authenticators.ts` is the store and
+the rules, bound to the ledger by `credentialstore.ts` like devices and
+passkeys, read live so a restart brings everything back; `mfa.test.ts` holds
+the vectors, the two-step enrolment, the three-step sign-in, replay, recovery
+codes, lockout, the policy and its refusals, the enrolment-only session, the
+operator default and the restart. Verified in Chromium: a person enrolling on
+Security and signing back in through three steps; an operator with nothing
+enrolled landing on Security, refused elsewhere with the sentence, enrolling,
+and the estate opening.
+
+**Not built, stated so it is not mistaken for missing by accident:** no QR
+code is rendered — the key is typed or the link opened on the phone; drawing
+one is a dependency or a hand-written encoder and neither is warranted for a
+one-time act. No SMS or voice factor: a phone number is not a second factor an
+enterprise policy accepts. No per-person exemption from the tenancy policy.
+
 ---
 
 ## What is partial

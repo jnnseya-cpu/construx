@@ -328,6 +328,8 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // actor rather than through the generic entity read.
   Device: { area: 'PLATFORM_ADMINISTRATION' },
   Passkey: { area: 'PLATFORM_ADMINISTRATION' },
+  Authenticator: { area: 'PLATFORM_ADMINISTRATION' },
+  SecurityPolicy: { area: 'ENTERPRISE_STRUCTURE' },
   StepUp: { area: 'PLATFORM_ADMINISTRATION' },
   BidEvaluation: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Adjudication: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },

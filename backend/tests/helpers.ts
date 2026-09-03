@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { currentCodeFor, useAuthenticatorClock } from '../src/identity/authenticators.ts';
+import { totp } from '../src/identity/totp.ts';
 
 /**
  * Assert that a call fails with a specific domain error code.
@@ -177,4 +179,67 @@ export async function bareConstructionProject(
   structure.transitionPhase(ownerCtx, { to: 'CONSTRUCTION', justification: 'Contract executed and estimate frozen' });
 
   return { projectId, packageId };
+}
+
+// --- signing in over HTTP, second factor included -----------------------------
+
+let authenticatorSkew = 0;
+let authenticatorClockInstalled = false;
+
+/**
+ * The next thirty-second step of the authenticator clock. Codes and their
+ * verification both read the injected clock, so stepping it forward makes the
+ * next code a fresh one instead of a replay — which the platform must refuse,
+ * and which a test that signs an operator in five times in a row would
+ * otherwise hit.
+ */
+function nextAuthenticatorStep(): number {
+  if (!authenticatorClockInstalled) {
+    useAuthenticatorClock(() => new Date(Date.now() + authenticatorSkew));
+    authenticatorClockInstalled = true;
+  }
+  authenticatorSkew += 30_000;
+  return Date.now() + authenticatorSkew;
+}
+
+async function postJson(base: string, path: string, token: string | null, payload: unknown): Promise<Record<string, unknown>> {
+  const response = await fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(payload),
+  });
+  return (await response.json()) as Record<string, unknown>;
+}
+
+/**
+ * Finish a sign-in the way the console does once `/v1/auth/mfa/verify` has
+ * answered.
+ *
+ * Somebody with nothing required gets tokens straight back. An operator —
+ * required to hold a second factor by default — gets an enrolment-only session
+ * the first time; this enrols an authenticator app for them and returns the
+ * session the confirmation mints. On every later sign-in the platform withholds
+ * tokens until the app's code arrives, and this supplies the next one. Tests
+ * about packages, alerts or site media should not each have to know that.
+ */
+export async function completeSignIn(base: string, verified: Record<string, unknown>): Promise<string> {
+  if (verified.secondFactorRequired === true) {
+    const actorId = String(verified.actorId);
+    const now = nextAuthenticatorStep();
+    const code = currentCodeFor(actorId, new Date(now));
+    assert.ok(code, `${actorId} was asked for an authenticator code but holds no authenticator`);
+    const signedIn = await postJson(base, '/v1/auth/mfa/factor', null, { actorId, factorChallengeId: verified.factorChallengeId, code });
+    assert.ok(signedIn.accessToken, `second factor refused: ${JSON.stringify(signedIn)}`);
+    return String(signedIn.accessToken);
+  }
+  const token = String(verified.accessToken);
+  if (verified.enrolmentRequired !== true) return token;
+  const started = await postJson(base, '/v1/me/authenticator/begin', token, {});
+  assert.ok(started.secret, `enrolment did not start: ${JSON.stringify(started)}`);
+  const confirmed = await postJson(base, '/v1/me/authenticator/confirm', token, {
+    enrolmentId: started.enrolmentId,
+    code: totp(String(started.secret), nextAuthenticatorStep()),
+  });
+  assert.ok(confirmed.accessToken, `enrolment was not confirmed: ${JSON.stringify(confirmed)}`);
+  return String(confirmed.accessToken);
 }

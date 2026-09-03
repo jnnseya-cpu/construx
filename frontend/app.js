@@ -583,12 +583,45 @@ wireDrill(() => state.session?.projectId);
 export async function signInWithCredentials({ actorId, challengeId, code }) {
   const verified = await api.post('/v1/auth/mfa/verify', { actorId, challengeId, code }, { anonymous: true });
 
+  // An account that holds an authenticator app is not in yet: the emailed code
+  // was right, and the platform now wants the app's code before it mints
+  // anything. Handed back to the form, which asks for it.
+  if (verified.secondFactorRequired) return verified;
+
+  await establishSession(verified);
+  return verified;
+}
+
+/**
+ * The third step of sign-in, for an account with an authenticator app: the
+ * six digits from the app, or a recovery code, against the challenge the
+ * second step issued.
+ */
+export async function completeSecondFactor({ actorId, factorChallengeId, code }) {
+  const verified = await api.post('/v1/auth/mfa/factor', { actorId, factorChallengeId, code }, { anonymous: true });
+  await establishSession(verified);
+  return verified;
+}
+
+async function establishSession(verified) {
   session.set({
     accessToken: verified.accessToken,
     refreshToken: verified.refreshToken,
     user: verified.user,
   });
   state.session = session.get();
+
+  // The organisation requires a second factor this account does not hold. The
+  // session is real and can do exactly one thing — enrol — and the gateway
+  // refuses everything else, so the only honest place to land is Security.
+  if (verified.enrolmentRequired) {
+    state.project = null;
+    state.gate = null;
+    state.wallet = null;
+    forgetPermissions();
+    navigate('security');
+    return;
+  }
 
   // What this tenancy can see, asked with the token we just earned. Failure is
   // not fatal: an account with no projects is a new account, not a broken one.

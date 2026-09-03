@@ -938,6 +938,16 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PASSKEY_REGISTERED', 'Passkey', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('PASSKEY_USED', 'Passkey', 'UPDATE', 'GOVERNANCE'),
   def('PASSKEY_REVOKED', 'Passkey', 'APPROVE', 'GOVERNANCE'),
+  // An authenticator app (RFC 6238) enrolled as a second factor. The secret is
+  // held encrypted; the record carries the last counter accepted so a code is
+  // never accepted twice, and the digests of the recovery codes.
+  def('AUTHENTICATOR_ENROLLED', 'Authenticator', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('AUTHENTICATOR_USED', 'Authenticator', 'UPDATE', 'GOVERNANCE'),
+  def('AUTHENTICATOR_RECOVERY_CODES_ISSUED', 'Authenticator', 'UPDATE', 'GOVERNANCE'),
+  def('AUTHENTICATOR_REVOKED', 'Authenticator', 'APPROVE', 'GOVERNANCE'),
+  // Whether the tenancy demands a second factor of nobody, its administrators
+  // or everybody. Set by the tenancy's administrator; enforced at sign-in.
+  def('SECURITY_POLICY_SET', 'SecurityPolicy', 'UPDATE', 'GOVERNANCE', { creates: true }),
   // Its own entity, not `User`. A user record already lives in the tenancy's
   // own project, and the ledger refuses to move an entity between projects —
   // correctly, because an entity that could change project is one that could

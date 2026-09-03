@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { html, initials, render, toast } from '../lib/ui.js';
-import { signIn, signInWithCredentials } from '../app.js';
+import { completeSecondFactor, signIn, signInWithCredentials } from '../app.js';
 
 /**
  * Sign-in.
@@ -73,6 +73,13 @@ export async function login(root) {
             <input id="code" name="code" type="text" inputmode="latin" autocomplete="one-time-code"
               autocapitalize="characters" spellcheck="false" placeholder="6 characters">
             <p class="hint" id="code-hint"></p>
+          </div>
+
+          <div class="field" id="factor-field" hidden>
+            <label for="factor">Authenticator app code</label>
+            <input id="factor" name="factor" type="text" inputmode="numeric" autocomplete="one-time-code"
+              spellcheck="false" placeholder="6 digits, or a recovery code">
+            <p class="hint" id="factor-hint"></p>
           </div>
 
           <button class="btn" type="submit" id="submit">Continue</button>
@@ -168,11 +175,17 @@ async function signInFromLink(email, resumeAtCode) {
   }
 
   try {
-    await signInWithCredentials({
+    const outcome = await signInWithCredentials({
       actorId: challenge.actorId,
       challengeId: challenge.challengeId,
       code,
     });
+    if (outcome?.secondFactorRequired) {
+      // A demonstration identity somebody has enrolled an authenticator on. The
+      // form picks up at the app's code rather than pretending it is signed in.
+      stopHere('This account holds an authenticator app — enter its code below.', 'warn');
+      resumeAtCode(challenge, email, outcome);
+    }
   } catch (error) {
     stopHere(`${error.message} — the demonstration sign-in did not complete.`);
   }
@@ -195,6 +208,9 @@ function wireCredentials() {
   const codeField = document.getElementById('code-field');
   const codeInput = document.getElementById('code');
   const codeHint = document.getElementById('code-hint');
+  const factorField = document.getElementById('factor-field');
+  const factorInput = document.getElementById('factor');
+  const factorHint = document.getElementById('factor-hint');
   const submit = document.getElementById('submit');
   const errorHost = document.getElementById('login-error');
 
@@ -202,6 +218,28 @@ function wireCredentials() {
   // the code belongs to, so a code from an earlier attempt cannot complete a
   // later one.
   let challenge = null;
+  // The third step, for an account that holds an authenticator app: the
+  // emailed code was right, and the platform now wants the app's code before
+  // it mints anything.
+  let factor = null;
+
+  /**
+   * Move to the authenticator step. The emailed code is done with; what is
+   * asked for now is something the person holds, not something sent to them.
+   */
+  const askForFactor = (issued) => {
+    factor = issued;
+    codeField.hidden = true;
+    factorField.hidden = false;
+    submit.textContent = 'Sign in';
+    if (issued.devFactorCode) {
+      factorInput.value = issued.devFactorCode;
+      factorHint.textContent = 'Development mode: the authenticator code is filled in for you.';
+    } else {
+      factorHint.textContent = 'Open your authenticator app and enter the six-digit code for CONSTRUX. Lost the phone? A recovery code works here too.';
+    }
+    factorInput.focus();
+  };
 
   const fail = (message) => {
     render(errorHost, html`<div class="notice err" style="margin-top:12px">${message}</div>`);
@@ -217,9 +255,15 @@ function wireCredentials() {
    * convenience, never a bypass — it still has to be verified, and typing a real
    * customer's address here gets no code back under either rule.
    */
-  const askForCode = (issued, email) => {
+  const askForCode = (issued, email, secondFactor) => {
     challenge = issued;
     challenge.email = email;
+    if (secondFactor) {
+      emailInput.value = email;
+      emailInput.readOnly = true;
+      askForFactor(secondFactor);
+      return;
+    }
 
     codeField.hidden = false;
     emailInput.value = email;
@@ -255,25 +299,38 @@ function wireCredentials() {
         return;
       }
 
+      if (factor) {
+        const code = factorInput.value.trim();
+        if (!code) {
+          fail('Enter the code from your authenticator app, or a recovery code.');
+          return;
+        }
+        await completeSecondFactor({ actorId: factor.actorId, factorChallengeId: factor.factorChallengeId, code });
+        return;
+      }
+
       const code = codeInput.value.trim();
       if (!code) {
         fail('Enter the code from your email.');
         return;
       }
 
-      await signInWithCredentials({
+      const outcome = await signInWithCredentials({
         actorId: challenge.actorId,
         challengeId: challenge.challengeId,
         code,
       });
+      if (outcome?.secondFactorRequired) askForFactor(outcome);
     } catch (error) {
       // A wrong code is worth another attempt against the same challenge; a
       // failure at the email step means starting over.
-      if (challenge && /code|challenge|mfa/i.test(String(error.message))) {
+      if ((challenge || factor) && /code|challenge|mfa|verification/i.test(String(error.message))) {
         fail(`${error.message} — check the code and try again.`);
       } else {
         challenge = null;
+        factor = null;
         codeField.hidden = true;
+        factorField.hidden = true;
         emailInput.readOnly = false;
         submit.textContent = 'Continue';
         fail(String(error.message));

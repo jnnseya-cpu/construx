@@ -175,6 +175,15 @@ export type RefundObligation = {
   settlementReference?: string;
 };
 
+/** Who in a tenancy must hold a second factor. */
+export type SecurityPolicy = {
+  tenantId: string;
+  mfaRequired: 'OFF' | 'ADMINISTRATORS' | 'EVERYONE';
+  setAt?: string;
+  setBy?: string;
+  reason?: string;
+};
+
 export type OrgUnit = {
   id: string;
   tenantId: string;
@@ -1115,6 +1124,68 @@ export class Platform {
       ...(user.unitId ? { unitId: user.unitId } : {}),
       ...(user.managerId ? { managerId: user.managerId } : {}),
     };
+  }
+
+  // --- Second-factor policy --------------------------------------------------
+
+  /**
+   * Who in a tenancy must hold a second factor. OFF unless the administrator
+   * says otherwise; the record is read from the ledger so it survives a
+   * restart and appears in the audit feed like any other governance act.
+   */
+  securityPolicy(tenantId: string): SecurityPolicy {
+    const record = this.ledger.get({ refType: 'SecurityPolicy', refId: tenantId });
+    const held = record?.state as Partial<SecurityPolicy> | undefined;
+    return {
+      tenantId,
+      mfaRequired: held?.mfaRequired ?? 'OFF',
+      ...(held?.setAt ? { setAt: held.setAt } : {}),
+      ...(held?.setBy ? { setBy: held.setBy } : {}),
+      ...(held?.reason ? { reason: held.reason } : {}),
+    };
+  }
+
+  setSecurityPolicy(actor: AuthContext, input: { mfaRequired: SecurityPolicy['mfaRequired']; reason: string }): SecurityPolicy {
+    if (!input.reason.trim()) throw new DomainError('REASON_REQUIRED', 'Changing the second-factor requirement needs a reason');
+    const current = this.securityPolicy(actor.tenantId);
+    if (current.mfaRequired === input.mfaRequired) return current;
+    const policy: SecurityPolicy = {
+      tenantId: actor.tenantId,
+      mfaRequired: input.mfaRequired,
+      setAt: new Date().toISOString(),
+      setBy: actor.actorId,
+      reason: input.reason,
+    };
+    this.ledger.commit({
+      tenantId: actor.tenantId,
+      projectId: `${actor.tenantId}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'SECURITY_POLICY_SET',
+      entity: { refType: 'SecurityPolicy', refId: actor.tenantId },
+      nextState: { id: actor.tenantId, ...policy },
+    });
+    return policy;
+  }
+
+  /**
+   * Whether this person must hold a second factor to use the platform.
+   *
+   * Operators: by deployment setting, on by default — they can credit wallets
+   * and close tenancies. Everybody else: by their tenancy's policy, applied to
+   * administrators (ENTERPRISE_ADMIN, OWNER) or everyone. A demonstration
+   * identity is never required to: its address belongs to nobody, and there is
+   * no phone to enrol.
+   */
+  secondFactorRequiredFor(userId: string): boolean {
+    const user = this.#users.get(userId);
+    if (!user || user.demonstration) return false;
+    if (user.roles.includes('PLATFORM_ADMIN')) return config.auth.operatorMfaRequired;
+    const policy = this.securityPolicy(user.tenantId);
+    if (policy.mfaRequired === 'EVERYONE') return true;
+    if (policy.mfaRequired === 'ADMINISTRATORS') return user.roles.includes('ENTERPRISE_ADMIN') || user.roles.includes('OWNER');
+    return false;
   }
 
   // --- Closing a tenancy ---------------------------------------------------
