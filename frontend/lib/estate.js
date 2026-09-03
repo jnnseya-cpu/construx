@@ -134,6 +134,17 @@ export function head({ title, intent, actions }) {
  * answers and this console shows them differently.
  */
 export function refusal(what, error) {
+  // Denied and failed are different answers too. A refusal is the permission
+  // model working and is said quietly; a failure stays red. The same split
+  // `positionReport` makes on the delivery screens.
+  if (error?.status === 403) {
+    return html`<div class="notice">
+      <div>
+        <b>${what} is outside your role</b><br />
+        ${error?.message ?? String(error)}
+      </div>
+    </div>`;
+  }
   return html`<div class="notice err">
     <div>
       <b>${what} could not be read</b><br />

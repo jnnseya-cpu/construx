@@ -123,19 +123,30 @@ export async function enterprise(root) {
   // figure below carries the number of projects it was built from, because a
   // total that treats a missing CVR as zero is the most confident wrong number
   // a portfolio screen can print.
+  // The estate position needs enterprise authority, and the matrix the API
+  // publishes already says whether this role holds it. Asking anyway produced
+  // three refusals the page then handled correctly — and three red lines in the
+  // browser console on every visit by a project-level role, which is what a
+  // person opening the developer tools reads as "this screen is broken". The
+  // refusal is the same either way; it is decided here from the published
+  // matrix rather than learned from the server, and the server still decides
+  // for anybody who edits this file.
+  const estateVisible = can('ENTERPRISE_STRUCTURE', 'R');
+  const refusedLocally = { refused: { message: blockedReason('ENTERPRISE_STRUCTURE', 'R') } };
+
   const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations] = await Promise.all([
-    // Caught rather than thrown. This was the only unguarded call on the page,
-    // and a project-level role is *correctly* refused the estate-wide
-    // commercial position — so for every role below enterprise level the
-    // refusal took the whole screen down and rendered nothing at all. Not a
-    // permission problem: a blank page where a refusal belonged.
-    api.get('/v1/enterprise/command').catch((error) => ({ refused: error })),
+    // Caught rather than thrown. A project-level role is *correctly* refused
+    // the estate-wide commercial position — and for every role below
+    // enterprise level the refusal once took the whole screen down and
+    // rendered nothing at all. Not a permission problem: a blank page where a
+    // refusal belonged.
+    estateVisible ? api.get('/v1/enterprise/command').catch((error) => ({ refused: error })) : Promise.resolve(refusedLocally),
     api.get('/v1/portfolios').catch(() => ({ portfolios: [] })),
     api.get('/v1/enterprises').catch(() => ({ enterprises: [] })),
     api.get('/v1/lifecycle/gates').catch(() => ({ gates: [] })),
     api.get('/v1/ownership').catch(() => ({ areas: [] })),
-    api.get('/v1/enterprise/changes').catch(() => null),
-    api.get('/v1/enterprise/forecast').catch(() => null),
+    estateVisible ? api.get('/v1/enterprise/changes').catch(() => null) : Promise.resolve(null),
+    estateVisible ? api.get('/v1/enterprise/forecast').catch(() => null) : Promise.resolve(null),
     // Everybody in this tenancy. A tenancy that can create people but never
     // list them makes "change what somebody may do" unusable, because you
     // cannot change the roles of a person you cannot find.

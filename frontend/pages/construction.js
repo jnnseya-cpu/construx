@@ -88,21 +88,21 @@ export async function construction(root) {
 
   const [quality, cdm, requirements, safetyControl, qualityControl, holdPoints, safetyPosition, procurementItems, verification, dailyLogs, mobilisation] =
     await Promise.all([
-      api.get(`/v1/projects/${projectId}/quality`).catch(() => null),
-      api.get(`/v1/projects/${projectId}/cdm`).catch(() => null),
+      api.read(`/v1/projects/${projectId}/quality`, 'QUALITY_COMMISSIONING').catch(() => null),
+      api.read(`/v1/projects/${projectId}/cdm`, 'SAFETY_RAMS').catch(() => null),
       api.get('/v1/safety/permit-requirements').catch(() => ({ requirements: [] })),
       // The control positions a site actually runs on. Every one had an engine
       // and no screen, which is why a permit could expire, a method could be
       // revised without anybody being rebriefed, and an instrument could fall
       // out of calibration with nothing on any screen saying so.
-      api.get(`/v1/projects/${projectId}/safety-control`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/quality-control`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/quality/hold-points`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/safety/position`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/procurement-items`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/progress-verification`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/daily-logs`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/mobilisation`).catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/safety-control`, 'SAFETY_RAMS').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/quality-control`, 'QUALITY_COMMISSIONING').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/quality/hold-points`, 'QUALITY_COMMISSIONING').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/safety/position`, 'SAFETY_RAMS').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/procurement-items`, 'PROCUREMENT_AWARD').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/progress-verification`, 'FIELD_EXECUTION').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/daily-logs`, 'FIELD_EXECUTION').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/mobilisation`, 'FIELD_EXECUTION').catch((error) => ({ error })),
     ]);
 
   const now = new Date().toISOString();

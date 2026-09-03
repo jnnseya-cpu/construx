@@ -54,18 +54,34 @@ function navItems(): NavItem[] {
   return items;
 }
 
-/** The areas each page actually gates its own panels and actions on. */
+const WRITE_CODES = ['C', 'U', 'A', 'X'];
+
+/**
+ * The areas each page actually offers *actions* in.
+ *
+ * A `can('AREA', 'C')` behind a button is the screen offering to do something;
+ * a `can('AREA', 'R')` in front of a fetch is the screen deciding, from the
+ * published matrix, whether to ask for a position at all. Only the first is
+ * what this test is about — a role shut out of a screen it could only have
+ * *read* on has lost nothing the gate was not already refusing. Counting read
+ * gates here flagged the operator's Communications screen for the enterprise
+ * administrator, who reaches the same screen through their own navigation.
+ */
 function areasOffered(): Record<string, string[]> {
   const dir = join(REPO_ROOT, 'frontend', 'pages');
   const offered: Record<string, string[]> = {};
   for (const file of readdirSync(dir).filter((name) => name.endsWith('.js'))) {
     const source = readFileSync(join(dir, file), 'utf8');
-    offered[file.replace('.js', '')] = [...new Set([...source.matchAll(/can\('([A-Z_]+)'/g)].map((m) => m[1]!))];
+    offered[file.replace('.js', '')] = [
+      ...new Set(
+        [...source.matchAll(/can\('([A-Z_]+)',\s*'([A-Z])'/g)]
+          .filter((m) => WRITE_CODES.includes(m[2]!))
+          .map((m) => m[1]!),
+      ),
+    ];
   }
   return offered;
 }
-
-const WRITE_CODES = ['C', 'U', 'A', 'X'];
 
 /**
  * Screens an operator reaches through their own navigation.

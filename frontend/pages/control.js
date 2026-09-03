@@ -153,7 +153,7 @@ export async function control(root) {
   const [project, estate, lessons, gate, gateDecisions, standard, stages, decisions, actions, reusable, responsibility] = await Promise.all([
     api.get(`/v1/projects/${projectId}/control`),
     api.get('/v1/control/estate').catch(() => null),
-    api.get('/v1/lessons').catch(() => null),
+    api.read('/v1/lessons', 'RISK_REGISTER').catch(() => null),
     // 8.4. The seven-clause Definition of Done, answered server-side — the
     // browser holds no rule the API does not publish, and a gate report the
     // browser assembled would be a second answer to the same question.
@@ -164,13 +164,13 @@ export async function control(root) {
     // projects have already paid for. All four had engines and no screen.
     api.get('/v1/control/standard').catch((error) => ({ error })),
     api.get(`/v1/projects/${projectId}/stages`).catch((error) => ({ error })),
-    api.get(`/v1/projects/${projectId}/decisions`).catch((error) => ({ error })),
-    api.get(`/v1/projects/${projectId}/actions`).catch((error) => ({ error })),
-    api.get(`/v1/projects/${projectId}/lessons/reusable`).catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/decisions`, 'LOOKAHEAD_CONSTRAINTS').catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/actions`, 'LOOKAHEAD_CONSTRAINTS').catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/lessons/reusable`, 'RISK_REGISTER').catch((error) => ({ error })),
     // Who is responsible for what, between the client and every firm on the
     // job. On this screen because the two roles that own it — the project
     // manager and the construction manager — already work from here.
-    api.get(`/v1/projects/${projectId}/responsibility`).catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/responsibility`, 'WORKPACKAGES_TASKS').catch((error) => ({ error })),
   ]);
 
   // The choosers for the responsibility form. A package named from the project's
@@ -183,7 +183,7 @@ export async function control(root) {
     // it, and the chooser was silently empty on every load: a typed party name
     // is exactly how one firm becomes two rows on a matrix, which is the thing
     // this chooser exists to prevent.
-    .get('/v1/supply-chain')
+    .read('/v1/supply-chain', 'PROCUREMENT_AWARD')
     .then((result) => result.suppliers ?? [])
     .catch(() => []);
 
@@ -191,7 +191,7 @@ export async function control(root) {
   // because a meeting action nobody closed and a control item nobody evidenced
   // are the same failure seen twice, and a person chasing one is chasing both.
   const meetings = await api
-    .get(`/v1/projects/${projectId}/meetings`)
+    .read(`/v1/projects/${projectId}/meetings`, 'LOOKAHEAD_CONSTRAINTS')
     .catch(() => ({ meetings: [], openActions: [], summary: '' }));
 
   // Only a draft meeting can still be minuted into. Issued minutes are not

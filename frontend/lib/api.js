@@ -214,6 +214,8 @@ export async function hashFile(file) {
 
 export const api = {
   get: (path, options) => request('GET', path, undefined, options),
+  /** A position read gated on the capability area, and sensitivity, it belongs to. */
+  read: (path, area, sensitivity) => read(path, area, sensitivity),
   post: (path, body, options) => request('POST', path, body ?? {}, options),
   put: (path, body, options) => request('PUT', path, body ?? {}, options),
   // No body. The one DELETE the console issues cancels an erasure request, and
@@ -248,8 +250,72 @@ export function isWithheld(refType) {
   return withheld.has(refType);
 }
 
-/** Materialised entities of a type within a project. */
+/**
+ * Whether the current identity may read a record type, decided before asking.
+ *
+ * Installed by the shell once the permission matrix and the entity
+ * classification have loaded. A screen bundling twelve record types for a
+ * planner used to make twelve requests, be refused nine, and handle every
+ * refusal correctly — while the browser console filled with nine red lines that
+ * read, to anybody who opened it, as a broken screen. The refusal is the same
+ * either way. With the classification the API already publishes, it is decided
+ * here and the request is never made.
+ *
+ * Returns `{ reason }` to withhold, or `null` to ask the server. Absent (before
+ * the matrix loads) or unsure (an unclassified type), the answer is to ask —
+ * the server is authoritative, and this guard can only ever narrow what is
+ * requested, never widen what is returned.
+ */
+let readGuard = null;
+
+export function setEntityReadGuard(guard) {
+  readGuard = typeof guard === 'function' ? guard : null;
+}
+
+/**
+ * The same decision for a position read.
+ *
+ * A screen names the capability area each engine position belongs to — the
+ * area the server's own `authorise` call checks — and, where the position is
+ * commercial-in-confidence or legal, its data sensitivity. The shell answers
+ * both from the published matrix. Where the role does not hold read on the
+ * area, or is not cleared for the sensitivity, the request is never sent and
+ * the caller receives exactly the refusal the server would have returned: an
+ * `ApiError` with status 403, so every existing `.catch` on these reads
+ * behaves as before. Where the matrix is not yet loaded or the role is cleared,
+ * the server is asked and decides.
+ *
+ * Returns the reason to withhold, or `null` to ask.
+ */
+let areaGuard = null;
+
+export function setAreaReadGuard(guard) {
+  areaGuard = typeof guard === 'function' ? guard : null;
+}
+
+/** The refusal the server would have sent, raised here instead. */
+function refused(reason) {
+  return Promise.reject(new ApiError({ title: 'ACCESS_DENIED', status: 403, detail: reason }, 403));
+}
+
+function read(path, area, sensitivity) {
+  const reason = area || sensitivity ? areaGuard?.(area, sensitivity) : null;
+  if (reason) return refused(reason);
+  return request('GET', path, undefined, undefined);
+}
+
+/**
+ * Materialised entities of a type within a project.
+ *
+ * Decided before asking, where the published classification lets it be — the
+ * same guard `entityBundle` applies, so a screen reading one type directly is
+ * refused in the same place and the same way as one bundling twelve. The
+ * refusal is the `ApiError` the server would have sent, so a caller's `.catch`
+ * sees no difference.
+ */
 export async function entities(projectId, refType) {
+  const held = readGuard?.(refType);
+  if (held) return refused(held.reason);
   const result = await api.get(`/v1/projects/${projectId}/entities/${refType}`);
   return result.entities.map((e) => ({ ...e.state, _refId: e.refId, _version: e.version, _hash: e.stateHash }));
 }
@@ -268,6 +334,10 @@ export async function latest(projectId, refType) {
 export async function entityBundle(projectId, refTypes) {
   const results = await Promise.all(
     refTypes.map((refType) =>
+      // `entities` decides before asking where the published classification
+      // lets it, and raises the same refusal the server would have. The record
+      // of the withholding is therefore identical whichever path produced it,
+      // and the shell's "N record types withheld from your role" reads the same.
       entities(projectId, refType).catch((error) => {
         if (error instanceof ApiError && error.status === 403) {
           withheld.set(refType, error.message);

@@ -38,7 +38,7 @@ export async function contracts(root) {
     // The dates the letters contain, which the obligation calendar does not
     // hold: the calendar is what the contract says, and these are what the
     // parties said afterwards.
-    api.get(`/v1/projects/${projectId}/commitments`).catch(() => null),
+    api.read(`/v1/projects/${projectId}/commitments`, 'CONTRACTS_CLAIMS', 'LEGAL_L4').catch(() => null),
   ]);
   const evidenceHeld = await api
     .get(`/v1/projects/${projectId}/evidence`)
@@ -60,15 +60,15 @@ export async function contracts(root) {
   // The matrix reconciles the two sides of every change, which no entity read
   // can do — it needs the link between an upstream variation and the
   // subcontractor claim that belongs to it.
-  const register = await api.get(`/v1/projects/${projectId}/variations/register`).catch(() => null);
+  const register = await api.read(`/v1/projects/${projectId}/variations/register`, 'CHANGE_VARIATION', 'COMMERCIAL_L3').catch(() => null);
 
   // Dated obligations. Nothing triggers these and nobody is watching for them,
   // which is exactly why they get missed.
-  const calendar = await api.get(`/v1/projects/${projectId}/obligations/calendar`).catch(() => null);
+  const calendar = await api.read(`/v1/projects/${projectId}/obligations/calendar`, 'CONTRACTS_CLAIMS', 'LEGAL_L4').catch(() => null);
 
   // Statutory adjudication. The timetable is the point: both ends of it are
   // fatal in different directions, and neither is about who is right.
-  const disputes = await api.get(`/v1/projects/${projectId}/disputes/position`).catch(() => null);
+  const disputes = await api.read(`/v1/projects/${projectId}/disputes/position`, 'CONTRACTS_CLAIMS', 'LEGAL_L4').catch(() => null);
 
   const contract = b.Contract.filter((c) => c.status === 'EXECUTED').at(-1) ?? b.Contract.at(-1);
 

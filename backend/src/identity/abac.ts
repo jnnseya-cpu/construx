@@ -63,6 +63,20 @@ export function clearedFor(roles: readonly Role[], sensitivity: DataSensitivity)
 }
 
 /**
+ * The same two sets, in the shape the permission matrix publishes.
+ *
+ * A console that knows a record type is Commercial-L3 and knows its role is not
+ * cleared for it can withhold the read without asking — which is what it already
+ * does for the capability area. Read from the sets above rather than restated,
+ * so the published answer and the enforced one cannot drift. Publishing widens
+ * nothing: a client that ignores it is still refused here.
+ */
+export const SENSITIVITY_CLEARANCE: Readonly<Partial<Record<DataSensitivity, readonly Role[]>>> = {
+  LEGAL_L4: [...LEGAL_L4_ROLES],
+  COMMERCIAL_L3: [...COMMERCIAL_L3_ROLES],
+};
+
+/**
  * Phases in which a capability area may be written. Writing a tender estimate
  * during O&M, or field progress before award, indicates a process error.
  */

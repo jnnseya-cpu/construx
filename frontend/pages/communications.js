@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { blockedReason, can } from '../app.js';
 import { badge, html, humanise, raw, render, table, time, toast } from '../lib/ui.js';
 
 /**
@@ -43,7 +44,9 @@ export async function communications(root) {
     // that into `deliveries: []` showed an operator an empty table, which reads
     // as "this tenancy has sent nothing" when the truth is "you may not see
     // this". Those are different facts and the screen now says which one it has.
-    api.get('/v1/notifications/deliveries').catch((error) => ({ deliveries: [], totals: null, error })),
+    can('ENTERPRISE_STRUCTURE', 'R')
+      ? api.get('/v1/notifications/deliveries').catch((error) => ({ deliveries: [], totals: null, error }))
+      : Promise.resolve({ deliveries: [], totals: null, error: { message: blockedReason('ENTERPRISE_STRUCTURE', 'R') } }),
   ]);
 
   const feedRefused = Boolean(feed.error);

@@ -7579,6 +7579,104 @@ repository.
 
 ---
 
+### Every screen as every role, and what a person would have seen go wrong
+
+The instruction was to make sure everything is clear, active and functioning,
+so the console was driven rather than read: every seeded identity signed in
+through the picker in Chromium, every item its sidebar actually renders opened,
+every permitted command modal opened and closed without submitting. What was
+recorded is what a person would have seen — a thrown page error, a failed
+request, a 4xx or 5xx the page made on its own, `[object Object]` or
+`undefined` or `NaN` in rendered text, a red notice, an empty panel, a form
+whose required dropdown had nothing in it. Fourteen identities, two hundred and
+eighty-one screens, two hundred and forty-three command forms.
+
+Nothing invented was found. Every screen rendered and no page threw. What the
+sweep did find was one problem in five costumes: **the platform refusing
+correctly and the console reporting the refusal as a failure.**
+
+**A required choice with nothing to choose from.** Eleven commands across three
+screens opened a form whose required dropdown was empty — "Answer a comment" on
+a programme with no comments, "Agree a variation" with no variation, "Record a
+referral" with no dispute. The form would not submit and nothing said why. The
+Construction screen already refused this pattern for its own commands, locking
+the button with a reason. That refusal is now made once, in `command()` and in
+`modal()`, at the one place a form is built: a required select or multiselect
+with no options opens a notice that says what does not exist yet, instead of a
+form. An *optional* empty select is left alone — it is a form being honest
+about an empty register, not a dead end.
+
+**Withheld records asked for anyway.** A planner opening Contracts made twelve
+entity reads, was refused nine, and handled every refusal correctly — while the
+browser console filled with nine red lines that read, to anybody who opened it,
+as a broken screen. The API already held the answer: the entity classification
+that `entityAccess.ts` authorises reads against. `/v1/permissions/matrix` now
+publishes it as `entityAccess`, and `entityBundle` decides from it before
+asking. The record of the withholding is identical to the one a server refusal
+leaves, so the shell's "N record types withheld from your role" reads the same
+whichever path produced it. Unclassified means ask: the guard can only narrow
+what is requested, never widen what is returned.
+
+**Position reads, the same.** Seventy-four engine positions across nine screens
+— the programme network for a BIM coordinator, the daily-log position for an
+enterprise administrator, the tender reviews for a planner — were requested,
+refused, and rendered as "This could not be read" in red. `api.read(path,
+area)` names the capability area the server's own `authorise` call checks, and
+the shell answers it from the published matrix. Where the role does not hold
+read on the area the request is never sent, and the caller receives exactly the
+`ApiError` the server would have returned, so every existing `.catch` behaves
+as before.
+
+**The other half of the same decision.** The third run of the sweep was down
+to one kind of refusal: a construction manager on Commercial, a planner on
+Contracts, refused twenty reads apiece with "Commercial-L3 content withheld
+from this role" and "Legal-L4 content withheld from this role". Those come from
+two role sets in `abac.ts`, not from the matrix, and the console had no way to
+know them. The matrix now publishes them as `sensitivityClearance`, read from
+the same two sets the access decision reads so the two cannot drift, and both
+guards — the entity read and the position read — check the sensitivity after
+the area. A commercial position names both (`api.read(path, 'BUDGET_COST',
+'COMMERCIAL_L3')`), in the same words the server's own `authorise` call uses.
+`entities()` read directly now consults the same guard as `entityBundle`, so a
+screen reading one record type is refused in the same place as one bundling
+twelve.
+
+**Denied and failed are different answers.** `positionReport`, the operator
+console's `refusal`, the insight panel and the drill all rendered a 403 in the
+same red as a thrown exception. A refusal is the permission model working, and
+it is now said quietly — "Outside your role" and the reason — while an actual
+failure stays red. The same split, in the same words, in every shared renderer,
+so a site supervisor on Programme sees one calm line rather than a wall of
+alarms about registers that were never theirs.
+
+**Reads a role was never going to be allowed.** Sign-in fetched the wallet for
+everybody and the morning briefing for everybody; Enterprise, Security and
+Communications fetched estate command, credentials and deliveries for whoever
+opened them; the operator's Platform Operations screen fetched evidence
+retention it is barred from by account-layer separation. Each is now gated on
+the published matrix — `can(area, 'R')` — or on the account layer, and renders
+the refusal without the round trip.
+
+What was looked at and deliberately left alone: the Project Control gap
+notices are red because the gate clauses are genuinely unmet on the seeded
+project, which is the finding and not a defect; and the sweep's own check
+flagged an optional supplier dropdown as a trap once, because it was reading an
+older version of itself — the live DOM has the control optional, which is
+right.
+
+Verified in the browser, not by inspection: the sweep was run four times, each
+after a round of fixes, and the fourth is the record — fourteen identities,
+every screen their sidebar renders, every permitted command form opened and
+closed, and not one page error, failed request, 4xx or 5xx, red notice or
+invented value. The frontend has no test runner; the backend changes —
+publishing `entityAccess` and `sensitivityClearance` — are covered by the
+existing matrix tests, and `npm test` passes. One test needed correcting
+rather than the code: the navigation-reach check read every `can('AREA'` in a
+page as an action the screen offers, and a read gate is not an offer. It now
+counts write codes only, which is what its own comment says it is about.
+
+---
+
 ## What is partial
 
 Implemented in a form that works, with a stated part missing. The missing part is

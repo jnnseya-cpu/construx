@@ -66,9 +66,14 @@ export async function insightPanel(host, { projectId, areas, subject, onChange }
   try {
     payload = await api.get(`/v1/projects/${projectId}/proposals?area=${encodeURIComponent(areas.join(','))}`);
   } catch (error) {
+    // A refusal is not a failure: the queue for these areas is outside this
+    // role, which the platform says in its own words and this panel repeats
+    // quietly. An actual failure stays red.
     host.innerHTML = resolveHtml(
       html`<div class="card"><h3>AI Insight</h3>
-        <div class="notice err">${error.detail ?? error.message ?? 'The proposal queue could not be read.'}</div>
+        <div class="notice ${error?.status === 403 ? '' : 'err'}">${
+          error?.status === 403 ? html`<b>Outside your role</b> — ` : ''
+        }${error.detail ?? error.message ?? 'The proposal queue could not be read.'}</div>
       </div>`,
     );
     return;

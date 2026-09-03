@@ -22,7 +22,7 @@ export async function procurement(root) {
   // firms — so offering a free-text field here would produce a refusal the
   // person could not have predicted.
   // Only the eligible ones, which is what this endpoint returns by default.
-  const suppliers = await api.get('/v1/supply-chain').catch(() => ({ suppliers: [] }));
+  const suppliers = await api.read('/v1/supply-chain', 'PROCUREMENT_AWARD').catch(() => ({ suppliers: [] }));
 
   // The tenancy-level procurement intelligence, and the project's own tender
   // position. Seven engines with no screen: the twenty cost heads a tender is
@@ -31,12 +31,12 @@ export async function procurement(root) {
   // review found, and what has actually converted.
   const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards] = await Promise.all([
     api.get('/v1/tender/cost-heads').catch((error) => ({ error })),
-    api.get('/v1/cost-intelligence').catch((error) => ({ error })),
+    api.read('/v1/cost-intelligence', 'ESTIMATE_TENDER').catch((error) => ({ error })),
     api.get('/v1/supply-chain/trades').catch((error) => ({ error })),
-    api.get('/v1/supply-chain/coverage').catch((error) => ({ error })),
-    api.get('/v1/frameworks').catch((error) => ({ error })),
-    api.get(`/v1/projects/${projectId}/tender-reviews`).catch((error) => ({ error })),
-    api.get(`/v1/projects/${projectId}/awards`).catch((error) => ({ error })),
+    api.read('/v1/supply-chain/coverage', 'PROCUREMENT_AWARD').catch((error) => ({ error })),
+    api.read('/v1/frameworks', 'PROCUREMENT_AWARD').catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/tender-reviews`, 'ESTIMATE_TENDER').catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/awards`, 'PROCUREMENT_AWARD', 'COMMERCIAL_L3').catch((error) => ({ error })),
   ]);
 
   const b = await entityBundle(projectId, [
@@ -63,7 +63,7 @@ export async function procurement(root) {
   // bundle because the completeness and the carried risk are derived server-side
   // — the browser holds no rule the API does not publish.
   const intel = await api
-    .get(`/v1/projects/${projectId}/tender-intelligence`)
+    .read(`/v1/projects/${projectId}/tender-intelligence`, 'PROCUREMENT_AWARD', 'COMMERCIAL_L3')
     .catch(() => ({ clarifications: [], comparisons: [], summary: '' }));
 
   // A command whose only select would be empty is locked with the reason rather
@@ -73,13 +73,13 @@ export async function procurement(root) {
   // T-WF-03. The measured items under the estimate, and what stops each
   // schedule freezing.
   const bill = await api
-    .get(`/v1/projects/${projectId}/measurement`)
+    .read(`/v1/projects/${projectId}/measurement`, 'BOQ_TAKEOFF')
     .catch(() => ({ schedules: [], summary: '' }));
   const openSchedules = bill.schedules.filter((s) => s.status === 'OPEN');
 
   // T-WF-04. Which revision of the pack each firm actually holds.
   const enquiries = await api
-    .get(`/v1/projects/${projectId}/enquiries`)
+    .read(`/v1/projects/${projectId}/enquiries`, 'PROCUREMENT_AWARD', 'COMMERCIAL_L3')
     .catch(() => ({ enquiries: [], summary: '' }));
   const liveEnquiries = enquiries.enquiries.filter((e) => e.status !== 'CLOSED');
   const closedEnquiries = enquiries.enquiries.filter((e) => e.status === 'CLOSED');
@@ -88,7 +88,7 @@ export async function procurement(root) {
 
   // T-WF-05. Buy it or do it, per package.
   const routes = await api
-    .get(`/v1/projects/${projectId}/pricing-routes`)
+    .read(`/v1/projects/${projectId}/pricing-routes`, 'ESTIMATE_TENDER')
     .catch(() => ({ routes: [], summary: '' }));
   const openRoutes = routes.routes.filter((r) => r.status === 'OPEN');
   const unanswered = intel.clarifications.filter((c) => c.status === 'OPEN');
@@ -217,7 +217,7 @@ export async function procurement(root) {
   // and nothing stood them beside each other, which from a screen is
   // indistinguishable from not tracking bidders at all.
   const reconciliation = rfq
-    ? await api.get(`/v1/projects/${projectId}/procurement/rfq/${rfq._refId}/reconciliation`).catch(() => null)
+    ? await api.read(`/v1/projects/${projectId}/procurement/rfq/${rfq._refId}/reconciliation`, 'PROCUREMENT_AWARD', 'COMMERCIAL_L3').catch(() => null)
     : null;
   const evaluation = b.BidEvaluation.at(-1);
   const adjudication = b.Adjudication.at(-1);

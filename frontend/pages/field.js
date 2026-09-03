@@ -650,12 +650,12 @@ export async function field(root) {
   // entry are the two things the other side's expert looks for first, and
   // neither is visible reading the diary a page at a time.
   const diary = await api
-    .get(`/v1/projects/${projectId}/site-diary/position`)
+    .read(`/v1/projects/${projectId}/site-diary/position`, 'FIELD_EXECUTION')
     .catch(() => null);
 
   // The walk register ordered by what is overdue. Sorted by date, the one that
   // matters is the one furthest down.
-  const walk = await api.get(`/v1/projects/${projectId}/observations/position`).catch(() => null);
+  const walk = await api.read(`/v1/projects/${projectId}/observations/position`, 'FIELD_EXECUTION').catch(() => null);
 
   // Whether this deployment can actually transcribe. A recording is worth
   // filing either way — it is what a delay claim is argued from — but the
@@ -674,13 +674,13 @@ export async function field(root) {
 
   // Days earned against days spent. The arithmetic already existed inside the
   // delay forecast, where nothing could read it on its own.
-  const productivity = await api.get(`/v1/projects/${projectId}/productivity`).catch(() => null);
+  const productivity = await api.read(`/v1/projects/${projectId}/productivity`, 'FIELD_EXECUTION').catch(() => null);
 
   // The site visit: findings that outlive the walk. Not the same thing as the
   // observation register above — an observation is about the state of the work
   // and closes next week, a finding is about the state of the site and governs
   // the job until handover.
-  const site = await api.get(`/v1/projects/${projectId}/site-visits`).catch(() => null);
+  const site = await api.read(`/v1/projects/${projectId}/site-visits`, 'LOOKAHEAD_CONSTRAINTS').catch(() => null);
 
   // What this handset is still holding. The outbox retries on its own, but a
   // file whose operation the platform rejected outright waits for a record that
@@ -691,13 +691,13 @@ export async function field(root) {
   // Conflicts the sync engine resolved on its own. Every resolution has a
   // losing side, and until these were recorded the only trace of a discarded
   // site record was a line in a response the handset may never have received.
-  const conflicts = await api.get(`/v1/projects/${projectId}/sync/conflicts`).catch(() => null);
+  const conflicts = await api.read(`/v1/projects/${projectId}/sync/conflicts`, 'FIELD_EXECUTION').catch(() => null);
 
   // The three-minute capture. The board is cheap; the brief is only fetched for
   // the mission a person actually opened, because it carries every constraint
   // with its full response set and a project with twenty walks would otherwise
   // ship all of them to a screen showing one.
-  const missions = await api.get(`/v1/projects/${projectId}/site-capture`).catch((error) => ({ error }));
+  const missions = await api.read(`/v1/projects/${projectId}/site-capture`, 'LOOKAHEAD_CONSTRAINTS').catch((error) => ({ error }));
   // The protocol and the constraint catalogue come from the server, on the same
   // argument as the permission matrix: the browser holds no list the API does
   // not publish, so the picker and the rulepack behind it cannot drift apart.
@@ -707,7 +707,7 @@ export async function field(root) {
 
   // The geometric record. Same shape as the capture above: the board is cheap,
   // the measured view is fetched only for the record somebody opened.
-  const models = await api.get(`/v1/projects/${projectId}/site-model`).catch((error) => ({ error }));
+  const models = await api.read(`/v1/projects/${projectId}/site-model`, 'LOOKAHEAD_CONSTRAINTS').catch((error) => ({ error }));
   const openModel = state.siteModel ?? null;
   const modelView = openModel
     ? await api.get(`/v1/projects/${projectId}/site-model/${openModel}`).catch(() => null)

@@ -127,8 +127,13 @@ export async function drill(projectId, label, sources, absence = []) {
   try {
     payload = await api.get(`/v1/projects/${projectId}/audit/events?refs=${encodeURIComponent(refs)}`);
   } catch (error) {
+    // Withheld is said as withheld. The events route already applies the entity
+    // classification per event; a whole drill refused is the same rule one
+    // level up, and it is not an error.
     host.querySelector('.body').innerHTML = resolveHtml(
-      html`<div class="notice err">${error.detail ?? error.message ?? 'The record could not be read.'}</div>`,
+      html`<div class="notice ${error?.status === 403 ? '' : 'err'}">${
+        error?.status === 403 ? html`<b>Outside your role</b> — ` : ''
+      }${error.detail ?? error.message ?? 'The record could not be read.'}</div>`,
     );
     return;
   }

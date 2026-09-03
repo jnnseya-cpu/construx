@@ -1,4 +1,4 @@
-import { api, ApiError, resetWithheld, session, withheldRecords } from './lib/api.js';
+import { api, ApiError, resetWithheld, session, setAreaReadGuard, setEntityReadGuard, withheldRecords } from './lib/api.js';
 import { esc, html, humanise, initials, money, raw, render, toast } from './lib/ui.js';
 import { wireDrill } from './lib/drill.js';
 import { armInstallPrompt } from './lib/install.js';
@@ -449,6 +449,31 @@ async function loadMatrix() {
   writePhaseGates = result.writePhaseGates ?? {};
   grantableRoles = result.tenantGrantableRoles ?? [];
   heldModules = result.modules ?? [];
+  // The record-type classification the API authorises reads against, so a
+  // screen can withhold a type this role cannot read without asking first.
+  // Unclassified means ask: the server decides, and this only ever narrows what
+  // is requested.
+  const entityAccess = result.entityAccess ?? {};
+  // The other half of the same decision: a type in an area this role reads can
+  // still be Commercial-L3 or Legal-L4, and the roles cleared for each come
+  // from the API too. Unpublished means cleared here and decided by the server.
+  const clearance = result.sensitivityClearance ?? {};
+  const sensitivityReason = (sensitivity) => {
+    const cleared = sensitivity ? clearance[sensitivity] : undefined;
+    if (!cleared) return null;
+    const roles = state.session?.user?.roles ?? [];
+    if (roles.some((role) => cleared.includes(role))) return null;
+    // The server's own words for it, so the two paths read the same.
+    const label = { COMMERCIAL_L3: 'Commercial-L3', LEGAL_L4: 'Legal-L4' }[sensitivity] ?? humanise(sensitivity);
+    return `${label} content withheld from this role`;
+  };
+  setAreaReadGuard((area, sensitivity) => (area ? blockedReason(area, 'R') : null) ?? sensitivityReason(sensitivity));
+  setEntityReadGuard((refType) => {
+    const classification = entityAccess[refType];
+    if (!classification) return null;
+    const reason = blockedReason(classification.area, 'R') ?? sensitivityReason(classification.sensitivity);
+    return reason ? { reason } : null;
+  });
   // The same call carries which events a device may never originate, so the
   // outbox refuses a governance action at the point of the press rather than
   // queuing one the sync engine will certainly reject.
@@ -1000,13 +1025,18 @@ async function loadContext() {
   if (!projectId) {
     state.project = null;
     state.gate = null;
-    state.wallet = await api.get('/v1/billing/wallet').catch(() => null);
+    // The wallet needs BILLING_ACU, which most delivery roles do not hold. The
+    // matrix is already loaded by this point, so the refusal is known in
+    // advance and the request is not made — the same rule the command bar
+    // applies, and one fewer red line in the console for every planner and
+    // supervisor on every sign-in.
+    state.wallet = can('BILLING_ACU', 'R') ? await api.get('/v1/billing/wallet').catch(() => null) : null;
     return;
   }
 
   const [detail, wallet, listed] = await Promise.all([
     api.get(`/v1/projects/${projectId}`),
-    api.get('/v1/billing/wallet').catch(() => null),
+    can('BILLING_ACU', 'R') ? api.get('/v1/billing/wallet').catch(() => null) : Promise.resolve(null),
     // What else this identity can open. Read here rather than at sign-in
     // because a project created during the session should appear in the picker
     // without signing out, and this already runs on every context load.

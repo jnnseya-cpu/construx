@@ -1,4 +1,5 @@
 import { api, session } from '../lib/api.js';
+import { can } from '../app.js';
 import { command } from '../lib/command.js';
 import { badge, date, html, notice, raw, render, table, time, toast } from '../lib/ui.js';
 import { barChart, donutChart, gauge, kpiCard, lineChart, proportionBar, treemap } from '../lib/charts.js';
@@ -36,9 +37,14 @@ export async function security(root) {
   // client-side permission check — but probing it for everybody put a 403 in
   // every non-administrator's console on every load, which is noise that
   // teaches people to ignore the console.
-  const administers = (session.get()?.user?.roles ?? []).some((role) =>
-    ['ENTERPRISE_ADMIN', 'PLATFORM_ADMIN', 'OWNER'].includes(role),
-  );
+  //
+  // Decided from the published matrix rather than a list of role names. The
+  // list said ENTERPRISE_ADMIN, PLATFORM_ADMIN and OWNER; the route authorises
+  // on ENTERPRISE_STRUCTURE read, which only the first of those holds — so the
+  // owner and the operator were each handed two refusals on every visit by a
+  // client-side rule that had drifted from the server's. `can()` is the
+  // server's own matrix, and cannot drift from it.
+  const administers = can('ENTERPRISE_STRUCTURE', 'R');
   const [mine, tenancy, protection] = await Promise.all([
     api.get('/v1/me/security'),
     administers ? api.get('/v1/admin/credentials').catch((error) => ({ error })) : Promise.resolve({ error: 'not asked' }),

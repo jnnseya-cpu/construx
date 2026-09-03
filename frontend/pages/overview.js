@@ -1,7 +1,7 @@
 import { api, entityBundle, isWithheld } from '../lib/api.js';
 import { badge, date, days, drillable, html, humanise, money, pct, raw, render, statusTone, table, time } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
-import { draw, state } from '../app.js';
+import { can, draw, state } from '../app.js';
 import { sectorLabel } from '../lib/enums.js';
 
 /**
@@ -21,7 +21,14 @@ export async function overview(root) {
     // The greeting uses the signed-in person's own name. A briefing addressed
     // to nobody reads like a report; addressed to somebody it reads like a
     // handover, which is what it is.
-    api.get(`/v1/briefing?name=${encodeURIComponent((state.session.user?.name ?? '').split(' ')[0] ?? '')}`).catch(() => null),
+    // The briefing reads across the whole tenancy and authorises on
+    // BUSINESS_DEVELOPMENT, which a planner, a supervisor or a BIM lead does not
+    // hold. Fourteen identities were asking for it on every sign-in and eleven
+    // were being refused — correctly, and noisily. The matrix already says who
+    // may read it; the ones who may not are not asked on their behalf.
+    can('BUSINESS_DEVELOPMENT', 'R')
+      ? api.get(`/v1/briefing?name=${encodeURIComponent((state.session.user?.name ?? '').split(' ')[0] ?? '')}`).catch(() => null)
+      : Promise.resolve(null),
     entityBundle(projectId, [
       'CVR',
       'EarnedValueSnapshot',

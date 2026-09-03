@@ -39,13 +39,13 @@ export async function design(root) {
 
   // Where every review stands. The engine computes duration, overdue and whose
   // it is, so the screen renders an answer rather than doing arithmetic.
-  const reviews = await api.get(`/v1/projects/${projectId}/design/reviews`).catch(() => null);
+  const reviews = await api.read(`/v1/projects/${projectId}/design/reviews`, 'DESIGN_INFORMATION').catch(() => null);
 
   // Material and technical submittals. On this screen because a submittal
   // answers a specification clause and is decided by the designer, which is the
   // same two parties and the same area as everything else here.
   const submittals = await api
-    .get(`/v1/projects/${projectId}/submittals`)
+    .read(`/v1/projects/${projectId}/submittals`, 'DESIGN_INFORMATION')
     .catch(() => ({ submittals: [], summary: '', pastOrderingDate: 0, reviewsOverdue: 0, atRisk: 0, circling: 0 }));
 
   // Who could check a design, read from the ownership map rather than guessed.
@@ -64,20 +64,20 @@ export async function design(root) {
 
   // The register read as a delay exhibit rather than a count: how long questions
   // stayed open, and whether the answers arrived after they were needed.
-  const rfi = await api.get(`/v1/projects/${projectId}/rfi/position`).catch(() => null);
+  const rfi = await api.read(`/v1/projects/${projectId}/rfi/position`, 'DESIGN_INFORMATION').catch(() => null);
 
   // What the late information is worth. "Eleven RFIs overdue" gets noted;
   // a figure in money gets acted on.
-  const exposure = await api.get(`/v1/projects/${projectId}/rfi/exposure`).catch(() => null);
+  const exposure = await api.read(`/v1/projects/${projectId}/rfi/exposure`, 'DESIGN_INFORMATION').catch(() => null);
 
   // Not the count. What is still critical, and where a closeout left the model
   // describing something that was not built.
-  const clashes = await api.get(`/v1/projects/${projectId}/bim/clashes/position`).catch(() => null);
+  const clashes = await api.read(`/v1/projects/${projectId}/bim/clashes/position`, 'BIM_TWIN').catch(() => null);
 
   // What the specification demands against what the inspection plans actually
   // check. The gap exists only between the two documents, so neither the
   // quality manager nor the engineer can see it on their own.
-  const spec = await api.get(`/v1/projects/${projectId}/specifications/coverage`).catch(() => null);
+  const spec = await api.read(`/v1/projects/${projectId}/specifications/coverage`, 'DESIGN_INFORMATION').catch(() => null);
   const deviations = b.DigitalTwinState.reduce((sum, s) => sum + Number(s.deviationCount ?? 0), 0);
 
   // Each tile's own records, so opening a figure shows the events that moved it.
@@ -92,7 +92,7 @@ export async function design(root) {
   // actually holds is a fact about the project.
   // What the next few weeks of work is waiting on. Answerable only because an
   // RFI now names the activity it holds up.
-  const readiness = await api.get(`/v1/projects/${projectId}/design/readiness`).catch(() => null);
+  const readiness = await api.read(`/v1/projects/${projectId}/design/readiness`, 'DESIGN_INFORMATION').catch(() => null);
 
   const [perception, evidence, packages, constructability, coordination, changes, baselines, gate, infoControl, currentInfo, cde] =
     await Promise.all([
@@ -102,19 +102,19 @@ export async function design(root) {
       // had an engine, a route and tests, and no screen — so the MIDP could
       // disagree with itself, a package could be frozen against a revision a
       // later one invalidated, and nobody could see either.
-      api.get(`/v1/projects/${projectId}/design-packages`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/constructability`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/coordination`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/design-changes`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/design-baselines`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/stages/design/validate`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/information-control`).catch((error) => ({ error })),
-      api.get(`/v1/projects/${projectId}/current-information`).catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/design-packages`, 'DESIGN_INFORMATION').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/constructability`, 'DESIGN_INFORMATION').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/coordination`, 'BIM_TWIN').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/design-changes`, 'DESIGN_INFORMATION').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/design-baselines`, 'DESIGN_INFORMATION').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/stages/design/validate`, 'DESIGN_INFORMATION').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/information-control`, 'DESIGN_INFORMATION').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/current-information`, 'DESIGN_INFORMATION').catch((error) => ({ error })),
       // The common data environment itself — the containers, not the plan for
       // them and not the record of issuing them. Both of those already had
       // screens on this page and neither could answer "which revision is
       // current", because neither holds a revision of a file.
-      api.get(`/v1/projects/${projectId}/cde`).catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/cde`, 'DESIGN_INFORMATION').catch((error) => ({ error })),
     ]);
 
   const containers = cde?.containers ?? [];

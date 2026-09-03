@@ -433,6 +433,21 @@ export function notice(text, tone = 'info') {
  */
 export function positionReport({ title, intent, data, error, sections = [] }) {
   if (error) {
+    // A refusal is not a failure, and rendering the two the same way was the
+    // single biggest reason a screen read as broken. A BIM lead opening the
+    // Programme page holds no read on PROGRAMME_BASELINES, and the page asked
+    // for eight positions and painted eight red "This could not be read" panels
+    // — every one of them the permission model working exactly as designed,
+    // every one of them looking like an outage. Withheld is said quietly, in
+    // the platform's own words for it; an actual failure stays red.
+    if (error?.status === 403) {
+      return html`<div class="card">
+        <h2>${title}</h2>
+        <div class="notice">
+          <div><b>Outside your role</b><br />${error.message ?? String(error)}</div>
+        </div>
+      </div>`;
+    }
     return html`<div class="card">
       <h2>${title}</h2>
       <div class="notice err">
@@ -565,8 +580,55 @@ function option(o) {
     : html`<option value="${o.value}">${o.label}</option>`;
 }
 
-/** A modal that resolves with the collected values, or null if dismissed. */
+/**
+ * A modal that resolves with the collected values, or null if dismissed.
+ *
+ * A select with nothing to select is refused before the form is built. Every
+ * select here is read unconditionally on submit, so an empty one would submit
+ * an empty string as a chosen record — and the person opening "What-if
+ * analysis" on a project with no activities was shown a dropdown with nothing
+ * in it and a Run button. `command()` in `lib/command.js` makes the same
+ * refusal for the command forms; this is the same rule at the second door.
+ */
 export function modal({ title, fields, submitLabel = 'Confirm' }) {
+  const missing = fields.filter((f) => f.type === 'select' && (f.options ?? []).length === 0);
+  if (missing.length > 0) {
+    return new Promise((resolveModal) => {
+      const host = document.createElement('div');
+      host.className = 'modal-host';
+      host.innerHTML = resolve(html`<div class="modal" role="dialog">
+        <header><h3>${title}</h3><button data-close aria-label="Close">×</button></header>
+        <div class="body">
+          <div class="notice warn">
+            <b>Nothing to act on yet.</b>
+            ${missing.map(
+              (f) => html`<div style="margin-top:6px">
+                This needs ${/^[aeiou]/i.test(f.label) ? 'an' : 'a'} <b>${String(f.label).toLowerCase()}</b> to act against, and this
+                project holds none.${f.hint ? ` ${f.hint}` : ''}
+              </div>`,
+            )}
+          </div>
+        </div>
+        <div class="foot"><button class="btn quiet" data-close>Close</button></div>
+      </div>`);
+      const close = () => {
+        host.remove();
+        resolveModal(null);
+      };
+      host.addEventListener('click', (event) => {
+        if (event.target === host || event.target.closest('[data-close]')) close();
+      });
+      document.addEventListener('keydown', function onKey(event) {
+        if (event.key === 'Escape') {
+          document.removeEventListener('keydown', onKey);
+          close();
+        }
+      });
+      document.body.append(host);
+      host.querySelector('[data-close]')?.focus();
+    });
+  }
+
   return new Promise((resolveModal) => {
     const host = document.createElement('div');
     host.className = 'modal-host';

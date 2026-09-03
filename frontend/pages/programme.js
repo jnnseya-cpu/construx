@@ -549,29 +549,29 @@ export async function programme(root) {
   const projectId = state.session.projectId;
 
   const [calc, bundle, ppc, logic, control, dated] = await Promise.all([
-    api.get(`/v1/projects/${projectId}/programme?contractualDurationDays=400`).catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/programme?contractualDurationDays=400`, 'PROGRAMME_BASELINES').catch((error) => ({ error })),
     entityBundle(projectId, ['Task', 'ProgrammeBaseline', 'DelayRiskSnapshot', 'Dependency', 'Constraint', 'LookaheadPlan', 'WorkPackage', 'ScopePackage', 'ScheduleRun']),
     // Percent Plan Complete and the constraints log. The critical path says
     // what the programme needs; PPC says whether the team can be relied on to
     // deliver a week of it, which is a different and more useful question.
-    api.get(`/v1/projects/${projectId}/lookahead/ppc`).catch(() => null),
+    api.read(`/v1/projects/${projectId}/lookahead/ppc`, 'LOOKAHEAD_CONSTRAINTS').catch(() => null),
     // Whether the network holds together at all, and whether the programme has
     // moved since the forecast was taken. Both existed as engines with no
     // screen: a critical path computed from open ends is arithmetic on a
     // network nobody has checked.
-    api.get(`/v1/projects/${projectId}/programme/logic`).catch((error) => ({ error })),
-    api.get(`/v1/projects/${projectId}/programme/control`).catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/programme/logic`, 'PROGRAMME_BASELINES').catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/programme/control`, 'PROGRAMME_BASELINES').catch((error) => ({ error })),
     // The dated programme: every activity on its own calendar, against a data
     // date, with the longest path traced back from what finishes last. The
     // critical path above is computed on abstract day indices and answers a
     // different question — this one answers "what date".
-    api.get(`/v1/projects/${projectId}/programme/schedule`).catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/programme/schedule`, 'PROGRAMME_BASELINES').catch((error) => ({ error })),
   ]);
 
   // Who said what about which version, and who said nothing. Read separately
   // because it is readable by every participant, including people who cannot
   // change a single date on the programme they are commenting on.
-  const review = await api.get(`/v1/projects/${projectId}/programme/review`).catch((error) => ({ error }));
+  const review = await api.read(`/v1/projects/${projectId}/programme/review`, 'PROGRAMME_BASELINES').catch((error) => ({ error }));
 
   // Who there is to ask. An invitation carries the identity a comment will be
   // matched against, so the list has to come from the people this platform
@@ -583,13 +583,13 @@ export async function programme(root) {
   // because it is computed from it: a stored demand curve disagrees with the
   // programme the moment a date moves, and somebody orders labour off the wrong
   // one.
-  const resourcing = await api.get(`/v1/projects/${projectId}/programme/resources`).catch((error) => ({ error }));
+  const resourcing = await api.read(`/v1/projects/${projectId}/programme/resources`, 'PROGRAMME_BASELINES').catch((error) => ({ error }));
 
   // The simulated distribution, alongside the analytic figure rather than
   // instead of it — people have been quoting the analytic one and need to be
   // able to explain the difference.
   const sim = await api
-    .get(`/v1/projects/${projectId}/programme/simulate?contractualDurationDays=400`)
+    .read(`/v1/projects/${projectId}/programme/simulate?contractualDurationDays=400`, 'PROGRAMME_BASELINES')
     .catch(() => null);
 
   const tasks = bundle.Task;
@@ -650,7 +650,15 @@ export async function programme(root) {
         </div>
       </div>
 
-      ${calc.error ? html`<div class="notice err">${calc.error.message}</div>` : ''}
+      ${
+        // A refusal is the permission model working and is said quietly; a
+        // failure stays red. The same split `positionReport` makes.
+        calc.error
+          ? calc.error.status === 403
+            ? html`<div class="notice"><b>Outside your role</b> — ${calc.error.message}</div>`
+            : html`<div class="notice err">${calc.error.message}</div>`
+          : ''
+      }
 
       ${datedPanel(dated)}
 

@@ -1,7 +1,8 @@
 import { api } from '../lib/api.js';
 import { badge, html, positionReport, raw, render, table, time } from '../lib/ui.js';
 import { command, commandBar } from '../lib/command.js';
-import { draw } from '../app.js';
+import { draw, isOperator } from '../app.js';
+import { refusal } from '../lib/estate.js';
 
 /**
  * Platform operations — the screen the operator did not have.
@@ -94,7 +95,13 @@ export async function operations(root) {
     // What the object store actually holds, what no record names, and the
     // policy on removing any of it. An orphan is a file the platform is storing
     // for nobody, which is both a cost and a data-protection question.
-    api.get('/v1/evidence/retention').catch((error) => ({ error })),
+    //
+    // Project evidence is customer delivery data, and the account-layer fence
+    // bars a platform operator from it before the route is even considered.
+    // The fence is known here, so the operator is not sent to it.
+    isOperator()
+      ? Promise.resolve({ error: { status: 403, message: 'Platform operators are barred from customer delivery data' } })
+      : api.get('/v1/evidence/retention').catch((error) => ({ error })),
   ]);
 
   const failed = (panel) => (panel && panel.error ? panel.error.message ?? 'This could not be read' : null);
@@ -162,8 +169,8 @@ export async function operations(root) {
 
       <section class="card">
         <h3>Chain assurance</h3>
-        ${failed(assurance)
-          ? html`<div class="notice err"><div><b>Could not be read</b><br />${failed(assurance)}</div></div>`
+        ${assurance.error
+          ? refusal('Chain assurance', assurance.error)
           : html`
               <div class="grid g4">
                 <div class="metric"><span>Projects tracked</span><strong>${(assurance.projects ?? []).length}</strong></div>
@@ -195,8 +202,8 @@ export async function operations(root) {
 
       <section class="card">
         <h3>What the platform says about itself</h3>
-        ${failed(watch)
-          ? html`<div class="notice err"><div><b>Could not be read</b><br />${failed(watch)}</div></div>`
+        ${watch.error
+          ? refusal('The watch', watch.error)
           : raw(
               table({
                 headers: ['Rule', 'What it watches', 'Why it matters', 'Severity', 'State'],
@@ -214,8 +221,8 @@ export async function operations(root) {
 
       <section class="card">
         <h3>What it has repaired</h3>
-        ${failed(repair)
-          ? html`<div class="notice err"><div><b>Could not be read</b><br />${failed(repair)}</div></div>`
+        ${repair.error
+          ? refusal('Repair', repair.error)
           : html`
               ${recurring.length > 0
                 ? html`<div class="notice warn">
@@ -252,8 +259,8 @@ export async function operations(root) {
 
       <section class="card">
         <h3>Telemetry egress</h3>
-        ${failed(egress)
-          ? html`<div class="notice err"><div><b>Could not be read</b><br />${failed(egress)}</div></div>`
+        ${egress.error
+          ? refusal('Telemetry egress', egress.error)
           : egress.configured
             ? html`
                 <div class="grid g4">
@@ -280,8 +287,8 @@ export async function operations(root) {
 
       <section class="card">
         <h3>The agent workforce</h3>
-        ${failed(fleet)
-          ? html`<div class="notice err"><div><b>Could not be read</b><br />${failed(fleet)}</div></div>`
+        ${fleet.error
+          ? refusal('The fleet', fleet.error)
           : html`
               <p class="metric-sub">
                 ${agentCount} agents across ${agents.length} divisions. The rung is the whole safety property:

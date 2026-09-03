@@ -177,7 +177,7 @@ import {
 import { documentVerificationPage, unsubscribePage, verificationPage } from '../messaging/render.ts';
 import { exposurePosition, readExposureInput } from '../site/exposure.ts';
 import { exposure as exposurePage } from '../site/pages.ts';
-import { evaluateAccess, WRITE_PHASE_GATES } from '../identity/abac.ts';
+import { evaluateAccess, SENSITIVITY_CLEARANCE, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { ENTITY_ACCESS } from '../identity/entityAccess.ts';
 import { MODULES, isModuleId } from '../identity/modules.ts';
 import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, revokeToken, shapeMfaResponse, verifyMfaChallenge, verifyToken, type AuthContext } from '../identity/auth.ts';
@@ -4680,6 +4680,20 @@ export const ROUTES: Route[] = [
     description: 'The enforceable permission matrix and the phases each area may be written in',
     handler: (platform, ctx) => ({
       matrix: PERMISSION_MATRIX,
+      // Which capability area each record type sits in, and its sensitivity.
+      // The same table the entity read, the audit feed, the device sync and the
+      // copilot authorise against — published so a screen bundling a dozen
+      // record types can withhold the ones this role cannot read *before*
+      // asking, rather than making a dozen requests and being refused nine. The
+      // refusal shown is the same; the requests are not made. A client that
+      // ignores this is still refused by the server, so publishing it widens
+      // nothing.
+      entityAccess: ENTITY_ACCESS,
+      // Which roles are cleared for each data sensitivity — the other half of
+      // the same decision. A record type can sit in an area this role reads and
+      // still be Commercial-L3 or Legal-L4, and the refusal for that comes from
+      // these two sets rather than from the matrix above.
+      sensitivityClearance: SENSITIVITY_CLEARANCE,
       // The private modules this tenancy holds — the one part of this response
       // that differs between customers.
       //

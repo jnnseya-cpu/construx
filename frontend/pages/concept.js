@@ -53,9 +53,9 @@ export async function concept(root) {
     api.get(`/v1/projects/${projectId}/concept/brief`).catch(() => null),
     api.get(`/v1/projects/${projectId}/concept/due-diligence`).catch(() => null),
     api.get(`/v1/projects/${projectId}/concept/options`).catch(() => null),
-    api.get(`/v1/projects/${projectId}/concept/controls`).catch(() => null),
-    api.get(`/v1/projects/${projectId}/concept/strategy`).catch(() => null),
-    api.get(`/v1/projects/${projectId}/concept/compliance`).catch(() => null),
+    api.read(`/v1/projects/${projectId}/concept/controls`, 'BUDGET_COST').catch(() => null),
+    api.read(`/v1/projects/${projectId}/concept/strategy`, 'PROCUREMENT_AWARD').catch(() => null),
+    api.read(`/v1/projects/${projectId}/concept/compliance`, 'RISK_REGISTER').catch(() => null),
     api.get(`/v1/projects/${projectId}/concept/gate`).catch(() => null),
   ]);
 

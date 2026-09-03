@@ -662,23 +662,23 @@ export async function commercial(root) {
       // For the retention position: the contract the retention is held under.
       'Contract',
     ]),
-    api.get(`/v1/projects/${projectId}/cost/ledger`).catch(() => null),
+    api.read(`/v1/projects/${projectId}/cost/ledger`, 'BUDGET_COST', 'COMMERCIAL_L3').catch(() => null),
     // Cash as the record now says it will be, rather than as the tender assumed.
     // The S-curve above is a bid document and stays one; this is measured.
-    api.get(`/v1/projects/${projectId}/cost/forward-cashflow`).catch(() => null),
+    api.read(`/v1/projects/${projectId}/cost/forward-cashflow`, 'BUDGET_COST', 'COMMERCIAL_L3').catch(() => null),
     // Submitted against assessed, certified against paid, and the time bars
     // nobody has checked. A time bar that passes unnoticed does not become a
     // dispute later; it becomes money that was never recoverable.
-    api.get(`/v1/projects/${projectId}/commercial-control`).catch((error) => ({ error })),
-    api.get(`/v1/projects/${projectId}/settlements`).catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/commercial-control`, 'CHANGE_VARIATION', 'COMMERCIAL_L3').catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/settlements`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
     // Running an integrated appointment: what the price is made of, and whether
     // the money will be in the account when the suppliers are due.
-    api.get(`/v1/projects/${projectId}/integration`).catch((error) => ({ error })),
-    api.get(`/v1/projects/${projectId}/intermediation`).catch((error) => ({ error })),
-    api.get('/v1/supplier-exposure').catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/integration`, 'BUDGET_COST', 'COMMERCIAL_L3').catch((error) => ({ error })),
+    api.read(`/v1/projects/${projectId}/intermediation`, 'BUDGET_COST', 'COMMERCIAL_L3').catch((error) => ({ error })),
+    api.read('/v1/supplier-exposure', 'BUDGET_COST', 'COMMERCIAL_L3').catch((error) => ({ error })),
     // Tax months with CIS payments on this project. The board is cheap; the
     // return itself is fetched only for the month somebody opened.
-    api.get(`/v1/projects/${projectId}/cis/returns`).catch(() => null),
+    api.read(`/v1/projects/${projectId}/cis/returns`, 'PAYMENT_APPLICATIONS', 'COMMERCIAL_L3').catch(() => null),
   ]);
 
   // Retention held against the main contract, and what has fallen due. Fetched

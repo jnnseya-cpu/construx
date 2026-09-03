@@ -222,7 +222,78 @@ async function collect(host, fields, files = []) {
  * generated command catalogue or not at all, which is the doorless-capability
  * problem in a smaller shape.
  */
+/**
+ * A required choice with nothing to choose from.
+ *
+ * Eleven commands across three screens opened a form whose required dropdown
+ * was empty: "Answer a comment" on a programme with no comments, "Agree a
+ * variation" with no variation, "Record a referral" with no dispute. The form
+ * could not be submitted and did not say why — the reader was left to work out
+ * that the list was empty because the thing did not exist yet. The Construction
+ * screen already refuses this pattern for its own commands: "locks with a
+ * reason, rather than a modal whose required dropdown is empty." This is that
+ * refusal made once, for every command, at the one place a form is built.
+ */
+function missingPrerequisites(fields) {
+  return fields.filter(
+    (f) => (f.type === 'select' || f.type === 'multiselect') && f.required !== false && (f.options ?? []).length === 0,
+  );
+}
+
+function nothingToChoose({ title, intent, missing }) {
+  return new Promise((resolveCommand) => {
+    const host = document.createElement('div');
+    host.className = 'modal-host';
+    host.innerHTML = `<div class="modal" role="dialog" aria-labelledby="cmd-nothing-title">
+      <header>
+        <div>
+          <h3 id="cmd-nothing-title">${esc(title)}</h3>
+          ${intent ? `<div class="metric-sub">${esc(intent)}</div>` : ''}
+        </div>
+        <button type="button" data-close aria-label="Close">×</button>
+      </header>
+      <div class="body">
+        <div class="notice warn">
+          <b>Nothing to act on yet.</b>
+          ${missing
+            .map(
+              (f) =>
+                `<div style="margin-top:6px">This needs ${esc(article(f.label))} <b>${esc(f.label.toLowerCase())}</b> to act against, and this project holds none.${
+                  f.hint ? ` ${esc(f.hint)}` : ''
+                }</div>`,
+            )
+            .join('')}
+        </div>
+      </div>
+      <div class="foot">
+        <button type="button" class="btn quiet" data-close>Close</button>
+      </div>
+    </div>`;
+    const close = () => {
+      host.remove();
+      document.removeEventListener('keydown', onKey);
+      resolveCommand(null);
+    };
+    const onKey = (event) => {
+      if (event.key === 'Escape') close();
+    };
+    host.addEventListener('click', (event) => {
+      if (event.target === host || event.target.closest('[data-close]')) close();
+    });
+    document.addEventListener('keydown', onKey);
+    document.body.append(host);
+    host.querySelector('[data-close]')?.focus();
+  });
+}
+
+function article(word) {
+  return /^[aeiou]/i.test(String(word ?? '')) ? 'an' : 'a';
+}
+
 export function command({ title, intent, path, fields, submitLabel = 'Submit', transform, aiCost = false, method = 'POST' }) {
+  const missing = missingPrerequisites(fields);
+  if (missing.length > 0) return nothingToChoose({ title, intent, missing });
+
   return new Promise((resolveCommand) => {
     const host = document.createElement('div');
     host.className = 'modal-host';
