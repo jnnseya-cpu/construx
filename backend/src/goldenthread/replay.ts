@@ -264,7 +264,14 @@ export function replayTimeline(
 }
 
 function narrate(event: GoldenThreadEvent): string {
-  const who = event.actor.refType === 'AI' ? `AI engine (${event.ai?.provider ?? 'unknown provider'})` : event.actor.refId;
+  // The engine, never the vendor behind it. The ledger keeps `ai.provider`
+  // — it has to, it is what the ACU charge is reconciled against and what a
+  // regulator would ask about — but which model house answered is the
+  // platform's supply chain and not the customer's business. Naming it here
+  // published every sub-processor to anybody who could read the audit trail,
+  // and it changes when routing or a failover changes, which would make the
+  // same narrative read differently for two identical events.
+  const who = event.actor.refType === 'AI' ? 'AI engine' : event.actor.refId;
   const what = event.eventType.toLowerCase().replace(/_/g, ' ');
   const subject = `${event.entity.refType} ${event.entity.refId}`;
   const changed = event.diff.length === 1 ? '1 field changed' : `${event.diff.length} fields changed`;

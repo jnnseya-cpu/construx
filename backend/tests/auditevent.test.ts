@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { Platform } from '../src/platform.ts';
 import { issueTokens, verifyToken } from '../src/identity/auth.ts';
 import { write } from '../src/engines/context.ts';
+import { replayTimeline } from '../src/goldenthread/replay.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 
 /**
@@ -256,5 +257,56 @@ describe('what the fields do not break', () => {
       events.some((event) => event.roleAtAction === undefined),
       'the fixture proves nothing — every event happened to carry a role snapshot',
     );
+  });
+});
+
+/**
+ * The audit narrative names the engine, never the vendor behind it.
+ *
+ * The Golden Thread screen read `AI · GEMINI` on every AI-authored row and
+ * `AI engine (GEMINI) — takeoff completed on …` in the timeline beside it. The
+ * ledger is right to hold `ai.provider`: it is what the ACU charge reconciles
+ * against and what a regulator would ask about. Publishing it to whoever can
+ * read a project's audit trail is a different act, and it is a sub-processor
+ * disclosure made by accident.
+ *
+ * It matters more than the screen. `replayTimeline` also feeds the project
+ * export and the delay-claim evidence pack, so the vendor name was travelling
+ * into documents issued to a client and, in a claim, to a tribunal. It also
+ * moves: routing and failover choose the provider per call, so two identical
+ * acts could narrate differently for a reason that has nothing to do with the
+ * project.
+ */
+describe('the audit narrative does not name the AI vendor', () => {
+  it('says who acted without saying whose model answered', () => {
+    const { platform, tenantId, actorId } = estate();
+    const ctx = contextFor(platform, tenantId, 'p-ai', actorId, ['ENTERPRISE_ADMIN', 'QS']);
+
+    write(ctx, {
+      // An event the catalogue actually permits an AI to author. It refuses
+      // PROJECT_CREATED outright, which is the governance rule working: the
+      // acts that constitute a project are human by construction.
+      eventType: 'TAKEOFF_COMPLETED',
+      entity: { refType: 'Takeoff', refId: 'tk-ai' },
+      nextState: { id: 'tk-ai', packageId: 'pkg-1', quantity: 12 },
+      evidenceRefs: [{ refType: 'EvidenceItem', refId: 'ev-1' }],
+      actor: { refType: 'AI', refId: 'AI:TENDER:quantity_extraction' },
+      ai: { provider: 'GEMINI', model: 'gemini-2.5-pro', acuCost: 4, confidence: 0.9 },
+    } as never);
+
+    const [entry] = replayTimeline(platform.ledger, tenantId, 'p-ai', '2000-01-01', '2100-01-01');
+    assert.ok(entry, 'no timeline entry was produced');
+    assert.match(entry.narrative, /AI engine/, 'the narrative stopped saying an engine acted at all');
+
+    // The whole point: every provider this platform can route to, by name.
+    for (const vendor of ['GEMINI', 'OPENAI', 'ANTHROPIC', 'gemini-2.5-pro']) {
+      assert.doesNotMatch(entry.narrative, new RegExp(vendor, 'i'), `the narrative names ${vendor}`);
+    }
+
+    // And the ledger still holds it. Removing the field would break the ACU
+    // reconciliation and lose a fact the record is required to keep — the fix
+    // is to stop publishing it, not to stop recording it.
+    const event = platform.ledger.events({ projectId: 'p-ai' })[0]!;
+    assert.equal(event.ai?.provider, 'GEMINI', 'the provider was deleted from the ledger rather than withheld');
   });
 });

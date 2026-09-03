@@ -98,7 +98,7 @@ export async function audit(root) {
         <div class="card">
           <h2>AI-authored</h2>
           <div class="metric">${byActor.AI}</div>
-          <div class="metric-sub">attributed to an AI actor, with provider and ACU cost</div>
+          <div class="metric-sub">attributed to an AI actor, with its ACU cost</div>
         </div>
         <div class="card">
           <h2>Evidenced</h2>
@@ -142,7 +142,7 @@ export async function audit(root) {
                 time(e.timestamp),
                 e.eventType,
                 `${e.entity.refType} ${reference(e.entity.refId)}`,
-                badge(e.actor.refType === 'AI' ? `AI · ${e.ai?.provider ?? ''}` : e.actor.refType, e.actor.refType === 'AI' ? 'ai' : 'neutral'),
+                badge(e.actor.refType === 'AI' ? 'AI' : e.actor.refType, e.actor.refType === 'AI' ? 'ai' : 'neutral'),
                 (e.evidenceRefs ?? []).length || '—',
                 shortHash(e.chainHash),
               ]),
