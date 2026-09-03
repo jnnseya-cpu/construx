@@ -105,3 +105,90 @@ export function retentionBasis(): { removed: string[]; retained: string[]; lawfu
       'establishment, exercise or defence of legal claims',
   };
 }
+
+// --- carrying it out ---------------------------------------------------------
+
+import type { Platform } from '../platform.ts';
+import type { AuthContext } from './auth.ts';
+import * as notifyEngine from '../notifications/notify.ts';
+
+export type ErasureRunReport = { due: number; erased: number; failed: Array<{ userId: string; because: string }> };
+
+/**
+ * The actor a scheduled erasure is recorded against. Not a person: nobody
+ * pressed anything, the grace period ran out, and the event should say so
+ * rather than borrow an administrator's name.
+ */
+function scheduledActor(tenantId: string): AuthContext {
+  return {
+    actorId: 'system:erasure',
+    tenantId,
+    roles: [],
+    scopes: [],
+    tokenId: 'system:erasure',
+    mfaSatisfied: true,
+    regulatorAiEnabled: false,
+    expiresAt: Date.now() + 60_000,
+  };
+}
+
+/**
+ * Erase every identity whose grace period has expired.
+ *
+ * `Platform.eraseUser` and `dueErasures` existed and nothing called either: an
+ * erasure could be requested, the account suspended, the mandatory notice
+ * sent — and the name stayed on the identity for ever, because no code ran
+ * when the date came. The completion notice goes to the real address first,
+ * because a moment later there is no real address to send it to.
+ */
+export async function runDueErasures(platform: Platform, now = new Date()): Promise<ErasureRunReport> {
+  const due = platform.dueErasures(now);
+  const report: ErasureRunReport = { due: due.length, erased: 0, failed: [] };
+
+  for (const user of due) {
+    try {
+      const recipient = { id: user.id, name: user.name, email: user.email, tenantId: user.tenantId };
+      await notifyEngine
+        .notify(platform, {
+          code: 'privacy.account_deletion_completed',
+          recipients: [recipient],
+          payload: {
+            detail:
+              'Your name, email address and telephone number have been removed from this platform. ' +
+              `The project record is kept: ${retentionBasis().lawfulBasis}`,
+          },
+          branding: platform.exports.branding(user.tenantId),
+          actorId: 'system:erasure',
+          correlationId: `erasure-${user.id}`,
+        })
+        // A notice that cannot be delivered must not keep the identity alive:
+        // the outbox retries it, and the erasure is what was promised.
+        .catch(() => undefined);
+
+      platform.eraseUser(scheduledActor(user.tenantId), { userId: user.id, now });
+      report.erased += 1;
+    } catch (error) {
+      report.failed.push({ userId: user.id, because: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  return report;
+}
+
+/** Hourly, like collection: a grace period that ended at 09:00 should not wait for midnight. */
+export function startErasureSchedule(
+  platform: Platform,
+  onRun: (report: ErasureRunReport) => void = () => {},
+): { stop: () => void } {
+  const tick = async () => {
+    try {
+      const report = await runDueErasures(platform);
+      if (report.erased > 0 || report.failed.length > 0) onRun(report);
+    } catch {
+      // The next hour is the retry. A dead scheduler is an erasure never done.
+    }
+  };
+  const timer = setInterval(() => void tick(), 3_600_000);
+  timer.unref?.();
+  return { stop: () => clearInterval(timer) };
+}

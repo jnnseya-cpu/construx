@@ -7,6 +7,7 @@ import { WriterLock } from './goldenthread/writerlock.ts';
 import type { ACUEntry } from './billing/acu.ts';
 import { startNewsletterSchedule } from './messaging/newsletter.ts';
 import { startCollectionSchedule } from './billing/collection.ts';
+import { startErasureSchedule } from './identity/erasure.ts';
 import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.ts';
 import { rehydrateKeys } from './developer/keys.ts';
 import { attachViewJournal, viewJournalPath } from './site/views.ts';
@@ -270,6 +271,15 @@ const collection = startCollectionSchedule(platform, (report) => {
   }
 });
 
+/**
+ * Erasures whose grace period has run out. Always on: an erasure that was
+ * requested and never carried out is a promise to a data subject the platform
+ * is breaking every hour it waits.
+ */
+const erasures = startErasureSchedule(platform, (report) => {
+  process.stdout.write(`[privacy] ${report.erased} identit${report.erased === 1 ? 'y' : 'ies'} erased on schedule\n`);
+});
+
 const newsletter = startNewsletterSchedule(platform, (report) => {
   process.stdout.write(
     `[newsletter] ${report.campaign.week} issued — ${report.sent} sent, ${report.recorded} recorded, ${report.failed} failed\n`,
@@ -339,6 +349,7 @@ const shutdown = (signal: string): void => {
   process.stdout.write(`\nReceived ${signal}, shutting down.\n`);
   newsletter.stop();
   collection.stop();
+  erasures.stop();
   outboxTimer();
   watchTimer();
   server.close(() => {

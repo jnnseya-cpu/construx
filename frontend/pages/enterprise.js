@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { badge, date, html, humanise, money, pct, raw, render, statusTone, table } from '../lib/ui.js';
+import { badge, date, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
 import { blockedReason, can, openProject, state, tenantGrantableRoles } from '../app.js';
 import { command, commandBar } from '../lib/command.js';
 import { CONTINENT, COUNTRY, SECTOR_GROUPED, sectorLabel, today } from '../lib/enums.js';
@@ -113,6 +113,35 @@ Enterprise-wide cost, margin and risk need enterprise-level authority${
       })}
     </div>
   `;
+}
+
+/** Whether the signed-in identity administers this tenancy — the same test the routes apply. */
+function administers() {
+  const roles = state.session?.user?.roles ?? [];
+  return roles.includes('ENTERPRISE_ADMIN') || roles.includes('OWNER');
+}
+
+/** Where a person is: active, deactivated, deletion pending with its date, or erased. */
+function personStatus(person) {
+  if (person.erasedAt) return badge('erased', 'neutral');
+  if (person.erasureDueAt) return html`${badge('deletion pending', 'warn')} <span class="metric-sub">on ${date(person.erasureDueAt)}</span>`;
+  if (person.status === 'SUSPENDED') return badge('deactivated', 'warn');
+  return badge(String(person.status ?? '').toLowerCase() || 'unknown', statusTone(person.status));
+}
+
+/**
+ * The actions an administrator has on a person, by where they are. Nothing is
+ * offered on the administrator's own row: the platform refuses it, and a button
+ * that only ever refuses is a trap.
+ */
+function personActions(person) {
+  const self = person.id === state.session?.user?.id;
+  if (self || person.erasedAt) return '';
+  const act = (action, label, tone = 'quiet') =>
+    html`<button class="btn ${tone} sm" data-person-action="${action}" data-user="${person.id}" data-name="${person.name}">${label}</button>`;
+  if (person.erasureDueAt) return act('cancel-erasure', 'Cancel deletion');
+  if (person.status === 'SUSPENDED') return html`${act('reactivate', 'Reactivate')} ${act('delete', 'Delete', 'quiet danger')}`;
+  return act('deactivate', 'Deactivate');
 }
 
 export async function enterprise(root) {
@@ -550,10 +579,10 @@ export async function enterprise(root) {
         }
       </div>
 
-      <div class="card">
+      <div class="card" data-people>
         <h2>People in this tenancy</h2>
         ${table({
-          headers: ['Name', 'Email', 'Roles', 'Status'],
+          headers: administers() ?['Name', 'Email', 'Roles', 'Status', ''] : ['Name', 'Email', 'Roles', 'Status'],
           rows: (people.users ?? []).map((person) => [
             person.name,
             person.email,
@@ -561,7 +590,8 @@ export async function enterprise(root) {
             // string, so joining stringifies each one to "[object Object]".
             // The tagged template resolves an array of them properly.
             html`${(person.roles ?? []).map((role) => badge(humanise(role), 'neutral'))}`,
-            badge(String(person.status ?? '').toLowerCase() || 'unknown', statusTone(person.status)),
+            personStatus(person),
+            ...(administers() ?[personActions(person)] : []),
           ]),
           empty:
             'Nobody has been added yet. A tenancy with one administrator and no colleagues cannot separate ' +
@@ -751,6 +781,67 @@ export async function enterprise(root) {
     },
   };
 
+  // What an administrator may do to a person, from the row. Each one is a
+  // recorded governance act with a reason, so each opens the same modal the
+  // other commands use rather than a bare confirm(). Bound to the card, which
+  // every render recreates — bound to `root`, which persists, each redraw
+  // added another listener and one click opened two modals.
+  root.querySelector('[data-people]')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-person-action]');
+    if (!button) return;
+    const userId = button.dataset.user;
+    const name = button.dataset.name ?? 'this person';
+    const action = button.dataset.personAction;
+    const reasonField = (hint) => ({ name: 'reason', label: 'Reason', type: 'textarea', hint });
+
+    try {
+      if (action === 'deactivate') {
+        const done = await command({
+          title: `Deactivate ${name}`,
+          intent:
+            'Their seat is released and they can no longer sign in. Nothing is removed: every approval, ' +
+            'signature and record still carries their name, and you can reactivate them at any time.',
+          path: `/v1/users/${userId}/deactivate`,
+          submitLabel: 'Deactivate',
+          fields: [reasonField('Recorded against this decision — "left the company", "contract ended".')],
+        });
+        if (done) await draw();
+      } else if (action === 'reactivate') {
+        const done = await command({
+          title: `Reactivate ${name}`,
+          intent: 'Gives their access back and takes a seat again. Refused if every seat is taken.',
+          path: `/v1/users/${userId}/reactivate`,
+          submitLabel: 'Reactivate',
+          fields: [reasonField('Why they are coming back.')],
+        });
+        if (done) await draw();
+      } else if (action === 'delete') {
+        const done = await command({
+          title: `Delete ${name}`,
+          intent:
+            'Irreversible once carried out. Their name, email address and telephone number are removed from the ' +
+            'platform after the grace period; the project record they took part in is kept, as the law requires, ' +
+            'against an identity that no longer names anybody. The person is notified and the request can be ' +
+            'cancelled until the date.',
+          path: `/v1/users/${userId}/erasure`,
+          submitLabel: 'Delete',
+          fields: [reasonField('At least ten characters. Quote the written request or the decision this rests on.')],
+        });
+        if (done) {
+          toast('Deletion scheduled', `${name} will be erased on ${date(done.dueAt)}.`, 'warn');
+          await draw();
+        }
+      } else if (action === 'cancel-erasure') {
+        if (!confirm(`Keep ${name}? The scheduled deletion is cancelled and their access is restored.`)) return;
+        await api.delete(`/v1/users/${userId}/erasure`);
+        toast('Deletion cancelled', `${name} is restored.`, 'ok');
+        await draw();
+      }
+    } catch (error) {
+      toast('Could not do that', error.message, 'err');
+    }
+  });
+
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
     if (!button) return;
@@ -768,6 +859,22 @@ export async function enterprise(root) {
     if (button.dataset.command === 'project' && !state.session?.projectId && result.projectId) {
       await openProject(result.projectId);
       return;
+    }
+    // Whether the person was actually told. A deployment with no mail server
+    // records the notice and sends nothing, and an administrator who believes
+    // an email went out will wait for a reply that is never coming.
+    if ((button.dataset.command === 'person' || button.dataset.command === 'invite') && result.notified) {
+      if (result.notified === 'SENT') {
+        toast('They have been emailed', `${result.email ?? 'The person'} has been told how to sign in.`, 'ok');
+      } else {
+        toast(
+          'No email left the platform',
+          `${result.email ?? 'The person'} was not emailed: this deployment has no mail server configured, so the ` +
+            'message was recorded and not sent. Tell them to sign in at /app with their email address; the one-time ' +
+            'code will reach them once mail is set up.',
+          'warn',
+        );
+      }
     }
     await draw();
   });

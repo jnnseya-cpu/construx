@@ -7928,7 +7928,73 @@ project in order — and after they did, every project-scoped screen went on
 saying the same thing. The session's project was chosen once at sign-in and
 nothing on Enterprise & Portfolio ever set it, so the only way through was to
 sign out and back in, and nothing said so. Creating a project on a workspace
-that has none now opens it.
+that has none now opens it — and, because a project can also arrive from a
+colleague, the API or a session opened before it existed, `loadContext` asks
+the platform for the project list whenever the session remembers none and
+adopts the first, rather than trusting what sign-in remembered. Reported again
+after redeploy ("project created but Site Services still says no project"):
+the session was the stale part, not the screen.
+
+### Taking people off the platform, and telling them they are on it
+
+**"Enterprise admin to be able to delete a user after deactivation."**
+Enterprise & Portfolio listed people and could do nothing to any of them. The
+erasure-request route existed with no door on any screen, and `eraseUser` —
+the thing that actually removes the name — was called by nothing at all: a
+requested erasure suspended the account, sent the mandatory notice, and then
+stayed requested for ever.
+
+Two acts, kept distinct because they are. **Deactivate** (`POST
+/v1/users/:id/deactivate`, `USER_DEACTIVATED`) releases the seat and stops
+sign-in; the record keeps their name, because the approvals they gave are the
+approvals the project was built on. It is reversible with **Reactivate**
+(`USER_REACTIVATED`), which takes a seat again and is refused with the seat
+limit if the tenancy has since filled. An administrator cannot deactivate
+themselves, and cannot deactivate the last active administrator
+(`LAST_ADMINISTRATOR`) — a tenancy with nobody able to re-seat anybody is one
+only the operator could rescue, and the operator is barred from customer data.
+**Delete** is erasure: requested with a reason of at least ten characters
+through the existing route, carried out after the grace period, cancellable
+until then by the holder or, now, by an administrator (`DELETE
+/v1/users/:id/erasure`). `identity/erasure.ts` gained the executor the design
+always implied: `runDueErasures` sends the completion notice to the real
+address, then pseudonymises, and `startErasureSchedule` runs it hourly from
+`main.ts`, always on — an erasure requested and never carried out is a promise
+to a data subject broken every hour it waits. `revokeUserSeat` no longer
+commits when the seat was not held, which is what had made "erase a deactivated
+person" a `NO_OP_CHANGE`. On Enterprise & Portfolio each row carries the
+actions its state allows — Deactivate; Reactivate and Delete; Cancel deletion
+with the date — and nothing on the administrator's own row. `/v1/users` now
+publishes the erasure fields so the row can say "deletion pending on ‹date›".
+`useradmin.test.ts` drives every branch over HTTP, including the restart and
+the schedule running early and on time.
+
+**"Added users receive nothing — no email, no link."** True, twice over. "Add
+a person" created the identity and sent nothing; the invitation route had a
+catalogue notice (`invitation.sent`) that nothing had ever called. Both now
+notify the person through the ordinary pipeline — added: how to sign in;
+invited: what happens once the invitation is accepted — and both routes return
+`notified`, which is the delivery's status. The console reads it: `SENT` gets
+"they have been emailed", anything else gets "No email left the platform: this
+deployment has no mail server configured", because an administrator who
+believes a message went out waits for a reply that is never coming. The
+deployment that reported this has no `SMTP_HOST`; until it does, every notice
+is recorded and none is delivered, and sign-in codes are written to the
+server log (`[auth] NO SMTP HOST CONFIGURED`).
+
+**The tenancy row read the tier.** Tenants & Users showed `FREE_TRIAL` and
+Free's seat count for a tenancy the operator had moved to Solo, because the
+row read `subscription.tier` — the vocabulary the tenancy was created in,
+which never moves — rather than `subscription.package`, which is what the
+operator changes and what caps seats and sets the charge. The row now reads
+the package, its label, its seats and its price.
+
+**`OWNER` has everything in the tenancy.** The row read and approved and
+authored almost nothing — a client-side approver — and the people running the
+tenancies actually being sold are the owners of the business. The role now
+holds every code in every tenant capability area. `PLATFORM_ADMINISTRATION`
+stays absent by construction; separation of duties on a record — proposer is
+not approver — is enforced per record by the engines and is unchanged.
 
 ---
 

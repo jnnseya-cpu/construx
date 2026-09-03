@@ -1023,8 +1023,26 @@ async function loadContext() {
   // wallet went unread because the rejected read took the whole `Promise.all`
   // down with it.
   if (!projectId) {
+    // No project was chosen at sign-in — but one may exist now. The session
+    // remembered "none" from the moment it was opened, and a project created
+    // since then, by this person on Enterprise & Portfolio, by a colleague, or
+    // through the API, was invisible to every project screen until they signed
+    // out and back in. A live tenancy hit exactly that: project created, Site
+    // Services still saying there was no project. The list is the truth, and
+    // it is asked here rather than remembered from sign-in.
+    const listed = await api.get('/v1/projects').catch(() => null);
+    const projects = listed?.projects ?? listed?.items ?? (Array.isArray(listed) ? listed : []);
+    const first = projects[0];
+    const firstId = first?.id ?? first?.projectId ?? null;
+    if (firstId) {
+      session.set({ ...session.get(), projectId: firstId });
+      state.session = session.get();
+      return loadContext();
+    }
+
     state.project = null;
     state.gate = null;
+    state.projects = [];
     // The wallet needs BILLING_ACU, which most delivery roles do not hold. The
     // matrix is already loaded by this point, so the refusal is known in
     // advance and the request is not made — the same rule the command bar

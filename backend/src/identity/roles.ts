@@ -290,30 +290,10 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     SITE_SERVICES: ['R'],
   },
 
-  OWNER: {
-    BUSINESS_DEVELOPMENT: ['R', 'C', 'U', 'A'],
-    PROJECT_SETUP: ['R', 'A'],
-    DESIGN_INFORMATION: ['R'],
-    WORKPACKAGES_TASKS: ['R'],
-    PROGRAMME_BASELINES: ['R', 'A'],
-    LOOKAHEAD_CONSTRAINTS: ['R'],
-    BOQ_TAKEOFF: ['R'],
-    ESTIMATE_TENDER: ['R', 'A'],
-    PROCUREMENT_AWARD: ['R', 'A'],
-    BUDGET_COST: ['R', 'A'],
-    PAYMENT_APPLICATIONS: ['R', 'A'],
-    CHANGE_VARIATION: ['R', 'A'],
-    CONTRACTS_CLAIMS: ['R', 'A'],
-    RISK_REGISTER: ['R'],
-    SAFETY_RAMS: ['R'],
-    QUALITY_COMMISSIONING: ['R'],
-    BIM_TWIN: ['R'],
-    HANDOVER_OM: ['R', 'A'],
-    EVIDENCE_AUDIT: ['R', 'I'],
-    AI_EXECUTION: ['R', 'X'],
-    BILLING_ACU: ['R', 'U'],
-    SITE_SERVICES: ['R', 'A'],
-  },
+  // The business owner: everything anybody in the tenancy can do, and nothing
+  // on the platform layer. Filled in below from the other rows — see
+  // `everythingInTheTenancy` — because it is defined as their union.
+  OWNER: {},
 
   // Reads everything, authors nothing, signs the few things that commit the
   // client: the gate, the baseline, the award, the forecast that goes outside.
@@ -700,6 +680,41 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     SITE_SERVICES: ['R'],
   },
 };
+
+/**
+ * What the owner of the business may do: everything anybody in it may do.
+ *
+ * The OWNER row used to read and approve and author almost nothing — a
+ * client-side approver — and the people running the tenancies actually being
+ * sold are the owners of the business. An owner locked out of creating a work
+ * package or running a take-off on their own platform is not a role model, it
+ * is a support ticket.
+ *
+ * Defined as the union of every tenant role's codes in every area, rather than
+ * as "every code everywhere", for two reasons. Nothing appears that no role
+ * has: an area no role approves in (the audit feed is read, not approved)
+ * stays unapprovable, so the ownership map still tells an administrator the
+ * truth about seat gaps. And the operator's layer is excluded by construction:
+ * PLATFORM_ADMIN and REGULATOR are not tenant roles, so nothing of theirs is
+ * inherited, and account-layer separation is enforced at the gateway besides.
+ * Separation of duties on a record — the proposer is not the approver — is
+ * enforced per record by the engines and is untouched by what a role may do
+ * in general.
+ */
+function everythingInTheTenancy(): Matrix {
+  const union: Matrix = {};
+  for (const role of ALL_ROLES) {
+    if (OPERATOR_ONLY_ROLES.includes(role) || role === 'OWNER') continue;
+    for (const [area, codes] of Object.entries(PERMISSION_MATRIX[role]) as Array<[CapabilityArea, PermissionCode[]]>) {
+      const held = union[area] ?? [];
+      for (const code of codes) if (!held.includes(code)) held.push(code);
+      union[area] = held;
+    }
+  }
+  return union;
+}
+
+PERMISSION_MATRIX.OWNER = everythingInTheTenancy();
 
 export function rolePermissions(role: Role, area: CapabilityArea): PermissionCode[] {
   return PERMISSION_MATRIX[role]?.[area] ?? [];

@@ -135,10 +135,13 @@ describe('the Principal Designer is a statutory duty holder, not a job title', (
     const approvers = ALL_ROLES.filter((role) => holds(role, 'DESIGN_INFORMATION', 'A'));
 
     assert.ok(approvers.includes('PRINCIPAL_DESIGNER'));
+    // OWNER holds the union of every tenant role's codes — the owner of the
+    // business may do anything anybody in it may do — so it appears wherever
+    // any role approves. It is not a third design authority; it is the owner.
     assert.deepEqual(
       approvers.sort(),
-      ['DESIGNER', 'PRINCIPAL_DESIGNER'],
-      'design approval has spread beyond the designer and the statutory duty holder',
+      ['DESIGNER', 'OWNER', 'PRINCIPAL_DESIGNER'],
+      'design approval has spread beyond the designer, the statutory duty holder and the owner',
     );
   });
 

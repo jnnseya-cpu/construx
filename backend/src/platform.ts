@@ -903,12 +903,176 @@ export class Platform {
     // the identity is restored and un-seated, which is recoverable, rather
     // than erased, which is not.
     const subscription = this.subscription(actor.tenantId);
-    this.#subscriptions.set(
-      actor.tenantId,
-      assignIdentity(subscription, input.userId, user.roles, purchasedSeats(this.ledger, actor.tenantId)),
-    );
+    const reseated = assignIdentity(subscription, input.userId, user.roles, purchasedSeats(this.ledger, actor.tenantId));
+    this.#subscriptions.set(actor.tenantId, reseated);
+    this.commitSeatAssigned(reseated);
 
     return { userId: input.userId };
+  }
+
+  /**
+   * Record a seat taken again on the subscription entity.
+   *
+   * Re-seating set the in-memory subscription and wrote nothing, so the
+   * ledger's copy still showed the seat released; the next release then
+   * produced an identical state and was refused as `NO_OP_CHANGE` — and a
+   * restart would have restored the person without their seat. The same event
+   * `createUser` writes, for the same reason.
+   */
+  private commitSeatAssigned(subscription: Subscription): void {
+    this.ledger.commit({
+      tenantId: subscription.tenantId,
+      projectId: `${subscription.tenantId}-governance`,
+      actor: { refType: 'System', refId: 'platform' },
+      source: 'SYSTEM',
+      correlationId: ulid(),
+      eventType: 'IDENTITY_SEAT_ASSIGNED',
+      entity: { refType: 'Subscription', refId: subscription.id },
+      nextState: {
+        id: subscription.id,
+        tenantId: subscription.tenantId,
+        tier: subscription.tier,
+        package: subscription.package,
+        includedSeats: PACKAGES[subscription.package].includedSeats,
+        monthlyPriceMinor: PACKAGES[subscription.package].monthlyPriceMinor,
+        status: subscription.status,
+        assignedIdentities: subscription.assignedIdentities,
+      },
+    });
+  }
+
+  /**
+   * Take somebody's access away without removing them.
+   *
+   * The step before erasure, and most of the time the only step needed: a
+   * person leaves, their seat is released and their sign-in stops, and the
+   * record still names them — which it must, because the approvals they gave
+   * are still the approvals the project was built on. Reversible with
+   * `reactivateUser`; erasure is the separate, irreversible act.
+   *
+   * An administrator cannot deactivate themselves, and cannot deactivate the
+   * last active administrator — either would lock the tenancy out of its own
+   * governance with nobody left who could let it back in.
+   */
+  deactivateUser(actor: AuthContext, input: { userId: string; reason: string }): { userId: string; status: 'SUSPENDED' } {
+    const user = this.#users.get(input.userId);
+    if (!user || user.tenantId !== actor.tenantId) throw new NotFoundError(`No user ${input.userId}`);
+    if (!input.reason.trim()) throw new DomainError('REASON_REQUIRED', 'Deactivating somebody requires a reason');
+    if (user.id === actor.actorId) {
+      throw new DomainError('CANNOT_DEACTIVATE_SELF', 'You cannot deactivate your own identity. Ask another administrator.', 422);
+    }
+    if (user.erasedAt !== undefined) {
+      throw new DomainError('ALREADY_ERASED', 'That identity has already been erased', 409);
+    }
+    if (user.status !== 'ACTIVE') {
+      throw new DomainError('ALREADY_DEACTIVATED', `${user.name} is already deactivated`, 409);
+    }
+    this.assertNotLastAdministrator(actor.tenantId, user);
+
+    this.revokeUserSeat(actor.tenantId, input.userId);
+    this.ledger.commit({
+      tenantId: actor.tenantId,
+      projectId: `${actor.tenantId}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'USER_DEACTIVATED',
+      entity: { refType: 'User', refId: input.userId },
+      nextState: {
+        ...this.userRecord(user),
+        status: 'SUSPENDED',
+        deactivatedAt: new Date().toISOString(),
+        deactivatedBy: actor.actorId,
+        reason: input.reason,
+      },
+    });
+    return { userId: input.userId, status: 'SUSPENDED' };
+  }
+
+  /**
+   * Give a deactivated person their access back. Takes a seat again, so it is
+   * refused with the seat limit if the tenancy has since filled up — the
+   * identity stays deactivated and nothing is lost.
+   */
+  reactivateUser(actor: AuthContext, input: { userId: string; reason: string }): { userId: string; status: 'ACTIVE' } {
+    const user = this.#users.get(input.userId);
+    if (!user || user.tenantId !== actor.tenantId) throw new NotFoundError(`No user ${input.userId}`);
+    if (!input.reason.trim()) throw new DomainError('REASON_REQUIRED', 'Reactivating somebody requires a reason');
+    if (user.erasedAt !== undefined) {
+      throw new DomainError('ALREADY_ERASED', 'That identity has been erased and cannot be restored', 409);
+    }
+    if (user.erasureRequestedAt !== undefined) {
+      throw new DomainError(
+        'ERASURE_OUTSTANDING',
+        'An erasure request is outstanding for this identity. Cancel the erasure to restore it.',
+        409,
+      );
+    }
+    if (user.status === 'ACTIVE') {
+      throw new DomainError('ALREADY_ACTIVE', `${user.name} is already active`, 409);
+    }
+
+    // The seat first: if there is none, nothing below happens.
+    const subscription = this.subscription(actor.tenantId);
+    const reseated = assignIdentity(subscription, user.id, user.roles, purchasedSeats(this.ledger, actor.tenantId));
+    this.#subscriptions.set(actor.tenantId, reseated);
+    this.commitSeatAssigned(reseated);
+    user.status = 'ACTIVE';
+
+    this.ledger.commit({
+      tenantId: actor.tenantId,
+      projectId: `${actor.tenantId}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'USER_REACTIVATED',
+      entity: { refType: 'User', refId: input.userId },
+      nextState: {
+        ...this.userRecord(user),
+        status: 'ACTIVE',
+        reactivatedAt: new Date().toISOString(),
+        reactivatedBy: actor.actorId,
+        reason: input.reason,
+      },
+    });
+    return { userId: input.userId, status: 'ACTIVE' };
+  }
+
+  /** The identity as the ledger records it — the fields `rehydrate` rebuilds from. */
+  private userRecord(user: PlatformUser): Record<string, unknown> {
+    return {
+      id: user.id,
+      tenantId: user.tenantId,
+      name: user.name,
+      email: user.email,
+      roles: user.roles,
+      partyId: user.partyId,
+      status: user.status,
+      ...(user.demonstration ? { demonstration: true as const } : {}),
+      ...(user.erasureRequestedAt ? { erasureRequestedAt: user.erasureRequestedAt } : {}),
+      ...(user.erasureDueAt ? { erasureDueAt: user.erasureDueAt } : {}),
+      ...(user.erasedAt ? { erasedAt: user.erasedAt } : {}),
+    };
+  }
+
+  /**
+   * Refuse to remove the last person who can administer the tenancy. A tenancy
+   * with nobody able to add, remove or re-seat anybody is a tenancy only the
+   * platform operator can rescue, and the operator is barred from customer data.
+   */
+  private assertNotLastAdministrator(tenantId: string, leaving: PlatformUser): void {
+    const administers = (user: PlatformUser) => user.roles.includes('ENTERPRISE_ADMIN') || user.roles.includes('OWNER');
+    if (!administers(leaving)) return;
+    const remaining = this.users(tenantId).filter(
+      (user) => user.id !== leaving.id && user.status === 'ACTIVE' && user.erasedAt === undefined && administers(user),
+    );
+    if (remaining.length === 0) {
+      throw new DomainError(
+        'LAST_ADMINISTRATOR',
+        `${leaving.name} is the only active administrator. Make somebody else an administrator first.`,
+        422,
+      );
+    }
   }
 
   /** Identities whose grace period has expired and are waiting to be erased. */
@@ -995,11 +1159,16 @@ export class Platform {
 
   revokeUserSeat(tenantId: string, userId: string): void {
     const subscription = this.subscription(tenantId);
-    const updated = revokeIdentity(subscription, userId);
-    this.#subscriptions.set(tenantId, updated);
-
     const user = this.#users.get(userId);
     if (user) user.status = 'SUSPENDED';
+
+    // A seat that is not held cannot be released. Erasure requested for a
+    // person already deactivated used to reach the ledger with an unchanged
+    // subscription and be refused as NO_OP_CHANGE — so the one path that was
+    // supposed to follow deactivation could not.
+    if (!subscription.assignedIdentities.includes(userId)) return;
+    const updated = revokeIdentity(subscription, userId);
+    this.#subscriptions.set(tenantId, updated);
 
     this.ledger.commit({
       tenantId,

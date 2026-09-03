@@ -275,7 +275,12 @@ export class EvidenceStore {
    */
   put(tenantId: string, claimedHash: string, bytes: Buffer, contentType: string): StoredObject {
     if (!this.configured) {
-      throw new DomainError('EVIDENCE_STORE_UNCONFIGURED', 'No object store is configured', 503);
+      throw new DomainError(
+        'EVIDENCE_STORE_UNCONFIGURED',
+        'This deployment has nowhere to keep files: no object store is configured. The operator sets ' +
+          'EVIDENCE_STORE_PATH to a volume, or the OBJECT_STORE_* settings, and restarts. Records are unaffected.',
+        503,
+      );
     }
     if (bytes.length === 0) throw new DomainError('EVIDENCE_EMPTY', 'An empty file is not evidence');
     if (bytes.length > this.#maxBytes) {
@@ -373,7 +378,12 @@ export class EvidenceStore {
     contentType: string,
   ): { held: number[]; chunks: number; complete: boolean; object?: StoredObject } {
     if (!this.configured) {
-      throw new DomainError('EVIDENCE_STORE_UNCONFIGURED', 'No object store is configured', 503);
+      throw new DomainError(
+        'EVIDENCE_STORE_UNCONFIGURED',
+        'This deployment has nowhere to keep files: no object store is configured. The operator sets ' +
+          'EVIDENCE_STORE_PATH to a volume, or the OBJECT_STORE_* settings, and restarts. Records are unaffected.',
+        503,
+      );
     }
     if (!Number.isInteger(chunks) || chunks < 1 || chunks > MAX_CHUNKS) {
       throw new DomainError('EVIDENCE_CHUNK_COUNT_INVALID', `An upload has between 1 and ${MAX_CHUNKS} parts`, 422);

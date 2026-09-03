@@ -964,6 +964,54 @@ async function activateRegistration(
   return { activation, email: user.email };
 }
 
+/**
+ * Tell somebody they have a place on this tenancy, and say whether the telling
+ * left the platform.
+ *
+ * Returns the delivery's status — `SENT`, or `RECORDED` where no mail server is
+ * configured, or `FAILED` — so the route can hand it to the screen and the
+ * administrator is not left believing an email went out that did not. A notice
+ * that cannot be sent never fails the act it describes: the identity exists
+ * either way, and the outbox retries the message.
+ */
+async function tellNewIdentity(
+  platform: Platform,
+  ctx: RequestContext,
+  actor: AuthContext,
+  person: { id: string; name: string; email: string; tenantId: string },
+  verb: 'added you to' | 'invited you to',
+  detail?: string,
+): Promise<string> {
+  const enterprise =
+    String(platform.ledger.listByTenant(actor.tenantId, 'Enterprise')[0]?.state.name ?? '') ||
+    platform.tenant(actor.tenantId).legalName;
+  const by = platform.user(actor.actorId).name;
+  try {
+    const dispatch = await notifyEngine.notify(platform, {
+      code: 'invitation.sent',
+      recipients: [person],
+      payload: {
+        actor: by,
+        enterprise,
+        actionUrl: '/app',
+        actionLabel: 'Sign in',
+        detail:
+          detail ??
+          `${by} ${verb} ${enterprise} on CONSTRUX. Sign in at ${config.publicBaseUrl}/app with this email address — ` +
+            'there is no password; a one-time code is emailed to you each time.',
+      },
+      channels: ['EMAIL'],
+      branding: platform.exports.brandingIfConfigured(actor.tenantId) ?? PLATFORM_BRANDING,
+      actorId: actor.actorId,
+      correlationId: ctx.correlationId,
+    });
+    const email = dispatch.deliveries.find((delivery) => delivery.channel === 'EMAIL');
+    return email?.status ?? 'RECORDED';
+  } catch {
+    return 'FAILED';
+  }
+}
+
 export const ROUTES: Route[] = [
   // ------------------------------------------------------------------ health
   {
@@ -1594,6 +1642,12 @@ export const ROUTES: Route[] = [
         tenants: platform.tenants().filter((tenant) => tenant.id !== PLATFORM_TENANT_ID).map((tenant) => {
           const subscription = platform.subscription(tenant.id);
           const definition = TIERS[subscription.tier];
+          // The package, not the tier. The tier is the vocabulary the tenancy
+          // was created in and never moves; the package is what the operator
+          // changes and what caps seats and sets the charge. The row read the
+          // tier, so a tenancy moved from Free to Solo still said FREE_TRIAL
+          // with Free's seat count beside it.
+          const pkg = PACKAGES[subscription.package];
           return {
             id: tenant.id,
             legalName: tenant.legalName,
@@ -1601,16 +1655,19 @@ export const ROUTES: Route[] = [
             jurisdiction: tenant.jurisdiction,
             currency: tenant.defaultCurrency,
             createdAt: tenant.createdAt,
-            tier: subscription.tier,
+            tier: subscription.package,
+            package: subscription.package,
+            packageLabel: pkg.label,
             status: subscription.status,
             renewsAt: subscription.renewsAt,
             seatsUsed: subscription.assignedIdentities.length,
-            seatsIncluded: definition.includedIdentities,
+            seatsIncluded: pkg.includedSeats,
             // Bought beyond the package. On the row, because "12 of 10" with no
             // explanation reads as a defect.
             seatsPurchased: purchasedSeats(platform.ledger, tenant.id),
+            monthlyPriceMinor: pkg.monthlyPriceMinor,
             monthlyPriceUsd: definition.monthlyPriceUsd,
-            isolatedTenancy: definition.isolatedTenancy,
+            isolatedTenancy: pkg.isolatedTenancy,
             wallet: platform.wallet(tenant.id).snapshot(),
             // What this tenancy has actually paid, and how many people it has.
             // Both were reachable only by fetching two other endpoints and
@@ -3671,6 +3728,12 @@ export const ROUTES: Route[] = [
           email: user.email,
           roles: user.roles,
           status: user.status,
+          // Where the identity is on the way out, if it is: an administrator
+          // deciding what to do with a deactivated person needs to see whether
+          // erasure is already pending and when, or already done.
+          erasureRequestedAt: user.erasureRequestedAt ?? null,
+          erasureDueAt: user.erasureDueAt ?? null,
+          erasedAt: user.erasedAt ?? null,
         })),
       };
     },
@@ -3690,7 +3753,7 @@ export const ROUTES: Route[] = [
       },
       additionalProperties: false,
     },
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
       const actor = auth(ctx);
       if (!actor.roles.includes('ENTERPRISE_ADMIN') && !actor.roles.includes('OWNER')) {
         throw new ForbiddenError('Only an enterprise admin may create users', 'ENTERPRISE_ADMIN_REQUIRED');
@@ -3700,11 +3763,19 @@ export const ROUTES: Route[] = [
       // strings. An enterprise admin could mint a PLATFORM_ADMIN and hold the
       // whole operator surface — including crediting their own wallet with
       // unlimited money, which defeats every control on the money model.
-      return platform.createUser({
+      const user = platform.createUser({
         ...input,
         roles: assertTenantGrantable(input.roles),
         tenantId: actor.tenantId,
       });
+
+      // Tell them. A person was added and nothing reached them — no email, no
+      // link, nothing — so the identity existed and its holder did not know
+      // there was a door, let alone that their address opened it. Through the
+      // same pipeline as every other notice, so a deployment with no mail
+      // server records it rather than losing it, and the response says which.
+      const notified = await tellNewIdentity(platform, ctx, actor, user, 'added you to');
+      return { ...user, notified };
     },
   },
   {
@@ -3752,14 +3823,29 @@ export const ROUTES: Route[] = [
       },
       additionalProperties: false,
     },
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
       const input = body<Parameters<typeof invitation.inviteToProject>[2]>(ctx);
-      return invitation.inviteToProject(platform, projectContext(platform, ctx), {
+      const sent = invitation.inviteToProject(platform, projectContext(platform, ctx), {
         ...input,
         // The same guard the user route has: an array of unconstrained strings
         // reaching the role model is how somebody mints a platform operator.
         roles: assertTenantGrantable(input.roles),
       });
+      // The invitation the catalogue always had a notice for and nothing sent.
+      // The invitee has no identity yet — acceptance creates it — so the notice
+      // says what happens next rather than offering a sign-in that would be
+      // refused.
+      const notified = await tellNewIdentity(
+        platform,
+        ctx,
+        actor,
+        { id: `invitation:${sent.invitationId}`, name: input.name, email: input.email, tenantId: actor.tenantId },
+        'invited you to',
+        `Once the invitation is accepted on the platform you can sign in at ${config.publicBaseUrl}/app with this email ` +
+          `address — a one-time code is emailed to you each time. The invitation lapses on ${sent.expiresAt.slice(0, 10)}.`,
+      );
+      return { ...sent, notified };
     },
   },
   {
@@ -4632,6 +4718,57 @@ export const ROUTES: Route[] = [
       });
 
       return requested;
+    },
+  },
+  {
+    method: 'DELETE',
+    pattern: '/v1/users/:userId/erasure',
+    description: 'Call off an outstanding erasure request for another identity in this tenancy and restore it',
+    // No body, like the account holder's own cancellation: a closed empty
+    // object refuses a stray body rather than ignoring it.
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('ENTERPRISE_ADMIN') && !actor.roles.includes('OWNER')) {
+        throw new ForbiddenError('Only an enterprise admin may cancel erasure of another identity', 'ENTERPRISE_ADMIN_REQUIRED');
+      }
+      return platform.cancelErasure(actor, { userId: ctx.params.userId as string, reason: 'Cancelled by an administrator' });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/users/:userId/deactivate',
+    description: 'Take an identity’s access away without removing it: the seat is released and sign-in stops; the record keeps their name',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 3 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('ENTERPRISE_ADMIN') && !actor.roles.includes('OWNER')) {
+        throw new ForbiddenError('Only an enterprise admin may deactivate an identity', 'ENTERPRISE_ADMIN_REQUIRED');
+      }
+      return platform.deactivateUser(actor, { userId: ctx.params.userId as string, reason: body<{ reason: string }>(ctx).reason });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/users/:userId/reactivate',
+    description: 'Give a deactivated identity its access back, taking a seat again',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 3 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('ENTERPRISE_ADMIN') && !actor.roles.includes('OWNER')) {
+        throw new ForbiddenError('Only an enterprise admin may reactivate an identity', 'ENTERPRISE_ADMIN_REQUIRED');
+      }
+      return platform.reactivateUser(actor, { userId: ctx.params.userId as string, reason: body<{ reason: string }>(ctx).reason });
     },
   },
   {
