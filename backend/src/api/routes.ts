@@ -12508,7 +12508,22 @@ export const ROUTES: Route[] = [
     method: 'GET',
     pattern: '/v1/projects/:projectId/mobilisation',
     description: 'Readiness by package, what is not ready and why, and which start authorities the information has overtaken',
-    handler: (platform, ctx) => siteMobilisation.mobilisationPosition(projectContext(platform, ctx)),
+    // The CONSTRUX position, not the ETABLIX control tower.
+    //
+    // This was bound to `siteMobilisation.mobilisationPosition`, which already
+    // has its own route at `/site-services/mobilisation` — so this one
+    // duplicated the ETABLIX tower and the CONSTRUX `mobilisationPosition` had
+    // no route at all. Every write on this screen — opening a plan, running a
+    // readiness check, authorising a start — goes to the CONSTRUX module, so
+    // mobilisation was write-only: a tenancy could record all of it and had no
+    // way to read any of it back. The console panel showed the ETABLIX refusal
+    // instead, telling a paying customer that mobilisation was a module they
+    // had not bought.
+    //
+    // Mobilisation is part of the CONSTRUX subscription. A company manages its
+    // own without ETABLIX, and ETABLIX's seven-gate tower over site services is
+    // a different question on a different path.
+    handler: (platform, ctx) => mobilisation.mobilisationPosition(projectContext(platform, ctx)),
   },
   {
     method: 'POST',

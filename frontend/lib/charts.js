@@ -170,8 +170,19 @@ export function niceScale(min, max, { ticks = 5, zeroBased = true } = {}) {
   if (lo === hi) {
     // A flat series still deserves an axis. One unit either side of the value.
     const pad = Math.abs(lo) > 0 ? Math.abs(lo) * 0.1 : 1;
-    lo -= pad;
-    hi += pad;
+    // …except that padding an all-zero value axis downwards invents a negative
+    // range the data cannot occupy. The contingency chart on Risk & Safety did
+    // exactly this on a project with no risks registered: expected, P80 and
+    // worst case were all £0, and the axis read £-1.00 · £-0.50 · £0 · £0.50 ·
+    // £1.00. Negative contingency is not a small figure, it is a meaningless
+    // one, and a reader who sees money below zero on an axis stops trusting
+    // the chart above it. A zero-based axis grows upwards only.
+    if (zeroBased && lo >= 0) hi += pad;
+    else if (zeroBased && hi <= 0) lo -= pad;
+    else {
+      lo -= pad;
+      hi += pad;
+    }
   }
   const rawStep = (hi - lo) / Math.max(1, ticks);
   const magnitude = 10 ** Math.floor(Math.log10(Math.abs(rawStep) || 1));

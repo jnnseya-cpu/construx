@@ -848,3 +848,39 @@ describe('the capabilities carried over when the two chart libraries became one'
     });
   });
 });
+
+/**
+ * An all-zero money axis must not invent a negative range.
+ *
+ * The contingency chart on Risk & Safety drew expected, P80 and worst case on a
+ * project with no risks registered. All three were £0, the flat-series padding
+ * ran one unit either side, and the axis read
+ * `£-1.00 · £-0.50 · £0 · £0.50 · £1.00`. Negative contingency is not a small
+ * figure, it is a meaningless one, and a reader who sees money below zero stops
+ * trusting the chart above it.
+ */
+describe('a zero-based axis grows upwards only', () => {
+  it('never puts a negative tick under an all-zero series', () => {
+    const axis = niceScale(0, 0);
+    assert.equal(axis.min, 0, `axis started at ${axis.min}`);
+    assert.ok(axis.max > 0, 'a flat zero series still needs a range to draw in');
+    assert.deepEqual(axis.ticks.filter((t) => t < 0), []);
+  });
+
+  it('still pads both ways when the caller has opted out of a zero base', () => {
+    // A flat non-zero line — a temperature, an index — is legitimately centred.
+    const axis = niceScale(47, 47, { zeroBased: false });
+    assert.ok(axis.min < 47 && axis.max > 47);
+  });
+
+  it('grows downwards for an all-zero series that can only be negative', () => {
+    const axis = niceScale(-0, -0, { zeroBased: true });
+    assert.equal(axis.max >= 0, true);
+  });
+
+  it('leaves a flat positive series alone, because zero already gives it a range', () => {
+    const axis = niceScale(5000, 5000);
+    assert.equal(axis.min, 0);
+    assert.ok(axis.max >= 5000);
+  });
+});

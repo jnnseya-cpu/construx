@@ -9,6 +9,8 @@ import * as safety from '../src/engines/safety.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import { classifyEntity } from '../src/identity/entityAccess.ts';
 import { Platform } from '../src/platform.ts';
+import { createGateway } from '../src/api/gateway.ts';
+import { issueTokens } from '../src/identity/auth.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
 /**
@@ -738,5 +740,62 @@ describe('CN-WF-01 the plan scopes what can be readied', () => {
         }),
       'WORK_PACKAGE_NOT_FOUND',
     );
+  });
+});
+
+/**
+ * The route the console reads mobilisation through.
+ *
+ * `GET /v1/projects/:projectId/mobilisation` was bound to the ETABLIX control
+ * tower, which already has its own route at `/site-services/mobilisation`. So
+ * the generic route duplicated the ETABLIX one and the CONSTRUX
+ * `mobilisationPosition` had no route at all — while every write on the
+ * construction screen (open a plan, run a readiness check, authorise a start)
+ * went to the CONSTRUX module.
+ *
+ * Mobilisation was therefore write-only. A tenancy could record all of it and
+ * had no way to read any of it back, and the panel meant to show it displayed
+ * "This tenancy does not hold the ETABLIX AI Site Services module" — telling a
+ * paying customer that mobilisation was something they had not bought.
+ *
+ * Mobilisation is part of the CONSTRUX subscription. ETABLIX's seven-gate tower
+ * over site services is a different question on a different path.
+ */
+describe('mobilisation is readable without the site-services module', () => {
+  it('answers the CONSTRUX position, not an ETABLIX refusal', async () => {
+    const local = new Platform();
+    const local_seed = await seedDemoProject(local);
+    const server = createGateway(local);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      const token = issueTokens({
+        actorId: local_seed.users.pm!.id,
+        tenantId: local.user(local_seed.users.pm!.id).tenantId,
+        partyId: local.user(local_seed.users.pm!.id).partyId,
+        roles: local.user(local_seed.users.pm!.id).roles,
+        mfaSatisfied: true,
+      }).accessToken;
+
+      const response = await fetch(`http://127.0.0.1:${port}/v1/projects/${local_seed.projectId}/mobilisation`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const body = (await response.json()) as Record<string, unknown>;
+
+      assert.equal(response.status, 200, JSON.stringify(body));
+      // The shape the console panel names its three sections from. The ETABLIX
+      // position has gates and families instead, so this is what tells the two
+      // apart rather than the status code.
+      assert.ok(Array.isArray(body.checks), 'no readiness checks — this is not the CONSTRUX position');
+      assert.ok(Array.isArray(body.authorisations), 'no start authorities');
+      assert.ok(Array.isArray(body.overdueConditions), 'no overdue conditions');
+      assert.equal(typeof body.summary, 'string');
+
+      // And the refusal that was reaching the screen must be gone.
+      assert.doesNotMatch(JSON.stringify(body), /ETABLIX/i);
+    } finally {
+      server.close();
+    }
   });
 });
