@@ -49,6 +49,23 @@ import type { Platform } from '../platform.ts';
  * — once more when it **recovers**. Somebody woken at three needs to be told it
  * stopped as much as they needed to be told it started.
  *
+ * ## Standing conditions are told once
+ *
+ * The re-notify interval is right for an incident — a 5xx rate that is still
+ * high half an hour later is still an incident — and wrong for a condition that
+ * cannot clear on its own. An unset environment variable is exactly as unset at
+ * 09:30 as it was at 09:00, and an operator told so every thirty minutes was
+ * told six hundred times before anybody asked why. A **standing** rule is told
+ * when the condition appears, again only when *what is wrong* changes, and once
+ * when it clears. It is never repeated on a timer; the position screen is where
+ * "still firing" lives.
+ *
+ * The same six hundred had a second cause: the watch's memory was this process,
+ * so every restart forgot it had already spoken and said it again. A standing
+ * rule now remembers through the outbox it writes to — the most recent alert or
+ * resolution it queued about itself is the durable record of what the operator
+ * has been told, and a restart reads it back rather than starting from silence.
+ *
  * ## What this is not
  *
  * It is not a metrics store: nothing is retained beyond the last observation.
@@ -82,8 +99,18 @@ export type WatchRule = {
   /** Why it is worth waking somebody for. */
   because: string;
   severity: WatchSeverity;
+  /**
+   * A condition that does not clear on its own — a setting, an abandoned
+   * notice, a daemon that has stopped answering. Told on appearance, on change
+   * and on recovery, never on the re-notify timer, and remembered across
+   * restarts. Absent means a windowed rule: a rate over the interval, which is
+   * a fresh judgement every time and is re-told while the incident lasts.
+   */
+  standing?: boolean;
   observe: (platform: Platform, window: Window) => Observation | Promise<Observation>;
 };
+
+type Transition = 'STARTED' | 'CHANGED' | 'STILL_FIRING' | 'RESOLVED';
 
 const percent = (part: number, whole: number): number => (whole === 0 ? 0 : Number(((part / whole) * 100).toFixed(1)));
 
@@ -152,6 +179,7 @@ export const WATCH_RULES: WatchRule[] = [
       'An abandoned entry is a person who was told they would be told and was not — a payment notice, a permit ' +
       'expiry, a verification code. It is the one failure in this list a customer feels directly.',
     severity: 'CRITICAL',
+    standing: true,
     observe: (platform) => {
       const position = outboxPosition(platform);
       return {
@@ -175,6 +203,7 @@ export const WATCH_RULES: WatchRule[] = [
       'scanner that has stopped answering does not corrupt anything, it stops evidence being read at all, and ' +
       'nobody finds out from a screen they were not looking at.',
     severity: 'CRITICAL',
+    standing: true,
     observe: async () => {
       if (!scannerConfigured()) {
         return { judged: false, because: 'no signature scanner is configured on this deployment' };
@@ -197,6 +226,9 @@ export const WATCH_RULES: WatchRule[] = [
       'warning nobody reads three weeks later, and the loudest of them — an in-memory ledger — loses the entire ' +
       'record on the next restart.',
     severity: 'CRITICAL',
+    // A setting is exactly as unset at 09:30 as it was at 09:00. Told once,
+    // again if a different setting goes wrong, and once when it is fixed.
+    standing: true,
     // Reuses `assertProductionSafety` rather than restating its rules. One
     // source of truth for what "unsafe" means, read by the boot banner and by
     // this; a second copy here would drift and the drift would be silent.
@@ -321,7 +353,9 @@ export async function evaluate(platform: Platform, now = new Date()): Promise<Wa
       continue;
     }
 
-    const was = states.get(rule.id);
+    // What this process remembers, or — for a standing rule after a restart —
+    // what the outbox remembers on its behalf.
+    const was = states.get(rule.id) ?? recall(platform, rule);
     const wasFiring = was?.firing === true;
 
     if (observation.breached && !wasFiring) {
@@ -340,14 +374,19 @@ export async function evaluate(platform: Platform, now = new Date()): Promise<Wa
 
     if (observation.breached && wasFiring) {
       stillFiring.push(rule.id);
+      // A windowed rule is re-told while the incident lasts. A standing one is
+      // re-told only when what is wrong has changed — a new unsafe setting, a
+      // different reason the scanner is silent — and never because time passed.
       const since = Date.parse(was?.lastNotifiedAt ?? at);
-      const dueAgain = now.getTime() - since >= config.ops.renotifyMinutes * 60_000;
+      const dueAgain = rule.standing
+        ? observation.detail !== was?.lastDetail
+        : now.getTime() - since >= config.ops.renotifyMinutes * 60_000;
       states.set(rule.id, {
         ...was!,
         lastDetail: observation.detail,
         ...(dueAgain ? { lastNotifiedAt: at } : {}),
       });
-      if (dueAgain) notified += send(platform, rule, observation, 'STILL_FIRING', at) ? 1 : 0;
+      if (dueAgain) notified += send(platform, rule, observation, rule.standing ? 'CHANGED' : 'STILL_FIRING', at) ? 1 : 0;
       continue;
     }
 
@@ -380,6 +419,41 @@ export async function evaluate(platform: Platform, now = new Date()): Promise<Wa
 }
 
 /**
+ * What the operator has already been told about a standing rule.
+ *
+ * Read from the outbox this watch writes to, which is ledger-backed and
+ * outlives the process. The most recent alert or resolution queued about the
+ * rule is the last thing said; if it was an alert, the condition is on record
+ * as firing with that detail, and this process picks up where the last one
+ * left off rather than announcing it again. Windowed rules are not recalled —
+ * the first evaluation after a restart judges no rate anyway, and a rate that
+ * recurs is a fresh incident.
+ *
+ * How many times it had fired before the restart is not on record here, so a
+ * recalled rule counts from one. The flapping count is a within-process
+ * observation and says so on the position.
+ */
+function recall(platform: Platform, rule: WatchRule): RuleState | undefined {
+  if (!rule.standing) return undefined;
+  const last = entriesByCodePrefix(platform, 'system.watch', Number.MAX_SAFE_INTEGER).find(
+    (entry) => entry.payload.rule === rule.id,
+  );
+  if (!last) return undefined;
+
+  const firing = last.code === 'system.watch_alert';
+  const state: RuleState = {
+    ruleId: rule.id,
+    firing,
+    since: String(last.payload.observedAt ?? last.queuedAt),
+    lastDetail: String(last.payload.detail ?? ''),
+    lastNotifiedAt: last.queuedAt,
+    firedCount: firing ? 1 : 0,
+  };
+  states.set(rule.id, state);
+  return state;
+}
+
+/**
  * Queue the alert. Through the outbox, so it survives this process dying —
  * which is exactly the circumstance an alert is most likely to be written in.
  *
@@ -391,7 +465,7 @@ function send(
   platform: Platform,
   rule: WatchRule,
   observation: Extract<Observation, { judged: true }>,
-  transition: 'STARTED' | 'STILL_FIRING' | 'RESOLVED',
+  transition: Transition,
   at: string,
 ): boolean {
   const operators = platform.operators();

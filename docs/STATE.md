@@ -7677,6 +7677,47 @@ counts write codes only, which is what its own comment says it is about.
 
 ---
 
+### Six hundred copies of one email
+
+Reported from the operator's inbox: "CRITICAL: Settings that make this
+deployment less safe than it looks", naming an unset `AI_PROVIDER_CLEARANCE`
+and an unset `GATEWAY_RATE_LIMIT_REDIS_URL`, received six hundred times.
+
+The watch (`ops/watch.ts`) was doing what it was written to do, and what it was
+written to do was wrong for this rule. It re-notifies a rule that is still
+breached after `OPS_WATCH_RENOTIFY_MINUTES` — right for a 5xx rate that is
+still high half an hour into an incident, and wrong for a condition that cannot
+clear on its own. An unset variable is exactly as unset at 09:30 as at 09:00,
+so the operator was told every thirty minutes for as long as the deployment
+ran. Then the second cause: the watch's memory was the process, so every
+restart forgot it had already spoken and said it again from the start.
+
+**A rule is now either windowed or standing.** The three rates keep the
+re-notify interval. `configuration`, `outbox_abandoned` and
+`scanner_unreachable` are standing: told when the condition appears, again only
+when *what is wrong* changes — a new unsafe setting, a different reason the
+scanner is silent — and once when it clears. Never on a timer. "Still firing"
+lives on the Platform Operations screen, which is where it belongs.
+
+**A standing rule remembers through the outbox it writes to.** The most recent
+alert or resolution queued about the rule is the durable record of what the
+operator has been told, and a fresh process reads it back before saying
+anything. A restart with the same unsafe setting is silent; a restart that
+fixed it sends the one "resolved". Windowed rules are not recalled — the first
+evaluation after a restart judges no rate anyway, and a rate that recurs is a
+new incident.
+
+Five tests in `watch.test.ts` hold it: told once and not again thirty-five
+minutes or a day later; told again on a change and the alert says `CHANGED`;
+silent across a restart with the position still showing it firing; resolved
+once after a restart and silent on the next; and the three standing rules
+declared as such, the three rates not.
+
+The two settings the email names are still unset on that deployment. The alert
+was right about that once, and the fix is in the environment, not here.
+
+---
+
 ## What is partial
 
 Implemented in a form that works, with a stated part missing. The missing part is

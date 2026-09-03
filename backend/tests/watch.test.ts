@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { before, beforeEach, describe, it } from 'node:test';
 import { config } from '../src/config.ts';
 import { counters } from '../src/api/telemetry.ts';
-import { outboxPosition } from '../src/notifications/outbox.ts';
+import { entriesByCodePrefix, outboxPosition } from '../src/notifications/outbox.ts';
 import { evaluate, resetWatch, watchPosition, WATCH_RULES } from '../src/ops/watch.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -196,6 +196,127 @@ describe('transitions, not repetitions', () => {
     }
     const state = watchPosition(platform).clear.find((entry) => entry.ruleId === 'server_errors')!;
     assert.equal(state.firedCount, 3);
+  });
+});
+
+describe('a standing condition is told once, not every half hour', () => {
+  /**
+   * Found from six hundred copies of one email. "AI_PROVIDER_CLEARANCE is
+   * unset" was true at 09:00 and exactly as true at 09:30, and the re-notify
+   * interval — right for an incident — re-sent it every thirty minutes for as
+   * long as the deployment ran, then again from scratch on every restart.
+   */
+  type Standing = { detail: string; breached: boolean };
+
+  function standingRule(id: string, state: Standing) {
+    return {
+      id,
+      what: `A standing condition injected to prove the rule: ${id}`,
+      because: 'A setting that is wrong stays wrong until somebody changes it, and telling them hourly does not change it.',
+      severity: 'CRITICAL' as const,
+      standing: true,
+      observe: () => ({ judged: true as const, breached: state.breached, detail: state.detail }),
+    };
+  }
+
+  async function withRule<T>(rule: (typeof WATCH_RULES)[number], run: () => Promise<T>): Promise<T> {
+    WATCH_RULES.push(rule);
+    try {
+      return await run();
+    } finally {
+      WATCH_RULES.splice(WATCH_RULES.indexOf(rule), 1);
+    }
+  }
+
+  function alertsAbout(ruleId: string) {
+    return entriesByCodePrefix(platform, 'system.watch', Number.MAX_SAFE_INTEGER).filter(
+      (entry) => entry.payload.rule === ruleId,
+    );
+  }
+
+  it('is told when it appears and not again when the re-notify interval passes', async () => {
+    tune({ renotifyMinutes: 30 });
+    const state: Standing = { detail: 'REDIS_URL is unset', breached: true };
+    await withRule(standingRule('standing_once', state), async () => {
+      const first = await evaluate(platform, new Date('2026-09-03T09:00:00Z'));
+      assert.equal(first.started.includes('standing_once'), true);
+      assert.equal(alertsAbout('standing_once').length, 1);
+
+      // Thirty-five minutes later, still unset, still exactly the same fact.
+      const later = await evaluate(platform, new Date('2026-09-03T09:35:00Z'));
+      assert.equal(later.stillFiring.includes('standing_once'), true);
+      assert.equal(alertsAbout('standing_once').length, 1, 'the operator was told once and it was re-sent');
+
+      // A day later, the same.
+      await evaluate(platform, new Date('2026-09-04T09:35:00Z'));
+      assert.equal(alertsAbout('standing_once').length, 1);
+    });
+  });
+
+  it('is told again only when what is wrong changes', async () => {
+    const state: Standing = { detail: 'REDIS_URL is unset', breached: true };
+    await withRule(standingRule('standing_changed', state), async () => {
+      await evaluate(platform, new Date('2026-09-03T09:00:00Z'));
+      state.detail = 'REDIS_URL is unset; AI_PROVIDER_CLEARANCE is unset';
+      await evaluate(platform, new Date('2026-09-03T09:01:00Z'));
+      const alerts = alertsAbout('standing_changed');
+      assert.equal(alerts.length, 2);
+      // Newest first. The second says it is a change, not a repeat.
+      assert.equal(alerts[0]!.payload.transition, 'CHANGED');
+      assert.equal(alerts[1]!.payload.transition, 'STARTED');
+    });
+  });
+
+  it('remembers across a restart that the operator has already been told', async () => {
+    const state: Standing = { detail: 'LEDGER is in memory', breached: true };
+    await withRule(standingRule('standing_restart', state), async () => {
+      await evaluate(platform, new Date('2026-09-03T09:00:00Z'));
+      assert.equal(alertsAbout('standing_restart').length, 1);
+
+      // The process dies and comes back. Its memory is gone; the outbox is not.
+      resetWatch();
+      const afterRestart = await evaluate(platform, new Date('2026-09-03T09:05:00Z'));
+      assert.equal(afterRestart.started.includes('standing_restart'), false);
+      assert.equal(afterRestart.stillFiring.includes('standing_restart'), true);
+      assert.equal(alertsAbout('standing_restart').length, 1, 'a restart re-sent an alert already on record');
+      assert.equal(
+        watchPosition(platform).firing.some((entry) => entry.ruleId === 'standing_restart'),
+        true,
+        'the position still shows it firing, read back from the record',
+      );
+    });
+  });
+
+  it('is still told once when it clears, including after a restart', async () => {
+    const state: Standing = { detail: 'LEDGER is in memory', breached: true };
+    await withRule(standingRule('standing_clears', state), async () => {
+      await evaluate(platform, new Date('2026-09-03T09:00:00Z'));
+      resetWatch();
+      state.breached = false;
+      state.detail = 'Nothing unsafe';
+      const fixed = await evaluate(platform, new Date('2026-09-03T09:05:00Z'));
+      assert.deepEqual(fixed.resolved, ['standing_clears']);
+      const alerts = alertsAbout('standing_clears');
+      assert.equal(alerts.length, 2);
+      assert.equal(alerts[0]!.code, 'system.watch_resolved');
+
+      // And a second restart with it still fixed says nothing at all.
+      resetWatch();
+      const quiet = await evaluate(platform, new Date('2026-09-03T09:10:00Z'));
+      assert.equal(quiet.resolved.includes('standing_clears'), false);
+      assert.equal(quiet.started.includes('standing_clears'), false);
+      assert.equal(alertsAbout('standing_clears').length, 2);
+    });
+  });
+
+  it('declares the three conditions that cannot clear on their own as standing, and the rates as not', () => {
+    const byId = new Map(WATCH_RULES.map((rule) => [rule.id, rule]));
+    for (const id of ['configuration', 'outbox_abandoned', 'scanner_unreachable']) {
+      assert.equal(byId.get(id)?.standing, true, `${id} would be re-sent every re-notify interval for ever`);
+    }
+    for (const id of ['server_errors', 'auth_failures', 'rate_limiting']) {
+      assert.notEqual(byId.get(id)?.standing, true, `${id} is a rate over an interval and is re-told while it lasts`);
+    }
   });
 });
 
