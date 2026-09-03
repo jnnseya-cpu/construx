@@ -1074,7 +1074,19 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('CDM_DOCUMENT_DRAFTED', 'CDMDocument', 'CREATE', 'RISK_SAFETY', { aiAllowed: true, creates: true }),
   def('CDM_DOCUMENT_APPROVED', 'CDMDocument', 'APPROVE', 'RISK_SAFETY', { requiresEvidence: true }),
   def('INDUCTION_RECORDED', 'Induction', 'CREATE', 'RISK_SAFETY'),
-  def('TOOLBOX_TALK_DELIVERED', 'ToolboxTalk', 'CREATE', 'RISK_SAFETY'),
+  // Two acts, one record. The content is prepared from an approved method
+  // statement; the attendance is taken when it is actually given. `aiAllowed`
+  // stays false on both: a safety briefing whose words a model chose cannot be
+  // traced to an approved control, and the first question after an incident is
+  // which document the instruction came from.
+  def('TOOLBOX_TALK_DRAFTED', 'ToolboxTalk', 'CREATE', 'RISK_SAFETY', { creates: true }),
+  // `ISSUE` rather than `CREATE`, because delivery now has two ways to happen
+  // and only one of them makes a record. A talk given straight is the first
+  // event on its entity; a talk drafted from a method statement is the second,
+  // and the ledger correctly refuses a `CREATE` against something that already
+  // exists. `creates: true` keeps the first case working — the same pattern
+  // `PERMIT_ISSUED` uses, and for the same reason.
+  def('TOOLBOX_TALK_DELIVERED', 'ToolboxTalk', 'ISSUE', 'RISK_SAFETY', { creates: true }),
   def('RAMS_DRAFTED', 'RAMS', 'CREATE', 'RISK_SAFETY', { aiAllowed: true }),
   def('RAMS_APPROVED', 'RAMS', 'APPROVE', 'RISK_SAFETY', { requiresEvidence: true }),
   def('RAMS_ACKNOWLEDGED', 'RAMS', 'UPDATE', 'RISK_SAFETY', { requiresEvidence: true }),

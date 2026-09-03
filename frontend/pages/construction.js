@@ -1,7 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { today as todayIso } from '../lib/enums.js';
-import { badge, date, html, humanise, positionReport, raw, render, statusTone, table, toast } from '../lib/ui.js';
+import { badge, date, html, humanise, notice, positionReport, raw, reference, render, statusTone, table, toast } from '../lib/ui.js';
 import { gauge } from '../lib/charts.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -84,7 +84,7 @@ const SEVERITY = [
 export async function construction(root) {
   const projectId = state.session.projectId;
 
-  const b = await entityBundle(projectId, ['Permit', 'RAMS', 'Induction', 'Competency', 'NCR', 'InspectionPlan', 'QualityInspection']);
+  const b = await entityBundle(projectId, ['Permit', 'RAMS', 'Induction', 'Competency', 'NCR', 'InspectionPlan', 'QualityInspection', 'ToolboxTalk']);
 
   const [quality, cdm, requirements, safetyControl, qualityControl, holdPoints, safetyPosition, procurementItems, verification, dailyLogs, mobilisation] =
     await Promise.all([
@@ -110,6 +110,17 @@ export async function construction(root) {
 
   const approvedRams = b.RAMS.filter((r) => r.status === 'APPROVED');
   const draftRams = b.RAMS.filter((r) => r.status !== 'APPROVED');
+
+  // Drafted means written and not yet given. A talk recorded before drafts
+  // existed carries no status at all, and absent means delivered — at the time
+  // it was the only kind there was.
+  const draftedTalks = b.ToolboxTalk.filter((t) => t.status === 'DRAFTED');
+  const deliveredTalks = b.ToolboxTalk.filter((t) => t.status !== 'DRAFTED');
+  // A method statement can hold one open draft, so the ones already carrying
+  // it are not offered again — the server refuses a second with a 409 and this
+  // is that refusal moved to the control.
+  const ramsWithOpenDraft = new Set(draftedTalks.map((t) => String(t.ramsId ?? '')));
+  const briefableRams = approvedRams.filter((r) => !ramsWithOpenDraft.has(r._refId));
   const livePermits = b.Permit.filter((p) => String(p.validTo ?? '') >= now && p.status !== 'CLOSED');
   const openNcrs = b.NCR.filter((n) => n.status === 'OPEN');
   const openPlans = b.InspectionPlan.filter((p) => p.status !== 'CLOSED');
@@ -180,6 +191,25 @@ export async function construction(root) {
               reason: !can('SAFETY_RAMS', 'A')
                 ? blockedReason('SAFETY_RAMS', 'A')
                 : 'Nothing is waiting for approval.',
+            },
+            {
+              id: 'toolbox-draft',
+              label: 'Draft a toolbox talk',
+              permitted: can('SAFETY_RAMS', 'C') && briefableRams.length > 0,
+              reason: !can('SAFETY_RAMS', 'C')
+                ? blockedReason('SAFETY_RAMS', 'C')
+                : approvedRams.length === 0
+                  ? noApprovedRams
+                  : 'Every approved method statement already has a talk drafted and waiting to be given.',
+            },
+            {
+              id: 'toolbox-deliver',
+              label: 'Give a talk',
+              tone: draftedTalks.length > 0 ? 'primary' : '',
+              permitted: can('SAFETY_RAMS', 'C') && draftedTalks.length > 0,
+              reason: !can('SAFETY_RAMS', 'C')
+                ? blockedReason('SAFETY_RAMS', 'C')
+                : 'Nothing is drafted and waiting. Draft one from an approved method statement first.',
             },
             { id: 'induction', label: 'Record an induction', permitted: can('SAFETY_RAMS', 'C'), reason: blockedReason('SAFETY_RAMS', 'C') },
             { id: 'competency', label: 'Record a ticket', permitted: can('SAFETY_RAMS', 'C'), reason: blockedReason('SAFETY_RAMS', 'C') },
@@ -333,6 +363,43 @@ export async function construction(root) {
             empty: 'Nobody inducted — no record that anybody was told the site rules',
           })}
         </div>
+      </div>
+
+      <div class="card pad0" style="margin-bottom:14px">
+        <h2 style="padding:15px 17px 0">Toolbox talks</h2>
+        <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+          Drafted from the approved method statement — its controls in sequence, nothing invented. A draft evidences
+          nothing until it is given: the attendance is the record, and the CDM position counts only what was delivered.
+        </p>
+        ${table({
+          headers: ['Subject', 'From', 'Covers', 'Points', 'State', 'Attended'],
+          align: ['', '', 'num', 'num', '', 'num'],
+          rows: [...draftedTalks, ...deliveredTalks].map((t) => [
+            t.subject,
+            t.ramsId ? reference(t.ramsId) : 'Given straight',
+            // Said out loud rather than left to be discovered. A method
+            // statement with more steps than a talk can carry needs two talks,
+            // and a briefing that silently dropped half of one is the failure
+            // this column exists to prevent.
+            t.ofSteps ? `${t.coversSteps} of ${t.ofSteps}` : '—',
+            (t.keyPoints ?? []).length,
+            badge(
+              t.status === 'DRAFTED' ? 'Drafted, not given' : 'Delivered',
+              t.status === 'DRAFTED' ? 'warn' : 'ok',
+            ),
+            t.status === 'DRAFTED' ? '—' : (t.attendees ?? []).length,
+          ]),
+          empty: 'No toolbox talk drafted or given. An approved method statement nobody was briefed on is a document, not a control.',
+        })}
+        ${draftedTalks
+          .filter((t) => (t.uncoveredSteps ?? []).length > 0)
+          .map((t) =>
+            notice(
+              `“${t.subject}” does not cover its whole method statement — ${(t.uncoveredSteps ?? []).length} step(s) are not in it: ` +
+                `${(t.uncoveredSteps ?? []).join('; ')}. A talk that long stops being a talk, so this needs a second one.`,
+              'warn',
+            ),
+          )}
       </div>
 
       ${
@@ -645,6 +712,78 @@ export async function construction(root) {
         { name: 'reviewComments', label: 'What was reviewed', type: 'textarea', rows: 4 },
       ],
       transform: ({ ramsId: _ramsId, ...rest }) => rest,
+    },
+    'toolbox-draft': {
+      title: 'Draft a toolbox talk',
+      intent:
+        'Assembled from the approved method statement — its controls in sequence, its PPE and its competency schedule. ' +
+        'Nothing is generated: every point is the statement’s own wording. Nobody is briefed until somebody gives it.',
+      path: `/v1/projects/${projectId}/cdm/toolbox-talk-drafts`,
+      submitLabel: 'Draft',
+      fields: [
+        {
+          name: 'ramsId',
+          label: 'Method statement',
+          type: 'select',
+          options: briefableRams.map((r) => ({ value: r._refId, label: `${r.activityDescription} · ${r.location}` })),
+        },
+        {
+          name: 'subject',
+          label: 'Subject',
+          type: 'text',
+          hint: 'Left blank, the talk takes the activity and location off the method statement.',
+        },
+        {
+          name: 'siteSpecificApplication',
+          label: 'How it applies here today',
+          type: 'textarea',
+          rows: 3,
+          hint:
+            'The half of a talk the document cannot supply — which corner, which gate, what changed since yesterday. ' +
+            'Optional, and the talk is thinner without it.',
+        },
+      ],
+      transform: ({ subject, siteSpecificApplication, ...rest }) => ({
+        ...rest,
+        ...(String(subject ?? '').trim() ? { subject: String(subject).trim() } : {}),
+        ...(String(siteSpecificApplication ?? '').trim()
+          ? { siteSpecificApplication: String(siteSpecificApplication).trim() }
+          : {}),
+      }),
+    },
+    'toolbox-deliver': {
+      title: 'Give a toolbox talk',
+      intent:
+        'The attendance is the record. A talk with nobody against it is refused — not as a form validation but because ' +
+        'a briefing nobody attended briefed nobody.',
+      path: `/v1/projects/${projectId}/cdm/toolbox-talks`,
+      submitLabel: 'Record',
+      fields: [
+        {
+          name: 'draftId',
+          label: 'Talk',
+          type: 'select',
+          options: draftedTalks.map((t) => ({
+            value: t._refId,
+            label: `${t.subject} · ${(t.keyPoints ?? []).length} points`,
+          })),
+        },
+        { name: 'deliveredBy', label: 'Given by', type: 'text', value: state.session.user.name },
+        {
+          name: 'attendees',
+          label: 'Who was there',
+          type: 'textarea',
+          rows: 4,
+          hint: 'One identifier per line. This is the list somebody signs, not a headcount.',
+        },
+      ],
+      transform: ({ attendees, ...rest }) => ({
+        ...rest,
+        attendees: String(attendees ?? '')
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean),
+      }),
     },
     induction: {
       title: 'Record a site induction',

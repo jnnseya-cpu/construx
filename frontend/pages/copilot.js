@@ -12,6 +12,9 @@ import { state } from '../app.js';
  * that, and here is who can" is more useful than a hidden button.
  */
 
+// Six questions from a desk and three from the workface. The second group is
+// the point: everything above is a question somebody asks sitting down, and the
+// person hardest for this platform to reach is standing up.
 const SUGGESTIONS = [
   'What is our delay exposure and how do we recover it?',
   'How is the margin looking?',
@@ -19,6 +22,9 @@ const SUGGESTIONS = [
   'What variations are outstanding?',
   'Show me the claim position',
   'What is left before handover?',
+  'Is there a permit open, and who is it for?',
+  'Has anybody been briefed on the method statement?',
+  'What did the diary record yesterday?',
 ];
 
 export async function copilot(root) {
@@ -108,9 +114,26 @@ export async function copilot(root) {
     try {
       const answer = await api.post(`/v1/projects/${state.session.projectId}/ask`, { question });
 
+      // A citation you can open, where the fact came from one record.
+      //
+      // `[SiteDiary]` names a register and is where this started; it tells the
+      // reader which pile the answer came out of and leaves them to go and find
+      // it. Where the fact *is* one record, the source carries its id and the
+      // delegated drill listener opens that record's own history — the same
+      // affordance every KPI on the platform already has, for the same reason:
+      // a figure nobody can open is a figure nobody can check.
+      //
+      // A count over a register has no id and correctly gets no link. Pointing
+      // "eleven permits" at one permit would be a citation that does not support
+      // the claim it is attached to.
       const grounding = (answer.grounding ?? [])
         .filter((f) => f.value !== '0' && f.label !== 'Project')
-        .map((f) => `<div>• <b>${escapeHtml(f.label)}:</b> ${escapeHtml(f.value)} <span class="src">[${escapeHtml(f.source)}]</span></div>`)
+        .map((f) => {
+          const cite = f.refId
+            ? `<span class="src cite" tabindex="0" data-drill='${escapeHtml(JSON.stringify([{ refType: f.source, refId: f.refId }]))}' data-drill-label="${escapeHtml(f.label)}">[${escapeHtml(f.source)} ↗]</span>`
+            : `<span class="src">[${escapeHtml(f.source)}]</span>`;
+          return `<div>• <b>${escapeHtml(f.label)}:</b> ${escapeHtml(f.value)} ${cite}</div>`;
+        })
         .join('');
 
       const chips = (answer.suggestedActions ?? [])
@@ -126,7 +149,17 @@ export async function copilot(root) {
       const engine = answer.intent
         ? `<div class="src" style="margin-bottom:7px"><b>${escapeHtml(contract?.name ?? answer.intent.engine)}</b>${
             contract?.purpose ? ` · ${escapeHtml(contract.purpose.toLowerCase())}` : ''
-          } · match ${escapeHtml(String(answer.intent.match))}</div>`
+          } · ${
+            // What the number is about, said in words. "match 0.667" reads as
+            // confidence in the *answer*, which would be wrong: every figure
+            // below is arithmetic over the record. What can be wrong is which
+            // subject the question was taken to be about.
+            answer.confidence >= 0.66
+              ? 'read as a question about this'
+              : `read as a question about this, though not confidently${
+                  answer.alternatives?.length ? ' — see the other readings below' : ''
+                }`
+          }</div>`
         : '';
 
       // The answer text already lists the grounding facts as bullets, and they

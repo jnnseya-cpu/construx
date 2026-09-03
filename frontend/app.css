@@ -723,6 +723,11 @@ td.mono { font-size: 11px; color: var(--text-3); }
 .bubble.me { background: var(--grey); align-self: flex-end; max-width: 76%; }
 .bubble.ai { background: var(--carbon); border: 1px solid var(--line); border-left: 3px solid var(--orange); }
 .bubble .src { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); }
+/* A citation that resolves to one record, and can be opened. Distinguished
+   from a register name by being interactive at all — a reader should be able
+   to tell at a glance which half of the answer they can go and check. */
+.bubble .src.cite { cursor: pointer; color: var(--orange); border-bottom: 1px dotted currentColor; }
+.bubble .src.cite:hover, .bubble .src.cite:focus-visible { color: var(--text-1); }
 .chips { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 11px; }
 .chip {
   font-size: 11px; padding: 4px 10px; border-radius: 999px;

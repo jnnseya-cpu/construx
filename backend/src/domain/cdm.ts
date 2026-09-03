@@ -517,10 +517,153 @@ export function assertInducted(ctx: EngineContext, personId: string): void {
   }
 }
 
-/** Record a toolbox talk and who attended it. */
+/**
+ * The most points a briefing can carry and still be a briefing.
+ *
+ * Not a display limit. A talk read off a list of thirty controls is a document
+ * being recited, and the people it is aimed at stop listening somewhere around
+ * the eighth. A method statement with more steps than this needs more than one
+ * talk, and the draft says which steps it did not reach rather than quietly
+ * dropping them — silently truncating a safety briefing is the one failure mode
+ * here that could hurt somebody.
+ */
+export const MAX_TALK_POINTS = 10;
+
+/**
+ * Draft a toolbox talk from an approved method statement.
+ *
+ * The half of a toolbox talk that can be prepared in advance is the content;
+ * the half that cannot is who was standing there. `recordToolboxTalk` refuses a
+ * talk with no attendance and always will — a talk that briefed nobody is not a
+ * talk. So this writes the content and stops, and delivery is a second act by
+ * the person who gave it.
+ *
+ * **Every point traces to the method statement.** Nothing is generated. The
+ * points are the controls the RAMS already states, in the order its steps are
+ * sequenced, with the PPE and competency schedules the same document
+ * aggregated. A safety briefing whose words a model chose is a briefing nobody
+ * can trace to an approved control, and the first serious question after an
+ * incident is which document the instruction came from.
+ *
+ * **Only from an approved RAMS**, for the reason `issuePermit` gives about the
+ * same document: briefing a method nobody has accepted is briefing a method
+ * that may still change.
+ */
+export function draftToolboxTalk(
+  ctx: EngineContext,
+  input: { ramsId: string; subject?: string; siteSpecificApplication?: string },
+): {
+  talkId: string;
+  subject: string;
+  keyPoints: string[];
+  coversSteps: number;
+  ofSteps: number;
+  uncoveredSteps: string[];
+} {
+  authorise(ctx, 'SAFETY_RAMS', 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'SAFETY_L2' });
+
+  const rams = ctx.ledger.require({ refType: 'RAMS', refId: input.ramsId });
+  if (rams.state.status !== 'APPROVED') {
+    throw new DomainError(
+      'TOOLBOX_TALK_RAMS_NOT_APPROVED',
+      'The method statement this talk would brief has not been approved. Briefing a method nobody has accepted is ' +
+        'briefing one that may still change.',
+    );
+  }
+
+  const steps = (rams.state.steps ?? []) as Array<{ sequence: number; description: string; controls: string[] }>;
+  if (steps.length === 0) {
+    throw new DomainError('TOOLBOX_TALK_NOTHING_TO_BRIEF', 'The method statement records no steps, so there is nothing to brief.');
+  }
+
+  // One open draft per method statement. Two drafts against one RAMS is two
+  // people about to give the same talk, and the second one to deliver it
+  // records an attendance that looks like a separate briefing.
+  const open = ctx.ledger
+    .list(ctx.projectId, 'ToolboxTalk')
+    .find((record) => record.state.ramsId === input.ramsId && record.state.status === 'DRAFTED');
+  if (open) {
+    throw new DomainError(
+      'TOOLBOX_TALK_ALREADY_DRAFTED',
+      `A talk against this method statement is already drafted and not yet delivered (${String(open.state.subject)}). ` +
+        'Deliver it or discard it before drafting another.',
+      409,
+    );
+  }
+
+  const ordered = [...steps].sort((a, b) => Number(a.sequence) - Number(b.sequence));
+  const covered = ordered.slice(0, MAX_TALK_POINTS);
+  const uncovered = ordered.slice(MAX_TALK_POINTS);
+
+  const keyPoints = covered.map((step) => {
+    const controls = (step.controls ?? []).join('; ');
+    return controls ? `${step.description} — ${controls}` : step.description;
+  });
+
+  // The two schedules the RAMS aggregates. Appended rather than mixed into the
+  // step points, because "what you must be wearing" and "what ticket you must
+  // hold" are the two things a person is stopped at the workface for.
+  const ppe = (rams.state.ppeSchedule ?? []) as string[];
+  const competency = (rams.state.competencySchedule ?? []) as string[];
+  if (ppe.length > 0) keyPoints.push(`PPE for this work: ${ppe.join(', ')}.`);
+  if (competency.length > 0) keyPoints.push(`Nobody does this work without: ${competency.join(', ')}.`);
+
+  const subject =
+    input.subject?.trim() || `${String(rams.state.activityDescription)} — ${String(rams.state.location)}`;
+
+  const talkId = ulid();
+  write(ctx, {
+    eventType: 'TOOLBOX_TALK_DRAFTED',
+    entity: { refType: 'ToolboxTalk', refId: talkId },
+    nextState: {
+      id: talkId,
+      projectId: ctx.projectId,
+      status: 'DRAFTED',
+      subject,
+      keyPoints,
+      ramsId: input.ramsId,
+      // The version matters. A talk drafted from revision 1 and delivered after
+      // revision 2 was approved briefed the wrong method, and this is what says
+      // so afterwards.
+      ramsVersion: rams.state.version,
+      siteSpecificApplication: input.siteSpecificApplication,
+      coversSteps: covered.length,
+      ofSteps: ordered.length,
+      uncoveredSteps: uncovered.map((step) => step.description),
+      draftedAt: new Date().toISOString(),
+      draftedBy: ctx.auth.actorId,
+    },
+  });
+
+  return {
+    talkId,
+    subject,
+    keyPoints,
+    coversSteps: covered.length,
+    ofSteps: ordered.length,
+    uncoveredSteps: uncovered.map((step) => step.description),
+  };
+}
+
+/**
+ * Record a toolbox talk and who attended it.
+ *
+ * With `draftId` this delivers a talk already drafted from a method statement,
+ * against the same record — so the content that was prepared and the attendance
+ * that was taken are one talk rather than two. Without one it is unchanged: a
+ * talk given straight, which is most of them.
+ */
 export function recordToolboxTalk(
   ctx: EngineContext,
-  input: { subject: string; deliveredBy: string; keyPoints: string[]; attendees: string[]; documentId?: string },
+  input: {
+    subject?: string;
+    deliveredBy: string;
+    keyPoints?: string[];
+    attendees: string[];
+    documentId?: string;
+    /** A talk drafted from a RAMS, now being given. */
+    draftId?: string;
+  },
 ): { talkId: string; attendees: number } {
   authorise(ctx, 'SAFETY_RAMS', 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'SAFETY_L2' });
 
@@ -528,16 +671,42 @@ export function recordToolboxTalk(
     throw new DomainError('ATTENDANCE_REQUIRED', 'A toolbox talk with no attendance recorded briefed nobody');
   }
 
-  const talkId = ulid();
+  const draft = input.draftId ? ctx.ledger.require({ refType: 'ToolboxTalk', refId: input.draftId }) : undefined;
+  if (draft && draft.state.status !== 'DRAFTED') {
+    throw new DomainError(
+      'TOOLBOX_TALK_NOT_DRAFTED',
+      `${String(draft.state.subject)} has already been delivered. Give it again as a new talk rather than recording a ` +
+        'second attendance against the same briefing.',
+      409,
+    );
+  }
+
+  const subject = input.subject?.trim() || (draft ? String(draft.state.subject) : '');
+  const keyPoints = input.keyPoints ?? ((draft?.state.keyPoints ?? []) as string[]);
+  if (!subject || keyPoints.length === 0) {
+    // Only reachable without a draft: a talk given straight has to say what it
+    // was about and what was said, because nothing else on the record does.
+    throw new DomainError(
+      'TOOLBOX_TALK_CONTENT_REQUIRED',
+      'A talk recorded with no subject or no points briefed an attendance list on nothing.',
+    );
+  }
+
+  const talkId = draft?.refId ?? ulid();
   write(ctx, {
     eventType: 'TOOLBOX_TALK_DELIVERED',
     entity: { refType: 'ToolboxTalk', refId: talkId },
     nextState: {
+      // Carried forward rather than replaced, so delivering a draft does not
+      // erase which method statement it came from or which steps it did not
+      // reach — the two facts an incident investigation asks for.
+      ...(draft?.state ?? {}),
       id: talkId,
       projectId: ctx.projectId,
-      subject: input.subject,
+      status: 'DELIVERED',
+      subject,
       deliveredBy: input.deliveredBy,
-      keyPoints: input.keyPoints,
+      keyPoints,
       attendees: input.attendees,
       documentId: input.documentId,
       deliveredAt: new Date().toISOString(),
@@ -554,7 +723,7 @@ export type PrincipalContractorPosition = {
   constructionPhasePlan: { inPlace: boolean; reference?: string; approvedAt?: string; revision?: number };
   documents: Array<{ type: string; label: string; approved: number; draft: number; gaps: number }>;
   inductions: { total: number; current: number };
-  toolboxTalks: { delivered: number; attendances: number };
+  toolboxTalks: { delivered: number; drafted: number; attendances: number };
   /** Duties the platform can see are not being met. */
   breaches: string[];
 };
@@ -601,8 +770,17 @@ export function principalContractorPosition(ctx: EngineContext): PrincipalContra
       };
     }),
     inductions: { total: inductions.length, current: inductions.filter((i) => String(i.validUntil) >= today).length },
+    // Delivered means given, not prepared. A drafted talk is content waiting
+    // for an audience and evidences nothing — counting it here would let a
+    // project raise its briefing figure without anybody being briefed, which is
+    // the one number on this position that must never be inflatable.
+    //
+    // A talk recorded before drafts existed carries no `status`, and treating
+    // that as undelivered would erase every historical briefing on the estate.
+    // Absent means delivered, because at the time it was the only kind.
     toolboxTalks: {
-      delivered: talks.length,
+      delivered: talks.filter((t) => t.status !== 'DRAFTED').length,
+      drafted: talks.filter((t) => t.status === 'DRAFTED').length,
       attendances: talks.reduce((sum, t) => sum + ((t.attendees as string[]) ?? []).length, 0),
     },
     breaches,

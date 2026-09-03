@@ -7272,6 +7272,141 @@ provider stub, which is what a deployment with a real one has.
 
 ---
 
+### The toolbox talk, in the two halves it actually has
+
+Recorded above as deliberately not built: `recordToolboxTalk` refuses a talk
+with no attendance, correctly, and an agent cannot know who will be standing
+there. That refusal is right and it stays. What it was also doing was making the
+content impossible to prepare, because the only command available demanded the
+audience at the moment the words were written.
+
+So the content and the attendance are now two acts against one record.
+`draftToolboxTalk` assembles the briefing from an approved method statement and
+stops; `recordToolboxTalk` takes the register when it is given, on the same
+`ToolboxTalk` entity, carrying forward which statement it briefed.
+
+**Nothing is generated.** Every point is the method statement's own wording, in
+its own step sequence, with the PPE and competency schedules that document
+already aggregates. A safety briefing whose words a model chose cannot be traced
+to an approved control, and the first question after an incident is which
+document the instruction came from. `aiAllowed` is false on both events.
+
+**A long method statement produces two talks, not a longer one.**
+`MAX_TALK_POINTS` is 10, and the draft records `coversSteps`, `ofSteps` and
+`uncoveredSteps` — the steps it did not reach, named. Silently truncating a
+safety briefing is the one failure mode here that could hurt somebody, and the
+construction screen shows the shortfall as a warning rather than leaving it to
+be discovered.
+
+**Drafted is never delivered.** `principalContractorPosition` counts the two
+separately, so a site cannot raise its briefing figure without briefing anybody
+— and `AGT-HSE-FIELD` keeps its finding open on a statement whose talk is
+drafted and not yet given, changing only the sentence. Approving the agent's own
+proposal must not close the gap it found.
+
+Refusals: a statement nobody approved cannot be briefed
+(`TOOLBOX_TALK_RAMS_NOT_APPROVED`), one statement holds one open draft
+(`TOOLBOX_TALK_ALREADY_DRAFTED`), a delivered talk cannot take a second
+attendance (`TOOLBOX_TALK_NOT_DRAFTED`), and a talk given straight still has to
+say what it was about (`TOOLBOX_TALK_CONTENT_REQUIRED`). The path every existing
+site uses — a talk given with no draft behind it — is unchanged.
+
+`TOOLBOX_TALK_DELIVERED` moved from action `CREATE` to `ISSUE` with
+`creates: true`. Delivery now has two ways to happen and only one of them makes
+a record, and the ledger correctly refuses a `CREATE` against an entity that
+already exists — the same pattern `PERMIT_ISSUED` uses.
+
+`AGT-HSE-FIELD` proposes the draft, one proposal per method statement, and is
+the only agent in the field fleet that proposes anything. What makes that safe
+is not the agent: it is that `recordToolboxTalk` still refuses without an
+attendance list, so nothing the agent can do makes it look as though anybody was
+briefed.
+
+Sixteen tests. Nine mutants killed. One survived twice and produced the test
+that was missing: counting a drafted talk as briefed only matters once something
+has actually been delivered, so the fixture — which had briefed nothing — could
+not tell the two apart. The shape that can is one statement briefed for real and
+a second with a draft waiting.
+
+---
+
+### The copilot at the workface, and what it was answering out of
+
+`AGT-FIELD-ANSWERS` is specification E2's "grounded answers from drawings,
+specs, RAMS, records — with citations and confidence, answered at the workface".
+It is **not** a second answerer. `ai/conversation.ts` already answers from
+materialised state and never from a model's memory of construction generally;
+building a parallel one would have been two engines to keep telling the same
+story, and the second one to drift would be the one a site manager was reading.
+
+What the copilot was missing was the workface. Every intent rule was a question
+somebody asks sitting down — the estimate, the cash position, the clash list.
+"Is there a permit open on the chamber" matched nothing at all and came back
+*"try naming what you need — programme, cost, risk, safety, bid comparison,
+variation, claim, model, or handover"*, which is the platform telling a site
+manager to rephrase.
+
+Three rules now route the site: field execution, permits and briefings, and
+quality control. They route to engines that already exist rather than adding an
+eighth. The grounding is what is new — the permits valid **today** (not open at
+all: a permit that expired last week answers wrongly while looking like an
+answer), who is inducted and in ticket, talks given as against talks drafted,
+the last day recorded with its narrative, this week's promises, the plans
+agreed, the hold points not released.
+
+**A citation you can open.** A grounding fact whose source is one record now
+carries its `refId`, and the copilot screen turns that into the same drill every
+KPI on the platform already has. A count over a register carries none, and that
+is the rule rather than an omission: pointing "eleven permits" at one permit is
+a citation that does not support the claim attached to it.
+
+**Confidence is in the reading of the question, not in the figures.** Every
+figure is arithmetic over the record, so there is nothing to be unsure about
+once the subject is settled; what can be wrong is which subject the question was
+taken to be about. The screen says that in words rather than showing
+`match 0.667`, which reads as confidence in the answer.
+
+**A plural is the same question.** Terms are written singular and matched
+exactly, so "are there any permits open" and "hold points not released" — which
+is how anybody asks — scored nothing at all. A trailing `s` on words and on
+phrases is the whole of the problem for this vocabulary; each token now scores
+once per rule however many of that rule's terms it matches, so a rule listing
+both `bid` and `bids` no longer scores twice for one word.
+
+#### The disclosure underneath it
+
+`ask` performs no authorisation, and neither does its route. That was survivable
+while the grounding read estimates and clash counts. It stopped being survivable
+the moment it read the SAFETY_L2 register and the quality record — the two the
+£25 subcontractor seat is scoped away from — and the fix is not specific to the
+field: **every** question was answering out of the ledger with no capability
+check at all, so a role with no commercial capability could ask about margin and
+be told the forecast erosion.
+
+Each grounding fact is now filtered by the classification of its own source,
+through the same `classifyEntity` + `evaluateAccess` path the entity read, the
+audit feed and the device sync use. This was a fourth reader that had never been
+connected to it. An unclassified register denies, and a test pins that every
+register the copilot can cite is one the classifier recognises — a block citing
+an unclassified type would otherwise be silently withheld from everybody, with
+the answer quietly thinner and nothing saying why.
+
+Withholding is **stated**. Asked "is there a permit open on the chamber", the QS
+— who holds nothing on safety, quality or field execution — is told
+*"Withheld from your role: 5 registers — RAMS, Permit, Induction, Competency,
+ToolboxTalk"*. A shorter answer with no explanation reads as a thin project; the
+same choice `frontend/lib/command.js` makes about a denial never being shown as
+a zero.
+
+Eleven tests. Six mutants killed, including removing the withholding filter,
+allowing every register, dropping the statement of what was withheld, and
+counting every open permit rather than the ones valid today. Two survived a
+first pass and produced the two tests that were missing: a permit that ran out
+last week and was never handed back, and a question whose only match is a plural
+word.
+
+---
+
 ### The project on site now has a site record
 
 The demonstration estate carries four projects. Rossendale Trunk Main Diversion

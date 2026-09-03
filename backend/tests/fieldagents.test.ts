@@ -29,11 +29,15 @@ import { bareConstructionProject } from './helpers.ts';
  * test builds that condition through the ordinary domain commands — never by
  * writing state directly — and then asks whether the agent notices.
  *
- * The one invariant worth stating out loud: **none of these agents proposes
- * anything.** Confirming a reading files a record under the confirmer's name,
- * so a machine doing it would put a person's name on something they never saw.
- * That is asserted here rather than left to the contract test, because it is
- * the property the whole field fleet is safe on.
+ * The one invariant worth stating out loud: **none of these agents files a site
+ * record.** Confirming a reading files it under the confirmer's name, so a
+ * machine doing it would put a person's name on something they never saw. Four
+ * of the five propose nothing at all; `AGT-HSE-FIELD` proposes a toolbox talk
+ * *draft*, which is content assembled from an approved method statement's own
+ * wording and which `recordToolboxTalk` still refuses to treat as a briefing
+ * until somebody supplies an attendance list. Both halves are asserted here
+ * rather than left to the contract test, because this is the property the whole
+ * field fleet is safe on.
  */
 
 let directory: string;
@@ -99,9 +103,9 @@ after(() => {
 
 // ---------------------------------------------------------------------------
 
-describe('the field fleet never files anything itself', () => {
+describe('the field fleet never files a site record itself', () => {
   it('proposes nothing and can never act unattended', () => {
-    for (const name of ['voice-structure', 'photo-classification', 'field-answers', 'hse-field', 'today']) {
+    for (const name of ['voice-structure', 'photo-classification', 'field-answers', 'today']) {
       const definition = agent(name);
       assert.deepEqual(definition.mandate.proposes, [], `${definition.agentId} proposes a write`);
       assert.equal(
@@ -111,6 +115,24 @@ describe('the field fleet never files anything itself', () => {
       );
       assert.deepEqual(definition.emits, [], `${definition.agentId} claims to emit an event it never writes`);
     }
+  });
+
+  /**
+   * The one exception, pinned so widening it is an edit to this test.
+   *
+   * `AGT-HSE-FIELD` proposes `cdm:draftToolboxTalk`, which assembles a briefing
+   * out of an approved method statement's own wording and stops. It is the only
+   * proposal in this fleet, and what makes it safe is not the agent — it is that
+   * `recordToolboxTalk` still refuses without an attendance list. Nothing the
+   * agent can do makes it look as though anybody was briefed.
+   */
+  it('lets the safety agent draft a briefing and nothing else', () => {
+    const definition = agent('hse-field');
+    assert.deepEqual(definition.mandate.proposes, ['SAFETY_RAMS']);
+    assert.equal(definition.mandate.maxUnattended, 'PROPOSE', 'a safety briefing may not be drafted unattended');
+    assert.equal(definition.mandate.envelope, undefined, 'PROPOSE needs no envelope, and one here would read as a grant');
+    assert.deepEqual(definition.emits, ['TOOLBOX_TALK_DRAFTED']);
+    assert.equal(definition.hitl, 'APPROVAL');
   });
 });
 
@@ -409,7 +431,7 @@ describe('AGT-HSE-FIELD watches the shift rather than the project', () => {
   it('raises an approved method statement nobody was ever briefed on', async () => {
     // A RAMS reaches APPROVED through the ordinary route, and no toolbox talk
     // is delivered against it.
-    const found = keyed(await run('hse-field', ctx), 'hse-field:no-toolbox-talk:');
+    const found = keyed(await run('hse-field', ctx), 'hse-field:brief-rams:');
     assert.equal(found, undefined, 'a project with no approved method statement was told to brief one');
 
     await safety.draftRAMS(safetyCtx, {
@@ -421,9 +443,14 @@ describe('AGT-HSE-FIELD watches the shift rather than the project', () => {
     const ramsId = platform.ledger.list(ctx.projectId, 'RAMS')[0]!.refId;
     safety.approveRAMS(safetyCtx, ramsId, 'Sequence and controls are proportionate to the ground conditions.');
 
-    const briefed = keyed(await run('hse-field', ctx), 'hse-field:no-toolbox-talk:');
+    // The per-statement finding, which is the one that names what to brief. The
+    // roll-up above it is raised only where more than one statement is
+    // unbriefed — with a single one it was the same sentence twice, and a queue
+    // that repeats itself teaches its reader to skim.
+    const briefed = keyed(await run('hse-field', ctx), 'hse-field:brief-rams:');
     assert.ok(briefed, 'an approved method statement with no talk against it raised nothing');
-    assert.ok(briefed.absence?.some((entry) => entry.refType === 'ToolboxTalk'));
+    assert.match(briefed.summary, /never been briefed/);
+    assert.equal(briefed.evidence[0]?.refType, 'RAMS');
 
     // And it stops once somebody has actually briefed the gang.
     cdm.recordToolboxTalk(safetyCtx, {
@@ -433,7 +460,7 @@ describe('AGT-HSE-FIELD watches the shift rather than the project', () => {
       attendees: ['op-1', 'op-2', 'op-3'],
     });
     assert.equal(
-      keyed(await run('hse-field', ctx), 'hse-field:no-toolbox-talk:'),
+      keyed(await run('hse-field', ctx), 'hse-field:brief-rams:'),
       undefined,
       'the finding survived somebody actually delivering the talk',
     );

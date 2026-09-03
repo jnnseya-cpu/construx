@@ -3341,17 +3341,38 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/cdm/toolbox-talk-drafts',
+    description: 'Draft a toolbox talk from an approved method statement, ready to be given',
+    schema: {
+      type: 'object',
+      required: ['ramsId'],
+      properties: {
+        ramsId: stringField,
+        subject: stringField,
+        siteSpecificApplication: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => cdm.draftToolboxTalk(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/cdm/toolbox-talks',
     description: 'Record a toolbox talk and its attendance',
     schema: {
       type: 'object',
-      required: ['subject', 'deliveredBy', 'keyPoints', 'attendees'],
+      // `subject` and `keyPoints` are no longer required at the schema, because
+      // delivering a draft inherits both. The engine still refuses a talk that
+      // has neither a draft nor content of its own — the check moved to where
+      // it can see which case it is in, rather than being relaxed away.
+      required: ['deliveredBy', 'attendees'],
       properties: {
         subject: stringField,
         deliveredBy: stringField,
         keyPoints: { type: 'array', minItems: 1, items: { type: 'string' } },
         attendees: { type: 'array', items: { type: 'string' } },
         documentId: stringField,
+        draftId: stringField,
       },
       additionalProperties: false,
     },

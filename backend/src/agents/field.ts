@@ -21,13 +21,20 @@ import type { AgentDefinition, AgentOutput, Finding } from './types.ts';
  * Three rules run through all five, and they are the reason this fleet does not
  * quietly become a way of filing site records without a person.
  *
- * **Nothing here proposes a write.** Every one of them carries
- * `maxUnattended: 'OBSERVE'` and an empty `proposes`. Confirming a reading is
- * an attribution: `perception.confirm` files the observation against
+ * **Nothing here files a site record.** Four of the five carry
+ * `maxUnattended: 'OBSERVE'` and an empty `proposes`, because confirming a
+ * reading is an attribution: `perception.confirm` files the observation against
  * `ctx.auth.actorId`, so a machine confirming it would be putting a person's
  * name on something that person never saw. The specification says the same
- * thing about the photo agent in four words — "never auto-filed" — and it is
- * true of all of them.
+ * thing about the photo agent in four words — "never auto-filed".
+ *
+ * The exception is `AGT-HSE-FIELD`, and it proves the rule rather than breaking
+ * it. It proposes `cdm:draftToolboxTalk`, which assembles a briefing from an
+ * approved method statement's own words and stops. `recordToolboxTalk` still
+ * refuses without an attendance list, so nothing the agent proposes can make it
+ * look as though anybody was briefed — the drafted talk is content waiting for
+ * an audience, and the position that reports on CDM duties counts it as exactly
+ * that.
  *
  * **The trigger is arithmetic over the record**, as everywhere else in the
  * fleet. No agent here asks a model whether a photograph shows a defect; the
@@ -517,20 +524,26 @@ const hseFieldAgent: AgentDefinition = {
     { kind: 'EVENT', eventType: 'LOOKAHEAD_PUBLISHED' },
   ],
   inputs: ['Permits and their validity', 'Approved method statements', 'Safety observations', 'This week’s lookahead and its commitments'],
-  outputs: ['Permits expiring under promised work', 'Areas never handed back', 'Repeated hazards at one location', 'The RAMS a toolbox talk is due from'],
-  emits: [],
+  outputs: ['Permits expiring under promised work', 'Areas never handed back', 'Repeated hazards at one location', 'Toolbox talk drafts from approved method statements'],
+  emits: ['TOOLBOX_TALK_DRAFTED'],
   hitl: 'APPROVAL',
   confidenceFloor: 0.6,
   acuTier: 'MED',
   memory: { reads: ['PROJECT'], writes: ['PROJECT'] },
   mandate: {
     reads: ['SAFETY_RAMS', 'FIELD_EXECUTION', 'LOOKAHEAD_CONSTRAINTS'],
-    proposes: [],
+    // The one proposal in this fleet, and it is a draft rather than a record.
+    // `draftToolboxTalk` writes content assembled from an approved method
+    // statement's own words; `recordToolboxTalk` still refuses without an
+    // attendance list, so nothing here can make it look as though anybody was
+    // briefed. Every other agent in this file proposes nothing at all.
+    proposes: ['SAFETY_RAMS'],
     approvers: ['SAFETY', 'PM', 'CONSTRUCTION_MANAGER', 'EPC'],
-    maxUnattended: 'OBSERVE',
+    maxUnattended: 'PROPOSE',
   },
   evaluate(ctx) {
     const findings: Finding[] = [];
+    const proposals: AgentOutput['proposals'] = [];
     const today = todayIso();
 
     const permits = list(ctx, 'Permit');
@@ -619,20 +632,75 @@ const hseFieldAgent: AgentDefinition = {
       });
     }
 
-    // A toolbox talk is due against approved method statements and none has been
-    // given. Named rather than drafted: the talk needs an audience, and the
-    // agent does not know who will be standing there.
+    // An approved method statement with no talk against it — and, per method
+    // statement, the draft that would brief it.
+    //
+    // One proposal per RAMS rather than one for the set. A toolbox talk covers
+    // one method: a single proposal that drafted five talks would be one
+    // approval standing for five separate briefings, and an approver could not
+    // decline the fourth.
     const approvedRams = list(ctx, 'RAMS').filter((record) => record.state.status === 'APPROVED');
     const talks = list(ctx, 'ToolboxTalk');
-    if (approvedRams.length > 0 && talks.length === 0) {
+    // Briefed means given. A drafted talk is content waiting for an audience,
+    // so it does not close this finding — otherwise approving the agent's own
+    // proposal would silence it without anybody being briefed.
+    const delivered = talks.filter((record) => record.state.status !== 'DRAFTED');
+    const briefedRamsIds = new Set(
+      delivered.map((record) => String(record.state.ramsId ?? '')).filter((id) => id !== ''),
+    );
+    const draftedRamsIds = new Set(
+      talks
+        .filter((record) => record.state.status === 'DRAFTED')
+        .map((record) => String(record.state.ramsId ?? ''))
+        .filter((id) => id !== ''),
+    );
+
+    // Which of the three states this project is in decides what can honestly be
+    // said, and getting it wrong in either direction is worse than silence.
+    //
+    // A talk given straight carries no `ramsId`, and one recorded before drafts
+    // existed carries neither that nor a status. On a site that briefs by hand,
+    // naming a specific method statement as never briefed is a false statement
+    // about a control that may well be in place — so per-statement findings are
+    // raised only where the project has shown it links talks to statements, or
+    // where it has delivered no talk at all.
+    const briefingIsLinked = briefedRamsIds.size > 0;
+    const unbriefed =
+      delivered.length === 0
+        ? approvedRams
+        : briefingIsLinked
+          ? approvedRams.filter((record) => !briefedRamsIds.has(record.refId))
+          : [];
+
+    if (delivered.length > 0 && !briefingIsLinked) {
       findings.push({
-        key: `hse-field:no-toolbox-talk:${approvedRams.length}`,
+        key: `hse-field:briefing-unlinked:${delivered.length}`,
+        severity: 'INFO',
+        summary: `${delivered.length} toolbox ${plural(delivered.length, 'talk has', 'talks have')} been given and none is recorded against a method statement.`,
+        consequence:
+          'The talks happened and the record cannot say which methods they briefed, so nothing can tell you that a ' +
+          'statement approved last week has not been put in front of anybody. Drafting a talk from the statement links ' +
+          'the two.',
+        evidence: delivered.slice(0, 3).map((record) => ({
+          refType: 'ToolboxTalk',
+          refId: record.refId,
+          note: `${String(record.state.subject ?? record.refId)} — ${((record.state.attendees ?? []) as string[]).length} attended`,
+        })),
+      });
+    }
+
+    // The roll-up, and only where it says something the per-statement findings
+    // do not. With one unbriefed statement it is the same sentence twice, which
+    // is how a queue teaches its reader to skim.
+    if (unbriefed.length > 1 && delivered.length === 0) {
+      findings.push({
+        key: `hse-field:no-toolbox-talk:${unbriefed.length}`,
         severity: 'ATTENTION',
-        summary: `${approvedRams.length} approved ${plural(approvedRams.length, 'method statement')} on site and no toolbox talk delivered against any of them.`,
+        summary: `${unbriefed.length} approved ${plural(unbriefed.length, 'method statement')} on site and no toolbox talk delivered against any of them.`,
         consequence:
           'An approved method statement nobody was briefed on is a document, not a control. The gang works to what they ' +
           'were told, and nothing on the record says they were told anything.',
-        evidence: approvedRams.slice(0, 5).map((record) => ({
+        evidence: unbriefed.slice(0, 5).map((record) => ({
           refType: 'RAMS',
           refId: record.refId,
           note: `${String(record.state.activityDescription ?? record.refId)} at ${String(record.state.location ?? 'an unstated location')} — approved, never briefed`,
@@ -641,7 +709,66 @@ const hseFieldAgent: AgentDefinition = {
       });
     }
 
-    return { findings, proposals: [] };
+    for (const record of unbriefed) {
+      // Already drafted and waiting to be given.
+      //
+      // The finding stays and the proposal does not, and keeping those apart is
+      // the point. A draft is content waiting for an audience: nobody has been
+      // briefed, so the gap is still open and the fleet must keep saying so —
+      // otherwise approving the agent's own proposal would close the finding
+      // while the gang was told nothing. What changes is the sentence, because
+      // "nobody has written it" and "it is written and nobody has given it" have
+      // different remedies and different people.
+      const waiting = draftedRamsIds.has(record.refId);
+      const steps = (record.state.steps ?? []) as Array<unknown>;
+      const key = `hse-field:brief-rams:${record.refId}`;
+      findings.push({
+        key,
+        severity: 'ATTENTION',
+        summary: waiting
+          ? `"${String(record.state.activityDescription ?? record.refId)}" has a talk drafted and waiting — nobody has been given it.`
+          : `"${String(record.state.activityDescription ?? record.refId)}" at ${String(record.state.location ?? 'an unstated location')} is approved and has never been briefed.`,
+        consequence:
+          'The method statement states the controls; the talk is what puts them in front of the people doing the work. ' +
+          'Between the two, only the talk has an attendance list on it.',
+        evidence: [
+          {
+            refType: 'RAMS',
+            refId: record.refId,
+            note: `${steps.length} ${plural(steps.length, 'step')}, revision ${String(record.state.version ?? 1)} — ${waiting ? 'drafted, not yet given' : 'approved, never briefed'}`,
+          },
+        ],
+      });
+
+      // `draftToolboxTalk` refuses a second open draft, so proposing one here
+      // would be proposing a command that is going to be refused — an approver
+      // pressing it meets a 409, which teaches them to stop pressing.
+      if (waiting) continue;
+
+      proposals.push({
+        findingKey: key,
+        autonomy: 'PROPOSE',
+        command: {
+          command: 'cdm:draftToolboxTalk',
+          area: 'SAFETY_RAMS',
+          code: 'C',
+          input: { ramsId: record.refId },
+          effect:
+            `Drafts the talk for "${String(record.state.activityDescription ?? record.refId)}" from the approved method ` +
+            'statement — its controls in sequence, its PPE and its competency schedule. Nobody is briefed and no ' +
+            'attendance is recorded until somebody gives it.',
+          ifDeclined:
+            'The method statement stays approved and unbriefed, and the talk is written out by hand from the same ' +
+            'document when somebody gets to it.',
+          estimatedAcuMinor: 0,
+          // A draft commits the business to nothing: it is the RAMS's own words
+          // arranged for reading aloud, and every point stays editable.
+          valueMinor: 0,
+        },
+      });
+    }
+
+    return { findings, proposals };
   },
 };
 
