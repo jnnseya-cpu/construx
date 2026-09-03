@@ -212,7 +212,7 @@ describe('errors name the domain this deployment actually serves', () => {
     const problem = toProblem(new Error('ENOSPC: no space left on /var/lib/construx/journal'), '/v1/users', 'trace-77', 'c');
     assert.equal(problem.status, 500);
     assert.equal(problem.title, 'INTERNAL_ERROR');
-    assert.match(problem.detail, /Reference trace-77/);
-    assert.doesNotMatch(problem.detail, /ENOSPC|journal/);
+    assert.match(problem.detail ?? '', /Reference trace-77/);
+    assert.doesNotMatch(problem.detail ?? '', /ENOSPC|journal/);
   });
 });
