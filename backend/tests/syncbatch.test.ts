@@ -180,3 +180,54 @@ describe('the batch contract over HTTP', () => {
     assert.match(JSON.stringify(problem), new RegExp(String(MAX_SYNC_BATCH)), JSON.stringify(problem));
   });
 });
+
+/**
+ * Specification A4, conflict class 3: append-only objects never conflict.
+ *
+ * Diary segments, photographs and observations are appends. Two people
+ * capturing at once have not disagreed about anything — they have each recorded
+ * something that happened — and a conflict between them would be the platform
+ * inventing a disagreement in order to discard one of them.
+ *
+ * It holds structurally rather than by a rule: the conflict path is entered only
+ * where the device carried a base hash *and* a record already exists to be stale
+ * against. An append has no base. That is a good reason to believe it and a poor
+ * reason to leave it untested, because the property people rely on is the
+ * doctrine — the app never blocks capture — not the implementation detail that
+ * currently delivers it.
+ */
+describe('appends never conflict, however many devices are capturing', () => {
+  it('accepts every observation from two devices at once, in device-time order', () => {
+    const both: SyncOperation[] = [
+      operation(60, { deviceId: 'device-a', deviceTimestamp: '2026-09-01T08:00:02.000Z' }),
+      operation(61, { deviceId: 'device-b', deviceTimestamp: '2026-09-01T08:00:01.000Z' }),
+      operation(62, { deviceId: 'device-a', deviceTimestamp: '2026-09-01T08:00:03.000Z' }),
+    ];
+    const result = pushOf(both);
+
+    assert.deepEqual(result.conflicts, [], 'two people capturing at once were treated as a disagreement');
+    assert.equal(result.accepted.length, 3);
+
+    // Ordered by the time on site, not the order the batch happened to arrive
+    // in. The device that was a second earlier is first on the record.
+    assert.deepEqual(result.accepted, ['op-batch-61', 'op-batch-60', 'op-batch-62']);
+  });
+
+  it('keeps the device clock rather than rewriting it to server time', () => {
+    // A4's clock discipline: the device timestamp is contractual evidence. The
+    // server records when it received the operation alongside; it never
+    // replaces when the work happened.
+    const captured = '2026-09-01T06:15:00.000Z';
+    pushOf([operation(70, { deviceTimestamp: captured })]);
+
+    const event = platform.ledger
+      .events({ projectId: seed.projectId })
+      .find((e) => e.entity.refId === 'obs-batch-70');
+    assert.ok(event, 'the observation never reached the ledger');
+    assert.equal(event.deviceTimestamp, captured, 'the device clock was rewritten to server time');
+    // And the server's own receive time is recorded beside it rather than
+    // instead of it — both facts, neither replacing the other.
+    assert.ok(event.timestamp, 'no server receive time was recorded');
+    assert.notEqual(event.timestamp, event.deviceTimestamp);
+  });
+});
