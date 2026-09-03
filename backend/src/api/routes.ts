@@ -165,6 +165,7 @@ import * as safety from '../engines/safety.ts';
 import * as tender from '../engines/tender.ts';
 import { lineage } from '../goldenthread/lineage.ts';
 import { replayProject, replayTimeline } from '../goldenthread/replay.ts';
+import { visiblePage } from '../goldenthread/visibility.ts';
 import { readConsent, resolveAudience, resolveUnsubscribe, setConsent } from '../messaging/audience.ts';
 import {
   deliveriesFor,
@@ -15488,6 +15489,43 @@ export const ROUTES: Route[] = [
       ),
   },
   {
+    method: 'POST',
+    pattern: '/v1/sync/pull',
+    description: 'Pull deltas for several projects in one round trip, each from its own cursor',
+    schema: {
+      type: 'object',
+      required: ['deviceId', 'projects'],
+      properties: {
+        deviceId: stringField,
+        projects: {
+          type: 'array',
+          minItems: 1,
+          // A device holds the projects a person is on, not a catalogue. The
+          // ceiling is here so a malformed client cannot ask for a scan of the
+          // whole estate in one request.
+          maxItems: 50,
+          items: {
+            type: 'object',
+            required: ['projectId'],
+            properties: { projectId: stringField, cursor: { type: 'string' } },
+            additionalProperties: false,
+          },
+        },
+        limit: { type: 'number', minimum: 1, maximum: 1000 },
+      },
+      additionalProperties: false,
+    },
+    // A POST because the cursors go in a body: one round trip for a device on a
+    // bad link, and cursors kept out of access logs and URL length limits. It
+    // reads rather than writes, and `readOnly` says so — the gateway answers 200
+    // rather than 201, which is the honest status for a read.
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const body_ = body<{ deviceId: string; projects: Array<{ projectId: string; cursor?: string }>; limit?: number }>(ctx);
+      return platform.sync.pullMany(auth(ctx), body_.deviceId, body_.projects, body_.limit);
+    },
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/sync/conflicts',
     readOnly: true,
@@ -17267,29 +17305,23 @@ export const ROUTES: Route[] = [
       // the patch, and that is entity content: withholding it here is the same
       // decision the entity read makes, or the audit feed becomes the way round
       // every capability boundary in the system.
-      const events = platform.ledger
-        .events({ tenantId: actor.tenantId, projectId })
-        .filter((event) => !filter || filter.has(`${event.entity.refType}:${event.entity.refId}`))
-        .map((event) => {
-        const classification = classifyEntity(event.entity.refType);
-        const decision = classification
-          ? evaluateAccess(
-              actor,
-              classification.area,
-              'R',
-              { tenantId: actor.tenantId, projectId, dataSensitivity: classification.sensitivity },
-              AUTHZ_OPTIONS,
-            ).decision
-          : 'DENY';
-
-        if (decision === 'ALLOW') return event;
-        return { ...event, diff: undefined, contentWithheld: true };
-      });
+      // One function, shared with the device pull. It used to live here, which
+      // was right until a second reader appeared — and the second reader
+      // withheld nothing at all. The comment this replaces said it: one place
+      // where an event's content is authorised, because a second path is a
+      // second chance to get it wrong.
+      const { events, withheldCount } = visiblePage(
+        actor,
+        projectId,
+        platform.ledger
+          .events({ tenantId: actor.tenantId, projectId })
+          .filter((event) => !filter || filter.has(`${event.entity.refType}:${event.entity.refId}`)),
+      );
 
       return {
         chainHead: platform.ledger.chainHead(projectId),
         events,
-        withheldCount: events.filter((e) => 'contentWithheld' in e).length,
+        withheldCount,
         // Said rather than left to be inferred from an empty list. A drill that
         // returns nothing because the records have no events yet is a different
         // answer from one that returns nothing because the refs were malformed.

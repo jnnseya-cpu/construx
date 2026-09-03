@@ -2,7 +2,8 @@ import { hashEvidence } from '../core/canonical.ts';
 import { ConflictError, DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { GoldenThreadLedger } from '../goldenthread/ledger.ts';
-import type { EntityRef, EventSource, GoldenThreadEvent } from '../goldenthread/types.ts';
+import type { EntityRef, EventSource } from '../goldenthread/types.ts';
+import { visiblePage, type VisibleEvent } from '../goldenthread/visibility.ts';
 import type { AuthContext } from '../identity/auth.ts';
 
 /**
@@ -102,10 +103,19 @@ export type SyncPushResult = {
 };
 
 export type SyncPullResult = {
-  events: GoldenThreadEvent[];
+  events: VisibleEvent[];
   cursor: string;
   hasMore: boolean;
   serverTime: string;
+  /**
+   * Events the device received the envelope of and not the content.
+   *
+   * Counted rather than hidden, so a count that does not reconcile has a
+   * visible reason — the same discipline the audit feed keeps. A field app
+   * showing "14 records" where the server sent 20 needs to be able to say why
+   * without guessing.
+   */
+  withheldCount: number;
 };
 
 /**
@@ -463,7 +473,78 @@ export class SyncEngine {
 
     this.#deviceCursors.set(`${deviceId}:${projectId}`, cursor);
 
-    return { events: page, cursor, hasMore: all.length > page.length, serverTime: new Date().toISOString() };
+    // Content the caller may not read is withheld, exactly as the audit feed
+    // withholds it. This pull filtered on tenancy alone, which meant a device
+    // received every event's full patch regardless of capability — including a
+    // subcontractor seat, whose whole proposition is that it can see its own
+    // snags and nothing else. The cursor still advances over the withheld ones:
+    // they happened, the device is entitled to know that they happened, and
+    // re-offering them on the next pull would loop forever.
+    const seen = visiblePage(auth, projectId, page);
+
+    return {
+      events: seen.events,
+      withheldCount: seen.withheldCount,
+      cursor,
+      hasMore: all.length > page.length,
+      serverTime: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Pull several projects in one round trip.
+   *
+   * A supervisor's phone holds three jobs, and on a site gate's signal three
+   * requests is three chances to fail rather than one. The per-project pull
+   * stays exactly as it is — this composes it rather than reimplementing it, so
+   * there is one cursor rule, one classification pass and one place to get
+   * either wrong.
+   *
+   * A project the caller cannot reach is **named and skipped**, not silently
+   * absent: a device showing two projects where the operator expects three
+   * needs to be able to say which one and why, and an empty answer that could
+   * mean either "nothing changed" or "you are not on that job any more" is the
+   * answer that generates a support call. It is also how a revoked project
+   * reaches the device at all — the specification's own rule is that revoking
+   * access purges that project's local data on next contact, and a device
+   * cannot purge what it was never told about.
+   */
+  pullMany(
+    auth: AuthContext,
+    deviceId: string,
+    projects: Array<{ projectId: string; cursor?: string }>,
+    limit = 500,
+  ): {
+    projects: Array<{ projectId: string } & SyncPullResult>;
+    unavailable: Array<{ projectId: string; because: string }>;
+    serverTime: string;
+  } {
+    const answered: Array<{ projectId: string } & SyncPullResult> = [];
+    const unavailable: Array<{ projectId: string; because: string }> = [];
+
+    for (const wanted of projects) {
+      const project = this.#ledger.get({ refType: 'Project', refId: wanted.projectId });
+      // Not "exists but not yours": that answer is itself information, and the
+      // same sentence covers a project that was never this tenant's and one the
+      // device has just been taken off.
+      if (!project || project.tenantId !== auth.tenantId) {
+        unavailable.push({
+          projectId: wanted.projectId,
+          because: 'No such project on this account. Purge anything held for it locally.',
+        });
+        continue;
+      }
+
+      try {
+        answered.push({ projectId: wanted.projectId, ...this.pull(auth, wanted.projectId, deviceId, wanted.cursor, limit) });
+      } catch (error) {
+        // One project's stale cursor must not cost the device the other two.
+        // The refusal travels with the project it belongs to.
+        unavailable.push({ projectId: wanted.projectId, because: (error as Error).message });
+      }
+    }
+
+    return { projects: answered, unavailable, serverTime: new Date().toISOString() };
   }
 
   /**

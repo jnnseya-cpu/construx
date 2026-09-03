@@ -7131,9 +7131,56 @@ unbounded array can be bounded on any route rather than only where a handler
 remembered to check.
 
 Nine tests, three mutants killed: removing the version guard, removing
-`maxItems`, and ignoring the batch key each fail. Still open against
-specification A4: resumable attachment upload, and the `POST /sync/pull` shape
-carrying per-project cursors for a device holding several projects.
+`maxItems`, and ignoring the batch key each fail. That left two items open
+against specification A4 — resumable attachment upload, and the pull shape —
+and both are closed in the two sections that follow.
+
+---
+
+### The pull shape, and the disclosure found underneath it
+
+Specification A4 asks for `POST /sync/pull`: a device that holds several
+projects gets its deltas in one round trip, each project from its own cursor.
+The route exists now, `readOnly: true` so the gateway answers 200 rather than
+201, capped at 50 projects because a phone holds the jobs a person is on and not
+a catalogue. `pullMany()` composes the per-project `pull()` rather than
+reimplementing it, and a project the device can no longer reach comes back in an
+`unavailable` array with a reason, so the app can purge it instead of retrying a
+cursor forever. A POST because cursors belong in a body — one round trip on a
+bad link, and cursors kept out of access logs and URL length limits.
+
+**Reading `pull()` to compose it is what mattered.** It filtered on tenancy and
+nothing else. Every event on a project came back with its full patch, whatever
+the device holder was allowed to read — while the audit feed, looking at the
+same ledger, classified every event and withheld the content of anything the
+actor had no capability for. Two readers of one ledger, one of them
+authorising and one of them not.
+
+The subcontractor seat is sold on that isolation. Specification F1 puts it
+plainly: it is "enforced in queries and sync scoping, not in the UI". A £25
+seat that syncs the whole project ledger to a phone is not a limited seat; it is
+the full record with a smaller screen, and nothing in the app would have shown
+it.
+
+`backend/src/goldenthread/visibility.ts` is now the one place an event's
+content is authorised. `visibleTo()` for a single event, `visiblePage()` for a
+list, `VisibleEvent` for the shape that comes back — metadata always, patch only
+where `evaluateAccess` allows the read, `contentWithheld: true` where it does
+not. An entity type the classifier does not recognise denies, so a new record
+type is invisible until somebody classifies it rather than public until somebody
+notices. The audit feed's own comment had already said why this belongs in one
+function — "a second path would be a second chance to get that wrong" — so the
+feed now calls it instead of carrying its own copy, and the sync pull calls the
+same one.
+
+The cursor advances over withheld events. It has to: a device that never
+acknowledges what it cannot see would re-request the same page forever.
+`withheldCount` on the result says how many, which is the same honesty the audit
+drill already offered — a page with three of eight withheld is a different
+answer from a page with five.
+
+Eight tests in `syncvisibility.test.ts`. The mutant that matters: make
+`visiblePage` a passthrough and the supplier-isolation test fails.
 
 ---
 
