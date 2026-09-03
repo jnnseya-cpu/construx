@@ -7718,6 +7718,48 @@ was right about that once, and the fix is in the environment, not here.
 
 ---
 
+### The operator's business, without the demonstration in it
+
+Asked for: remove the dummy data from the admin without deleting the demo
+account. Looked at as the operator: lifetime revenue £5.0K, run-rate £50K,
+"more than half of all revenue comes from one account", a CRITICAL "no
+administrator — nobody can run this tenancy" on the Command Center, Predictive
+Intel and the Onboarding Queue, and a $1,200 renewal to have a conversation
+about. None of it was a customer.
+
+The £5.0K was the demonstration's seeded opening credit. It is written through
+the payment path on purpose — the demonstration should take the route a real
+payment takes — and so it is a `PaymentReceipt`, and every revenue figure
+summed it. The tenancy nobody could run was the platform's own house tenancy:
+an ENTERPRISE subscription that holds the operator and no customer identities,
+which every screen then flagged and forecast a renewal for.
+
+**One rule.** `Platform.customerTenants()` is every tenancy that is neither the
+platform's own nor a demonstration, and a demonstration is decided from the
+identities in it — the `demonstration` mark the seed writes into `USER_CREATED`,
+that survives a replay and that no route can set or clear. There is no second
+flag on the tenancy to drift from it. The estate overview, the tenancy count,
+the storage commitment, the burn, the forecast, the estate reports, the
+payment record and the blueprint's figures read customers. `customerReceipts()`
+is the revenue.
+
+**The demonstration is not deleted and not hidden.** It is on the Tenants &
+Users register with a `demonstration` badge, because an operator credits it and
+inspects it from that row, and its own payment record still answers when asked
+by tenancy. What changed is that its credit, seats and renewal are counted in
+none of the figures around it. The house tenancy is dropped from the register
+altogether: it is administered from Company Profile and was never a customer.
+
+`estatecustomers.test.ts` holds it from both sides: with only the demonstration
+seeded the overview counts no revenue and no tenancy, the register marks the
+demonstration and omits the platform, the forecast names neither; and the
+moment a real tenancy is created and pays, it appears in every one of those
+figures — including the "nobody can run it" signal, because that one is true of
+a customer with no administrator and the rule excludes what is not a customer
+rather than softening what is.
+
+---
+
 ## What is partial
 
 Implemented in a form that works, with a stated part missing. The missing part is

@@ -206,7 +206,7 @@ import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode,
 import { authorise, AUTHZ_OPTIONS, currentPhase, registerEvidence, write } from '../engines/context.ts';
 import { ulid } from '../core/ids.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
-import type { Platform } from '../platform.ts';
+import { PLATFORM_TENANT_ID, type Platform } from '../platform.ts';
 import { parseVerification, VERIFICATION_SCHEME, type ExportAudience, type ExportFormat } from '../export/exporter.ts';
 import { posture as envelopePosture, verifyTag } from '../evidence/envelope.ts';
 import { transportPosture } from '../ops/transport.ts';
@@ -1568,13 +1568,20 @@ export const ROUTES: Route[] = [
       }
       // Tenancy, commercial terms and credit — and nothing about what any of
       // these tenants is building. That is the whole point of the layer.
+      //
+      // Every tenancy but the platform's own, which is not a customer and is
+      // administered from the Company Profile screen — listed here it read as a
+      // customer with nobody in it, and was flagged as one. A demonstration is
+      // listed, because an operator credits and inspects it, and is marked so it
+      // is never mistaken for a paying account.
       return {
-        tenants: platform.tenants().map((tenant) => {
+        tenants: platform.tenants().filter((tenant) => tenant.id !== PLATFORM_TENANT_ID).map((tenant) => {
           const subscription = platform.subscription(tenant.id);
           const definition = TIERS[subscription.tier];
           return {
             id: tenant.id,
             legalName: tenant.legalName,
+            demonstration: platform.isDemonstrationTenant(tenant.id),
             jurisdiction: tenant.jurisdiction,
             currency: tenant.defaultCurrency,
             createdAt: tenant.createdAt,
@@ -1620,7 +1627,7 @@ export const ROUTES: Route[] = [
         // at 500 GB, let alone an Enterprise one at 4 TB. Somebody has to be
         // able to see the line coming.
         estate: (() => {
-          const positions = platform.tenants().map((tenant) => storagePositionFor(platform, tenant.id));
+          const positions = platform.customerTenants().map((tenant) => storagePositionFor(platform, tenant.id));
           const heldBytes = positions.reduce((sum, position) => sum + position.usedBytes, 0);
           const committedBytes = positions.reduce((sum, position) => sum + position.limitBytes, 0);
           return {
@@ -1656,7 +1663,7 @@ export const ROUTES: Route[] = [
       // content of the work that produced the charge.
       const windowDays = ctx.query.get('windowDays') ? Number(ctx.query.get('windowDays')) : undefined;
       return estateBurn(
-        platform.tenants().map((tenant) => {
+        platform.customerTenants().map((tenant) => {
           const wallet = platform.wallet(tenant.id);
           return {
             tenantId: tenant.id,
@@ -1681,8 +1688,10 @@ export const ROUTES: Route[] = [
       // Commercial position only, on the same boundary the rest of the operator
       // layer keeps: how many tenancies, how many identities, how much money.
       // Nothing here names a project, a package or a document.
+      // Customers only. The house tenancy and the demonstration are not the
+      // business, and counted here they were most of it.
       return estateOverview({
-        tenancies: platform.tenants().map((tenant) => {
+        tenancies: platform.customerTenants().map((tenant) => {
           const subscription = platform.subscription(tenant.id);
           return {
             tenantId: tenant.id,
@@ -1697,8 +1706,10 @@ export const ROUTES: Route[] = [
             })),
           };
         }),
-        receipts: platform.paymentReceipts(),
-        awaitingPayment: platform.topUpIntents().filter((intent) => intent.status === 'AWAITING_PAYMENT'),
+        receipts: platform.customerReceipts(),
+        awaitingPayment: platform
+          .topUpIntents()
+          .filter((intent) => intent.status === 'AWAITING_PAYMENT' && platform.isCustomerTenant(intent.tenantId)),
         operators: platform.operators().length,
       });
     },
@@ -17636,9 +17647,14 @@ export const ROUTES: Route[] = [
         throw new ForbiddenError('Only the platform operator may see the payment record', 'PLATFORM_ADMIN_REQUIRED');
       }
       const tenantId = ctx.query.get('tenantId') ?? undefined;
+      // Asked about one tenancy, that tenancy — including a demonstration,
+      // which an operator credits from its own row. Asked about the estate,
+      // customers: the demonstration's seeded opening credit is not a receipt
+      // the business took, and it was the only line on this screen.
+      const counts = (candidate: string): boolean => (tenantId ? candidate === tenantId : platform.isCustomerTenant(candidate));
       return {
-        awaitingPayment: platform.topUpIntents(tenantId).filter((i) => i.status === 'AWAITING_PAYMENT'),
-        receipts: platform.paymentReceipts(tenantId),
+        awaitingPayment: platform.topUpIntents(tenantId).filter((i) => i.status === 'AWAITING_PAYMENT' && counts(i.tenantId)),
+        receipts: platform.paymentReceipts(tenantId).filter((receipt) => counts(receipt.tenantId)),
         // How the card route is actually behaving, because a webhook secret can
         // be present and wrong — and then customers pay, every delivery is
         // refused, and nothing is credited. Rejections climbing while

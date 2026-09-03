@@ -113,7 +113,7 @@ export function blueprintPosition(platform: Platform, routeCount: number): Bluep
     eventTypesEverWritten: new Set(platform.ledger.events().map((event) => event.eventType)).size,
     entityTypes: Object.keys(ENTITY_ACCESS).length,
     agents: AGENTS.length,
-    tenancies: platform.tenants().length,
+    tenancies: platform.customerTenants().length,
     eventsWritten: platform.ledger.events().length,
   };
 

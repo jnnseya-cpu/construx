@@ -101,7 +101,9 @@ function operatorOnly(actor: AuthContext): void {
 }
 
 function estateReport(platform: Platform): { sections: ReportSection[]; excludes: string[] } {
-  const tenants = platform.tenants();
+  // Customers only — the same rule as the estate overview route, for the same
+  // reason: the house tenancy and the demonstration are not the business.
+  const tenants = platform.customerTenants();
   const overview = estateOverview({
     tenancies: tenants.map((tenant) => {
       const subscription = platform.subscription(tenant.id);
@@ -115,8 +117,10 @@ function estateReport(platform: Platform): { sections: ReportSection[]; excludes
         identities: platform.users(tenant.id).map((user) => ({ status: user.status, administrator: user.roles.includes('ENTERPRISE_ADMIN') })),
       };
     }),
-    receipts: platform.paymentReceipts(),
-    awaitingPayment: platform.topUpIntents().filter((intent) => intent.status === 'AWAITING_PAYMENT'),
+    receipts: platform.customerReceipts(),
+    awaitingPayment: platform
+      .topUpIntents()
+      .filter((intent) => intent.status === 'AWAITING_PAYMENT' && platform.isCustomerTenant(intent.tenantId)),
     operators: platform.operators().length,
   });
 
@@ -218,7 +222,7 @@ function estateReport(platform: Platform): { sections: ReportSection[]; excludes
 
 function economicsReport(platform: Platform): { sections: ReportSection[]; excludes: string[] } {
   const burn = estateBurn(
-    platform.tenants().map((tenant) => {
+    platform.customerTenants().map((tenant) => {
       const wallet = platform.wallet(tenant.id);
       return { tenantId: tenant.id, legalName: tenant.legalName, availableMinor: wallet.availableMinor(), entries: wallet.entries() };
     }),

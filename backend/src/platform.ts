@@ -1435,6 +1435,50 @@ export class Platform {
     return [...this.#tenants.values()];
   }
 
+  /**
+   * Whether a tenancy is a demonstration — the seeded programme or the clean
+   * workspace — rather than a customer.
+   *
+   * Decided from the identities in it: the seed marks every account it creates
+   * `demonstration`, that mark is written into the record and survives a
+   * replay, and no route can set or clear it. A tenancy holding one such
+   * account was built by the seed, and a tenancy holding none was not. There is
+   * no second flag on the tenancy to drift from this one.
+   */
+  isDemonstrationTenant(tenantId: string): boolean {
+    return this.users(tenantId).some((user) => user.demonstration === true);
+  }
+
+  /**
+   * Whether a tenancy is a customer: somebody's real organisation, paying or
+   * trialling, and not the platform's own house tenancy or a demonstration.
+   */
+  isCustomerTenant(tenantId: string): boolean {
+    return tenantId !== PLATFORM_TENANT_ID && !this.isDemonstrationTenant(tenantId);
+  }
+
+  /**
+   * The tenancies the business is made of.
+   *
+   * The operator console computed revenue, run-rate, concentration, renewal
+   * exposure and "who cannot run their tenancy" over `tenants()`, which holds
+   * two things that are not customers: the platform's own tenancy — an
+   * ENTERPRISE subscription with nobody in it, which every screen then flagged
+   * CRITICAL for having no administrator — and the demonstration, whose seeded
+   * opening credit was the deployment's entire lifetime revenue and 100% of its
+   * concentration. Neither is money the business has taken or a customer it
+   * could lose. Every figure about the business reads this instead; the
+   * administrative register still lists a demonstration, marked as one.
+   */
+  customerTenants(): Tenant[] {
+    return this.tenants().filter((tenant) => this.isCustomerTenant(tenant.id));
+  }
+
+  /** Every receipt from a customer. Demonstration credit is not revenue. */
+  customerReceipts(): PaymentReceipt[] {
+    return this.paymentReceipts().filter((receipt) => this.isCustomerTenant(receipt.tenantId));
+  }
+
   user(userId: string): PlatformUser {
     const user = this.#users.get(userId);
     if (!user) throw new NotFoundError(`User ${userId} not found`);

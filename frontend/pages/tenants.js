@@ -108,7 +108,13 @@ export async function tenants(root) {
           headers: ['Tenant', 'Tier', 'Status', 'People', 'Seats', 'Storage', 'Lifetime revenue', 'ACU available', 'Renews', ''],
           align: ['', '', '', 'num', 'num', 'num', 'num', 'num', '', ''],
           rows: rows.map((tenant) => [
-            html`${tenant.legalName}<div class="metric-sub">${tenant.jurisdiction} · ${
+            html`${tenant.legalName}
+              ${
+                // Not a customer. Listed because an operator credits and
+                // inspects it; marked because its credit, seats and renewal are
+                // counted in none of the figures on the screens around this one.
+                tenant.demonstration ? badge('demonstration', 'info') : ''
+              }<div class="metric-sub">${tenant.jurisdiction} · ${
               tenant.isolatedTenancy ? 'dedicated tenancy' : 'shared tenancy'
             }${tenant.referralCode ? ` · referred by ${tenant.referralCode}` : ''}</div>
               ${

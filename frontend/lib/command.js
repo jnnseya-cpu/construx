@@ -98,6 +98,16 @@ function control(field) {
     </select>`;
   }
 
+  if (field.type === 'checkbox') {
+    // A yes or no. Never `required`: an unticked box is an answer, and the
+    // browser's required-checkbox rule would refuse "no" as an omission. It
+    // used to fall through to the generic input below, which rendered a
+    // checkbox and then submitted its `value` — the string "on" — to a schema
+    // that asked for a boolean. The operator saw "must be of type boolean,
+    // received string" and could not grant a package free of charge.
+    return `<input id="${id}" name="${esc(field.name)}" type="checkbox"${field.value ? ' checked' : ''}>`;
+  }
+
   if (field.type === 'textarea') {
     return `<textarea id="${id}" name="${esc(field.name)}" rows="${field.rows ?? 3}" ${required}
       placeholder="${esc(field.placeholder ?? '')}">${esc(field.value ?? '')}</textarea>`;
@@ -176,6 +186,13 @@ async function collect(host, fields, files = []) {
         throw new ApiError({ title: 'FIELD_REQUIRED', detail: `${field.label} needs at least one choice` }, 400);
       }
       body[field.name] = chosen;
+      continue;
+    }
+
+    if (field.type === 'checkbox') {
+      // The state of the box, as the boolean the schema asks for. Always sent:
+      // "no" is an answer, not a field left blank.
+      body[field.name] = el.checked;
       continue;
     }
 

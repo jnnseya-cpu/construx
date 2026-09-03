@@ -68,7 +68,10 @@ function daysBetween(from: Date, to: Date): number {
 }
 
 export function forecastPosition(platform: Platform, now = new Date()): ForecastPosition {
-  const tenants = platform.tenants();
+  // Customers only. The platform's own tenancy produced a CRITICAL "no
+  // administrator" signal and a renewal on every deployment, and the
+  // demonstration a renewal nobody will ever have a conversation about.
+  const tenants = platform.customerTenants();
   const signals: Signal[] = [];
   let renewalExposureMinor = 0;
 
