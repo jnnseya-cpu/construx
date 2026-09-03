@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command } from '../lib/command.js';
-import { badge, html, money, notice, raw, render, table, toast } from '../lib/ui.js';
+import { badge, html, money, notice, raw, reference, render, table, toast } from '../lib/ui.js';
 import { barChart, gauge, kpiCard } from '../lib/charts.js';
 
 /**
@@ -238,7 +238,7 @@ function revenueView(revenue) {
         headers: ['Raised', 'Against', 'Amount', 'Rail', 'Fee', 'Net', 'Status'],
         rows: revenue.settlements.map((record) => [
           record.raisedAt.slice(0, 10),
-          `${record.againstRef.refType} ${String(record.againstRef.refId).slice(-8)}`,
+          `${record.againstRef.refType} ${reference(record.againstRef.refId)}`,
           money(record.amountMinor, record.currency),
           badge(
             record.rail === 'FACILITATED' ? 'Carried' : 'Recorded',

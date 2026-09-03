@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { badge, html, humanise, positionReport, raw, render, resolveHtml, table, time, toast } from '../lib/ui.js';
+import { badge, ellipsis, html, humanise, positionReport, raw, reference, render, resolveHtml, table, time, toast } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -54,7 +54,7 @@ export async function autopilot(root) {
             value: proposal.id,
             // The finding's own words, not the id. A chooser listing eleven
             // ULIDs is a chooser nobody can use.
-            label: `${proposal.agent} \u00b7 ${String(proposal.finding?.summary ?? proposal.id).slice(0, 70)}`,
+            label: `${proposal.agent} \u00b7 ${ellipsis(proposal.finding?.summary ?? proposal.id, 70)}`,
           })),
         },
       ],
@@ -354,7 +354,7 @@ function dispositionPanel(ai) {
                 ${badge(humanise(item.taskType ?? 'unknown task'), 'ai')}
                 ${item.engine ? badge(humanise(item.engine), 'neutral') : ''}
                 <div class="metric-sub mono" style="margin-left:auto;font-size:11px">
-                  ${String(item.executionId).slice(-8)}
+                  ${reference(item.executionId)}
                 </div>
               </div>
 
@@ -410,7 +410,7 @@ function proposalCard(proposal) {
             ${finding.evidence.map(
               (e) => html`<div class="row">
                 <span class="lbl"><b>${humanise(e.refType)}</b> ${e.note}</span>
-                <span class="val mono" style="font-size:11px;opacity:.6">${String(e.refId).slice(-8)}</span>
+                <span class="val mono" style="font-size:11px;opacity:.6">${reference(e.refId)}</span>
               </div>`,
             )}
           </div>`

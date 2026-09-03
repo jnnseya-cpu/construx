@@ -1,5 +1,5 @@
 import { api, hashFile } from '../lib/api.js';
-import { badge, html, notice, positionReport, raw, render, shortHash, table, time, toast } from '../lib/ui.js';
+import { badge, html, notice, positionReport, raw, reference, render, shortHash, table, time, toast } from '../lib/ui.js';
 import { donutChart, gauge, kpiCard } from '../lib/charts.js';
 import { can, state } from '../app.js';
 
@@ -141,7 +141,7 @@ export async function audit(root) {
               .map((e) => [
                 time(e.timestamp),
                 e.eventType,
-                `${e.entity.refType} ${e.entity.refId.slice(-6)}`,
+                `${e.entity.refType} ${reference(e.entity.refId)}`,
                 badge(e.actor.refType === 'AI' ? `AI · ${e.ai?.provider ?? ''}` : e.actor.refType, e.actor.refType === 'AI' ? 'ai' : 'neutral'),
                 (e.evidenceRefs ?? []).length || '—',
                 shortHash(e.chainHash),
@@ -213,7 +213,7 @@ export async function audit(root) {
             <select id="t-entity" name="entity">
               ${[...new Map(events.slice(-120).reverse().map((e) => [`${e.entity.refType}/${e.entity.refId}`, e])).entries()]
                 .slice(0, 60)
-                .map(([key, e]) => html`<option value="${key}">${e.entity.refType} · ${e.entity.refId.slice(-6)} · ${e.eventType}</option>`)}
+                .map(([key, e]) => html`<option value="${key}">${e.entity.refType} · ${reference(e.entity.refId)} · ${e.eventType}</option>`)}
             </select>
           </div>
           <div class="field">
@@ -364,8 +364,8 @@ export async function audit(root) {
       };
       const nameOf = (ref) => {
         const node = byKey.get(`${ref.refType}:${ref.refId}`);
-        if (!node) return `${ref.refType} ${ref.refId.slice(-6)}`;
-        return node.readable ? `${ref.refType} · ${node.label ?? ref.refId.slice(-6)}` : `${ref.refType} · withheld`;
+        if (!node) return `${ref.refType} ${reference(ref.refId)}`;
+        return node.readable ? `${ref.refType} · ${node.label ?? reference(ref.refId)}` : `${ref.refType} · withheld`;
       };
 
       render(
@@ -523,7 +523,7 @@ function graphPanel(graph) {
 
       ${table({
         headers: ['Record', 'Connections'],
-        rows: graph.hubs.map((hub) => [hub.label ?? `${hub.ref.refType} ${String(hub.ref.refId).slice(-8)}`, String(hub.edges)]),
+        rows: graph.hubs.map((hub) => [hub.label ?? `${hub.ref.refType} ${reference(hub.ref.refId)}`, String(hub.edges)]),
         empty: 'Nothing in this project is connected to anything else yet.',
         emptyDetail: 'Connections appear as evidence is declared and records begin to name each other.',
       })}
@@ -560,7 +560,7 @@ function feedPanel(changes) {
         rows: changes.entries.map((entry) => [
           time(entry.occurredAt),
           entry.eventType,
-          `${entry.entity.refType} ${String(entry.entity.refId).slice(-8)}`,
+          `${entry.entity.refType} ${reference(entry.entity.refId)}`,
           shortHash(entry.idempotencyKey),
         ]),
         empty: 'Nothing has changed in this tenancy yet.',

@@ -1,7 +1,7 @@
 import { api, entityBundle, hashFile } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { OBSERVATION_TYPE, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, today } from '../lib/enums.js';
-import { badge, date, days, drillable, html, humanise, pct, raw, render, statusTone, table, time, toast, track } from '../lib/ui.js';
+import { badge, date, days, drillable, html, humanise, pct, raw, reference, render, statusTone, table, time, toast, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
 import * as outbox from '../lib/outbox.js';
 import { recordVoice, recordingDescription, voiceSupport } from '../lib/voice.js';
@@ -594,7 +594,7 @@ function conflictPanel(position) {
             <div style="display:flex;gap:11px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
               ${badge(humanise(entry.reason), lost(entry) ? 'bad' : 'warn')}
               ${badge(humanise(entry.autoResolution), 'neutral')}
-              ${badge(`${humanise(entry.subject.refType)} ${String(entry.subject.refId).slice(-6)}`, '')}
+              ${badge(`${humanise(entry.subject.refType)} ${reference(entry.subject.refId)}`, '')}
               <div class="metric-sub" style="margin-left:auto">
                 ${entry.deviceId} · captured ${time(entry.deviceTimestamp)}
               </div>

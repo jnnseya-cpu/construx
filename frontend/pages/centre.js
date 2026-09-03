@@ -99,22 +99,20 @@ export async function centre(root) {
         : ''}
 
       <section class="grid cols-4">
-        ${raw(
-          REGIONS.map((region) => {
-            const inRegion = cards.filter((entry) => entry.region === region.id);
-            return html`
-              <div class="col centre-region">
-                <h3>${region.label}</h3>
-                <p class="muted small">${region.blurb}</p>
-                ${inRegion.length === 0
-                  ? html`<p class="muted small">
-                      Nothing in this region from the functions you can reach.
-                    </p>`
-                  : raw(inRegion.map((entry) => card(entry)).join(''))}
-              </div>
-            `;
-          }).join(''),
-        )}
+        ${REGIONS.map((region) => {
+          const inRegion = cards.filter((entry) => entry.region === region.id);
+          return html`
+            <div class="col centre-region">
+              <h3>${region.label}</h3>
+              <p class="muted small">${region.blurb}</p>
+              ${inRegion.length === 0
+                ? html`<p class="muted small">
+                    Nothing in this region from the functions you can reach.
+                  </p>`
+                : inRegion.map((entry) => card(entry))}
+            </div>
+          `;
+        })}
       </section>
 
       <section class="card">
@@ -124,20 +122,16 @@ export async function centre(root) {
           you are entitled to see anywhere else.
         </p>
         <ul class="list">
-          ${raw(
-            functions
-              .map(
-                (entry) => html`
-                  <li>
-                    ${raw(badge(entry.available ? 'reaches you' : 'outside your authority', entry.available ? 'good' : 'muted'))}
-                    <strong>${entry.label}</strong> — ${entry.what}
-                    ${entry.available
-                      ? html`<span class="muted small">${entry.cards.length} card${entry.cards.length === 1 ? '' : 's'}</span>`
-                      : html`<p class="muted small">${entry.because ?? 'No reason was given.'}</p>`}
-                  </li>
-                `,
-              )
-              .join(''),
+          ${functions.map(
+            (entry) => html`
+              <li>
+                ${raw(badge(entry.available ? 'reaches you' : 'outside your authority', entry.available ? 'good' : 'muted'))}
+                <strong>${entry.label}</strong> — ${entry.what}
+                ${entry.available
+                  ? html`<span class="muted small">${entry.cards.length} card${entry.cards.length === 1 ? '' : 's'}</span>`
+                  : html`<p class="muted small">${entry.because ?? 'No reason was given.'}</p>`}
+              </li>
+            `,
           )}
         </ul>
         ${refused.length > 0

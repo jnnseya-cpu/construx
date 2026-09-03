@@ -1,7 +1,7 @@
 import { api, entities, entityBundle } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { DISCIPLINE, today } from '../lib/enums.js';
-import { badge, date, drillable, html, humanise, money, pct, positionReport, raw, render, resolveHtml, statusTone, table, time, toast } from '../lib/ui.js';
+import { badge, date, drillable, html, humanise, money, pct, positionReport, raw, reference, render, resolveHtml, statusTone, table, time, toast } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -352,7 +352,7 @@ export async function design(root) {
                   align: ['', '', 'num', '', 'num', 'num', 'num', ''],
                   rows: reviews.cycles.map((cycle) => [
                     cycle.reference,
-                    `${cycle.deliverable.refType} ${String(cycle.deliverable.refId).slice(-8)}`,
+                    `${cycle.deliverable.refType} ${reference(cycle.deliverable.refId)}`,
                     cycle.revision,
                     cycle.decision
                       ? badge(humanise(cycle.decision), cycle.decision.startsWith('ACCEPTED') ? 'good' : 'bad')

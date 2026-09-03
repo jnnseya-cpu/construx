@@ -29,7 +29,36 @@ const RAW = Symbol('raw');
  */
 export function raw(value) {
   if (value !== null && typeof value === 'object' && RAW in value) return value;
-  return { [RAW]: String(value ?? '') };
+  return marked(String(value ?? ''));
+}
+
+/**
+ * A marked fragment that survives being stringified.
+ *
+ * The comment above describes `raw(badge(...))`. This is the other half of the
+ * same defect, and it reached the command centre: `array.map((x) => html\`…\`)`
+ * is an array of *marked objects*, so `.join('')` calls `String()` on each one
+ * and the screen showed `[object Object][object Object][object Object]
+ * [object Object]` where the four regions belonged, and seven more below.
+ *
+ * That was not a cosmetic fault. The headline above the wreckage read "1 thing
+ * needs deciding today — 2 gaps will stop the next stage gate", so there was
+ * real, urgent content behind it that nobody could read.
+ *
+ * A source-scan test was tried first and could not do the job: the offending
+ * line was `inRegion.map((entry) => card(entry)).join('')`, whose callback
+ * contains no template literal at all — `card` is a function that returns one.
+ * Nothing syntactic distinguishes it from a correct join over strings, so the
+ * scan flagged 29 files that were fine and missed the one that was broken.
+ *
+ * So the fix belongs here, where the type is known. `toString` returns the
+ * markup, which makes joining, plain template interpolation and `String()` all
+ * produce the fragment instead of the word "object". `resolve` still reads the
+ * symbol first, so nothing about escaping changes: text is escaped, markup is
+ * not, and neither path consults `toString`.
+ */
+function marked(markup) {
+  return { [RAW]: markup, toString: () => markup };
 }
 
 function resolve(value) {
@@ -148,6 +177,51 @@ export function initials(name) {
 export function shortHash(hash) {
   const value = String(hash ?? '');
   return value.startsWith('sha256:') ? `${value.slice(7, 19)}…` : value.slice(0, 12);
+}
+
+/**
+ * A record reference, shortened only where shortening keeps its meaning.
+ *
+ * A ULID has no readable part, so its last eight characters are the handle
+ * people quote to each other and the whole 26 would crowd the line. A reference
+ * that is a *sentence* has no such tail, and slicing one produced this on the
+ * autopilot screen, under a finding about unsafe configuration:
+ *
+ *     Watch rule    Firing since 2026-09-02T22:08:44.368Z    guration
+ *     Configuration AI_PROVIDER_CLEARANCE is unset …          oduction
+ *
+ * "guration" and "oduction" are the tails of "…configuration" and
+ * "…production". On a screen whose entire claim is that every figure traces
+ * back to a record, a reference that renders as a word fragment reads as
+ * corruption — and it is the reference, the one thing a reader would quote when
+ * asking somebody about the finding.
+ *
+ * So: opaque handles get shortened, prose gets shown. Whitespace is the test,
+ * because no identifier this platform mints contains a space.
+ */
+export function reference(value) {
+  const text = String(value ?? '').trim();
+  if (text === '') return '';
+  const opaque = !/\s/.test(text) && text.length > 12;
+  return opaque ? text.slice(-8) : ellipsis(text, 48);
+}
+
+/**
+ * Cut at a word boundary and say that it was cut.
+ *
+ * A hard `slice` mid-word produced "…no lookahead has ever been publishe" in the
+ * decision-owner picker: it reads as a truncated database column rather than as
+ * a deliberately shortened label, and the missing character is the one that
+ * tells the reader something was left out.
+ */
+export function ellipsis(value, max) {
+  const text = String(value ?? '');
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const boundary = cut.lastIndexOf(' ');
+  // Only respect the boundary if it leaves something worth reading; a single
+  // very long word should still be cut rather than returned whole.
+  return `${(boundary > max * 0.6 ? cut.slice(0, boundary) : cut).trimEnd()}…`;
 }
 
 /** Tokens whose readable form is not derivable — mostly acronyms in the middle. */
