@@ -183,7 +183,7 @@ import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, revo
 import { lockedSubjects } from '../identity/lockout.ts';
 import { renderAndCharge, quoteRender, type RenderableFormat } from '../export/render.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
-import { FIELD_FORBIDDEN_EVENTS } from '../field/sync.ts';
+import { FIELD_FORBIDDEN_EVENTS, MAX_SYNC_BATCH } from '../field/sync.ts';
 import { estateBurn } from '../billing/burn.ts';
 import { estateOverview } from '../billing/overview.ts';
 import { isPlatformGovernanceEvent } from '../goldenthread/eventTypes.ts';
@@ -15403,7 +15403,14 @@ export const ROUTES: Route[] = [
     schema: {
       type: 'object',
       required: ['operations'],
-      properties: { operations: { type: 'array', minItems: 1, items: { type: 'object' } } },
+      properties: {
+        // Capped at the schema as well as in the engine. The engine's refusal is
+        // the one that counts — it is what a non-HTTP caller hits — but a batch
+        // rejected here never reaches the ordering pass, and a device that sent
+        // 5,000 operations gets a field error naming the limit rather than a
+        // domain error after the whole array has been read.
+        operations: { type: 'array', minItems: 1, maxItems: MAX_SYNC_BATCH, items: { type: 'object' } },
+      },
       additionalProperties: false,
     },
     handler: (platform, ctx) =>
@@ -15412,6 +15419,10 @@ export const ROUTES: Route[] = [
         ctx.params.projectId as string,
         body<{ operations: Parameters<Platform['sync']['push']>[2] }>(ctx).operations,
         ctx.correlationId,
+        // The gateway already reads `Idempotency-Key` for every request, so the
+        // batch key is the header the rest of the platform uses rather than a
+        // second convention invented for the field.
+        ctx.idempotencyKey,
       ),
   },
   {

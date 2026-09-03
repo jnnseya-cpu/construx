@@ -7038,6 +7038,60 @@ variable nobody can discover is worse than one somebody sets wrongly.
 
 ---
 
+### The batch contract the native field apps are built against
+
+`CONSTRUX Field` — the native Android and iOS apps — pushes work in batches from
+a device that has been offline. `backend/src/field/sync.ts` already carried the
+hard parts: client-minted operation ids so a retry changes nothing, monotonic
+per-device cursors, deterministic conflict resolution with a merge for disjoint
+edits, and a `SyncConflict` record so a losing change is never silently
+discarded. Three things the app specification requires were missing, and they
+share one rule — **a batch the server cannot read is refused whole**, because
+the device still holds every operation and refusing costs nothing where guessing
+costs a site record.
+
+**A push is bounded.** `MAX_SYNC_BATCH` is 500. A batch is read into memory,
+ordered, and applied one at a time inside a request, so an unbounded batch was
+an unbounded allocation on a shared process. A device with more to say makes
+more than one push, which the cursor and per-operation idempotency already make
+safe.
+
+**A device declares the shape it speaks.** `schemaVersion` on the operation,
+absent meaning 1. A fleet is never on one version — stores roll out in stages,
+people decline updates, and a phone out of a drawer carries a fortnight of work
+in a shape the server may since have changed. Without a declared version the
+server reads whatever arrives as though it were current, and an old payload is
+*misread* rather than refused, which is silent corruption of a site record.
+Optional because the shipped PWA sends none, and breaking the client already in
+the field to fix a mixed-fleet problem would be a direct way to prove the point.
+Two bounds rather than one: a device newer than the server is told to hold, a
+device below the minimum is told to update, and the sentences differ because the
+remedies do.
+
+**The same batch twice is the same answer twice.** Operations were already
+individually idempotent, so a replayed batch was always safe; what it was not
+was cheap or honest. Five hundred operations were re-read to conclude that all
+five hundred were duplicates, and the device was handed `duplicates: 500` for a
+push it had every reason to think was its first. Keyed on `Idempotency-Key` —
+the header the gateway already reads for every request, rather than a second
+convention invented for the field.
+
+**A schema constraint that did nothing.** Writing the test for the batch cap
+turned up something worth more than the cap: `core/validate.ts` implemented
+`minItems` and not `maxItems`, and its own header comment listed the supported
+subset without it. A schema saying `maxItems: 500` validated nothing at all and
+looked exactly like one that did — the test expected a 422 from the schema and
+got a 413 from the engine behind it. `maxItems` is implemented now, so an
+unbounded array can be bounded on any route rather than only where a handler
+remembered to check.
+
+Nine tests, three mutants killed: removing the version guard, removing
+`maxItems`, and ignoring the batch key each fail. Still open against
+specification A4: resumable attachment upload, and the `POST /sync/pull` shape
+carrying per-project cursors for a device holding several projects.
+
+---
+
 ### The project on site now has a site record
 
 The demonstration estate carries four projects. Rossendale Trunk Main Diversion

@@ -3,7 +3,7 @@ import { ValidationError } from './errors.ts';
 /**
  * Dependency-free JSON Schema validator covering the subset the platform's own
  * schemas use: type, required, enum, properties, additionalProperties, items,
- * minimum/maximum, minLength/maxLength, minItems, pattern, format (date-time),
+ * minimum/maximum, minLength/maxLength, minItems/maxItems, pattern, format (date-time),
  * const, oneOf, $ref to local $defs.
  *
  * Every command body is validated against a schema before it reaches a handler,
@@ -108,6 +108,20 @@ function check(value: unknown, schema: Schema, path: string, root: Schema, failu
   if (Array.isArray(value)) {
     if (typeof schema.minItems === 'number' && value.length < schema.minItems) {
       failures.push({ field: path, message: `must contain at least ${schema.minItems} item(s)` });
+    }
+    // The other half of the pair, and it was missing.
+    //
+    // `minItems` alone is an asymmetry that reads as a complete feature: a
+    // schema saying `maxItems: 500` validated nothing at all and looked exactly
+    // like one that did. Found by writing a test that expected a 422 from the
+    // schema and got a 413 from the engine behind it — the engine's own guard
+    // was the only thing bounding the array.
+    //
+    // An unbounded array on any route is a request that allocates whatever the
+    // caller sends before a handler sees it, so this is worth having beyond the
+    // one route that prompted it.
+    if (typeof schema.maxItems === 'number' && value.length > schema.maxItems) {
+      failures.push({ field: path, message: `must contain at most ${schema.maxItems} item(s)` });
     }
     if (schema.items !== undefined) {
       value.forEach((item, index) => check(item, schema.items as Schema, `${path}[${index}]`, root, failures));

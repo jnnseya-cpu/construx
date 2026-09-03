@@ -56,6 +56,22 @@ export type SyncOperation = {
    * that justifies the backdating.
    */
   source: Extract<EventSource, 'PWA' | 'ANDROID' | 'IOS'>;
+  /**
+   * The operation shape this device speaks. Absent means 1.
+   *
+   * A fleet is never on one version. Stores roll out in stages, people decline
+   * updates for weeks, and a phone that has been in a drawer since March comes
+   * back holding a fortnight of work in a shape the server may since have
+   * changed. Without a declared version the server reads whatever arrives as
+   * though it were current, and an old payload is misread rather than refused —
+   * silent corruption of a site record, which is the worst failure this
+   * platform has.
+   *
+   * Optional because the shipped PWA does not send it, and breaking the client
+   * that is already in the field to fix a mixed-fleet problem would be an
+   * unusually direct way to prove the point.
+   */
+  schemaVersion?: number;
 };
 
 export type SyncConflict = {
@@ -116,6 +132,29 @@ const ROLE_PRIORITY: Record<string, number> = {
 function priorityOf(auth: AuthContext): number {
   return Math.max(0, ...auth.roles.map((role) => ROLE_PRIORITY[role] ?? 0));
 }
+
+/**
+ * The operation shape this server understands, and the oldest it still accepts.
+ *
+ * Two numbers rather than one because they answer different questions. A device
+ * *newer* than the server appears during a staged rollout, when the app updates
+ * before the backend does; a device *older* than the minimum has been in a
+ * drawer long enough that its shape has been retired. Both are refusals, and
+ * they need different sentences — one says wait, the other says update.
+ */
+export const SYNC_SCHEMA_VERSION = 1;
+export const MIN_SYNC_SCHEMA_VERSION = 1;
+
+/**
+ * The most operations one push may carry.
+ *
+ * The spec's number, and it is a real limit rather than a round one: a batch is
+ * read into memory, ordered, and applied one at a time inside a single request,
+ * so an unbounded batch is an unbounded allocation on a shared process. A
+ * device with more than this to say makes more than one push, which the cursor
+ * and the per-operation idempotency already make safe.
+ */
+export const MAX_SYNC_BATCH = 500;
 
 /** A resolution, plus the state to commit where it is not the device's own. */
 type Resolution = SyncConflict & { state?: Record<string, unknown> };
@@ -201,6 +240,18 @@ export class SyncEngine {
   readonly #applied = new Map<string, string>();
   /** Highest cursor issued per device, so cursors never move backwards. */
   readonly #deviceCursors = new Map<string, string>();
+  /**
+   * batch key → the result that batch produced.
+   *
+   * Operations are already individually idempotent, so a replayed batch was
+   * always *safe*; what it was not was cheap or honest. Five hundred operations
+   * were re-read and re-checked to conclude that all five hundred were
+   * duplicates, and the device was handed a result that said `duplicates: 500`
+   * for a push it had every reason to believe was its first. Keyed on the batch
+   * the device names, the same answer comes back — which is what a device
+   * retrying after a dropped connection is asking for.
+   */
+  readonly #batches = new Map<string, SyncPushResult>();
 
   constructor(ledger: GoldenThreadLedger) {
     this.#ledger = ledger;
@@ -217,7 +268,52 @@ export class SyncEngine {
     projectId: string,
     operations: SyncOperation[],
     correlationId: string,
+    batchKey?: string,
   ): SyncPushResult {
+    // --- The batch itself, before anything in it -----------------------------
+    //
+    // Refused whole rather than partially applied. A batch the server cannot
+    // read is not a batch to make a best effort at: the device still holds
+    // every operation, and holding them until it can be understood loses
+    // nothing, where guessing at them loses the record.
+    if (operations.length > MAX_SYNC_BATCH) {
+      throw new DomainError(
+        'SYNC_BATCH_TOO_LARGE',
+        `A push carries at most ${MAX_SYNC_BATCH} operations; this one carried ${operations.length}. ` +
+          'Split it — per-operation idempotency and the cursor make more than one push safe.',
+        413,
+      );
+    }
+
+    const versions = operations.map((operation) => operation.schemaVersion ?? 1);
+    const tooNew = Math.max(...versions, 0);
+    if (tooNew > SYNC_SCHEMA_VERSION) {
+      throw new DomainError(
+        'SYNC_SCHEMA_UNSUPPORTED',
+        `This device speaks operation schema ${tooNew} and the server understands ${SYNC_SCHEMA_VERSION}. ` +
+          'Nothing has been applied. Hold the batch and push again once the platform has been upgraded — ' +
+          'reading a shape it does not know would misfile the record rather than refuse it.',
+        409,
+      );
+    }
+    const tooOld = Math.min(...versions, SYNC_SCHEMA_VERSION);
+    if (tooOld < MIN_SYNC_SCHEMA_VERSION) {
+      throw new DomainError(
+        'SYNC_SCHEMA_RETIRED',
+        `This device speaks operation schema ${tooOld}, which is no longer accepted (the oldest is ` +
+          `${MIN_SYNC_SCHEMA_VERSION}). Nothing has been applied and nothing has been lost. Update the app; ` +
+          'the work it is holding pushes unchanged afterwards.',
+        409,
+      );
+    }
+
+    // A batch the device has already sent gets the answer it got before, rather
+    // than five hundred fresh duplicate reports.
+    if (batchKey !== undefined) {
+      const seen = this.#batches.get(batchKey);
+      if (seen) return seen;
+    }
+
     const syncSessionId = ulid();
     const accepted: string[] = [];
     const duplicates: string[] = [];
@@ -329,7 +425,16 @@ export class SyncEngine {
 
     const cursor = this.#issueCursor(operations[0]?.deviceId ?? 'unknown', projectId);
 
-    return { syncSessionId, accepted, duplicates, conflicts, cursor, serverTime: new Date().toISOString() };
+    const result: SyncPushResult = {
+      syncSessionId,
+      accepted,
+      duplicates,
+      conflicts,
+      cursor,
+      serverTime: new Date().toISOString(),
+    };
+    if (batchKey !== undefined) this.#batches.set(batchKey, result);
+    return result;
   }
 
   /**
