@@ -196,6 +196,23 @@ export type Finding = {
    */
   evidence: Array<{ refType: string; refId: string; note: string }>;
   /**
+   * What the agent looked for and did not find.
+   *
+   * `evidence` holds records, and an absence has none — so a finding about
+   * something that does not exist had nowhere to put its source and borrowed
+   * the nearest record instead. Two did: "no lookahead has ever been published"
+   * and "no approved Construction Phase Plan" both cited the Project, so
+   * Review opened the project's phase history — four phase transitions that say
+   * nothing whatever about lookaheads. Worse than an empty panel, because it
+   * looks like the platform is padding a claim it cannot support.
+   *
+   * An absence is still read from a source: a register that was searched and
+   * came back empty. This says which register, in what terms, and what was
+   * found — `found` is not always zero, because "three drafted, none approved"
+   * is a different and more useful sentence than "none".
+   */
+  absence?: Array<{ refType: string; looked: string; found: number }>;
+  /**
    * How sure the agent is, 0–1. Optional, and its absence means something.
    *
    * An agent whose trigger is pure arithmetic over the record — "this permit

@@ -65,9 +65,12 @@ function changed(event) {
  * @param label what the number was, shown as the panel's subject
  * @param sources `[{refType, refId}]` — the records the figure was computed from
  */
-export async function drill(projectId, label, sources) {
+export async function drill(projectId, label, sources, absence = []) {
   const refs = refsParam(sources);
-  if (!refs) return;
+  // An absence has no records to open, so a drill that had only records to show
+  // used to refuse outright — or worse, open somebody else's history. With the
+  // search stated it has something true to say either way.
+  if (!refs && absence.length === 0) return;
 
   const host = document.createElement('div');
   host.className = 'modal-host';
@@ -93,6 +96,33 @@ export async function drill(projectId, label, sources) {
   });
   document.body.append(host);
 
+  // What was looked for and not found, above the records that do exist. It is
+  // the half of the finding a reader came to check: "no lookahead has ever been
+  // published" is not evidenced by the project's phase history, and showing
+  // that alone reads as padding.
+  const searched =
+    absence.length === 0
+      ? ''
+      : resolveHtml(html`<div class="notice info" style="margin-bottom:12px">
+          ${absence.map(
+            (item) => html`<div>
+              <b>${humanise(item.refType)}</b> — searched ${item.looked}:
+              ${item.found === 0
+                ? 'nothing on this project.'
+                : html`${item.found} record${item.found === 1 ? '' : 's'} exist, none of which qualifies.`}
+            </div>`,
+          )}
+          <div class="metric-sub" style="margin-top:6px">
+            This is the finding. There is no record to open, because the point is that there is none.
+          </div>
+        </div>`);
+
+  if (!refs) {
+    host.querySelector('.body').innerHTML = searched;
+    host.querySelector('header .metric-sub').textContent = 'Read from a register that is empty';
+    return;
+  }
+
   let payload;
   try {
     payload = await api.get(`/v1/projects/${projectId}/audit/events?refs=${encodeURIComponent(refs)}`);
@@ -113,7 +143,7 @@ export async function drill(projectId, label, sources) {
     `${events.length} event${events.length === 1 ? '' : 's'} across ${count} record${count === 1 ? '' : 's'}` +
     (withheld > 0 ? ` · ${withheld} with content withheld from your role` : '');
 
-  host.querySelector('.body').innerHTML = resolveHtml(
+  host.querySelector('.body').innerHTML = searched + resolveHtml(
     events.length === 0
       ? html`<div class="empty">
           <b>No events yet</b>

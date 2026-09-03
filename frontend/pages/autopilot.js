@@ -413,6 +413,14 @@ function proposalCard(proposal) {
                 <span class="val mono" style="font-size:11px;opacity:.6">${reference(e.refId)}</span>
               </div>`,
             )}
+            ${(finding.absence ?? []).map(
+              (a) => html`<div class="row">
+                <span class="lbl"><b>${humanise(a.refType)}</b> searched ${a.looked}</span>
+                <span class="val" style="font-size:11px;opacity:.6">
+                  ${a.found === 0 ? 'none on this project' : `${a.found} exist, none qualifying`}
+                </span>
+              </div>`,
+            )}
           </div>`
         : ''
     }

@@ -183,11 +183,16 @@ function wire(host, { projectId, proposals, onChange }) {
         refType: item.refType,
         refId: item.refId,
       }));
-      if (evidence.length === 0) {
+      // A finding about something that does not exist has a source too — the
+      // register it searched. Without this, Review on "no lookahead has ever
+      // been published" opened the project's phase history, which evidences the
+      // phase and says nothing at all about lookaheads.
+      const absence = proposal.finding?.absence ?? [];
+      if (evidence.length === 0 && absence.length === 0) {
         toast('Nothing to review', 'This finding names no source records, which is itself worth knowing.', 'warn');
         return;
       }
-      await drill(projectId, proposal.finding.summary ?? 'Finding evidence', evidence);
+      await drill(projectId, proposal.finding.summary ?? 'Finding evidence', evidence, absence);
       return;
     }
 

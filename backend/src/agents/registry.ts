@@ -1015,7 +1015,18 @@ const lookaheadAgent: AgentDefinition = {
           summary: 'The project is in construction and no lookahead has ever been published.',
           consequence:
             'Without a weekly promise there is no PPC, no constraint clearing rhythm and no record of why work did not happen — the programme is being reported against, not run.',
-          evidence: [{ refType: 'Project', refId: ctx.projectId, note: `Project is in ${projectPhase}` }],
+          // The Project reference evidences the *phase*, which is half the
+          // finding and is genuinely what its events show. The other half —
+          // that no lookahead exists — has no record to open, and saying so is
+          // the honest form of it.
+          evidence: [{ refType: 'Project', refId: ctx.projectId, note: `phase is ${projectPhase}` }],
+          absence: [
+            {
+              refType: 'LookaheadPlan',
+              looked: 'every weekly work plan ever published on this project',
+              found: 0,
+            },
+          ],
         });
       }
     }
@@ -1217,9 +1228,8 @@ const hseqAgent: AgentDefinition = {
     // No construction work without an approved Construction Phase Plan. This is
     // a CDM duty, not a preference, and the platform already refuses the work —
     // the agent's job is to say so before somebody is standing on site.
-    const plans = list(ctx, 'CDMDocument').filter(
-      (d) => d.state.type === 'CONSTRUCTION_PHASE_PLAN' && d.state.status === 'APPROVED',
-    );
+    const drafted = list(ctx, 'CDMDocument').filter((d) => d.state.type === 'CONSTRUCTION_PHASE_PLAN');
+    const plans = drafted.filter((d) => d.state.status === 'APPROVED');
     const projectPhase = String((phase as Record<string, unknown> | undefined)?.phase ?? '');
     if (plans.length === 0 && ['CONSTRUCTION', 'COMMISSIONING'].includes(projectPhase)) {
       findings.push({
@@ -1227,7 +1237,17 @@ const hseqAgent: AgentDefinition = {
         severity: 'URGENT',
         summary: 'No approved Construction Phase Plan on a project in construction',
         consequence: 'Construction work and site inductions are both refused without one, and the duty sits with the Principal Contractor personally.',
-        evidence: [{ refType: 'Project', refId: ctx.projectId, note: `Project is in ${projectPhase}` }],
+        evidence: [{ refType: 'Project', refId: ctx.projectId, note: `phase is ${projectPhase}` }],
+        // Drafted-but-unapproved is the case worth separating: a site with a
+        // plan sitting in draft is a different conversation from one with no
+        // plan at all, and both were reported as "none".
+        absence: [
+          {
+            refType: 'CDMDocument',
+            looked: 'a Construction Phase Plan approved by a competent person',
+            found: drafted.length,
+          },
+        ],
       });
     }
 

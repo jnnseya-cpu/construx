@@ -86,6 +86,38 @@ describe('the lookahead agent watches the constraint log and the weekly promise'
     ]);
   });
 
+  /**
+   * An absence has a source, and it is not the nearest record to hand.
+   *
+   * "The project is in construction and no lookahead has ever been published"
+   * cited the Project, so Review opened the project's phase history: four phase
+   * transitions that evidence the phase and say nothing whatever about
+   * lookaheads. That is worse than an empty panel — it reads as the platform
+   * padding a claim it cannot support, on a screen whose entire argument is
+   * that every figure traces to a record.
+   *
+   * The source of an absence is the register that was searched and came back
+   * empty, and `absence` is where that is said.
+   */
+  it('names the register it searched, not the nearest record it could find', async () => {
+    const [found] = await findings(agent('lookahead'), ctx);
+    assert.ok(found, 'the finding stopped being raised');
+
+    assert.ok(found.absence, 'the finding claims an absence and names no search');
+    const [searched] = found.absence;
+    assert.equal(searched!.refType, 'LookaheadPlan', 'the search names the wrong register');
+    assert.equal(searched!.found, 0);
+    assert.match(searched!.looked, /weekly work plan/);
+
+    // The Project reference stays, because the phase is the other half of the
+    // finding and its events do evidence that. What must not happen is the
+    // project standing in for the half it cannot support.
+    assert.ok(
+      found.evidence.every((item) => item.refType !== 'LookaheadPlan'),
+      'a LookaheadPlan was cited as evidence, and the finding is that there are none',
+    );
+  });
+
   it('says nothing about a project that has done nothing wrong beyond having no plan', async () => {
     // Before anything is raised, the only true statement is that there is no
     // lookahead. An agent that also invented a constraint problem here would be
