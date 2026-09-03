@@ -7092,6 +7092,39 @@ that had passed but never been released, because "a hold point is a witness
 point with a stronger word on it" otherwise. And `createProject` refused the
 owner: no role of OWNER holds "C" on PROJECT_SETUP.
 
+**It would have deployed and changed nothing, and that is the finding that
+matters most.** The record was written inside the block that *creates* the
+project, guarded on the project being absent. Every running deployment already
+holds Rossendale — it was created in August — so on the live site the guard was
+false, none of the record executed, and the deploy would have altered nothing
+while all 5,445 tests passed. `ensureDemonstrationExtras` exists precisely to be
+additive on a tenancy that is already running, and a block that can only run on
+a fresh ledger is not additive. The guard is on the record now, not the project:
+the history is written where the project exists and holds no programme yet,
+which also makes it idempotent.
+
+Found by replaying a journal written by the previous build into this one — the
+only way to see an upgrade path before a customer does — and that replay turned
+up two more faults behind it.
+
+`ensureDemonstrationExtras` ran the AI engines against whatever `AI_MODE` names.
+`seedDemoProject` has been wrapped in `withLocalProviders` since it was written,
+for two reasons already recorded there: seeding a lifecycle against three live
+providers is a real invoice, and a fixture whose words differ per run is not a
+fixture. That wrapper was never put on the extras. It was latent while nothing
+in there called a model on an already-seeded tenancy; the site record does, so
+every boot of the live deployment would have called a real provider — and an
+exhausted wallet would have thrown `ACU_EXHAUSTED` out of the bootstrap and
+taken the boot down with it. The extras are wrapped now, the same way.
+
+And the record wrote eleven activities and both baselines before the wallet
+refused, leaving a half-written history that the append-only chain cannot undo —
+while the note said the project was unchanged. The one step that can refuse for
+a reason outside the seed now runs *first*, before anything is committed, so a
+refusal leaves the project exactly as it was; and the whole block is wrapped so
+that a demonstration fixture can never fail a health check and roll back a
+release.
+
 **It broke seven tests in two suites, and that is the more useful finding.**
 `chain.test.ts` and `agents.lookahead.test.ts` both used Rossendale as their
 *empty* construction project — one to prove CDM refuses work with no approved

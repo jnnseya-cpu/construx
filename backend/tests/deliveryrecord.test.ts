@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { Platform } from '../src/platform.ts';
-import { seedDemoProject, type SeedResult } from '../src/seed.ts';
+import { ensureDemonstrationExtras, seedDemoProject, type SeedResult } from '../src/seed.ts';
 import * as control from '../src/domain/control.ts';
 import * as planning from '../src/engines/planning.ts';
 
@@ -120,5 +120,23 @@ describe('the project on site carries a delivery record', () => {
     assert.ok(programme.projectDurationDays > 0, 'the programme computed no duration');
     assert.ok(programme.criticalPath.length > 0, 'no activity is on the critical path');
     assert.ok(programme.p80DurationDays >= programme.projectDurationDays, 'P80 is shorter than the deterministic duration');
+  });
+
+  /**
+   * The record is written by `ensureDemonstrationExtras`, which runs on every
+   * boot of a deployment that keeps its journal — so it has to be additive and
+   * it has to be safe to repeat.
+   *
+   * The first version of this seed put the record *inside* the block that
+   * creates the project, guarded on the project being absent. Every existing
+   * deployment already holds Rossendale, so the guard was false, none of it ran,
+   * and deploying the change would have altered nothing on the live site while
+   * every test here passed. The guard is on the record now, not the project.
+   */
+  it('adds nothing on a second and third pass', async () => {
+    const before = platform.ledger.events({ projectId }).length;
+    await ensureDemonstrationExtras(platform);
+    await ensureDemonstrationExtras(platform);
+    assert.equal(platform.ledger.events({ projectId }).length, before, 'a repeat pass wrote events again');
   });
 });
