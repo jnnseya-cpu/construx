@@ -43,7 +43,7 @@ import { centreCatalogue, commandCentre, type CentreFunctionId } from '../comman
 import { grantableScopes, issueKey, keyRegister, revokeKey } from '../developer/keys.ts';
 import { subscribe, subscriptionRegister, unsubscribe, webhookPosition } from '../developer/webhooks.ts';
 import type { ACUCaps } from '../billing/acu.ts';
-import { ACU_BUNDLES, PACKAGES, SEATS, type PackageTier } from '../billing/seats.ts';
+import { ACU_BUNDLES, PACKAGES, SEATS, TOP_UPS, type PackageTier } from '../billing/seats.ts';
 import { seatEconomics, TIERS, type SubscriptionTier } from '../billing/subscription.ts';
 import { config, demonstrationEnabled, isProduction } from '../config.ts';
 import * as consistency from '../domain/consistency.ts';
@@ -4687,6 +4687,10 @@ export const ROUTES: Route[] = [
       seats: Object.values(SEATS),
       packages: Object.values(PACKAGES),
       bundles: Object.values(ACU_BUNDLES),
+      // The amounts the console offers on its Top up button. Published rather
+      // than held in the browser, so the price a customer is shown and the
+      // price the platform means are one figure.
+      topUps: TOP_UPS,
       currency: 'GBP',
       note: 'A package is charged, not the sum of its seats. No package includes AI — ACUs are bought separately.',
     }),

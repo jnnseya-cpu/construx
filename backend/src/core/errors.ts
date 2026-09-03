@@ -131,7 +131,13 @@ export function toProblem(error: unknown, instance: string, traceId: string, cor
     type: `${problemBase()}/problems/internal-error`,
     title: 'INTERNAL_ERROR',
     status: 500,
-    detail: 'The request could not be completed.',
+    // The reference is in the body already, as `traceId`; it is repeated in
+    // the sentence because the sentence is what a person sees and quotes. An
+    // administrator reporting "The request could not be completed" gave the
+    // operator nothing to search the log for. The cause is never put here —
+    // an unexpected error's message can name a path, a host or a record — but
+    // the reference to it is, and the gateway writes the cause beside it.
+    detail: `The request could not be completed. Reference ${traceId}.`,
     instance,
     traceId,
     correlationId,

@@ -621,6 +621,27 @@ export function sendProblem(res: ServerResponse, ctx: RequestContext, error: unk
   const problem = toProblem(error, ctx.path, ctx.traceId, ctx.correlationId);
   const payload = JSON.stringify(problem);
 
+  // An unexpected error is answered as a 500 with a reference and nothing
+  // else, which is right for the caller and was the whole of the record: the
+  // cause went nowhere. An administrator hit "The request could not be
+  // completed" on "Add a person" and there was nothing for anybody to search.
+  // The cause is written here, once, against the reference the person sees —
+  // to stderr, where the platform's own diagnostics go, never to the response.
+  if (problem.status >= 500) {
+    const cause = error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) };
+    process.stderr.write(
+      `${JSON.stringify({
+        level: 'error',
+        event: 'unhandled_error',
+        traceId: ctx.traceId,
+        correlationId: ctx.correlationId,
+        method: ctx.method,
+        path: ctx.routeId ?? ctx.path,
+        ...cause,
+      })}\n`,
+    );
+  }
+
   const headers: Record<string, string | number> = {
     'Content-Type': 'application/problem+json; charset=utf-8',
     'Content-Length': Buffer.byteLength(payload),

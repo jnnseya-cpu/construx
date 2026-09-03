@@ -315,8 +315,36 @@ export async function billing(root) {
     // per press, with no payment involved anywhere. It now records a request,
     // and the wording says so, because a button that reported "topped up" while
     // the balance stayed put would read as a bug.
+    //
+    // And it used to send that thousand pounds as the only amount: the payment
+    // page opened on "£1,000.00" whatever the tenancy could use or afford, so a
+    // customer on a £100 package, or on one granted free, had no proportionate
+    // way to carry on. The amounts are the platform's, published through the
+    // catalogue, and the person chooses one before anything is recorded.
     try {
-      const intent = await api.post('/v1/billing/top-up', { amountMinor: 100_000 });
+      const offered = (catalogue?.topUps ?? []).map((option) => ({
+        value: String(option.amountMinor),
+        label: `${money(option.amountMinor)} — credits ${option.usableAcus.toLocaleString('en-GB')} ACUs`,
+      }));
+      const intent = await command({
+        title: 'Top up AI credit',
+        intent:
+          'Prepaid credit, drawn down as the engines run. Nothing is charged until an output is on the record, and a ' +
+          'failed execution costs nothing. The balance moves once the payment clears.',
+        path: '/v1/billing/top-up',
+        submitLabel: 'Continue to payment',
+        fields: [
+          {
+            name: 'amountMinor',
+            label: 'Amount',
+            type: 'select',
+            options: offered,
+            hint: 'What each amount credits, at the rate the platform charges. Larger prepaid bundles are on the pricing page.',
+          },
+        ],
+        transform: (values) => ({ amountMinor: Number(values.amountMinor) }),
+      });
+      if (!intent) return;
 
       // The request is on record either way. Paying is a second step and is
       // allowed to fail on its own — a deployment with no payment provider

@@ -362,6 +362,27 @@ export const ACU_BUNDLES: Record<BundleName, BundleDefinition> = Object.fromEntr
 ) as Record<BundleName, BundleDefinition>;
 
 /**
+ * The amounts a customer can top up by from the console, in minor units.
+ *
+ * The Top up button used to send a single hardcoded figure — a thousand pounds
+ * — to the payment page, so the only way to add AI credit was to buy a
+ * thousand pounds of it. A Solo customer on a £100 package, or a tenancy on a
+ * package granted free, had no proportionate way to carry on. These are the
+ * denominations offered, published through the catalogue so the console holds
+ * no price the API does not, and the bundles above remain the larger
+ * purchases for a purchase order. What each credits is derived from the
+ * amount the same way a bundle's is, so the two can never disagree.
+ */
+export const TOP_UP_AMOUNTS_MINOR: readonly number[] = [1_000, 3_000, 5_000, 10_000];
+
+export type TopUpOption = { amountMinor: number; usableAcus: number };
+
+export const TOP_UPS: readonly TopUpOption[] = TOP_UP_AMOUNTS_MINOR.map((amountMinor) => ({
+  amountMinor,
+  usableAcus: acusFromMinor(amountMinor),
+}));
+
+/**
  * Roles that never consume a paid seat: the platform operator is not a customer
  * identity, and regulator access is granted by the asset owner as an obligation
  * of the Building Safety regime, not sold to the regulator.

@@ -204,4 +204,15 @@ describe('errors name the domain this deployment actually serves', () => {
     const problem = toProblem(new DomainError('NOT_FOUND', 'nope', 404), '/x', 't', 'c');
     assert.equal(problem.type, `${new URL(config.publicBaseUrl).origin}/problems/not-found`);
   });
+
+  it('puts the reference, and never the cause, in the sentence a person sees for an unexpected error', async () => {
+    const { toProblem } = await import('../src/core/errors.ts');
+    // "The request could not be completed" gave an operator nothing to search
+    // the log for. The reference is what they quote; the cause stays in the log.
+    const problem = toProblem(new Error('ENOSPC: no space left on /var/lib/construx/journal'), '/v1/users', 'trace-77', 'c');
+    assert.equal(problem.status, 500);
+    assert.equal(problem.title, 'INTERNAL_ERROR');
+    assert.match(problem.detail, /Reference trace-77/);
+    assert.doesNotMatch(problem.detail, /ENOSPC|journal/);
+  });
 });

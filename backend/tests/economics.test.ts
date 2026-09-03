@@ -9,7 +9,7 @@ import {
   profitPercent,
   subscriptionAcuAllocationMinor,
 } from '../src/billing/acu.ts';
-import { PACKAGES } from '../src/billing/seats.ts';
+import { ACU_BUNDLES, PACKAGES, TOP_UPS } from '../src/billing/seats.ts';
 import { throwsCode } from './helpers.ts';
 import { config } from '../src/config.ts';
 import { Platform } from '../src/platform.ts';
@@ -376,6 +376,21 @@ describe('every package credits 20% of its price as AI', () => {
     // runs for at most £0.20, and the monthly budget bounds the total.
     assert.equal(config.billing.freeTrialGrantMinor, 100);
     assert.ok(config.billing.trialMonthlyBudgetMinor >= config.billing.freeTrialGrantMinor);
+  });
+
+  it('offers four top-up amounts a customer can actually pay: £10, £30, £50 and £100', () => {
+    // The Top up button sent a single hardcoded £1,000 to the payment page, so
+    // the only way to add credit was to buy a thousand pounds of it — on a £100
+    // package, or on one granted free. The denominations are published, and
+    // what each credits is derived from the amount exactly as a bundle's is.
+    assert.deepEqual(
+      TOP_UPS.map((option) => option.amountMinor),
+      [1_000, 3_000, 5_000, 10_000],
+    );
+    for (const option of TOP_UPS) {
+      assert.equal(option.usableAcus, acusFromMinor(option.amountMinor));
+      assert.ok(option.amountMinor < ACU_BUNDLES.STARTER.priceMinor, 'a top-up sits below the bundle ladder');
+    }
   });
 
   it('prices Solo as the entry package a single person can afford', () => {

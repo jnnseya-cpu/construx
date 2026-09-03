@@ -7860,6 +7860,27 @@ computed from the same position, and what each means for a request and its
 charge. The mode, the vendors and their health stay on the operator's AI
 Engine screen, where they are the job.
 
+**The only top-up was £1,000.** The Top up button sent a single hardcoded
+figure to the payment page, so the payment screen opened on "CONSTRUX prepaid
+AI credit — £1,000.00" whatever the tenancy could use or afford. A customer on
+a £100 package, or on a package granted free, had no proportionate way to add
+credit at all. `TOP_UPS` in `billing/seats.ts` publishes four denominations —
+£10, £30, £50 and £100 — through the billing catalogue, each with what it
+credits derived from the amount exactly as a bundle's is, and the button opens
+a choice of them before anything is recorded. The larger bundles stay on the
+pricing page for a purchase order. The console holds no price the API does not
+publish. `economics.test.ts` pins the four amounts and that each sits below the
+bundle ladder.
+
+**A 500 with nothing behind it.** When "Add a person" failed, the person saw
+"The request could not be completed" and the operator had nothing to search
+for: the gateway answered the reference in the body and wrote the cause
+nowhere. The sentence now carries the reference — "Reference ‹traceId›" — so it
+can be quoted, and `sendProblem` writes the cause once to stderr against that
+reference for any status of 500 or above: name, message and stack, never in
+the response. The seat-limit case that prompted it is a 422 now; the next
+unexpected error will at least be findable.
+
 ---
 
 ## What is partial
