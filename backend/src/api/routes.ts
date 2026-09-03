@@ -1013,6 +1013,27 @@ async function tellNewIdentity(
   }
 }
 
+/**
+ * The package decides whether the API is part of the deal.
+ *
+ * `PACKAGES[...].apiAccess` was published on the pricing page ("No API access"
+ * on the smaller packages), returned to the console, and enforced by nothing —
+ * a Free tenancy could issue live keys and integrate. The rule is applied
+ * where a key or a webhook is issued; a key already held keeps working, which
+ * is the same courtesy a package move gives every other entitlement.
+ */
+function requireApiAccess(platform: Platform, tenantId: string): void {
+  const subscription = platform.subscription(tenantId);
+  const definition = PACKAGES[subscription.package];
+  if (!definition.apiAccess) {
+    throw new DomainError(
+      'API_ACCESS_NOT_ON_PLAN',
+      `API access is not part of the ${definition.label} package. Move package on ACU & Billing to integrate.`,
+      422,
+    );
+  }
+}
+
 /** The tenancy's own administrator, for the acts that shape who is in it. */
 function requireTenantAdministrator(ctx: RequestContext, act: string): AuthContext {
   const actor = auth(ctx);
@@ -15837,6 +15858,7 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => {
+      requireApiAccess(platform, auth(ctx).tenantId);
       const issued = issueKey(tenantContext(platform, ctx), body(ctx));
       const { secretHash: _held, ...key } = issued.key;
       return {
@@ -15887,6 +15909,7 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => {
+      requireApiAccess(platform, auth(ctx).tenantId);
       const created = subscribe(tenantContext(platform, ctx), body(ctx));
       return {
         ...created,

@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import type { DataSensitivity } from './identity/abac.ts';
 
 /**
@@ -383,7 +383,21 @@ export const config = {
   },
 
   evidence: {
-    storePath: str('EVIDENCE_STORE_PATH', ''),
+    /**
+     * Where files live. Set explicitly, or — when unset and the ledger journal
+     * is on a volume — beside the journal, in `evidence/` under the same
+     * directory. A deployment that had somewhere durable to keep the record
+     * had somewhere durable to keep the files, and every upload on it was
+     * refused with "no object store is configured" until somebody found the
+     * second setting. Unset with no journal stays unset: an in-memory ledger
+     * has no volume to put files on, and pretending otherwise would hold
+     * evidence that vanished with the container.
+     */
+    storePath:
+      str('EVIDENCE_STORE_PATH', '') ||
+      (str('LEDGER_JOURNAL_PATH', '') !== '' && str('OBJECT_STORE_ENDPOINT', '') === ''
+        ? resolve(dirname(str('LEDGER_JOURNAL_PATH', '')), 'evidence')
+        : ''),
     /**
      * Per-object ceiling. A site photograph is a few megabytes; a scanned
      * drawing set is tens. The limit exists so one upload cannot fill the

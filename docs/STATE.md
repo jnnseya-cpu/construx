@@ -8092,6 +8092,28 @@ count and the money before asking for the reason. `tenancyclosure.test.ts`
 holds the arithmetic, the cascade, the refusals, the settlement and the
 restart.
 
+### Files without a second setting, and a term the pricing page made
+
+**"Account pictures don't work, for everyone."** Every upload on the
+deployment answered "no object store is configured": the ledger journal was on
+a volume, and nothing said the files could be too. `EVIDENCE_STORE_PATH` now
+defaults, when unset and no S3 store is configured, to `evidence/` beside the
+journal named by `LEDGER_JOURNAL_PATH` — a deployment with somewhere durable
+for the record has somewhere durable for the files. Unset with no journal stays
+unset: an in-memory ledger has no volume, and holding evidence that vanishes
+with the container would be worse than refusing. The readiness screen says when
+the location is derived, and the refusal, where it still applies, names the
+setting.
+
+**API access is now a term, not a label.** `PACKAGES[...].apiAccess` was on
+the pricing page ("No API access" on Free and Solo), returned to the console,
+and enforced by nothing — a Free tenancy could issue live keys and integrate.
+Issuing a key or a webhook subscription is refused with
+`API_ACCESS_NOT_ON_PLAN` on a package without it, and the Developer screen
+blocks the buttons with the same sentence before they are pressed. A key
+already held keeps working, as every other entitlement does across a package
+move.
+
 ---
 
 ## What is partial

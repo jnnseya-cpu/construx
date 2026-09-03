@@ -84,15 +84,24 @@ function reveal(root, label, secret, notice) {
 }
 
 export async function developer(root) {
-  const [keys, hooks] = await Promise.all([
+  const [keys, hooks, seats] = await Promise.all([
     api.get('/v1/developer/keys').catch(() => ({ keys: [], grantableScopes: [] })),
     api.get('/v1/developer/webhooks').catch(() => ({ subscriptions: [], position: null })),
+    can('BILLING_ACU', 'R') ? api.get('/v1/billing/seats').catch(() => null) : Promise.resolve(null),
   ]);
 
   grantable = keys.grantableScopes ?? [];
   const live = (keys.keys ?? []).filter((key) => key.live);
   const position = hooks.position ?? { subscriptions: 0, active: 0, queued: 0, delivered: 0, abandoned: 0, failing: [] };
-  const mayGovern = can('ENTERPRISE_STRUCTURE', 'G');
+  // The package decides whether the API is part of the deal at all. The
+  // pricing page says "No API access" on the smaller packages and nothing
+  // enforced it; the platform now refuses to issue a key there, and this
+  // screen says so before the button is pressed rather than after.
+  const apiOnPlan = seats?.package ? seats.package.apiAccess !== false : true;
+  const mayGovern = can('ENTERPRISE_STRUCTURE', 'G') && apiOnPlan;
+  const governReason = apiOnPlan
+    ? blockedReason('ENTERPRISE_STRUCTURE', 'G')
+    : `API access is not part of the ${seats.package.label} package. Move package on ACU & Billing to integrate.`;
 
   render(
     root,
@@ -109,8 +118,8 @@ export async function developer(root) {
         <div class="actions cmd-bar">
           ${raw(
             commandBar([
-              { id: 'key', label: 'Issue an API key', permitted: mayGovern, reason: blockedReason('ENTERPRISE_STRUCTURE', 'G') },
-              { id: 'webhook', label: 'Subscribe an endpoint', permitted: mayGovern, reason: blockedReason('ENTERPRISE_STRUCTURE', 'G') },
+              { id: 'key', label: 'Issue an API key', permitted: mayGovern, reason: governReason },
+              { id: 'webhook', label: 'Subscribe an endpoint', permitted: mayGovern, reason: governReason },
             ]),
           )}
         </div>

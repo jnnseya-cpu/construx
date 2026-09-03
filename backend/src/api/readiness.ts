@@ -158,7 +158,9 @@ export function readiness(now = new Date()): Readiness {
       detail:
         config.evidence.storePath === ''
           ? 'Hashes only — the platform records that a document was the evidence and does not hold the document. The chain lasts as long as whoever else still has the file.'
-          : 'Files follow their hashes into a tenant-scoped store, so the record carries its own evidence.',
+          : process.env.EVIDENCE_STORE_PATH
+            ? 'Files follow their hashes into a tenant-scoped store, so the record carries its own evidence.'
+            : 'Files follow their hashes into a tenant-scoped store beside the ledger journal, on the same volume (EVIDENCE_STORE_PATH is unset, so the location is derived from LEDGER_JOURNAL_PATH).',
       env: ['EVIDENCE_STORE_PATH', 'EVIDENCE_MAX_BYTES'],
     },
     {
