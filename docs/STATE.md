@@ -7038,6 +7038,51 @@ variable nobody can discover is worse than one somebody sets wrongly.
 
 ---
 
+### An evidence upload that survives a dropped connection
+
+`put` took a whole file. On the signal a site gate actually has, a connection
+that dies at 90% starts again at nothing, and on a bad enough link the evidence
+never arrives at all — the record exists, the hash is on the chain, and the file
+behind it is on a handset. The field specification's own budget is twenty
+photographs in a batch, resumable on drop.
+
+**The content hash is the upload id**, which is the part worth noticing: the
+device already knows it, because it hashed the file to make the evidence record.
+There is no handshake to lose and no upload token to expire, so a phone that
+reboots mid-upload resumes by asking what is held under a hash it still has.
+
+Parts live beside the object, encrypted per part with the same envelope the
+whole object uses — an interrupted upload must not leave plaintext site
+photography on the volume for however long the device takes to come back. The
+object appears only when every part is present *and the assembled bytes hash to
+the address they were sent to*: the parts are never trusted, only the assembly
+is, which keeps the guard that makes the chain worth having. A set of parts that
+fails that check is removed rather than left to resume, because it is not a
+partial upload, it is a wrong one.
+
+**No new write route, which is the design decision in it.** Resumability is a
+parameter on the existing `POST /v1/evidence/:hash` rather than a second
+endpoint: this is one capability at two granularities, and a separate chunk
+endpoint would have been a second door onto the same act with its own
+authorisation to drift out of step. The authorisation both paths share is now
+one function rather than two copies of twenty-five lines.
+
+**The doors invariant did its job here.** The first attempt added a `PUT` and a
+`GET` under `/chunks`, and the invariant failed both: no console door. Its
+comment says "no exemption list, deliberately… an exemption here would be a
+permanent hiding place for exactly the thing this test exists to prevent", and
+that is right — so nothing was exempted. The write folded into the route that
+already had a door, and the read got a real one: a lookup on the audit screen
+saying which parts of an unfinished upload the platform holds. That is useful to
+a person as well as to a phone — it says which records are not evidence yet
+because their file is still on a handset — which is what a door is supposed to
+be rather than a formality to satisfy a test.
+
+Nine tests. Mutants: trusting the parts instead of the assembly dies; assembling
+them in the wrong order dies four times over.
+
+---
+
 ### The batch contract the native field apps are built against
 
 `CONSTRUX Field` — the native Android and iOS apps — pushes work in batches from

@@ -7,6 +7,16 @@ import * as envelope from './envelope.ts';
 import { S3Client } from '../store/s3.ts';
 
 /**
+ * The most parts one upload may be split into.
+ *
+ * A ceiling rather than a size: the device picks a chunk size for the link it
+ * is on, and this bounds how many files an unfinished upload can leave on the
+ * volume. At the store's own size limit this is a floor of well under a
+ * megabyte per part, which is smaller than any link worth chunking for.
+ */
+const MAX_CHUNKS = 512;
+
+/**
  * The object store this deployment is configured for, built once.
  *
  * A module-level singleton rather than a field built per `EvidenceStore`,
@@ -321,6 +331,133 @@ export class EvidenceStore {
       contentType,
       storedAt: new Date().toISOString(),
     };
+  }
+
+  // --- resumable upload -----------------------------------------------------
+  //
+  // A photograph taken at the bottom of a shaft is uploaded over whatever
+  // signal the gate has, and the specification's own budget is 20 photographs
+  // in a batch, resumable on drop. `put` takes the whole file: a connection
+  // that dies at 90% starts again at nothing, and on a bad enough link it never
+  // finishes at all — the record exists, the evidence never arrives, and the
+  // hash on the chain points at a file nobody holds.
+  //
+  // **The content hash is the upload id.** The device already knows it — it
+  // hashed the file to make the evidence record — so there is no handshake to
+  // lose, no upload token to expire, and a device that reboots mid-upload
+  // resumes by asking what is held under a hash it still has.
+  //
+  // Chunks live beside the object rather than in it, and the object appears only
+  // when every chunk is present and the assembled bytes hash to the address they
+  // were sent to. Until then there is nothing for a reader to find, which is the
+  // same discipline as the write-and-rename in `put`.
+
+  /** Where the parts of an unfinished upload are kept. */
+  #chunkDir(tenantId: string, hash: string): string {
+    return `${this.#pathFor(tenantId, hash)}.chunks`;
+  }
+
+  /**
+   * Store one part. Returns what is held, and the object once the last part
+   * completes it.
+   *
+   * Idempotent per chunk: re-sending one already held is a no-op, which is what
+   * a device retrying an ambiguous request needs.
+   */
+  putChunk(
+    tenantId: string,
+    claimedHash: string,
+    index: number,
+    chunks: number,
+    bytes: Buffer,
+    contentType: string,
+  ): { held: number[]; chunks: number; complete: boolean; object?: StoredObject } {
+    if (!this.configured) {
+      throw new DomainError('EVIDENCE_STORE_UNCONFIGURED', 'No object store is configured', 503);
+    }
+    if (!Number.isInteger(chunks) || chunks < 1 || chunks > MAX_CHUNKS) {
+      throw new DomainError('EVIDENCE_CHUNK_COUNT_INVALID', `An upload has between 1 and ${MAX_CHUNKS} parts`, 422);
+    }
+    if (!Number.isInteger(index) || index < 0 || index >= chunks) {
+      throw new DomainError('EVIDENCE_CHUNK_INDEX_INVALID', `Part ${index} is outside an upload of ${chunks}`, 422);
+    }
+    if (bytes.length === 0) throw new DomainError('EVIDENCE_EMPTY', 'An empty part is not evidence');
+
+    const target = this.#pathFor(tenantId, claimedHash);
+    // Already complete. A device that missed the answer to its last part gets
+    // the object rather than a refusal, which is the resumable case working.
+    if (existsSync(target)) {
+      const stat = statSync(target);
+      return {
+        held: Array.from({ length: chunks }, (_, i) => i),
+        chunks,
+        complete: true,
+        object: { hash: claimedHash, bytes: stat.size, contentType, storedAt: stat.mtime.toISOString() },
+      };
+    }
+
+    const dir = this.#chunkDir(tenantId, claimedHash);
+    mkdirSync(dir, { recursive: true });
+
+    // The running total is checked as parts arrive, not only at the end: a
+    // device that would exceed the limit is told at the part that crosses it,
+    // rather than after uploading everything.
+    const existing = this.#heldChunks(dir);
+    const alreadyHave = existing.reduce((total, i) => total + statSync(join(dir, String(i))).size, 0);
+    if (!existing.includes(index) && alreadyHave + bytes.length > this.#maxBytes) {
+      rmSync(dir, { recursive: true, force: true });
+      throw new DomainError(
+        'EVIDENCE_TOO_LARGE',
+        `Evidence exceeds the ${Math.round(this.#maxBytes / 1_048_576)}MB limit`,
+        413,
+      );
+    }
+
+    // Encrypted per part with the same envelope the whole object uses, so an
+    // interrupted upload does not leave plaintext site photography on the
+    // volume for however long it takes the device to come back.
+    const part = join(dir, String(index));
+    if (!existsSync(part)) writeFileSync(part, envelope.encrypt(tenantId, bytes));
+
+    const held = this.#heldChunks(dir);
+    if (held.length < chunks) return { held, chunks, complete: false };
+
+    // Every part is in. Assemble in index order and hand the whole thing to
+    // `put`, which re-checks the hash — the parts were never trusted, only the
+    // assembled bytes are, and that is the guard that makes the chain worth
+    // having.
+    const assembled = Buffer.concat(held.map((i) => envelope.decrypt(tenantId, readFileSync(join(dir, String(i))))));
+    let object: StoredObject;
+    try {
+      object = this.put(tenantId, claimedHash, assembled, contentType);
+    } finally {
+      // Removed either way. A set of parts that does not hash to its address is
+      // not a partial upload to resume; it is one to start again.
+      rmSync(dir, { recursive: true, force: true });
+    }
+    return { held, chunks, complete: true, object };
+  }
+
+  /**
+   * What is held for an unfinished upload, so a device knows where to resume.
+   *
+   * Answers for a completed object too: `complete: true` and nothing left to
+   * send, which is the answer a device that lost the last response needs.
+   */
+  uploadState(tenantId: string, hash: string): { held: number[]; complete: boolean } {
+    if (!this.configured) return { held: [], complete: false };
+    if (existsSync(this.#pathFor(tenantId, hash))) return { held: [], complete: true };
+    const dir = this.#chunkDir(tenantId, hash);
+    return { held: existsSync(dir) ? this.#heldChunks(dir) : [], complete: false };
+  }
+
+  /** Part indices present, in order. */
+  #heldChunks(dir: string): number[] {
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir)
+      .map((name) => Number(name))
+      .filter((index) => Number.isInteger(index) && index >= 0)
+      .sort((a, b) => a - b);
   }
 
   has(tenantId: string, hash: string): boolean {

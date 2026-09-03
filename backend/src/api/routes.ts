@@ -485,6 +485,55 @@ function sourceOf(ctx: RequestContext): 'WEB' | 'PWA' | 'ANDROID' | 'IOS' | 'SYS
 }
 
 /**
+ * The evidence record a file is being supplied for, and the authority to do it.
+ *
+ * Shared by the whole-file upload and the resumable one, because they are the
+ * same act at two granularities and the authorisation must not be able to drift
+ * between them — a chunked route with a looser check would be a way round the
+ * capability model that looked like a performance feature.
+ *
+ * Evidence is never *created* through an upload; the record already exists and
+ * this supplies the file it always referred to. The matrix has no `C` on
+ * EVIDENCE_AUDIT for exactly that reason.
+ *
+ * Two ways to be allowed, and the second is not a loosening. A site supervisor
+ * holds EVIDENCE_AUDIT read only, and is precisely the person whose phone took
+ * the photograph: on `I` alone the field app could register a hash and then be
+ * refused the file behind it, which is the whole feature failing for the role it
+ * exists for. Supplying bytes that match a hash you yourself committed is
+ * finishing your own act, not reaching into somebody else's — so the captor may
+ * complete their own record, and `I` is what it takes to complete anybody's.
+ */
+function evidenceUploadTarget(
+  platform: Platform,
+  ctx: RequestContext,
+  actor: ReturnType<typeof auth>,
+): { record: NonNullable<ReturnType<typeof evidence.findByHash>>; engineCtx: ReturnType<Platform['context']> } {
+  const hash = ctx.params.hash as string;
+  const record = evidence.findByHash(platform.ledger, actor.tenantId, hash);
+  if (!record) {
+    // Not "unknown hash": within this tenancy nothing has claimed that hash as
+    // evidence, so there is nothing for these bytes to be evidence of.
+    throw new NotFoundError('No evidence record in this tenancy references that hash');
+  }
+
+  // Through the project the evidence belongs to, so the same authorisation that
+  // governs reading the record governs supplying its file. The project id comes
+  // from a record already scoped to the caller's tenancy, so it cannot be used
+  // to reach across one.
+  const engineCtx = platform.context(actor, record.projectId, {
+    correlationId: ctx.correlationId,
+    source: sourceOf(ctx),
+  });
+
+  authorise(engineCtx, 'EVIDENCE_AUDIT', 'R');
+  const capturedBy = (record.state as { capturedBy?: string }).capturedBy;
+  if (capturedBy !== actor.actorId) authorise(engineCtx, 'EVIDENCE_AUDIT', 'I');
+
+  return { record, engineCtx };
+}
+
+/**
  * Every capability area, read from the permission matrix rather than restated.
  *
  * A signature request names the area its document belongs to, and that choice
@@ -17923,37 +17972,7 @@ export const ROUTES: Route[] = [
         throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
       }
 
-      const hash = ctx.params.hash as string;
-      const record = evidence.findByHash(platform.ledger, actor.tenantId, hash);
-      if (!record) {
-        // Not "unknown hash": within this tenancy nothing has claimed that hash
-        // as evidence, so there is nothing for these bytes to be evidence of.
-        throw new NotFoundError('No evidence record in this tenancy references that hash');
-      }
-
-      // Through the project the evidence belongs to, so the same authorisation
-      // that governs reading the record governs supplying its file. The project
-      // id comes from a record already scoped to the caller's tenancy, so it
-      // cannot be used to reach across one.
-      const engineCtx = platform.context(actor, record.projectId, {
-        correlationId: ctx.correlationId,
-        source: sourceOf(ctx),
-      });
-      // Evidence is never created through this route; the record already
-      // exists, and this supplies the file it always referred to. The matrix
-      // has no `C` on EVIDENCE_AUDIT for exactly that reason.
-      //
-      // Two ways to be allowed, and the second is not a loosening. A site
-      // supervisor holds EVIDENCE_AUDIT read only, and is precisely the person
-      // whose phone took the photograph: on `I` alone the field app could
-      // register a hash and then be refused the file behind it, which is the
-      // whole feature failing for the role it exists for. Supplying bytes that
-      // match a hash you yourself committed is finishing your own act, not
-      // reaching into somebody else's — so the captor may complete their own
-      // record, and `I` is what it takes to complete anybody's.
-      authorise(engineCtx, 'EVIDENCE_AUDIT', 'R');
-      const capturedBy = (record.state as { capturedBy?: string }).capturedBy;
-      if (capturedBy !== actor.actorId) authorise(engineCtx, 'EVIDENCE_AUDIT', 'I');
+      const { record, engineCtx } = evidenceUploadTarget(platform, ctx, actor);
 
       // Capacity, checked before the write rather than after it. The plan's
       // allowance was published on the pricing page from the first day and
@@ -17962,7 +17981,32 @@ export const ROUTES: Route[] = [
       const incoming = ctx.rawBody ?? Buffer.alloc(0);
       storage.assertCapacity(storagePositionFor(platform, actor.tenantId), incoming.length);
 
-      const stored = platform.evidence.put(actor.tenantId, hash, incoming, mediaType(ctx.contentType));
+      // Resumable when the device asks for it, whole-file when it does not.
+      //
+      // One route rather than two, because this is one capability at two
+      // granularities: supplying the file behind an evidence hash. A separate
+      // chunk endpoint would have been a second door onto the same act with its
+      // own authorisation to drift out of step, and the console would have had
+      // to grow a panel for a transport detail nobody operates by hand.
+      //
+      // A phone on a site gate's signal needs it: `put` takes the whole file, so
+      // a connection that dies at 90% starts again at nothing, and on a bad
+      // enough link the evidence never arrives at all — the record exists, the
+      // hash is on the chain, and the file behind it is on a handset.
+      const chunks = Number(ctx.query.get('chunks') ?? 0);
+      if (chunks > 0) {
+        const state = platform.evidence.putChunk(
+          actor.tenantId,
+          ctx.params.hash as string,
+          Number(ctx.query.get('index') ?? 0),
+          chunks,
+          incoming,
+          mediaType(ctx.contentType),
+        );
+        return { ...state, evidenceId: record.refId, projectId: record.projectId };
+      }
+
+      const stored = platform.evidence.put(actor.tenantId, ctx.params.hash as string, incoming, mediaType(ctx.contentType));
 
       // No ledger event is written, and that is deliberate rather than an
       // omission. The hash was committed by the domain command that registered
@@ -17970,6 +18014,24 @@ export const ROUTES: Route[] = [
       // not are refused above. There is no new fact to record, and inventing an
       // event type to record a non-fact would widen a closed catalogue.
       return { ...stored, evidenceId: record.refId, projectId: record.projectId };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/evidence/:hash/chunks',
+    readOnly: true,
+    description: 'Which parts of a resumable upload the platform already holds, so a device knows where to resume',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+      }
+      const { record } = evidenceUploadTarget(platform, ctx, actor);
+      return {
+        ...platform.evidence.uploadState(actor.tenantId, ctx.params.hash as string),
+        evidenceId: record.refId,
+        projectId: record.projectId,
+      };
     },
   },
   {

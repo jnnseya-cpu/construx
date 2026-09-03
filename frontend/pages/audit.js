@@ -1,7 +1,8 @@
 import { api, hashFile } from '../lib/api.js';
-import { badge, html, notice, positionReport, raw, reference, render, shortHash, table, time, toast } from '../lib/ui.js';
+import { badge, html, notice, positionReport, raw, reference, render, resolveHtml, shortHash, table, time, toast } from '../lib/ui.js';
 import { donutChart, gauge, kpiCard } from '../lib/charts.js';
 import { can, state } from '../app.js';
+import { lookupPanel, wireLookups } from '../lib/lookup.js';
 
 /**
  * Golden Thread.
@@ -49,6 +50,31 @@ export async function audit(root) {
     byGroup.set(event.entity.refType, (byGroup.get(event.entity.refType) ?? 0) + 1);
   }
   const withEvidence = events.filter((e) => (e.evidenceRefs ?? []).length > 0).length;
+
+  /** Doors invariant: the read the field app resumes with is one a person can open too. */
+  const UPLOAD_STATE_LOOKUP = {
+            id: 'uploadstate',
+            title: 'Where did this upload get to',
+            intent:
+              'A photograph taken at a site gate is uploaded in parts over whatever signal is there. This says which ' +
+              'parts the platform holds, so a phone that lost the connection resumes rather than starting again — and ' +
+              'so somebody can see that a record is not evidence yet because its file is still on a handset.',
+            empty: 'Every evidence record on this project has its file. Nothing is part-uploaded.',
+            inputs: [
+              {
+                name: 'hash',
+                label: 'Evidence still missing its file',
+                options: ((evidence?.entries) ?? [])
+                  .filter((entry) => !entry.held)
+                  .slice(0, 40)
+                  .map((entry) => ({ value: entry.hash, label: `${entry.type} · ${shortHash(entry.hash)}` })),
+              },
+            ],
+            path: (v) => `/v1/evidence/${v.hash}/chunks`,
+            sections: [
+              { key: 'held', label: 'Parts already held', empty: 'Nothing of this file has arrived yet.' },
+            ],
+          };
 
   render(
     root,
@@ -159,6 +185,8 @@ export async function audit(root) {
           </div>
         </div>
       </div>
+
+      ${raw(resolveHtml(lookupPanel(UPLOAD_STATE_LOOKUP)))}
 
       ${
         evidence
@@ -276,6 +304,8 @@ export async function audit(root) {
       ${feedPanel(changes)}
     `,
   );
+
+  wireLookups(root, [UPLOAD_STATE_LOOKUP]);
 
   // Supply the file behind a hash the chain already records. The browser hashes
   // it first and refuses a mismatch locally, so somebody who picked the wrong

@@ -570,3 +570,112 @@ describe('evidence retention', () => {
     assert.match(position.summary, /No object store is configured/i);
   });
 });
+
+/**
+ * Resumable upload: the connection dies, the photograph survives.
+ *
+ * `put` takes a whole file. On the link a site gate actually has, a connection
+ * that dies at 90% starts again at nothing, and on a bad enough one it never
+ * finishes — the evidence record exists, the file never arrives, and the hash on
+ * the chain points at something nobody holds. The specification's own budget is
+ * twenty photographs in a batch, resumable on drop.
+ *
+ * The content hash is the upload id, which is the part worth noticing: the
+ * device already knows it, because it hashed the file to make the record. There
+ * is no handshake to lose and no token to expire, so a phone that reboots
+ * mid-upload resumes by asking what is held under a hash it still has.
+ */
+describe('an upload survives a dropped connection', () => {
+  const store = (): EvidenceStore => new EvidenceStore(join(directory, `r-${Math.random().toString(36).slice(2)}`));
+
+  /** A file in three parts, as a device on a bad link would send it. */
+  const whole = bytesOf('the north kicker at chainage 214, photographed at 07:412');
+  const parts = [whole.subarray(0, 20), whole.subarray(20, 40), whole.subarray(40)];
+  const address = hashBytes(whole);
+
+  it('assembles the file from parts and stores it at its own hash', () => {
+    const s = store();
+    assert.equal(s.putChunk('t', address, 0, 3, parts[0]!, 'image/jpeg').complete, false);
+    assert.equal(s.putChunk('t', address, 1, 3, parts[1]!, 'image/jpeg').complete, false);
+
+    const done = s.putChunk('t', address, 2, 3, parts[2]!, 'image/jpeg');
+    assert.equal(done.complete, true);
+    assert.equal(done.object?.hash, address);
+    assert.deepEqual(s.get('t', address).bytes, whole);
+  });
+
+  it('tells a returning device exactly which parts it still owes', () => {
+    const s = store();
+    s.putChunk('t', address, 0, 3, parts[0]!, 'image/jpeg');
+    s.putChunk('t', address, 2, 3, parts[2]!, 'image/jpeg');
+
+    // The phone died between part 0 and part 2 and has come back. It asks.
+    const state = s.uploadState('t', address);
+    assert.deepEqual(state.held, [0, 2]);
+    assert.equal(state.complete, false);
+
+    // It sends only what is missing, and the file completes.
+    assert.equal(s.putChunk('t', address, 1, 3, parts[1]!, 'image/jpeg').complete, true);
+    assert.deepEqual(s.get('t', address).bytes, whole);
+  });
+
+  it('accepts a part it already holds without corrupting the file', () => {
+    // The ambiguous case: the server stored the part and the response was lost,
+    // so the device sends it again. This must be a no-op, not a second copy
+    // concatenated into the middle of somebody's photograph.
+    const s = store();
+    s.putChunk('t', address, 0, 3, parts[0]!, 'image/jpeg');
+    s.putChunk('t', address, 0, 3, parts[0]!, 'image/jpeg');
+    s.putChunk('t', address, 1, 3, parts[1]!, 'image/jpeg');
+    assert.equal(s.putChunk('t', address, 2, 3, parts[2]!, 'image/jpeg').complete, true);
+    assert.deepEqual(s.get('t', address).bytes, whole);
+  });
+
+  it('answers a device that lost the last response with the finished object', () => {
+    const s = store();
+    for (const [i, part] of parts.entries()) s.putChunk('t', address, i, 3, part, 'image/jpeg');
+    // Sent again after the file is complete.
+    const again = s.putChunk('t', address, 1, 3, parts[1]!, 'image/jpeg');
+    assert.equal(again.complete, true);
+    assert.equal(again.object?.hash, address);
+    assert.equal(s.uploadState('t', address).complete, true);
+  });
+
+  it('refuses parts that do not assemble to the address they were sent to', () => {
+    // The guard that makes the chain worth having, applied to the assembled
+    // bytes rather than to any part: the parts were never trusted.
+    const s = store();
+    s.putChunk('t', address, 0, 2, parts[0]!, 'image/jpeg');
+    throwsCode(
+      () => s.putChunk('t', address, 1, 2, bytesOf('not the rest of that photograph'), 'image/jpeg'),
+      'EVIDENCE_HASH_MISMATCH',
+    );
+    // And the failed attempt leaves nothing to resume: a set of parts that does
+    // not hash to its address is not a partial upload, it is a wrong one.
+    assert.deepEqual(s.uploadState('t', address).held, []);
+    assert.equal(s.has('t', address), false);
+  });
+
+  it('refuses a part outside the upload it claims to belong to', () => {
+    const s = store();
+    throwsCode(() => s.putChunk('t', address, 3, 3, parts[0]!, 'image/jpeg'), 'EVIDENCE_CHUNK_INDEX_INVALID');
+    throwsCode(() => s.putChunk('t', address, 0, 0, parts[0]!, 'image/jpeg'), 'EVIDENCE_CHUNK_COUNT_INVALID');
+    throwsCode(() => s.putChunk('t', address, 0, 100_000, parts[0]!, 'image/jpeg'), 'EVIDENCE_CHUNK_COUNT_INVALID');
+  });
+
+  it('stops at the part that crosses the size limit rather than after the whole file', () => {
+    const s = new EvidenceStore(join(directory, 'chunk-limits'), { maxBytes: 32 });
+    const big = bytesOf('x'.repeat(64));
+    const half = [big.subarray(0, 32), big.subarray(32)];
+    const bigAddress = hashBytes(big);
+
+    assert.equal(s.putChunk('t', bigAddress, 0, 2, half[0]!, 'text/plain').complete, false);
+    throwsCode(() => s.putChunk('t', bigAddress, 1, 2, half[1]!, 'text/plain'), 'EVIDENCE_TOO_LARGE');
+  });
+
+  it('keeps one tenant out of another tenant\'s unfinished upload', () => {
+    const s = store();
+    s.putChunk('a', address, 0, 3, parts[0]!, 'image/jpeg');
+    assert.deepEqual(s.uploadState('b', address).held, [], 'a tenant saw another tenant\'s parts');
+  });
+});
