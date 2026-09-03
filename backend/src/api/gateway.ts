@@ -143,11 +143,20 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
   const requested = req.method ?? 'GET';
   const method = requested === 'HEAD' ? 'GET' : requested;
 
+  // The specification documents the gateway as `/api/v1/{service}`; the routes
+  // live at `/v1/...`. An integrator who read the specification and called
+  // `/api/v1/routes` was answered "No route for GET /api/v1/routes", which is
+  // true and useless. Both spellings are accepted at the one place the path
+  // is read, so every route, its authentication, its rate-limit key and its
+  // telemetry are identical whichever the caller used. Nothing new is
+  // reachable through the alias that was not reachable without it.
+  const path = url.pathname === '/api/v1' || url.pathname.startsWith('/api/v1/') ? url.pathname.slice('/api'.length) : url.pathname;
+
   const ctx: RequestContext = {
     traceId,
     correlationId,
     method,
-    path: url.pathname,
+    path,
     params: {},
     query: url.searchParams,
     body: undefined,

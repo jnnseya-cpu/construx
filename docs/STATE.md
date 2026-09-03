@@ -7840,6 +7840,26 @@ before sending a token within thirty seconds of its `exp`, so the burst does
 not happen at all. `watch.test.ts` holds the rate both ways — expiry excluded,
 an invalid token still counted.
 
+**"No route for GET /api/v1/routes".** `docs/SPEC.md` documents the gateway
+as `/api/v1/{service}`; the routes live at `/v1/...`, and the specification's
+own reconciliation note says so. An integrator who read the specification
+rather than the note got a true and useless 404. The gateway now accepts both
+spellings at the one place the path is read, so every route, its
+authentication, its rate-limit key and its telemetry are identical whichever
+prefix the caller used, and nothing is reachable through the alias that was
+not reachable without it. `api.test.ts` holds it: the catalogue and an
+authenticated read answer under `/api/v1`, and an unauthenticated one is still
+refused.
+
+**The AI control plane on a customer screen.** ACU & Billing showed a card
+naming the routing mode and each provider by vendor with its health. A
+customer needs one fact from it — will an AI request run right now — and a
+vendor name on a customer screen is a sub-processor disclosure made by layout
+rather than by policy. The card now says available, reduced or unavailable,
+computed from the same position, and what each means for a request and its
+charge. The mode, the vendors and their health stay on the operator's AI
+Engine screen, where they are the job.
+
 ---
 
 ## What is partial

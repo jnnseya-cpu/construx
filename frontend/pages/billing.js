@@ -234,22 +234,35 @@ export async function billing(root) {
           </div>
 
           <div class="card">
-            <h2>AI control plane</h2>
+            <h2>AI service</h2>
             ${
+              // What a customer needs from this card is one fact: will an AI
+              // request run right now. Which vendor serves it, the routing
+              // mode and each provider's health are the operator's concern and
+              // live on the AI Engine screen — and a vendor name on a customer
+              // screen is a sub-processor disclosure made by layout rather
+              // than by policy.
               plane
-                ? html`<div class="split-list">
-                    <div class="row"><span class="lbl">Mode</span><span class="val">${plane.mode}</span></div>
-                    <div class="row">
-                      <span class="lbl">Reasoning</span>
-                      <span class="val">${plane.reasoning.provider} ${badge(plane.reasoning.healthy ? 'healthy' : 'degraded', plane.reasoning.healthy ? 'ok' : 'bad')}</span>
-                    </div>
-                    <div class="row">
-                      <span class="lbl">Perception</span>
-                      <span class="val">${plane.perception.provider} ${badge(plane.perception.healthy ? 'healthy' : 'degraded', plane.perception.healthy ? 'ok' : 'bad')}</span>
-                    </div>
-                  </div>
-                  <div class="metric-sub" style="margin-top:10px">Perception observes; reasoning decides. Both sit behind adapters, so neither is a dependency.</div>`
-                : html`<div class="empty"><b>Not available</b></div>`
+                ? (() => {
+                    const providers = plane.available ?? [plane.reasoning, plane.perception];
+                    const healthy = providers.filter((entry) => entry?.healthy).length;
+                    const total = providers.length;
+                    const state = healthy === 0 ? 'unavailable' : healthy < total ? 'reduced' : 'available';
+                    return html`<div class="split-list">
+                        <div class="row">
+                          <span class="lbl">Right now</span>
+                          <span class="val">${badge(state, state === 'available' ? 'ok' : state === 'reduced' ? 'warn' : 'bad')}</span>
+                        </div>
+                      </div>
+                      <div class="metric-sub" style="margin-top:10px">
+                        ${state === 'available'
+                          ? 'Every AI request is served, quoted before it runs, and charged only once its output is on the record.'
+                          : state === 'reduced'
+                            ? 'A provider is degraded. Requests still run through the others; anything that cannot be served is refused with the reason, never charged.'
+                            : 'No provider is answering. Requests are refused with the reason rather than queued, and nothing is charged.'}
+                      </div>`;
+                  })()
+                : html`<div class="empty"><b>Not available</b>The service position could not be read.</div>`
             }
           </div>
         </div>

@@ -522,6 +522,22 @@ describe('the interface is given the rules rather than holding them', () => {
     assert.equal(reply.body.routes.length, ROUTES.length);
   });
 
+  it('answers the specification’s /api/v1 spelling as the same API', async () => {
+    // docs/SPEC.md documents the gateway as `/api/v1/{service}`. An integrator
+    // who followed it was told "No route for GET /api/v1/routes". Same routes,
+    // same authentication, same refusals, whichever prefix the caller read.
+    const catalogue = await call('GET', '/api/v1/routes');
+    assert.equal(catalogue.status, 200);
+    assert.equal(catalogue.body.routes.length, ROUTES.length);
+
+    const matrix = await call('GET', '/api/v1/permissions/matrix', { token: tokenFor('pm') });
+    assert.equal(matrix.status, 200);
+    assert.ok(matrix.body.matrix.PM);
+
+    const refused = await call('GET', '/api/v1/permissions/matrix');
+    assert.equal(refused.status, 401, 'the alias must not be a way past authentication');
+  });
+
   it('never exposes a provider credential through the control plane', async () => {
     const reply = await call('GET', '/v1/ai/control-plane', { token: tokenFor('pm') });
 
