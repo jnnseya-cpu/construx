@@ -44,6 +44,7 @@ import { grantableScopes, issueKey, keyRegister, revokeKey } from '../developer/
 import { subscribe, subscriptionRegister, unsubscribe, webhookPosition } from '../developer/webhooks.ts';
 import type { ACUCaps } from '../billing/acu.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS, TOP_UPS, type PackageTier } from '../billing/seats.ts';
+import { BILLING_CURRENCY } from '../billing/payments.ts';
 import {
   purchasedSeatEntitlements,
   purchasedSeats,
@@ -1794,6 +1795,7 @@ export const ROUTES: Route[] = [
             jurisdiction: tenant.jurisdiction,
             currency: tenant.defaultCurrency,
             createdAt: tenant.createdAt,
+            closedAt: tenant.closedAt ?? null,
             tier: subscription.package,
             package: subscription.package,
             packageLabel: pkg.label,
@@ -4908,6 +4910,106 @@ export const ROUTES: Route[] = [
         throw new ForbiddenError('Only an enterprise admin may reactivate an identity', 'ENTERPRISE_ADMIN_REQUIRED');
       }
       return platform.reactivateUser(actor, { userId: ctx.params.userId as string, reason: body<{ reason: string }>(ctx).reason });
+    },
+  },
+  // ------------------------------------------------------------ closing a tenancy
+  {
+    method: 'GET',
+    pattern: '/v1/admin/tenants/:tenantId/closure',
+    readOnly: true,
+    description: 'What closing this tenancy would do and what the customer would be owed (platform operator only)',
+    handler: (platform, ctx) => {
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may close a tenancy', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const tenantId = ctx.params.tenantId as string;
+      const tenant = platform.tenant(tenantId);
+      const people = platform.users(tenantId);
+      return {
+        tenant: { id: tenant.id, legalName: tenant.legalName, closedAt: tenant.closedAt ?? null },
+        identities: people.length,
+        active: people.filter((user) => user.status === 'ACTIVE').length,
+        refund: platform.refundPosition(tenantId),
+        erasureGraceDays: config.privacy.erasureGraceDays,
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:tenantId/close',
+    description: 'Close a customer tenancy: cancel the subscription, deactivate and schedule erasure of every identity, raise the refund owed (platform operator only)',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 10 } }, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may close a tenancy', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const tenantId = ctx.params.tenantId as string;
+      // Read before closing: the notice has to reach the real addresses, and
+      // erasure will take those away in thirty days.
+      const recipients = platform
+        .users(tenantId)
+        .filter((user) => user.erasedAt === undefined && user.erasureRequestedAt === undefined)
+        .map((user) => ({ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }));
+      const result = platform.closeTenant(actor, { tenantId, reason: body<{ reason: string }>(ctx).reason });
+
+      // Mandatory, and the same notice an administrator's request sends: the
+      // person is told their account will be erased and when.
+      for (const recipient of recipients) {
+        await notifyEngine
+          .notify(platform, {
+            code: 'privacy.account_deletion_requested',
+            recipients: [recipient],
+            payload: {
+              detail:
+                `${result.tenant.legalName}'s tenancy on this platform has been closed by the operator. Your account has been ` +
+                `deactivated and will be erased on ${String(platform.user(recipient.id).erasureDueAt ?? '').slice(0, 10)}. ` +
+                'The project records you took part in are kept, as the law requires.',
+            },
+            branding: platform.exports.brandingIfConfigured(tenantId) ?? PLATFORM_BRANDING,
+            actorId: actor.actorId,
+            correlationId: ctx.correlationId,
+          })
+          .catch(() => undefined);
+      }
+
+      return {
+        tenantId,
+        legalName: result.tenant.legalName,
+        closedAt: result.tenant.closedAt,
+        identitiesDeactivated: result.deactivated.length,
+        refund: result.refund ?? null,
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/refunds',
+    readOnly: true,
+    description: 'Refunds owed to closed tenancies, and those already paid (platform operator only)',
+    handler: (platform, ctx) => {
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may see refunds', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const refunds = platform.refunds();
+      return {
+        refunds,
+        dueMinor: refunds.filter((refund) => refund.status === 'DUE').reduce((sum, refund) => sum + refund.totalMinor, 0),
+        currency: BILLING_CURRENCY,
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/refunds/:refundId/settle',
+    description: 'Record that a refund was paid, with the payment reference (platform operator only)',
+    schema: { type: 'object', required: ['reference'], properties: { reference: { type: 'string', minLength: 3 } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may settle a refund', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      return platform.settleRefund(actor, { refundId: ctx.params.refundId as string, reference: body<{ reference: string }>(ctx).reference });
     },
   },
   // --------------------------------------------------------------- team & access

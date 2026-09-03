@@ -8057,6 +8057,41 @@ switch nothing reads would be a promise with nothing behind it. An "expected
 ACU band per role group": there is no measured figure to publish, and an
 invented one would be a fake number on a governance screen.
 
+### Closing a tenancy, and what it is owed
+
+Asked for as: the operator deletes an enterprise, every user attached to it
+ends, and unused accounts are refunded automatically. Nothing on this platform
+is deleted — the record is evidence and the chain is what makes it so — so the
+act is a **closure**, on Tenants & Users beside Credit, Package, Status and
+Modules, refused for the platform's own tenancy and the demonstration.
+
+`Platform.closeTenant` does four things in order and records each. The
+subscription is cancelled through `setSubscriptionStatus`, which `standing()`
+turns into a read-only record on the next request. Every identity is
+deactivated (`USER_DEACTIVATED`, seat released, sign-in refused) and erasure is
+requested for it through the ordinary route, so the names go after the same
+grace period any erasure has and a closure made in error can be walked back for
+thirty days; each person receives the mandatory deletion notice. The wallet is
+emptied (`ACUWallet.closeOut`, a debit of the whole balance naming the refund)
+so the same pounds cannot be both refunded and spent. And what the customer is
+owed is raised as a `RefundObligation` (`REFUND_RAISED`, `DUE`) with both
+figures and their basis. `TENANT_CLOSED` carries `closedAt`, who and why.
+
+**What is owed** is computed by `refundPosition` from the records: the wallet's
+unspent paid-in credit — the lesser of the balance and what was paid in, so
+trial grants and subscription allowances, which were never the customer's
+money, count as spent first — plus the unused days of the current subscription
+period, pro rata against the settled charge for it; nothing is owed for a
+period never charged. "Automatically" stops at raising the obligation: this
+deployment has no rail that moves money back on its own (card payments are not
+keyed), so the operator pays it and records the reference (`POST
+/v1/admin/refunds/:id/settle`, `REFUND_SETTLED`), and the Refunds owed card on
+Tenants & Users shows what is due and what was paid, with the reference the
+customer can check against their statement. The Close button previews the
+count and the money before asking for the reason. `tenancyclosure.test.ts`
+holds the arithmetic, the cascade, the refusals, the settlement and the
+restart.
+
 ---
 
 ## What is partial

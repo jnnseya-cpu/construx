@@ -31,6 +31,7 @@ import {
 } from './billing/payments.ts';
 import { PACKAGES, UNCHARGED_ROLES, type PackageTier } from './billing/seats.ts';
 import * as storage from './billing/storage.ts';
+import { chargesFor } from './billing/collection.ts';
 import { createHash } from 'node:crypto';
 import { config } from './config.ts';
 import { SIGNATURES } from './site/media.ts';
@@ -149,6 +150,31 @@ export type PlatformUser = {
  * project) that the estate is filed under. Owned by the tenancy's
  * administrator; a person belongs to at most one.
  */
+/**
+ * Money the platform owes a customer whose tenancy was closed. Raised on
+ * closure with both figures and their basis; settled by the operator with the
+ * reference of the payment that discharged it. This deployment has no rail
+ * that moves money back on its own, so the obligation is the record and the
+ * settlement is a human act, recorded.
+ */
+export type RefundObligation = {
+  id: string;
+  tenantId: string;
+  legalName: string;
+  walletMinor: number;
+  subscriptionMinor: number;
+  totalMinor: number;
+  currency: string;
+  basis: string[];
+  status: 'DUE' | 'SETTLED';
+  raisedAt: string;
+  raisedBy: string;
+  reason: string;
+  settledAt?: string;
+  settledBy?: string;
+  settlementReference?: string;
+};
+
 export type OrgUnit = {
   id: string;
   tenantId: string;
@@ -207,6 +233,7 @@ export class Platform {
   readonly #tenants = new Map<string, Tenant>();
   readonly #users = new Map<string, PlatformUser>();
   readonly #units = new Map<string, OrgUnit>();
+  readonly #refunds = new Map<string, RefundObligation>();
   /**
    * Private module grants, keyed by `grantRef` — one record per module per
    * tenancy, so a re-grant after a revocation moves the same record back to
@@ -1090,6 +1117,218 @@ export class Platform {
     };
   }
 
+  // --- Closing a tenancy ---------------------------------------------------
+
+  /**
+   * What the customer would be owed if the tenancy closed now.
+   *
+   * Two figures, each from its own record. The wallet: the unspent part of what
+   * they paid in, grants and allowances counted as spent first because they
+   * were never the customer's money. The subscription: the unused part of the
+   * period they have already paid for, pro rata by day against the settled
+   * charge for the current period. Nothing is owed for a period never charged.
+   */
+  refundPosition(tenantId: string, now = new Date()): {
+    walletMinor: number;
+    subscriptionMinor: number;
+    totalMinor: number;
+    currency: string;
+    basis: string[];
+  } {
+    const wallet = this.#wallets.get(tenantId);
+    const walletMinor = wallet ? wallet.refundableMinor() : 0;
+    const subscription = this.#subscriptions.get(tenantId);
+    const basis: string[] = [];
+    if (wallet) {
+      basis.push(
+        `Wallet: ${wallet.availableMinor()} available, ${wallet.paidInMinor()} paid in; the lesser is refundable, grants and allowances are not`,
+      );
+    }
+    let subscriptionMinor = 0;
+    if (subscription) {
+      const settled = chargesFor(this, tenantId)
+        .filter((charge) => charge.status === 'SETTLED' && charge.periodStart <= now.toISOString())
+        .sort((a, b) => b.periodStart.localeCompare(a.periodStart))[0];
+      if (settled) {
+        const start = Date.parse(settled.periodStart);
+        const end = Date.parse(subscription.renewsAt);
+        const span = end - start;
+        const left = end - now.getTime();
+        if (span > 0 && left > 0) {
+          subscriptionMinor = Math.round((settled.amountMinor * Math.min(left, span)) / span);
+          basis.push(
+            `Subscription: ${settled.amountMinor} settled for the period from ${settled.periodStart.slice(0, 10)} to ${subscription.renewsAt.slice(0, 10)}, ` +
+              `${Math.ceil(left / 86_400_000)} of ${Math.round(span / 86_400_000)} days unused`,
+          );
+        } else {
+          basis.push('Subscription: the current period is fully used');
+        }
+      } else {
+        basis.push('Subscription: no settled charge for the current period, so nothing is owed for it');
+      }
+    }
+    return {
+      walletMinor,
+      subscriptionMinor,
+      totalMinor: walletMinor + subscriptionMinor,
+      currency: BILLING_CURRENCY,
+      basis,
+    };
+  }
+
+  /**
+   * Close a customer's tenancy.
+   *
+   * Everything stops and nothing is destroyed. The subscription is cancelled,
+   * which `standing()` turns into a read-only record on the next request;
+   * every identity is deactivated — seat released, sign-in refused — and
+   * scheduled for erasure through the same grace period any erasure has, so a
+   * closure made in error can still be walked back for thirty days; and what
+   * the customer is owed is raised as a refund obligation for the operator to
+   * settle and record, because this deployment has no rail that can move money
+   * back on its own. The wallet is emptied against that obligation so the same
+   * pounds cannot be both refunded and spent.
+   *
+   * The platform's own tenancy and a demonstration cannot be closed.
+   */
+  closeTenant(
+    actor: AuthContext,
+    input: { tenantId: string; reason: string },
+    now = new Date(),
+  ): { tenant: Tenant; deactivated: string[]; refund: RefundObligation | undefined } {
+    const tenant = this.#tenants.get(input.tenantId);
+    if (!tenant) throw new NotFoundError(`No tenant ${input.tenantId}`);
+    if (!input.reason.trim() || input.reason.trim().length < 10) {
+      throw new DomainError('CLOSURE_REASON_REQUIRED', 'Closing a tenancy requires a reason of at least ten characters');
+    }
+    if (tenant.id === PLATFORM_TENANT_ID) {
+      throw new DomainError('CANNOT_CLOSE_PLATFORM_TENANCY', 'The platform’s own tenancy cannot be closed', 422);
+    }
+    if (this.isDemonstrationTenant(tenant.id)) {
+      throw new DomainError('CANNOT_CLOSE_DEMONSTRATION', 'The demonstration tenancy cannot be closed; it is not a customer', 422);
+    }
+    if (tenant.closedAt) throw new DomainError('TENANT_ALREADY_CLOSED', `${tenant.legalName} was closed on ${tenant.closedAt.slice(0, 10)}`, 409);
+
+    const position = this.refundPosition(tenant.id, now);
+    const closedAt = now.toISOString();
+
+    // The subscription first, so the record is read-only before anything else
+    // moves. Cancellation is recorded with its authority like any status change.
+    if (this.subscription(tenant.id).status !== 'CANCELLED') {
+      this.setSubscriptionStatus({
+        tenantId: tenant.id,
+        status: 'CANCELLED',
+        reason: `Tenancy closed: ${input.reason}`,
+        decidedBy: actor.actorId,
+      });
+    }
+
+    // Every identity: deactivated now, erased after the grace period. Acting
+    // inside the tenancy, so the same checks and the same events apply as when
+    // its own administrator does it — except the last-administrator rule,
+    // which protects a tenancy that is carrying on, and this one is not.
+    const inside: AuthContext = { ...actor, tenantId: tenant.id };
+    const deactivated: string[] = [];
+    for (const user of this.users(tenant.id)) {
+      if (user.erasedAt !== undefined) continue;
+      if (user.status === 'ACTIVE') {
+        this.revokeUserSeat(tenant.id, user.id);
+        this.ledger.commit({
+          tenantId: tenant.id,
+          projectId: `${tenant.id}-governance`,
+          actor: { refType: 'User', refId: actor.actorId },
+          source: 'WEB',
+          correlationId: ulid(),
+          eventType: 'USER_DEACTIVATED',
+          entity: { refType: 'User', refId: user.id },
+          nextState: { ...this.userRecord(user), status: 'SUSPENDED', deactivatedAt: closedAt, deactivatedBy: actor.actorId, reason: `Tenancy closed: ${input.reason}` },
+        });
+      }
+      if (user.erasureRequestedAt === undefined) {
+        this.requestErasure(inside, { userId: user.id, reason: `Tenancy closed: ${input.reason}` });
+      }
+      deactivated.push(user.id);
+    }
+
+    // The money. Emptied against the obligation, and the obligation names
+    // both figures and their basis so the settlement can be checked.
+    let refund: RefundObligation | undefined;
+    if (position.totalMinor > 0) {
+      this.#wallets.get(tenant.id)?.closeOut(`Wallet closed with the tenancy; ${position.walletMinor} raised as a refund`);
+      refund = {
+        id: ulid(),
+        tenantId: tenant.id,
+        legalName: tenant.legalName,
+        walletMinor: position.walletMinor,
+        subscriptionMinor: position.subscriptionMinor,
+        totalMinor: position.totalMinor,
+        currency: position.currency,
+        basis: position.basis,
+        status: 'DUE',
+        raisedAt: closedAt,
+        raisedBy: actor.actorId,
+        reason: input.reason,
+      };
+      this.#refunds.set(refund.id, refund);
+      this.ledger.commit({
+        tenantId: tenant.id,
+        projectId: `${tenant.id}-governance`,
+        actor: { refType: 'User', refId: actor.actorId },
+        source: 'WEB',
+        correlationId: ulid(),
+        eventType: 'REFUND_RAISED',
+        entity: { refType: 'RefundObligation', refId: refund.id },
+        nextState: { ...refund },
+      });
+    } else {
+      this.#wallets.get(tenant.id)?.closeOut('Wallet closed with the tenancy; nothing refundable remained');
+    }
+
+    const closed: Tenant = { ...tenant, closedAt, closedBy: actor.actorId, closureReason: input.reason };
+    this.#tenants.set(tenant.id, closed);
+    this.ledger.commit({
+      tenantId: tenant.id,
+      projectId: `${tenant.id}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'TENANT_CLOSED',
+      entity: { refType: 'Tenant', refId: tenant.id },
+      nextState: { ...closed, identitiesDeactivated: deactivated.length, refundId: refund?.id ?? null, refundMinor: refund?.totalMinor ?? 0 },
+    });
+
+    return { tenant: closed, deactivated, refund };
+  }
+
+  /** Every refund obligation on the estate, unsettled first. */
+  refunds(): RefundObligation[] {
+    return [...this.#refunds.values()].sort(
+      (a, b) => Number(a.status === 'SETTLED') - Number(b.status === 'SETTLED') || b.raisedAt.localeCompare(a.raisedAt),
+    );
+  }
+
+  /** Record that a refund was paid, with the bank's or provider's reference. */
+  settleRefund(actor: AuthContext, input: { refundId: string; reference: string }): RefundObligation {
+    const refund = this.#refunds.get(input.refundId);
+    if (!refund) throw new NotFoundError(`No refund ${input.refundId}`);
+    if (refund.status === 'SETTLED') throw new DomainError('REFUND_ALREADY_SETTLED', 'That refund has already been recorded as paid', 409);
+    const reference = input.reference.trim();
+    if (reference.length < 3) throw new DomainError('REFUND_REFERENCE_REQUIRED', 'The payment reference is required — it is what the customer can check against their statement');
+    const settled: RefundObligation = { ...refund, status: 'SETTLED', settledAt: new Date().toISOString(), settledBy: actor.actorId, settlementReference: reference };
+    this.#refunds.set(refund.id, settled);
+    this.ledger.commit({
+      tenantId: refund.tenantId,
+      projectId: `${refund.tenantId}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'REFUND_SETTLED',
+      entity: { refType: 'RefundObligation', refId: refund.id },
+      nextState: { ...settled },
+    });
+    return settled;
+  }
+
   // --- Organisation structure ----------------------------------------------
 
   /** The tenancy's units, live ones first, as the administrator arranged them. */
@@ -1786,6 +2025,11 @@ export class Platform {
     for (const record of this.ledger.entitiesOfType('OrgUnit')) {
       const state = record.state as unknown as OrgUnit;
       this.#units.set(state.id, state);
+    }
+
+    for (const record of this.ledger.entitiesOfType('RefundObligation')) {
+      const state = record.state as unknown as RefundObligation;
+      this.#refunds.set(state.id, state);
     }
 
     for (const record of this.ledger.entitiesOfType('Subscription')) {

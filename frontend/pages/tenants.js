@@ -19,10 +19,11 @@ import { badge, date, html, money, raw, render, table, time, toast, track } from
  */
 
 export async function tenants(root) {
-  const [estate, vocab, register] = await Promise.all([
+  const [estate, vocab, register, refunds] = await Promise.all([
     api.get('/v1/admin/tenants').catch((error) => ({ error })),
     api.get('/v1/signup/account-types').catch(() => null),
     api.get('/v1/admin/modules').catch(() => null),
+    api.get('/v1/admin/refunds').catch(() => null),
   ]);
 
   if (estate.error) {
@@ -125,7 +126,9 @@ export async function tenants(root) {
                 (tenant.modules ?? []).map((module) => badge(module.name, 'ai'))
               }`,
             badge(tenant.tier, tenant.tier === 'ENTERPRISE' || tenant.tier === 'SOVEREIGN' ? 'ai' : 'info'),
-            badge(tenant.status, tenant.status === 'ACTIVE' ? 'ok' : 'warn'),
+            tenant.closedAt
+              ? html`${badge('closed', 'bad')}<div class="metric-sub">${date(tenant.closedAt)}</div>`
+              : badge(tenant.status, tenant.status === 'ACTIVE' ? 'ok' : 'warn'),
             tenant.administrators === 0
               ? badge('no administrator', 'bad')
               : `${tenant.identities} (${tenant.administrators} admin${tenant.administrators === 1 ? '' : 's'})`,
@@ -140,14 +143,46 @@ export async function tenants(root) {
             money(tenant.lifetimeRevenueMinor),
             money(tenant.wallet.availableMinor),
             date(tenant.renewsAt),
-            html`<button class="btn quiet sm" data-credit="${tenant.id}">Credit</button>
-              <button class="btn quiet sm" data-package="${tenant.id}">Package</button>
-              <button class="btn quiet sm" data-status="${tenant.id}">Status</button>
-              <button class="btn quiet sm" data-modules="${tenant.id}">Modules</button>`,
+            tenant.closedAt
+              ? html`<span class="metric-sub">Closed — record kept, read-only</span>`
+              : html`<button class="btn quiet sm" data-credit="${tenant.id}">Credit</button>
+                  <button class="btn quiet sm" data-package="${tenant.id}">Package</button>
+                  <button class="btn quiet sm" data-status="${tenant.id}">Status</button>
+                  <button class="btn quiet sm" data-modules="${tenant.id}">Modules</button>
+                  ${tenant.demonstration ? '' : html`<button class="btn quiet danger sm" data-close="${tenant.id}">Close</button>`}`,
           ]),
           empty: 'No tenancy on the estate yet.',
         })}
       </div>
+
+      ${refunds
+        ? html`<div class="card" style="margin-top:14px" data-refunds>
+            <h2>Refunds owed</h2>
+            <p class="metric-sub" style="margin-bottom:12px">
+              What closed tenancies are owed: the unspent part of what they paid into their wallet, and the unused days of a
+              subscription period they had already paid for. This deployment has no rail that moves money back on its own, so
+              each is paid by the operator and recorded here with the payment reference.
+              ${refunds.dueMinor > 0 ? html`<b>${money(refunds.dueMinor)} due now.</b>` : 'Nothing is due.'}
+            </p>
+            ${table({
+              headers: ['Tenancy', 'Wallet', 'Subscription', 'Total', 'Raised', 'Status', ''],
+              rows: (refunds.refunds ?? []).map((refund) => [
+                html`<b>${refund.legalName}</b><div class="metric-sub">${refund.reason}</div>`,
+                money(refund.walletMinor),
+                money(refund.subscriptionMinor),
+                money(refund.totalMinor),
+                date(refund.raisedAt),
+                refund.status === 'SETTLED'
+                  ? html`${badge('paid', 'good')}<div class="metric-sub">${refund.settlementReference} · ${date(refund.settledAt)}</div>`
+                  : badge('due', 'warn'),
+                refund.status === 'DUE'
+                  ? html`<button class="btn quiet sm" data-settle="${refund.id}" data-name="${refund.legalName}">Record payment</button>`
+                  : '',
+              ]),
+              empty: 'No tenancy has been closed with money owed.',
+            })}
+          </div>`
+        : ''}
 
       ${register
         ? html`<div class="card pad0" style="margin-top:14px">
@@ -359,6 +394,71 @@ export async function tenants(root) {
           'ok',
         );
         await again();
+      }
+    });
+  }
+
+  for (const button of root.querySelectorAll('[data-close]')) {
+    button.addEventListener('click', async () => {
+      const tenantId = button.getAttribute('data-close');
+      const tenant = byId.get(tenantId);
+      try {
+        // What it would do, before the reason is asked for. A closure is the
+        // one operator act that ends a customer, and the person doing it
+        // should see the count and the money first.
+        const preview = await api.get(`/v1/admin/tenants/${tenantId}/closure`);
+        const refund = preview.refund;
+        const result = await command({
+          title: `Close ${tenant?.legalName ?? 'tenancy'}`,
+          intent:
+            `Ends this customer. The subscription is cancelled and the record becomes read-only. All ${preview.identities} ` +
+            `identit${preview.identities === 1 ? 'y' : 'ies'} (${preview.active} active) are deactivated now and erased after ` +
+            `${preview.erasureGraceDays} days, which is also how long there is to reverse a mistake. The wallet is emptied and ` +
+            `${money(refund.totalMinor)} is raised as a refund owed — ${money(refund.walletMinor)} of unspent paid-in credit and ` +
+            `${money(refund.subscriptionMinor)} of unused subscription — for you to pay and record. Nothing on the record is deleted.`,
+          path: `/v1/admin/tenants/${tenantId}/close`,
+          submitLabel: 'Close tenancy',
+          fields: [
+            {
+              name: 'reason',
+              label: 'Reason',
+              type: 'textarea',
+              hint: 'At least ten characters. Quote the notice, the request or the decision this rests on; it is recorded against the closure.',
+            },
+          ],
+        });
+        if (result) {
+          toast(
+            `${result.legalName} closed`,
+            `${result.identitiesDeactivated} identit${result.identitiesDeactivated === 1 ? 'y' : 'ies'} deactivated. ` +
+              (result.refund ? `${money(result.refund.totalMinor)} raised as a refund to pay and record below.` : 'Nothing was owed.'),
+            'warn',
+          );
+          await again();
+        }
+      } catch (error) {
+        toast('Could not close the tenancy', error.message, 'err');
+      }
+    });
+  }
+
+  for (const button of root.querySelectorAll('[data-settle]')) {
+    button.addEventListener('click', async () => {
+      const refundId = button.getAttribute('data-settle');
+      try {
+        const result = await command({
+          title: `Record the refund to ${button.getAttribute('data-name')}`,
+          intent: 'The payment has been made outside the platform. The reference is what the customer can check against their statement.',
+          path: `/v1/admin/refunds/${refundId}/settle`,
+          submitLabel: 'Record payment',
+          fields: [{ name: 'reference', label: 'Payment reference', hint: 'The bank or provider reference of the payment that discharged this refund.' }],
+        });
+        if (result) {
+          toast('Refund recorded', `${money(result.totalMinor)} paid — ${result.settlementReference}.`, 'ok');
+          await again();
+        }
+      } catch (error) {
+        toast('Could not record the refund', error.message, 'err');
       }
     });
   }
