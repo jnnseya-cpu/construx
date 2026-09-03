@@ -185,6 +185,12 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // one would be a second source of truth for a number the filesystem already
   // holds.
   def('STORAGE_CAPACITY_PURCHASED', 'StorageEntitlement', 'CREATE', 'GOVERNANCE', { creates: true }),
+  // A seat bought beyond the package's included count, at the role's seat
+  // price, charged monthly for as long as it is held. The same shape as storage
+  // capacity and for the same reason: a package caps seats, the seat prices are
+  // what an over-cap seat is charged at, and until this nothing let anybody buy
+  // one — a Solo tenancy's only route to a second person was a £950 package.
+  def('SEAT_PURCHASED', 'SeatEntitlement', 'CREATE', 'GOVERNANCE', { creates: true }),
 
   // --- Portfolio / project structure ---------------------------------------
   def('PORTFOLIO_CREATED', 'Portfolio', 'CREATE', 'PROJECT_CONTROL'),

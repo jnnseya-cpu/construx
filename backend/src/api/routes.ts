@@ -44,7 +44,14 @@ import { grantableScopes, issueKey, keyRegister, revokeKey } from '../developer/
 import { subscribe, subscriptionRegister, unsubscribe, webhookPosition } from '../developer/webhooks.ts';
 import type { ACUCaps } from '../billing/acu.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS, TOP_UPS, type PackageTier } from '../billing/seats.ts';
-import { seatEconomics, TIERS, type SubscriptionTier } from '../billing/subscription.ts';
+import {
+  purchasedSeatEntitlements,
+  purchasedSeats,
+  seatCap,
+  seatEconomics,
+  TIERS,
+  type SubscriptionTier,
+} from '../billing/subscription.ts';
 import { config, demonstrationEnabled, isProduction } from '../config.ts';
 import * as consistency from '../domain/consistency.ts';
 import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
@@ -1599,6 +1606,9 @@ export const ROUTES: Route[] = [
             renewsAt: subscription.renewsAt,
             seatsUsed: subscription.assignedIdentities.length,
             seatsIncluded: definition.includedIdentities,
+            // Bought beyond the package. On the row, because "12 of 10" with no
+            // explanation reads as a defect.
+            seatsPurchased: purchasedSeats(platform.ledger, tenant.id),
             monthlyPriceUsd: definition.monthlyPriceUsd,
             isolatedTenancy: definition.isolatedTenancy,
             wallet: platform.wallet(tenant.id).snapshot(),
@@ -3705,7 +3715,10 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => {
       const context = projectContext(platform, ctx);
       const subscription = platform.subscription(context.tenantId);
-      const limit = subscription ? PACKAGES[subscription.package].includedSeats : null;
+      // The package's seats plus any bought beyond it — the same cap
+      // `assignIdentity` enforces, so the number of seats this screen says are
+      // left is the number that will actually be admitted.
+      const limit = subscription ? seatCap(subscription, purchasedSeats(platform.ledger, context.tenantId)) : null;
       const pending = invitation.pendingInvitations(context);
       return {
         invitations: context.ledger
@@ -4703,10 +4716,81 @@ export const ROUTES: Route[] = [
       const actor = auth(ctx);
       const subscription = platform.subscription(actor.tenantId);
       const rolesByUser = new Map(platform.users(actor.tenantId).map((u) => [u.id, u.roles]));
+      const bought = purchasedSeatEntitlements(platform.ledger, actor.tenantId);
+      const purchased = bought.reduce((sum, entitlement) => sum + entitlement.seats, 0);
       return {
         package: PACKAGES[subscription.package],
         seatsUsed: subscription.assignedIdentities.length,
+        // Seats bought beyond the package, and the cap they lift it to. The
+        // screen used to show "1 of 1" with no way past it.
+        seatsPurchased: purchased,
+        seatCap: seatCap(subscription, purchased),
+        purchasedSeats: bought,
+        purchasedMonthlyMinor: bought.reduce((sum, entitlement) => sum + entitlement.monthlyPriceMinor, 0),
         ...seatEconomics(subscription, rolesByUser),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/billing/seats/purchase',
+    description: 'Buy seats beyond the package, at the seat price for the authority, charged monthly for as long as they are held',
+    schema: {
+      type: 'object',
+      required: ['seat', 'count'],
+      properties: {
+        seat: { type: 'string', enum: Object.keys(SEATS) },
+        // A ceiling on one purchase, not on the total — the same reasoning as a
+        // storage block: twenty in one click is a stuck finger.
+        count: { type: 'integer', minimum: 1, maximum: 20 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+      }
+      // Committing the tenancy to a recurring charge is an approval, not a read.
+      const engineCtx = platform.context(actor, `${actor.tenantId}-governance`, {
+        correlationId: ctx.correlationId,
+        source: sourceOf(ctx),
+      });
+      authorise(engineCtx, 'BILLING_ACU', 'U');
+
+      const { seat, count } = body<{ seat: keyof typeof SEATS; count: number }>(ctx);
+      const definition = SEATS[seat];
+      const entitlementId = ulid();
+      const monthlyPriceMinor = count * definition.monthlyPriceMinor;
+      write(engineCtx, {
+        eventType: 'SEAT_PURCHASED',
+        entity: { refType: 'SeatEntitlement', refId: entitlementId },
+        nextState: {
+          id: entitlementId,
+          tenantId: actor.tenantId,
+          seat,
+          label: definition.label,
+          seats: count,
+          monthlyPriceMinor,
+          // The price in force when it was bought, so the charge stays what the
+          // customer agreed to if the price list moves.
+          seatPriceMinorAtPurchase: definition.monthlyPriceMinor,
+          purchasedAt: new Date().toISOString(),
+          purchasedBy: actor.actorId,
+        },
+      });
+
+      const subscription = platform.subscription(actor.tenantId);
+      const purchased = purchasedSeats(platform.ledger, actor.tenantId);
+      return {
+        entitlementId,
+        seat,
+        label: definition.label,
+        seats: count,
+        monthlyPriceMinor,
+        seatsUsed: subscription.assignedIdentities.length,
+        seatCap: seatCap(subscription, purchased),
+        seatsPurchased: purchased,
       };
     },
   },

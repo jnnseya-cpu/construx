@@ -129,7 +129,11 @@ export async function tenants(root) {
             tenant.administrators === 0
               ? badge('no administrator', 'bad')
               : `${tenant.identities} (${tenant.administrators} admin${tenant.administrators === 1 ? '' : 's'})`,
-            `${tenant.seatsUsed} / ${tenant.seatsIncluded ?? '∞'}`,
+            `${tenant.seatsUsed} / ${
+              tenant.seatsIncluded === null || tenant.seatsIncluded === undefined
+                ? '∞'
+                : tenant.seatsIncluded + (tenant.seatsPurchased ?? 0)
+            }${tenant.seatsPurchased > 0 ? ` (${tenant.seatsPurchased} bought)` : ''}`,
             html`${gb(tenant.storage.usedBytes)}${
               tenant.storage.state !== 'OK' ? badge(tenant.storage.state.toLowerCase(), tenant.storage.state === 'FULL' ? 'bad' : 'warn') : ''
             }`,

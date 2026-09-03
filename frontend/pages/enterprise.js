@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { badge, date, html, humanise, money, pct, raw, render, statusTone, table } from '../lib/ui.js';
-import { blockedReason, can, state, tenantGrantableRoles } from '../app.js';
+import { blockedReason, can, openProject, state, tenantGrantableRoles } from '../app.js';
 import { command, commandBar } from '../lib/command.js';
 import { CONTINENT, COUNTRY, SECTOR_GROUPED, sectorLabel, today } from '../lib/enums.js';
 
@@ -756,7 +756,20 @@ export async function enterprise(root) {
     if (!button) return;
     const spec = COMMANDS[button.dataset.command];
     if (!spec) return;
-    if (await command(spec)) await draw();
+    const result = await command(spec);
+    if (!result) return;
+
+    // A workspace with no project yet adopts the one just created. The
+    // project-scoped screens all said "there is not one here yet — Enterprise &
+    // Portfolio takes all three in order", the person did exactly that, and
+    // every one of those screens went on saying it: the session's project was
+    // chosen once at sign-in and nothing here ever set it. Signing out and back
+    // in was the only way through, and nothing said so.
+    if (button.dataset.command === 'project' && !state.session?.projectId && result.projectId) {
+      await openProject(result.projectId);
+      return;
+    }
+    await draw();
   });
   }
 }

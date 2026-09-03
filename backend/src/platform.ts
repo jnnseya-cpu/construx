@@ -5,7 +5,16 @@ import { ExportService } from './export/exporter.ts';
 import { SyncEngine } from './field/sync.ts';
 import { ACUWallet, TRIAL_GRANT_NOTE, type ACUCaps, type ACUEntry } from './billing/acu.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
-import { assignIdentity, packageForTier, revokeIdentity, TIERS, type Subscription, type SubscriptionTier } from './billing/subscription.ts';
+import {
+  assignIdentity,
+  packageForTier,
+  purchasedSeatEntitlements,
+  purchasedSeats,
+  revokeIdentity,
+  TIERS,
+  type Subscription,
+  type SubscriptionTier,
+} from './billing/subscription.ts';
 import { standing } from './billing/entitlement.ts';
 import { KODA_SETTLEMENT_CURRENCY } from './billing/koda.ts';
 import {
@@ -641,7 +650,7 @@ export class Platform {
     };
 
     // Seat assignment can fail on a tier limit; the user is not created if so.
-    const updated = assignIdentity(subscription, userId, input.roles);
+    const updated = assignIdentity(subscription, userId, input.roles, purchasedSeats(this.ledger, input.tenantId));
     this.#subscriptions.set(input.tenantId, updated);
     this.#users.set(userId, user);
 
@@ -752,7 +761,12 @@ export class Platform {
     // than an edit. If the new roles do not fit the tier this throws and the
     // identity keeps the roles it had.
     const subscription = this.subscription(actor.tenantId);
-    const reseated = assignIdentity(revokeIdentity(subscription, input.userId), input.userId, input.roles);
+    const reseated = assignIdentity(
+      revokeIdentity(subscription, input.userId),
+      input.userId,
+      input.roles,
+      purchasedSeats(this.ledger, actor.tenantId),
+    );
     this.#subscriptions.set(actor.tenantId, reseated);
     user.roles = input.roles;
 
@@ -889,7 +903,10 @@ export class Platform {
     // the identity is restored and un-seated, which is recoverable, rather
     // than erased, which is not.
     const subscription = this.subscription(actor.tenantId);
-    this.#subscriptions.set(actor.tenantId, assignIdentity(subscription, input.userId, user.roles));
+    this.#subscriptions.set(
+      actor.tenantId,
+      assignIdentity(subscription, input.userId, user.roles, purchasedSeats(this.ledger, actor.tenantId)),
+    );
 
     return { userId: input.userId };
   }
@@ -1168,11 +1185,16 @@ export class Platform {
 
     const target = PACKAGES[input.package];
     const assigned = subscription.assignedIdentities.length;
+    // Seats bought beyond the package travel with the tenancy, so the cap the
+    // move is judged against is the target package plus what has been bought.
+    const bought = purchasedSeats(this.ledger, input.tenantId);
     // `null` is unlimited, which can never be exceeded.
-    if (target.includedSeats !== null && assigned > target.includedSeats) {
+    if (target.includedSeats !== null && assigned > target.includedSeats + bought) {
       throw new DomainError(
         'PACKAGE_SEATS_EXCEEDED',
-        `${assigned} identities are assigned and the ${target.label} package includes ${target.includedSeats}. ` +
+        `${assigned} identities are assigned and the ${target.label} package includes ${target.includedSeats}` +
+          (bought > 0 ? ` plus ${bought} bought` : '') +
+          '. ' +
           'Revoke seats first, or choose a package that holds them — moving anyway would leave this tenancy over ' +
           'its cap with every existing identity still working and the next assignment refused.',
       );
@@ -1912,6 +1934,7 @@ export class Platform {
       // quarter in KWD and half in JPY.
       BILLING_CURRENCY,
       storage.purchasedBlocks(this.ledger, tenantId),
+      purchasedSeatEntitlements(this.ledger, tenantId),
     );
   }
 
@@ -1950,6 +1973,7 @@ export class Platform {
       // quarter in KWD and half in JPY.
       BILLING_CURRENCY,
       storage.purchasedBlocks(this.ledger, tenantId),
+      purchasedSeatEntitlements(this.ledger, tenantId),
     );
 
     this.ledger.commit({

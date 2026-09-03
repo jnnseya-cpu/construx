@@ -7881,6 +7881,55 @@ reference for any status of 500 or above: name, message and stack, never in
 the response. The seat-limit case that prompted it is a 422 now; the next
 unexpected error will at least be findable.
 
+### A seat that can be bought, and a project that opens once it exists
+
+**"Redeployed, now getting seat limit reached on Solo."** The refusal was
+right — Solo includes one seat and the administrator was it — and the remedy it
+named was the only one there was: move to a package ten times the price, or
+have the operator grant one free. `billing/seats.ts` had said since it was
+written that an over-cap seat is charged at the seat price, and nothing on the
+platform let anybody buy one.
+
+A bought seat is now a `SeatEntitlement` on the ledger (`SEAT_PURCHASED`,
+`GOVERNANCE`, classified `BILLING_ACU` in `entityAccess.ts`), the same shape as
+a bought storage block and read the same way — from the record, never a
+counter. Each carries the seat it was bought as and the price in force when it
+was bought, so the monthly charge stays what the customer agreed to if the
+price list moves. It counts everywhere the cap is judged, through one function:
+`seatCap(subscription, purchased)` in `billing/subscription.ts` is the package's
+included seats plus what has been bought, and `assignIdentity` takes the
+purchased count at all three call sites (create a person, change roles,
+cancel an erasure), as does the invitation cap in `domain/invitation.ts`, the
+invitation seat position the console reads, and the package-move check in
+`setSubscriptionPackage` — a bought seat travels with the tenancy, so moving
+down to a package that holds the assigned people only with it is allowed.
+
+`POST /v1/billing/seats/purchase` takes a seat type from the published list and
+a count of one to twenty, needs `BILLING_ACU:U`, refuses the platform operator
+under account-layer separation (a tenancy commits itself to a recurring
+charge), and answers with the new cap. `GET /v1/billing/seats` publishes
+`seatsPurchased`, `seatCap` and the entitlements. The invoice carries one
+`SEATS` line per purchase ("Additional seat — Site Manager / Supervisor × 1"),
+`seatsMinor` in the total, and a commercial term that says the charge recurs
+for as long as the seat is held; `raiseCharge` collects package, storage blocks
+and seats together — storage blocks had been invoiced but never collected. On
+ACU & Billing the Seats row reads "2 of 2 · 1 bought beyond the package" and an
+"Add a seat" button, shown only on capped packages, opens a choice of seat type
+at its monthly price; the refusal itself now names the door ("Buy a seat on ACU
+& Billing, revoke a seat, or move package") and states what has already been
+bought. Tenants & Users shows the operator the bought count against each
+tenancy. `seatpurchase.test.ts` drives the whole thing over HTTP on a Solo
+tenancy: refused → bought → admitted → refused again at the new cap, the
+invoice line, the collected charge, the package move and the operator's view.
+
+**"Site Services: No project on this workspace yet."** The screen sent the
+person to Enterprise & Portfolio to create the enterprise, portfolio and
+project in order — and after they did, every project-scoped screen went on
+saying the same thing. The session's project was chosen once at sign-in and
+nothing on Enterprise & Portfolio ever set it, so the only way through was to
+sign out and back in, and nothing said so. Creating a project on a workspace
+that has none now opens it.
+
 ---
 
 ## What is partial

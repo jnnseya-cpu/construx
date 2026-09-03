@@ -3,7 +3,7 @@ import { ulid } from '../core/ids.ts';
 import { currencySymbol, formatMoney as exactMoney, toMajor } from '../domain/locale.ts';
 import type { ACUWallet } from './acu.ts';
 import { STORAGE_BLOCK_GB } from './storage.ts';
-import { monthlySubscriptionCharge, type Subscription, TIERS } from './subscription.ts';
+import { monthlySubscriptionCharge, type PurchasedSeat, type Subscription, TIERS } from './subscription.ts';
 
 /**
  * Invoicing — the customer-facing reconciliation of the two revenue lines:
@@ -17,7 +17,7 @@ export type InvoiceLine = {
   quantity: number;
   unitMinor: number;
   amountMinor: number;
-  category: 'SUBSCRIPTION' | 'STORAGE' | 'AI_USAGE';
+  category: 'SUBSCRIPTION' | 'SEATS' | 'STORAGE' | 'AI_USAGE';
   projectId?: string;
   module?: string;
 };
@@ -30,6 +30,8 @@ export type Invoice = {
   issuedAt: string;
   lines: InvoiceLine[];
   subscriptionMinor: number;
+  /** Seats bought beyond the package, at the prices they were bought at. */
+  seatsMinor: number;
   storageMinor: number;
   aiUsageMinor: number;
   aiRawCostMinor: number;
@@ -51,6 +53,7 @@ export function buildInvoice(
   period: string,
   currency = 'USD',
   storageBlocks = 0,
+  seatEntitlements: PurchasedSeat[] = [],
 ): Invoice {
   const tier = TIERS[subscription.tier];
   // The package charge is already in minor units — the whole billing path works
@@ -68,6 +71,21 @@ export function buildInvoice(
       category: 'SUBSCRIPTION',
     },
   ];
+
+  // Seats bought beyond the package, one line per purchase at the price in
+  // force when it was bought. A Solo tenancy that adds a second person pays
+  // for that person here, not by moving to a package ten times the price.
+  let seatsMinor = 0;
+  for (const entitlement of seatEntitlements) {
+    seatsMinor += entitlement.monthlyPriceMinor;
+    lines.push({
+      description: `Additional seat — ${entitlement.label} × ${entitlement.seats}`,
+      quantity: entitlement.seats,
+      unitMinor: entitlement.unitMinor,
+      amountMinor: entitlement.monthlyPriceMinor,
+      category: 'SEATS',
+    });
+  }
 
   // Storage held beyond the package allowance, charged for as long as it is
   // held. This line did not exist: blocks could be bought and never appeared on
@@ -109,6 +127,7 @@ export function buildInvoice(
     issuedAt: new Date().toISOString(),
     lines,
     subscriptionMinor,
+    seatsMinor,
     storageMinor,
     aiUsageMinor,
     aiRawCostMinor,
@@ -130,10 +149,11 @@ export function buildInvoice(
      * charge, and `aiUsageDrawnFromCredit` says so rather than leaving somebody
      * to work out why the lines do not sum to the total.
      */
-    totalMinor: subscriptionMinor + storageMinor,
+    totalMinor: subscriptionMinor + seatsMinor + storageMinor,
     aiUsageDrawnFromCredit: true,
     commercialTerms: [
       'Subscription fees cover platform access, identity management, governance, auditability and non-AI functionality.',
+      'Seats bought beyond the package are charged monthly at the seat price in force when they were bought, for as long as they are held.',
       'AI services are prepaid: credit is purchased in advance and drawn down as it is consumed.',
       'AI usage shown on this invoice has already been paid for at the point credit was purchased, and is stated here for transparency rather than charged again.',
       'Each ACU represents the underlying third-party AI compute cost incurred by CONSTRUX.',

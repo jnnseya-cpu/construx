@@ -128,14 +128,68 @@ export type Subscription = {
  * carries the limit, the package and what to do about it to the person.
  */
 export class SeatLimitError extends DomainError {
-  constructor(packageTier: PackageTier, limit: number) {
+  constructor(packageTier: PackageTier, limit: number, purchased = 0) {
+    const included = PACKAGES[packageTier].includedSeats ?? limit;
     super(
       'SEAT_LIMIT_REACHED',
-      `The ${PACKAGES[packageTier].label} package includes ${limit} seat${limit === 1 ? '' : 's'}; revoke a seat or move package`,
+      `The ${PACKAGES[packageTier].label} package includes ${included} seat${included === 1 ? '' : 's'}` +
+        (purchased > 0 ? ` and ${purchased} more ${purchased === 1 ? 'has' : 'have'} been bought` : '') +
+        ', and every one is taken. Buy a seat on ACU & Billing, revoke a seat, or move package.',
       422,
     );
     this.name = 'SeatLimitError';
   }
+}
+
+/**
+ * Seats this tenancy has bought beyond the package, summed from the record.
+ *
+ * Read from the ledger rather than held on the subscription, for the reason
+ * every balance on this platform is: a counter is a second place the truth can
+ * live. Each entitlement carries the seat it was bought as and the price in
+ * force when it was bought, so the monthly charge below is what the customer
+ * agreed to and not what the price list says today.
+ */
+type EntitlementLedger = { listByTenant: (tenantId: string, refType: string) => Array<{ state: Record<string, unknown> }> };
+
+export type PurchasedSeat = {
+  id: string;
+  seat: string;
+  label: string;
+  seats: number;
+  unitMinor: number;
+  monthlyPriceMinor: number;
+  purchasedAt: string;
+};
+
+export function purchasedSeatEntitlements(ledger: EntitlementLedger, tenantId: string): PurchasedSeat[] {
+  return ledger.listByTenant(tenantId, 'SeatEntitlement').map((record) => ({
+    id: String(record.state.id ?? ''),
+    seat: String(record.state.seat ?? ''),
+    label: String(record.state.label ?? record.state.seat ?? ''),
+    seats: Number(record.state.seats ?? 0),
+    unitMinor: Number(record.state.seatPriceMinorAtPurchase ?? 0),
+    monthlyPriceMinor: Number(record.state.monthlyPriceMinor ?? 0),
+    purchasedAt: String(record.state.purchasedAt ?? ''),
+  }));
+}
+
+export function purchasedSeats(ledger: EntitlementLedger, tenantId: string): number {
+  return purchasedSeatEntitlements(ledger, tenantId).reduce((sum, entitlement) => sum + entitlement.seats, 0);
+}
+
+/** What the bought seats add to the month, at the prices they were bought at. */
+export function purchasedSeatChargeMinor(ledger: EntitlementLedger, tenantId: string): number {
+  return purchasedSeatEntitlements(ledger, tenantId).reduce((sum, entitlement) => sum + entitlement.monthlyPriceMinor, 0);
+}
+
+/**
+ * The seats a tenancy may fill: the package's included count plus what it has
+ * bought. `null` is unlimited.
+ */
+export function seatCap(subscription: Subscription, purchased: number): number | null {
+  const included = PACKAGES[subscription.package].includedSeats;
+  return included === null ? null : included + purchased;
 }
 
 /**
@@ -145,13 +199,15 @@ export class SeatLimitError extends DomainError {
  * Roles that carry no seat cost — the platform operator, and a regulator whose
  * access the asset owner is obliged to provide — do not consume the cap either.
  */
-export function assignIdentity(subscription: Subscription, userId: string, roles: Role[] = []): Subscription {
+export function assignIdentity(subscription: Subscription, userId: string, roles: Role[] = [], purchased = 0): Subscription {
   if (subscription.assignedIdentities.includes(userId)) return subscription;
   if (roles.some((role) => UNCHARGED_ROLES.includes(role))) return subscription;
 
-  const limit = PACKAGES[subscription.package].includedSeats;
+  // The package's seats plus the ones bought beyond it. A seat bought and not
+  // counted here is money taken for nothing.
+  const limit = seatCap(subscription, purchased);
   if (limit !== null && subscription.assignedIdentities.length >= limit) {
-    throw new SeatLimitError(subscription.package, limit);
+    throw new SeatLimitError(subscription.package, limit, purchased);
   }
   return { ...subscription, assignedIdentities: [...subscription.assignedIdentities, userId] };
 }

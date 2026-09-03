@@ -3,6 +3,7 @@ import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, write, type EngineContext } from '../engines/context.ts';
 import { PERMISSION_MATRIX, type CapabilityArea, type Role } from '../identity/roles.ts';
 import { PACKAGES } from '../billing/seats.ts';
+import { purchasedSeats } from '../billing/subscription.ts';
 import type { Platform } from '../platform.ts';
 
 /**
@@ -173,7 +174,7 @@ export function inviteToProject(
   // link means the business has already promised a place to a person outside
   // it, and the refusal lands on the wrong person at the worst moment.
   const subscription = platform.subscription(ctx.tenantId);
-  const limit = subscription ? seatLimit(subscription.package) : null;
+  const limit = subscription ? seatLimit(subscription.package, purchasedSeats(ctx.ledger, ctx.tenantId)) : null;
   let seatsRemaining: number | null = null;
 
   if (limit !== null && subscription) {
@@ -299,8 +300,11 @@ export function acceptInvitation(
   return { userId: user.id, email: String(record.state.email), roles };
 }
 
-/** The seat ceiling for a package, or null where there is none. */
-function seatLimit(packageTier: string): number | null {
-  // From the billing model, which is the one place seats are sized.
-  return PACKAGES[packageTier as keyof typeof PACKAGES]?.includedSeats ?? null;
+/** The seat ceiling for a package plus the seats bought beyond it, or null where there is none. */
+function seatLimit(packageTier: string, purchased: number): number | null {
+  // From the billing model, which is the one place seats are sized. A bought
+  // seat counts here for the same reason it counts in `assignIdentity`: an
+  // invitation is a seat, and a seat paid for must be one that can be given.
+  const included = PACKAGES[packageTier as keyof typeof PACKAGES]?.includedSeats ?? null;
+  return included === null ? null : included + purchased;
 }

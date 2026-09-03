@@ -69,7 +69,7 @@ describe('adding a person beyond the package’s seats', () => {
     assert.equal(response.status, 422, `a seat limit answered ${response.status}: ${JSON.stringify(problem)}`);
     assert.equal(problem.title, 'SEAT_LIMIT_REACHED');
     assert.match(problem.detail, /includes 1 seat/);
-    assert.match(problem.detail, /revoke a seat or move package/i);
+    assert.match(problem.detail, /buy a seat on acu & billing, revoke a seat, or move package/i);
     // Nothing was created on the way to the refusal.
     assert.equal(platform.users(tenantId).length, 1);
   });

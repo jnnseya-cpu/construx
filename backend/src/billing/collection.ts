@@ -3,7 +3,8 @@ import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { Platform } from '../platform.ts';
-import { monthlySubscriptionCharge } from './subscription.ts';
+import { purchasedBlocks } from './storage.ts';
+import { monthlySubscriptionCharge, purchasedSeatChargeMinor } from './subscription.ts';
 import type { Subscription } from './subscription.ts';
 
 /**
@@ -135,7 +136,17 @@ export function raiseCharge(
   // Nothing to collect. A free trial is free, and a cancelled subscription has
   // already stopped — continuing to raise charges against it would build a
   // debt nobody agreed to.
-  const amountMinor = monthlySubscriptionCharge(subscription);
+  //
+  // The whole recurring charge: the package, plus storage bought beyond it,
+  // plus seats bought beyond it. This raised the package alone, so a tenancy
+  // that had bought capacity was invoiced for it and never collected on it.
+  // The invoice and the charge are computed from the same three parts now.
+  const amountMinor =
+    subscription.status === 'ACTIVE'
+      ? monthlySubscriptionCharge(subscription) +
+        purchasedBlocks(platform.ledger, tenantId) * config.billing.storageBlockPriceMinor +
+        purchasedSeatChargeMinor(platform.ledger, tenantId)
+      : 0;
   if (amountMinor <= 0 || subscription.status === 'CANCELLED') return undefined;
 
   const periodStart = subscription.renewsAt;

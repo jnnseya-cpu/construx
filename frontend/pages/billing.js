@@ -51,6 +51,11 @@ export async function billing(root) {
         </div>
         <div class="actions">
           ${can('BILLING_ACU', 'U') ? html`<button class="btn ghost" id="topup">Top up</button>` : ''}
+          ${
+            can('BILLING_ACU', 'U') && seats && seats.package?.includedSeats !== null
+              ? html`<button class="btn quiet" id="buy-seat">Add a seat</button>`
+              : ''
+          }
           ${can('BILLING_ACU', 'U') ? html`<button class="btn quiet" id="invoice">Issue invoice</button>` : ''}
           ${can('BILLING_ACU', 'U') ? html`<button class="btn quiet" id="caps">Set spend caps</button>` : ''}
         </div>
@@ -80,8 +85,12 @@ export async function billing(root) {
               </p>
               <div class="split-list">
                 <div class="row"><span class="lbl">Seats</span><span class="val">${seats.seatsUsed} of ${
-                  seats.package.includedSeats === null ? 'unlimited' : seats.package.includedSeats
-                }</span></div>
+                  seats.seatCap === null || seats.seatCap === undefined
+                    ? seats.package.includedSeats === null
+                      ? 'unlimited'
+                      : seats.package.includedSeats
+                    : seats.seatCap
+                }${seats.seatsPurchased > 0 ? ` · ${seats.seatsPurchased} bought beyond the package` : ''}</span></div>
                 <div class="row"><span class="lbl">Storage</span><span class="val">${
                   storage
                     ? `${gb(storage.usedBytes)} of ${gb(storage.limitBytes)}${
@@ -307,6 +316,49 @@ export async function billing(root) {
       await billing(root);
     } catch (error) {
       toast('Could not add capacity', error.message, 'err');
+    }
+  });
+
+  document.getElementById('buy-seat')?.addEventListener('click', async () => {
+    // A Solo or Free tenancy that needs a second person used to have one
+    // answer: move to a package ten times the price. The seat price list has
+    // always said an over-cap seat is charged at the seat price; this is the
+    // door that lets somebody actually buy one. Named as recurring, because
+    // it is.
+    try {
+      const offered = (catalogue?.seats ?? []).map((seat) => ({
+        value: seat.seat ?? seat.code ?? seat.id,
+        label: `${seat.label} — ${money(seat.monthlyPriceMinor)} a month`,
+      }));
+      const result = await command({
+        title: 'Add a seat beyond the package',
+        intent:
+          'Buys room for one more named person on this tenancy, charged monthly at the seat price for as long as it ' +
+          'is held. The seat is added to your cap the moment it is bought; the person is then added on Enterprise & Portfolio.',
+        path: '/v1/billing/seats/purchase',
+        submitLabel: 'Buy seat',
+        fields: [
+          {
+            name: 'seat',
+            label: 'Seat type',
+            type: 'select',
+            options: offered,
+            hint: 'Priced by the role the person will hold. The price is fixed at what it is today.',
+          },
+          { name: 'count', label: 'How many', type: 'number', value: 1, hint: 'Between 1 and 20.' },
+        ],
+        transform: (values) => ({ seat: values.seat, count: Number(values.count) }),
+      });
+      if (!result) return;
+      toast(
+        'Seat added',
+        `${result.seats} × ${result.label} bought, ${money(result.monthlyPriceMinor)} a month. Seats now ${result.seatsUsed} of ${result.seatCap}.`,
+        'ok',
+      );
+      await refreshContext();
+      await billing(root);
+    } catch (error) {
+      toast('Could not add a seat', error.message, 'err');
     }
   });
 
