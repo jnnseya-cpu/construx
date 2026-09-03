@@ -27,6 +27,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
 
   // Tenancy and platform — the operator layer, never delivery
   Tenant: { area: 'PLATFORM_ADMINISTRATION' },
+  RefundObligation: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'COMMERCIAL_L3' },
   Subscription: { area: 'PLATFORM_ADMINISTRATION' },
   // Which companies hold a private module. PLATFORM_ADMINISTRATION rather than
   // the module's own area: the grant is the operator's decision about a
@@ -292,6 +293,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // The common data environment: the file itself, its revision and its state.
   InformationContainer: { area: 'DESIGN_INFORMATION' },
   ProjectInvitation: { area: 'PROJECT_SETUP' },
+  OrgUnit: { area: 'ENTERPRISE_STRUCTURE' },
   // What the tenancy owes and whether it has been paid. Under billing, with
   // the wallet and the invoices, because that is who asks the question.
   SubscriptionCharge: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },

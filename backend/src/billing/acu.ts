@@ -798,6 +798,35 @@ export class ACUWallet {
     return this.#entries;
   }
 
+  /** What the customer has paid into this wallet, ever. Grants are not money. */
+  paidInMinor(): number {
+    return this.#entries.filter((entry) => entry.type === 'TOP_UP').reduce((sum, entry) => sum + entry.billedMinor, 0);
+  }
+
+  /**
+   * What the customer is owed back if the wallet closes now: the unspent part
+   * of what they paid in. Grants and subscription allowances are spent first —
+   * they were never the customer's money — so the refundable figure is the
+   * lesser of the balance and what was paid in.
+   */
+  refundableMinor(): number {
+    return Math.max(0, Math.min(this.availableMinor(), this.paidInMinor()));
+  }
+
+  /**
+   * Empty the wallet on closure. Recorded as a debit of the whole available
+   * balance, with the note saying why, so the entries still fold to the
+   * balance and the money that left can be traced to the refund raised for it.
+   */
+  closeOut(note: string): ACUEntry | undefined {
+    const available = this.availableMinor();
+    if (available <= 0) return undefined;
+    return this.#record(
+      { type: 'DEBIT', rawCostMinor: 0, acuUnits: 0, billedMinor: available, effectiveMultiplier: 0, note },
+      -available,
+    );
+  }
+
   restoreCaps(caps: ACUCaps): void {
     this.#caps = caps;
   }

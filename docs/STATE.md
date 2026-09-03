@@ -7991,10 +7991,71 @@ the package, its label, its seats and its price.
 
 **`OWNER` has everything in the tenancy.** The row read and approved and
 authored almost nothing — a client-side approver — and the people running the
-tenancies actually being sold are the owners of the business. The role now
-holds every code in every tenant capability area. `PLATFORM_ADMINISTRATION`
-stays absent by construction; separation of duties on a record — proposer is
-not approver — is enforced per record by the engines and is unchanged.
+tenancies actually being sold are the owners of the business. The role is now
+defined as the union of every tenant role's codes in every area
+(`everythingInTheTenancy` in `identity/roles.ts`): the owner may do anything
+anybody in their business may do. A union rather than "every code everywhere"
+so that an area no role approves in stays unapprovable and the ownership map
+still tells the truth about seat gaps. `PLATFORM_ADMINISTRATION` stays absent
+by construction; separation of duties on a record — proposer is not approver —
+is enforced per record by the engines and is unchanged.
+
+### Team & Access — the identity directory
+
+Asked for as a screen an enterprise administrator could run their people from,
+modelled on a governance console the customer had seen elsewhere, "based on
+CONSTRUX". Built as `frontend/pages/team.js` on `GET /v1/team`, which assembles
+the position from records that already exist rather than keeping a screen of
+its own: the users, the seats, the invitations, the credential store and the
+ledger. Nothing on it is a number the platform cannot show the source of.
+
+**User directory.** Every identity with roles, activity (the last event they
+authored on the ledger, banded this week / this month / idle / dormant /
+never), risk signals (no second factor, a bound device unused for ninety days,
+dormant while active, an administrator without a passkey), second factor
+(passkey, bound device, code only — from the same store the Security screen
+reads), state (active, deactivated, deletion pending with the date, erased),
+and the actions that state allows: Roles, Place, Deactivate, Reactivate,
+Delete, Cancel deletion, History. Nothing on the administrator's own row.
+History reads `GET /v1/users/:id/history` — the events the person authored,
+newest first, from the hash chain.
+
+**Organisation structure.** Departments, branches and teams (`OrgUnit`,
+`ORG_UNIT_CREATED` / `ORG_UNIT_RETIRED`, nested by parent), and placement
+(`USER_PLACED`: `unitId`, `managerId` on the identity). Structure, not
+authority — roles decide what a person may do. A person belongs to at most one
+unit and reports to at most one person; reporting loops and self-management
+are refused; a unit with live units under it cannot be retired; retiring a
+unit releases its people's placement and keeps their records. Reporting lines
+are shown manager → staff.
+
+**Invitations**, tenancy-wide across every project, with the project, who
+invited, when it lapses, and Withdraw on a pending one. **Import people**:
+paste rows of email, name, roles, unit, manager email; each row is admitted or
+refused on its own (`POST /v1/users/import`) with the reason — the seat limit,
+an operator role, an address in use, a unit that does not exist — and each
+admitted person is notified. **Export user report**: `POST /v1/team/report`,
+a CSV of every identity with roles, unit, manager, status, second factor, last
+activity and risk signals. **Roles & permissions**: the grantable roles, their
+holders, and their codes, as published and enforced. **Governance in force**:
+the controls actually enforced — separation of duties, the seat cap, the
+last-administrator rule, the AI mandate ceiling, the erasure grace period,
+device binding — read from where each is enforced.
+
+Reads need `ENTERPRISE_STRUCTURE:R`; every change needs the tenancy's
+administrator; the operator is barred by account-layer separation. The entry
+sits under Command beside Enterprise & Portfolio. `team.test.ts` drives it
+over HTTP, including the restart.
+
+**Deliberately not built, and why.** Custom role templates and per-user
+permission toggles: the permission matrix is the one published source of what
+a role may do, and a permission granted outside a role is one no screen can
+account for; change what somebody may do by changing their roles. Approval-rule
+switches ("finance access requires owner approval") and four-eyes thresholds:
+the controls in force are the ones the engines enforce, listed as such; a
+switch nothing reads would be a promise with nothing behind it. An "expected
+ACU band per role group": there is no measured figure to publish, and an
+invented one would be a fake number on a governance screen.
 
 ---
 

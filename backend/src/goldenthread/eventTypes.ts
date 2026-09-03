@@ -104,6 +104,20 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // identity and its record stay exactly as they are.
   def('USER_DEACTIVATED', 'User', 'UPDATE', 'GOVERNANCE'),
   def('USER_REACTIVATED', 'User', 'UPDATE', 'GOVERNANCE'),
+  // Where a person sits in the organisation: their unit and who they report
+  // to. Structure, not authority — roles decide what they may do.
+  def('USER_PLACED', 'User', 'UPDATE', 'GOVERNANCE'),
+  // Department → branch → team. The tenancy's own shape, owned by its
+  // administrator, distinct from the delivery hierarchy of enterprise,
+  // portfolio, programme and project.
+  def('ORG_UNIT_CREATED', 'OrgUnit', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('ORG_UNIT_RETIRED', 'OrgUnit', 'UPDATE', 'GOVERNANCE'),
+  // The operator closing a customer's tenancy: subscription cancelled, every
+  // identity deactivated and scheduled for erasure, and what the customer is
+  // owed raised as a refund obligation. The record stays.
+  def('TENANT_CLOSED', 'Tenant', 'UPDATE', 'GOVERNANCE'),
+  def('REFUND_RAISED', 'RefundObligation', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('REFUND_SETTLED', 'RefundObligation', 'UPDATE', 'GOVERNANCE'),
   // Bringing somebody onto a project, in three events because the states are
   // three different facts. An invitation *holds a seat* from the moment it is
   // sent — see `domain/invitation.ts` for why — so withdrawing one has to be

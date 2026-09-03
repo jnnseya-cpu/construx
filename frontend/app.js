@@ -69,6 +69,11 @@ export const NAV = [
       // seats. Ordering a menu by what a first-time customer needs and what a
       // daily user needs gives the same answer here.
       { id: 'enterprise', label: 'Enterprise & Portfolio', area: 'PROJECT_SETUP', icon: 'layers', tenantScoped: true },
+      // Who is in the tenancy and what each of them may do: the identity
+      // directory, the organisation structure, invitations, credentials and
+      // the governance in force. Under ENTERPRISE_STRUCTURE, which is the
+      // area that governs people; every action on it needs the administrator.
+      { id: 'team', label: 'Team & Access', area: 'ENTERPRISE_STRUCTURE', icon: 'key', tenantScoped: true },
       { id: 'overview', label: 'Project Command Centre', area: 'PROJECT_SETUP', icon: 'grid' },
       // Assembled per person from seven functions over four questions. Under
       // PROJECT_SETUP read because that is the narrowest thing every seat

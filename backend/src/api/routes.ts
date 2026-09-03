@@ -1012,6 +1012,145 @@ async function tellNewIdentity(
   }
 }
 
+/** The tenancy's own administrator, for the acts that shape who is in it. */
+function requireTenantAdministrator(ctx: RequestContext, act: string): AuthContext {
+  const actor = auth(ctx);
+  if (actor.roles.includes('PLATFORM_ADMIN')) {
+    throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+  }
+  if (!actor.roles.includes('ENTERPRISE_ADMIN') && !actor.roles.includes('OWNER')) {
+    throw new ForbiddenError(`Only an enterprise admin may ${act}`, 'ENTERPRISE_ADMIN_REQUIRED');
+  }
+  return actor;
+}
+
+/**
+ * The identity directory, assembled from the records that already exist rather
+ * than kept as a screen of its own: the users, the seats, the invitations, the
+ * credential posture and the ledger. Nothing here is a number the platform
+ * cannot show the source of.
+ */
+function teamPosition(platform: Platform, tenantId: string) {
+  const now = Date.now();
+  const DAY = 86_400_000;
+  const people = platform.users(tenantId);
+  const units = platform.orgUnits(tenantId);
+  const unitName = new Map(units.map((unit) => [unit.id, unit.name]));
+  const personName = new Map(people.map((person) => [person.id, person.name]));
+  const security = tenantSecurity(tenantId, people.map((person) => person.id), now);
+  const withDevice = new Set(security.devices.filter((device) => device.status === 'ACTIVE').map((device) => device.actorId));
+  const withPasskey = new Set(security.passkeys.map((passkey) => passkey.actorId));
+  const staleDevice = new Set(
+    security.devices
+      .filter((device) => device.status === 'ACTIVE' && device.lastSeenAt && now - Date.parse(device.lastSeenAt) > 90 * DAY)
+      .map((device) => device.actorId),
+  );
+  const subscription = platform.subscription(tenantId);
+  const purchased = purchasedSeats(platform.ledger, tenantId);
+  const cap = seatCap(subscription, purchased);
+
+  const invitations: Array<Record<string, unknown>> = platform.ledger
+    .listByTenant(tenantId, 'ProjectInvitation')
+    .map((record): Record<string, unknown> => {
+      const state = record.state as Record<string, unknown>;
+      return {
+        ...state,
+        projectName: String(platform.ledger.get({ refType: 'Project', refId: String(state.projectId) })?.state.name ?? ''),
+        invitedByName: personName.get(String(state.invitedBy)) ?? String(state.invitedBy),
+      };
+    })
+    .sort((a, b) => String(b.invitedAt).localeCompare(String(a.invitedAt)));
+  const pending = invitations.filter(
+    (invitation) => invitation.status === 'PENDING' && String(invitation.expiresAt) > new Date(now).toISOString(),
+  );
+
+  const rows = people.map((person) => {
+    const lastActivityAt = platform.lastActivity(tenantId, person.id);
+    const age = lastActivityAt ? (now - Date.parse(lastActivityAt)) / DAY : null;
+    const activity = age === null ? 'NEVER' : age <= 7 ? 'ACTIVE' : age <= 30 ? 'RECENT' : age <= 90 ? 'IDLE' : 'DORMANT';
+    const state = person.erasedAt
+      ? 'ERASED'
+      : person.erasureDueAt
+        ? 'DELETION_PENDING'
+        : person.status === 'SUSPENDED'
+          ? 'DEACTIVATED'
+          : 'ACTIVE';
+    const passkey = withPasskey.has(person.id);
+    const device = withDevice.has(person.id);
+    const risk: string[] = [];
+    if (state === 'ACTIVE' && !passkey && !device) risk.push('No second factor enrolled');
+    if (staleDevice.has(person.id)) risk.push('A bound device unused for over 90 days');
+    if (state === 'ACTIVE' && activity === 'DORMANT') risk.push('No activity for over 90 days');
+    if (state === 'ACTIVE' && person.roles.includes('ENTERPRISE_ADMIN') && !passkey) risk.push('Administrator without a passkey');
+    return {
+      id: person.id,
+      name: person.name,
+      email: person.email,
+      roles: person.roles,
+      status: person.status,
+      state,
+      erasureDueAt: person.erasureDueAt ?? null,
+      erasedAt: person.erasedAt ?? null,
+      unitId: person.unitId ?? null,
+      unitName: person.unitId ? (unitName.get(person.unitId) ?? null) : null,
+      managerId: person.managerId ?? null,
+      managerName: person.managerId ? (personName.get(person.managerId) ?? null) : null,
+      reports: people.filter((other) => other.managerId === person.id).length,
+      lastActivityAt,
+      activity,
+      mfa: { passkey, device, label: passkey && device ? 'Passkey and device' : passkey ? 'Passkey' : device ? 'Bound device' : 'Code only' },
+      risk,
+    };
+  });
+
+  const active = rows.filter((row) => row.state === 'ACTIVE');
+  const second = active.filter((row) => row.mfa.passkey || row.mfa.device).length;
+  const roleCatalogue = TENANT_GRANTABLE_ROLES.map((role) => ({
+    role,
+    areas: Object.entries(PERMISSION_MATRIX[role]).map(([area, codes]) => ({ area, codes })),
+    holders: active.filter((row) => row.roles.includes(role)).length,
+  }));
+
+  return {
+    summary: {
+      identities: rows.length,
+      active: active.length,
+      deactivated: rows.filter((row) => row.state === 'DEACTIVATED').length,
+      deletionPending: rows.filter((row) => row.state === 'DELETION_PENDING').length,
+      erased: rows.filter((row) => row.state === 'ERASED').length,
+      pendingInvitations: pending.length,
+      secondFactor: { enrolled: second, of: active.length, coverage: active.length === 0 ? 0 : Math.round((second / active.length) * 100) },
+      rolesDefined: TENANT_GRANTABLE_ROLES.length,
+      units: units.filter((unit) => !unit.retiredAt).length,
+    },
+    seats: {
+      used: subscription.assignedIdentities.length,
+      cap,
+      purchased,
+      heldByInvitations: pending.length,
+      remaining: cap === null ? null : Math.max(0, cap - subscription.assignedIdentities.length - pending.length),
+      package: PACKAGES[subscription.package].label,
+    },
+    people: rows,
+    units: units.map((unit) => ({
+      ...unit,
+      parentName: unit.parentId ? (unitName.get(unit.parentId) ?? null) : null,
+      members: rows.filter((row) => row.unitId === unit.id && row.state !== 'ERASED').length,
+    })),
+    invitations,
+    roles: roleCatalogue,
+    // The controls actually in force, read from where they are enforced.
+    governance: {
+      separationOfDuties: 'The proposer of a record is never its approver; enforced per record by the engines',
+      seatCap: cap === null ? 'Unlimited identities on this package' : `${cap} identities on this package, including ${purchased} bought`,
+      lastAdministrator: 'The last active administrator cannot be deactivated or deleted',
+      erasureGraceDays: config.privacy.erasureGraceDays,
+      aiMandateCeiling: 'No agent mandate exceeds PROPOSE; a person approves every AI proposal',
+      deviceBindingRequired: security.bindingRequired,
+    },
+  };
+}
+
 export const ROUTES: Route[] = [
   // ------------------------------------------------------------------ health
   {
@@ -4769,6 +4908,214 @@ export const ROUTES: Route[] = [
         throw new ForbiddenError('Only an enterprise admin may reactivate an identity', 'ENTERPRISE_ADMIN_REQUIRED');
       }
       return platform.reactivateUser(actor, { userId: ctx.params.userId as string, reason: body<{ reason: string }>(ctx).reason });
+    },
+  },
+  // --------------------------------------------------------------- team & access
+  {
+    method: 'GET',
+    pattern: '/v1/team',
+    readOnly: true,
+    description: 'The tenancy’s people, structure, invitations, credential posture and governance in force — the identity directory',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+      }
+      authorise(platform.context(actor, `${actor.tenantId}-governance`, { correlationId: ctx.correlationId }), 'ENTERPRISE_STRUCTURE', 'R');
+      return teamPosition(platform, actor.tenantId);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/team/units',
+    description: 'Create a department, branch or team in the tenancy’s organisation structure',
+    schema: {
+      type: 'object',
+      required: ['name', 'kind'],
+      properties: {
+        name: { type: 'string', minLength: 1 },
+        kind: { type: 'string', enum: ['DEPARTMENT', 'BRANCH', 'TEAM'] },
+        parentId: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = requireTenantAdministrator(ctx, 'change the organisation structure');
+      return platform.createOrgUnit(actor, body<{ name: string; kind: 'DEPARTMENT' | 'BRANCH' | 'TEAM'; parentId?: string }>(ctx));
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/team/units/:unitId/retire',
+    description: 'Retire a unit. Its people keep their records and lose the placement',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 3 } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = requireTenantAdministrator(ctx, 'change the organisation structure');
+      return platform.retireOrgUnit(actor, { unitId: ctx.params.unitId as string, reason: body<{ reason: string }>(ctx).reason });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/users/:userId/placement',
+    description: 'Put a person in a unit and under a manager. Structure, not authority — roles decide what they may do',
+    schema: {
+      type: 'object',
+      properties: {
+        unitId: { type: ['string', 'null'] },
+        managerId: { type: ['string', 'null'] },
+        reason: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = requireTenantAdministrator(ctx, 'place people in the organisation');
+      const input = body<{ unitId?: string | null; managerId?: string | null; reason?: string }>(ctx);
+      const placed = platform.placeUser(actor, { userId: ctx.params.userId as string, ...input });
+      return { userId: placed.id, unitId: placed.unitId ?? null, managerId: placed.managerId ?? null };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/users/import',
+    description: 'Add several people at once from rows of email, name, roles, unit and manager. Each row is admitted or refused on its own',
+    schema: {
+      type: 'object',
+      required: ['rows'],
+      properties: {
+        rows: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 200,
+          items: {
+            type: 'object',
+            required: ['email', 'name', 'roles'],
+            properties: {
+              email: stringField,
+              name: stringField,
+              roles: { type: 'array', minItems: 1, items: { type: 'string' } },
+              unit: { type: 'string' },
+              managerEmail: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+        // Applied to every row that names no unit of its own.
+        unitId: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const actor = requireTenantAdministrator(ctx, 'add people');
+      const input = body<{
+        rows: Array<{ email: string; name: string; roles: string[]; unit?: string; managerEmail?: string }>;
+        unitId?: string;
+      }>(ctx);
+      const units = platform.orgUnits(actor.tenantId).filter((unit) => !unit.retiredAt);
+      const outcomes: Array<{ email: string; outcome: 'CREATED' | 'REFUSED'; userId?: string; reason?: string; notified?: string }> = [];
+
+      for (const row of input.rows) {
+        const email = row.email.trim().toLowerCase();
+        try {
+          // Every refusal a single "Add a person" would give, given per row
+          // rather than failing the batch: the seat limit, an operator role, an
+          // address already in use, a unit that does not exist.
+          const roles = assertTenantGrantable(row.roles);
+          if (platform.userByEmail(email)) {
+            outcomes.push({ email, outcome: 'REFUSED', reason: 'That address already holds an identity on this platform' });
+            continue;
+          }
+          const unit = row.unit
+            ? units.find((candidate) => candidate.name.toLowerCase() === row.unit!.trim().toLowerCase())
+            : input.unitId
+              ? units.find((candidate) => candidate.id === input.unitId)
+              : undefined;
+          if ((row.unit || input.unitId) && !unit) {
+            outcomes.push({ email, outcome: 'REFUSED', reason: `No unit called ${row.unit ?? input.unitId} exists. Create it first.` });
+            continue;
+          }
+          const manager = row.managerEmail ? platform.userByEmail(row.managerEmail.trim().toLowerCase()) : undefined;
+          if (row.managerEmail && (!manager || manager.tenantId !== actor.tenantId)) {
+            outcomes.push({ email, outcome: 'REFUSED', reason: `No manager with the address ${row.managerEmail} is in this tenancy` });
+            continue;
+          }
+          const user = platform.createUser({ tenantId: actor.tenantId, name: row.name.trim(), email, roles });
+          if (unit || manager) {
+            platform.placeUser(actor, {
+              userId: user.id,
+              ...(unit ? { unitId: unit.id } : {}),
+              ...(manager ? { managerId: manager.id } : {}),
+              reason: 'Placed on import',
+            });
+          }
+          const notified = await tellNewIdentity(platform, ctx, actor, user, 'added you to');
+          outcomes.push({ email, outcome: 'CREATED', userId: user.id, notified });
+        } catch (error) {
+          outcomes.push({ email, outcome: 'REFUSED', reason: error instanceof Error ? error.message : String(error) });
+        }
+      }
+
+      return {
+        created: outcomes.filter((row) => row.outcome === 'CREATED').length,
+        refused: outcomes.filter((row) => row.outcome === 'REFUSED').length,
+        rows: outcomes,
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/users/:userId/history',
+    readOnly: true,
+    description: 'What a person has done on the record — the events they authored, newest first, from the hash-chained ledger',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+      }
+      authorise(platform.context(actor, `${actor.tenantId}-governance`, { correlationId: ctx.correlationId }), 'ENTERPRISE_STRUCTURE', 'R');
+      const userId = ctx.params.userId as string;
+      const person = platform.user(userId);
+      if (person.tenantId !== actor.tenantId) throw new NotFoundError(`No user ${userId}`);
+      return {
+        userId,
+        name: person.name,
+        events: platform.userHistory(actor.tenantId, userId, 100),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/team/report',
+    binary: true,
+    description: 'The user report as a spreadsheet: every identity, its roles, unit, manager, credentials, activity and status',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = requireTenantAdministrator(ctx, 'export the user report');
+      const position = teamPosition(platform, actor.tenantId);
+      const cell = (value: unknown): string => {
+        const text = value === null || value === undefined ? '' : String(value);
+        return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+      };
+      const header = ['Name', 'Email', 'Roles', 'Unit', 'Manager', 'Status', 'Second factor', 'Last activity', 'Risk signals'];
+      const lines = position.people.map((person) =>
+        [
+          person.name,
+          person.email,
+          person.roles.join(' '),
+          person.unitName ?? '',
+          person.managerName ?? '',
+          person.state,
+          person.mfa.label,
+          person.lastActivityAt ?? 'never',
+          person.risk.join('; '),
+        ]
+          .map(cell)
+          .join(','),
+      );
+      return {
+        bytes: Buffer.from([header.join(','), ...lines].join('\n') + '\n', 'utf8'),
+        contentType: 'text/csv; charset=utf-8',
+        filename: `user-report-${new Date().toISOString().slice(0, 10)}.csv`,
+      };
     },
   },
   {

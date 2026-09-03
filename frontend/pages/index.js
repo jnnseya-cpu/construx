@@ -27,6 +27,7 @@ import { design } from './design.js';
 import { developer } from './developer.js';
 import { documents } from './documents.js';
 import { enterprise } from './enterprise.js';
+import { team } from './team.js';
 import { eventstore } from './eventstore.js';
 import { field } from './field.js';
 import { handover } from './handover.js';
@@ -68,6 +69,7 @@ export const PAGES = {
   copilot,
   autopilot,
   enterprise,
+  team,
   pipeline,
   programme,
   field,

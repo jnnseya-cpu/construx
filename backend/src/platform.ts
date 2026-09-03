@@ -68,6 +68,13 @@ export type Tenant = {
   enterpriseId?: string;
   createdAt: string;
   /**
+   * Closed by the operator. The tenancy's record is kept, read-only; nobody
+   * in it can sign in; what it was owed is a refund obligation.
+   */
+  closedAt?: string;
+  closedBy?: string;
+  closureReason?: string;
+  /**
    * The referral code this tenancy arrived with, if any.
    *
    * Recorded at creation and never afterwards. Attribution that can be edited
@@ -128,6 +135,29 @@ export type PlatformUser = {
   erasureRequestedBy?: string;
   /** Set once the identity has been pseudonymised. Never unset. */
   erasedAt?: string;
+  /**
+   * Where the person sits: their organisational unit and who they report to.
+   * Structure only — neither changes what they may do, which roles decide.
+   */
+  unitId?: string;
+  managerId?: string;
+};
+
+/**
+ * A department, branch or team — the shape of the customer's organisation, as
+ * distinct from the delivery hierarchy (enterprise → portfolio → programme →
+ * project) that the estate is filed under. Owned by the tenancy's
+ * administrator; a person belongs to at most one.
+ */
+export type OrgUnit = {
+  id: string;
+  tenantId: string;
+  name: string;
+  kind: 'DEPARTMENT' | 'BRANCH' | 'TEAM';
+  parentId?: string;
+  createdAt: string;
+  createdBy: string;
+  retiredAt?: string;
 };
 
 export class Platform {
@@ -176,6 +206,7 @@ export class Platform {
   readonly #receiptsByReference = new Map<string, PaymentReceipt>();
   readonly #tenants = new Map<string, Tenant>();
   readonly #users = new Map<string, PlatformUser>();
+  readonly #units = new Map<string, OrgUnit>();
   /**
    * Private module grants, keyed by `grantRef` — one record per module per
    * tenancy, so a re-grant after a revocation moves the same record back to
@@ -1052,7 +1083,176 @@ export class Platform {
       ...(user.erasureRequestedAt ? { erasureRequestedAt: user.erasureRequestedAt } : {}),
       ...(user.erasureDueAt ? { erasureDueAt: user.erasureDueAt } : {}),
       ...(user.erasedAt ? { erasedAt: user.erasedAt } : {}),
+      ...(user.pictureHash ? { pictureHash: user.pictureHash } : {}),
+      ...(user.coverHash ? { coverHash: user.coverHash } : {}),
+      ...(user.unitId ? { unitId: user.unitId } : {}),
+      ...(user.managerId ? { managerId: user.managerId } : {}),
     };
+  }
+
+  // --- Organisation structure ----------------------------------------------
+
+  /** The tenancy's units, live ones first, as the administrator arranged them. */
+  orgUnits(tenantId: string): OrgUnit[] {
+    return [...this.#units.values()]
+      .filter((unit) => unit.tenantId === tenantId)
+      .sort((a, b) => Number(Boolean(a.retiredAt)) - Number(Boolean(b.retiredAt)) || a.createdAt.localeCompare(b.createdAt));
+  }
+
+  createOrgUnit(
+    actor: AuthContext,
+    input: { name: string; kind: OrgUnit['kind']; parentId?: string },
+  ): OrgUnit {
+    const name = input.name.trim();
+    if (!name) throw new DomainError('UNIT_NAME_REQUIRED', 'A unit needs a name');
+    if (input.parentId !== undefined) {
+      const parent = this.#units.get(input.parentId);
+      if (!parent || parent.tenantId !== actor.tenantId || parent.retiredAt) {
+        throw new DomainError('UNIT_PARENT_UNKNOWN', 'The parent unit does not exist in this tenancy', 422);
+      }
+    }
+    const duplicate = this.orgUnits(actor.tenantId).find(
+      (unit) => !unit.retiredAt && unit.name.toLowerCase() === name.toLowerCase() && (unit.parentId ?? '') === (input.parentId ?? ''),
+    );
+    if (duplicate) throw new DomainError('UNIT_EXISTS', `${name} already exists here`, 409);
+
+    const unit: OrgUnit = {
+      id: ulid(),
+      tenantId: actor.tenantId,
+      name,
+      kind: input.kind,
+      ...(input.parentId !== undefined ? { parentId: input.parentId } : {}),
+      createdAt: new Date().toISOString(),
+      createdBy: actor.actorId,
+    };
+    this.#units.set(unit.id, unit);
+    this.ledger.commit({
+      tenantId: actor.tenantId,
+      projectId: `${actor.tenantId}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'ORG_UNIT_CREATED',
+      entity: { refType: 'OrgUnit', refId: unit.id },
+      nextState: { ...unit },
+    });
+    return unit;
+  }
+
+  /** Retire a unit. Its people keep their records and lose the placement; a unit with live children is kept. */
+  retireOrgUnit(actor: AuthContext, input: { unitId: string; reason: string }): OrgUnit {
+    const unit = this.#units.get(input.unitId);
+    if (!unit || unit.tenantId !== actor.tenantId) throw new NotFoundError(`No unit ${input.unitId}`);
+    if (unit.retiredAt) throw new DomainError('UNIT_RETIRED', `${unit.name} is already retired`, 409);
+    if (!input.reason.trim()) throw new DomainError('REASON_REQUIRED', 'Retiring a unit requires a reason');
+    const children = this.orgUnits(actor.tenantId).filter((candidate) => candidate.parentId === unit.id && !candidate.retiredAt);
+    if (children.length > 0) {
+      throw new DomainError('UNIT_HAS_CHILDREN', `${unit.name} still holds ${children.length} unit${children.length === 1 ? '' : 's'}. Retire those first.`, 409);
+    }
+    const retired: OrgUnit = { ...unit, retiredAt: new Date().toISOString() };
+    this.#units.set(unit.id, retired);
+    for (const user of this.users(actor.tenantId)) {
+      if (user.unitId === unit.id) {
+        delete user.unitId;
+        this.commitPlacement(actor, user, `Unit ${unit.name} retired: ${input.reason}`);
+      }
+    }
+    this.ledger.commit({
+      tenantId: actor.tenantId,
+      projectId: `${actor.tenantId}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'ORG_UNIT_RETIRED',
+      entity: { refType: 'OrgUnit', refId: unit.id },
+      nextState: { ...retired, reason: input.reason },
+    });
+    return retired;
+  }
+
+  /**
+   * Put a person in a unit and under a manager. Either may be cleared with
+   * null. A manager is somebody active in the same tenancy who is not the
+   * person, and not somebody who reports to them — a loop is not a hierarchy.
+   */
+  placeUser(
+    actor: AuthContext,
+    input: { userId: string; unitId?: string | null; managerId?: string | null; reason?: string },
+  ): PlatformUser {
+    const user = this.#users.get(input.userId);
+    if (!user || user.tenantId !== actor.tenantId) throw new NotFoundError(`No user ${input.userId}`);
+    if (user.erasedAt !== undefined) throw new DomainError('ALREADY_ERASED', 'That identity has been erased', 409);
+
+    if (input.unitId !== undefined) {
+      if (input.unitId === null) delete user.unitId;
+      else {
+        const unit = this.#units.get(input.unitId);
+        if (!unit || unit.tenantId !== actor.tenantId || unit.retiredAt) {
+          throw new DomainError('UNIT_UNKNOWN', 'That unit does not exist in this tenancy', 422);
+        }
+        user.unitId = unit.id;
+      }
+    }
+    if (input.managerId !== undefined) {
+      if (input.managerId === null) delete user.managerId;
+      else {
+        if (input.managerId === user.id) throw new DomainError('MANAGER_IS_SELF', 'Somebody cannot report to themselves', 422);
+        const manager = this.#users.get(input.managerId);
+        if (!manager || manager.tenantId !== actor.tenantId || manager.erasedAt !== undefined) {
+          throw new DomainError('MANAGER_UNKNOWN', 'That manager does not exist in this tenancy', 422);
+        }
+        // Walk up from the proposed manager; meeting the person again is a loop.
+        let cursor: PlatformUser | undefined = manager;
+        const seen = new Set<string>();
+        while (cursor?.managerId && !seen.has(cursor.id)) {
+          if (cursor.managerId === user.id) {
+            throw new DomainError('MANAGER_LOOP', `${manager.name} already reports to ${user.name}, directly or through others`, 422);
+          }
+          seen.add(cursor.id);
+          cursor = this.#users.get(cursor.managerId);
+        }
+        user.managerId = manager.id;
+      }
+    }
+    this.commitPlacement(actor, user, input.reason ?? 'Placed by an administrator');
+    return user;
+  }
+
+  private commitPlacement(actor: AuthContext, user: PlatformUser, reason: string): void {
+    this.ledger.commit({
+      tenantId: actor.tenantId,
+      projectId: `${actor.tenantId}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'USER_PLACED',
+      entity: { refType: 'User', refId: user.id },
+      nextState: { ...this.userRecord(user), placedBy: actor.actorId, placedAt: new Date().toISOString(), reason },
+    });
+  }
+
+  /**
+   * What a person has done, from the record: the events they authored across
+   * the tenancy, newest first. This is the audit history the directory shows,
+   * and it is read from the chain rather than kept as a separate log so it can
+   * never disagree with it.
+   */
+  userHistory(tenantId: string, userId: string, limit = 50): Array<{ at: string; eventType: string; entity: { refType: string; refId: string }; projectId: string }> {
+    return this.ledger
+      .events({ tenantId })
+      .filter((event) => event.actor.refId === userId)
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+      .slice(0, limit)
+      .map((event) => ({ at: event.timestamp, eventType: event.eventType, entity: { refType: event.entity.refType, refId: event.entity.refId }, projectId: event.projectId }));
+  }
+
+  /** When a person last did anything on the record, if ever. */
+  lastActivity(tenantId: string, userId: string): string | null {
+    let latest: string | null = null;
+    for (const event of this.ledger.events({ tenantId })) {
+      if (event.actor.refId === userId && (latest === null || event.timestamp > latest)) latest = event.timestamp;
+    }
+    return latest;
   }
 
   /**
@@ -1581,6 +1781,11 @@ export class Platform {
     for (const record of this.ledger.entitiesOfType('User')) {
       const state = record.state as unknown as PlatformUser;
       this.#users.set(state.id, state);
+    }
+
+    for (const record of this.ledger.entitiesOfType('OrgUnit')) {
+      const state = record.state as unknown as OrgUnit;
+      this.#units.set(state.id, state);
     }
 
     for (const record of this.ledger.entitiesOfType('Subscription')) {
