@@ -684,7 +684,11 @@ export function getStarted(): string {
           <li>${
             t.aiAllowanceAcus > 0
               ? `<b>${t.aiAllowanceAcus.toLocaleString('en-GB')} ACUs</b> of AI included each month`
-              : `${config.billing.freeTrialGrantMinor.toLocaleString('en-GB')} trial ACUs, once`
+              // "While allocation lasts" is a material term, not small print:
+              // the platform gives away a bounded amount of trial credit a
+              // month, and a card promising it unconditionally would promise
+              // something the wallet may open without.
+              : `${config.billing.freeTrialGrantMinor.toLocaleString('en-GB')} trial ACUs, once — while the month’s allocation lasts`
           }</li>
           <li>${
             t.monthlyPriceMinor === 0

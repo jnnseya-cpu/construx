@@ -278,7 +278,18 @@ function totals(): Totals {
     serverErrors: requests
       .filter((series) => String(series.labels.status ?? '').startsWith('5'))
       .reduce((sum, series) => sum + series.value, 0),
-    authFailures: counters.total('auth_failures_total'),
+    // An expired access token is not a failed credential. A console left open
+    // past the fifteen-minute access lifetime sends its next page load with the
+    // stale token — a dozen parallel requests, every one refused, then one
+    // refresh and every one retried — and that read as "14 of 29 requests
+    // failed authentication (48.3%)" to the operator. An attacker cannot
+    // produce a validly signed token that has merely expired, so expiry says
+    // nothing about credential stuffing and is left out of this rate. It is
+    // still counted, and still on the security stream, under its own reason.
+    authFailures: counters
+      .read('auth_failures_total')
+      .filter((series) => String(series.labels.reason ?? '') !== 'TOKEN_EXPIRED')
+      .reduce((sum, series) => sum + series.value, 0),
     rateLimited: counters.total('rate_limited_total'),
     validationRejects: counters.total('validation_reject_total'),
   };

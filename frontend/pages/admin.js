@@ -36,7 +36,7 @@ function lead({ title, value, tone, sub, to, cta }) {
 }
 
 export async function admin(root) {
-  const [overview, burn, forecast, watch, ready, plane, support, estate] = await Promise.all([
+  const [overview, burn, forecast, watch, ready, plane, support, estate, trialBudget] = await Promise.all([
     api.get('/v1/admin/overview').catch((error) => ({ error })),
     api.get('/v1/admin/burn').catch(() => null),
     api.get('/v1/admin/forecast').catch(() => null),
@@ -45,6 +45,10 @@ export async function admin(root) {
     api.get('/v1/ai/control-plane').catch(() => null),
     api.get('/v1/support').catch(() => null),
     api.get('/v1/admin/tenants').catch(() => null),
+    // How much of this month's free trial credit has gone. The free tier is
+    // the one line of the business whose cost scales with signups rather than
+    // revenue, so the ceiling on it belongs on the first screen.
+    api.get('/v1/admin/trial-budget').catch(() => null),
   ]);
 
   if (overview.error) {
@@ -186,7 +190,12 @@ export async function admin(root) {
           title: 'Tenancies',
           value: overview.tenancies.total,
           tone: overview.tenancies.unreachable > 0 ? 'bad' : '',
-          sub: `${overview.tenancies.active} active · ${overview.tenancies.onTrial} on trial · ${overview.tenancies.suspended} suspended`,
+          sub:
+            `${overview.tenancies.active} active · ${overview.tenancies.onTrial} on trial · ${overview.tenancies.suspended} suspended` +
+            (trialBudget
+              ? ` · trial credit ${money(trialBudget.issuedMinor)} of ${money(trialBudget.budgetMinor)} given away this month` +
+                (trialBudget.remainingMinor === 0 ? ' — the allocation is spent; new signups open with an empty wallet' : '')
+              : ''),
           to: 'tenants',
           cta: 'Tenants & users',
         })}

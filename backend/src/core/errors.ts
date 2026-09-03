@@ -37,8 +37,17 @@ export class ValidationError extends DomainError {
 }
 
 export class AuthError extends DomainError {
-  constructor(message = 'Authentication required') {
-    super('UNAUTHENTICATED', message, 401);
+  /**
+   * The code defaults to the one every refusal has always carried. Expiry
+   * names itself: the gateway's security stream and the operator's watch tell
+   * a token that lapsed apart from one that was forged, and were written to —
+   * `/EXPIRED/i.test(code)` — against a code that, until this, was always
+   * `UNAUTHENTICATED`. So every expiry was recorded as a token anomaly and
+   * counted as a failed credential, and one console left open past its access
+   * lifetime woke the operator.
+   */
+  constructor(message = 'Authentication required', code = 'UNAUTHENTICATED') {
+    super(code, message, 401);
     this.name = 'AuthError';
   }
 }

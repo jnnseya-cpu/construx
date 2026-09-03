@@ -936,7 +936,16 @@ async function activateRegistration(
       enterprise: activation.enterpriseName,
       actionUrl: '/app',
       actionLabel: 'Sign in',
-      detail: `${activation.enterpriseName} is set up and you are its administrator.`,
+      // Said in the welcome rather than discovered at the first refusal. A
+      // wallet that opened empty because the month's trial allocation is spent
+      // is a fact about this month, not about the product.
+      detail:
+        activation.trialGrantMinor > 0
+          ? `${activation.enterpriseName} is set up and you are its administrator. ` +
+            `Your workspace opens with ${activation.trialGrantMinor.toLocaleString('en-GB')} ACUs of trial AI credit.`
+          : `${activation.enterpriseName} is set up and you are its administrator. ` +
+            'This month’s allocation of free trial AI credit has been taken up, so the AI wallet opens empty — ' +
+            'everything else works now, and AI runs as soon as the wallet is topped up.',
     },
     // Same reasoning as the login code: this arrives seconds after the tenancy
     // exists, so there has been no opportunity to configure anything.
@@ -1712,6 +1721,18 @@ export const ROUTES: Route[] = [
           .filter((intent) => intent.status === 'AWAITING_PAYMENT' && platform.isCustomerTenant(intent.tenantId)),
         operators: platform.operators().length,
       });
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/trial-budget',
+    description: 'How much of this month’s free trial credit has been given away, and what the next signup receives',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may see the trial budget', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      return platform.trialBudgetPosition();
     },
   },
   {

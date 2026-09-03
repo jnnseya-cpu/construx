@@ -1025,7 +1025,20 @@ export const config = {
      * deployment rather than the default everywhere.
      */
     collectionEnabled: bool('SUBSCRIPTION_COLLECTION_ENABLED', false),
-    freeTrialGrantMinor: num('FREE_TRIAL_GRANT_MINOR', 500),
+    /**
+     * The one-off trial grant, in minor units of AI credit.
+     *
+     * Sized as a first task, not a first project. It was 500 — £5.00 of credit
+     * at face value, £1.00 of provider cost at the 5× markup if every unit is
+     * spent — which is a real invoice per signup with nothing paid against it,
+     * and it scales with signups rather than with revenue. At 100 the grant
+     * still covers a handful of standard runs (a MED-class run costs 10 raw,
+     * 50 billed) and the worst case per trial is £0.20 of provider cost.
+     *
+     * The aggregate exposure is bounded separately by
+     * `trialMonthlyBudgetMinor` below; this figure only sizes one grant.
+     */
+    freeTrialGrantMinor: num('FREE_TRIAL_GRANT_MINOR', 100),
     /**
      * What one 100 GB block of extra storage costs per month.
      *
@@ -1083,6 +1096,25 @@ export const config = {
      * prospect asked.
      */
     trialsPerOrganisation: num('TRIALS_PER_ORGANISATION', 1),
+    /**
+     * The most trial credit the platform will give away in one calendar month,
+     * in minor units at face value, across every signup.
+     *
+     * The per-organisation rule above bounds how often one company can take
+     * the grant; nothing bounded how many companies could. A million signups
+     * at £1.00 of provider cost each is a million pounds the platform has
+     * promised to vendors with no revenue against it, and a free tier that
+     * scales its own cost with its own popularity is a liability, not a
+     * funnel. This is the ceiling: once the month's allocation is issued, a
+     * new tenancy is still created and everything else works, but the wallet
+     * opens empty and the person is told so — AI runs as soon as they top up.
+     *
+     * The default is £1,000 of face-value credit a month: at the default grant
+     * that is a thousand trials, and at most £200 of provider cost. Raise it
+     * deliberately for a campaign; the Command Center shows how much of it has
+     * gone.
+     */
+    trialMonthlyBudgetMinor: num('TRIALS_MONTHLY_BUDGET_MINOR', 100_000),
   },
 
   privacy: {

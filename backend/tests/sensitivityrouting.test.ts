@@ -229,7 +229,9 @@ describe('the decision is recorded with the input it was made on', () => {
       perception: adapter('OPENAI'),
     });
     const wallet = new ACUWallet('tenant-1');
-    wallet.grantTrialCredit();
+    // Funded explicitly: the default trial grant is sized as a first task and is
+    // smaller than what this run reserves. The test is about routing, not trials.
+    wallet.grantTrialCredit(1_000);
 
     const run = await withClearance({ ANTHROPIC: 'LEGAL_L4', OPENAI: 'INTERNAL' }, () =>
       orchestrator.execute(
@@ -267,7 +269,7 @@ describe('the decision is recorded with the input it was made on', () => {
     const { ACUWallet } = await import('../src/billing/acu.ts');
     const orchestrator = new AIOrchestrator({ reasoning: adapter('OPENAI'), perception: adapter('GEMINI') });
     const wallet = new ACUWallet('tenant-2');
-    wallet.grantTrialCredit();
+    wallet.grantTrialCredit(1_000);
 
     await withClearance({ OPENAI: 'INTERNAL', GEMINI: 'INTERNAL' }, async () => {
       await assert.rejects(

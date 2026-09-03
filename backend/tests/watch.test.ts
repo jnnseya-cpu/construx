@@ -117,6 +117,30 @@ describe('it measures a rate over an interval, not a total since boot', () => {
   });
 });
 
+describe('an expired token is not a failed credential', () => {
+  it('leaves token expiry out of the authentication-failure rate', async () => {
+    await evaluate(platform, new Date('2026-09-03T09:00:00Z'));
+    // One page load from a console whose fifteen-minute access token has just
+    // lapsed: fourteen parallel requests refused, one refresh, fourteen retried.
+    // That was "14 of 29 requests failed authentication (48.3%)" to the
+    // operator, and it was nobody working through a credential list.
+    requests(29, '200');
+    for (let index = 0; index < 14; index += 1) counters.increment('auth_failures_total', { reason: 'TOKEN_EXPIRED' });
+    const report = await evaluate(platform, new Date('2026-09-03T09:01:00Z'));
+    assert.equal(report.window.authFailures, 0);
+    assert.equal(report.started.includes('auth_failures'), false);
+  });
+
+  it('still counts a token that is invalid, missing or forged', async () => {
+    await evaluate(platform, new Date('2026-09-03T09:00:00Z'));
+    requests(29, '200');
+    for (let index = 0; index < 14; index += 1) counters.increment('auth_failures_total', { reason: 'TOKEN_INVALID' });
+    const report = await evaluate(platform, new Date('2026-09-03T09:01:00Z'));
+    assert.equal(report.window.authFailures, 14);
+    assert.equal(report.started.includes('auth_failures'), true);
+  });
+});
+
 describe('it declines to judge rather than judging a sample of one', () => {
   it('says why it had nothing to judge', async () => {
     await evaluate(platform, new Date('2026-08-28T09:00:00Z'));

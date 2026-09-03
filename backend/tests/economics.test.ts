@@ -365,12 +365,17 @@ describe('every package credits 20% of its price as AI', () => {
   });
 
   it('gives the free trial a one-off grant rather than a monthly allowance', () => {
-    // Nothing is paid, so 20% of nothing is nothing. The 500 ACUs are a grant
-    // made once at signup — a different mechanism, deliberately, because a
-    // monthly allowance on a free package is a free platform.
+    // Nothing is paid, so 20% of nothing is nothing. The grant is made once at
+    // signup — a different mechanism, deliberately, because a monthly allowance
+    // on a free package is a free platform.
     assert.equal(PACKAGES.FREE_TRIAL.monthlyPriceMinor, 0);
     assert.equal(subscriptionAcuAllocationMinor(PACKAGES.FREE_TRIAL.monthlyPriceMinor), 0);
-    assert.equal(config.billing.freeTrialGrantMinor, 500);
+    // Sized as a first task, not a first project. It was 500 — £1.00 of
+    // provider cost per signup at the 5× markup, with nothing paid against it
+    // and no ceiling on how many signups. 100 covers a handful of standard
+    // runs for at most £0.20, and the monthly budget bounds the total.
+    assert.equal(config.billing.freeTrialGrantMinor, 100);
+    assert.ok(config.billing.trialMonthlyBudgetMinor >= config.billing.freeTrialGrantMinor);
   });
 
   it('prices Solo as the entry package a single person can afford', () => {

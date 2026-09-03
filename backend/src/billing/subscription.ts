@@ -1,4 +1,5 @@
 import { PACKAGES, UNCHARGED_ROLES, seatForRole, type PackageTier } from './seats.ts';
+import { DomainError } from '../core/errors.ts';
 import type { Role } from '../identity/roles.ts';
 
 /**
@@ -116,9 +117,23 @@ export type Subscription = {
   renewsAt: string;
 };
 
-export class SeatLimitError extends Error {
+/**
+ * A refusal, not a failure.
+ *
+ * This extended a bare `Error`. The gateway had no mapping for it and answered
+ * `500 INTERNAL_ERROR — The request could not be completed` — so an
+ * administrator on the Free package, which includes one identity and whose one
+ * identity they already were, pressed "Add a person" and was told the platform
+ * was broken. It was refusing correctly and saying nothing. A `DomainError`
+ * carries the limit, the package and what to do about it to the person.
+ */
+export class SeatLimitError extends DomainError {
   constructor(packageTier: PackageTier, limit: number) {
-    super(`The ${PACKAGES[packageTier].label} package includes ${limit} seats; revoke a seat or move package`);
+    super(
+      'SEAT_LIMIT_REACHED',
+      `The ${PACKAGES[packageTier].label} package includes ${limit} seat${limit === 1 ? '' : 's'}; revoke a seat or move package`,
+      422,
+    );
     this.name = 'SeatLimitError';
   }
 }

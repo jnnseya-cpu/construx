@@ -7760,6 +7760,88 @@ rather than softening what is.
 
 ---
 
+### The free tier has a ceiling
+
+The pricing card read "1 identity · 1 GB storage · 500 trial ACUs, once", and
+the objection was arithmetic: a million signups at that grant is a seven-figure
+vendor bill with no revenue against it. Both halves of that were true. A grant
+of 500 is £5.00 of credit at face value and £1.00 of provider cost at the 5×
+markup if every unit is spent — a real invoice per signup, with nothing paid
+against it. And nothing bounded the total: `TRIALS_PER_ORGANISATION` stops one
+company taking two grants and says nothing about how many companies may take
+one.
+
+**The grant is sized as a first task, not a first project.**
+`FREE_TRIAL_GRANT_MINOR` defaults to 100: £1.00 at face value, at most £0.20 of
+provider cost, and still a handful of standard runs — a MED-class run costs 10
+raw, 50 billed. The pricing card, the signup welcome and the wallet all read the
+same configured figure, so changing it changes the offer in one place.
+
+**The month has a budget.** `TRIALS_MONTHLY_BUDGET_MINOR` is the most trial
+credit the platform will give away in a calendar month across every signup —
+default £1,000 at face value, which is a thousand trials at the default grant
+and at most £200 of provider cost. `Platform.trialBudgetPosition()` computes
+what has gone from the wallets themselves: every grant carries
+`TRIAL_GRANT_NOTE`, the month's total is the sum of those entries stamped this
+month, and the figure is right after a restart because the entries are.
+`createTenant` grants the smaller of the configured grant and what remains,
+which can be a partial grant and can be nothing.
+
+**Nothing else about a tenancy changes when the budget is spent.** The tenancy
+is created, the administrator is created, branding is seeded, the subscription
+is active. The wallet opens empty and the welcome says why — "this month's
+allocation of free trial AI credit has been taken up … AI runs as soon as the
+wallet is topped up" — rather than the person discovering it at the first
+refusal. An organisation that arrived after the allocation was spent has not
+had its trial, so it is not recorded as having taken one. The operator reads
+the position on `/v1/admin/trial-budget` and on the Command Center's tenancy
+tile.
+
+`trialbudget.test.ts` holds it: full grants until the budget runs short, then
+what is left, then nothing; a zero grant is not counted as a grant; last month's
+grants do not consume this month's budget; and the defaults keep one trial
+under 25 minor of worst-case provider cost with at least a hundred trials in
+the month. `economics.test.ts` pins the new default and the reason for it.
+
+What this does not do: it does not ask for a card at signup, and it does not
+expire unspent trial credit. The trial's thirty-day entitlement already stops
+AI running on an expired trial, which bounds the second in practice.
+
+---
+
+### Two refusals that were reported as failures
+
+Both reported from a live deployment being tested by its operator, both the
+same class of defect: the platform refusing correctly and saying so wrongly.
+
+**"Add a person" answered `INTERNAL_ERROR`.** The tenancy was on the Free
+package, which includes one identity, and the administrator was it. The seat
+limit was doing its job — and `SeatLimitError` extended a bare `Error`, so the
+gateway had no mapping for it and answered a 500 with "The request could not
+be completed". The administrator concluded nobody could be added at all. It is
+now a `DomainError`, `SEAT_LIMIT_REACHED`, 422: the person is told the limit,
+the package it belongs to, and what to do — revoke a seat or move package. The
+operator moves a tenancy's package from its row on Tenants & Users.
+`seatlimit.test.ts` holds it at the HTTP level, and holds the other half: a
+regulator's seat is uncharged and is still admitted.
+
+**"14 of 29 requests failed authentication (48.3%)".** One page load from a
+console whose fifteen-minute access token had just lapsed: fourteen parallel
+requests refused, one refresh, fourteen retried. Nobody was working through a
+credential list. Three things were wrong and each is fixed at its own layer.
+`AuthError` carried the same code for every refusal, so the gateway's
+`/EXPIRED/i` test — written to tell expiry from forgery — never matched and
+every expiry was recorded as a token anomaly; expiry now names itself
+(`TOKEN_EXPIRED`). The watch's authentication-failure rate counted it; it now
+leaves expiry out, because an attacker cannot produce a validly signed token
+that has merely expired, and the reason is still on the security stream. And
+the console sent a token it could read the expiry of: `api.js` now refreshes
+before sending a token within thirty seconds of its `exp`, so the burst does
+not happen at all. `watch.test.ts` holds the rate both ways — expiry excluded,
+an invalid token still counted.
+
+---
+
 ## What is partial
 
 Implemented in a form that works, with a stated part missing. The missing part is

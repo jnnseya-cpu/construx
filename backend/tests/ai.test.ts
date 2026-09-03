@@ -70,7 +70,10 @@ const task = (orchestrator: AIOrchestrator, wallet: ACUWallet, capability: 'REAS
 
 function fundedWallet(): ACUWallet {
   const wallet = new ACUWallet('tenant-1');
-  wallet.grantTrialCredit();
+  // Funded explicitly rather than by the default trial grant. These tests are
+  // about reservation and settlement, not about the trial policy, and the grant
+  // is sized as a first task — smaller than the 250 a stubbed run reserves.
+  wallet.grantTrialCredit(1_000);
   return wallet;
 }
 

@@ -111,12 +111,42 @@ async function send(method, path, body, options, token) {
   });
 }
 
+/**
+ * Whether a stored access token has lapsed, or is about to.
+ *
+ * Read from the token's own `exp` claim — no request is made. A token that has
+ * expired is refused by the gateway before routing, and a console left open past
+ * the fifteen-minute access lifetime used to discover that on its next page
+ * load: a dozen parallel requests, every one refused, then one refresh and every
+ * one retried. Each of those refusals counted as a failed authentication on the
+ * operator's watch, and the operator was woken for "14 of 29 requests failed
+ * authentication". Refreshing *before* sending a token known to be stale means
+ * the refusals never happen. Thirty seconds of margin covers clock skew and the
+ * time a request spends in flight.
+ */
+function expiresSoon(token) {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now() + 30_000;
+  } catch {
+    // Not a JWT this code can read. Send it and let the gateway decide.
+    return false;
+  }
+}
+
+/** The access token to send: refreshed first where it is known to be stale. */
+async function freshToken() {
+  const token = session.get()?.accessToken;
+  if (token && expiresSoon(token)) return (await rotate()) ?? token;
+  return token;
+}
+
 async function request(method, path, body, options = {}) {
   // Retrying a command must not create a second one, so the idempotency key is
   // fixed before the first attempt and reused across the refresh retry.
   const attempt = { ...options, idempotencyKey: method === 'GET' ? undefined : crypto.randomUUID() };
 
-  let response = await send(method, path, body, attempt, session.get()?.accessToken);
+  let response = await send(method, path, body, attempt, await freshToken());
 
   if (response.status === 401 && !options.anonymous) {
     const token = await rotate();
@@ -140,7 +170,7 @@ async function request(method, path, body, options = {}) {
  */
 async function download(path, body, options = {}) {
   const attempt = { ...options, idempotencyKey: crypto.randomUUID() };
-  let response = await send('POST', path, body ?? {}, attempt, session.get()?.accessToken);
+  let response = await send('POST', path, body ?? {}, attempt, await freshToken());
 
   if (response.status === 401 && !options.anonymous) {
     const token = await rotate();
@@ -194,7 +224,7 @@ async function upload(path, file, options = {}) {
       body: file,
     });
 
-  let response = await attempt(session.get()?.accessToken);
+  let response = await attempt(await freshToken());
   if (response.status === 401 && !options.anonymous) {
     const token = await rotate();
     if (token) response = await attempt(token);

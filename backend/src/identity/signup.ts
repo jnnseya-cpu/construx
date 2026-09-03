@@ -351,6 +351,13 @@ export type Activation = {
   tenantId: string;
   userId: string;
   enterpriseName: string;
+  /**
+   * What the wallet opened with. Zero where the organisation had already had
+   * its trial, or where the month's trial allocation is spent — and in either
+   * case the person is told, because a wallet that opens empty with no word
+   * reads as AI that does not work.
+   */
+  trialGrantMinor: number;
 };
 
 /**
@@ -396,7 +403,7 @@ export function verify(
   // provisioning a customer should not be second-guessed by it.
   const grantTrial = trialGrantAllowed(record.email);
 
-  const { tenant } = platform.createTenant({
+  const { tenant, trialGrantMinor } = platform.createTenant({
     trialGrant: grantTrial,
     legalName: record.organisationName,
     jurisdiction: record.jurisdiction,
@@ -433,7 +440,9 @@ export function verify(
     legalFooter: `${record.organisationName} · registered in ${record.jurisdiction}`,
   });
 
-  if (grantTrial) recordTrialTaken(record.email);
+  // Taken only if something was actually given. An organisation that arrived
+  // after the month's allocation was spent has not had its trial.
+  if (grantTrial && trialGrantMinor > 0) recordTrialTaken(record.email);
 
   record.status = 'VERIFIED';
   record.verifiedAt = new Date().toISOString();
@@ -442,5 +451,11 @@ export function verify(
   // The token is spent. Keeping it would leave a second working link.
   tokenHashes.delete(record.id);
 
-  return { registration: record, tenantId: tenant.id, userId: user.id, enterpriseName: record.organisationName };
+  return {
+    registration: record,
+    tenantId: tenant.id,
+    userId: user.id,
+    enterpriseName: record.organisationName,
+    trialGrantMinor,
+  };
 }

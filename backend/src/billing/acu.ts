@@ -41,6 +41,16 @@ export function balanceEffect(entry: { type: ACUEntryType; billedMinor: number }
   }
 }
 
+/**
+ * How a trial grant is labelled on the wallet.
+ *
+ * One constant, because the platform's monthly trial budget is computed by
+ * reading these entries back — what has been given away this month is the sum
+ * of the grants carrying this note, and a second spelling anywhere would be
+ * credit that the budget cannot see.
+ */
+export const TRIAL_GRANT_NOTE = 'Free trial ACU grant';
+
 export type ACUEntry = {
   id: string;
   tenantId: string;
@@ -290,7 +300,7 @@ export class ACUWallet {
         rawCostMinor: 0,
         acuUnits: 0,
         effectiveMultiplier: 0,
-        note: 'Free trial ACU grant',
+        note: TRIAL_GRANT_NOTE,
       },
       amountMinor,
     );

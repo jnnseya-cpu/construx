@@ -204,8 +204,10 @@ export function verifyToken(
     claims.iss === ISSUER || (options.allowLegacyIssuer === true && LEGACY_ISSUERS.has(claims.iss));
   if (!issuerAccepted || claims.aud !== AUDIENCE) throw new AuthError('Token issuer or audience mismatch');
   if (claims.typ !== expectedType) throw new AuthError(`Expected a ${expectedType} token`);
-  // No grace window: an expired token is rejected before routing.
-  if (claims.exp * 1000 <= now) throw new AuthError('Token has expired');
+  // No grace window: an expired token is rejected before routing. Named as
+  // expiry, so the gateway counts it apart from a forged or unknown token — a
+  // console whose access token lapsed is not somebody guessing credentials.
+  if (claims.exp * 1000 <= now) throw new AuthError('Token has expired', 'TOKEN_EXPIRED');
   if (revoked.has(claims.jti)) throw new AuthError('Token has been revoked');
 
   return {

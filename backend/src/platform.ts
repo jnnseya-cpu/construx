@@ -3,7 +3,7 @@ import { EvidenceStore } from './evidence/store.ts';
 import { SigningAuthority } from './signing/signature.ts';
 import { ExportService } from './export/exporter.ts';
 import { SyncEngine } from './field/sync.ts';
-import { ACUWallet, type ACUCaps, type ACUEntry } from './billing/acu.ts';
+import { ACUWallet, TRIAL_GRANT_NOTE, type ACUCaps, type ACUEntry } from './billing/acu.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
 import { assignIdentity, packageForTier, revokeIdentity, TIERS, type Subscription, type SubscriptionTier } from './billing/subscription.ts';
 import { standing } from './billing/entitlement.ts';
@@ -256,7 +256,7 @@ export class Platform {
      * worth seeing.
      */
     referralCode?: string;
-  }): { tenant: Tenant; subscription: Subscription; wallet: ACUWallet } {
+  }): { tenant: Tenant; subscription: Subscription; wallet: ACUWallet; trialGrantMinor: number } {
     const tenantId = ulid();
     const enterpriseId = ulid();
 
@@ -288,8 +288,16 @@ export class Platform {
     // Every tenant, paid or trial, starts with the trial grant so AI can be
     // tried without a payment method — and stops when it runs out. Unless this
     // organisation has already had one: the grant is an offer to a customer,
-    // not a per-mailbox entitlement.
-    if (input.trialGrant !== false) wallet.grantTrialCredit();
+    // not a per-mailbox entitlement. And never beyond the month's budget: the
+    // grant is provider spend with nothing paid against it, and a free tier
+    // whose cost scales with its own popularity is a liability. Once the
+    // month's allocation is issued the tenancy is still created, the wallet
+    // opens empty, and the caller is told how much was granted so it can say so.
+    let trialGrantMinor = 0;
+    if (input.trialGrant !== false) {
+      trialGrantMinor = Math.min(config.billing.freeTrialGrantMinor, this.trialBudgetPosition().remainingMinor);
+      if (trialGrantMinor > 0) wallet.grantTrialCredit(trialGrantMinor);
+    }
     // A paid plan additionally credits its AI allowance for the first period.
     // A free plan allocates nothing and therefore has only the trial grant,
     // which is the whole reason AI stops working on a trial that runs out
@@ -389,7 +397,7 @@ export class Platform {
         .slice(0, 4),
     });
 
-    return { tenant, subscription, wallet };
+    return { tenant, subscription, wallet, trialGrantMinor };
   }
 
   /**
@@ -1477,6 +1485,45 @@ export class Platform {
   /** Every receipt from a customer. Demonstration credit is not revenue. */
   customerReceipts(): PaymentReceipt[] {
     return this.paymentReceipts().filter((receipt) => this.isCustomerTenant(receipt.tenantId));
+  }
+
+  /**
+   * How much of this month's trial credit has been given away, and what is left.
+   *
+   * Computed from the wallets rather than kept as a counter: every grant is an
+   * entry carrying `TRIAL_GRANT_NOTE`, so the month's total is the sum of those
+   * entries stamped this month, and it survives a restart because the entries
+   * do. The budget is the ceiling on what the platform will promise vendors
+   * with no revenue against it; `remainingMinor` is what the next signup may
+   * receive, which can be less than a full grant and can be nothing.
+   */
+  trialBudgetPosition(now = new Date()): {
+    month: string;
+    budgetMinor: number;
+    grantMinor: number;
+    issuedMinor: number;
+    grants: number;
+    remainingMinor: number;
+  } {
+    const month = now.toISOString().slice(0, 7);
+    let issuedMinor = 0;
+    let grants = 0;
+    for (const wallet of this.#wallets.values()) {
+      for (const entry of wallet.entries()) {
+        if (entry.type !== 'GRANT' || entry.note !== TRIAL_GRANT_NOTE || !entry.timestamp.startsWith(month)) continue;
+        issuedMinor += entry.billedMinor;
+        grants += 1;
+      }
+    }
+    const budgetMinor = config.billing.trialMonthlyBudgetMinor;
+    return {
+      month,
+      budgetMinor,
+      grantMinor: config.billing.freeTrialGrantMinor,
+      issuedMinor,
+      grants,
+      remainingMinor: Math.max(0, budgetMinor - issuedMinor),
+    };
   }
 
   user(userId: string): PlatformUser {
