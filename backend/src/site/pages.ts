@@ -8,6 +8,7 @@ import { EVENT_TYPES } from '../goldenthread/eventTypes.ts';
 import { ROUTES } from '../api/routes.ts';
 import { accountTypes } from '../identity/signup.ts';
 import { absolute, cards, cta, jsonLd, organisation, page, pageHead, SITE_PAGES } from './layout.ts';
+import { addressBlock, businessDetails, emailLink, phoneLink, socialLinks } from './business.ts';
 import { POSTS, longDate } from './posts.ts';
 import { publishedPost, publishedPosts } from './blog.ts';
 import type { Platform } from '../platform.ts';
@@ -633,13 +634,30 @@ export function contact(): string {
       than an address, and this platform does not ship things that pretend to work. Until the enquiry pipeline is
       connected to a real inbox, the honest instruction is the one below.
     </p>
-    <p class="callout">
-      Write to <b>contact@construxvg.com</b> and say which of the four above you are. If it is a security report, put
-      <b>SECURITY</b> in the subject and it is triaged ahead of everything else.
-    </p>
+    ${contactDetails()}
   </div>
 </section>`,
   );
+}
+
+/**
+ * How to reach a person: whatever is configured, as links a phone can act on.
+ * The email is always there; the phone and the address appear when set and
+ * are never invented. `SITE_CONTACT_*` and `SITE_ADDRESS_*` in `.env`.
+ */
+function contactDetails(): string {
+  const business = businessDetails();
+  return `<p class="callout">
+      Write to ${emailLink(business)} and say which of the four above you are. If it is a security report, put
+      <b>SECURITY</b> in the subject and it is triaged ahead of everything else.
+    </p>
+    <dl class="contact-details">
+      ${business.phone ? `<div><dt>Call</dt><dd>${phoneLink(business, 'contact-phone')}</dd></div>` : ''}
+      <div><dt>Email</dt><dd>${emailLink(business)}</dd></div>
+      ${business.address ? `<div><dt>Find us</dt><dd>${addressBlock(business)}</dd></div>` : ''}
+      ${business.openingHours.length ? `<div><dt>Hours</dt><dd>${business.openingHours.map((h) => esc(h)).join('<br>')}</dd></div>` : ''}
+      ${business.social.length ? `<div><dt>Elsewhere</dt><dd>${socialLinks(business)}</dd></div>` : ''}
+    </dl>`;
 }
 
 // ---------------------------------------------------------------- Get started

@@ -1,6 +1,7 @@
 import { esc } from '../messaging/render.ts';
 import { config } from '../config.ts';
 import { analyticsScriptTag, consentBanner } from './analytics.ts';
+import { businessDetails, contactColumn, emailLink, organisationJsonLd, phoneLink, telHref } from './business.ts';
 
 /**
  * The public site's chrome.
@@ -123,6 +124,7 @@ ${meta.published ? `<meta property="article:published_time" content="${esc(meta.
 <meta name="theme-color" content="#090a0d">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/site.css">
+<script type="application/ld+json">${jsonLd(organisationJsonLd(businessDetails(), config.publicBaseUrl))}</script>
 ${meta.jsonLd ? `<script type="application/ld+json">${meta.jsonLd}</script>\n` : ''}</head>`;
 }
 
@@ -140,12 +142,9 @@ export function jsonLd(value: unknown): string {
 
 /** The publisher, identical on every page that carries structured data. */
 export function organisation(): Record<string, unknown> {
-  return {
-    '@type': 'Organization',
-    name: 'CONSTRUX',
-    url: absolute('/'),
-    logo: absolute('/logo.svg'),
-  };
+  // Nested inside another node, so without its own `@context`.
+  const { '@context': _context, ...node } = organisationJsonLd(businessDetails(), config.publicBaseUrl);
+  return node;
 }
 
 export { absolute };
@@ -156,6 +155,16 @@ function header(current: string): string {
       `<a href="${esc(link.href)}"${link.href === current ? ' aria-current="page"' : ''}>${esc(link.label)}</a>`,
   ).join('');
 
+  // The phone, where one is configured, sits in the header of every page as a
+  // link a phone can dial. On a small screen the header actions collapse into
+  // the menu, so the same number and the email are the menu's last two rows —
+  // a contact route that is only there at desktop width is not there.
+  const business = businessDetails();
+  const phone = phoneLink(business);
+  const mobileContact = `${
+    business.phone ? `<a class="menu-contact" href="${esc(telHref(business.phone))}">Call ${esc(business.phone)}</a>` : ''
+  }<a class="menu-contact" href="mailto:${esc(business.email)}">Email ${esc(business.email)}</a>`;
+
   return `<header class="site-head">
   <div class="wrap head-row">
     <a class="mark" href="/" aria-label="CONSTRUX home">
@@ -164,6 +173,7 @@ function header(current: string): string {
     </a>
     <nav class="site-nav" aria-label="Primary">${links}</nav>
     <div class="head-cta">
+      ${phone}
       <a class="btn ghost" href="/app">Sign in</a>
       <a class="btn" href="/get-started">Get started</a>
     </div>
@@ -173,6 +183,7 @@ function header(current: string): string {
   </div>
   <nav class="mobile-nav" id="mobile-nav" hidden aria-label="Primary, mobile">
     ${SITE_PAGES.map((p) => `<a href="${esc(p.path)}">${esc(p.label)}</a>`).join('')}
+    ${mobileContact}
   </nav>
 </header>`;
 }
@@ -188,6 +199,7 @@ function footer(): string {
     })
     .join('');
 
+  const business = businessDetails();
   return `<footer class="site-foot">
   <div class="wrap">
     <div class="foot-grid">
@@ -197,9 +209,10 @@ function footer(): string {
         <p class="foot-status"><a href="/status"><span class="dot"></span> All systems operational</a></p>
       </div>
       ${columns}
+      ${contactColumn(business)}
     </div>
     <div class="foot-base">
-      <span>&copy; ${new Date().getUTCFullYear()} CONSTRUX</span>
+      <span>&copy; ${new Date().getUTCFullYear()} ${esc(business.legalName)}${business.email ? ` · ${emailLink(business)}` : ''}</span>
       <span class="foot-links"><a href="/verify-document">Verify a document</a> <a href="/terms">Terms</a> <a href="/privacy">Privacy</a> <a href="/policies">Policies</a></span>
     </div>
   </div>

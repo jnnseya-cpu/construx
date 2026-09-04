@@ -114,6 +114,14 @@ function str(key: string, fallback: string): string {
   return raw === undefined || raw === '' ? fallback : raw;
 }
 
+/** A comma-separated list; blanks dropped, order kept. */
+function list(key: string): string[] {
+  return str(key, '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item);
+}
+
 const SENSITIVITY: DataSensitivity[] = ['PUBLIC', 'INTERNAL', 'SAFETY_L2', 'COMMERCIAL_L3', 'LEGAL_L4'];
 
 /**
@@ -1201,6 +1209,24 @@ export const config = {
      * that the marketing page cannot fill the volume the ledger writes to.
      */
     mediaMaxBytes: num('SITE_MEDIA_MAX_BYTES', 8 * 1_048_576),
+    /**
+     * The business behind the site, for the header, the footer, the contact
+     * page and the `Organization` structured data on every page. Nothing here
+     * is invented when unset: a phone that is not configured is not shown.
+     * The email defaults to the address the contact page has always named.
+     */
+    business: {
+      legalName: str('SITE_LEGAL_NAME', 'CONSTRUX'),
+      email: str('SITE_CONTACT_EMAIL', 'contact@construxvg.com'),
+      phone: str('SITE_CONTACT_PHONE', ''),
+      addressStreet: str('SITE_ADDRESS_STREET', ''),
+      addressLocality: str('SITE_ADDRESS_LOCALITY', ''),
+      addressRegion: str('SITE_ADDRESS_REGION', ''),
+      addressPostcode: str('SITE_ADDRESS_POSTCODE', ''),
+      addressCountry: str('SITE_ADDRESS_COUNTRY', 'GB'),
+      social: list('SITE_SOCIAL_LINKS'),
+      openingHours: list('SITE_OPENING_HOURS'),
+    },
   },
 
   /**

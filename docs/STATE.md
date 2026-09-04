@@ -8185,6 +8185,45 @@ Security and signing back in through three steps; an operator with nothing
 enrolled landing on Security, refused elsewhere with the sentence, enrolling,
 and the estate opening.
 
+### The business behind the public site: phone, address, profiles, structured data
+
+An external audit of the live site scored it B and named six things, five of
+them one fault: no phone, no contact link, no address, no social profile and
+no structured data, because the site had nowhere to hold any of them. The
+contact page named an email in bold text that nothing could tap.
+
+`backend/src/site/business.ts` is the one source: legal name, email, phone,
+postal address, profile links and opening hours, every one from configuration
+(`SITE_LEGAL_NAME`, `SITE_CONTACT_EMAIL`, `SITE_CONTACT_PHONE`,
+`SITE_ADDRESS_*`, `SITE_SOCIAL_LINKS`, `SITE_OPENING_HOURS`, all in
+`.env.example`). **Nothing is invented when unset**: the email defaults to the
+address the contact page has always named; a phone, an address or a profile
+that is not configured is not shown, and the structured data omits it rather
+than guessing. What is set appears in three places at once so it cannot drift:
+the header of every page (a `tel:` link a phone dials; on a small screen the
+menu's last two rows are "Call" and "Email"), a Contact column in the footer
+of every page with the address as an `<address>` block and the profiles named
+by their host with `rel="me"`, and `/contact`, which lays the same details out
+under Call, Email, Find us, Hours and Elsewhere. The footer's copyright line
+carries the legal name and the email as a link.
+
+Every page now carries `Organization` structured data in its head — name,
+legal name, URL, logo, email, a sales `ContactPoint`, and the phone,
+`PostalAddress`, `sameAs` and `openingHours` where configured. `Organization`
+rather than `LocalBusiness`: a software platform is not a shop with a door,
+and the markup would be marked as a falsehood by the crawler it is for. The
+blog's existing publisher and author nodes reuse the same object.
+`sitebusiness.test.ts` holds the dialling-link derivation, the host-to-name
+mapping, the omissions, the escaping, and the served pages carrying an email
+link and Organization data and no invented phone. Verified in Chromium at
+desktop and phone widths with every value set.
+
+**What remains yours to supply.** The values. A phone that is answered, the
+address on your Google Business Profile exactly, and the profiles you post
+to. Until they are set, the audit's phone, address and profile findings stand,
+correctly. "Contact route" and "Schema.org" are answered on every page now,
+with the email alone.
+
 **Not built, stated so it is not mistaken for missing by accident:** no QR
 code is rendered — the key is typed or the link opened on the phone; drawing
 one is a dependency or a hand-written encoder and neither is warranted for a
