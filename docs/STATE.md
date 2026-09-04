@@ -8289,6 +8289,62 @@ product); BitriPay and any invoicing run (the statement moves no money);
 document-generation job API; RLS and Kafka (no database, no broker — the
 policies and topics are recorded as the contract in `docs/GROUP_TENANCY.md`).
 
+### The Enterprise / Group specification v1.0 — CONSTRUX side, on top of the group tenancy
+
+The second specification (§1–§20, AT-01..AT-44) is implemented over the
+group tenancy above without removing any of it; `docs/GROUP_TENANCY.md`
+Part 2 maps every section to what is built, built differently, or not
+built. **Built:** `group/agreement.ts` — the agreement under a group,
+versioned and effective-dated (mode INTERNAL_COST_ALLOCATION /
+INVOICED_INTERCOMPANY / EXTERNAL_ENTERPRISE, seller, payer, currency,
+cadence; operator sets a draft, the group approves), each company's
+subscription as line items (product with seats, restricted modules), the
+group billing view with seats used, distinct people and the invoice-grouping
+rule (one invoice only where seller, payer, currency and period agree).
+`group/issuance.ts` — the document lifecycle for legal instruments: draft →
+generated (frozen, hashed manifest of body, issuer, brand, template, source
+version) → awaiting approval → approved (by revision hash; named signatory
+or administrator) → issued, with issuance as one outcome per request: the
+number and a pending issuance are recorded first, the bytes rendered against
+the frozen manifest, then issued; a failed render is retried under the same
+key with the same number; an abandoned number is voided and never reused;
+an issued document is immutable and a correction supersedes it;
+`LEGAL_PROFILE_INCOMPLETE` and `ISSUER_PROFILE_CHANGED` refuse issue until
+the registered issuer is complete and current. `profile.ts` — legal
+verification state (UNVERIFIED / DECLARED / VERIFIED, the operator verifies,
+a change re-declares), approval policy per document type, readiness.
+`group/reporting.ts` — reporting grants from a company to its group (metrics,
+roles, period, export right, expiry) and grant-filtered group reports that
+name withheld metrics and ungranted companies rather than showing zero,
+total per currency without conversion, and recheck grants on every read.
+`group/sharing.ts` — shares are proposed and accepted, scoped to named
+fields. `group/transfer.ts` — moving a company between groups: draft →
+review → company approval → scheduled → executed, preflight before any
+change, the old group's grants, shares and roles ended, the relation kept
+in the group's history and the statement effective-dated over it.
+`group/onboarding.ts` — one idempotent onboarding act and three separate
+readiness lights. `billing/acu.ts` — a replayed settlement charges nothing
+and answers the same; a per-person monthly budget. `identity/modules.ts` —
+the restricted module's registry entry in the spec's shape.
+
+**Console:** Documents gains legal readiness and verification, the approval
+policy, the Legal documents card (draft, generate, submit, approve, send
+back, issue, download, supersede, void) and share acceptance with field
+scopes; Group gains Agreement and subscriptions and Reports; Billing gains
+subscription line items and a personal budget; Team & Access gains group
+reporting grants and transfer approval; Tenants & Users gains Onboard a
+group, Agreement, Readiness, Verify issuer, Transfer and the transfer cases.
+
+**Tests:** `enterprisegroup.test.ts`, one block per acceptance test that
+reaches CONSTRUX (see the docs for the list), including the §10.3 wallet
+arithmetic and a restart replay. **Not built, stated:** VERYX and product
+workspaces; external identity providers; the asynchronous document job with
+ACU reservation (rendering is synchronous and local); worker leases and
+`reconciliation_required` (no worker exists); credit lots and cross-tenant
+credit transfer; the invoicing run and payment adapter; proration; FX and
+intercompany elimination; legacy migration; the latency targets are
+unmeasured.
+
 ### Requests: new → contacted → qualified → provisioned
 
 Enterprise and group accounts were "provisioned with an agreement rather

@@ -149,3 +149,123 @@ Each criterion that reaches CONSTRUX has a test: isolation across companies; mod
 2. Token TTL: 15 minutes, in place.
 3. ETABLIX agent tool list: the runtime already filters agents by module grant (`runnableAgents`).
 4. ETABLIX RDC SARL: a third company, attached to the group as its own tenancy with its own cost centre, profile and numbering. Nothing about it is a sub-profile of ETABLIX Ltd.
+
+---
+
+# Part 2 — the Enterprise / Group specification v1.0 (4 September 2026)
+
+The second specification ("CONSTRUX + VERYX Enterprise / Group account
+specification", §1–§20, AT-01..AT-44) is implemented on top of Part 1 —
+nothing above was removed or replaced. As before: CONSTRUX side only, and
+wherever the specification says "both products" or VERYX, read CONSTRUX.
+`backend/tests/enterprisegroup.test.ts` carries the acceptance tests by
+their specification numbers.
+
+## §1–§2 Binding decisions
+
+| Decision | Here |
+|---|---|
+| One tenant per legal entity | Unchanged: a Company is a tenancy |
+| One identity, explicit memberships | Unchanged: one address, one user record per company, `/v1/users/me` and `/v1/auth/switch-company` (= `GET /me/contexts`, `POST /session/context`) |
+| One tenant id per product workspace | One product; `productCode: 'construx'` is carried on documents and subscription items |
+| Two suite subscriptions under one agreement | `group/agreement.ts`: `Agreement` per group, versioned and effective-dated (mode, seller, payer, currency, cadence, pricing policy version; DRAFT → APPROVED → SUPERSEDED); each company's existing subscription read as line items (`tenantSubscriptionItems`: `construx.core` with its seats, plus every restricted module) |
+| Configurable agreement mode, identical metering | `INTERNAL_COST_ALLOCATION` / `INVOICED_INTERCOMPANY` / `EXTERNAL_ENTERPRISE`; the cost centre's charge mode is the per-company allocation line class and defaults from the mode. Metering is the same code path in every mode (AT-43) |
+| Separate wallets, no borrowing | Unchanged and tested (AT-23) |
+| ETABLIX as a restricted module | Unchanged; the registry entry `MODULES.ETABLIX.registry` publishes the §7 shape (`construx.etablix.integrated_site_services`, restricted, `explicit_tenant_grant`, no self-activation). AT-17, AT-18 |
+| Branding automatic from the bound issuer | Unchanged for reports; legal instruments freeze issuer, brand and source version into a manifest (§8) |
+| Parent ownership grants nothing implicit | Unchanged; reporting is by grant (§12) |
+| Transfers preserve identity and history | `group/transfer.ts` and `Group.history` (§16.3) |
+
+## §4 Data model → where it lives
+
+| Spec | Here |
+|---|---|
+| LegalProfileVersion (verification state; immutable once used) | `IssuerProfile.legal` — UNVERIFIED / DECLARED / VERIFIED; a change to the issuer block re-declares; `POST /v1/admin/tenants/:id/issuer/verify` (operator) makes a VERIFIED version; every version is immutable on the chain; `legalReadiness()` names what is missing |
+| GroupTenantRelation (effective-dated, one primary) | `Group.costCentres[]` (current) + `Group.history[]` (left, with `leftAt`); `Tenant.groupId` is the one primary group; the statement is effective-dated over both |
+| UserIdentity | Not built: no external identity providers; the platform is the single identity authority, and nothing is merged on email — a second company is an explicit membership |
+| Agreement / TenantSubscription / SubscriptionItem | `Agreement`; the existing `Subscription`; `tenantSubscriptionItems()` |
+| EntitlementGrant / ModuleDefinition | Existing module grants; registry entry on `MODULES` |
+| TenantWallet / LedgerTransaction / UsageReservation / UsageRecord | The existing `ACUWallet`: holds are reservations, debits are usage records with tenant, project, person, module, feature, provider and multiplier. Added: replay-safe settlement and a per-person budget (`ACUCaps.perUserMinor`) |
+| BudgetLimit | `ACUCaps`: monthly, per project, per module, per person |
+| BrandProfileVersion / TemplateVersion | The brand is versioned through the issuer profile (Part 1); `templateVersion: 1` is recorded on every manifest — there is one template per document type in this build |
+| NumberSeries | `DocumentSequence` (Part 1) |
+| Document / DocumentRevision / Issuance | `group/issuance.ts`: `Document` (status, revisions with hashed manifests, approvals bound to a hash), `Issuance` (PENDING → ISSUED, or VOID; idempotency key; attempts; render hash; stored flag) |
+| CrossTenantShare (acceptance, field scopes, export right) | `RecordShare` gains `status` PENDING → ACCEPTED, `fields`, `exportAllowed`; `POST /v1/shares/:id/accept` |
+| ReportingGrant | `group/reporting.ts` `ReportingGrant` on the company's chain: metrics, roles, period, export right, expiry, revision |
+| TransferCase | `group/transfer.ts` on the platform tenancy: DRAFT → REVIEW → SCHEDULED → EXECUTING → COMPLETED, FAILED, CANCELLED |
+| OutboxEvent / InboxReceipt | The existing transactional outbox and webhook subscriptions over ledger events |
+| IntegrationConnection / ExternalObjectMap / ProductWorkspace | Not built: one product, no legacy organisation ids to map |
+
+## §5–§6 Identity, context, isolation
+
+Unchanged from Part 1. The gateway derives the tenancy from the session, never from a header or a body; every read here checks the record's tenancy and answers a foreign id as no record (AT-05, AT-16, AT-30 are tested through the new routes too). Roles: the spec's Group Owner / Billing Admin / Analyst are GROUP_ADMIN / GROUP_FINANCE / GROUP_VIEWER; Tenant Admin is ENTERPRISE_ADMIN; `documents.approve` is held by a named signatory or, where none is named for the type, a company administrator; `documents.generate` / `documents.issue` by anybody who may take a document out of the company (EVIDENCE_AUDIT I).
+
+## §7 Entitlements — unchanged plus the registry entry. Scheduled/expiring entitlements are not built: a grant is ACTIVE or REVOKED, revocation is immediate.
+
+## §8 Documents
+
+- **Lifecycle** `POST /v1/documents/lifecycle` (draft) → `/generate` (frozen, hashed manifest: body, issuer block and profile version, brand, template version, locale, source record version) → `/submit` → `/approve` (revision + hash; `VERSION_CONFLICT` otherwise; signatory or administrator) → `/issue` → `/download`. `/reject` returns to draft with the reason on the revision.
+- **Approval policy** per document type: quotation, invoice, contract, certificate need approval; report, notice, letter go from generated to issued; overridable on the profile (`documentPolicies`), itself a recorded version.
+- **Issuance** reserves the number and a PENDING issuance first (idempotency key, tenant-scoped), renders against the frozen manifest, then marks ISSUED. A failed render leaves the pending issuance and number for the retry (`ISSUANCE_RENDER_FAILED` 503, attempts counted); the same key after success replays; a different key on an issued document is `DOCUMENT_ISSUED`; the same key on another document is `IDEMPOTENCY_CONFLICT`. A pending issuance can be voided; its number stays recorded and is never reused. AT-13, AT-14 tested.
+- **Readiness** `LEGAL_PROFILE_INCOMPLETE` (422) until the registered issuer block is complete; `ISSUER_PROFILE_CHANGED` when the profile moved since generation — regenerate and re-approve, so what was approved is exactly what goes out. A removed signatory invalidates the approval (AT-15).
+- **Immutability** an issued document cannot be regenerated; a correction is a new document with `supersedes`. Issued bytes are kept in the evidence store where one is configured; otherwise the download re-renders the frozen manifest and says so (AT-11).
+- Not built: the asynchronous document-job API with ACU reservation (rendering is synchronous and local, and charges nothing); DOCX for legal instruments (PDF only); group-branded management reports as documents.
+
+## §9 Billing
+
+- `PUT /v1/admin/groups/:id/agreement` (operator, draft) → `POST /v1/groups/:id/agreement/:version/approve` (group admin or finance). `GET /v1/groups/:id/billing`: the version in force, subscriptions as line items, seats used and distinct people (AT-27), and `invoicing`: one invoice only where seller, payer, currency and period agree; otherwise separate invoices plus the consolidated statement, with the reasons named (AT-28, AT-29). Internal-allocation companies are listed as allocation-only.
+- Seats: `SEAT_LIMIT_REACHED` on activation is the existing rule (AT-26).
+- Not built: the invoicing run and payment adapter (unchanged from Part 1); proration; subscription states beyond ACTIVE / SUSPENDED / CANCELLED.
+
+## §10 Wallets
+
+- Holds are reservations against available balance, never negative; `settle` charges once and a replayed settlement returns the same entry without moving the balance; `release` after settle is a no-op (commit and release are mutually exclusive). The §10.3 arithmetic is `enterprisegroup.test.ts` AT-20/21 (100 → 70 held, 40 refused, 55 settled → 45 available, 0 held, 55 consumed, replay unchanged).
+- Budgets: monthly, per project, per module and — new — per person (`perUserMinor`, set on Billing).
+- Not built: micro-ACU denomination (1 ACU = 1 minor unit is a settled decision), `running` / `reconciliation_required` states and worker leases (AI runs in-process and synchronously — there is no worker to fence), credit lots and cross-tenant credit transfer (disabled by default in the spec; absent here).
+
+## §11 Events
+
+Unchanged: every act is a ledger event with tenant, actor and correlation id, published through the outbox. The new event codes are the `document.*`, `subscription.changed`, `reporting_grant.changed` and `tenant.group_changed` topics: `DOCUMENT_*`, `ISSUANCE_*`, `AGREEMENT_*`, `REPORTING_GRANT_*`, `GROUP_REPORT_GENERATED`, `TRANSFER_CASE_*`, `RECORD_SHARE_ACCEPTED`.
+
+## §12 Collaboration and reporting
+
+- Shares are proposed by the owner and accepted by the recipient; a share names fields or the whole record; the read projects the named fields only (AT-32); revocation ends the read on the next request (AT-33).
+- Reporting grants: `POST /v1/company/reporting-grants` (company administrator) names metrics (`projects.count`, `projects.contract_value`, `people.active`, `documents.issued`, `acu.billed`, `events.governance`), group roles, period, export right, expiry. `POST /v1/groups/:id/reports` reads each company by id under its live grant, names withheld metrics and ungranted companies (never a zero), totals per currency without conversion (AT-31, AT-36); `GET …/reports/:id` rechecks every grant and withholds a section whose grant has since ended (AT-33).
+- Not built: cross-tenant writes; intercompany elimination rules; FX conversion (policy is recorded as `ORIGINAL_CURRENCY_NO_CONVERSION`).
+
+## §13 API
+
+The spec's `/enterprise/v1` catalogue is served under this platform's `/v1` with the same semantics; the OpenAPI document the gateway already publishes covers every route. Error codes used as named: `VERSION_CONFLICT`, `IDEMPOTENCY_CONFLICT`, `SEAT_LIMIT_REACHED`, `DOCUMENT_NOT_APPROVED`, `LEGAL_PROFILE_INCOMPLETE`; `ACU_INSUFFICIENT` / `BUDGET_LIMIT_REACHED` are the existing `ACU_EXHAUSTED` (402) with the reason in the message; `RESOURCE_NOT_FOUND` is the existing 404. Errors are RFC 7807 with `x-correlation-id`, not the spec's `{ error: {...} }` envelope.
+
+## §14 UI
+
+| Spec route | Here |
+|---|---|
+| Account switcher | The console header (Part 1) |
+| /enterprise/{group}/overview, companies, people | Group screen: directory, usage, roles (Part 1) |
+| /enterprise/{group}/billing | Group screen: Agreement and subscriptions card (approve a draft; line items; seats and distinct people; invoice grouping) |
+| /enterprise/{group}/reports | Group screen: Run a report; Reports card; a report opens with granted values and withheld markers |
+| /company/settings/identity | Documents: issuer card with legal readiness and verification state |
+| /company/settings/branding | Documents (Part 1) plus the approval policy |
+| /company/settings/people | Team & Access (Part 1) plus group reporting grants and transfer approval |
+| /company/settings/modules | Billing: subscription line items (product and restricted modules) |
+| /company/settings/usage | Billing: caps now include a personal budget |
+| /company/settings/audit | Audit feed (existing) |
+| Document preview/issue | Documents: Legal documents card — status, revision, approval, issue action, resulting number, download, supersede, void |
+| Operator | Tenants & Users: Onboard a group; per group Agreement; per company Readiness, Verify issuer, Transfer; Transfer cases card |
+
+## §15 Onboarding
+
+`POST /v1/admin/groups/onboard` is one idempotent act (AT-01, AT-44): group by slug, agreement once as a draft, company by cost-centre code, administrator by address, first group administrator once. Re-running creates nothing twice. Three readiness lights — operational, billing, issuance — are read from what exists (`GET /v1/company/readiness`, `GET /v1/admin/tenants/:id/readiness`) and nothing is guessed to make one green. The Groupe Nseya fixture is what the operator types in; no customer name is in the code. Not built: a seed script for the fixture (the operator's onboarding act is the fixture).
+
+## §16 Transfer
+
+`POST /v1/admin/tenants/:id/transfer-cases` (draft) → `/review` (destination checked) → company administrator approves on Team & Access → `/schedule` (effective date) → `/execute` (once due): the destination is checked again before anything moves; the old group's reporting grants, shares with its companies and group roles held only through this company end; the company leaves (history entry with `leftAt`) and joins the new group. A failed check fails the case before any change; the company is in one group at most and never two (AT-37, AT-38). Wallet credits, issued documents and the tenancy id do not move. Not built: migration of legacy data (there is none), closure retention workflows beyond the existing tenancy closure.
+
+## §17 Targets
+
+Live authority: every read here checks the grant, share or membership on the request; tokens are 15-minute. Not measured: the latency targets (no load rig here; recorded as unmeasured rather than met).
+
+## §18 Acceptance — `backend/tests/enterprisegroup.test.ts`
+
+Tested by number: AT-01, 02, 11, 13, 14, 15, 16, 17, 18, 20, 21, 23, 26, 27, 28, 29, 30, 31, 32, 33, 36, 37, 38, 43, 44, plus a restart replay (AT-42 as far as the ledger goes). Covered by Part 1 tests: AT-03, 05, 10. Not applicable on one synchronous product with no external identity provider, worker or payment adapter: AT-04, 06, 07, 08, 09, 12, 19, 22, 24, 25, 34, 35, 39, 40, 41.

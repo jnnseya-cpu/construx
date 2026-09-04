@@ -968,6 +968,30 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SUPPORT_ACCESS_OPENED', 'SupportAccessGrant', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('SUPPORT_ACCESS_USED', 'SupportAccessGrant', 'UPDATE', 'GOVERNANCE'),
   def('SUPPORT_ACCESS_CLOSED', 'SupportAccessGrant', 'UPDATE', 'GOVERNANCE'),
+  def('RECORD_SHARE_ACCEPTED', 'RecordShare', 'UPDATE', 'GOVERNANCE'),
+  // The enterprise / group specification: the agreement under a group,
+  // versioned and effective-dated; the document lifecycle with an issuance
+  // that is one outcome per request; reporting grants and the grant-filtered
+  // group report; the transfer of a company between groups.
+  def('AGREEMENT_SET', 'Agreement', 'UPDATE', 'GOVERNANCE', { creates: true }),
+  def('AGREEMENT_APPROVED', 'Agreement', 'APPROVE', 'GOVERNANCE'),
+  def('DOCUMENT_DRAFTED', 'Document', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('DOCUMENT_GENERATED', 'Document', 'UPDATE', 'GOVERNANCE'),
+  def('DOCUMENT_SUBMITTED', 'Document', 'UPDATE', 'GOVERNANCE'),
+  def('DOCUMENT_APPROVED', 'Document', 'APPROVE', 'GOVERNANCE'),
+  def('DOCUMENT_REJECTED', 'Document', 'REJECT', 'GOVERNANCE'),
+  def('DOCUMENT_ISSUED', 'Document', 'ISSUE', 'GOVERNANCE'),
+  def('ISSUANCE_RESERVED', 'Issuance', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('ISSUANCE_ATTEMPT_FAILED', 'Issuance', 'UPDATE', 'GOVERNANCE'),
+  def('ISSUANCE_COMPLETED', 'Issuance', 'ISSUE', 'GOVERNANCE'),
+  def('ISSUANCE_VOIDED', 'Issuance', 'UPDATE', 'GOVERNANCE'),
+  def('REPORTING_GRANT_CREATED', 'ReportingGrant', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('REPORTING_GRANT_REVOKED', 'ReportingGrant', 'UPDATE', 'GOVERNANCE'),
+  def('GROUP_REPORT_GENERATED', 'GroupReport', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('TRANSFER_CASE_OPENED', 'TransferCase', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('TRANSFER_CASE_ADVANCED', 'TransferCase', 'UPDATE', 'GOVERNANCE'),
+  def('TRANSFER_CASE_FAILED', 'TransferCase', 'UPDATE', 'GOVERNANCE'),
+  def('TRANSFER_CASE_COMPLETED', 'TransferCase', 'UPDATE', 'GOVERNANCE'),
   // Account requests from the public site: new → contacted → qualified →
   // provisioned, or declined and then deleted. On the platform's own tenancy.
   def('ACCOUNT_REQUEST_RECEIVED', 'AccountRequest', 'CREATE', 'GOVERNANCE', { creates: true }),

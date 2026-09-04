@@ -390,6 +390,12 @@ describe('controlled sharing between companies (§7.1)', () => {
     assert.equal(shared.status, 201, JSON.stringify(shared.body));
     shareId = String(shared.body.id);
 
+    // A share is a proposal until the other company accepts it (enterprise specification §12).
+    const proposed = await send('GET', `/v1/shares/${shareId}/record`, tokenFor(jn.pm));
+    assert.equal(proposed.body.title, 'SHARE_NOT_ACCEPTED');
+    const accepted = await send('POST', `/v1/shares/${shareId}/accept`, tokenFor(jn.admin), {});
+    assert.equal(accepted.status, 201, JSON.stringify(accepted.body));
+
     const read = await send('GET', `/v1/shares/${shareId}/record`, tokenFor(jn.pm));
     assert.equal(read.status, 200, JSON.stringify(read.body));
     assert.equal((read.body.sharedBy as Record<string, unknown>).name, 'ETABLIX Ltd');

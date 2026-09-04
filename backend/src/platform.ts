@@ -2310,6 +2310,28 @@ export class Platform {
     return grouped;
   }
 
+  /**
+   * The tenancy leaves its group. The same event as joining one, with the
+   * group fields gone: the record says when the relation ended, the group
+   * keeps the relation in its history, and the tenancy is otherwise untouched.
+   */
+  ungroupTenant(actorId: string, tenantId: string): Tenant {
+    const { groupId: _group, groupSlug: _slug, ...rest } = this.tenant(tenantId);
+    const alone: Tenant = { ...rest };
+    this.#tenants.set(tenantId, alone);
+    this.ledger.commit({
+      tenantId,
+      projectId: `${tenantId}-governance`,
+      actor: { refType: 'User', refId: actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'TENANT_GROUPED',
+      entity: { refType: 'Tenant', refId: tenantId },
+      nextState: { ...alone } as unknown as Record<string, unknown>,
+    });
+    return alone;
+  }
+
   userByEmail(email: string): PlatformUser | undefined {
     return [...this.#users.values()].find((u) => u.email.toLowerCase() === email.toLowerCase());
   }

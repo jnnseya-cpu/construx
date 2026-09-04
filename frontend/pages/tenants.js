@@ -19,12 +19,13 @@ import { badge, date, html, money, raw, render, table, time, toast, track } from
  */
 
 export async function tenants(root) {
-  const [estate, vocab, register, refunds, groupsHeld] = await Promise.all([
+  const [estate, vocab, register, refunds, groupsHeld, transfers] = await Promise.all([
     api.get('/v1/admin/tenants').catch((error) => ({ error })),
     api.get('/v1/signup/account-types').catch(() => null),
     api.get('/v1/admin/modules').catch(() => null),
     api.get('/v1/admin/refunds').catch(() => null),
     api.get('/v1/admin/groups').catch(() => null),
+    api.get('/v1/admin/transfer-cases').catch(() => null),
   ]);
 
   if (estate.error) {
@@ -48,6 +49,7 @@ export async function tenants(root) {
           '<button class="btn primary" data-command="onboard">Onboard a tenancy</button>' +
           '<button class="btn quiet" data-command="operator">Appoint an operator</button>' +
           '<button class="btn quiet" data-command="group">Create a group</button>' +
+          '<button class="btn quiet" data-command="onboard-group">Onboard a group</button>' +
           '<button class="btn quiet" data-command="support">Support access</button>',
       })}
 
@@ -242,6 +244,7 @@ export async function tenants(root) {
                   <span class="row-actions">
                     <button class="btn quiet sm" data-group-action="attach" data-group="${g.id}" data-name="${g.displayName}">Bring a company in</button>
                     <button class="btn quiet sm" data-group-action="billing" data-group="${g.id}" data-name="${g.displayName}">Billing terms</button>
+                    <button class="btn quiet sm" data-group-action="agreement" data-group="${g.id}" data-name="${g.displayName}" data-currency="${g.billing.currency}">Agreement</button>
                     <button class="btn quiet sm" data-group-action="role" data-group="${g.id}" data-name="${g.displayName}">Group role</button>
                   </span>
                 </div>
@@ -253,13 +256,45 @@ export async function tenants(root) {
                     c.chargeMode.toLowerCase(),
                     c.rateCard.toLowerCase(),
                     date(c.joinedAt),
-                    html`<button class="btn quiet sm" data-group-action="centre" data-group="${g.id}" data-tenant="${c.tenantId}" data-name="${c.name}" data-code="${c.code}" data-mode="${c.chargeMode}" data-card="${c.rateCard}">Cost centre</button>`,
+                    html`<span class="row-actions">
+                      <button class="btn quiet sm" data-group-action="centre" data-group="${g.id}" data-tenant="${c.tenantId}" data-name="${c.name}" data-code="${c.code}" data-mode="${c.chargeMode}" data-card="${c.rateCard}">Cost centre</button>
+                      <button class="btn quiet sm" data-group-action="readiness" data-group="${g.id}" data-tenant="${c.tenantId}" data-name="${c.name}">Readiness</button>
+                      <button class="btn quiet sm" data-group-action="verify" data-group="${g.id}" data-tenant="${c.tenantId}" data-name="${c.name}">Verify issuer</button>
+                      <button class="btn quiet sm" data-group-action="transfer" data-group="${g.id}" data-tenant="${c.tenantId}" data-name="${c.name}">Transfer</button>
+                    </span>`,
                   ]),
                   empty: 'No company in this group yet.',
                 })}
               </div>`,
             )}
       </div>
+
+      ${(transfers?.cases ?? []).length
+        ? html`<div class="card pad0" style="margin-top:14px" data-transfers>
+            <h2 style="padding:15px 17px 0">Transfer cases</h2>
+            <div class="metric-sub" style="padding:6px 17px 10px">
+              A company moving between groups keeps its identity, people, records, wallet and issued documents. The case is reviewed,
+              approved by the company’s own administrator, scheduled, then executed: the old group’s reach ends, the new relation opens.
+            </div>
+            ${table({
+              headers: ['Company', 'From', 'To', 'Standing', 'Effective', 'Approvals', ''],
+              rows: transfers.cases.map((t) => [
+                html`<b>${t.companyName}</b><div class="metric-sub">${t.reason}</div>`,
+                t.fromGroupName,
+                html`${t.toGroupName}<div class="metric-sub">as ${t.code}</div>`,
+                html`${badge(t.status.toLowerCase(), t.status === 'COMPLETED' ? 'ok' : t.status === 'FAILED' ? 'bad' : t.status === 'CANCELLED' ? 'neutral' : 'warn')}${t.error ? html`<div class="metric-sub">${t.error}</div>` : ''}`,
+                t.effectiveAt ? date(t.effectiveAt) : html`<span class="metric-sub">not set</span>`,
+                t.approvals.map((a) => a.capacity.toLowerCase().replace('_', ' ')).join(', ') || html`<span class="metric-sub">none</span>`,
+                html`<span class="row-actions">
+                  ${t.status === 'DRAFT' ? html`<button class="btn quiet sm" data-transfer-action="review" data-case="${t.id}" data-name="${t.companyName}">Review</button>` : ''}
+                  ${t.status === 'REVIEW' ? html`<button class="btn quiet sm" data-transfer-action="schedule" data-case="${t.id}" data-name="${t.companyName}">Schedule</button>` : ''}
+                  ${t.status === 'SCHEDULED' ? html`<button class="btn sm" data-transfer-action="execute" data-case="${t.id}" data-name="${t.companyName}">Execute</button>` : ''}
+                  ${['DRAFT', 'REVIEW', 'SCHEDULED', 'FAILED'].includes(t.status) ? html`<button class="btn quiet sm" data-transfer-action="cancel" data-case="${t.id}" data-name="${t.companyName}">Cancel</button>` : ''}
+                </span>`,
+              ]),
+            })}
+          </div>`
+        : ''}
       <div id="support-panel"></div>
     `,
   );
@@ -382,6 +417,82 @@ export async function tenants(root) {
           ],
         });
       }
+      if (groupAction === 'agreement') {
+        const inGroup = (groupsHeld?.groups ?? []).find((g) => g.id === groupId)?.companies ?? [];
+        const party = (label) => [
+          { name: `${label}LegalName`, label: `${label === 'seller' ? 'Seller' : 'Payer'} — legal name`, placeholder: label === 'seller' ? 'CONSTRUX (the vendor)' : 'The paying legal entity' },
+          { name: `${label}TenantId`, label: `${label === 'seller' ? 'Seller' : 'Payer'} — one of the group’s companies?`, type: 'select', required: false, options: [{ value: '', label: 'No — an entity outside the platform' }, ...inGroup.map((c) => ({ value: c.tenantId, label: c.name }))] },
+        ];
+        result = await command({
+          title: `${name} — agreement terms`,
+          intent: 'A new draft version the group approves on its Group screen. Mode is a billing choice: every mode meters seats, AI, documents and storage the same way. Parties are legal entities, never a display name.',
+          path: `/v1/admin/groups/${groupId}/agreement`,
+          method: 'PUT',
+          submitLabel: 'Set as a draft',
+          fields: [
+            { name: 'mode', label: 'Mode', type: 'select', options: [{ value: 'INTERNAL_COST_ALLOCATION', label: 'Internal cost allocation — statement, no sale' }, { value: 'INVOICED_INTERCOMPANY', label: 'Invoiced intercompany — related-party invoice' }, { value: 'EXTERNAL_ENTERPRISE', label: 'External enterprise — customer invoice' }] },
+            ...party('seller'),
+            ...party('payer'),
+            { name: 'currency', label: 'Currency', value: button.dataset.currency },
+            { name: 'cadence', label: 'Billing cadence', type: 'select', options: [{ value: 'MONTHLY', label: 'Monthly' }, { value: 'QUARTERLY', label: 'Quarterly' }, { value: 'ANNUAL', label: 'Annual' }] },
+            { name: 'effectiveFrom', label: 'Effective from', type: 'date', iso: true, required: false },
+            { name: 'note', label: 'Note', type: 'textarea', required: false, placeholder: 'Terms as approved by finance on …' },
+          ],
+          transform: (v) => ({
+            mode: v.mode,
+            seller: { legalName: v.sellerLegalName, tenantId: v.sellerTenantId || null },
+            payer: { legalName: v.payerLegalName, tenantId: v.payerTenantId || null },
+            currency: v.currency,
+            cadence: v.cadence,
+            ...(v.effectiveFrom ? { effectiveFrom: v.effectiveFrom } : {}),
+            ...(v.note ? { note: v.note } : {}),
+          }),
+        });
+      }
+      if (groupAction === 'readiness') {
+        const host = root.querySelector('#support-panel');
+        try {
+          const readiness = await api.get(`/v1/admin/tenants/${tenant}/readiness`);
+          const light = (r) => (r.ready ? badge('ready', 'ok') : html`${badge('not ready', 'warn')} <span class="metric-sub">${r.missing.join('; ')}</span>`);
+          render(host, html`<div class="card" style="margin-top:14px"><h2>${name} — readiness</h2>
+            <div class="split-list">
+              <div class="row"><span class="lbl">Operational</span><span class="val">${light(readiness.operational)}</span></div>
+              <div class="row"><span class="lbl">Billing</span><span class="val">${light(readiness.billing)}</span></div>
+              <div class="row"><span class="lbl">Document issuance</span><span class="val">${light(readiness.issuance)}</span></div>
+              <div class="row"><span class="lbl">Registered issuer</span><span class="val">${readiness.legal.verification.toLowerCase()}${readiness.legal.complete ? '' : html` · missing ${readiness.legal.missing.join(', ')}`}</span></div>
+            </div>
+            <div class="metric-sub" style="margin-top:8px">Three lights, kept apart. None is made green by guessing a detail: the company enters its registered issuer; you verify it.</div>
+          </div>`);
+        } catch (error) {
+          render(host, html`<div class="notice warn"><div>${error.message}</div></div>`);
+        }
+        return;
+      }
+      if (groupAction === 'verify') {
+        result = await command({
+          title: `${name} — verify the registered issuer`,
+          intent: 'Records that the details the company declared were checked against the register. A new profile version on the company’s chain under your name. Refused while the details are incomplete.',
+          path: `/v1/admin/tenants/${tenant}/issuer/verify`,
+          submitLabel: 'Record as verified',
+          fields: [{ name: 'note', label: 'What was checked', placeholder: 'Companies House 12345678, matches registered name and address' }],
+        });
+        if (result) toast('Issuer verified', `${name} · profile version ${result.version}`, 'ok');
+        return;
+      }
+      if (groupAction === 'transfer') {
+        result = await command({
+          title: `Transfer ${name} to another group`,
+          intent: 'Opens a case; nothing moves. The destination is checked at review, the company’s administrator approves on Team & Access, you schedule the effective date, then execute.',
+          path: `/v1/admin/tenants/${tenant}/transfer-cases`,
+          submitLabel: 'Open the case',
+          fields: [
+            { name: 'toGroupId', label: 'Destination group', type: 'select', options: (groupsHeld?.groups ?? []).filter((g) => g.id !== groupId).map((g) => ({ value: g.id, label: g.displayName })) },
+            { name: 'code', label: 'Cost centre code there', placeholder: 'ETX' },
+            { name: 'chargeMode', label: 'Charge mode there', type: 'select', options: [{ value: 'INTERNAL', label: 'Internal' }, { value: 'INTERCOMPANY', label: 'Intercompany' }, { value: 'EXTERNAL', label: 'External' }] },
+            { name: 'reason', label: 'Why', type: 'textarea', placeholder: 'Sale of the subsidiary completed on …' },
+          ],
+        });
+      }
       if (groupAction === 'centre') {
         result = await command({
           title: `${name} — cost centre`,
@@ -397,6 +508,49 @@ export async function tenants(root) {
         });
       }
       if (result) again();
+    });
+  }
+
+  for (const button of root.querySelectorAll('[data-transfer-action]')) {
+    button.addEventListener('click', async () => {
+      const { transferAction, case: caseId, name } = button.dataset;
+      try {
+        let result = null;
+        if (transferAction === 'review') {
+          result = await api.post(`/v1/admin/transfer-cases/${caseId}/review`, {});
+          toast('In review', `${name}: destination checked; the company administrator approves on Team & Access.`, 'ok');
+        }
+        if (transferAction === 'schedule') {
+          result = await command({
+            title: `Schedule the transfer of ${name}`,
+            intent: 'Needs the company administrator’s approval first. Billing switches at the effective date: the old group’s statement carries the company up to it, the new group’s from it.',
+            path: `/v1/admin/transfer-cases/${caseId}/schedule`,
+            submitLabel: 'Schedule',
+            fields: [{ name: 'effectiveAt', label: 'Effective', type: 'date', iso: true }],
+          });
+        }
+        if (transferAction === 'execute') {
+          result = await command({
+            title: `Execute the transfer of ${name}`,
+            intent: 'The cutover: the destination is checked again, the old group’s reporting grants, shares and group roles over this company end, the company leaves the old group and joins the new one. A failed check leaves it where it is.',
+            path: `/v1/admin/transfer-cases/${caseId}/execute`,
+            submitLabel: 'Execute',
+            fields: [],
+          });
+          if (result) toast(result.status === 'COMPLETED' ? 'Transferred' : 'Not transferred', result.status === 'COMPLETED' ? `${name} has moved.` : result.error ?? result.status, result.status === 'COMPLETED' ? 'ok' : 'err');
+        }
+        if (transferAction === 'cancel') {
+          result = await command({
+            title: `Cancel the transfer of ${name}`,
+            path: `/v1/admin/transfer-cases/${caseId}/cancel`,
+            submitLabel: 'Cancel the case',
+            fields: [{ name: 'reason', label: 'Why' }],
+          });
+        }
+        if (result) again();
+      } catch (error) {
+        toast('Could not do that', error.message, 'err');
+      }
     });
   }
 
@@ -427,6 +581,55 @@ export async function tenants(root) {
 
     if (button.dataset.command === 'support') {
       renderSupportPanel();
+      return;
+    }
+
+    if (button.dataset.command === 'onboard-group') {
+      const result = await command({
+        title: 'Onboard a group',
+        intent:
+          'One idempotent act: the group, the agreement as a draft, one company with its first administrator and invitation, and the first group administrator. ' +
+          'Run it again with the same names for each further company — nothing is created twice. Registered issuer details are entered by the company afterwards; none are guessed.',
+        path: '/v1/admin/groups/onboard',
+        submitLabel: 'Onboard',
+        fields: [
+          { name: 'groupName', label: 'Group display name', placeholder: 'Groupe Nseya' },
+          { name: 'groupCurrency', label: 'Group billing currency', type: 'select', options: (vocab?.currencies ?? []).map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` })) },
+          { name: 'mode', label: 'Agreement mode', type: 'select', options: [{ value: 'INTERNAL_COST_ALLOCATION', label: 'Internal cost allocation' }, { value: 'INVOICED_INTERCOMPANY', label: 'Invoiced intercompany' }, { value: 'EXTERNAL_ENTERPRISE', label: 'External enterprise' }] },
+          { name: 'seller', label: 'Seller — legal name', placeholder: 'CONSTRUX (the vendor)' },
+          { name: 'payer', label: 'Payer — legal name', placeholder: 'The paying legal entity' },
+          { name: 'companyName', label: 'Company display name', placeholder: 'ETABLIX' },
+          { name: 'code', label: 'Cost centre code', placeholder: 'ETX', hint: 'The company’s key within the group; the same code on a re-run finds the same company' },
+          { name: 'jurisdiction', label: 'Jurisdiction', type: 'select', options: (vocab?.jurisdictions ?? []).map((j) => ({ value: j.code, label: `${j.name} (${j.taxName})` })) },
+          { name: 'currency', label: 'Company currency', type: 'select', options: (vocab?.currencies ?? []).map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` })) },
+          { name: 'package', label: 'Package', type: 'select', options: [{ value: 'ENTERPRISE', label: 'Enterprise' }, { value: 'PROFESSIONAL_DELIVERY', label: 'Professional delivery' }, { value: 'CORE_PROJECT', label: 'Core project' }] },
+          { name: 'adminName', label: 'First administrator' },
+          { name: 'adminEmail', label: 'Administrator email' },
+          { name: 'groupAdministrator', label: 'Group administrator email', required: false, hint: 'Somebody in the company; usually the same address' },
+        ],
+        transform: (v) => ({
+          group: { displayName: v.groupName, currency: v.groupCurrency },
+          agreement: { mode: v.mode, seller: { legalName: v.seller, tenantId: null }, payer: { legalName: v.payer, tenantId: null } },
+          company: {
+            displayName: v.companyName,
+            code: v.code,
+            jurisdiction: v.jurisdiction,
+            currency: v.currency,
+            tier: v.package === 'ENTERPRISE' ? 'ENTERPRISE' : v.package === 'PROFESSIONAL_DELIVERY' ? 'BUSINESS' : 'TEAM',
+            package: v.package,
+            administrator: { name: v.adminName, email: v.adminEmail },
+          },
+          ...(v.groupAdministrator ? { groupAdministrator: v.groupAdministrator } : {}),
+        }),
+      });
+      if (result) {
+        toast(
+          result.company.created ? 'Company onboarded' : 'Already onboarded — nothing created twice',
+          `${result.group.displayName} · ${result.company.name} (${result.company.code}) · ${result.administrator.email}${result.invitations?.length ? ` · invitation ${result.invitations[0].notified.toLowerCase()}` : ''}`,
+          'ok',
+        );
+        await again();
+      }
       return;
     }
 

@@ -42,6 +42,28 @@ export type NumberingRule = {
 
 export type Signatory = { userId: string; title: string; documents: string[] };
 
+/**
+ * Where the registered issuer details stand (enterprise specification §4,
+ * LegalProfileVersion). UNVERIFIED: nothing has been entered beyond the
+ * onboarding name. DECLARED: the company entered its own details. VERIFIED:
+ * the platform operator checked them against the register. A change to the
+ * issuer block after verification is a new declaration — verification is of
+ * a version, and the new version has not been checked.
+ */
+export type LegalVerification = {
+  state: 'UNVERIFIED' | 'DECLARED' | 'VERIFIED';
+  declaredAt?: string;
+  declaredBy?: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
+  /** The profile version the operator verified. */
+  verifiedVersion?: number;
+  note: string;
+};
+
+/** Per document type: whether a generated revision needs an approval before it is issued (§8.2). */
+export type DocumentPolicy = { approvalRequired: boolean };
+
 export type IssuerProfile = {
   id: string;
   tenantId: string;
@@ -51,14 +73,60 @@ export type IssuerProfile = {
   signatories: Signatory[];
   /** Snapshot of the brand kit at this version, so the version history is complete on its own. */
   brand: ClientBranding | null;
+  /** Absent on versions written before verification existed; read as UNVERIFIED. */
+  legal?: LegalVerification;
+  /** Overrides of the default approval policy per document type. Absent means the defaults. */
+  documentPolicies?: Record<string, DocumentPolicy>;
   updatedAt: string;
   updatedBy: string;
-  /** What changed at this version, in a word: PROFILE, BRAND or COVER. */
-  change: 'CREATED' | 'PROFILE' | 'BRAND';
+  /** What changed at this version, in a word: PROFILE, BRAND, COVER or VERIFICATION. */
+  change: 'CREATED' | 'PROFILE' | 'BRAND' | 'VERIFICATION';
 };
 
 export const DOCUMENT_TYPES = ['quotation', 'invoice', 'report', 'contract', 'certificate', 'notice', 'letter'] as const;
 export type DocumentType = (typeof DOCUMENT_TYPES)[number];
+
+/**
+ * The published default: what binds a company or states money needs an
+ * approval before it goes out; a report, a notice or a letter may go from
+ * generated to issued under this policy. A company may override per type on
+ * its profile, which is itself a versioned, recorded act.
+ */
+export const DEFAULT_APPROVAL_REQUIRED: Record<DocumentType, boolean> = {
+  quotation: true,
+  invoice: true,
+  contract: true,
+  certificate: true,
+  report: false,
+  notice: false,
+  letter: false,
+};
+
+export function approvalRequiredFor(profile: IssuerProfile, documentType: string): boolean {
+  const override = profile.documentPolicies?.[documentType];
+  if (override) return override.approvalRequired;
+  return DEFAULT_APPROVAL_REQUIRED[documentType as DocumentType] ?? true;
+}
+
+export function legalVerificationOf(profile: IssuerProfile): LegalVerification {
+  return profile.legal ?? { state: 'UNVERIFIED', note: '' };
+}
+
+/**
+ * Whether the issuer block is complete enough to issue a legal document under
+ * (§8.2 "legal-profile readiness"). Not a guess: the fields a contractual
+ * document has to carry are named, and what is missing is said.
+ */
+export function legalReadiness(profile: IssuerProfile): { complete: boolean; missing: string[]; verification: LegalVerification['state'] } {
+  const missing: string[] = [];
+  const issuer = profile.issuer;
+  if (!issuer.registeredName.trim()) missing.push('registeredName');
+  if (!issuer.registrationNo.trim()) missing.push('registrationNo');
+  if (!issuer.registeredAddress.line1.trim()) missing.push('registeredAddress.line1');
+  if (!issuer.registeredAddress.city.trim()) missing.push('registeredAddress.city');
+  if (!issuer.registeredAddress.country.trim()) missing.push('registeredAddress.country');
+  return { complete: missing.length === 0, missing, verification: legalVerificationOf(profile).state };
+}
 
 const governance = (tenantId: string) => `${tenantId}-governance`;
 
@@ -101,6 +169,8 @@ export function issuerProfile(platform: Platform, tenantId: string): IssuerProfi
     numberingRules: brand ? { report: { prefix: `${brand.documentReferencePrefix}-`, pattern: '{seq:5}', seqScope: 'all' } } : {},
     signatories: [],
     brand,
+    legal: { state: 'UNVERIFIED', note: 'Display name from onboarding; registered details not yet entered' },
+    documentPolicies: {},
     updatedAt: tenant.createdAt,
     updatedBy: 'platform',
     change: 'CREATED',
@@ -137,7 +207,7 @@ function commitProfile(platform: Platform, actorId: string, profile: IssuerProfi
 export function setIssuerProfile(
   platform: Platform,
   actor: AuthContext,
-  input: { issuer?: Partial<IssuerBlock>; numberingRules?: Record<string, NumberingRule>; signatories?: Signatory[] },
+  input: { issuer?: Partial<IssuerBlock>; numberingRules?: Record<string, NumberingRule>; signatories?: Signatory[]; documentPolicies?: Record<string, DocumentPolicy> },
 ): IssuerProfile {
   const current = issuerProfile(platform, actor.tenantId);
   const issuer: IssuerBlock = {
@@ -146,6 +216,12 @@ export function setIssuerProfile(
     registeredAddress: { ...current.issuer.registeredAddress, ...(input.issuer?.registeredAddress ?? {}) },
     contact: { ...current.issuer.contact, ...(input.issuer?.contact ?? {}) },
   };
+  const issuerChanged = JSON.stringify(issuer) !== JSON.stringify(current.issuer);
+  const documentPolicies = input.documentPolicies ?? current.documentPolicies ?? {};
+  for (const [type, policy] of Object.entries(documentPolicies)) {
+    if (!(DOCUMENT_TYPES as readonly string[]).includes(type)) throw new DomainError('DOCUMENT_TYPE_UNKNOWN', `${type} is not a document type`);
+    if (typeof policy?.approvalRequired !== 'boolean') throw new DomainError('DOCUMENT_POLICY_INVALID', `The ${type} policy says whether approval is required, true or false`);
+  }
   for (const [key, value] of Object.entries(issuer)) {
     if (typeof value === 'string' && value.length > 300) throw new DomainError('PROFILE_FIELD_TOO_LONG', `${key} is longer than 300 characters`);
   }
@@ -160,6 +236,8 @@ export function setIssuerProfile(
       if (!(DOCUMENT_TYPES as readonly string[]).includes(type)) throw new DomainError('DOCUMENT_TYPE_UNKNOWN', `${type} is not a document type`);
     }
   }
+  const now = new Date().toISOString();
+  const legal = legalVerificationOf(current);
   const next: IssuerProfile = {
     id: actor.tenantId,
     tenantId: actor.tenantId,
@@ -168,11 +246,43 @@ export function setIssuerProfile(
     numberingRules,
     signatories,
     brand: platform.exports.brandingIfConfigured(actor.tenantId) ?? null,
-    updatedAt: new Date().toISOString(),
+    // A changed issuer block is a new declaration; what the operator verified
+    // was the previous version. Anything else keeps the verification it had.
+    legal: issuerChanged
+      ? { state: 'DECLARED', declaredAt: now, declaredBy: actor.actorId, note: legal.state === 'VERIFIED' ? `Re-declared after verification of version ${legal.verifiedVersion ?? current.version}` : 'Declared by the company' }
+      : legal,
+    documentPolicies,
+    updatedAt: now,
     updatedBy: actor.actorId,
     change: 'PROFILE',
   };
   commitProfile(platform, actor.actorId, next);
+  return next;
+}
+
+/**
+ * The platform operator records that the declared issuer details were
+ * checked against the register. A new version, on the company's own chain,
+ * under the operator's name: verification is an act somebody did, not a flag.
+ * Refused while the details are incomplete — there is nothing to verify.
+ */
+export function verifyIssuerProfile(platform: Platform, operator: AuthContext, tenantId: string, note: string): IssuerProfile {
+  const current = issuerProfile(platform, tenantId);
+  const readiness = legalReadiness(current);
+  if (!readiness.complete) {
+    throw new DomainError('LEGAL_PROFILE_INCOMPLETE', `The registered issuer details are incomplete (${readiness.missing.join(', ')}); the company enters them before they can be verified`, 422);
+  }
+  const now = new Date().toISOString();
+  const next: IssuerProfile = {
+    ...current,
+    id: tenantId,
+    version: current.version + 1,
+    legal: { ...legalVerificationOf(current), state: 'VERIFIED', verifiedAt: now, verifiedBy: operator.actorId, verifiedVersion: current.version + 1, note: note.trim().slice(0, 500) },
+    updatedAt: now,
+    updatedBy: operator.actorId,
+    change: 'VERIFICATION',
+  };
+  commitProfile(platform, operator.actorId, next);
   return next;
 }
 

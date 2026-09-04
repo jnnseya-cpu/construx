@@ -78,6 +78,21 @@ export const MODULES = {
     restricted:
       'Built for ETABLIX and the companies delivering site services with them. It is not part of the CONSTRUX ' +
       'subscription and is not offered for sale on the pricing page.',
+    /**
+     * The registry entry, in the shape the enterprise specification (§7) asks
+     * a module to be published in. The key is what an entitlement claim and a
+     * subscription item carry; the policy says the only way in is an explicit
+     * grant to a tenant id — never a company name, a group, an email domain or
+     * a flag a client could set.
+     */
+    registry: {
+      moduleKey: 'construx.etablix.integrated_site_services',
+      productCode: 'construx',
+      visibility: 'restricted',
+      requires: ['construx.core'],
+      eligibilityPolicy: 'explicit_tenant_grant',
+      customerSelfActivation: false,
+    },
   },
 } as const;
 

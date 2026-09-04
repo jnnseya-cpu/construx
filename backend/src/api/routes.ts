@@ -155,8 +155,14 @@ import {
   type RateCard,
 } from '../group/directory.ts';
 import { allocateDocumentNumber, DOCUMENT_TYPES, issuerProfile, issuerProfileVersion, recordBrandChange, setIssuerProfile } from '../group/profile.ts';
-import { readSharedRecord, revokeShare, shareRecord, sharesGiven, sharesReceived } from '../group/sharing.ts';
+import { acceptShare, readSharedRecord, revokeShare, shareRecord, sharesGiven, sharesReceived } from '../group/sharing.ts';
 import { closeSupportAccess, openSupportAccess, readUnderSupportAccess, supportGrants } from '../group/support.ts';
+import { AGREEMENT_MODES, approveAgreement, BILLING_CADENCES, groupBilling, setAgreement, tenantSubscriptionItems, type AgreementMode, type AgreementParty, type BillingCadence } from '../group/agreement.ts';
+import { approveDocument, createDraft, documentOf, documentsOf, generateRevision, issuancesOf, issueDocument, issuedBytes, rejectDocument, submitForApproval, voidIssuance, type DocumentBody } from '../group/issuance.ts';
+import { legalReadiness, verifyIssuerProfile } from '../group/profile.ts';
+import { createReportingGrant, grantsGiven, groupReports, readGroupReport, REPORT_METRICS, revokeReportingGrant, runGroupReport } from '../group/reporting.ts';
+import { approveTransferCase, cancelTransferCase, executeTransferCase, openTransferCase, reviewTransferCase, scheduleTransferCase, transferCases, transferCasesFor } from '../group/transfer.ts';
+import { onboardGroup, readinessOf, type OnboardingInput } from '../group/onboarding.ts';
 import { accountRequests, advanceAccountRequest, declineAccountRequest, deleteAccountRequest, provisionAccountRequest, receiveAccountRequest, recordProvisionNotice, REQUEST_STATUSES } from '../identity/requests.ts';
 import * as bim from '../engines/bim.ts';
 import * as claims from '../engines/claims.ts';
@@ -6625,10 +6631,32 @@ export const ROUTES: Route[] = [
         issuer: { type: 'object' },
         numberingRules: { type: 'object' },
         signatories: { type: 'array', items: { type: 'object' } },
+        documentPolicies: { type: 'object' },
       },
       additionalProperties: false,
     },
     handler: (platform, ctx) => setIssuerProfile(platform, authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'U'), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/company/readiness',
+    description: 'The three readiness lights kept apart: operational, billing, document issuance — and what each is missing',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      return { tenantId: actor.tenantId, ...readinessOf(platform, actor.tenantId), legal: legalReadiness(issuerProfile(platform, actor.tenantId)) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:id/issuer/verify',
+    description: "Record that a company's declared registered-issuer details were checked against the register — a new profile version on the company's chain (platform operator only)",
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 500 } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator verifies an issuer', 'PLATFORM_ADMIN_REQUIRED');
+      return verifyIssuerProfile(platform, actor, ctx.params.id as string, body<{ note: string }>(ctx).note);
+    },
   },
   {
     method: 'GET',
@@ -6680,14 +6708,29 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/shares',
-    description: 'Share one record, read-only, with another company in the group. Ownership never moves',
+    description: 'Propose sharing one record, read-only, with another company in the group — the whole record or named fields. Readable once the other company accepts. Ownership never moves',
     schema: {
       type: 'object',
       required: ['granteeTenantId', 'refType', 'refId'],
-      properties: { granteeTenantId: stringField, refType: stringField, refId: stringField, expiresAt: { type: 'string' }, note: { type: 'string' } },
+      properties: {
+        granteeTenantId: stringField,
+        refType: stringField,
+        refId: stringField,
+        expiresAt: { type: 'string' },
+        note: { type: 'string' },
+        fields: { type: 'array', items: { type: 'string' }, maxItems: 100 },
+        exportAllowed: { type: 'boolean' },
+      },
       additionalProperties: false,
     },
     handler: (platform, ctx) => shareRecord(platform, authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'U'), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/shares/:shareId/accept',
+    description: 'Accept a share proposed to this company. Until then nothing is readable',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => acceptShare(platform, authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'U'), ctx.params.shareId as string),
   },
   {
     method: 'POST',
@@ -6702,6 +6745,422 @@ export const ROUTES: Route[] = [
     description: "Read a record another company shared with this one, with the owner's branding and a shared-by marker",
     readOnly: true,
     handler: (platform, ctx) => readSharedRecord(platform, auth(ctx), ctx.params.shareId as string),
+  },
+
+  // The agreement under the group, and the group's billing view.
+  {
+    method: 'PUT',
+    pattern: '/v1/admin/groups/:groupId/agreement',
+    description: 'Set the agreement terms as a new draft version: mode, seller, payer, currency, cadence, effective date. The group approves it (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['mode', 'seller', 'payer'],
+      properties: {
+        mode: { type: 'string', enum: [...AGREEMENT_MODES] },
+        seller: { type: 'object', required: ['legalName'], properties: { legalName: stringField, tenantId: { type: ['string', 'null'] } }, additionalProperties: false },
+        payer: { type: 'object', required: ['legalName'], properties: { legalName: stringField, tenantId: { type: ['string', 'null'] } }, additionalProperties: false },
+        currency: { type: 'string', minLength: 3, maxLength: 3 },
+        cadence: { type: 'string', enum: [...BILLING_CADENCES] },
+        effectiveFrom: { type: 'string' },
+        pricingPolicyVersion: { type: 'string', maxLength: 60 },
+        note: { type: 'string', maxLength: 1000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator sets agreement terms', 'PLATFORM_ADMIN_REQUIRED');
+      return setAgreement(platform, actor, ctx.params.groupId as string, body<{ mode: AgreementMode; seller: AgreementParty; payer: AgreementParty; currency?: string; cadence?: BillingCadence; effectiveFrom?: string; note?: string; pricingPolicyVersion?: string }>(ctx));
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/groups/:groupId/agreement/:version/approve',
+    description: 'Approve a draft agreement version; the previously approved one ends where it begins (group admin or finance)',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN', 'GROUP_FINANCE']);
+      const version = Number(ctx.params.version);
+      if (!Number.isInteger(version) || version < 1) throw new ValidationError('The version is a whole number', [{ field: 'version', message: 'not a version' }]);
+      return approveAgreement(platform, actor, ctx.params.groupId as string, version);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/groups/:groupId/billing',
+    description: "The group's billing view: the agreement in force, each company's subscription as line items, seats used and distinct people, and whether one invoice may cover the invoiced companies (group admin or finance)",
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN', 'GROUP_FINANCE']);
+      return groupBilling(platform, ctx.params.groupId as string);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/company/subscription/items',
+    description: "This company's subscription as line items: the product with its seats, and every restricted module it holds",
+    readOnly: true,
+    handler: (platform, ctx) => tenantSubscriptionItems(platform, authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R').tenantId),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/groups/onboard',
+    description: 'Onboard a group in one idempotent act: group, agreement draft, one company with its first administrator and invitation, the first group administrator. Running it again creates nothing twice (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['group', 'company'],
+      properties: {
+        group: { type: 'object', required: ['displayName', 'currency'], properties: { displayName: stringField, slug: { type: 'string' }, currency: { type: 'string', minLength: 3, maxLength: 3 }, label: { type: 'string' } }, additionalProperties: false },
+        agreement: {
+          type: 'object',
+          required: ['mode', 'seller', 'payer'],
+          properties: {
+            mode: { type: 'string', enum: [...AGREEMENT_MODES] },
+            seller: { type: 'object', required: ['legalName'], properties: { legalName: stringField, tenantId: { type: ['string', 'null'] } }, additionalProperties: false },
+            payer: { type: 'object', required: ['legalName'], properties: { legalName: stringField, tenantId: { type: ['string', 'null'] } }, additionalProperties: false },
+            cadence: { type: 'string', enum: [...BILLING_CADENCES] },
+          },
+          additionalProperties: false,
+        },
+        company: {
+          type: 'object',
+          required: ['displayName', 'code', 'jurisdiction', 'currency', 'tier', 'package', 'administrator'],
+          properties: {
+            displayName: stringField,
+            code: { type: 'string', minLength: 2, maxLength: 8 },
+            jurisdiction: { type: 'string', minLength: 2, maxLength: 2 },
+            currency: { type: 'string', minLength: 3, maxLength: 3 },
+            tier: { type: 'string', enum: ['ENTERPRISE', 'BUSINESS', 'TEAM'] },
+            package: { type: 'string', enum: ['ENTERPRISE', 'PROFESSIONAL_DELIVERY', 'CORE_PROJECT'] },
+            administrator: { type: 'object', required: ['name', 'email'], properties: { name: stringField, email: stringField }, additionalProperties: false },
+          },
+          additionalProperties: false,
+        },
+        groupAdministrator: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator onboards a group', 'PLATFORM_ADMIN_REQUIRED');
+      const result = onboardGroup(platform, actor, body<OnboardingInput>(ctx));
+      const invitations: Array<{ email: string; notified: string }> = [];
+      for (const administrator of result.invited) {
+        const tenant = platform.tenant(administrator.tenantId);
+        let notified = 'RECORDED';
+        try {
+          const dispatch = await notifyEngine.notify(platform, {
+            code: 'invitation.sent',
+            recipients: [{ id: administrator.id, name: administrator.name, email: administrator.email, tenantId: tenant.id }],
+            payload: {
+              actor: platform.user(actor.actorId).name,
+              enterprise: tenant.legalName,
+              actionUrl: '/app',
+              actionLabel: 'Sign in',
+              detail:
+                `${tenant.legalName} is set up on CONSTRUX under ${result.group.displayName} and you are its first administrator. Sign in at ${config.publicBaseUrl}/app ` +
+                'with this email address — there is no password; a one-time code is emailed to you each time.',
+            },
+            channels: ['EMAIL'],
+            branding: PLATFORM_BRANDING,
+            actorId: actor.actorId,
+            correlationId: ctx.correlationId,
+          });
+          notified = String((dispatch as { deliveries?: Array<{ status?: string }> }).deliveries?.[0]?.status ?? 'SENT');
+        } catch {
+          notified = 'FAILED';
+        }
+        invitations.push({ email: administrator.email, notified });
+      }
+      const { invited: _invited, ...rest } = result;
+      return { ...rest, invitations };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/tenants/:id/readiness',
+    description: "A company's three readiness lights — operational, billing, document issuance — for the operator's onboarding view (platform operator only)",
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator reads readiness across tenancies', 'PLATFORM_ADMIN_REQUIRED');
+      const tenantId = ctx.params.id as string;
+      return { tenantId, name: platform.tenant(tenantId).legalName, ...readinessOf(platform, tenantId), legal: legalReadiness(issuerProfile(platform, tenantId)) };
+    },
+  },
+
+  // The document lifecycle: draft → generated → awaiting approval → approved → issued.
+  {
+    method: 'GET',
+    pattern: '/v1/documents/lifecycle',
+    description: "This company's legal instruments — quotations, invoices, contracts, certificates — with their status, revisions and issuances",
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'EVIDENCE_AUDIT', 'R');
+      const profile = issuerProfile(platform, actor.tenantId);
+      return { documents: documentsOf(platform, actor.tenantId), issuances: issuancesOf(platform, actor.tenantId), legal: legalReadiness(profile), documentTypes: DOCUMENT_TYPES };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/documents/lifecycle/:id',
+    description: 'One document with every revision, its manifest hashes, approvals and issuance',
+    readOnly: true,
+    handler: (platform, ctx) => documentOf(platform, authoriseTenant(ctx, 'EVIDENCE_AUDIT', 'R').tenantId, ctx.params.id as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/documents/lifecycle',
+    description: 'Open a draft: unnumbered, unapproved, changeable. The issuer is this company; a source record must be one of ours',
+    schema: {
+      type: 'object',
+      required: ['documentType', 'title'],
+      properties: {
+        documentType: { type: 'string', enum: [...DOCUMENT_TYPES] },
+        title: { type: 'string', minLength: 2, maxLength: 200 },
+        body: { type: 'object' },
+        source: { type: 'object', required: ['refType', 'refId'], properties: { refType: stringField, refId: stringField }, additionalProperties: false },
+        supersedes: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => createDraft(platform, authoriseTenant(ctx, 'EVIDENCE_AUDIT', 'I'), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/documents/lifecycle/:id/generate',
+    description: 'Generate a revision: freeze the body, issuer version, brand and source version into a hashed manifest. Any earlier approval no longer applies',
+    schema: { type: 'object', properties: { body: { type: 'object' }, expectedVersion: { type: 'integer', minimum: 1 }, locale: { type: 'string', maxLength: 10 } }, additionalProperties: false },
+    handler: (platform, ctx) => generateRevision(platform, authoriseTenant(ctx, 'EVIDENCE_AUDIT', 'I'), ctx.params.id as string, body<{ body?: DocumentBody; expectedVersion?: number; locale?: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/documents/lifecycle/:id/submit',
+    description: 'Put the current revision before its approver',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => submitForApproval(platform, authoriseTenant(ctx, 'EVIDENCE_AUDIT', 'I'), ctx.params.id as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/documents/lifecycle/:id/approve',
+    description: 'Approve exactly one revision by its hash. A named signatory where the company has named any, otherwise a company administrator; a changed revision is VERSION_CONFLICT',
+    schema: { type: 'object', required: ['revision', 'hash'], properties: { revision: { type: 'integer', minimum: 1 }, hash: stringField }, additionalProperties: false },
+    handler: (platform, ctx) => approveDocument(platform, authoriseTenant(ctx, 'EVIDENCE_AUDIT', 'R'), ctx.params.id as string, body<{ revision: number; hash: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/documents/lifecycle/:id/reject',
+    description: 'Send the revision back: it is marked rejected with the reason and the document is a draft again',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => rejectDocument(platform, authoriseTenant(ctx, 'EVIDENCE_AUDIT', 'R'), ctx.params.id as string, body<{ reason: string }>(ctx).reason),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/documents/lifecycle/:id/issue',
+    description: 'Issue: reserve the number and a pending issuance, render the numbered bytes against the frozen manifest, mark it issued. Retrying the same key finishes the same issuance with the same number',
+    schema: { type: 'object', required: ['idempotencyKey'], properties: { idempotencyKey: { type: 'string', minLength: 8, maxLength: 128 } }, additionalProperties: false },
+    handler: (platform, ctx) => issueDocument(platform, authoriseTenant(ctx, 'EVIDENCE_AUDIT', 'I'), ctx.params.id as string, body<{ idempotencyKey: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/documents/lifecycle/:id/download',
+    binary: true,
+    description: 'The issued bytes, reauthorised on every download: the stored file where one is kept, otherwise a re-render of the frozen manifest',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const served = issuedBytes(platform, authoriseTenant(ctx, 'EVIDENCE_AUDIT', 'R'), ctx.params.id as string);
+      return { bytes: served.bytes, contentType: served.contentType, filename: served.filename };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/documents/issuances/:id/void',
+    description: 'Abandon a pending issuance. Its number stays on the record as void and is never handed out again',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 500 } }, additionalProperties: false },
+    handler: (platform, ctx) => voidIssuance(platform, authoriseTenant(ctx, 'EVIDENCE_AUDIT', 'I'), ctx.params.id as string, body<{ reason: string }>(ctx).reason),
+  },
+
+  // Reporting grants and group reports.
+  {
+    method: 'GET',
+    pattern: '/v1/company/reporting-grants',
+    description: 'The metrics this company lets its group read, to which roles, until when — and the metrics it could grant',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      return { grants: grantsGiven(platform, actor.tenantId), metrics: Object.entries(REPORT_METRICS).map(([key, definition]) => ({ key, ...definition })), group: groupOfTenant(platform, actor.tenantId)?.displayName ?? null };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/company/reporting-grants',
+    description: 'Grant the group a view of named metrics of this company: which, to which group roles, over which period, exportable or not, until when (company administrator)',
+    schema: {
+      type: 'object',
+      required: ['metrics'],
+      properties: {
+        metrics: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        roles: { type: 'array', items: { type: 'string', enum: ['GROUP_ADMIN', 'GROUP_FINANCE', 'GROUP_VIEWER'] } },
+        exportAllowed: { type: 'boolean' },
+        periodFrom: { type: 'string' },
+        periodTo: { type: 'string' },
+        expiresAt: { type: 'string' },
+        note: { type: 'string', maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => createReportingGrant(platform, requireTenantAdministrator(ctx, 'grant group reporting'), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/company/reporting-grants/:id/revoke',
+    description: 'Revoke a reporting grant. Reports already run stop showing this company on their next read (company administrator)',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => revokeReportingGrant(platform, requireTenantAdministrator(ctx, 'revoke group reporting'), ctx.params.id as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/groups/:groupId/reports',
+    description: 'Run a grant-filtered report: named metrics over chosen companies and a window. A company that has not granted the metric is named as withheld, never shown as zero (group role)',
+    schema: {
+      type: 'object',
+      required: ['metrics'],
+      properties: {
+        metrics: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        tenantIds: { type: 'array', items: { type: 'string' } },
+        from: { type: 'string' },
+        to: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const held = requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN', 'GROUP_FINANCE', 'GROUP_VIEWER']);
+      return runGroupReport(platform, actor, ctx.params.groupId as string, held, body(ctx));
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/groups/:groupId/reports',
+    description: 'Reports run for this group, and the metrics that can be asked for (group role)',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN', 'GROUP_FINANCE', 'GROUP_VIEWER']);
+      return { reports: groupReports(platform, ctx.params.groupId as string), metrics: Object.entries(REPORT_METRICS).map(([key, definition]) => ({ key, ...definition })) };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/groups/:groupId/reports/:reportId',
+    description: 'A stored report, every grant rechecked: a company whose grant has since ended is withheld from this read (group role)',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const held = requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN', 'GROUP_FINANCE', 'GROUP_VIEWER']);
+      return readGroupReport(platform, ctx.params.groupId as string, ctx.params.reportId as string, held);
+    },
+  },
+
+  // Moving a company between groups.
+  {
+    method: 'GET',
+    pattern: '/v1/admin/transfer-cases',
+    description: 'Every transfer case: which company, from which group to which, where it stands (platform operator only)',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator works transfer cases', 'PLATFORM_ADMIN_REQUIRED');
+      const name = (tenantId: string) => platform.tenant(tenantId).legalName;
+      const groupName = (groupId: string) => groupOf(platform, groupId).displayName;
+      return { cases: transferCases(platform).map((held) => ({ ...held, companyName: name(held.tenantId), fromGroupName: groupName(held.fromGroupId), toGroupName: groupName(held.toGroupId) })) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:id/transfer-cases',
+    description: 'Open a transfer case for a company: to which group, under which cost centre code, why. A draft; nothing moves (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['toGroupId', 'code', 'reason'],
+      properties: {
+        toGroupId: stringField,
+        code: { type: 'string', minLength: 2, maxLength: 8 },
+        chargeMode: { type: 'string', enum: ['INTERNAL', 'INTERCOMPANY', 'EXTERNAL'] },
+        reason: { type: 'string', minLength: 10, maxLength: 1000 },
+        effectiveAt: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator opens a transfer case', 'PLATFORM_ADMIN_REQUIRED');
+      return openTransferCase(platform, actor, { tenantId: ctx.params.id as string, ...body<{ toGroupId: string; code: string; chargeMode?: ChargeMode; reason: string; effectiveAt?: string }>(ctx) });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/transfer-cases/:id/review',
+    description: 'Into review: the destination is checked and the company administrator is asked to approve (platform operator only)',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator works transfer cases', 'PLATFORM_ADMIN_REQUIRED');
+      return reviewTransferCase(platform, actor, ctx.params.id as string);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/transfer-cases/:id/schedule',
+    description: 'Fix the effective date. Needs the company administrator\'s approval first (platform operator only)',
+    schema: { type: 'object', required: ['effectiveAt'], properties: { effectiveAt: stringField }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator works transfer cases', 'PLATFORM_ADMIN_REQUIRED');
+      return scheduleTransferCase(platform, actor, ctx.params.id as string, body<{ effectiveAt: string }>(ctx).effectiveAt);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/transfer-cases/:id/execute',
+    description: 'The cutover, once due: the old relation and everything it carried end, the new one opens. A failed check leaves the company where it was (platform operator only)',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator works transfer cases', 'PLATFORM_ADMIN_REQUIRED');
+      return executeTransferCase(platform, actor, ctx.params.id as string);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/transfer-cases/:id/cancel',
+    description: 'Cancel a case that has not executed (platform operator only)',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 500 } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator works transfer cases', 'PLATFORM_ADMIN_REQUIRED');
+      return cancelTransferCase(platform, actor, ctx.params.id as string, body<{ reason: string }>(ctx).reason);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/team/transfer-cases',
+    description: "Transfer cases concerning this company, for its administrator to approve or watch",
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      const groupName = (groupId: string) => groupOf(platform, groupId).displayName;
+      return { cases: transferCasesFor(platform, actor.tenantId).map((held) => ({ ...held, fromGroupName: groupName(held.fromGroupId), toGroupName: groupName(held.toGroupId) })) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/team/transfer-cases/:id/approve',
+    description: "The company's own administrator approves the move — the recorded governance a transfer needs",
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => approveTransferCase(platform, requireTenantAdministrator(ctx, 'approve a transfer'), ctx.params.id as string),
   },
 
   // Deleting a closed identity now, from either side.
@@ -19342,7 +19801,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/billing/caps',
-    description: 'Set monthly, per-project and per-module AI spend caps, recorded against whoever moved them',
+    description: 'Set monthly, per-project, per-module and per-person AI spend caps, recorded against whoever moved them',
     schema: {
       type: 'object',
       required: ['reason'],
@@ -19350,6 +19809,7 @@ export const ROUTES: Route[] = [
         monthlyMinor: { type: 'integer', minimum: 0 },
         perProjectMinor: { type: 'object' },
         perModuleMinor: { type: 'object' },
+        perUserMinor: { type: 'object' },
         reason: { type: 'string', minLength: 10 },
       },
       additionalProperties: false,

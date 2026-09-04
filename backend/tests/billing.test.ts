@@ -109,11 +109,21 @@ describe('ACU wallet', () => {
     assert.match(String(entry.note), /above the estimate/i, 'an overrun must say so on the entry');
   });
 
-  it('refuses to settle the same hold twice', () => {
+  it('never charges the same hold twice: a replayed settlement is the first one, and a released hold cannot be settled', () => {
     const w = wallet();
     const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
-    w.settle(hold.holdId, 100, 'OPENAI');
-    throwsCode(() => w.settle(hold.holdId, 100, 'OPENAI'), 'ACU_HOLD_NOT_FOUND');
+    const first = w.settle(hold.holdId, 100, 'OPENAI');
+    const balance = w.availableMinor();
+    // A completion reported twice — a retried callback — is the same
+    // settlement. The balance does not move and the entry is the same one.
+    const again = w.settle(hold.holdId, 100, 'OPENAI');
+    assert.equal(again.id, first.id);
+    assert.equal(w.availableMinor(), balance);
+    assert.equal(w.allEntries().filter((entry) => entry.type === 'DEBIT').length, 1);
+    // Commit and release are mutually exclusive: a hold that was released is gone.
+    const released = w.reserve({ aiRequestId: 'req-2', estimatedRawCostMinor: 100 });
+    w.release(released.holdId, 'failed');
+    throwsCode(() => w.settle(released.holdId, 100, 'OPENAI'), 'ACU_HOLD_NOT_FOUND');
   });
 
   it('enforces a monthly cap before contacting a provider', () => {

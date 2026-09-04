@@ -14,7 +14,7 @@ import { can, refreshContext, state } from '../app.js';
  */
 
 export async function billing(root) {
-  const [wallet, attribution, plane, seats, catalogue, storage] = await Promise.all([
+  const [wallet, attribution, plane, seats, catalogue, storage, items] = await Promise.all([
     api.get('/v1/billing/wallet'),
     api.get('/v1/billing/attribution'),
     api.get('/v1/ai/control-plane').catch(() => null),
@@ -29,6 +29,9 @@ export async function billing(root) {
     // computed from the package, because a tenancy that has bought capacity has
     // an allowance the package alone does not describe.
     api.get('/v1/storage').catch(() => null),
+    // The subscription as line items: the product with its seats and every
+    // restricted module the company holds (enterprise specification §9).
+    api.get('/v1/company/subscription/items').catch(() => null),
   ]);
 
   /** Bytes, at the scale a person reads them. */
@@ -277,6 +280,25 @@ export async function billing(root) {
         </div>
       </div>
 
+      ${items
+        ? html`<div class="card">
+            <h2>Subscription line items</h2>
+            <div class="metric-sub" style="margin:6px 0 10px">
+              ${humanise(items.package.toLowerCase())} · ${items.state.toLowerCase()} · renews ${new Date(items.renewsAt).toISOString().slice(0, 10)}. One seat per active person in this company.
+            </div>
+            ${table({
+              headers: ['Item', 'Kind', 'Price', 'Seats', 'Since'],
+              rows: items.items.map((item) => [
+                html`<code>${item.code}</code><div class="metric-sub">${item.label}</div>`,
+                item.kind.toLowerCase(),
+                item.priceMinor === null ? html`<span class="metric-sub">${item.priceVersion}</span>` : `${exact(item.priceMinor, items.currency)} / month`,
+                item.seats ? `${item.seats.used}${item.seats.included === null ? '' : ` / ${item.seats.included}`}` : '—',
+                new Date(item.start).toISOString().slice(0, 10),
+              ]),
+            })}
+          </div>`
+        : ''}
+
       <div class="card">
         <h2>Budget caps</h2>
         ${
@@ -284,6 +306,9 @@ export async function billing(root) {
             ? html`<div class="empty"><b>No caps configured</b>Monthly, per-project and per-module caps can be set to make AI spend predictable.</div>`
             : html`<div class="split-list">
                 ${wallet.caps.monthlyMinor ? html`<div class="row"><span class="lbl">Monthly cap</span><span class="val">${exact(wallet.caps.monthlyMinor)}</span></div>` : ''}
+                ${Object.entries(wallet.caps.perProjectMinor ?? {}).map(([id, minor]) => html`<div class="row"><span class="lbl">Project ${id}</span><span class="val">${exact(minor)}</span></div>`)}
+                ${Object.entries(wallet.caps.perModuleMinor ?? {}).map(([id, minor]) => html`<div class="row"><span class="lbl">Module ${id}</span><span class="val">${exact(minor)}</span></div>`)}
+                ${Object.entries(wallet.caps.perUserMinor ?? {}).map(([id, minor]) => html`<div class="row"><span class="lbl">Person ${id}</span><span class="val">${exact(minor)} / month</span></div>`)}
               </div>`
         }
         <div class="metric-sub" style="margin-top:10px">
@@ -438,6 +463,7 @@ export async function billing(root) {
     // A cap is a governance decision, so the reason is part of the command
     // rather than an afterthought: it is what an auditor asks about a year
     // later, when nobody remembers why the ceiling moved.
+    const people = await api.get('/v1/users').catch(() => ({ users: [] }));
     const result = await command({
       title: 'Set AI spend caps',
       intent:
@@ -447,8 +473,21 @@ export async function billing(root) {
       fields: [
         { name: 'monthlyMinor', label: 'Monthly ceiling', type: 'number', money: true,
           hint: 'Across the whole tenancy. Reached, AI execution halts rather than overspending.' },
+        { name: 'personId', label: 'A personal budget for', type: 'select', required: false,
+          options: [{ value: '', label: '— nobody in particular —' }, ...(people.users ?? []).map((u) => ({ value: u.id, label: u.name }))],
+          hint: 'One person’s own monthly ceiling, on top of the tenancy’s. Other people’s budgets are kept.' },
+        { name: 'personMinor', label: 'Their monthly budget', type: 'number', money: true, required: false },
         { name: 'reason', label: 'Why it is changing', type: 'textarea' },
       ],
+      transform: (v) => ({
+        ...(v.monthlyMinor !== undefined && v.monthlyMinor !== '' ? { monthlyMinor: Number(v.monthlyMinor) } : {}),
+        ...(wallet.caps?.perProjectMinor ? { perProjectMinor: wallet.caps.perProjectMinor } : {}),
+        ...(wallet.caps?.perModuleMinor ? { perModuleMinor: wallet.caps.perModuleMinor } : {}),
+        ...(v.personId && v.personMinor !== undefined && v.personMinor !== ''
+          ? { perUserMinor: { ...(wallet.caps?.perUserMinor ?? {}), [v.personId]: Number(v.personMinor) } }
+          : wallet.caps?.perUserMinor ? { perUserMinor: wallet.caps.perUserMinor } : {}),
+        reason: v.reason,
+      }),
     });
     if (result) await billing(root);
   });

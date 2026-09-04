@@ -63,10 +63,18 @@ export type Group = {
     paymentCustomerRef: string;
   };
   costCentres: CostCentre[];
+  /**
+   * Companies that were in the group and left (enterprise specification §4,
+   * GroupTenantRelation): the relation is effective-dated, not overwritten.
+   * Absent on groups written before a company ever left one.
+   */
+  history?: FormerCostCentre[];
   createdAt: string;
   createdBy: string;
   updatedAt?: string;
 };
+
+export type FormerCostCentre = CostCentre & { leftAt: string; leftBy: string; reason: string };
 
 export type GroupRole = {
   id: string;
@@ -240,6 +248,28 @@ export function attachCompany(
   const updated: Group = { ...group, costCentres: [...group.costCentres, centre], updatedAt: centre.joinedAt };
   commitGroup(platform, actor.actorId, updated, 'GROUP_UPDATED');
   platform.groupTenant(actor.actorId, tenant.id, group.id, slug);
+  return updated;
+}
+
+/**
+ * Take a company out of the group, keeping the relation on the record with
+ * the date it ended. The tenancy keeps everything it has — its people,
+ * records, wallet, issued documents — and stands alone until another group
+ * takes it in. Called by the transfer workflow; not a route of its own.
+ */
+export function detachCompany(platform: Platform, actor: AuthContext, groupId: string, tenantId: string, reason: string): Group {
+  const group = groupOf(platform, groupId);
+  const centre = group.costCentres.find((candidate) => candidate.tenantId === tenantId);
+  if (!centre) throw new NotFoundError(`${tenantId} is not a company in ${group.displayName}`);
+  const leftAt = new Date().toISOString();
+  const updated: Group = {
+    ...group,
+    costCentres: group.costCentres.filter((candidate) => candidate.tenantId !== tenantId),
+    history: [...(group.history ?? []), { ...centre, leftAt, leftBy: actor.actorId, reason }],
+    updatedAt: leftAt,
+  };
+  commitGroup(platform, actor.actorId, updated, 'GROUP_UPDATED');
+  platform.ungroupTenant(actor.actorId, tenantId);
   return updated;
 }
 
@@ -572,6 +602,8 @@ export type StatementSection = CompanyUsage & {
   acuBilledMinor: number;
   invoiced: boolean;
   totalMinor: number;
+  /** The part of the month the company was in the group; absent when it was the whole month. */
+  membership?: { from: string; to: string; left: boolean };
 };
 
 /**
@@ -594,14 +626,22 @@ export function groupStatement(platform: Platform, groupId: string, month: strin
 } {
   const group = groupOf(platform, groupId);
   const { from, to } = monthWindow(month);
-  const sections: StatementSection[] = group.costCentres.map((centre) => {
-    const usage = companyUsage(platform, group, centre, from, to);
+  // Effective-dated: a company that joined or left during the month is
+  // metered for the part of the month it was in the group, and a former
+  // company appears on the statement of the month it left, not after.
+  const current = group.costCentres.map((centre) => ({ centre, from: centre.joinedAt > from ? centre.joinedAt : from, to, left: false }));
+  const former = (group.history ?? [])
+    .filter((centre) => centre.leftAt > from && centre.joinedAt < to && !group.costCentres.some((live) => live.tenantId === centre.tenantId))
+    .map((centre) => ({ centre, from: centre.joinedAt > from ? centre.joinedAt : from, to: centre.leftAt < to ? centre.leftAt : to, left: true }));
+  const sections: StatementSection[] = [...current, ...former].map(({ centre, from: windowFrom, to: windowTo, left }) => {
+    const usage = companyUsage(platform, group, centre, windowFrom, windowTo);
     const subscription = platform.subscription(centre.tenantId);
     const pkg = PACKAGES[subscription.package];
     const charge = chargesFor(platform, centre.tenantId).find((candidate) => candidate.periodStart.slice(0, 7) === month);
     const chargedMinor = charge?.amountMinor ?? 0;
     const invoiced = centre.chargeMode !== 'INTERNAL';
     const totalMinor = (charge ? chargedMinor : 0) + usage.meters.acu.billedMinor;
+    const partial = windowFrom !== from || windowTo !== to;
     return {
       ...usage,
       plan: {
@@ -614,6 +654,7 @@ export function groupStatement(platform: Platform, groupId: string, month: strin
       acuBilledMinor: usage.meters.acu.billedMinor,
       invoiced,
       totalMinor,
+      ...(partial ? { membership: { from: windowFrom, to: windowTo, left } } : {}),
     };
   });
   const planMinor = sections.reduce((sum, section) => sum + section.plan.chargedMinor, 0);

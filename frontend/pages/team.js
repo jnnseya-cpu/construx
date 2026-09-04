@@ -34,7 +34,11 @@ function administers() {
 
 export async function team(root) {
   let position;
-  const support = await api.get('/v1/team/support-access').catch(() => null);
+  const [support, transfers, reporting] = await Promise.all([
+    api.get('/v1/team/support-access').catch(() => null),
+    api.get('/v1/team/transfer-cases').catch(() => null),
+    api.get('/v1/company/reporting-grants').catch(() => null),
+  ]);
   try {
     position = await api.get('/v1/team');
   } catch (error) {
@@ -261,6 +265,48 @@ export async function team(root) {
           })}
         </div>
 
+        ${reporting
+          ? html`<div class="card" data-reporting-grants>
+              <h2>What the group may read about this company</h2>
+              <div class="metric-sub" style="margin:6px 0 10px">
+                ${reporting.group ? html`${reporting.group} reads nothing operational about this company unless this company says so. A grant names the metrics, the group roles, the period, whether they may be exported, and until when.` : 'This company is not in a group; there is nobody to grant reporting to.'}
+              </div>
+              ${table({
+                headers: ['Metrics', 'To', 'Period', 'Export', 'Until', ''],
+                rows: (reporting.grants ?? []).map((grant) => [
+                  grant.metrics.join(', '),
+                  grant.roles.map((role) => humanise(role)).join(', '),
+                  grant.periodFrom || grant.periodTo ? `${grant.periodFrom ? date(grant.periodFrom) : '…'} – ${grant.periodTo ? date(grant.periodTo) : '…'}` : 'any',
+                  grant.exportAllowed ? 'allowed' : 'on screen only',
+                  grant.revokedAt ? html`revoked ${date(grant.revokedAt)}` : grant.expiresAt ? date(grant.expiresAt) : 'until revoked',
+                  !grant.revokedAt && admin ? html`<button class="btn quiet sm" data-grant-revoke="${grant.id}">Revoke</button>` : '',
+                ]),
+                empty: 'No reporting grant. The group sees billing figures only.',
+              })}
+              ${admin && reporting.group ? html`<div class="actions" style="margin-top:10px"><button class="btn quiet sm" data-grant-new>Grant the group a view</button></div>` : ''}
+            </div>`
+          : ''}
+
+        ${(transfers?.cases ?? []).length
+          ? html`<div class="card" data-transfer-cases>
+              <h2>Group transfer</h2>
+              <div class="metric-sub" style="margin:6px 0 10px">
+                A move between groups changes who administers this company and nothing else: its people, records, wallet and issued
+                documents stay. It needs this company’s own administrator to approve it.
+              </div>
+              ${table({
+                headers: ['From', 'To', 'Why', 'Standing', ''],
+                rows: transfers.cases.map((t) => [
+                  t.fromGroupName,
+                  t.toGroupName,
+                  t.reason,
+                  badge(t.status.toLowerCase(), t.status === 'COMPLETED' ? 'ok' : t.status === 'FAILED' ? 'bad' : 'warn'),
+                  t.status === 'REVIEW' && admin && !t.approvals.some((a) => a.capacity === 'COMPANY_ADMINISTRATOR') ? html`<button class="btn sm" data-transfer-approve="${t.id}">Approve the move</button>` : t.approvals.some((a) => a.capacity === 'COMPANY_ADMINISTRATOR') ? html`<span class="metric-sub">approved by this company</span>` : '',
+                ]),
+              })}
+            </div>`
+          : ''}
+
         <div class="card">
           <h2>Governance in force</h2>
           <p class="metric-sub" style="margin-bottom:12px">
@@ -418,6 +464,57 @@ export async function team(root) {
       } catch (error) {
         toast('Could not end it', error.message, 'err');
       }
+    });
+  }
+
+  root.querySelector('[data-grant-new]')?.addEventListener('click', async () => {
+    const result = await command({
+      title: `Grant ${reporting.group} a view of this company`,
+      intent: 'Named metrics only, to the group roles you choose, over a period, exportable or not, until a date. Recorded here, revocable here; a report the group runs reads only what is granted and names the rest as withheld.',
+      path: '/v1/company/reporting-grants',
+      submitLabel: 'Grant',
+      fields: [
+        { name: 'metrics', label: 'Metrics', type: 'multiselect', options: (reporting.metrics ?? []).map((m) => ({ value: m.key, label: m.label })) },
+        { name: 'roles', label: 'Group roles', type: 'multiselect', options: [{ value: 'GROUP_ADMIN', label: 'Group admin' }, { value: 'GROUP_FINANCE', label: 'Group finance' }, { value: 'GROUP_VIEWER', label: 'Group viewer' }] },
+        { name: 'exportAllowed', label: 'They may export', type: 'checkbox', required: false },
+        { name: 'periodFrom', label: 'Period from', type: 'date', iso: true, required: false },
+        { name: 'periodTo', label: 'Period to', type: 'date', iso: true, required: false },
+        { name: 'expiresAt', label: 'Until', type: 'date', iso: true, required: false },
+        { name: 'note', label: 'Why', required: false },
+      ],
+      transform: (v) => ({
+        metrics: v.metrics ?? [],
+        roles: v.roles ?? [],
+        exportAllowed: Boolean(v.exportAllowed),
+        ...(v.periodFrom ? { periodFrom: v.periodFrom } : {}),
+        ...(v.periodTo ? { periodTo: v.periodTo } : {}),
+        ...(v.expiresAt ? { expiresAt: v.expiresAt } : {}),
+        ...(v.note ? { note: v.note } : {}),
+      }),
+    });
+    if (result) draw();
+  });
+  for (const button of root.querySelectorAll('[data-grant-revoke]')) {
+    button.addEventListener('click', async () => {
+      try {
+        await api.post(`/v1/company/reporting-grants/${button.dataset.grantRevoke}/revoke`, {});
+        toast('Grant revoked', 'Reports already run stop showing this company on their next read.', 'ok');
+        draw();
+      } catch (error) {
+        toast('Could not revoke', error.message, 'err');
+      }
+    });
+  }
+  for (const button of root.querySelectorAll('[data-transfer-approve]')) {
+    button.addEventListener('click', async () => {
+      const result = await command({
+        title: 'Approve the move to another group',
+        intent: 'Recorded under your name as this company’s administrator. The platform operator then schedules and executes it.',
+        path: `/v1/team/transfer-cases/${button.dataset.transferApprove}/approve`,
+        submitLabel: 'Approve',
+        fields: [],
+      });
+      if (result) draw();
     });
   }
 

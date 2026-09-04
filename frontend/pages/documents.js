@@ -627,15 +627,44 @@ export async function documents(root) {
  * never alters it. Rendered after the main panel so a refusal here — a role
  * without ENTERPRISE_STRUCTURE — costs the page nothing.
  */
+/** "label: value" lines into the body a legal document prints. A number stays a number. */
+function parseRows(text) {
+  const body = {};
+  for (const line of String(text ?? '').split('\n')) {
+    const at = line.indexOf(':');
+    if (at <= 0) continue;
+    const label = line.slice(0, at).trim();
+    const value = line.slice(at + 1).trim();
+    if (!label) continue;
+    body[label] = /^-?\d+(\.\d+)?$/.test(value) ? Number(value) : value;
+  }
+  return body;
+}
+
 async function issuerPanels(host) {
   if (!host) return;
-  const [issuer, shares] = await Promise.all([
+  const [issuer, shares, lifecycle, readiness] = await Promise.all([
     api.get('/v1/company/issuer').catch((error) => ({ error })),
     api.get('/v1/shares').catch((error) => ({ error })),
+    api.get('/v1/documents/lifecycle').catch((error) => ({ error })),
+    api.get('/v1/company/readiness').catch(() => null),
   ]);
-  if (issuer.error && shares.error) return;
+  if (issuer.error && shares.error && lifecycle.error) return;
   const profile = issuer.profile;
   const rules = Object.entries(profile?.numberingRules ?? {});
+  const legal = readiness?.legal ?? lifecycle?.legal ?? null;
+  const statusTone = (status) => (status === 'ISSUED' ? 'ok' : status === 'APPROVED' ? 'ok' : status === 'AWAITING_APPROVAL' ? 'warn' : 'neutral');
+  const documentActions = (doc) => {
+    const act = (action, label, tone = 'quiet') => html`<button class="btn ${tone} sm" data-document-action="${action}" data-document="${doc.id}" data-title="${doc.title}" data-revision="${doc.revision}" data-hash="${doc.revisions[doc.revisions.length - 1]?.hash ?? ''}">${label}</button>`;
+    if (doc.status === 'ISSUED') return html`${act('download', 'Download')} ${act('supersede', 'Supersede')}`;
+    const pending = (lifecycle.issuances ?? []).find((issuance) => issuance.documentId === doc.id && issuance.status === 'PENDING');
+    if (pending) return html`${act('issue', `Retry ${pending.number}`, '')} <button class="btn quiet sm" data-issuance-void="${pending.id}" data-number="${pending.number}">Void number</button>`;
+    if (doc.status === 'DRAFT') return act('generate', doc.revision === 0 ? 'Generate' : 'Regenerate');
+    if (doc.status === 'GENERATED') return html`${act('generate', 'Regenerate')} ${act('submit', 'Submit')} ${act('approve', 'Approve')} ${act('issue', 'Issue', '')}`;
+    if (doc.status === 'AWAITING_APPROVAL') return html`${act('approve', 'Approve', '')} ${act('reject', 'Send back')}`;
+    if (doc.status === 'APPROVED') return html`${act('issue', 'Issue', '')} ${act('reject', 'Send back')} ${act('generate', 'Regenerate')}`;
+    return '';
+  };
   render(
     host,
     html`
@@ -647,6 +676,12 @@ async function issuerPanels(host) {
               The issuing company decides what a document says about who issued it — never the person, never the group.
               Every document pins the profile version it went out under; changing the profile leaves issued documents exactly as issued.
             </div>
+            ${legal
+              ? html`<div class="notice ${legal.complete ? '' : 'warn'}" style="margin-bottom:12px"><div>
+                  <b>Registered issuer ${legal.complete ? 'complete' : 'incomplete'}</b> · ${humanise((profile.legal?.state ?? legal.verification ?? 'UNVERIFIED').toLowerCase())}${profile.legal?.verifiedAt ? html` on ${date(profile.legal.verifiedAt)}` : ''}.
+                  ${legal.complete ? 'Legal documents can be issued under it; the platform operator verifies the details against the register.' : html`Missing: ${legal.missing.join(', ')}. Nothing is issued until they are entered — no detail is guessed.`}
+                </div></div>`
+              : ''}
             <div class="grid g3" style="gap:14px">
               <div>
                 <div class="metric-sub">Registered issuer</div>
@@ -674,10 +709,51 @@ async function issuerPanels(host) {
               <button class="btn" data-issuer-action="issuer">Set the issuer details</button>
               <button class="btn quiet" data-issuer-action="rule">Set a numbering rule</button>
               <button class="btn quiet" data-issuer-action="signatory">Name a signatory</button>
+              <button class="btn quiet" data-issuer-action="policy">Approval policy</button>
               <button class="btn quiet" data-issuer-action="allocate">Allocate a number</button>
               ${profile.version > 0 ? html`<button class="btn quiet" data-issuer-action="version">See a past version</button>` : ''}
             </div>
             <div id="issuer-result" style="margin-top:12px"></div>
+          </div>`}
+
+      ${lifecycle.error
+        ? ''
+        : html`<div class="card pad0" style="margin-top:14px" data-lifecycle>
+            <h2 style="padding:15px 17px 0">Legal documents — draft, generated, approved, issued</h2>
+            <div class="metric-sub" style="padding:6px 17px 10px">
+              Quotations, invoices, contracts and certificates go out under this company’s registered issuer. A revision is a frozen,
+              hashed manifest; an approval names the hash it approved; issuing reserves the number first and finishes with the same
+              number on a retry. An issued document never changes — a correction supersedes it.
+            </div>
+            ${table({
+              headers: ['Type', 'Title', 'Status', 'Revision', 'Number', 'Updated', ''],
+              rows: (lifecycle.documents ?? []).map((doc) => [
+                doc.documentType,
+                html`${doc.title}${doc.supersedes ? html`<div class="metric-sub">supersedes ${doc.supersedes.slice(-8)}</div>` : ''}`,
+                badge(humanise(doc.status.toLowerCase()), statusTone(doc.status)),
+                html`${doc.revision}${doc.revisions[doc.revisions.length - 1]?.approval ? html`<div class="metric-sub">approved</div>` : ''}`,
+                doc.issuance ? html`<b>${doc.issuance.number}</b>` : html`<span class="metric-sub">unnumbered</span>`,
+                date(doc.updatedAt),
+                html`<span class="row-actions">${documentActions(doc)}</span>`,
+              ]),
+              empty: 'No legal document yet. Open a draft, generate a revision, approve it, issue it.',
+            })}
+            ${(lifecycle.issuances ?? []).length
+              ? html`<h3 style="padding:10px 17px 0">Numbers issued</h3>
+                ${table({
+                  headers: ['Number', 'Type', 'Status', 'Reserved', 'Issued', 'Attempts'],
+                  rows: lifecycle.issuances.map((issuance) => [
+                    html`<b>${issuance.number}</b>`,
+                    issuance.documentType,
+                    badge(issuance.status.toLowerCase(), issuance.status === 'ISSUED' ? 'ok' : issuance.status === 'VOID' ? 'bad' : 'warn'),
+                    date(issuance.reservedAt),
+                    issuance.issuedAt ? date(issuance.issuedAt) : html`<span class="metric-sub">${issuance.status === 'VOID' ? issuance.voidReason ?? 'void' : issuance.lastError ?? '—'}</span>`,
+                    issuance.attempts,
+                  ]),
+                })}`
+              : ''}
+            <div class="actions" style="padding:12px 17px 15px"><button class="btn" data-document-new>Open a draft</button></div>
+            <div id="lifecycle-result" style="padding:0 17px 15px"></div>
           </div>`}
 
       ${shares.error
@@ -685,28 +761,30 @@ async function issuerPanels(host) {
         : html`<div class="card" style="margin-top:14px" data-shares>
             <h2>Shared with other companies in the group</h2>
             <div class="metric-sub" style="margin:6px 0 12px">
-              By explicit grant, one record at a time, read-only, until it expires or is ended. Ownership never moves:
-              quotations, margins and correspondence stay private unless individually shared. A record shared with you
-              renders with the owner’s branding and says who shared it.
+              By explicit grant, one record at a time — the whole record or named fields — read-only, until it expires or is
+              ended, and only once the other company accepts. Ownership never moves: quotations, margins and correspondence stay
+              private unless individually shared. A record shared with you renders with the owner’s branding and says who shared it.
             </div>
             ${table({
-              headers: ['Direction', 'Company', 'Record', 'Note', 'Until', ''],
+              headers: ['Direction', 'Company', 'Record', 'Fields', 'Note', 'Standing', ''],
               rows: [
                 ...shares.given.map((share) => [
                   badge('given', 'neutral'),
                   share.granteeName,
                   html`${share.refType}<div class="metric-sub">${share.refId}</div>`,
+                  share.fields?.length ? share.fields.join(', ') : 'whole record',
                   share.note,
-                  share.revokedAt ? html`ended ${date(share.revokedAt)}` : share.expiresAt ? date(share.expiresAt) : 'until ended',
+                  share.revokedAt ? html`ended ${date(share.revokedAt)}` : html`${badge((share.status ?? 'ACCEPTED').toLowerCase(), share.status === 'PENDING' ? 'warn' : 'ok')}<div class="metric-sub">${share.expiresAt ? `until ${date(share.expiresAt)}` : 'until ended'}</div>`,
                   share.revokedAt ? '' : html`<button class="btn quiet sm" data-share-revoke="${share.id}">End</button>`,
                 ]),
                 ...shares.received.map((share) => [
                   badge('shared with us', 'ok'),
                   share.ownerName,
                   html`${share.refType}<div class="metric-sub">${share.refId}</div>`,
+                  share.fields?.length ? share.fields.join(', ') : 'whole record',
                   share.note,
-                  share.revokedAt ? html`ended ${date(share.revokedAt)}` : share.expiresAt ? date(share.expiresAt) : 'until ended',
-                  share.revokedAt ? '' : html`<button class="btn quiet sm" data-share-open="${share.id}">Open</button>`,
+                  share.revokedAt ? html`ended ${date(share.revokedAt)}` : html`${badge((share.status ?? 'ACCEPTED').toLowerCase(), share.status === 'PENDING' ? 'warn' : 'ok')}<div class="metric-sub">${share.expiresAt ? `until ${date(share.expiresAt)}` : 'until ended'}</div>`,
+                  share.revokedAt ? '' : share.status === 'PENDING' ? html`<button class="btn sm" data-share-accept="${share.id}">Accept</button>` : html`<button class="btn quiet sm" data-share-open="${share.id}">Open</button>`,
                 ]),
               ],
               empty: shares.companies.length ? 'Nothing shared yet.' : 'This company is not in a group, so there is nobody to share with.',
@@ -793,6 +871,21 @@ async function issuerPanels(host) {
         });
         if (result) again();
       }
+      if (action === 'policy') {
+        const result = await command({
+          title: 'Approval policy per document type',
+          intent: 'Whether a generated revision needs an approval before it is issued. By default quotations, invoices, contracts and certificates do; reports, notices and letters may go from generated to issued. A new profile version.',
+          path: '/v1/company/issuer',
+          method: 'PUT',
+          submitLabel: 'Save as a new version',
+          fields: [
+            { name: 'documentType', label: 'Document type', type: 'select', options: (issuer.documentTypes ?? []).map((t) => ({ value: t, label: t })) },
+            { name: 'approvalRequired', label: 'Approval required', type: 'select', options: [{ value: 'true', label: 'Yes — approved by a signatory before issue' }, { value: 'false', label: 'No — issued straight from a generated revision' }] },
+          ],
+          transform: (v) => ({ documentPolicies: { ...(profile.documentPolicies ?? {}), [v.documentType]: { approvalRequired: v.approvalRequired === 'true' } } }),
+        });
+        if (result) again();
+      }
       if (action === 'allocate') {
         const result = await command({
           title: 'Allocate a document number',
@@ -820,20 +913,150 @@ async function issuerPanels(host) {
   host.querySelector('[data-share-new]')?.addEventListener('click', async () => {
     const result = await command({
       title: 'Share a record with another company',
-      intent: 'Read-only, one record, until it expires or you end it. The other company sees it with your branding and “shared by” on it.',
+      intent: 'Read-only, one record or named fields of it, until it expires or you end it, once the other company accepts. They see it with your branding and “shared by” on it.',
       path: '/v1/shares',
-      submitLabel: 'Share',
+      submitLabel: 'Propose the share',
       fields: [
         { name: 'granteeTenantId', label: 'Company', type: 'select', options: shares.companies.map((c) => ({ value: c.tenantId, label: c.name })) },
         { name: 'refType', label: 'Record type', placeholder: 'Project', hint: 'As the record is named in the audit feed' },
         { name: 'refId', label: 'Record id' },
+        { name: 'fields', label: 'Fields', required: false, placeholder: 'name, plannedStart, plannedCompletion', hint: 'Comma-separated field names to share; blank shares the whole record. A tender margin stays home unless named.' },
+        { name: 'exportAllowed', label: 'They may export it', type: 'checkbox', required: false },
         { name: 'expiresAt', label: 'Until', type: 'date', iso: true, required: false },
         { name: 'note', label: 'Why', required: false, placeholder: 'Site services on the depot' },
       ],
-      transform: (v) => ({ granteeTenantId: v.granteeTenantId, refType: v.refType, refId: v.refId, ...(v.expiresAt ? { expiresAt: v.expiresAt } : {}), ...(v.note ? { note: v.note } : {}) }),
+      transform: (v) => ({
+        granteeTenantId: v.granteeTenantId,
+        refType: v.refType,
+        refId: v.refId,
+        ...(v.fields ? { fields: v.fields.split(',').map((field) => field.trim()).filter(Boolean) } : {}),
+        exportAllowed: Boolean(v.exportAllowed),
+        ...(v.expiresAt ? { expiresAt: v.expiresAt } : {}),
+        ...(v.note ? { note: v.note } : {}),
+      }),
     });
     if (result) again();
   });
+  for (const button of host.querySelectorAll('[data-share-accept]')) {
+    button.addEventListener('click', async () => {
+      try {
+        await api.post(`/v1/shares/${button.dataset.shareAccept}/accept`, {});
+        toast('Share accepted', 'The record is readable from here, with the owner’s branding.', 'ok');
+        again();
+      } catch (error) {
+        toast('Could not accept', error.message, 'err');
+      }
+    });
+  }
+
+  // The document lifecycle.
+  const lifecycleResult = host.querySelector('#lifecycle-result');
+  host.querySelector('[data-document-new]')?.addEventListener('click', async () => {
+    const result = await command({
+      title: 'Open a draft legal document',
+      intent: 'Unnumbered, unapproved, changeable. The issuer is this company. The body is the rows the document prints — labels and values — and is frozen into a hashed revision when generated.',
+      path: '/v1/documents/lifecycle',
+      submitLabel: 'Open the draft',
+      fields: [
+        { name: 'documentType', label: 'Document type', type: 'select', options: (lifecycle.documentTypes ?? []).map((t) => ({ value: t, label: t })) },
+        { name: 'title', label: 'Title', placeholder: 'Quotation — welfare village, phase 1' },
+        { name: 'body', label: 'Rows', type: 'textarea', required: false, placeholder: 'Client: Riverside Depot Ltd\nTotal excl. VAT: 48,500.00\nValidity: 30 days', hint: 'One row per line, label: value' },
+        { name: 'sourceRefType', label: 'Source record type', required: false, placeholder: 'Project' },
+        { name: 'sourceRefId', label: 'Source record id', required: false },
+      ],
+      transform: (v) => ({
+        documentType: v.documentType,
+        title: v.title,
+        body: parseRows(v.body),
+        ...(v.sourceRefType && v.sourceRefId ? { source: { refType: v.sourceRefType, refId: v.sourceRefId } } : {}),
+      }),
+    });
+    if (result) again();
+  });
+  for (const button of host.querySelectorAll('[data-document-action]')) {
+    button.addEventListener('click', async () => {
+      const { documentAction, document: id, title, revision, hash } = button.dataset;
+      try {
+        if (documentAction === 'generate') {
+          const doc = await api.get(`/v1/documents/lifecycle/${id}`);
+          const result = await command({
+            title: `Generate a revision — ${title}`,
+            intent: 'Freezes the rows, the issuer profile version, the brand and the source record’s version into a hashed manifest. Any earlier approval no longer applies to what you are about to make.',
+            path: `/v1/documents/lifecycle/${id}/generate`,
+            submitLabel: 'Generate',
+            fields: [{ name: 'body', label: 'Rows', type: 'textarea', value: Object.entries(doc.body ?? {}).map(([k, v]) => `${k}: ${v}`).join('\n'), hint: 'One row per line, label: value' }],
+            transform: (v) => ({ body: parseRows(v.body), expectedVersion: doc.version }),
+          });
+          if (result) again();
+        }
+        if (documentAction === 'submit') {
+          await api.post(`/v1/documents/lifecycle/${id}/submit`, {});
+          toast('Submitted', `${title} awaits its approver.`, 'ok');
+          again();
+        }
+        if (documentAction === 'approve') {
+          const result = await command({
+            title: `Approve revision ${revision} — ${title}`,
+            intent: `You approve exactly this revision, by its hash ${hash.slice(0, 23)}…. If the document changes, this approval no longer applies.`,
+            path: `/v1/documents/lifecycle/${id}/approve`,
+            submitLabel: 'Approve this revision',
+            fields: [],
+            transform: () => ({ revision: Number(revision), hash }),
+          });
+          if (result) again();
+        }
+        if (documentAction === 'reject') {
+          const result = await command({
+            title: `Send back — ${title}`,
+            intent: 'The revision is marked rejected with your reason and the document becomes a draft again.',
+            path: `/v1/documents/lifecycle/${id}/reject`,
+            submitLabel: 'Send back',
+            fields: [{ name: 'reason', label: 'Why', type: 'textarea' }],
+          });
+          if (result) again();
+        }
+        if (documentAction === 'issue') {
+          const key = `issue-${id}-${revision}`;
+          const result = await api.post(`/v1/documents/lifecycle/${id}/issue`, { idempotencyKey: key });
+          toast(result.replayed ? 'Already issued' : 'Issued', `${title} — ${result.issuance.number}`, 'ok');
+          again();
+        }
+        if (documentAction === 'download') {
+          await api.download(`/v1/documents/lifecycle/${id}/download`, {});
+          toast('Downloaded', 'The issued bytes, reauthorised on this download.', 'ok');
+        }
+        if (documentAction === 'supersede') {
+          const doc = await api.get(`/v1/documents/lifecycle/${id}`);
+          const result = await command({
+            title: `Supersede ${doc.issuance?.number ?? title}`,
+            intent: 'An issued document never changes. The correction is a new document that names the one it supersedes, and goes through generation, approval and issue like any other.',
+            path: '/v1/documents/lifecycle',
+            submitLabel: 'Open the superseding draft',
+            fields: [
+              { name: 'title', label: 'Title', value: `${doc.title} (revised)` },
+              { name: 'body', label: 'Rows', type: 'textarea', value: Object.entries(doc.body ?? {}).map(([k, v]) => `${k}: ${v}`).join('\n') },
+            ],
+            transform: (v) => ({ documentType: doc.documentType, title: v.title, body: parseRows(v.body), supersedes: doc.id, ...(doc.source ? { source: doc.source } : {}) }),
+          });
+          if (result) again();
+        }
+      } catch (error) {
+        render(lifecycleResult, html`<div class="notice warn"><div><b>${error.code ?? 'Refused'}</b><br />${error.message}</div></div>`);
+      }
+    });
+  }
+  for (const button of host.querySelectorAll('[data-issuance-void]')) {
+    button.addEventListener('click', async () => {
+      const result = await command({
+        title: `Void ${button.dataset.number}`,
+        intent: 'The pending issuance is abandoned. The number stays on the record as void and is never handed out again; the document can be issued under the next number.',
+        path: `/v1/documents/issuances/${button.dataset.issuanceVoid}/void`,
+        submitLabel: 'Void the number',
+        fields: [{ name: 'reason', label: 'Why' }],
+      });
+      if (result) again();
+    });
+  }
   for (const button of host.querySelectorAll('[data-share-revoke]')) {
     button.addEventListener('click', async () => {
       try {

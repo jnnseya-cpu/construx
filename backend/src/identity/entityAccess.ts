@@ -337,6 +337,15 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   RecordShare: { area: 'ENTERPRISE_STRUCTURE' },
   SupportAccessGrant: { area: 'ENTERPRISE_STRUCTURE' },
   AccountRequest: { area: 'PLATFORM_ADMINISTRATION' },
+  Agreement: { area: 'ENTERPRISE_STRUCTURE', sensitivity: 'COMMERCIAL_L3' },
+  // A legal instrument the company issues, and its issuance. Under evidence
+  // and audit like an export: what went out, under which number, is a record
+  // anybody who may read the company's documents may read.
+  Document: { area: 'EVIDENCE_AUDIT' },
+  Issuance: { area: 'EVIDENCE_AUDIT' },
+  ReportingGrant: { area: 'ENTERPRISE_STRUCTURE' },
+  GroupReport: { area: 'ENTERPRISE_STRUCTURE' },
+  TransferCase: { area: 'PLATFORM_ADMINISTRATION' },
   StepUp: { area: 'PLATFORM_ADMINISTRATION' },
   BidEvaluation: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Adjudication: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },

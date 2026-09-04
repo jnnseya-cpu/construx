@@ -78,11 +78,13 @@ export type ACUCaps = {
   monthlyMinor?: number;
   perProjectMinor?: Record<string, number>;
   perModuleMinor?: Record<string, number>;
+  /** Per person, per calendar month: the budget a company gives one of its people. */
+  perUserMinor?: Record<string, number>;
 };
 
 /** A ceiling a charge would breach, before it is turned into a sentence. */
 export type CapBreach = {
-  scope: 'MONTHLY' | 'PROJECT' | 'MODULE';
+  scope: 'MONTHLY' | 'PROJECT' | 'MODULE' | 'USER';
   capMinor: number;
   spentMinor: number;
   /** The project or module the cap applies to. Absent for the monthly cap. */
@@ -270,6 +272,8 @@ export class ACUWallet {
   #volumeIncentive: boolean;
   readonly #entries: ACUEntry[] = [];
   readonly #holds = new Map<string, Hold>();
+  /** Settled holds by id, so a replayed completion answers the same and charges nothing. */
+  readonly #settled = new Map<string, ACUEntry>();
   readonly #alerts: ACUAlert[] = [];
   #raisedAlertKeys = new Set<string>();
   #sink: ((entry: ACUEntry) => void) | undefined;
@@ -367,7 +371,7 @@ export class ACUWallet {
    * calculations would eventually disagree, and the one a user was shown is the
    * one they would remember.
    */
-  quote(estimatedRawCostMinor: number, projectId?: string, module?: string): {
+  quote(estimatedRawCostMinor: number, projectId?: string, module?: string, userId?: string): {
     chargeMinor: number;
     multiplier: number;
     availableMinor: number;
@@ -390,7 +394,7 @@ export class ACUWallet {
       };
     }
 
-    const capBreach = this.#capBreach(chargeMinor, projectId, module);
+    const capBreach = this.#capBreach(chargeMinor, projectId, module, userId);
     if (capBreach) {
       return {
         chargeMinor,
@@ -398,7 +402,7 @@ export class ACUWallet {
         availableMinor,
         blockedBy: 'CAP',
         capBreach,
-        blockedReason: this.#checkCaps(chargeMinor, projectId, module),
+        blockedReason: this.#checkCaps(chargeMinor, projectId, module, userId),
       };
     }
 
@@ -422,7 +426,7 @@ export class ACUWallet {
       );
     }
 
-    const capBreach = this.#checkCaps(heldMinor, input.projectId, input.module);
+    const capBreach = this.#checkCaps(heldMinor, input.projectId, input.module, input.userId);
     if (capBreach) throw new ACUExhaustedError(capBreach);
 
     const hold: Hold = {
@@ -458,6 +462,14 @@ export class ACUWallet {
    * without a ledger write.
    */
   settle(holdId: string, actualRawCostMinor: number, provider: string): ACUEntry {
+    // A settlement replayed is the same settlement. An execution whose
+    // completion is reported twice — a retried callback, a worker that did not
+    // hear the first acknowledgement — charged once and answers the same the
+    // second time, with the balance exactly where the first left it. Commit and
+    // release stay mutually exclusive: a released hold cannot then be settled,
+    // because the hold is gone and its release is on the record.
+    const already = this.#settled.get(holdId);
+    if (already) return already;
     const hold = this.#holds.get(holdId);
     if (!hold) throw new DomainError('ACU_HOLD_NOT_FOUND', `Hold ${holdId} does not exist or is already settled`);
 
@@ -536,6 +548,7 @@ export class ACUWallet {
         : {}),
     }, -chargedMinor);
 
+    this.#settled.set(holdId, entry);
     this.#evaluateAlerts();
     return entry;
   }
@@ -603,10 +616,11 @@ export class ACUWallet {
       .sort((a, b) => a - b);
   }
 
-  entries(filter: { projectId?: string; module?: string; month?: string } = {}): ACUEntry[] {
+  entries(filter: { projectId?: string; module?: string; userId?: string; month?: string } = {}): ACUEntry[] {
     return this.#entries.filter((e) => {
       if (filter.projectId && e.projectId !== filter.projectId) return false;
       if (filter.module && e.module !== filter.module) return false;
+      if (filter.userId && e.userId !== filter.userId) return false;
       if (filter.month && monthKey(e.timestamp) !== filter.month) return false;
       return true;
     });
@@ -684,9 +698,9 @@ export class ACUWallet {
    * sentence. The message a person reads is built from these, so a screen can
    * put the figure in their own currency instead of repeating minor units.
    */
-  #capBreach(pendingBilledMinor: number, projectId?: string, module?: string): CapBreach | undefined {
+  #capBreach(pendingBilledMinor: number, projectId?: string, module?: string, userId?: string): CapBreach | undefined {
     const caps = this.#caps;
-    const spentOn = (filter: { projectId?: string; module?: string }): number =>
+    const spentOn = (filter: { projectId?: string; module?: string; userId?: string }): number =>
       this.entries({ ...filter, month: monthKey(new Date().toISOString()) })
         .filter((e) => e.type === 'DEBIT')
         .reduce((s, e) => s + e.billedMinor, 0);
@@ -708,15 +722,22 @@ export class ACUWallet {
         return { scope: 'MODULE', capMinor: cap, spentMinor: spent, scopeId: module };
       }
     }
+    if (userId && caps.perUserMinor?.[userId] !== undefined) {
+      const cap = caps.perUserMinor[userId] as number;
+      const spent = spentOn({ userId });
+      if (spent + pendingBilledMinor > cap) {
+        return { scope: 'USER', capMinor: cap, spentMinor: spent, scopeId: userId };
+      }
+    }
     return undefined;
   }
 
-  #checkCaps(pendingBilledMinor: number, projectId?: string, module?: string): string | undefined {
-    const breach = this.#capBreach(pendingBilledMinor, projectId, module);
+  #checkCaps(pendingBilledMinor: number, projectId?: string, module?: string, userId?: string): string | undefined {
+    const breach = this.#capBreach(pendingBilledMinor, projectId, module, userId);
     if (!breach) return undefined;
 
     const where = breach.scopeId ? ` for ${breach.scopeId}` : '';
-    const scope = breach.scope === 'MONTHLY' ? 'Monthly' : breach.scope === 'PROJECT' ? 'Project' : 'Module';
+    const scope = breach.scope === 'MONTHLY' ? 'Monthly' : breach.scope === 'PROJECT' ? 'Project' : breach.scope === 'USER' ? 'Personal' : 'Module';
     return `${scope} AI cap of ${breach.capMinor} minor units would be exceeded${where}. AI execution halted.`;
   }
 

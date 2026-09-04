@@ -40,10 +40,12 @@ export async function group(root) {
 
   const isAdmin = held.roles.includes('GROUP_ADMIN');
   const isFinance = isAdmin || held.roles.includes('GROUP_FINANCE');
-  const [directory, usage, statement] = await Promise.all([
+  const [directory, usage, statement, billing, reports] = await Promise.all([
     api.get(`/v1/groups/${held.id}`).catch((error) => ({ error })),
     api.get(`/v1/groups/${held.id}/usage`).catch((error) => ({ error })),
     isFinance ? api.get(`/v1/groups/${held.id}/statement?month=${month}`).catch((error) => ({ error })) : Promise.resolve(null),
+    isFinance ? api.get(`/v1/groups/${held.id}/billing`).catch((error) => ({ error })) : Promise.resolve(null),
+    api.get(`/v1/groups/${held.id}/reports`).catch((error) => ({ error })),
   ]);
   if (directory.error) {
     render(root, html`<div class="view-head"><div><h1>${held.displayName}</h1></div></div>${notice(directory.error.message, 'bad')}`);
@@ -68,6 +70,7 @@ export async function group(root) {
         </div>
         <div class="actions cmd-bar">
           ${isAdmin ? html`<button class="btn" data-command="role">Grant a group role</button>` : ''}
+          <button class="btn quiet" data-command="report">Run a report</button>
           ${isFinance ? html`<button class="btn quiet" data-command="export">Export statement</button>` : ''}
         </div>
       </div>
@@ -170,6 +173,70 @@ export async function group(root) {
           </div>`
         : ''}
 
+      ${isFinance && billing && !billing.error
+        ? html`<div class="card" style="margin-bottom:14px" data-billing>
+            <h2>Agreement and subscriptions</h2>
+            <div class="metric-sub" style="margin:6px 0 12px">
+              The agreement joins the companies’ subscriptions to a payer: who sells, who pays, in which currency, how often, under
+              which mode. Every mode meters the same way. A group display name is not a billing identity — the parties are legal entities.
+            </div>
+            ${billing.inForce
+              ? html`<div class="split-list" style="margin-bottom:12px">
+                  <div class="row"><span class="lbl">In force</span><span class="val">version ${billing.inForce.version} · ${humanise(billing.inForce.mode.toLowerCase())} · since ${date(billing.inForce.effectiveFrom)}</span></div>
+                  <div class="row"><span class="lbl">Seller</span><span class="val">${billing.inForce.seller.legalName}</span></div>
+                  <div class="row"><span class="lbl">Payer</span><span class="val">${billing.inForce.payer.legalName}</span></div>
+                  <div class="row"><span class="lbl">Terms</span><span class="val">${billing.inForce.currency} · ${billing.inForce.cadence.toLowerCase()} · price list ${billing.inForce.pricingPolicyVersion}</span></div>
+                </div>`
+              : notice('No approved agreement is in force. The platform operator sets the terms as a draft; the group approves them here.', 'warn')}
+            ${(billing.agreement?.versions ?? []).filter((v) => v.status === 'DRAFT').map((v) => html`<div class="notice" style="margin-bottom:12px"><div>
+                <b>Draft version ${v.version}</b> · ${humanise(v.mode.toLowerCase())} · ${v.seller.legalName} → ${v.payer.legalName} · ${v.currency} ${v.cadence.toLowerCase()} · effective ${date(v.effectiveFrom)}${v.note ? html` · ${v.note}` : ''}
+                <button class="btn sm" style="margin-left:10px" data-agreement-approve="${v.version}">Approve</button>
+              </div></div>`)}
+            ${table({
+              headers: ['Cost centre', 'Subscription', 'Line items', 'Seats', 'Currency', 'Charged as'],
+              rows: billing.subscriptions.map((s) => [
+                html`<b>${s.code}</b> ${s.name}`,
+                html`${humanise(s.package.toLowerCase())}<div class="metric-sub">${s.state.toLowerCase()} · renews ${date(s.renewsAt)}</div>`,
+                html`${s.items.map((item) => html`<div>${item.code}<span class="metric-sub"> · ${item.kind === 'PRODUCT' ? money(item.priceMinor, s.currency) + ' / month' : 'restricted grant, not priced'}</span></div>`)}`,
+                html`${s.seatsUsed}${s.seatLimit === null ? '' : html`<span class="metric-sub"> / ${s.seatLimit}</span>`}`,
+                s.currency,
+                humanise(s.chargeMode.toLowerCase()),
+              ]),
+              empty: 'No company in this group.',
+            })}
+            <div class="metric-sub" style="margin-top:10px">
+              ${billing.seats.used} seat${billing.seats.used === 1 ? '' : 's'} in use across the group; ${billing.seats.distinctPeople} distinct ${billing.seats.distinctPeople === 1 ? 'person' : 'people'} (one person in two companies holds a seat in each).
+            </div>
+            <div class="metric-sub" style="margin-top:6px">
+              ${billing.invoicing.single
+                ? 'One invoice may cover the invoiced companies: same seller, payer, currency and period.'
+                : html`Separate invoices plus the consolidated statement${billing.invoicing.reasons.length ? html`: ${billing.invoicing.reasons.join('; ')}` : ''}.`}
+              ${billing.invoicing.allocationOnly.length ? html` ${billing.invoicing.allocationOnly.join(', ')}: allocation statement, not invoiced.` : ''}
+            </div>
+          </div>`
+        : ''}
+
+      <div class="card pad0" style="margin-bottom:14px" data-reports>
+        <h2 style="padding:15px 17px 0">Reports</h2>
+        <div class="metric-sub" style="padding:6px 17px 10px">
+          Read under each company’s reporting grant, one company at a time. A company that has not granted a metric is named as
+          withheld — never shown as zero. Money keeps its currency; nothing is converted.
+        </div>
+        ${reports?.error
+          ? notice(reports.error.message, 'warn')
+          : table({
+              headers: ['Run', 'Metrics', 'Window', 'Companies', ''],
+              rows: (reports?.reports ?? []).map((r) => [
+                html`${date(r.generatedAt)}<div class="metric-sub">${humanise(r.requestedRole)}</div>`,
+                r.metrics.join(', '),
+                `${date(r.window.from)} – ${date(r.window.to)}`,
+                html`${r.included} of ${r.companies} included`,
+                html`<button class="btn quiet sm" data-report-open="${r.id}">Open</button>`,
+              ]),
+              empty: 'No report has been run. Run one from the top of the page.',
+            })}
+      </div>
+
       <div class="card" style="margin-bottom:14px" data-roles>
         <h2>Group roles</h2>
         <div class="metric-sub" style="margin:6px 0 10px">
@@ -231,7 +298,49 @@ export async function group(root) {
         toast('Could not export', error.message, 'err');
       }
     }
+    if (button.dataset.command === 'report') {
+      const result = await command({
+        title: 'Run a group report',
+        intent: 'Named metrics over chosen companies and a window, read under each company’s reporting grant. What a company has not granted is named as withheld.',
+        path: `/v1/groups/${held.id}/reports`,
+        submitLabel: 'Run',
+        fields: [
+          { name: 'metrics', label: 'Metrics', type: 'multiselect', options: (reports?.metrics ?? []).map((m) => ({ value: m.key, label: m.label })) },
+          { name: 'tenantIds', label: 'Companies', type: 'multiselect', required: false, options: companies.map((c) => ({ value: c.tenantId, label: c.name })), hint: 'None selected means every company in the group' },
+          { name: 'from', label: 'From', type: 'date', iso: true, required: false },
+          { name: 'to', label: 'To', type: 'date', iso: true, required: false },
+        ],
+        transform: (v) => ({ metrics: v.metrics ?? [], ...(v.tenantIds?.length ? { tenantIds: v.tenantIds } : {}), ...(v.from ? { from: v.from } : {}), ...(v.to ? { to: v.to } : {}) }),
+      });
+      if (result) {
+        await group(root);
+        showReport(root.querySelector('#group-panel'), result);
+      }
+    }
   });
+
+  for (const button of root.querySelectorAll('[data-agreement-approve]')) {
+    button.addEventListener('click', async () => {
+      const result = await command({
+        title: `Approve agreement version ${button.dataset.agreementApprove}`,
+        intent: 'The terms come into force from their effective date; the previously approved version ends where this one begins. Recorded under your name.',
+        path: `/v1/groups/${held.id}/agreement/${button.dataset.agreementApprove}/approve`,
+        submitLabel: 'Approve',
+        fields: [],
+      });
+      if (result) again();
+    });
+  }
+
+  for (const button of root.querySelectorAll('[data-report-open]')) {
+    button.addEventListener('click', async () => {
+      try {
+        showReport(root.querySelector('#group-panel'), await api.get(`/v1/groups/${held.id}/reports/${button.dataset.reportOpen}`));
+      } catch (error) {
+        toast('Could not open the report', error.message, 'err');
+      }
+    });
+  }
 
   for (const button of root.querySelectorAll('[data-role-revoke]')) {
     button.addEventListener('click', async () => {
@@ -310,6 +419,36 @@ export async function group(root) {
       }
     });
   }
+}
+
+/** A report, section by section: values where granted, the reason where not. */
+function showReport(panel, report) {
+  const value = (v) => (v.unit === 'money' ? money(v.value, v.currency) : String(v.value));
+  render(
+    panel,
+    html`<div class="card pad0" style="margin-bottom:14px" data-report>
+      <h2 style="padding:15px 17px 0">Report · ${date(report.generatedAt)} <span class="metric-sub">${date(report.window.from)} – ${date(report.window.to)} · ${humanise(report.requestedRole)}</span></h2>
+      ${report.withheldSinceGeneration?.length ? notice(`Withheld since this report was run, because the grant ended: ${report.withheldSinceGeneration.join(', ')}.`, 'warn') : ''}
+      ${table({
+        headers: ['Company', 'Standing', ...report.metrics],
+        rows: report.sections.map((s) => [
+          html`<b>${s.code}</b> ${s.name}`,
+          s.status === 'INCLUDED'
+            ? html`${badge('granted', 'ok')}<div class="metric-sub">grant rev. ${s.grantRevision}${s.withheld.length ? ` · withheld: ${s.withheld.join(', ')}` : ''}</div>`
+            : badge(humanise(s.status.toLowerCase()), 'warn'),
+          ...report.metrics.map((metric) => (s.values[metric] ? value(s.values[metric]) : html`<span class="metric-sub">withheld</span>`)),
+        ]),
+        empty: 'No company was asked for.',
+      })}
+      <div class="metric-sub" style="padding:8px 17px 15px">
+        Totals over included companies, per currency — nothing converted:
+        ${Object.entries(report.totals).length
+          ? Object.entries(report.totals).map(([key, totals]) => html`<div>${key}: ${Object.entries(totals).map(([metric, total]) => `${metric} ${key === 'count' ? total : money(total, key)}`).join(' · ')}</div>`)
+          : 'none'}
+      </div>
+    </div>`,
+  );
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function recentMonths() {
