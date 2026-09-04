@@ -116,7 +116,7 @@ export async function account(root) {
           wide photograph of a site, and one field serving both gives a stretched face and a squashed landscape.
         </div>
         <div class="account-cover ${raw(user?.coverHash ? 'has-image' : '')}">
-          ${user?.coverHash ? html`<img src="/v1/users/${user.id}/cover" alt="" />` : html`<span>No cover image yet</span>`}
+          ${user?.coverHash ? html`<img data-authed-src="/v1/users/${user.id}/cover" alt="" />` : html`<span>No cover image yet</span>`}
         </div>
         <div style="margin-top:11px">
           <input type="file" accept="image/png,image/jpeg,image/webp" data-cover style="display:none" />
@@ -136,7 +136,7 @@ export async function account(root) {
         <div class="row" style="display:flex;gap:14px;align-items:center">
           <span class="avatar lg">${
             user?.pictureHash
-              ? html`<img src="/v1/users/${user.id}/picture" alt="" width="56" height="56" />`
+              ? html`<img data-authed-src="/v1/users/${user.id}/picture" alt="" width="56" height="56" />`
               : initials(user?.name)
           }</span>
           <div>
@@ -172,6 +172,10 @@ export async function account(root) {
     `,
   );
 
+  // The picture and the cover are behind the gateway, which an <img> cannot
+  // authenticate to on its own.
+  void api.hydrateImages(root);
+
   root.querySelector('[data-choose-picture]')?.addEventListener('click', () => {
     root.querySelector('[data-picture]')?.click();
   });
@@ -186,7 +190,8 @@ export async function account(root) {
       // something it deliberately ignores.
       await api.upload('/v1/me/picture', file);
       toast('Picture set', 'It appears beside your name from now on.', 'ok');
-      await account(root);
+      // The shell redraws the header chip from this.
+      document.dispatchEvent(new CustomEvent('identity-changed'));
     } catch (error) {
       toast('That picture was refused', error.message, 'err');
     }
@@ -202,7 +207,7 @@ export async function account(root) {
     try {
       await api.upload('/v1/me/cover', file);
       toast('Cover set', 'It appears across the top of your account page.', 'ok');
-      await account(root);
+      document.dispatchEvent(new CustomEvent('identity-changed'));
     } catch (error) {
       toast('That image was refused', error.message, 'err');
     }

@@ -37,6 +37,11 @@ export async function auditlogs(root) {
   }
 
   const brokenChains = (governance.chains ?? []).filter((chain) => chain.failures > 0);
+  // Verified, with a recorded state hash the patch does not reproduce. The
+  // chain vouches for the event; the writer's arithmetic is what disagreed.
+  // Named beside the chain, never folded into "intact" and never called a
+  // break — both would be a lie in a different direction.
+  const discrepantChains = (governance.chains ?? []).filter((chain) => (chain.discrepancies ?? 0) > 0);
 
   render(
     root,
@@ -58,7 +63,11 @@ export async function auditlogs(root) {
           <h2>Chain</h2>
           <div class="metric ${raw(governance.intact ? 'good' : 'bad')}">${governance.intact ? 'intact' : 'BROKEN'}</div>
           <div class="metric-sub">
-            ${governance.intact ? 'verified by walking every chain on this request' : 'a chain failed verification'}
+            ${governance.intact
+              ? discrepantChains.length > 0
+                ? 'verified by walking every chain on this request; recorded-hash discrepancies noted below'
+                : 'verified by walking every chain on this request'
+              : 'a chain failed verification'}
           </div>
         </div>
         <div class="card">
@@ -74,6 +83,19 @@ export async function auditlogs(root) {
           <div class="metric-sub">${logs.error ? 'the log could not be read' : `p95 ${logs.metrics?.p95DurationMs ?? '—'}ms at the gateway`}</div>
         </div>
       </section>
+
+      ${discrepantChains.length > 0
+        ? html`<div class="notice warn" style="margin-bottom:14px">
+            <div>
+              <b>Recorded state hashes that the events' own patches do not reproduce.</b><br />
+              ${discrepantChains.map((chain) => `${chain.tenant}: ${chain.discrepancies} event${chain.discrepancies === 1 ? '' : 's'}`).join(' · ')}.
+              Each of these events verifies against the chain — it is the event as written — but the process that
+              wrote it hashed a copy of the record that had moved on from the ledger's own. Nothing was altered,
+              deleted or reordered; the arithmetic was the writer's. The cause is fixed; the record is kept as it was
+              written, and replay names these events every time rather than rewriting them.
+            </div>
+          </div>`
+        : ''}
 
       ${!governance.intact
         ? html`<div class="notice bad" style="margin-bottom:14px">

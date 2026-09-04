@@ -438,7 +438,11 @@ export async function audit(root) {
         html`<div class="notice ${raw(ok ? 'ok' : 'err')}">
           <div>
             <b>${report.verificationStatus}</b> — ${report.eventsReplayed} events replayed, ${report.entities.length} entities reconstructed,
-            ${report.failures.length} integrity failure${report.failures.length === 1 ? '' : 's'}.<br>
+            ${report.failures.length} integrity failure${report.failures.length === 1 ? '' : 's'}${
+              (report.discrepancies ?? []).length > 0
+                ? `, ${report.discrepancies.length} recorded-hash discrepanc${report.discrepancies.length === 1 ? 'y' : 'ies'} (chain verified; the writer's arithmetic disagreed)`
+                : ''
+            }.<br>
             <span style="font-family:var(--mono);font-size:11.5px">state root ${report.rootHash}</span>
             ${
               report.redactionLog.length > 0

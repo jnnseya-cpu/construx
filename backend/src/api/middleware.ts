@@ -563,7 +563,12 @@ const CSP = {
    */
   APP_SHELL:
     "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; " +
-    "img-src 'self' data:; font-src 'self'; manifest-src 'self'; form-action 'self'; " +
+    // `blob:` because an account picture lives behind the gateway and an <img>
+    // cannot carry the bearer token: the console fetches the bytes itself and
+    // hands them to the element as an object URL, which this origin's own
+    // script minted. Without it the picture fetched, decoded to nothing, and
+    // the initials stayed.
+    "img-src 'self' data: blob:; font-src 'self'; manifest-src 'self'; form-action 'self'; " +
     "base-uri 'none'; frame-ancestors 'none'",
 } as const;
 

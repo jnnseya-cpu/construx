@@ -8291,12 +8291,19 @@ policies and topics are recorded as the contract in `docs/GROUP_TENANCY.md`).
 
 ### The ledger hashes what it writes
 
-A production journal refused to replay (`JOURNAL_STATE_MISMATCH` at one
-event): the commit path hashed the after-state over the object in memory
-(`structuredClone`) and wrote JSON, so a proposal carrying a `Date` or a
-`Buffer` recorded a hash the written patch could never reproduce. The commit
-path now takes its copy as a JSON round trip and hashes that, so the hash
-recorded is the hash of what is read back. Replay no longer refuses an event
+A production journal refused to replay (`JOURNAL_STATE_MISMATCH` at four
+events: a tenancy closed on a restored process). Root cause: `rehydrate()`
+put the ledger's own state objects into the platform's user, tenant and
+subscription maps, and `revokeUserSeat` set `user.status = 'SUSPENDED'` on
+that shared object — so the ledger's before-state moved, the next commit's
+patch omitted the change, and the hash it recorded included it. The
+platform now copies what it restores and the ledger deep-freezes every
+state it holds, so an in-place change throws where it is written
+(`journal.test.ts`: the exact closure sequence replays; an in-place change
+is refused). Second, the commit path hashed the after-state over the object
+in memory (`structuredClone`) and wrote JSON, so a `Date` or a `Buffer` in a
+proposal recorded a hash the written patch could never reproduce; it now
+takes its copy as a JSON round trip and hashes that. Replay no longer refuses an event
 whose chain hash verifies but whose recorded state hash disagrees with its
 own patch: the patched state is taken, the discrepancy is reported on every
 boot (stderr and the boot line) and kept on `ledger.discrepancies()`, and
@@ -8304,6 +8311,45 @@ the next event a writer chained from the recorded hash is accepted. A
 tampered event — chain hash not verifying — is refused as before.
 `journal.test.ts`. The runbook has the section "State-hash discrepancies on
 replay".
+
+Three consequences of the same outage, fixed with it. **The estate 500.**
+`IDENTITY_SEAT_REVOKED` wrote the subscription in the legacy tier shape
+(`includedIdentities`, `monthlyPriceUsd`) with no `package`, so the diff
+removed the package from the ledger's copy and the next restart rehydrated
+`package: undefined` — `GET /v1/admin/tenants` and `/v1/admin/forecast`
+then failed on `PACKAGES[undefined]` and the Tenants & users, Onboarding
+queue, Customer value and Predictive intel screens showed `INTERNAL_ERROR`.
+The event now writes the same shape every other seat event writes, and
+`rehydrate()` derives the package from the tier when a journal written
+before this carries none (`journal.test.ts`: the closure-across-restart
+test asserts the package; a legacy-shaped seat event restores with the
+package derived). **Replay judged the same event differently.** The audit
+screens walk `replayProject`, which called the recorded-hash disagreement a
+`FAILED_HASH` and stopped advancing the entity, so the Audit logs screen
+said "Chain BROKEN — Etablix: 4 events … altered" over a record the ledger
+had just booted from. `replay.ts` now returns `STATE_HASH_DISCREPANCY` when
+the chain hash verifies — the event is as written — and lists those events
+on `report.discrepancies` beside `failures`, never inside them; the
+governance route publishes the count per chain, `ops/assurance.ts` carries
+it on each project, and Audit logs and the Golden Thread replay panel name
+the discrepancies in a warning, not as a break. A mismatch with no chain
+hash vouching for it is still `FAILED_HASH`. **Tests that edited ledger
+state in place** (`goldenthread.test.ts`, `estimating.test.ts`) now assert
+the refusal or write a legacy-shaped record through the ledger.
+
+### Pictures behind the gateway, and two operator-screen labels
+
+An account picture uploaded, hashed and recorded correctly and still showed
+initials: the console rendered `<img src="/v1/users/…/picture">`, the
+browser fetched it with no bearer token, and the gateway refused it.
+`api.hydrateImages(root)` in `frontend/lib/api.js` fetches every
+`img[data-authed-src]` with the session's token (rotating on a 401) and
+hands the bytes over as an object URL; the account page's picture and cover
+and the header chip use it. Platform operations said "2 rules are firing.
+undefined undefined": the page read `id`/`detail` off a `RuleState` whose
+fields are `ruleId`/`lastDetail`. The Blueprint screen reported
+`docs/ai-os-blueprint.md` absent on construxvg.com because the image never
+copied `docs/`; `deploy/Dockerfile` now does.
 
 ### The Enterprise / Group specification v1.0 — CONSTRUX side, on top of the group tenancy
 

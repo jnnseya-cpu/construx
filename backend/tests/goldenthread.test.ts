@@ -87,9 +87,16 @@ describe('a committed event is nobody else’s to change', () => {
     const hashedAs = JSON.stringify(event);
 
     const record = ledger.require({ refType: 'Task', refId: 't-alias' });
-    (record.state.tags as string[]).push('injected');
+    // The record's state is the state that was hashed, and it is frozen: a
+    // reader that writes into it is refused rather than silently changing
+    // what the next commit's before-hash is computed from.
+    assert.throws(() => (record.state.tags as string[]).push('injected'), TypeError);
+    assert.throws(() => {
+      (record.state as Record<string, unknown>).title = 'changed';
+    }, TypeError);
 
     assert.equal(JSON.stringify(event), hashedAs, 'a reader changed a hashed event through the entity record');
+    assert.deepEqual(record.state.tags, ['b', 'a']);
   });
 
   it('leaves the chain verifiable after both', () => {
@@ -97,7 +104,10 @@ describe('a committed event is nobody else’s to change', () => {
     const tags = ['b', 'a', 'c'];
     const { event } = commitOne(ledger, { title: 'Replay check', tags });
     tags.sort();
-    (ledger.require({ refType: 'Task', refId: 't-alias' }).state.tags as string[]).push('injected');
+    assert.throws(
+      () => (ledger.require({ refType: 'Task', refId: 't-alias' }).state.tags as string[]).push('injected'),
+      TypeError,
+    );
 
     // The point of all of the above: the chain hash still recomputes from the
     // event's own body, which is what replay and the assurance sweep do.

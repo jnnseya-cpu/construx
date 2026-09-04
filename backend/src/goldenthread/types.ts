@@ -181,7 +181,15 @@ export type VerificationStatus =
   | 'FAILED_PATCH'
   | 'FAILED_CHAIN'
   | 'FAILED_CATALOG'
-  | 'MISSING_EVIDENCE';
+  | 'MISSING_EVIDENCE'
+  /**
+   * The event verifies against the chain — it is the event as written — but
+   * the state hash it recorded is not the hash of the state its own patch
+   * produces. The writer's arithmetic, not an alteration: the process hashed
+   * an in-memory object that had moved on from the ledger's copy. Reported,
+   * never hidden, and never counted as a failure of the chain.
+   */
+  | 'STATE_HASH_DISCREPANCY';
 
 export type EventVerification = {
   eventId: string;

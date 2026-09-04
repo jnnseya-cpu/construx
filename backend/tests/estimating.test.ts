@@ -12,6 +12,8 @@ import {
 } from '../src/engines/maths/costModel.ts';
 import { cashflowScoreFor, modelFunding } from '../src/engines/maths/funding.ts';
 import { scoreRisk } from '../src/engines/maths/risk.ts';
+import { write } from '../src/engines/context.ts';
+import { ulid } from '../src/core/ids.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tender from '../src/engines/tender.ts';
 import { Platform } from '../src/platform.ts';
@@ -728,13 +730,20 @@ describe('Funding modelled from the estimate itself', () => {
   it('refuses to model an estimate that carries no programme', () => {
     const ctx = qsCtx();
     const built = tender.buildEstimate(ctx, { packageId: 'PKG-FUND-3', ...complete(), basisOfEstimate: 'Rates', assumptions: [] });
-    // Strip the programme the way a legacy record would lack one.
+    // Strip the programme the way a legacy record would lack one — through
+    // the ledger, since the state it holds is frozen and cannot be edited in
+    // place. A legacy record is one whose last committed state has no
+    // `durationWeeks`; write exactly that.
     const record = ctx.ledger.require({ refType: 'Estimate', refId: built.estimateId });
-    const original = record.state.durationWeeks;
-    delete (record.state as Record<string, unknown>).durationWeeks;
+    const { durationWeeks: _programme, ...withoutProgramme } = record.state;
+    const legacyId = ulid();
+    write(ctx, {
+      eventType: 'ESTIMATE_CREATED',
+      entity: { refType: 'Estimate', refId: legacyId },
+      nextState: { ...withoutProgramme, id: legacyId },
+    });
 
-    throwsCode(() => tender.modelTenderFunding(ctx, built.estimateId, terms), 'ESTIMATE_NOT_TIME_BASED');
-    (record.state as Record<string, unknown>).durationWeeks = original;
+    throwsCode(() => tender.modelTenderFunding(ctx, legacyId, terms), 'ESTIMATE_NOT_TIME_BASED');
   });
 
   it('keeps the funding event in the catalogue and off the AI', () => {

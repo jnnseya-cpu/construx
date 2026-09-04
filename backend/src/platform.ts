@@ -33,7 +33,6 @@ import {
 import { PACKAGES, UNCHARGED_ROLES, type PackageTier } from './billing/seats.ts';
 import * as storage from './billing/storage.ts';
 import { chargesFor } from './billing/collection.ts';
-import { createHash } from 'node:crypto';
 import { config } from './config.ts';
 import { SIGNATURES } from './site/media.ts';
 import { DomainError, ForbiddenError, NotFoundError } from './core/errors.ts';
@@ -636,7 +635,12 @@ export class Platform {
       );
     }
 
-    const hash = createHash('sha256').update(input.bytes).digest('hex');
+    // The store's own address form (`sha256:…`, `hashEvidence`). A bare hex
+    // digest was refused as EVIDENCE_HASH_MISMATCH by every store that
+    // actually holds bytes, so a picture that uploaded, was read as a PNG and
+    // was sized correctly still answered 422 on every deployment with a
+    // volume — which is every production deployment.
+    const hash = hashEvidence(input.bytes);
     await this.evidence.store(user.tenantId, hash, input.bytes, signature.contentType);
 
     const kind = input.kind ?? 'PROFILE';
@@ -1733,12 +1737,18 @@ export class Platform {
       correlationId: ulid(),
       eventType: 'IDENTITY_SEAT_REVOKED',
       entity: { refType: 'Subscription', refId: updated.id },
+      // The same shape every other seat event writes. This one used to carry
+      // the legacy tier fields and no `package`, so the diff removed the
+      // package from the ledger's copy and the next restart rehydrated a
+      // subscription whose package lookup was undefined — every estate read
+      // (`/v1/admin/tenants`, `/v1/admin/forecast`) then answered 500.
       nextState: {
         id: updated.id,
         tenantId: updated.tenantId,
         tier: updated.tier,
-        includedIdentities: TIERS[updated.tier].includedIdentities,
-        monthlyPriceUsd: TIERS[updated.tier].monthlyPriceUsd,
+        package: updated.package,
+        includedSeats: PACKAGES[updated.package].includedSeats,
+        monthlyPriceMinor: PACKAGES[updated.package].monthlyPriceMinor,
         status: updated.status,
         assignedIdentities: updated.assignedIdentities,
       },
@@ -2128,40 +2138,56 @@ export class Platform {
     subscriptions: number;
     wallets: number;
   } {
+    // Every map below holds a *copy* of the ledger's state, never the
+    // ledger's own object. The first restored process held the same object
+    // in both places, so a routine `user.status = 'SUSPENDED'` on the
+    // platform's copy silently rewrote the ledger's before-state; the next
+    // commit diffed against the rewritten object, recorded a hash over it,
+    // and the journal could not replay its own record (JOURNAL_STATE_MISMATCH
+    // on construxvg.com). The ledger now also freezes what it holds, so the
+    // same mistake fails loudly rather than a restart later.
+    const copy = <T>(record: { state: Record<string, unknown> }): T => structuredClone(record.state) as unknown as T;
+
     for (const record of this.ledger.entitiesOfType('Tenant')) {
-      const state = record.state as unknown as Tenant;
+      const state = copy<Tenant>(record);
       this.#tenants.set(state.id, state);
     }
 
     for (const record of this.ledger.entitiesOfType('User')) {
-      const state = record.state as unknown as PlatformUser;
+      const state = copy<PlatformUser>(record);
       this.#users.set(state.id, state);
     }
 
     for (const record of this.ledger.entitiesOfType('OrgUnit')) {
-      const state = record.state as unknown as OrgUnit;
+      const state = copy<OrgUnit>(record);
       this.#units.set(state.id, state);
     }
 
     for (const record of this.ledger.entitiesOfType('RefundObligation')) {
-      const state = record.state as unknown as RefundObligation;
+      const state = copy<RefundObligation>(record);
       this.#refunds.set(state.id, state);
     }
 
     for (const record of this.ledger.entitiesOfType('Subscription')) {
-      const state = record.state as unknown as Subscription;
+      const state = copy<Subscription>(record);
       // The entity is re-committed on every seat assignment, so the restored
       // copy already carries the current identities; recomputing them from the
       // users would be a second opinion about the same fact.
       this.#subscriptions.set(state.tenantId, {
         ...state,
+        // A journal written before `IDENTITY_SEAT_REVOKED` carried the package
+        // has subscriptions whose last state removed it. The tier was always
+        // written, and the package is derived from it the way `createTenant`
+        // does when none is chosen — so the estate reads again instead of
+        // failing on `PACKAGES[undefined]`.
+        package: state.package ?? packageForTier(state.tier),
         startedAt: state.startedAt ?? new Date().toISOString(),
         renewsAt: state.renewsAt ?? new Date(Date.now() + 30 * 86_400_000).toISOString(),
       });
     }
 
     for (const record of this.ledger.entitiesOfType('ModuleGrant')) {
-      const state = record.state as unknown as ModuleGrant;
+      const state = copy<ModuleGrant>(record);
       // Guarded, because a grant restored for a module this build no longer has
       // would be an access check reading a module id that is not in the
       // catalogue. Dropping it fails closed; keeping it would not.

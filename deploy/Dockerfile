@@ -36,6 +36,10 @@ COPY backend/ ./backend/
 COPY frontend/ ./frontend/
 COPY shared/ ./shared/
 COPY tsconfig.json ./
+# The operator's Blueprint screen reads docs/ai-os-blueprint.md next to the
+# process and measures the running platform against it. Without the directory
+# the screen reports the blueprint as absent from the deployment.
+COPY docs/ ./docs/
 
 # The journal's directory. Mount a volume here — without one the container is
 # writable but ephemeral, and the record dies with it.

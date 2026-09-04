@@ -7,8 +7,12 @@ import { throwsCode } from './helpers.ts';
 import { canonicalize, EMPTY_STATE_HASH, sha256 } from '../src/core/canonical.ts';
 import { Journal } from '../src/goldenthread/journal.ts';
 import { GoldenThreadLedger } from '../src/goldenthread/ledger.ts';
+import { replayProject } from '../src/goldenthread/replay.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject } from '../src/seed.ts';
+import { PACKAGES } from '../src/billing/seats.ts';
+import { packageForTier } from '../src/billing/subscription.ts';
+import { allowanceBytes } from '../src/billing/storage.ts';
 
 /**
  * Durability.
@@ -528,6 +532,21 @@ describe('the state hash is taken over what is written', () => {
     const again = new Platform().ledger.restore(platform.ledger.events());
     assert.equal(again.discrepancies.length, 1, 'the discrepancy is reported on every replay; nothing is rewritten');
 
+    // The replay engine — what the audit screens and the assurance sweep walk
+    // — judges the same event the same way: verified against the chain, with
+    // the discrepancy named, not a broken chain. The Audit logs screen used to
+    // say "Chain BROKEN — 4 events altered" over exactly this record.
+    const report = replayProject(platform.ledger, event.tenantId as string, event.projectId as string, new Date().toISOString());
+    assert.equal(report.verificationStatus, 'VERIFIED');
+    assert.deepEqual(report.failures, []);
+    assert.equal(report.discrepancies.length, 1);
+    assert.equal(report.discrepancies[0]!.eventId, event.eventId);
+    assert.equal(report.discrepancies[0]!.status, 'STATE_HASH_DISCREPANCY');
+    assert.equal(report.summary.STATE_HASH_DISCREPANCY, 1);
+    // And the entity it belongs to is reconstructed — replay did not stop
+    // advancing it at the discrepancy.
+    assert.ok(report.entities.some((entity) => entity.refType === refType && entity.refId === refId));
+
     // A genuinely altered event is still refused: change the patch and leave
     // the chain hash as it was.
     const tampered = events.map((held) => ({ ...held }));
@@ -535,5 +554,95 @@ describe('the state hash is taken over what is written', () => {
     const tamperedPath = nextPath();
     writeFileSync(tamperedPath, `${tampered.map((held) => JSON.stringify(held)).join('\n')}\n`);
     throwsCode(() => new Platform().ledger.restore(new Journal(tamperedPath).read().events), 'JOURNAL_CHAIN_BROKEN');
+  });
+});
+
+describe('the ledger\'s own state is nobody else\'s to change', () => {
+  it('a restarted process closing a tenancy — the sequence that broke production — replays cleanly', async () => {
+    const path = nextPath();
+    const first = new Platform();
+    const journal = new Journal(path, { fsync: false });
+    first.ledger.attachJournal(journal);
+    const operator = first.createOperator({ name: 'Ruth', email: 'ops@construx.example' });
+    const created = first.createTenant({ legalName: 'Etablix', jurisdiction: 'GB', defaultCurrency: 'GBP', tier: 'ENTERPRISE', package: 'ENTERPRISE', enterpriseName: 'Etablix' });
+    first.createUser({ tenantId: created.tenant.id, name: 'Justin', email: 'justin@etablix.example', roles: ['ENTERPRISE_ADMIN'] });
+    first.createUser({ tenantId: created.tenant.id, name: 'Amara', email: 'amara@etablix.example', roles: ['PM'] });
+    journal.close();
+
+    // Restart: the platform's maps are rebuilt from the chain.
+    const second = new Platform();
+    const secondJournal = new Journal(path, { fsync: false });
+    second.ledger.restore(secondJournal.read().events);
+    second.rehydrate();
+    secondJournal.open();
+    second.ledger.attachJournal(secondJournal);
+    const ops = second.userByEmail('ops@construx.example')!;
+    // Closing the tenancy deactivates and requests erasure for every person,
+    // and the seat revocation marks the user record suspended in place. When
+    // that record was the ledger's own object, the ledger's before-state moved
+    // with it and the next commit recorded a hash its patch could not reproduce.
+    const { authOf } = await import('../src/seed.ts');
+    second.closeTenant(authOf(second, ops.id), { tenantId: created.tenant.id, reason: 'change of structure is coming' });
+    secondJournal.close();
+
+    const third = new Platform();
+    const result = third.ledger.restore(new Journal(path).read().events);
+    assert.deepEqual(result.discrepancies, [], 'every event replays to the hash it recorded');
+    third.rehydrate();
+    assert.equal(third.userByEmail('amara@etablix.example')!.status, 'SUSPENDED');
+
+    // The seat revocation used to write the subscription without its package,
+    // so a restart after a closure rehydrated `package: undefined` and every
+    // estate read that looked up `PACKAGES[subscription.package]` answered 500.
+    const subscription = third.subscription(created.tenant.id);
+    assert.equal(subscription.package, 'ENTERPRISE');
+    assert.ok(PACKAGES[subscription.package].label);
+    assert.equal(subscription.assignedIdentities.length, 0);
+    assert.equal(allowanceBytes(subscription.package, 0) > 0, true);
+    void operator;
+  });
+
+  it('derives the package from the tier for a journal written before the seat event carried it', () => {
+    const platform = new Platform();
+    const created = platform.createTenant({ legalName: 'Legacy Ltd', jurisdiction: 'GB', defaultCurrency: 'GBP', tier: 'BUSINESS', enterpriseName: 'Legacy' });
+    const before = platform.subscription(created.tenant.id);
+    // Exactly the shape the old `IDENTITY_SEAT_REVOKED` wrote: tier, the
+    // legacy price fields, and no package — so the diff removes the package.
+    platform.ledger.commit({
+      tenantId: created.tenant.id,
+      projectId: `${created.tenant.id}-governance`,
+      actor: { refType: 'System', refId: 'platform' },
+      source: 'SYSTEM',
+      correlationId: 'legacy-seat-event',
+      eventType: 'IDENTITY_SEAT_REVOKED',
+      entity: { refType: 'Subscription', refId: before.id },
+      nextState: {
+        id: before.id,
+        tenantId: created.tenant.id,
+        tier: before.tier,
+        includedIdentities: 25,
+        monthlyPriceUsd: 499,
+        status: before.status,
+        assignedIdentities: [],
+      },
+    });
+    assert.equal(platform.ledger.require({ refType: 'Subscription', refId: before.id }).state.package, undefined);
+
+    const restored = new Platform();
+    assert.deepEqual(restored.ledger.restore(platform.ledger.events()).discrepancies, []);
+    restored.rehydrate();
+    const subscription = restored.subscription(created.tenant.id);
+    assert.equal(subscription.package, packageForTier('BUSINESS'));
+    assert.ok(PACKAGES[subscription.package].label);
+  });
+
+  it('refuses an in-place change to a record it holds', () => {
+    const platform = new Platform();
+    const created = platform.createTenant({ legalName: 'Frozen Ltd', jurisdiction: 'GB', defaultCurrency: 'GBP', tier: 'TEAM', package: 'CORE_PROJECT', enterpriseName: 'Frozen' });
+    const record = platform.ledger.get({ refType: 'Tenant', refId: created.tenant.id })!;
+    assert.throws(() => {
+      (record.state as { legalName: string }).legalName = 'Changed in place';
+    }, TypeError);
+    assert.equal(platform.ledger.get({ refType: 'Tenant', refId: created.tenant.id })!.state.legalName, 'Frozen Ltd');
   });
 });

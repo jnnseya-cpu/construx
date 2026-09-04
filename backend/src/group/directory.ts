@@ -431,7 +431,7 @@ export function membershipsByEmail(platform: Platform, email: string): Membershi
  * — but a company outside any group has no group to show.
  */
 export function whoAmI(platform: Platform, actor: AuthContext): {
-  user: { id: string; name: string; email: string; tenantId: string; roles: string[] };
+  user: { id: string; name: string; email: string; tenantId: string; roles: string[]; pictureHash?: string; coverHash?: string };
   activeCompany: { tenantId: string; name: string; slug: string | null };
   memberships: Membership[];
   group: { id: string; slug: string; displayName: string; roles: GroupRoleName[] } | null;
@@ -441,7 +441,10 @@ export function whoAmI(platform: Platform, actor: AuthContext): {
   const tenant = platform.tenant(user.tenantId);
   const group = tenant.groupId ? groupOf(platform, tenant.groupId) : undefined;
   return {
-    user: { id: user.id, name: user.name, email: user.email, tenantId: user.tenantId, roles: user.roles },
+    // The picture as well: the console's header chip is drawn from this
+    // payload, and the sign-in response that first filled it predates any
+    // picture the person sets afterwards.
+    user: { id: user.id, name: user.name, email: user.email, tenantId: user.tenantId, roles: user.roles, pictureHash: user.pictureHash, coverHash: user.coverHash },
     activeCompany: {
       tenantId: tenant.id,
       name: tenant.legalName,

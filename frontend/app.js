@@ -570,6 +570,16 @@ export function navigate(page, params = []) {
 
 window.addEventListener('popstate', () => void draw());
 
+// The account page raises this when the person sets their picture or cover:
+// the header chip is drawn from `state.me`, which is read once per shell, so
+// it is read again and the shell redrawn.
+document.addEventListener('identity-changed', () => {
+  void api.get('/v1/users/me').then((me) => {
+    state.me = me;
+    void draw();
+  }).catch(() => undefined);
+});
+
 document.addEventListener('click', (event) => {
   const link = event.target.closest('[data-nav]');
   if (!link) return;
@@ -1083,8 +1093,10 @@ function topbar() {
     ${companySwitcher()}
     <button class="user-chip" id="user-chip" aria-label="Signed in as ${user?.name ?? 'this identity'}. Sign out.">
       <span class="avatar">${
-        user?.pictureHash
-          ? html`<img src="/v1/users/${user.id}/picture" alt="" width="26" height="26" />`
+        // `/v1/users/me` carries the picture; the sign-in payload that fills
+        // the session predates any picture set afterwards.
+        (state.me?.user?.pictureHash ?? user?.pictureHash)
+          ? html`<img data-authed-src="/v1/users/${user.id}/picture" alt="" width="26" height="26" />`
           : initials(user?.name)
       }</span>
       <span><span class="nm">${user?.name}</span><br><span class="rl">${(user?.roles ?? []).join(', ')}</span></span>
@@ -1272,6 +1284,7 @@ async function draw() {
   );
 
   bindSignOut();
+  void api.hydrateImages(document.querySelector('.topbar'));
 
   try {
     if (!state.project) await loadContext();
@@ -1284,6 +1297,7 @@ async function draw() {
       </div>`,
     );
     bindSignOut();
+    void api.hydrateImages(document.querySelector('.topbar'));
     // Bound after the second render, which is the one that has the project list
     // to build the picker from. The first render happens before `loadContext`
     // and shows the skeleton.

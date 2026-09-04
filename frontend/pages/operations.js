@@ -152,7 +152,7 @@ export async function operations(root) {
         ? html`<div class="notice warn">
             <div>
               <b>${firing.length} rule${firing.length === 1 ? ' is' : 's are'} firing.</b><br />
-              ${raw(firing.map((state) => `${state.id}${state.detail ? ` — ${state.detail}` : ''}`).join('<br>'))}
+              ${raw(firing.map((state) => `${state.ruleId}${state.lastDetail ? ` — ${state.lastDetail}` : ''}`).join('<br>'))}
             </div>
           </div>`
         : ''}
@@ -212,7 +212,7 @@ export async function operations(root) {
                   rule.what,
                   rule.because,
                   badge(String(rule.severity ?? '').toLowerCase(), severityTone(rule.severity)),
-                  firing.some((state) => state.id === rule.id) ? badge('firing', 'bad') : badge('clear', 'good'),
+                  firing.some((state) => state.ruleId === rule.id) ? badge('firing', 'bad') : badge('clear', 'good'),
                 ]),
                 empty: 'No rules are declared, which means the platform is not watching itself at all.',
               }),

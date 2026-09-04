@@ -18,7 +18,6 @@ import { POST_PAGES } from '../site/posts.ts';
 import * as views from '../site/views.ts';
 import * as booking from '../site/booking.ts';
 import { SIGNATURES } from '../site/media.ts';
-import { createHash } from 'node:crypto';
 import * as notifications from '../notifications/catalogue.ts';
 import { CATEGORIES, CATEGORY_TITLES, NOTIFICATION_EVENTS } from '../notifications/catalogue.ts';
 import * as notifyEngine from '../notifications/notify.ts';
@@ -70,6 +69,7 @@ import { config, demonstrationEnabled, isProduction } from '../config.ts';
 import * as consistency from '../domain/consistency.ts';
 import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
 import { AuthError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../core/errors.ts';
+import { hashEvidence } from '../core/canonical.ts';
 import type { Schema } from '../core/validate.ts';
 import * as business from '../domain/business.ts';
 import * as cdm from '../domain/cdm.ts';
@@ -767,7 +767,9 @@ async function storeBrandImage(
     );
   }
 
-  const hash = createHash('sha256').update(bytes).digest('hex');
+  // `sha256:…`, the address form the store checks the bytes against. A bare
+  // digest was refused as EVIDENCE_HASH_MISMATCH wherever a store holds bytes.
+  const hash = hashEvidence(bytes);
   await platform.evidence.store(tenantId, hash, bytes, signature.contentType);
   return { hash, bytes: bytes.length, contentType: signature.contentType };
 }
@@ -2319,6 +2321,10 @@ export const ROUTES: Route[] = [
           tenant: names.get(tenantId) ?? (tenantId === 'platform' ? 'Platform' : tenantId),
           verified: report.summary.VERIFIED,
           failures: report.failures.length,
+          // Events the chain vouches for whose recorded state hash is not the
+          // hash of their own patched state. Reported beside the chain, not
+          // as a break in it — the same judgement the ledger makes on restore.
+          discrepancies: report.discrepancies.length,
           chainHead: platform.ledger.chainHead(projectId),
         };
       });
@@ -5081,7 +5087,17 @@ export const ROUTES: Route[] = [
         // Which account this is about. A confirmation screen for an
         // irreversible act has to name the thing being destroyed, and the
         // session payload does not carry the address.
-        identity: { id: user.id, name: user.name, email: user.email, roles: user.roles },
+        // The two image hashes as well: the account page renders the picture
+        // and the cover from this payload, and without them a picture that
+        // had just been set still showed initials.
+        identity: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          roles: user.roles,
+          pictureHash: user.pictureHash,
+          coverHash: user.coverHash,
+        },
         requestedAt: user.erasureRequestedAt,
         dueAt: user.erasureDueAt,
         erasedAt: user.erasedAt,

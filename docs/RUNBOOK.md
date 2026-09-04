@@ -334,12 +334,18 @@ journalctl -u construx-deploy --since "2 hours ago" --no-pager | tail -60
 
 Every event carries three hashes: the state before, the state after, and
 the chain hash over the whole event including both. Replay recomputes all
-three. Builds before 4 September 2026 computed the after-state hash over
-the object in memory and then wrote JSON — so a `Date` or a `Buffer` in a
-proposal was hashed as one thing and written as another, and the journal
-refused to replay its own record (`JOURNAL_STATE_MISMATCH`, seen on
-construxvg.com at event 3634). The commit path now hashes the JSON that is
-written, so no new event can disagree with itself.
+three. Builds before 4 September 2026 could record an after-state hash the
+patch beside it cannot reproduce, in two ways. A restarted process held the
+ledger's own state objects in its working maps, and a routine in-place
+change (`user.status = 'SUSPENDED'` on seat revocation) rewrote the
+before-state the next commit diffed against — so the patch omitted the
+change and the hash included it (`JOURNAL_STATE_MISMATCH`, seen on
+construxvg.com at events 3634–3638, a tenancy closure on a restored
+process). And the hash was taken over the object in memory rather than the
+JSON written, so a `Date` or a `Buffer` in a proposal was hashed as one
+thing and written as another. The ledger now freezes every state it holds,
+the platform copies what it restores, and the commit path hashes the JSON
+that is written — no new event can disagree with itself.
 
 An event already written that way is not rewritten. On replay, where the
 chain hash verifies — proving the event is as written — and the recorded
@@ -356,6 +362,24 @@ An event whose chain hash does not verify is still refused, whatever its
 state hash says: that is an altered record, not a writer's arithmetic. The
 discrepancy stays on every boot as a matter of record; `docs/STATE.md`
 names the build that wrote it.
+
+The same events are named on the operator's screens, and the wording is
+deliberate. Audit logs shows the chain **intact** with a warning notice
+"Recorded state hashes that the events' own patches do not reproduce —
+Etablix: 4 events"; the Golden Thread replay panel counts them as
+"recorded-hash discrepancies (chain verified)". Neither says BROKEN or
+altered, because nothing was: an event that verifies against the chain is
+the event as written. A chain reported BROKEN is a different finding and a
+different section of this runbook.
+
+**If the estate screens answer `INTERNAL_ERROR` after a boot with
+discrepancies** (Tenants & users, Onboarding queue, Customer value,
+Predictive intel; the security stream shows `GET /v1/admin/tenants` and
+`/v1/admin/forecast` as 500): the journal was written by a build whose
+seat-revocation event dropped the subscription's package, and the restart
+rehydrated a subscription with none. Builds from 4 September 2026 derive
+the package from the tier on restore and write the package on every seat
+event; deploy the current build. Nothing in the journal needs editing.
 
 ## Health and observability
 

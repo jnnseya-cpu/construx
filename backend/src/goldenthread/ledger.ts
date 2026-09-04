@@ -74,13 +74,15 @@ function entityKey(ref: EntityRef): string {
   return `${ref.refType}:${ref.refId}`;
 }
 
-/** Canonical body used for chain hashing — excludes the chain fields themselves. */
 /**
  * An event whose chain hash verifies — it is the event as written — but whose
  * recorded state hash is not the hash of the state its own patch produces.
- * The one known cause is a value that JSON serialisation changed between the
- * hash and the write (a `Date`, a `Buffer`), which the commit path no longer
- * allows to happen. Reported at boot; the record is not rewritten.
+ * The cause seen in production: a restarted process held the ledger's own
+ * state object in its working maps, changed it in place, and the next commit
+ * diffed against the changed object — so the patch omitted the change and
+ * the hash included it. The ledger now freezes what it holds and the
+ * platform copies what it restores. Reported at boot; the record is not
+ * rewritten.
  */
 export type StateHashDiscrepancy = {
   index: number;
@@ -91,6 +93,20 @@ export type StateHashDiscrepancy = {
   computed: string;
 };
 
+/**
+ * The ledger's own copy of a state is nobody else's to change. Frozen all the
+ * way down, so `record.state.status = 'SUSPENDED'` throws where it is written
+ * instead of rewriting the before-state the next commit diffs against — which
+ * is how a production journal came to record a hash its own patch could not
+ * reproduce. Readers spread or clone; they never assign into it.
+ */
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  for (const key of Object.keys(value as Record<string, unknown>)) deepFreeze((value as Record<string, unknown>)[key]);
+  return Object.freeze(value);
+}
+
+/** Canonical body used for chain hashing — excludes the chain fields themselves. */
 function chainBody(event: GoldenThreadEvent): string {
   const { chainHash: _chain, previousChainHash: _previous, ...body } = event;
   return canonicalize(body);
@@ -271,7 +287,7 @@ export class GoldenThreadLedger {
       refId: input.entity.refId,
       tenantId: input.tenantId,
       projectId: input.projectId,
-      state: afterState,
+      state: deepFreeze(afterState),
       stateHash: afterHash,
       lastEventId: eventId,
       version: (existing?.version ?? 0) + 1,
@@ -384,7 +400,7 @@ export class GoldenThreadLedger {
         refId: event.entity.refId,
         tenantId: event.tenantId,
         projectId: event.projectId,
-        state: afterState,
+        state: deepFreeze(afterState),
         // The hash of the state as replayed — what the next commit chains
         // from, and what every commit from now on records, since the hash is
         // now taken over the JSON that is written.

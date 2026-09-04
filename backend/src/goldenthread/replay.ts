@@ -32,6 +32,15 @@ export type ReplayReport = {
   summary: Record<VerificationStatus, number>;
   eventsReplayed: number;
   failures: EventVerification[];
+  /**
+   * Events that verify against the chain but recorded a state hash their own
+   * patch does not reproduce. The same events `GoldenThreadLedger.restore`
+   * reports as discrepancies, judged the same way: the chain hash covers the
+   * patch and the recorded hash together, so an event that verifies is the
+   * event as written, and the disagreement is the writer's arithmetic. They
+   * do not fail the replay; they are named on it.
+   */
+  discrepancies: EventVerification[];
   entities: ReplayEntity[];
   evidenceIndex: Array<{ refType: string; refId: string; firstSeen: string; linkedEvents: string[] }>;
   redactionLog: Array<{ refType: string; refId: string; reason: string }>;
@@ -68,6 +77,7 @@ function emptySummary(): Record<VerificationStatus, number> {
     FAILED_CHAIN: 0,
     FAILED_CATALOG: 0,
     MISSING_EVIDENCE: 0,
+    STATE_HASH_DISCREPANCY: 0,
   };
 }
 
@@ -86,6 +96,7 @@ function verifyOne(
 
   // Chain first: a broken chain means events were removed or reordered, which
   // would make every downstream hash comparison meaningless.
+  let chainVerified = false;
   if (event.chainHash) {
     const { chainHash: _c, previousChainHash: _p, ...body } = event;
     const expectedChain = sha256(`${previousChainHash}\n${canonicalize(body)}`);
@@ -95,6 +106,7 @@ function verifyOne(
     if ((event.previousChainHash ?? EMPTY_STATE_HASH) !== previousChainHash) {
       return { status: 'FAILED_CHAIN', detail: 'Previous chain hash does not match ledger position' };
     }
+    chainVerified = true;
   }
 
   if (event.beforeHash !== currentHash) {
@@ -121,6 +133,19 @@ function verifyOne(
 
   const recomputed = hashState(nextState);
   if (recomputed !== event.afterHash) {
+    // With the chain verified, the event is the one that was written and the
+    // recorded hash is what its writer computed — over an object that had
+    // been changed in memory after the ledger took its copy. The ledger
+    // accepts the same event on restore and reports it; replay judges it the
+    // same way rather than calling the record altered. Without a chain hash
+    // there is nothing to vouch for the event, and the mismatch is a failure.
+    if (chainVerified) {
+      return {
+        status: 'STATE_HASH_DISCREPANCY',
+        detail: `Recorded afterHash ${event.afterHash} is not the hash of the patched state (${recomputed}); the chain hash verifies`,
+        nextState,
+      };
+    }
     return { status: 'FAILED_HASH', detail: `Recomputed afterHash ${recomputed} != stored ${event.afterHash}` };
   }
 
@@ -137,6 +162,7 @@ export function replayProject(
   const events = ledger.events({ tenantId, projectId, until: asAt });
   const summary = emptySummary();
   const failures: EventVerification[] = [];
+  const discrepancies: EventVerification[] = [];
 
   const states = new Map<string, { state: Record<string, unknown>; hash: string; lastEventId: string }>();
   const evidence = new Map<string, { refType: string; refId: string; firstSeen: string; linkedEvents: string[] }>();
@@ -149,7 +175,16 @@ export function replayProject(
     const result = verifyOne(event, current?.state, current?.hash ?? EMPTY_STATE_HASH, previousChainHash);
 
     summary[result.status] += 1;
-    if (result.status !== 'VERIFIED') {
+    if (result.status === 'STATE_HASH_DISCREPANCY') {
+      discrepancies.push({
+        eventId: event.eventId,
+        eventType: event.eventType,
+        entity: event.entity,
+        status: result.status,
+        detail: result.detail,
+      });
+    }
+    if (result.status !== 'VERIFIED' && result.status !== 'STATE_HASH_DISCREPANCY') {
       failures.push({
         eventId: event.eventId,
         eventType: event.eventType,
@@ -160,6 +195,8 @@ export function replayProject(
       // Stop advancing this entity, but keep verifying the rest of the log so the
       // report shows the full blast radius rather than only the first break.
     } else if (result.nextState) {
+      // The recorded hash, not the recomputed one: the next event on this
+      // entity chains from what its writer believed the state hashed to.
       states.set(key, { state: result.nextState, hash: event.afterHash, lastEventId: event.eventId });
     }
 
@@ -221,6 +258,7 @@ export function replayProject(
     summary,
     eventsReplayed: events.length,
     failures,
+    discrepancies,
     entities,
     evidenceIndex: [...evidence.values()].sort((a, b) => (a.refId < b.refId ? -1 : 1)),
     redactionLog,

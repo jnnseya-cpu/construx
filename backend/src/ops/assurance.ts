@@ -45,6 +45,13 @@ export type ProjectAssurance = {
   tenantId: string;
   verifiedAt: string;
   events: number;
+  /**
+   * Events the chain vouches for whose recorded state hash is not the hash of
+   * their own patched state. Not a divergence: the event is the one written,
+   * and its writer's arithmetic is what disagrees. Counted so the screen can
+   * say so rather than hide it inside "intact".
+   */
+  discrepancies?: number;
   /** Every event verified against its own hashes and its predecessor. */
   intact: boolean;
   /** What failed, where anything did. Empty on an intact chain. */
@@ -124,6 +131,7 @@ export function verifyProject(platform: Platform, tenantId: string, projectId: s
     verifiedAt: asAt,
     events: report.eventsReplayed,
     intact: divergences.length === 0,
+    discrepancies: report.discrepancies.length,
     divergences,
     rootHash: report.rootHash,
     durationMs: Date.now() - started,

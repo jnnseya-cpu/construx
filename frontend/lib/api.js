@@ -264,6 +264,46 @@ export async function hashFile(file) {
   return `sha256:${[...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
 
+/**
+ * Load the images on a rendered view that live behind the gateway.
+ *
+ * An `<img src="/v1/users/…/picture">` is fetched by the browser with no
+ * `Authorization` header, so the gateway refuses it and the picture never
+ * appears — an account picture that uploaded correctly, hashed correctly and
+ * was recorded correctly, and still showed initials. The bearer token lives in
+ * storage, not in a cookie, so the bytes are fetched here with it and handed
+ * to the element as an object URL. A view marks such an image with
+ * `data-authed-src` and calls this once it is in the document.
+ */
+async function hydrateImages(root) {
+  const images = [...(root ?? document).querySelectorAll('img[data-authed-src]')];
+  await Promise.all(
+    images.map(async (image) => {
+      const path = image.dataset.authedSrc;
+      const attempt = async (token) =>
+        fetch(path, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      try {
+        let response = await attempt(await freshToken());
+        if (response.status === 401) {
+          const token = await rotate();
+          if (token) response = await attempt(token);
+        }
+        if (!response.ok) {
+          // A refusal or an absence is not a broken image: the element is
+          // removed so the initials or the empty slot beside it show instead.
+          image.remove();
+          return;
+        }
+        const url = URL.createObjectURL(await response.blob());
+        image.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+        image.src = url;
+      } catch {
+        image.remove();
+      }
+    }),
+  );
+}
+
 export const api = {
   get: (path, options) => request('GET', path, undefined, options),
   /** A position read gated on the capability area, and sensitivity, it belongs to. */
@@ -276,6 +316,7 @@ export const api = {
   delete: (path, options) => request('DELETE', path, undefined, options),
   download,
   upload,
+  hydrateImages,
 };
 
 // --- domain helpers ---------------------------------------------------------
