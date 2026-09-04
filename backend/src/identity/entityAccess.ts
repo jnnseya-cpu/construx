@@ -119,6 +119,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   AccommodationRoom: { area: 'SITE_SERVICES' },
   BedAllocation: { area: 'SITE_SERVICES' },
   TransportJourney: { area: 'SITE_SERVICES' },
+  // §6 stage 8. What a project promoted, and the library it promoted into. A
+  // benchmark is a price and is commercial-in-confidence; a supplier's score
+  // and a package template are the company's own operating knowledge.
+  KnowledgePromotion: { area: 'SITE_SERVICES' },
+  LibrarySupplierScore: { area: 'SITE_SERVICES' },
+  LibraryBenchmark: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  LibraryPackageTemplate: { area: 'SITE_SERVICES' },
   // Accepted progress is the evidential half and is deliberately not
   // commercial: the people who record what the platform actually saw are the
   // ones running the operation, not the ones pricing it.

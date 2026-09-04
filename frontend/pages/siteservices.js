@@ -323,10 +323,25 @@ const DESK_COMMANDS = {
       summary: (result) => `${result.vehicle}: ${result.status.toLowerCase()}`,
     };
   },
+  promote: () => ({
+    title: 'Promote what this project learned',
+    intent:
+      'Supplier scores from engagements that reached Contracted or were suspended, price benchmarks from fully locked ' +
+      'tenders, and package templates. Every field is checked against the names on the appointment and the project, ' +
+      'and a field that names the customer is withheld and said so. Nothing already in the library goes up twice.',
+    path: `/v1/projects/${state.session.projectId}/site-services/library/promote`,
+    submitLabel: 'Promote',
+    fields: [{ name: 'note', label: 'Note', required: false, hint: 'Why now, if it is worth saying.' }],
+    done: 'Promoted',
+    summary: (result) =>
+      `${result.suppliers.length} supplier score${result.suppliers.length === 1 ? '' : 's'}, ${result.benchmarks.length} benchmark${result.benchmarks.length === 1 ? '' : 's'}, ${result.templates.length} template${result.templates.length === 1 ? '' : 's'}${
+        result.promotion.withheld.length > 0 ? ` · ${result.promotion.withheld.length} withheld, each with its reason` : ''
+      }`,
+  }),
 };
 
 export async function siteservices(root) {
-  const [position, readiness, structure, tower, factory, live, commercial, changes, closeout, cash, eac, desk, portfolio] = await Promise.all([
+  const [position, readiness, structure, tower, factory, live, commercial, changes, closeout, cash, eac, desk, portfolio, library] = await Promise.all([
     api.get(`/v1/projects/${state.session.projectId}/site-services/appointment`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/brief`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/sbs`).catch((error) => ({ error })),
@@ -340,6 +355,7 @@ export async function siteservices(root) {
     api.get(`/v1/projects/${state.session.projectId}/site-services/eac`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/desk`).catch((error) => ({ error })),
     api.get('/v1/site-services/portfolio').catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/library`).catch((error) => ({ error })),
   ]);
 
   // §13 and §17. Separate from the block above because the workspace is chosen
@@ -644,6 +660,7 @@ export async function siteservices(root) {
           { id: 'journey', label: 'Schedule a journey', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
           { id: 'book', label: 'Book a seat', permitted: can('SITE_SERVICES', 'U'), reason: blockedReason('SITE_SERVICES', 'U') },
           { id: 'journeystatus', label: 'Move a journey on', permitted: can('SITE_SERVICES', 'U'), reason: blockedReason('SITE_SERVICES', 'U') },
+          { id: 'promote', label: 'Promote what this project learned', permitted: can('SITE_SERVICES', 'A'), reason: blockedReason('SITE_SERVICES', 'A') },
           {
             id: 'credit',
             label: 'Raise a service credit',
@@ -866,6 +883,8 @@ export async function siteservices(root) {
 
       ${workflow.error ? refusal('The workflow engine', workflow.error) : workflowCard(workflow)}
 
+      ${library.error ? refusal('The knowledge library', library.error) : libraryCard(library)}
+
       ${commandCentreCard(centre, factory)}
 
       ${automation.error ? refusal('The automation measure', automation.error) : automationCard(automation)}
@@ -919,7 +938,7 @@ export async function siteservices(root) {
     const which = button.dataset.command;
 
     // §13's record families: one spec each, the same panel as every other door.
-    const extra = DESK_COMMANDS[which]?.({ commercial, cash, desk, structure });
+    const extra = DESK_COMMANDS[which]?.({ commercial, cash, desk, structure, library });
     if (extra) {
       if (extra.blocked) {
         toast(extra.blocked.title, extra.blocked.detail, 'warn');
@@ -4577,6 +4596,120 @@ function deskCard(desk) {
           empty: 'No unit registered.',
         })}
       </div>
+    </div>
+  `;
+}
+
+/**
+ * §6 stage 8 — the knowledge library, read against this project.
+ *
+ * Three tables the next job is meant to open with, and beneath them what the
+ * library says about *this* project's own firms and prices. A benchmark is a
+ * price, so it is withheld from a reader without commercial standing and the
+ * card says so rather than showing an empty table.
+ */
+function libraryCard(library) {
+  const applied = library.applied;
+  const promotions = library.promotions;
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>The knowledge library</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">${library.statement}</div>
+      <section class="grid g4" style="margin-bottom:14px">
+        <div class="card"><h2>Suppliers scored</h2><div class="metric">${library.suppliers.length}</div><div class="metric-sub">written back from engagements that reached contract or were suspended</div></div>
+        <div class="card"><h2>Price benchmarks</h2><div class="metric">${library.benchmarks ? library.benchmarks.length : '—'}</div><div class="metric-sub">${library.benchmarks ? 'median compliant rates from fully locked tenders, no bidder named' : 'withheld without commercial standing'}</div></div>
+        <div class="card"><h2>Package templates</h2><div class="metric">${library.templates.length}</div><div class="metric-sub">the seven stated fields, the customer’s names withheld</div></div>
+        <div class="card"><h2>Promoted from here</h2><div class="metric">${promotions.length}</div><div class="metric-sub">${promotions.length > 0 ? `last ${promotions.at(-1).promotedAt.slice(0, 10)} · checked against ${promotions.at(-1).checkedAgainst.length} name${promotions.at(-1).checkedAgainst.length === 1 ? '' : 's'}` : 'nothing yet'}</div></div>
+      </section>
+      <div class="grid g-2-1">
+        <div>
+          <h2>Supplier scores</h2>
+          ${table({
+            headers: ['Firm', 'Score', 'Engagements', 'To contract', 'To operation', 'Suspensions', 'Deliveries'],
+            align: ['', 'num', 'num', 'num', 'num', 'num', ''],
+            rows: library.suppliers.map((entry) => [
+              entry.supplierName,
+              html`<b class="${raw(entry.score >= 80 ? 'ok' : entry.score >= 50 ? 'warn' : 'bad')}">${String(entry.score)}</b>`,
+              String(entry.engagements),
+              String(entry.contracted),
+              String(entry.operational),
+              String(entry.suspensions),
+              `${entry.deliveries.checked} checked · ${entry.deliveries.short} short · ${entry.deliveries.refused} refused`,
+            ]),
+            empty: 'No firm has a score yet. One is written back when a project promotes an engagement that reached Contracted or was suspended.',
+          })}
+        </div>
+        <div>
+          <h2>Templates</h2>
+          ${table({
+            headers: ['Families', 'Fields', 'Used'],
+            align: ['', 'num', 'num'],
+            rows: library.templates.map((entry) => [
+              entry.label,
+              `${Object.keys(entry.stated).length}${entry.withheldFields.length > 0 ? ` (${entry.withheldFields.join(', ')} withheld last time)` : ''}`,
+              String(entry.uses),
+            ]),
+            empty: 'No template yet. One is promoted from a package that went to tender.',
+          })}
+        </div>
+      </div>
+      <div style="margin-top:14px">
+        <h2>Price benchmarks</h2>
+        ${library.benchmarks
+          ? table({
+              headers: ['Family', 'Item', 'Unit', 'Low', 'Median', 'High', 'Packages', 'Returns'],
+              align: ['', '', '', 'num', 'num', 'num', 'num', 'num'],
+              rows: library.benchmarks.map((entry) => [
+                entry.familyLabel,
+                entry.description,
+                entry.unit,
+                money(entry.lowMinor),
+                money(entry.medianMinor),
+                money(entry.highMinor),
+                String(entry.packages),
+                String(entry.returns),
+              ]),
+              empty: 'No benchmark yet. One is promoted per schedule item from a tender with every return locked and at least two compliant prices.',
+            })
+          : html`<div class="notice info"><div>${library.benchmarksWithheld}</div></div>`}
+      </div>
+      ${applied.packages.length > 0
+        ? html`<div style="margin-top:14px">
+            <h2>This project against the library</h2>
+            ${applied.packages.map(
+              (pkg) => html`<div class="metric-sub" style="margin:6px 0"><b>${pkg.reference}</b></div>
+                ${table({
+                  headers: ['Item', 'Field median', 'Library median', 'Variance', 'Samples'],
+                  align: ['', 'num', 'num', 'num', 'num'],
+                  rows: pkg.items.map((item) => [
+                    item.description,
+                    money(item.fieldMedianMinor),
+                    money(item.libraryMedianMinor),
+                    html`<span class="${raw(Math.abs(item.variancePercent) > 15 ? 'warn' : '')}">${item.variancePercent > 0 ? '+' : ''}${String(item.variancePercent)}%</span>`,
+                    String(item.samples),
+                  ]),
+                })}`,
+            )}
+          </div>`
+        : ''}
+      ${applied.suppliers.length > 0
+        ? html`<div style="margin-top:14px">
+            <h2>This project’s firms, as the library knows them</h2>
+            ${table({
+              headers: ['Firm', 'Here', 'Library score', 'Engagements scored'],
+              align: ['', '', 'num', 'num'],
+              rows: applied.suppliers.map((entry) => [
+                entry.supplierName,
+                badge(entry.state.toLowerCase().replaceAll('_', ' '), entry.state === 'SUSPENDED_RECOVERY' ? 'bad' : 'info'),
+                entry.score === undefined ? '—' : String(entry.score),
+                entry.engagements === undefined ? 'never scored' : String(entry.engagements),
+              ]),
+            })}
+          </div>`
+        : ''}
+      ${promotions.length > 0 && promotions.at(-1).withheld.length > 0
+        ? html`<div class="metric-sub" style="margin-top:10px">Withheld at the last promotion: ${promotions.at(-1).withheld.map((entry) => `${entry.what} — ${entry.why}`).join(' · ')}</div>`
+        : ''}
     </div>
   `;
 }

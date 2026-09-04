@@ -1915,6 +1915,18 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('DEMOBILISATION_OPENED', 'DemobilisationRecord', 'CREATE', 'DELIVERY', { aiAllowed: true, creates: true }),
   def('DEMOBILISATION_EVIDENCED', 'DemobilisationRecord', 'UPDATE', 'DELIVERY', { aiAllowed: true }),
   def('DEMOBILISATION_ACCEPTED', 'DemobilisationRecord', 'APPROVE', 'DELIVERY'),
+
+  // §6 stage 8 — the knowledge library.
+  //
+  // Promoting is the supervised act on the project: a person decides that
+  // what this job learned may leave it. The three library records it writes
+  // are derived from records that already exist, on the tenancy's governance
+  // project, and each is an upsert — one score per firm, one benchmark per
+  // family and item, one template per family set — so they carry `creates`.
+  def('KNOWLEDGE_PROMOTED', 'KnowledgePromotion', 'CREATE', 'PROCUREMENT', { aiAllowed: true, creates: true }),
+  def('LIBRARY_SUPPLIER_SCORED', 'LibrarySupplierScore', 'UPDATE', 'PROCUREMENT', { aiAllowed: true, creates: true }),
+  def('LIBRARY_BENCHMARK_PROMOTED', 'LibraryBenchmark', 'UPDATE', 'PROCUREMENT', { aiAllowed: true, creates: true }),
+  def('LIBRARY_TEMPLATE_PROMOTED', 'LibraryPackageTemplate', 'UPDATE', 'PROCUREMENT', { aiAllowed: true, creates: true }),
 ];
 
 /**

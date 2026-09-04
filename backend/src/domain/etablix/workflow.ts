@@ -8,6 +8,7 @@ import { procurementPosition } from './procurement.ts';
 import { operationsPosition } from './operations.ts';
 import { changePosition } from './change.ts';
 import { demobilisationPosition } from './demobilisation.ts';
+import { promotionsOf } from './library.ts';
 
 /**
  * §6 — the end-to-end workflow engine.
@@ -555,13 +556,24 @@ export function workflowPosition(ctx: EngineContext, today?: string): WorkflowPo
         : 'The closeout is not complete.',
     ),
   ];
+  const promotions = promotionsOf(ctx);
+  const promoted = promotions.reduce(
+    (sum, entry) => ({
+      suppliers: sum.suppliers + entry.suppliers.length,
+      benchmarks: sum.benchmarks + entry.benchmarks.reduce((items, benchmark) => items + benchmark.items, 0),
+      templates: sum.templates + entry.templates.length,
+    }),
+    { suppliers: 0, benchmarks: 0, templates: 0 },
+  );
   const learnExit = [
-    condition(
+    derived(
       'knowledgePromoted',
       'Sanitised knowledge is promoted to the ETABLIX library',
       'The module’s stated advantage is that each project improves the next brief, tender and operating baseline without exposing one customer’s data to another. Without the library that is a claim rather than a mechanism.',
-      'NOT_DERIVABLE',
-      'Not built. There is no ETABLIX knowledge library: no site-services supplier score is written back from an engagement, no price benchmark is promoted out of a normalisation, and no reusable package template exists. §7 normalises bids within a project and nothing carries the result forward. This is the one stage of the nine with no authoritative record behind it.',
+      promotions.length > 0,
+      promotions.length > 0
+        ? `Promoted ${promotions.length} time${promotions.length === 1 ? '' : 's'}: ${promoted.suppliers} supplier score${promoted.suppliers === 1 ? '' : 's'}, ${promoted.benchmarks} price benchmark${promoted.benchmarks === 1 ? '' : 's'}, ${promoted.templates} package template${promoted.templates === 1 ? '' : 's'}, each checked against the names on the appointment and the project.`
+        : 'Nothing has been promoted to the library from this project. Promotion carries supplier scores from engagements that reached Contracted, price benchmarks from fully locked tenders, and package templates with the customer’s names withheld.',
     ),
   ];
 

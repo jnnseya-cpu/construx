@@ -265,6 +265,14 @@ export const ACTIVITIES: Record<string, ActivityDefinition> = {
   DEMOBILISATION_OPENED: { class: 'A', workflow: 'DEMOBILISATION' },
   DEMOBILISATION_EVIDENCED: { class: 'A', workflow: 'DEMOBILISATION' },
   DEMOBILISATION_ACCEPTED: { class: 'C', workflow: 'DEMOBILISATION' },
+
+  // §6 stage 8 — the library. Deciding that what a job learned may leave it
+  // is supervised; the three records the decision derives are recording, and
+  // they feed the next procurement, which is where they are counted.
+  KNOWLEDGE_PROMOTED: { class: 'B', workflow: 'PROCUREMENT' },
+  LIBRARY_SUPPLIER_SCORED: { class: 'A', workflow: 'PROCUREMENT' },
+  LIBRARY_BENCHMARK_PROMOTED: { class: 'A', workflow: 'PROCUREMENT' },
+  LIBRARY_TEMPLATE_PROMOTED: { class: 'A', workflow: 'PROCUREMENT' },
 };
 
 /** §17's stabilised target for the agent-driven activity ratio. */

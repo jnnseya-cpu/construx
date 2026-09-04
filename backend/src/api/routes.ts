@@ -102,6 +102,7 @@ import * as siteCommercial from '../domain/etablix/commercial.ts';
 import * as siteChange from '../domain/etablix/change.ts';
 import * as siteCash from '../domain/etablix/cash.ts';
 import * as siteDesk from '../domain/etablix/desk.ts';
+import * as siteLibrary from '../domain/etablix/library.ts';
 import * as siteDemob from '../domain/etablix/demobilisation.ts';
 import * as siteCommand from '../domain/etablix/commandcentre.ts';
 import * as siteWorkflow from '../domain/etablix/workflow.ts';
@@ -8489,6 +8490,24 @@ export const ROUTES: Route[] = [
     readOnly: true,
     description: 'Every project of this company’s site-services position at once, through the same reads each project uses',
     handler: (platform, ctx) => siteCash.portfolioRollUp(platform, auth(ctx), ctx.query.get('today') ?? undefined),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/library',
+    readOnly: true,
+    description: 'The ETABLIX knowledge library read against this project: supplier scores, price benchmarks, package templates, and what this project has promoted',
+    handler: (platform, ctx) => siteLibrary.libraryPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/library/promote',
+    description: 'Promote what this project has learned into the library, checked against the names on the appointment and the project',
+    schema: {
+      type: 'object',
+      properties: { note: { type: 'string', maxLength: 1000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteLibrary.promoteKnowledge(projectContext(platform, ctx), body<{ note?: string }>(ctx)),
   },
   {
     method: 'GET',

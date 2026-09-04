@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,729 passing, 0 failing, 0 skipped, across 249 files · plus 18 against a live Postgres 16 |
+| Tests | 5,740 passing, 0 failing, 0 skipped, across 250 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
-| Backend | 291 TypeScript files, 187,100 lines |
-| Application | 76 ES modules, 42,800 lines (including a service worker) |
-| API routes | 1,048 — 719 writes, 329 reads (48 of them public) |
-| Event types | 706 Golden Thread (closed) · the communication catalogue is separate and closed |
-| Entity types | 324, all classified for access |
+| Backend | 292 TypeScript files, 187,700 lines |
+| Application | 76 ES modules, 42,900 lines (including a service worker) |
+| API routes | 1,050 — 720 writes, 330 reads (48 of them public) |
+| Event types | 710 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Entity types | 328, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
@@ -8600,6 +8600,56 @@ move a journey on) are Class A and agent-authorable in the catalogue; taking
 a room out of service, drawing on contingency and recording money are Class
 B; setting or resetting the pot is Class C.
 
+## The knowledge library, built
+
+Stage 8 of the nine had no record behind it. `domain/etablix/library.ts`
+holds three, on the tenancy's governance project beside the supply-chain
+register and the frameworks, because they are the company's knowledge and
+not any one project's.
+
+**A supplier score** is written back from an engagement that reached
+Contracted or was suspended: engagements, how many reached contract, how
+many reached operation, suspensions, and what the gate found when the firm's
+lorries arrived (deliveries checked, short, refused, matched on the
+supplier's name under either spelling). The score is arithmetic over those
+counts and is published beside them; a firm that never reached Contracted
+has no performance to score and the promotion says so.
+
+**A price benchmark** is promoted out of a normalisation per family and
+schedule item: the median compliant rate of a field with every return locked
+and at least two compliant prices, and nothing else. No bidder, no project,
+no customer. Each promotion of the same item is another sample, and the
+library reads low, median and high across them.
+
+**A package template** is the seven stated fields of a package that went to
+tender, each checked against the project's name, the contracting entity and
+the funding source on the appointment. A field that names one is withheld
+and the withholding is on the promotion record; a later clean promotion fills
+it. Nothing is silently rewritten.
+
+Promotion is one supervised act on the project (`KNOWLEDGE_PROMOTED`, Class
+B), idempotent per record: a second promotion carries only what is new and
+is refused with the reason when nothing is. The three library writes are
+upserts (`LIBRARY_SUPPLIER_SCORED`, `LIBRARY_BENCHMARK_PROMOTED`,
+`LIBRARY_TEMPLATE_PROMOTED`, Class A). The library read is per project and
+also says what the library knows about *this* project: every tendered
+package's field median against the library median with the variance, and
+every engaged firm's library score. A benchmark is a price, so a reader
+without commercial standing is told it is withheld rather than shown an
+empty table. The Learn gate is derived from the promotion record. Routes
+`GET /v1/projects/:projectId/site-services/library` and
+`POST .../library/promote`; the Site Services screen carries the library
+card and "Promote what this project learned", driven in Chromium.
+`etablix.library.test.ts` proves the sanitisation by searching every
+promoted record for the project id, the project name, the contracting
+entity and the funding source rather than by trusting the code that strips
+them.
+
+What the library still does not do: promote a supplier score automatically
+when an engagement closes (promotion is a person's act, by design), or carry
+failure patterns from service events (§6 names them; no record of a pattern
+exists yet, only the events).
+
 ## What is partial
 
 Implemented in a form that works, with a stated part missing. The missing part is
@@ -8682,7 +8732,7 @@ count.
 
 | Gap | Where it is stated | What is actually missing |
 |---|---|---|
-| **The knowledge library** (§6 stage 8, §1's stated advantage) | The workflow card, as `NOT DERIVABLE` — the only such gate in the nine | No site-services supplier score written back from an engagement, no price benchmark promoted out of a normalisation, no reusable package template. §7 normalises bids inside a project and nothing carries the result forward |
+| ~~**The knowledge library**~~ (§6 stage 8, §1's stated advantage) | Built — `etablix/library.ts` | Supplier scores written back from engagements that reached Contracted or were suspended, with what the gate found; the median compliant rate of a fully locked field promoted per family and item with no bidder on it; the seven stated fields promoted as a template with any field naming the customer withheld and said so. The Learn gate is derived from the promotion record, and every gate of the nine is now answerable |
 | ~~**Room, bed and allocation records**~~ (§13 Accommodation Desk) | Built — `etablix/desk.ts` | Rooms registered beneath the composed accommodation system, beds allocated by name for dated nights, check-in and check-out, a vacated room sent to cleaning by the record, inventory read against the brief's bed demand |
 | ~~**Transport journeys**~~ (§13 Accommodation Desk) | Built — `etablix/desk.ts` | Journeys with a vehicle, route, departure and seats; seats booked by name never beyond the seats; departed, arrived or cancelled with a reason; today's load factor |
 | ~~**QR asset scan and delivery check**~~ (§13 Field Mobile) | Built — `etablix/desk.ts` | Units registered under their system with the tag their code carries; a scan resolves the tag and records state and location; deliveries scheduled and checked in as received, short with the discrepancy, or refused |
@@ -15231,15 +15281,16 @@ records behind it true.
 A condition is **satisfied**, **outstanding**, or **not derivable**, and the
 third is what keeps it honest.
 
-Stage 8's exit is "sanitised knowledge promoted to the ETABLIX library", and
-there is no library: no site-services supplier score is written back from an
-engagement, no price benchmark is promoted out of a normalisation, no reusable
-package template exists. §7 normalises bids inside a project and nothing carries
-the result forward. Reporting that as outstanding would tell somebody they have
-work to do; *not derivable* tells them the platform cannot answer the question.
-**It is the one stage of the nine with no authoritative record behind it**, and a
-test asserts it is the only one — so building the library makes that assertion
-fail and forces the count down.
+Stage 8's exit is "sanitised knowledge promoted to the ETABLIX library". Until
+`etablix/library.ts` existed there was no library, and the gate said *not
+derivable* rather than *outstanding*: reporting it as outstanding would have told
+somebody they had work to do when the platform could not answer the question.
+It was the one stage of the nine with no authoritative record behind it, and a
+test asserted it was the only one, so that building the library would make the
+assertion fail and force the count down. It did. The gate is now derived from
+this project's promotion record (see *The knowledge library, built* above), and
+the test asserts that a reader with commercial standing gets an answer to every
+gate of the nine.
 
 The same distinction carries the commercial gates. A site manager reading the
 workflow gets "the month is commercially accepted" as withheld rather than as

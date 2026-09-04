@@ -671,21 +671,22 @@ describe('§6 walked end to end', () => {
 });
 
 describe('§6 what a gate is allowed to say', () => {
-  it('reports the knowledge library as not derivable rather than as outstanding', () => {
+  it('reports the knowledge library as outstanding until this project promotes into it', () => {
     appoint();
     const learn = stage(workflowPosition(as('pm'), '2026-10-20'), 'LEARN');
-    assert.equal(learn.exit[0]!.outcome, 'NOT_DERIVABLE');
-    assert.match(learn.exit[0]!.detail, /Not built/);
-    assert.match(learn.exit[0]!.detail, /no site-services supplier score is written back/);
-    assert.match(learn.exit[0]!.detail, /the one stage of the nine with no authoritative record behind it/);
+    assert.equal(learn.exit[0]!.outcome, 'OUTSTANDING');
+    assert.match(learn.exit[0]!.detail, /Nothing has been promoted to the library from this project/);
+    assert.match(learn.exit[0]!.detail, /customer’s names withheld/);
   });
 
-  it('is the only gate in the nine that cannot be answered at all', () => {
+  it('answers every one of the nine stages’ gates for a reader with commercial standing', () => {
+    // The library gate was the one gate of the nine with no record behind it.
+    // `etablix.library.test.ts` proves the record; this proves the gate reads it.
     appoint();
     const undecidable = workflowPosition(as('pm'), '2026-10-20').stages.flatMap((entry) =>
       [...entry.entry, ...entry.exit].filter((gate) => gate.outcome === 'NOT_DERIVABLE').map((gate) => gate.id),
     );
-    assert.deepEqual(undecidable, ['knowledgePromoted']);
+    assert.deepEqual(undecidable, []);
   });
 
   it('gives every condition a reason it exists that is not a restatement of the label', () => {
