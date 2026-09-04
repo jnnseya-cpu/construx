@@ -49,6 +49,14 @@ const COMMANDS = {
       },
     ],
   }),
+  chains: () => ({
+    title: 'Sweep for chain breaks now',
+    intent:
+      'Runs the commercial escalation over every open customer project, the same pass the hourly timer runs. A break already carrying an open exception is not raised twice; a link that traces again closes its exception. What is raised goes to each tenancy’s own commercial roles — you see the counts, never their findings.',
+    path: '/v1/admin/consistency-sweep/run',
+    submitLabel: 'Sweep now',
+    fields: [],
+  }),
   evaluate: () => ({
     title: 'Evaluate every watch rule now',
     intent:
@@ -85,7 +93,7 @@ export async function operations(root) {
   // collector configured still has chains to prove. A failed panel says so
   // rather than rendering as an empty one, because "nothing to report" and
   // "this is broken" must never look the same.
-  const [assurance, watch, repair, egress, fleet, ladder, retention] = await Promise.all([
+  const [assurance, watch, repair, egress, fleet, ladder, retention, chainSweep] = await Promise.all([
     api.get('/v1/admin/assurance').catch((error) => ({ error })),
     api.get('/v1/admin/watch').catch((error) => ({ error })),
     api.get('/v1/admin/repair').catch((error) => ({ error })),
@@ -102,6 +110,7 @@ export async function operations(root) {
     isOperator()
       ? Promise.resolve({ error: { status: 403, message: 'Platform operators are barred from customer delivery data' } })
       : api.get('/v1/evidence/retention').catch((error) => ({ error })),
+    api.get('/v1/admin/consistency-sweep').catch((error) => ({ error })),
   ]);
 
   const failed = (panel) => (panel && panel.error ? panel.error.message ?? 'This could not be read' : null);
@@ -128,6 +137,7 @@ export async function operations(root) {
           ${raw(
             commandBar([
               { id: 'sweep', label: 'Verify chains now', permitted: true },
+              { id: 'chains', label: 'Sweep chain breaks', permitted: true },
               { id: 'evaluate', label: 'Evaluate rules', permitted: true },
               { id: 'repair', label: 'Repair pass', permitted: true },
               { id: 'flush', label: 'Flush telemetry', permitted: true },
@@ -166,6 +176,28 @@ export async function operations(root) {
             </div>
           </div>`
         : ''}
+
+      <section class="card">
+        <h3>Chain-break sweep</h3>
+        ${chainSweep.error
+          ? refusal('Chain-break sweep', chainSweep.error)
+          : html`
+              <div class="grid g4">
+                <div class="metric"><span>Open exceptions on the estate</span><strong>${chainSweep.openExceptions ?? 0}</strong></div>
+                <div class="metric"><span>Projects checked last pass</span><strong>${chainSweep.last?.projectsChecked ?? '—'}</strong></div>
+                <div class="metric"><span>Raised last pass</span><strong>${chainSweep.last ? chainSweep.last.raised.length : '—'}</strong></div>
+                <div class="metric"><span>Skipped last pass</span><strong>${chainSweep.last ? chainSweep.last.skipped.length : '—'}</strong></div>
+              </div>
+              <p class="metric-sub">
+                ${chainSweep.enabled
+                  ? `Escalating breaks in the bid-to-CVR data flow every ${chainSweep.intervalMinutes} minutes, on every open customer project, to that tenancy’s own commercial roles. Last pass ${chainSweep.last ? time(chainSweep.last.at) : 'not yet run on this process'}.`
+                  : 'The sweep is off (OPS_CONSISTENCY_SWEEP_MINUTES=0). A break is raised only when somebody opens the commercial position.'}
+                ${chainSweep.last && chainSweep.last.skipped.length > 0
+                  ? ` Skipped: ${chainSweep.last.skipped.map((entry) => `${entry.projectId} (${entry.because})`).join('; ')}.`
+                  : ''}
+              </p>
+            `}
+      </section>
 
       <section class="card">
         <h3>Chain assurance</h3>

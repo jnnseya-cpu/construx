@@ -1,9 +1,9 @@
 import { config } from '../config.ts';
 import { ulid } from '../core/ids.ts';
-import { ConflictError } from '../core/errors.ts';
+import { ConflictError, DomainError } from '../core/errors.ts';
 import type { Platform } from '../platform.ts';
 import { PLATFORM_TENANT_ID } from '../platform.ts';
-import { MARKETING_PROJECT_ID, resolveAudience, unsubscribeUrl, type Exclusion, type Recipient } from './audience.ts';
+import { MARKETING_PROJECT_ID, resolveAudience, suppressedAddresses, unsubscribeUrl, type Exclusion, type Recipient, type Suppression } from './audience.ts';
 import { FEATURES, featuresFor } from './content.ts';
 import { buildMime, renderCampaign, type CampaignCopy } from './render.ts';
 import { sendMail } from './smtp.ts';
@@ -38,6 +38,12 @@ export type Delivery = {
   attemptedAt: string;
   /** Server response or error text. Verbatim, because a summary loses the cause. */
   detail: string;
+  /**
+   * For a failure: whether the relay refused for good (a 5xx reply — no such
+   * user, domain gone) or for now (4xx, or the connection). A permanent refusal
+   * suppresses the address; a transient one is retried on the next issue.
+   */
+  failure?: 'PERMANENT' | 'TRANSIENT';
 };
 
 export type Campaign = {
@@ -147,6 +153,60 @@ export function previewFor(recipient: Recipient, week = isoWeek(new Date())) {
 
 // --- Issuing ----------------------------------------------------------------
 
+/** Record a permanent refusal against the address. One active record per address. */
+function suppressAddress(platform: Platform, recipient: Recipient, campaignId: string, detail: string): void {
+  const email = recipient.email.trim().toLowerCase();
+  if (suppressedAddresses(platform).has(email)) return;
+  const suppression: Suppression = {
+    id: ulid(),
+    email,
+    userId: recipient.userId,
+    campaignId,
+    detail,
+    status: 'ACTIVE',
+    suppressedAt: new Date().toISOString(),
+  };
+  platform.ledger.commit({
+    tenantId: PLATFORM_TENANT_ID,
+    projectId: MARKETING_PROJECT_ID,
+    actor: { refType: 'System', refId: 'platform' },
+    source: 'SYSTEM',
+    correlationId: campaignId,
+    eventType: 'NEWSLETTER_ADDRESS_SUPPRESSED',
+    entity: { refType: 'NewsletterSuppression', refId: suppression.id },
+    nextState: suppression as unknown as Record<string, unknown>,
+  });
+}
+
+/**
+ * Lift a suppression, so the next issue tries the address again.
+ *
+ * An operator's act, recorded under their name: the relay said the address
+ * was gone, and somebody has decided it is worth another attempt — after the
+ * person changed it, or the domain came back. The record of the refusal stays.
+ */
+export function clearSuppression(
+  platform: Platform,
+  actorId: string,
+  userId: string,
+): { suppression: Suppression; cleared: true } {
+  const user = platform.user(userId);
+  const active = suppressedAddresses(platform).get(user.email.trim().toLowerCase());
+  if (!active) throw new DomainError('NOT_SUPPRESSED', `${user.name} is not suppressed.`, 404);
+  const cleared: Suppression = { ...active, status: 'CLEARED', clearedAt: new Date().toISOString(), clearedBy: actorId };
+  platform.ledger.commit({
+    tenantId: PLATFORM_TENANT_ID,
+    projectId: MARKETING_PROJECT_ID,
+    actor: { refType: 'User', refId: actorId },
+    source: 'WEB',
+    correlationId: cleared.id,
+    eventType: 'NEWSLETTER_SUPPRESSION_CLEARED',
+    entity: { refType: 'NewsletterSuppression', refId: cleared.id },
+    nextState: cleared as unknown as Record<string, unknown>,
+  });
+  return { suppression: cleared, cleared: true };
+}
+
 function recordDelivery(platform: Platform, delivery: Delivery): void {
   platform.ledger.commit({
     tenantId: PLATFORM_TENANT_ID,
@@ -169,7 +229,18 @@ function recordDelivery(platform: Platform, delivery: Delivery): void {
  */
 export async function issueNewsletter(
   platform: Platform,
-  options: { issuedBy: string; week?: string; force?: boolean } = { issuedBy: 'scheduler' },
+  options: {
+    issuedBy: string;
+    week?: string;
+    force?: boolean;
+    /**
+     * The submission, where a test supplies one. Absent, the configured SMTP
+     * relay is used and the channel follows `SMTP_HOST`. Present, the channel
+     * is SMTP whatever the configuration says — the point is to exercise the
+     * relay's answers without a relay.
+     */
+    transport?: { send: typeof sendMail };
+  } = { issuedBy: 'scheduler' },
 ): Promise<IssueReport> {
   const week = options.week ?? isoWeek(new Date());
   const existing = campaignForWeek(platform, week);
@@ -198,7 +269,7 @@ export async function issueNewsletter(
 
   const copy = copyForWeek(week);
   const { recipients, excluded } = resolveAudience(platform);
-  const channel: Campaign['channel'] = config.smtp.host ? 'SMTP' : 'RECORD_ONLY';
+  const channel: Campaign['channel'] = options.transport || config.smtp.host ? 'SMTP' : 'RECORD_ONLY';
 
   const campaign: Campaign = existing ?? {
     id: ulid(),
@@ -266,7 +337,8 @@ export async function issueNewsletter(
 
     if (channel === 'SMTP') {
       try {
-        const result = await sendMail({ from: config.newsletter.fromAddress, to: recipient.email, raw });
+        const send = options.transport?.send ?? sendMail;
+        const result = await send({ from: config.newsletter.fromAddress, to: recipient.email, raw });
         delivery.status = 'SENT';
         delivery.detail = result.response;
       } catch (error) {
@@ -274,6 +346,12 @@ export async function issueNewsletter(
         // the recipient so a retry knows exactly who to try again.
         delivery.status = 'FAILED';
         delivery.detail = error instanceof Error ? error.message : String(error);
+        const code = (error as { code?: unknown }).code;
+        delivery.failure = code === 'SMTP_PERMANENT' ? 'PERMANENT' : 'TRANSIENT';
+        // A permanent refusal is the relay saying the address does not exist.
+        // Sending to it again next week is how a sender gets blocklisted, so
+        // the address is suppressed until an operator lifts it deliberately.
+        if (delivery.failure === 'PERMANENT') suppressAddress(platform, recipient, campaign.id, delivery.detail);
       }
       if (config.newsletter.throttleMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, config.newsletter.throttleMs));

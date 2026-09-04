@@ -15,16 +15,21 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 3,931 passing, 0 failing, 0 skipped, across 176 files · plus 18 against a live Postgres 16 |
+| Tests | 5,707 passing, 0 failing, 0 skipped, across 248 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
-| Backend | 214 TypeScript files, 132,384 lines |
-| Application | 70 ES modules, 26,634 lines (including a service worker) |
-| API routes | 763 — 521 writes, 242 reads (26 of them public) |
-| Event types | 518 Golden Thread (closed) · 180 communication events (closed) |
-| Entity types | 241, all classified for access |
-| Agents | 57 across 9 divisions — 48 deployed, 9 declared with what each is waiting on |
+| Backend | 289 TypeScript files, 185,600 lines |
+| Application | 76 ES modules, 42,300 lines (including a service worker) |
+| API routes | 1,029 — 704 writes, 325 reads (48 of them public) |
+| Event types | 690 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Entity types | 317, all classified for access |
+| Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
+
+Counted from the tree on 4 September 2026 (`npm test`, `wc`, and the
+`ROUTES`, `EVENT_TYPES`, `ENTITY_ACCESS` and `AGENTS` tables at import). The
+figures drift as the work below lands; the Blueprint screen counts the same
+tables from the running process and is the live figure.
 
 Run: `npm test`, `npm run typecheck`, `npm start` (landing at `/`, app at `/app`).
 
@@ -8493,6 +8498,44 @@ enterprise policy accepts. No per-person exemption from the tenancy policy.
 
 ---
 
+## What was still open, closed
+
+Three things this file had named as not built, and one it had let go stale.
+
+**The chain-break sweep.** `consistency.escalateChainBreaks` ran only when
+somebody opened the commercial position or called its route, so a break on a
+project nobody had open was raised the next time somebody looked. `ops/consistencysweep.ts`
+runs the same escalation on a timer (`OPS_CONSISTENCY_SWEEP_MINUTES`, default
+60, 0 off) over every open project of every customer tenancy, under a system
+actor holding a Commercial Manager's read authority and that role's own
+scopes, recorded on the chain as `system:consistency-sweep`. A break already
+carrying an open exception is not raised twice; a link that traces again
+closes its exception; every exception raised is notified to the tenancy's
+own commercial roles exactly as the route does. The platform tenancy is never
+touched, a closed tenancy is skipped by name, and a tenancy whose standing
+refuses writes is skipped with the reason. Platform operations shows the
+sweep's position and has "Sweep chain breaks" (`/v1/admin/consistency-sweep`
+and `/run`, operator only — the operator sees counts, never a customer's
+findings). `consistencysweep.test.ts`.
+
+**A suppression list for the newsletter.** A relay's permanent refusal (a
+5xx reply — no such user, domain gone) now records `NewsletterSuppression`
+against the address and the audience leaves it out with the relay's own words
+on the Newsletter screen; a transient refusal (4xx, or the connection) is
+retried on the next issue as before. An operator lifts a suppression from the
+same row ("Try this address again"), recorded under their name; the refusal
+stays on the record. `issueNewsletter` takes a transport for tests so the
+relay's answers can be exercised without a relay. `newsletter.test.ts`.
+
+**The record's own figures.** The *At a glance* table had stood at 3,931
+tests and 763 routes while the tree held 5,707 and 1,029; it is counted again
+above and says how. The partial-table rows for evidence capture and
+newsletter delivery described gaps that had since closed (the signature
+scanner; the suppression list) and now describe the gap that remains. The
+note that the sparkline and histogram had no callers is stale — both are
+drawn on the estate screens — and the resource levelling the programme block
+records as built supersedes the earlier "not yet built" note above it.
+
 ## What is partial
 
 Implemented in a form that works, with a stated part missing. The missing part is
@@ -8504,14 +8547,14 @@ named so it is not mistaken for finished.
 | Drawing register | Title-block reading from the held drawing itself or from supplied text, supersession, markup→RFI carrying the activity it blocks | Same: the wire contract is proven against real vendor response shapes; the quality of the reading is not |
 | Model ingestion | Records the model, hash, discipline, LOD, element count as a governed event | IFC parsing, geometry hash, model diffing |
 | Digital twin | Reconciles observed against expected element status | Observations are structured input, not derived from imagery |
-| Evidence capture | Real SHA-256 over the real file, recorded against the event, and the file itself held in a tenant-scoped content-addressed store | Retention and deletion policy; no antivirus scan on upload |
+| Evidence capture | Real SHA-256 over the real file, recorded against the event, the file itself held in a tenant-scoped content-addressed store, and every ingested file sent to a signature scanner where one is configured (see *Signature scanning* below) | A deletion policy, deliberately: evidence under the golden thread is retained, and `evidence/registry.ts` reports what the record names against what the volume holds rather than deciding what is old enough to remove |
 | File ingestion | Structural inspection, rules classification with its signals, native text and table extraction, and a lexical index over what was read. A file that is not what it claims to be is quarantined with the finding on the record | A PDF or a photograph reports `NEEDS_OCR` rather than being read; the index is lexical, so it finds a near-duplicate and not a paraphrase |
 | Signature scanning | `evidence/scanner.ts` speaks clamd's INSTREAM protocol over a socket. Every ingested file is sent to it where one is configured, and the record names the daemon and its signature database. Unset means unscanned and every record and every read says so; configured-and-unreachable refuses the ingestion rather than recording an unscanned file as checked | The platform holds no signatures itself and never will. Verified against a daemon of the suite's own speaking the real protocol, not against ClamAV — no ClamAV exists in this environment |
 | Vision tasks | Progress, PPE, plant and defects read from a held photograph, each as a draft a person confirms into the ordinary domain command | The wire contract is proven against real vendor response shapes, including fenced, prefaced, truncated, empty and non-object replies. What no test here can establish is whether a model reads a photograph correctly |
 | Commitment extraction | Reads a held letter for what it promises and what it demands, drops anything not quoted verbatim from the letter, and registers a confirmed one in the obligation calendar that already exists | Needs a provider that reads prose; a local deployment is refused rather than given an invented undertaking. The wire contract is proven against real vendor response shapes; the reading is not |
 | Clause extraction | From supplied text | OCR and table extraction from a PDF |
 | 4D scheduling | Twin states link to task ids | No visualisation |
-| Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded | No bounce processing or suppression list; DKIM belongs at the relay, where the key should live |
+| Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded, a permanent refusal (5xx) suppressing the address until an operator lifts it from the Newsletter screen, a transient one retried on the next issue | Asynchronous bounces — a message accepted by the relay and bounced later arrives at a mailbox this platform does not read; DKIM belongs at the relay, where the key should live |
 
 ---
 

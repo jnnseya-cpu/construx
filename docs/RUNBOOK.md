@@ -381,6 +381,25 @@ rehydrated a subscription with none. Builds from 4 September 2026 derive
 the package from the tier on restore and write the package on every seat
 event; deploy the current build. Nothing in the journal needs editing.
 
+## The chain-break sweep and the newsletter suppression list
+
+Two background behaviours an operator should know are running.
+
+**`OPS_CONSISTENCY_SWEEP_MINUTES`** (default 60) runs the commercial
+escalation over every open customer project on that interval: a break in the
+bid-to-CVR data flow is raised as an exception to the tenancy's Commercial
+Manager and Project Director without anybody opening the position. Platform
+operations shows when it last ran, what it raised and what it skipped, and
+"Sweep chain breaks" runs it now. Set it to 0 to leave escalation to the
+people opening the screen. It never touches the platform tenancy or a closed
+one.
+
+**A newsletter address the relay refuses permanently is suppressed.** The
+Newsletter screen lists it under "Who does not, and why" with the relay's own
+reply; nothing is sent to it again until an operator presses "Try this
+address again" on that row. A 4xx refusal is not suppression — the next issue
+tries it again.
+
 ## Health and observability
 
 | Endpoint | Purpose |

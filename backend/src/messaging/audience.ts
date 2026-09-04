@@ -45,11 +45,43 @@ export type Recipient = {
   roles: Role[];
 };
 
+/**
+ * An address the relay has refused permanently.
+ *
+ * One record per address, written by the issue that met the refusal and lifted
+ * only by an operator. Derived here from the record rather than kept as a
+ * list, so a restart cannot forget who bounced.
+ */
+export type Suppression = {
+  id: string;
+  email: string;
+  userId: string;
+  campaignId: string;
+  /** The relay's reply, verbatim. */
+  detail: string;
+  status: 'ACTIVE' | 'CLEARED';
+  suppressedAt: string;
+  clearedAt?: string;
+  clearedBy?: string;
+};
+
+/** Every address currently suppressed, keyed by the lower-cased address. */
+export function suppressedAddresses(platform: Platform): Map<string, Suppression> {
+  const held = new Map<string, Suppression>();
+  for (const record of platform.ledger.list(MARKETING_PROJECT_ID, 'NewsletterSuppression')) {
+    const suppression = record.state as unknown as Suppression;
+    if (suppression.status === 'ACTIVE') held.set(suppression.email.trim().toLowerCase(), suppression);
+  }
+  return held;
+}
+
 /** Why a registered user is not in the audience. Shown, never silently applied. */
 export type Exclusion = {
   userId: string;
   name: string;
-  reason: 'UNSUBSCRIBED' | 'ROLE_EXCLUDED' | 'SUSPENDED' | 'NO_EMAIL' | 'NOT_YET_OPTED_IN';
+  reason: 'UNSUBSCRIBED' | 'ROLE_EXCLUDED' | 'SUSPENDED' | 'NO_EMAIL' | 'NOT_YET_OPTED_IN' | 'SUPPRESSED';
+  /** For a suppression: the server's own words, so the operator can judge whether to try again. */
+  detail?: string;
 };
 
 // --- Consent ----------------------------------------------------------------
@@ -166,6 +198,7 @@ function excludedByRole(roles: Role[]): boolean {
 export function resolveAudience(platform: Platform): { recipients: Recipient[]; excluded: Exclusion[] } {
   const recipients: Recipient[] = [];
   const excluded: Exclusion[] = [];
+  const suppressed = suppressedAddresses(platform);
 
   for (const user of platform.allUsers()) {
     const consent = readConsent(platform, user.id);
@@ -180,6 +213,13 @@ export function resolveAudience(platform: Platform): { recipients: Recipient[]; 
     }
     if (excludedByRole(user.roles)) {
       excluded.push({ userId: user.id, name: user.name, reason: 'ROLE_EXCLUDED' });
+      continue;
+    }
+    const suppression = suppressed.get(user.email.trim().toLowerCase());
+    if (suppression) {
+      // The address bounced permanently on an earlier issue. Sending again is
+      // what gets a sender blocklisted; the operator lifts it deliberately.
+      excluded.push({ userId: user.id, name: user.name, reason: 'SUPPRESSED', detail: suppression.detail });
       continue;
     }
     if (consent && !consent.subscribed) {

@@ -30,6 +30,7 @@ import { fleetManifest } from '../agents/runtime.ts';
 import { AUTOMATABLE_COMMANDS, LADDER, envelopeRegister, grantEnvelope, revokeEnvelope } from '../agents/mandate.ts';
 import { egressPosition, flush as flushEgress } from '../ops/otlp.ts';
 import { assurancePosition, sweep } from '../ops/assurance.ts';
+import * as consistencySweep from '../ops/consistencysweep.ts';
 import { blueprintPosition } from '../ops/blueprint.ts';
 import { eventStorePosition, platformEventStream } from '../ops/eventstore.ts';
 import * as reports from '../ops/reports.ts';
@@ -228,6 +229,7 @@ import {
   issueNewsletter,
   listCampaigns,
   previewFor,
+  clearSuppression,
 } from '../messaging/newsletter.ts';
 import { documentVerificationPage, unsubscribePage, verificationPage } from '../messaging/render.ts';
 import { exposurePosition, readExposureInput } from '../site/exposure.ts';
@@ -2465,6 +2467,39 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'GET',
+    pattern: '/v1/admin/consistency-sweep',
+    readOnly: true,
+    description: 'The chain-break sweep: whether it runs, when it last ran, what it raised and what it skipped',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read the chain-break sweep');
+      return consistencySweep.sweepPosition(platform);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/consistency-sweep/run',
+    description: 'Run the chain-break sweep now over every open customer project',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      operatorOnly(ctx, 'run the chain-break sweep');
+      // The operator triggers the pass and sees its counts. What was raised
+      // is on each tenancy's own chain, owed to its own commercial roles —
+      // the operator reads the numbers, never the customer's findings.
+      const outcome = await consistencySweep.sweepChainBreaks(platform);
+      return {
+        at: outcome.at,
+        durationMs: outcome.durationMs,
+        projectsChecked: outcome.projectsChecked,
+        raised: outcome.raised.length,
+        alreadyOpen: outcome.alreadyOpen,
+        cleared: outcome.cleared,
+        notified: outcome.notified,
+        skipped: outcome.skipped.length,
+      };
+    },
+  },
+  {
+    method: 'GET',
     pattern: '/v1/admin/assurance',
     readOnly: true,
     description: 'When each project’s chain was last proved, and anything that no longer verifies',
@@ -2960,6 +2995,16 @@ export const ROUTES: Route[] = [
         }, {}),
         excluded,
       };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/newsletter/suppressions/:userId/clear',
+    description: 'Lift the suppression on an address that bounced permanently, so the next issue tries it again (platform operator only)',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'clear a newsletter suppression');
+      return clearSuppression(platform, auth(ctx).actorId, ctx.params.userId as string);
     },
   },
   {

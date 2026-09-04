@@ -1060,6 +1060,8 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SITE_POST_PUBLISHED', 'SitePost', 'APPROVE', 'GOVERNANCE'),
   def('SITE_POST_WITHDRAWN', 'SitePost', 'UPDATE', 'GOVERNANCE'),
   def('NEWSLETTER_DELIVERY_RECORDED', 'NewsletterDelivery', 'CREATE', 'GOVERNANCE'),
+  def('NEWSLETTER_ADDRESS_SUPPRESSED', 'NewsletterSuppression', 'CREATE', 'GOVERNANCE'),
+  def('NEWSLETTER_SUPPRESSION_CLEARED', 'NewsletterSuppression', 'UPDATE', 'GOVERNANCE'),
 
   // Support. On the raising tenancy's governance chain rather than in the
   // operator layer, because the request belongs to the customer who wrote it

@@ -25,6 +25,7 @@ const EXCLUSION_REASON = {
   SUSPENDED: 'Account is suspended',
   NO_EMAIL: 'No usable email address',
   NOT_YET_OPTED_IN: 'Has not opted in yet',
+  SUPPRESSED: 'The address bounced permanently — suppressed until an operator lifts it',
 };
 
 export async function newsletter(root) {
@@ -118,6 +119,23 @@ export async function newsletter(root) {
       ${operator ? campaignHistory(campaigns.campaigns ?? []) : ''}
     `,
   );
+
+  // --- suppression ------------------------------------------------------------
+
+  for (const button of root.querySelectorAll('[data-unsuppress]')) {
+    button.addEventListener('click', async () => {
+      const userId = button.getAttribute('data-unsuppress');
+      button.disabled = true;
+      try {
+        await api.post(`/v1/newsletter/suppressions/${userId}/clear`, {});
+        toast('Suppression lifted', 'The next issue will try the address again.', 'ok');
+        await draw();
+      } catch (error) {
+        toast('Could not lift it', error.message, 'err');
+        button.disabled = false;
+      }
+    });
+  }
 
   // --- preference -------------------------------------------------------------
 
@@ -267,7 +285,13 @@ function operatorSummary(audience) {
           headers: ['Person', 'Reason'],
           rows: audience.excluded.map((entry) => [
             entry.name,
-            html`<span class="metric-sub">${EXCLUSION_REASON[entry.reason] ?? humanise(entry.reason)}</span>`,
+            html`<span class="metric-sub">${EXCLUSION_REASON[entry.reason] ?? humanise(entry.reason)}${
+              entry.detail ? html`<br /><code>${entry.detail}</code>` : ''
+            }</span>${
+              entry.reason === 'SUPPRESSED'
+                ? html` <button class="btn quiet sm" data-unsuppress="${entry.userId}">Try this address again</button>`
+                : ''
+            }`,
           ]),
           empty: 'Nobody is excluded',
         })}

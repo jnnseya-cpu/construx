@@ -417,3 +417,77 @@ describe('SMTP transport', () => {
     );
   });
 });
+
+import { suppressedAddresses as suppressedNow } from '../src/messaging/audience.ts';
+import { clearSuppression } from '../src/messaging/newsletter.ts';
+
+describe('an address the relay refuses for good', () => {
+  let platform: Platform;
+  let seed: SeedResult;
+  let gone = { userId: '', email: '' };
+  let flaky = { userId: '', email: '' };
+
+  before(async () => {
+    platform = new Platform();
+    seed = await seedDemoProject(platform);
+  });
+
+  it('is suppressed, while a transient refusal is retried, and both are on the record', async () => {
+    const { recipients } = resolveAudience(platform);
+    assert.ok(recipients.length >= 3);
+    gone = { userId: recipients[0]!.userId, email: recipients[0]!.email };
+    flaky = { userId: recipients[1]!.userId, email: recipients[1]!.email };
+    const transport = {
+      send: async ({ to }: { to: string }) => {
+        if (to === gone.email) throw Object.assign(new Error('550 5.1.1 The email account that you tried to reach does not exist'), { code: 'SMTP_PERMANENT' });
+        if (to === flaky.email) throw Object.assign(new Error('451 4.7.1 Try again later'), { code: 'SMTP_TRANSIENT' });
+        return { accepted: true as const, response: '250 2.0.0 Ok' };
+      },
+    };
+
+    const report = await issueNewsletter(platform, { issuedBy: seed.users.admin!.id, week: '2031-W10', transport });
+    assert.equal(report.campaign.channel, 'SMTP');
+    assert.equal(report.failed, 2);
+    assert.equal(report.sent, recipients.length - 2);
+    const failures = report.deliveries.filter((delivery) => delivery.status === 'FAILED');
+    assert.equal(failures.find((delivery) => delivery.userId === gone.userId)!.failure, 'PERMANENT');
+    assert.equal(failures.find((delivery) => delivery.userId === flaky.userId)!.failure, 'TRANSIENT');
+    assert.equal(suppressedNow(platform).get(gone.email.toLowerCase())?.status, 'ACTIVE');
+    assert.equal(suppressedNow(platform).has(flaky.email.toLowerCase()), false);
+
+    // The next audience leaves the gone address out, with the relay's words,
+    // and keeps the one that merely asked for later.
+    const next = resolveAudience(platform);
+    const excluded = next.excluded.find((entry) => entry.userId === gone.userId);
+    assert.equal(excluded?.reason, 'SUPPRESSED');
+    assert.match(String(excluded?.detail), /550 5\.1\.1/);
+    assert.ok(next.recipients.some((entry) => entry.userId === flaky.userId), 'a transient failure is retried');
+
+    const second = await issueNewsletter(platform, {
+      issuedBy: seed.users.admin!.id,
+      week: '2031-W11',
+      transport: { send: async () => ({ accepted: true as const, response: '250 2.0.0 Ok' }) },
+    });
+    assert.ok(!second.deliveries.some((delivery) => delivery.userId === gone.userId), 'a suppressed address was written to again');
+    assert.ok(second.deliveries.some((delivery) => delivery.userId === flaky.userId && delivery.status === 'SENT'));
+  });
+
+  it('is lifted by an operator, once, under their name', () => {
+    const operator = platform.createOperator({ name: 'Ruth', email: 'ops@construx.example' });
+    const { suppression } = clearSuppression(platform, operator.id, gone.userId);
+    assert.equal(suppression.status, 'CLEARED');
+    assert.equal(suppression.clearedBy, operator.id);
+    assert.ok(resolveAudience(platform).recipients.some((entry) => entry.userId === gone.userId), 'back in the audience');
+    throwsCode(() => clearSuppression(platform, operator.id, gone.userId), 'NOT_SUPPRESSED');
+    // The refusal is still on the record; it is the suppression that ended.
+    assert.equal(platform.ledger.list('platform-marketing', 'NewsletterSuppression').length, 1);
+  });
+
+  it('survives a restart in whichever state it was left', () => {
+    const restored = new Platform();
+    restored.ledger.restore(platform.ledger.events());
+    restored.rehydrate();
+    assert.equal(suppressedNow(restored).size, 0, 'cleared stays cleared');
+    assert.equal(restored.ledger.list('platform-marketing', 'NewsletterSuppression')[0]!.state.status, 'CLEARED');
+  });
+});

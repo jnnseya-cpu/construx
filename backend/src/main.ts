@@ -12,6 +12,7 @@ import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.
 import { rehydrateKeys } from './developer/keys.ts';
 import { attachViewJournal, viewJournalPath } from './site/views.ts';
 import { startAssurance } from './ops/assurance.ts';
+import { startConsistencySweep, stopConsistencySweep } from './ops/consistencysweep.ts';
 import { armRepair, startRepair } from './ops/repair.ts';
 import { egressConfigured, startEgress } from './ops/otlp.ts';
 import { startWatch } from './ops/watch.ts';
@@ -260,6 +261,11 @@ const egressTimer = startEgress();
 // least able to do anything about it.
 const assuranceTimer = startAssurance(platform);
 
+// The commercial chain, escalated on a timer rather than only when somebody
+// opens the position: a break on a project nobody has open is otherwise found
+// the next time somebody looks, which on a quiet project is never.
+startConsistencySweep(platform);
+
 // Auto-repair, bounded to restart and reroute. Handed a function rather than a
 // timer handle, so it can re-arm the real drain rather than clear one it could
 // not replace.
@@ -364,6 +370,7 @@ const shutdown = (signal: string): void => {
   erasures.stop();
   outboxTimer();
   watchTimer();
+  stopConsistencySweep();
   server.close(() => {
     platform.ledger.journal?.close();
     // Released last, after the descriptor is closed. Releasing first would

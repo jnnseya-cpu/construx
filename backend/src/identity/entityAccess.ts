@@ -609,6 +609,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // read, which is the opposite of everything else in this block.
   SitePost: { area: 'PLATFORM_ADMINISTRATION' },
   NewsletterDelivery: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
+  NewsletterSuppression: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
   // A support request. Classified under ENTERPRISE_STRUCTURE rather than
   // PLATFORM_ADMINISTRATION on purpose: it belongs to the tenancy that raised
   // it, and the customer who wrote it has to be able to read it back. Putting

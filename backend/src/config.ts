@@ -381,6 +381,12 @@ export const config = {
      */
     renotifyMinutes: num('OPS_WATCH_RENOTIFY_MINUTES', 30),
     /**
+     * How often the chain-break sweep runs the commercial escalation over every
+     * open customer project. Zero disables it, and a break is then raised
+     * only when somebody opens the position or calls the route.
+     */
+    consistencySweepMinutes: num('OPS_CONSISTENCY_SWEEP_MINUTES', 60),
+    /**
      * The floor under every rate rule. "100% of requests failed" over one
      * request is the alert that gets the whole system muted within a day.
      */
