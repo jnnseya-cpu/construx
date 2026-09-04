@@ -14,6 +14,8 @@ import { raiseNCR } from './quality.ts';
 import { logSafetyObservation } from './safety.ts';
 import { runTakeoff } from './tender.ts';
 import { analyseITT, type CommercialTerms, type ITTRequirement } from '../domain/itt.ts';
+import { BRIEF_ITEMS, recordFact } from '../domain/etablix/brief.ts';
+import { requireModule } from '../identity/modules.ts';
 import { extractRequirements, type SubmissionChannel } from '../domain/tenderintake.ts';
 
 /**
@@ -99,10 +101,13 @@ export type PerceptionTask =
   | 'PPE_COMPLIANCE'
   | 'EQUIPMENT_RECOGNITION'
   | 'DEFECT_DETECTION'
-  | 'GROUND_MATERIAL';
+  | 'GROUND_MATERIAL'
+  | 'SITE_SERVICES_BRIEF';
 
 type TaskDefinition = {
   engine: Engine;
+  /** A module the tenancy must hold, where the downstream command is gated by one. */
+  module?: 'ETABLIX';
   /**
    * Distinct from the text-path task of the same name on purpose.
    * `registerDrawing` runs `title_block_extraction` over text somebody already
@@ -623,6 +628,64 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
     },
     usable: (extraction) => Array.isArray(extraction.defects) && extraction.defects.length > 0,
   },
+
+  /**
+   * ETABLIX §3 — the brief register read from a customer's document.
+   *
+   * A workforce curve, a welfare schedule or a compound layout carries the
+   * facts a site-services system is designed from, and until this task existed
+   * every one of them was typed in by hand. The model reports each fact it can
+   * find with the words it read it from; nothing reaches the register until a
+   * person confirms the draft, and what does reach it goes through `recordFact`
+   * with the document, the provider and the confirmer all on the source. §19.10:
+   * a reading below the threshold sits on the draft list with its provenance,
+   * and the baseline is unchanged.
+   *
+   * The risk and safety adviser, because welfare provision is a CDM Schedule 2
+   * duty and that engine is the one in contract in every phase a site-services
+   * appointment can begin in.
+   */
+  SITE_SERVICES_BRIEF: {
+    engine: 'RISK_SAFETY',
+    module: 'ETABLIX',
+    taskType: 'site_services_brief_extraction',
+    area: 'SITE_SERVICES',
+    // What `recordFact` requires.
+    code: 'C',
+    label: 'Read a site-services brief',
+    accepts: IMAGE_OR_PDF,
+    acceptsLabel: 'a workforce curve, welfare schedule or compound layout as a PDF or scan',
+    prompt:
+      'Read this document for the facts a site-services brief needs. The items, with their units, are: ' +
+      BRIEF_ITEMS.map((item) => `${item.id} — ${item.label} (${item.unit})`).join('; ') +
+      '. Report every item the document states, as a number in the unit given (or the text where the item is ' +
+      'not numeric), with the exact words or figure it was read from and the page. Report nothing the document ' +
+      'does not state — never infer, average or complete a figure — and list separately what you looked for and ' +
+      'could not find.',
+    responseSchema: {
+      type: 'object',
+      properties: {
+        facts: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              itemId: { type: 'string', enum: BRIEF_ITEMS.map((item) => item.id) },
+              value: { type: ['number', 'string'] },
+              quoted: { type: 'string' },
+              page: { type: ['number', 'null'] },
+            },
+            required: ['itemId', 'value', 'quoted'],
+          },
+        },
+        omitted: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['facts'],
+    },
+    usable: (extraction) =>
+      Array.isArray(extraction.facts) &&
+      extraction.facts.some((fact) => BRIEF_ITEMS.some((item) => item.id === String((fact as Record<string, unknown>).itemId))),
+  },
 };
 
 export type PerceptionDraft = {
@@ -671,6 +734,7 @@ export async function extract(
   const definition = PERCEPTION_TASKS[input.task];
   if (!definition) throw new DomainError('PERCEPTION_TASK_UNKNOWN', `No perception task "${input.task}"`);
 
+  if (definition.module) requireModule(ctx.grantedModules, definition.module);
   authorise(ctx, definition.area, definition.code, { lifecyclePhase: currentPhase(ctx) });
 
   const record = findByHash(ctx.ledger, ctx.tenantId, input.hash);
@@ -839,6 +903,7 @@ export async function confirm(
 ): Promise<{ draftId: string; task: PerceptionTask; result: Record<string, unknown> }> {
   const draft = requireDraft(ctx, input.draftId);
   const definition = PERCEPTION_TASKS[draft.task];
+  if (definition.module) requireModule(ctx.grantedModules, definition.module);
   authorise(ctx, definition.area, definition.code, { lifecyclePhase: currentPhase(ctx) });
 
   const extraction = { ...draft.extraction, ...(input.corrections ?? {}) };
@@ -1164,6 +1229,38 @@ export async function confirm(
       itemsRecorded: items.length,
       idle: items.filter((item) => item.state === 'IDLE' || item.state === 'LAID_UP').length,
     };
+  } else if (draft.task === 'SITE_SERVICES_BRIEF') {
+    const known = new Set<string>(BRIEF_ITEMS.map((item) => item.id));
+    const read = ((extraction.facts as Array<Record<string, unknown>> | undefined) ?? []).filter((fact) => known.has(String(fact.itemId)));
+    if (read.length === 0) {
+      throw new DomainError(
+        'PERCEPTION_NOTHING_TO_RECORD',
+        'The corrected draft names no brief item the catalogue knows, so there is nothing to record.',
+      );
+    }
+    const document = String(
+      ctx.ledger.get({ refType: 'EvidenceItem', refId: draft.evidenceId })?.state.description ?? 'Document',
+    );
+    const provider = draft.aiProvenance?.provider ?? 'the perception provider';
+    // Each fact goes through the same command a person typing it would use,
+    // and the source it carries is the whole provenance: which document, which
+    // page, which model read it, who confirmed it, and the words it came from.
+    const recorded = read.map((fact) => {
+      const value = typeof fact.value === 'number' ? fact.value : String(fact.value ?? '');
+      const page = fact.page != null ? `, page ${Number(fact.page)}` : '';
+      const quoted = fact.quoted ? ` — "${String(fact.quoted)}"` : '';
+      const written = recordFact(ctx, {
+        itemId: String(fact.itemId),
+        value,
+        source: `${document} (evidence ${draft.evidenceHash.slice(0, 16)}${page}), read by ${provider} and confirmed by ${ctx.auth.actorId}${quoted}`,
+      });
+      return { itemId: written.itemId, value: written.value, factId: written.id };
+    });
+    result = {
+      facts: recorded,
+      recorded: recorded.length,
+      omitted: Array.isArray(extraction.omitted) ? (extraction.omitted as unknown[]).map(String) : [],
+    };
   } else {
     const defects = (extraction.defects as Array<Record<string, unknown>> | undefined) ?? [];
     if (defects.length === 0) {
@@ -1222,6 +1319,7 @@ export function discard(ctx: EngineContext, input: { draftId: string; reason: st
   const draft = requireDraft(ctx, input.draftId);
   const definition = PERCEPTION_TASKS[draft.task];
   // Rejecting is deciding, so it takes the same authority as accepting.
+  if (definition.module) requireModule(ctx.grantedModules, definition.module);
   authorise(ctx, definition.area, definition.code, { lifecyclePhase: currentPhase(ctx) });
 
   if (input.reason.trim().length < 4) {

@@ -239,7 +239,7 @@ import { exposurePosition, readExposureInput } from '../site/exposure.ts';
 import { exposure as exposurePage } from '../site/pages.ts';
 import { evaluateAccess, SENSITIVITY_CLEARANCE, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { ENTITY_ACCESS } from '../identity/entityAccess.ts';
-import { MODULES, isModuleId } from '../identity/modules.ts';
+import { MODULES, isModuleId, requireModule } from '../identity/modules.ts';
 import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, revokeToken, shapeMfaResponse, verifyMfaChallenge, verifyToken, type AuthContext } from '../identity/auth.ts';
 import { lockedSubjects } from '../identity/lockout.ts';
 import { renderAndCharge, quoteRender, type RenderableFormat } from '../export/render.ts';
@@ -627,6 +627,7 @@ const PERCEPTION_PATHS: Record<perception.PerceptionTask, string> = {
   EQUIPMENT_RECOGNITION: 'equipment',
   DEFECT_DETECTION: 'defects',
   GROUND_MATERIAL: 'ground-material',
+  SITE_SERVICES_BRIEF: 'site-services-brief',
 };
 
 /**
@@ -8508,6 +8509,28 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => siteLibrary.promoteKnowledge(projectContext(platform, ctx), body<{ note?: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/brief/document',
+    description: 'File a customer document — a workforce curve, a welfare schedule, a compound layout — as evidence the brief can be read from',
+    schema: {
+      type: 'object',
+      required: ['hash', 'description'],
+      properties: { hash: stringField, description: { type: 'string', minLength: 3, maxLength: 300 } },
+      additionalProperties: false,
+    },
+    // Filed first, read second. The reading is a separate act with its own
+    // cost and its own confirmation; the document is evidence in its own right
+    // whatever is subsequently read from it.
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      requireModule(engineCtx.grantedModules, 'ETABLIX');
+      authorise(engineCtx, 'SITE_SERVICES', 'C');
+      const input = body<{ hash: string; description: string }>(ctx);
+      const ref = registerEvidence(engineCtx, { type: 'SITE_SERVICES_BRIEF_DOCUMENT', hash: input.hash, description: input.description });
+      return { evidenceId: ref.refId, hash: input.hash, description: input.description };
+    },
   },
   {
     method: 'GET',

@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,740 passing, 0 failing, 0 skipped, across 250 files · plus 18 against a live Postgres 16 |
+| Tests | 5,742 passing, 0 failing, 0 skipped, across 250 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
-| Backend | 292 TypeScript files, 187,700 lines |
-| Application | 76 ES modules, 42,900 lines (including a service worker) |
-| API routes | 1,050 — 720 writes, 330 reads (48 of them public) |
+| Backend | 292 TypeScript files, 187,800 lines |
+| Application | 76 ES modules, 43,100 lines (including a service worker) |
+| API routes | 1,052 — 722 writes, 330 reads (48 of them public) |
 | Event types | 710 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 328, all classified for access |
 | Agents | 81 across the divisions the registry declares |
@@ -8740,7 +8740,7 @@ count.
 | ~~**Paid, accrual and cash**~~ (§13 Commercial) | Built — `etablix/cash.ts` | Payments recorded against a certified valuation under the bank's reference, never above the certificate; earned, certified and paid kept apart, outstanding split by who owes it |
 | ~~**Contingency and EAC**~~ (§13 Commercial) | Built — `etablix/cash.ts` | A pot set with its basis and drawn with a reason; the EAC as the higher of commitment and earned plus agreed change plus risk-adjusted exposure, every term published |
 | ~~**The cross-project roll-up**~~ (§13 Executive Portfolio) | Built — `etablix/cash.ts` | Every project of the caller's company through the same project context, skipped with the reason where unreadable |
-| **An ETABLIX perception task** (§19.10) | The acceptance test, which asserts the fact that makes its pass condition hold | The draft/confirm mechanism exists and is proved in `tests/perception.test.ts`; no perception task reads a workforce curve or a welfare schedule into the brief register, so nothing a model produces can reach the baseline |
+| ~~**An ETABLIX perception task**~~ (§19.10) | Built — `SITE_SERVICES_BRIEF` in `engines/perception.ts` | A workforce curve, welfare schedule or compound layout filed as evidence is read by a provider that can see it into a draft naming each brief item, the words it was read from and the page; a confirmed draft goes through `recordFact` with the document, the model and the confirmer on the source; a deployment with no such provider is refused before anything is charged. §19.10 now runs end to end against this path |
 | **Forecast accuracy** (§17) | The automation card, as not measurable | It compares a prior estimate at completion against a final outturn. No site-services account has been closed out, and reporting it on a live project would compare the forecast against itself |
 
 ---
@@ -15233,23 +15233,33 @@ so reading zero as "no window" made the one severity with no grace the only one
 that could never breach. Fixed with §13's work, and asserted here from the
 scenario as well as from the unit.
 
-#### What §19.10 can and cannot do
+#### §19.10, run end to end
 
-Stated rather than dressed up. The platform holds the whole mechanism the
-scenario needs: `engines/perception.ts` turns a file into a `PerceptionDraft`
-that changes nothing until a person confirms it, refuses a provider that cannot
-actually see the file rather than asking it anyway, and refuses to confirm an
-extraction the model could not read — all proved in `tests/perception.test.ts`
-and not repeated. What does not exist is an ETABLIX-specific extraction task:
-**no perception task reads a workforce curve or a welfare schedule into the brief
-register.** So the scenario's trigger cannot be run end to end, and its pass
-condition — the baseline is unchanged — holds by construction rather than by
-behaviour. The test asserts the fact that makes it true, so the day somebody adds
-the task it fails and has to be rewritten against the real path.
+`SITE_SERVICES_BRIEF` is the tenth perception task. A workforce curve, a
+welfare schedule or a compound layout is filed as evidence from the Site
+Services screen ("File a brief document",
+`POST /v1/projects/:id/site-services/brief/document`), and once the platform
+holds the file a reader with `SITE_SERVICES C` can have a provider that can see
+it read the brief items out of it, with the cost on screen first. The draft
+names each item, the value, the words it was read from and the page, the
+provider and its confidence; a reading below the threshold sits on the brief
+card marked as such and changes nothing. Confirming it runs `recordFact` — the
+same command as typing the figure in, under the same authority and the same
+module gate — and the source every fact carries names the document, the page,
+the model and the confirmer, with the quoted words. An item the catalogue does
+not know is dropped, never invented. A deployment whose provider computes
+rather than perceives is refused before anything is charged, and the card
+says so at the control.
 
-The nearest thing the module does have is §3's provisional value: a figure
-nobody has confirmed carries its basis, its owner and the date after which it is
-too late to change, and it sits on the command centre's NEXT list until then.
+The scenario's test builds a platform with a seeing provider answering at 42%
+confidence and one with the local stand-in, and asserts all of the above
+against the register. The earlier version of this section said the trigger
+could not be run and asserted the fact that made that true; that assertion
+failed the day the task was added, as it was written to.
+
+§3's provisional value stands beside this: a figure nobody has confirmed
+carries its basis, its owner and the date after which it is too late to
+change, and sits on the command centre's NEXT list until then.
 
 **10 mutations, 10 caught**, after two survivors named real gaps: an authority
 missing its reference was accepted, and a certificate could be issued under no

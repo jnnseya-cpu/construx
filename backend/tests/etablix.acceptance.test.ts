@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
-import { before, beforeEach, describe, it } from 'node:test';
-import { throwsCode } from './helpers.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, before, beforeEach, describe, it } from 'node:test';
+import { rejectsCode, throwsCode } from './helpers.ts';
+import { AIOrchestrator } from '../src/ai/orchestrator.ts';
+import type { AIProviderAdapter, ProviderResponse } from '../src/ai/providers/types.ts';
+import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import {
   appointmentPosition,
   recordAuthorityToProceed,
@@ -47,8 +53,8 @@ import {
   recordClosureEvidence,
 } from '../src/domain/etablix/operations.ts';
 import { commandCentre } from '../src/domain/etablix/commandcentre.ts';
-import { PERCEPTION_TASKS } from '../src/engines/perception.ts';
-import type { EngineContext } from '../src/engines/context.ts';
+import { confirm, drafts, extract } from '../src/engines/perception.ts';
+import { registerEvidence, type EngineContext } from '../src/engines/context.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
@@ -905,44 +911,131 @@ describe('§19.10 agent uncertainty', () => {
    * Pass: the output enters the exception queue with its source and a proposed
    * reviewer; the baseline is unchanged.
    *
-   * **Stated rather than dressed up:** the platform has the whole mechanism —
-   * `engines/perception.ts` turns a file into a `PerceptionDraft` that changes
-   * nothing until a person confirms it, refuses a provider that cannot actually
-   * see the file rather than asking it anyway, and refuses to confirm an
-   * extraction the model could not read. `tests/perception.test.ts` proves all
-   * of that and this file does not repeat it.
-   *
-   * What does not exist is an ETABLIX-specific extraction task: no perception
-   * task reads a workforce curve or a welfare schedule into the brief register.
-   * So the scenario's trigger cannot be run end to end here, and the pass
-   * condition holds by construction rather than by behaviour. That is worth
-   * knowing precisely, so it is asserted precisely — including the fact that
-   * makes it true, so the day somebody adds the task this test fails and has to
-   * be rewritten against the real path.
+   * Run against the real path. `SITE_SERVICES_BRIEF` in `engines/perception.ts`
+   * reads a workforce curve into a draft; the draft carries its provider, its
+   * confidence and the words each figure was read from; it changes nothing
+   * until a person confirms it, and what it changes then goes through
+   * `recordFact` — the same command as typing the figure in — with the
+   * document, the model and the confirmer all on the source. A deployment with
+   * no provider that can see a file is refused before anything is charged.
    */
-  it('has no path by which a model can write the brief register', () => {
-    appoint('PRINCIPAL_SERVICE_CONTRACTOR', false);
-    recordFact(as('pm'), { itemId: 'peakWorkforce', value: 164, source: 'Programme rev D, workforce curve sheet 3' });
+  const CURVE = Buffer.from('PDF-ish bytes standing in for a workforce curve', 'utf8');
+  const CURVE_HASH = hashBytes(CURVE);
+  const READING = {
+    facts: [
+      { itemId: 'peakWorkforce', value: 164, quoted: 'Peak on site 164 (wk 22)', page: 3 },
+      { itemId: 'shiftOverlapPersons', value: 120, quoted: 'Shift overlap 120 persons 06:30–07:30', page: 3 },
+      { itemId: 'notAnItem', value: 9, quoted: 'Something the catalogue does not know', page: 4 },
+    ],
+    omitted: ['visitorsPerDay — the curve does not count visitors'],
+  };
+  let directory = '';
+  let store: EvidenceStore;
 
-    // Every figure in force names where it came from, in words somebody could
-    // go and check. There is no unsourced fact and no route that would produce
-    // one: the two commands that write the register both require a source or a
-    // basis, and neither takes a draft.
+  /** A provider that can be handed a file, answering at the confidence given. */
+  function seeing(confidence: number): AIProviderAdapter {
+    return {
+      name: 'GEMINI',
+      capability: 'PERCEPTION',
+      multimodal: true,
+      transmits: true,
+      estimateCostMinor: () => 40,
+      healthy: () => true,
+      async execute(): Promise<ProviderResponse> {
+        return { provider: 'GEMINI', modelClass: 'perception-standard', output: READING, rawCostMinor: 40, latencyMs: 8, confidence };
+      },
+    };
+  }
+
+  async function rebuild(adapter?: AIProviderAdapter): Promise<void> {
+    platform = new Platform(adapter ? new AIOrchestrator({ perception: adapter }) : undefined, store);
+    seed = await seedDemoProject(platform);
+    platform.setModuleGrant({
+      moduleId: 'ETABLIX',
+      tenantId: seed.users.pm!.auth.tenantId,
+      status: 'ACTIVE',
+      reason: 'Appointed as ETABLIX site-services delivery partner',
+      decidedBy: seed.users.operator!.id,
+    });
+    appoint('PRINCIPAL_SERVICE_CONTRACTOR', false);
+    registerEvidence(as('pm'), { type: 'SITE_SERVICES_BRIEF_DOCUMENT', hash: CURVE_HASH, description: 'Programme rev D, workforce curve sheet 3' });
+    store.put(seed.tenantId, CURVE_HASH, CURVE, 'application/pdf');
+  }
+
+  before(() => {
+    directory = mkdtempSync(join(tmpdir(), 'construx-etablix-brief-'));
+    store = new EvidenceStore(directory);
+  });
+  after(() => rmSync(directory, { recursive: true, force: true }));
+
+  it('refuses to read the curve on a deployment whose provider cannot see a file, and charges nothing', async () => {
+    await rebuild();
+    const wallet = platform.wallet(seed.tenantId).snapshot();
+    await rejectsCode(() => extract(as('pm'), store, { hash: CURVE_HASH, task: 'SITE_SERVICES_BRIEF' }), 'PERCEPTION_PROVIDER_UNAVAILABLE');
+    assert.equal(platform.wallet(seed.tenantId).snapshot().balanceMinor, wallet.balanceMinor);
+    assert.equal(briefReadiness(as('pm')).facts.length, 0, 'the baseline moved on a refusal');
+  });
+
+  it('holds a low-confidence reading as a draft with its source and provider, and the baseline is unchanged', async () => {
+    await rebuild(seeing(0.42));
+    const read = await extract(as('pm'), store, { hash: CURVE_HASH, task: 'SITE_SERVICES_BRIEF' });
+    const held = drafts(as('pm')).find((entry) => entry.id === read.draftId)!;
+    assert.equal(held.status, 'DRAFT');
+    assert.equal(held.confidence, 0.42);
+    assert.equal(held.evidenceHash, CURVE_HASH, 'the draft names the exact bytes it was read from');
+    assert.equal(held.aiProvenance?.provider, 'GEMINI');
+    assert.equal(held.aiProvenance?.synthetic, false);
+    assert.equal(briefReadiness(as('pm')).facts.length, 0, 'a draft reached the register');
+
+    // The exception queue: it is on the list of somebody entitled to decide it.
+    assert.ok(drafts(as('pm')).some((entry) => entry.status === 'DRAFT' && entry.task === 'SITE_SERVICES_BRIEF'));
+
+    // And once a person confirms it, the reading goes through the same command
+    // as typing it in, with the document, the model and the confirmer on the
+    // source. One test rather than two because the suite's `beforeEach` moves
+    // every test onto a fresh project, and the draft belongs to this one.
+    const pending = drafts(as('pm')).find((entry) => entry.status === 'DRAFT')!;
+    const confirmed = await confirm(as('pm'), { draftId: pending.id });
+    const result = confirmed.result as { recorded: number; facts: { itemId: string }[]; omitted: string[] };
+    assert.equal(result.recorded, 2, 'the item the catalogue does not know was dropped, not invented');
+    assert.deepEqual(result.facts.map((fact) => fact.itemId).sort(), ['peakWorkforce', 'shiftOverlapPersons']);
+    assert.deepEqual(result.omitted, READING.omitted);
+
     const facts = briefReadiness(as('pm')).facts;
-    assert.ok(facts.length > 0);
+    const peak = facts.find((fact) => fact.itemId === 'peakWorkforce')!;
+    assert.equal(peak.value, 164);
+    assert.equal(peak.status, 'KNOWN');
+    assert.match(peak.source, /Programme rev D, workforce curve sheet 3/);
+    assert.match(peak.source, /page 3/);
+    assert.match(peak.source, /read by GEMINI/);
+    assert.match(peak.source, new RegExp(`confirmed by ${seed.users.pm!.id}`));
+    assert.match(peak.source, /"Peak on site 164 \(wk 22\)"/);
     for (const fact of facts) {
       assert.ok(fact.source.trim().length > 0, `${fact.itemId} reached the register with no stated source`);
     }
+    assert.equal(drafts(as('pm')).find((entry) => entry.id === pending.id)!.status, 'CONFIRMED');
+  });
 
-    // And the catalogue of perception tasks holds nothing that targets it. When
-    // one is added, this assertion fails — which is the point.
-    const tasks = Object.keys(PERCEPTION_TASKS);
-    assert.ok(tasks.length > 0, 'the perception catalogue is empty, so this proves nothing');
-    assert.deepEqual(
-      tasks.filter((task) => /BRIEF|WELFARE|WORKFORCE|SITE_SERVICE/.test(task)),
-      [],
-      'a perception task now targets the site-services brief; §19.10 must be rewritten against the real extraction path',
-    );
+  it('refuses the reading to a tenancy that does not hold the module, and to a reader who may not record a fact', async () => {
+    await rebuild(seeing(0.9));
+    // An enterprise admin reads the brief and records nothing in it.
+    await rejectsCode(() => extract(as('admin'), store, { hash: CURVE_HASH, task: 'SITE_SERVICES_BRIEF' }), 'ACCESS_DENIED');
+    platform.setModuleGrant({
+      moduleId: 'ETABLIX',
+      tenantId: seed.users.pm!.auth.tenantId,
+      status: 'REVOKED',
+      reason: 'Engagement ended at the close of the pilot',
+      decidedBy: seed.users.operator!.id,
+    });
+    await assert.rejects(() => extract(as('pm'), store, { hash: CURVE_HASH, task: 'SITE_SERVICES_BRIEF' }));
+    // Restored, because the tests after this one run on the same tenancy.
+    platform.setModuleGrant({
+      moduleId: 'ETABLIX',
+      tenantId: seed.users.pm!.auth.tenantId,
+      status: 'ACTIVE',
+      reason: 'Re-engaged for the next scenario',
+      decidedBy: seed.users.operator!.id,
+    });
   });
 
   it('keeps a provisional value visible as provisional rather than letting it settle into the baseline', () => {

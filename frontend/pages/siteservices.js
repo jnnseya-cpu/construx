@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { command, commandBar } from '../lib/command.js';
+import { command, commandBar, confirmCost } from '../lib/command.js';
 import { badge, date, html, money, pct, raw, render, table, toast, track } from '../lib/ui.js';
 import { head, refusal } from '../lib/estate.js';
 import { blockedReason, can, modules, state } from '../app.js';
@@ -323,6 +323,20 @@ const DESK_COMMANDS = {
       summary: (result) => `${result.vehicle}: ${result.status.toLowerCase()}`,
     };
   },
+  briefdocument: () => ({
+    title: 'File a brief document',
+    intent:
+      'A workforce curve, a welfare schedule or a compound layout, filed as evidence under the name every fact read ' +
+      'from it will carry. Reading it is a separate act, on the brief card, with its own cost and its own confirmation.',
+    path: `/v1/projects/${state.session.projectId}/site-services/brief/document`,
+    submitLabel: 'File',
+    fields: [
+      { name: 'description', label: 'What the document is', hint: '"Programme rev D, workforce curve sheet 3" — the source every fact read from it will be traced to.' },
+      { name: 'hash', label: 'The document', type: 'file' },
+    ],
+    done: 'Filed',
+    summary: (result) => `${result.description} — read it from the brief card once the upload has landed`,
+  }),
   promote: () => ({
     title: 'Promote what this project learned',
     intent:
@@ -341,7 +355,7 @@ const DESK_COMMANDS = {
 };
 
 export async function siteservices(root) {
-  const [position, readiness, structure, tower, factory, live, commercial, changes, closeout, cash, eac, desk, portfolio, library] = await Promise.all([
+  const [position, readiness, structure, tower, factory, live, commercial, changes, closeout, cash, eac, desk, portfolio, library, perception, evidence] = await Promise.all([
     api.get(`/v1/projects/${state.session.projectId}/site-services/appointment`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/brief`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/sbs`).catch((error) => ({ error })),
@@ -356,6 +370,11 @@ export async function siteservices(root) {
     api.get(`/v1/projects/${state.session.projectId}/site-services/desk`).catch((error) => ({ error })),
     api.get('/v1/site-services/portfolio').catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/library`).catch((error) => ({ error })),
+    // What this deployment can read from a file, and the brief drafts waiting
+    // to be confirmed. Null, not a refusal card: a reader without the evidence
+    // audit capability still gets the brief, only without the reading.
+    api.get(`/v1/projects/${state.session.projectId}/perception`).catch(() => null),
+    api.get(`/v1/projects/${state.session.projectId}/evidence`).catch(() => null),
   ]);
 
   // §13 and §17. Separate from the block above because the workspace is chosen
@@ -444,6 +463,12 @@ export async function siteservices(root) {
           {
             id: 'fact',
             label: 'Record a brief fact',
+            permitted: can('SITE_SERVICES', 'C'),
+            reason: blockedReason('SITE_SERVICES', 'C'),
+          },
+          {
+            id: 'briefdocument',
+            label: 'File a brief document',
             permitted: can('SITE_SERVICES', 'C'),
             reason: blockedReason('SITE_SERVICES', 'C'),
           },
@@ -889,7 +914,7 @@ export async function siteservices(root) {
 
       ${automation.error ? refusal('The automation measure', automation.error) : automationCard(automation)}
 
-      ${readiness.error ? refusal('Brief readiness', readiness.error) : briefCard(readiness)}
+      ${readiness.error ? refusal('Brief readiness', readiness.error) : briefCard(readiness, perception, evidence)}
 
       ${structure.error ? refusal('The system breakdown structure', structure.error) : sbsCard(structure)}
 
@@ -930,6 +955,60 @@ export async function siteservices(root) {
   root.querySelector('[data-portal-supplier]')?.addEventListener('change', (event) => {
     portalSupplier = event.target.value;
     again();
+  });
+
+  // Reading a filed document, and settling what was read. Written out rather
+  // than interpolated: one route per perception task is what makes each one
+  // quotable, and the cost is on screen before the provider is asked.
+  root.addEventListener('click', async (event) => {
+    const read = event.target.closest('[data-read-brief]');
+    if (read) {
+      const path = `/v1/projects/${state.session.projectId}/perception/site-services-brief`;
+      const go = await confirmCost({
+        title: 'Read the brief from this document',
+        intent:
+          'A provider that can see the document reports each brief fact it finds with the words it read it from. ' +
+          'Nothing reaches the register until the draft is confirmed here.',
+        path,
+        runLabel: 'Read',
+      });
+      if (!go) return;
+      read.disabled = true;
+      try {
+        const draft = await api.post(path, { hash: read.dataset.readBrief });
+        toast('Read', `${draft.extraction.facts.length} fact${draft.extraction.facts.length === 1 ? '' : 's'} drafted — confirm or reject each reading below`, 'ok');
+        await again();
+      } catch (error) {
+        toast('Not read', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
+        read.disabled = false;
+      }
+      return;
+    }
+    const confirmDraft = event.target.closest('[data-confirm-brief]');
+    if (confirmDraft) {
+      confirmDraft.disabled = true;
+      try {
+        const result = await api.post(`/v1/projects/${state.session.projectId}/perception/${confirmDraft.dataset.confirmBrief}/confirm`, {});
+        toast('Confirmed', `${result.result.recorded} fact${result.result.recorded === 1 ? '' : 's'} recorded through the same command as typing them in`, 'ok');
+        await again();
+      } catch (error) {
+        toast('Not confirmed', error.message, 'err');
+        confirmDraft.disabled = false;
+      }
+      return;
+    }
+    const discardDraft = event.target.closest('[data-discard-brief]');
+    if (discardDraft) {
+      const reason = window.prompt('Why is this reading wrong? It stays on the record either way.');
+      if (!reason) return;
+      try {
+        await api.post(`/v1/projects/${state.session.projectId}/perception/${discardDraft.dataset.discardBrief}/discard`, { reason });
+        toast('Rejected', 'The draft stays on the record with your reason; nothing reached the register', 'ok');
+        await again();
+      } catch (error) {
+        toast('Not rejected', error.message, 'err');
+      }
+    }
   });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
@@ -2919,7 +2998,7 @@ function assessmentCard(assessment, models) {
  * that are both recorded is worse than a fact that is missing: nobody is
  * looking for it.
  */
-function briefCard(readiness) {
+function briefCard(readiness, perception, evidence) {
   const { families, percentKnown, conflicts, overdue, interview } = readiness;
   return html`
     <div class="card" style="margin-bottom:14px">
@@ -2929,6 +3008,8 @@ function briefCard(readiness) {
         system is designed from are settled. The percentage is a caption, not the answer — what each gap decides is
         below it.
       </div>
+
+      ${briefReading(perception, evidence)}
 
       ${conflicts.length > 0
         ? html`<div style="margin-bottom:14px">
@@ -4709,6 +4790,78 @@ function libraryCard(library) {
         : ''}
       ${promotions.length > 0 && promotions.at(-1).withheld.length > 0
         ? html`<div class="metric-sub" style="margin-top:10px">Withheld at the last promotion: ${promotions.at(-1).withheld.map((entry) => `${entry.what} — ${entry.why}`).join(' · ')}</div>`
+        : ''}
+    </div>
+  `;
+}
+
+/**
+ * §3 read from a document, §19.10 kept honest.
+ *
+ * The documents filed for reading, whether the platform actually holds the
+ * file behind each, and the drafts a provider produced from them. A draft is
+ * shown with what the model read and the words it read it from, and it changes
+ * nothing until somebody confirms it; a reading below the threshold is on this
+ * list with its provenance rather than in the register. Where the deployment
+ * cannot read a file the card says so at the control, in the platform's own
+ * words, rather than after the attempt.
+ */
+function briefReading(perception, evidence) {
+  const documents = (evidence?.entries ?? []).filter((entry) => entry.type === 'SITE_SERVICES_BRIEF_DOCUMENT');
+  const drafts = (perception?.drafts ?? []).filter((draft) => draft.task === 'SITE_SERVICES_BRIEF');
+  const open = drafts.filter((draft) => draft.status === 'DRAFT');
+  const available = perception?.capability?.available === true;
+  if (documents.length === 0 && drafts.length === 0) return '';
+  const documentOf = (draft) => documents.find((entry) => entry.hash === draft.evidenceHash)?.description ?? draft.evidenceHash.slice(0, 16);
+  return html`
+    <div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--line)">
+      <h2>Read from a document</h2>
+      ${perception && !available
+        ? html`<div class="notice info" style="margin:6px 0 10px"><div><b>Not readable on this deployment.</b> ${perception.capability?.reason ?? ''} A filed document is still evidence; its facts are typed in until a provider that can see it is configured.</div></div>`
+        : ''}
+      ${table({
+        headers: ['Document', 'Filed', 'File', ''],
+        rows: documents.map((entry) => [
+          entry.description,
+          entry.capturedAt.slice(0, 10),
+          entry.held ? badge('held', 'ok') : badge('not held', 'warn'),
+          entry.held && available && state.session.user
+            ? html`<button class="btn sm" data-read-brief="${entry.hash}">Read</button>`
+            : html`<span class="metric-sub">${entry.held ? 'no provider can read it' : 'upload has not landed'}</span>`,
+        ]),
+        empty: 'No document filed for reading.',
+      })}
+      ${open.map(
+        (draft) => html`<div class="notice ${raw((draft.confidence ?? 1) < 0.7 ? 'warn' : 'info')}" style="margin-top:10px">
+          <div style="width:100%">
+            <b>Read from ${documentOf(draft)}</b>
+            <span class="metric-sub"> · by ${draft.aiProvenance?.provider ?? 'the provider'}${draft.aiProvenance?.synthetic ? ' (local stand-in)' : ''}${
+              draft.confidence !== undefined ? ` · confidence ${Math.round(draft.confidence * 100)}%` : ''
+            }${(draft.confidence ?? 1) < 0.7 ? ' · below the threshold: check every figure against the page' : ''}</span>
+            ${table({
+              headers: ['Item', 'Value', 'Read from', 'Page'],
+              rows: (draft.extraction.facts ?? []).map((fact) => [
+                fact.itemId,
+                String(fact.value),
+                html`<span class="metric-sub">${fact.quoted ?? ''}</span>`,
+                fact.page == null ? '—' : String(fact.page),
+              ]),
+            })}
+            ${(draft.extraction.omitted ?? []).length > 0
+              ? html`<div class="metric-sub" style="margin-top:6px">Looked for and not found: ${draft.extraction.omitted.join(' · ')}</div>`
+              : ''}
+            <div style="margin-top:8px;display:flex;gap:8px">
+              <button class="btn sm" data-confirm-brief="${draft.id}">Confirm into the register</button>
+              <button class="btn sm quiet" data-discard-brief="${draft.id}">Reject</button>
+            </div>
+          </div>
+        </div>`,
+      )}
+      ${drafts.length > open.length
+        ? html`<div class="metric-sub" style="margin-top:8px">${drafts.length - open.length} earlier reading${drafts.length - open.length === 1 ? '' : 's'} settled: ${drafts
+            .filter((draft) => draft.status !== 'DRAFT')
+            .map((draft) => `${documentOf(draft)} ${draft.status.toLowerCase()}`)
+            .join(' · ')}</div>`
         : ''}
     </div>
   `;
