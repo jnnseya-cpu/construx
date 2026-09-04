@@ -124,8 +124,8 @@ ${meta.published ? `<meta property="article:published_time" content="${esc(meta.
 <meta name="theme-color" content="#090a0d">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/site.css">
-<script type="application/ld+json">${jsonLd(organisationJsonLd(businessDetails(), config.publicBaseUrl))}</script>
-${meta.jsonLd ? `<script type="application/ld+json">${meta.jsonLd}</script>\n` : ''}</head>`;
+${meta.jsonLd ? `<script type="application/ld+json">${meta.jsonLd}</script>\n` : ''}<script type="application/ld+json">${jsonLd(organisationJsonLd(businessDetails(), config.publicBaseUrl))}</script>
+</head>`;
 }
 
 /**

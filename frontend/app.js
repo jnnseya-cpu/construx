@@ -1,4 +1,4 @@
-import { api, ApiError, resetWithheld, session, setAreaReadGuard, setEntityReadGuard, withheldRecords } from './lib/api.js';
+import { api, ApiError, resetWithheld, session, setAreaReadGuard, setEnrolmentGuard, setEntityReadGuard, withheldRecords } from './lib/api.js';
 import { esc, html, humanise, initials, money, raw, render, toast } from './lib/ui.js';
 import { wireDrill } from './lib/drill.js';
 import { armInstallPrompt } from './lib/install.js';
@@ -538,6 +538,18 @@ export function isOperator() {
 }
 
 // --- routing ----------------------------------------------------------------
+
+// A session the organisation holds to enrolment can reach Security and
+// nothing else. Whatever screen it landed on — the one remembered in the
+// address bar, a deep link, the operator's estate — the first refusal takes
+// it to the one screen that can end the refusal, with the sentence that says
+// why. Without this the person read "outside your role" on their own command
+// centre and concluded they could not sign in.
+setEnrolmentGuard((problem) => {
+  if (currentRoute().page === 'security') return;
+  toast('Set up a second factor to continue', problem?.detail ?? 'Your organisation requires an authenticator app.', 'warn');
+  navigate('security');
+});
 
 function currentRoute() {
   const path = location.pathname.replace(/^\/app\/?/, '');

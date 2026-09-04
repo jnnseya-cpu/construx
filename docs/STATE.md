@@ -8165,8 +8165,14 @@ session without `mfaSatisfied` for someone the policy covers to the routes
 enrolment needs (`GET /v1/me/security`, the authenticator routes, refresh,
 logout, the permission matrix) and refuses everything else with
 `MFA_ENROLMENT_REQUIRED` and the sentence that says what to do. The console
-lands such a session on Security and every other screen shows the same
-sentence. API keys are not sessions and are not gated: a key is issued by
+lands such a session on Security, and the first refusal from any other screen
+— the one remembered in the address bar, a deep link, the operator's estate —
+takes it back there with the sentence as a notice (`setEnrolmentGuard` in
+`frontend/lib/api.js`, registered by the shell). A refusal that does render
+says "Set up a second factor first" with a link to Security, not "outside
+your role": the person has the role and lacks the factor, and the first
+operator to meet it read the old heading as being locked out of their own
+platform. API keys are not sessions and are not gated: a key is issued by
 someone who was. Removing the authenticator while the policy requires one is
 refused (`MFA_REQUIRED_BY_POLICY`). Team & Access shows who holds an
 authenticator app beside passkeys and bound devices, flags an administrator

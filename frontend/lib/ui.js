@@ -441,10 +441,15 @@ export function positionReport({ title, intent, data, error, sections = [] }) {
     // every one of them looking like an outage. Withheld is said quietly, in
     // the platform's own words for it; an actual failure stays red.
     if (error?.status === 403) {
+      // Not a role at all when the organisation is holding this session to
+      // enrolment: the person has the role and lacks the second factor, and
+      // "outside your role" reads as being locked out of their own platform.
+      const enrolment = error?.code === 'MFA_ENROLMENT_REQUIRED';
       return html`<div class="card">
         <h2>${title}</h2>
-        <div class="notice">
-          <div><b>Outside your role</b><br />${error.message ?? String(error)}</div>
+        <div class="notice ${raw(enrolment ? 'warn' : '')}">
+          <div><b>${enrolment ? 'Set up a second factor first' : 'Outside your role'}</b><br />${error.message ?? String(error)}
+          ${enrolment ? html`<br /><a href="/app/security" data-nav="security">Go to Security</a>` : ''}</div>
         </div>
       </div>`;
     }

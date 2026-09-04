@@ -156,8 +156,28 @@ async function request(method, path, body, options = {}) {
   const text = await response.text();
   const payload = text ? JSON.parse(text) : {};
 
-  if (!response.ok) throw new ApiError(payload, response.status);
+  if (!response.ok) {
+    noticeEnrolmentRequired(payload, response.status);
+    throw new ApiError(payload, response.status);
+  }
   return payload;
+}
+
+/**
+ * A session the organisation holds to enrolment. The gateway refuses every
+ * route but Security's with `MFA_ENROLMENT_REQUIRED`, and a page that asked
+ * for eight positions would otherwise paint eight refusals and leave the
+ * person reading "outside your role" on a screen they cannot use. The shell
+ * registers a guard that takes them to Security instead; this only notices.
+ */
+let enrolmentGuard = null;
+
+export function setEnrolmentGuard(guard) {
+  enrolmentGuard = guard;
+}
+
+function noticeEnrolmentRequired(payload, status) {
+  if (status === 403 && payload?.title === 'MFA_ENROLMENT_REQUIRED') enrolmentGuard?.(payload);
 }
 
 /**
@@ -179,7 +199,9 @@ async function download(path, body, options = {}) {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new ApiError(text ? JSON.parse(text) : {}, response.status);
+    const payload = text ? JSON.parse(text) : {};
+    noticeEnrolmentRequired(payload, response.status);
+    throw new ApiError(payload, response.status);
   }
 
   // The filename the platform chose, which is the document's own reference.
