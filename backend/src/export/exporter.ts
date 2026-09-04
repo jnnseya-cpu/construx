@@ -74,6 +74,13 @@ export type ClientBranding = {
   /** Registered office, company number, and any regulated-entity detail. */
   legalFooter: string;
   documentReferencePrefix: string;
+  /**
+   * Which version of the identity a document was built under. Counts up on
+   * every change at that scope, so a document exported under version 3 stays
+   * attributable to version 3 after the colour or the footer moves on. Set by
+   * the platform, never by the caller.
+   */
+  profileVersion?: number;
 };
 
 /**
@@ -307,7 +314,9 @@ export class ExportService {
    * own client identity is written to that project, where the rest of its
    * record is.
    */
-  setBranding(tenantId: string, branding: ClientBranding, projectId?: string, actorId?: string): void {
+  setBranding(tenantId: string, input: ClientBranding, projectId?: string, actorId?: string): void {
+    const previous = projectId ? this.#brandingByProject.get(`${tenantId}:${projectId}`) : this.#brandingByTenant.get(tenantId);
+    const branding: ClientBranding = { ...input, profileVersion: (previous?.profileVersion ?? 0) + 1 };
     if (projectId) this.#brandingByProject.set(`${tenantId}:${projectId}`, branding);
     else this.#brandingByTenant.set(tenantId, branding);
 
