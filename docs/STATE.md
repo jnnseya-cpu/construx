@@ -7187,6 +7187,19 @@ answer from a page with five.
 Eight tests in `syncvisibility.test.ts`. The mutant that matters: make
 `visiblePage` a passthrough and the supplier-isolation test fails.
 
+**The cursor names the event, not the millisecond.** A pull cursor is
+`<timestamp>|<eventId>`, the ledger's own `(timestamp, eventId)` order, the
+same tiebreak the change feed below already carries. The cursor had been the
+timestamp alone, and CI showed why that is not a cursor: the seed writes more
+events into one millisecond than a page of five holds, so a page boundary that
+fell inside that millisecond re-offered the same page for ever and the device
+never moved — one CI run in ten, on a fast runner. Skipping to the next
+millisecond would have lost every sibling event instead. A device still
+holding a plain-timestamp cursor resumes inclusively from it once and is
+handed a full cursor back. `field.test.ts` walks the whole seeded project one
+event at a time and requires every event exactly once; against the old cursor
+it does not terminate.
+
 ---
 
 ### The field fleet: specification E2's six agents

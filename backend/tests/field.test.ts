@@ -142,6 +142,29 @@ describe('offline field sync', () => {
     );
   });
 
+  it('walks the whole project one event at a time without repeating or skipping one', () => {
+    // The seed writes many events inside one millisecond. A cursor that named
+    // only the millisecond re-offered that page for ever once a page boundary
+    // fell inside it — CI caught it, one run in ten — and a cursor that skipped
+    // to the next millisecond would have lost every sibling event. A page of
+    // one puts a boundary inside every busy millisecond there is.
+    const total = platform.ledger.events({ tenantId: seed.tenantId, projectId: seed.projectId }).length;
+    const seen = new Set<string>();
+    let cursor: string | undefined;
+    for (let step = 0; step < total + 5; step += 1) {
+      const page = platform.sync.pull(auth, seed.projectId, 'device-walk', cursor, 1);
+      if (page.events.length === 0) break;
+      for (const event of page.events) {
+        assert.ok(!seen.has(event.eventId), `event ${event.eventId} was offered twice`);
+        seen.add(event.eventId);
+      }
+      assert.notEqual(page.cursor, cursor, 'the cursor did not move');
+      cursor = page.cursor;
+      if (!page.hasMore) break;
+    }
+    assert.equal(seen.size, total, 'every event on the project reached the device exactly once');
+  });
+
   it('leaves the ledger verifiable after synchronisation', async () => {
     const { replayProject } = await import('../src/goldenthread/replay.ts');
     const report = replayProject(platform.ledger, seed.tenantId, seed.projectId, new Date().toISOString());

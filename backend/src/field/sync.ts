@@ -467,9 +467,20 @@ export class SyncEngine {
       );
     }
 
-    const all = this.#ledger.events({ tenantId: auth.tenantId, projectId, from: since });
+    // A cursor is the timestamp *and* the id of the last event handed over,
+    // not the timestamp alone. The ledger orders events by timestamp then id,
+    // and a busy writer puts more events into one millisecond than a page
+    // holds; a cursor that named only the millisecond re-offered that page for
+    // ever and the device never moved. A plain timestamp is still accepted —
+    // a device holding one from before this change resumes inclusively from
+    // it, once, and is handed a full cursor back.
+    const [sinceTimestamp, sinceEventId] = since ? since.split('|', 2) : [undefined, undefined];
+    const all = this.#ledger
+      .events({ tenantId: auth.tenantId, projectId, from: sinceTimestamp })
+      .filter((event) => !(sinceEventId && event.timestamp === sinceTimestamp && event.eventId <= sinceEventId));
     const page = all.slice(0, limit);
-    const cursor = page[page.length - 1]?.timestamp ?? since ?? new Date().toISOString();
+    const last = page[page.length - 1];
+    const cursor = last ? `${last.timestamp}|${last.eventId}` : (since ?? new Date().toISOString());
 
     this.#deviceCursors.set(`${deviceId}:${projectId}`, cursor);
 
