@@ -112,6 +112,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   ContractLine: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
   Valuation: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
   ServiceCredit: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  ValuationPayment: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  SiteServicesContingency: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  ServiceAsset: { area: 'SITE_SERVICES' },
+  ServiceDelivery: { area: 'SITE_SERVICES' },
+  AccommodationRoom: { area: 'SITE_SERVICES' },
+  BedAllocation: { area: 'SITE_SERVICES' },
+  TransportJourney: { area: 'SITE_SERVICES' },
   // Accepted progress is the evidential half and is deliberately not
   // commercial: the people who record what the platform actually saw are the
   // ones running the operation, not the ones pricing it.

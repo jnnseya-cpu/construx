@@ -485,13 +485,16 @@ describe('§13 the eight workspaces', () => {
   });
 
   it('records the gaps it cannot answer rather than showing a green tile', () => {
-    // Four of the eight have a real gap, and each is an entity family that does
-    // not exist rather than a screen that was not drawn. Stated here so that
-    // building one of them fails this assertion and forces the count down.
+    // One of the eight has a real gap left: the supplier portal has no
+    // supplier-side identity to scope a valuation to. The other four gaps —
+    // paid/accrual/cash and contingency/EAC, the portfolio roll-up, the asset
+    // register and delivery check, rooms, beds and journeys — are record
+    // families now (`etablix/cash.ts`, `etablix/desk.ts`). Stated here so
+    // that building the last one fails this assertion and forces it to zero.
     const withGaps = WORKSPACES.filter((workspace) => workspace.questions.some((question) => !question.answered));
     assert.deepEqual(
       withGaps.map((workspace) => workspace.id).sort(),
-      ['ACCOMMODATION_DESK', 'COMMERCIAL', 'EXECUTIVE_PORTFOLIO', 'FIELD_MOBILE', 'SUPPLIER_PORTAL'],
+      ['SUPPLIER_PORTAL'],
     );
   });
 

@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,707 passing, 0 failing, 0 skipped, across 248 files · plus 18 against a live Postgres 16 |
+| Tests | 5,729 passing, 0 failing, 0 skipped, across 249 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
-| Backend | 289 TypeScript files, 185,600 lines |
-| Application | 76 ES modules, 42,300 lines (including a service worker) |
-| API routes | 1,029 — 704 writes, 325 reads (48 of them public) |
-| Event types | 690 Golden Thread (closed) · the communication catalogue is separate and closed |
-| Entity types | 317, all classified for access |
+| Backend | 291 TypeScript files, 187,100 lines |
+| Application | 76 ES modules, 42,800 lines (including a service worker) |
+| API routes | 1,048 — 719 writes, 329 reads (48 of them public) |
+| Event types | 706 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Entity types | 324, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
@@ -8536,6 +8536,57 @@ note that the sparkline and histogram had no callers is stale — both are
 drawn on the estate screens — and the resource levelling the programme block
 records as built supersedes the earlier "not yet built" note above it.
 
+## §13's record families, built
+
+The command centres had declared eight questions unanswerable because the
+record beneath each did not exist. Seven of those records exist now; the
+eighth — a supplier logging into their own portal — needs a supplier account
+layer with its own authentication and is still declared, not implied.
+
+**`domain/etablix/cash.ts`.** A payment is recorded against a certified
+valuation under the bank's own reference — the same reference twice records
+once, a different valuation or amount under a known reference is refused,
+and nothing is recorded above what the certificate says. The cash position
+keeps earned, certified and paid apart, names accrual (earned above
+certified) and outstanding (certified above paid), and splits the
+outstanding sum by who owes it under the appointment. A contingency pot is
+set with its basis and drawn against with a reason, never below what has
+left it. The estimate at completion is the higher of commitment and earned,
+plus agreed change at face, plus unagreed change at risk-adjusted value, with
+headroom against budget plus pot and every term published beside the total.
+The portfolio roll-up walks every project of the caller's own company
+through the same project context every other read uses, so the isolation is
+the same isolation; a project the caller may not read, or one with nothing
+appointed, is skipped with the reason. Routes under
+`/v1/projects/:projectId/site-services/{cash,payment,eac,contingency,contingency/draw}`
+and `/v1/site-services/portfolio`; `etablix.cash.test.ts`.
+
+**`domain/etablix/desk.ts`.** Units are registered under their composed
+system with the tag their code carries, unique on the project; a scan
+resolves the tag and records the scan, its location and its state, and a tag
+that resolves to nothing says so. Deliveries are scheduled with what is
+expected and when, and checked in as received, short with the discrepancy
+named, or refused; an expected delivery past its day is overdue. Rooms are
+registered beneath the accommodation system with their beds; a bed is
+allocated by name for dated nights, checked in and checked out; a room is
+occupied by a check-in and never by declaration, goes to cleaning when
+vacated, and refuses allocation while out of service. Journeys carry a
+vehicle, a route, a departure and seats, are booked by name never beyond the
+seats, and depart, arrive or are cancelled with a reason. The desk position
+reads all four against the brief's bed demand and today's date. Routes under
+`/v1/projects/:projectId/site-services/{desk,asset,asset/scan,delivery,delivery/check,room,room/status,bed,bed/checkin,bed/checkout,journey,journey/book,journey/status}`;
+`etablix.desk.test.ts`. The Site Services screen carries a cash card, an
+estimate-at-completion card, a portfolio card and a desk card, each with its
+doors; every door was driven in Chromium as the seeded project manager under
+an ETABLIX grant, including the refusal of a short delivery with no
+discrepancy named.
+
+All sixteen new events sit in §17's automation map: the desk's recording
+acts (register, scan, schedule, check, allocate, check in and out, book,
+move a journey on) are Class A and agent-authorable in the catalogue; taking
+a room out of service, drawing on contingency and recording money are Class
+B; setting or resetting the pot is Class C.
+
 ## What is partial
 
 Implemented in a form that works, with a stated part missing. The missing part is
@@ -8619,13 +8670,13 @@ count.
 | Gap | Where it is stated | What is actually missing |
 |---|---|---|
 | **The knowledge library** (§6 stage 8, §1's stated advantage) | The workflow card, as `NOT DERIVABLE` — the only such gate in the nine | No site-services supplier score written back from an engagement, no price benchmark promoted out of a normalisation, no reusable package template. §7 normalises bids inside a project and nothing carries the result forward |
-| **Room, bed and allocation records** (§13 Accommodation Desk) | The workspace's *what this cannot answer* table | §4 composes an accommodation system sized against demand; there is no room, bed, allocation, arrival or housekeeping record beneath it. One entity family, not a screen |
-| **Transport journeys** (§13 Accommodation Desk) | The same table | Transport and logistics is a service family with a KPI that is reported rather than enforced; there is no journey, vehicle or booking record |
-| **QR asset scan and delivery check** (§13 Field Mobile) | The same table | A composed system is the unit; there is no per-asset register for a code to resolve to, and deliveries are attested as gate evidence rather than booked against a schedule |
+| ~~**Room, bed and allocation records**~~ (§13 Accommodation Desk) | Built — `etablix/desk.ts` | Rooms registered beneath the composed accommodation system, beds allocated by name for dated nights, check-in and check-out, a vacated room sent to cleaning by the record, inventory read against the brief's bed demand |
+| ~~**Transport journeys**~~ (§13 Accommodation Desk) | Built — `etablix/desk.ts` | Journeys with a vehicle, route, departure and seats; seats booked by name never beyond the seats; departed, arrived or cancelled with a reason; today's load factor |
+| ~~**QR asset scan and delivery check**~~ (§13 Field Mobile) | Built — `etablix/desk.ts` | Units registered under their system with the tag their code carries; a scan resolves the tag and records state and location; deliveries scheduled and checked in as received, short with the discrepancy, or refused |
 | **Supplier-side authentication** (§13 Supplier Portal) | The same table, and the portal refuses an unscoped read | External project invitations exist; a supplier account layer with its own login does not. The portal is an internal view of one supplier's obligations |
-| **Paid, accrual and cash** (§13 Commercial) | The same table | §10 certifies value and records who owes it; it does not record payment against a certificate. CONSTRUX holds a purchase ledger and the two are not joined |
-| **Contingency and EAC** (§13 Commercial) | The same table | Change exposure is an input to an EAC, not an EAC |
-| **The cross-project roll-up** (§13 Executive Portfolio) | The same table | Every position is project-scoped by construction |
+| ~~**Paid, accrual and cash**~~ (§13 Commercial) | Built — `etablix/cash.ts` | Payments recorded against a certified valuation under the bank's reference, never above the certificate; earned, certified and paid kept apart, outstanding split by who owes it |
+| ~~**Contingency and EAC**~~ (§13 Commercial) | Built — `etablix/cash.ts` | A pot set with its basis and drawn with a reason; the EAC as the higher of commitment and earned plus agreed change plus risk-adjusted exposure, every term published |
+| ~~**The cross-project roll-up**~~ (§13 Executive Portfolio) | Built — `etablix/cash.ts` | Every project of the caller's company through the same project context, skipped with the reason where unreadable |
 | **An ETABLIX perception task** (§19.10) | The acceptance test, which asserts the fact that makes its pass condition hold | The draft/confirm mechanism exists and is proved in `tests/perception.test.ts`; no perception task reads a workforce curve or a welfare schedule into the brief register, so nothing a model produces can reach the baseline |
 | **Forecast accuracy** (§17) | The automation card, as not measurable | It compares a prior estimate at completion against a final outturn. No site-services account has been closed out, and reporting it on a live project would compare the forecast against itself |
 

@@ -226,6 +226,29 @@ export const ACTIVITIES: Record<string, ActivityDefinition> = {
   SERVICE_VALUATION_CERTIFIED: { class: 'C', workflow: 'COMMERCIAL' },
   SERVICE_CREDIT_RAISED: { class: 'B', workflow: 'COMMERCIAL' },
   SERVICE_CREDIT_APPROVED: { class: 'B', workflow: 'COMMERCIAL' },
+  // §13 — paid, accrual and cash; contingency and the estimate at completion.
+  // Money that has moved is recorded under the bank's reference by a person
+  // who saw it move; the pot is a commercial authority; a draw is supervised.
+  SERVICE_PAYMENT_RECORDED: { class: 'B', workflow: 'COMMERCIAL' },
+  SERVICE_CONTINGENCY_SET: { class: 'C', workflow: 'COMMERCIAL' },
+  SERVICE_CONTINGENCY_RESET: { class: 'C', workflow: 'COMMERCIAL' },
+  SERVICE_CONTINGENCY_DRAWN: { class: 'B', workflow: 'COMMERCIAL' },
+
+  // §13 — the record families beneath a running system. Scanning a code,
+  // checking a delivery, putting a name in a bed and a seat on a bus are
+  // recording; taking a room out of service changes what the site can house.
+  SERVICE_ASSET_REGISTERED: { class: 'A', workflow: 'OPERATIONS' },
+  SERVICE_ASSET_SCANNED: { class: 'A', workflow: 'OPERATIONS' },
+  SERVICE_DELIVERY_SCHEDULED: { class: 'A', workflow: 'OPERATIONS' },
+  SERVICE_DELIVERY_CHECKED: { class: 'A', workflow: 'OPERATIONS' },
+  ACCOMMODATION_ROOM_REGISTERED: { class: 'A', workflow: 'OPERATIONS' },
+  ACCOMMODATION_ROOM_STATUS_SET: { class: 'B', workflow: 'OPERATIONS' },
+  BED_ALLOCATED: { class: 'A', workflow: 'OPERATIONS' },
+  BED_CHECKED_IN: { class: 'A', workflow: 'OPERATIONS' },
+  BED_CHECKED_OUT: { class: 'A', workflow: 'OPERATIONS' },
+  TRANSPORT_JOURNEY_SCHEDULED: { class: 'A', workflow: 'OPERATIONS' },
+  TRANSPORT_SEAT_BOOKED: { class: 'A', workflow: 'OPERATIONS' },
+  TRANSPORT_JOURNEY_UPDATED: { class: 'A', workflow: 'OPERATIONS' },
 
   // §11 — change. Raising an early warning is autonomous and should be: the
   // whole failure this module addresses is nobody raising one.
@@ -830,9 +853,10 @@ export const WORKSPACES: readonly Workspace[] = [
       {
         id: 'PORTFOLIO_ROLLUP',
         question: 'The same, across every project at once.',
-        answered: false,
+        answered: true,
+        from: 'commercial',
         basis:
-          'Not built. Each position is project-scoped by construction, and a cross-project roll-up of site services would need a portfolio read that respects the same tenant isolation. CONSTRUX has a portfolio forecast; ETABLIX does not yet feed it.',
+          'The portfolio roll-up walks every project of the caller’s own company through the same project context every other read uses — budget, commitment, earned, certified, paid, outstanding, estimate at completion and open changes per project and in total. A project the caller may not read, or one with nothing appointed, is listed as skipped with the reason rather than summed as zero.',
       },
     ],
   },
@@ -981,16 +1005,18 @@ export const WORKSPACES: readonly Workspace[] = [
       {
         id: 'PAID_ACCRUAL_CASH',
         question: 'Paid, accrual and cash?',
-        answered: false,
+        answered: true,
+        from: 'commercial',
         basis:
-          'Not built. §10 certifies value; it does not record payment against a certificate, so paid, accrual and cash position cannot be reported from ETABLIX records. CONSTRUX holds a purchase ledger, and the two are not yet joined.',
+          'Payments are recorded against a certified valuation under the bank’s own reference, never above the certificate. The cash position keeps three numbers apart: earned (accepted work), certified (what a certificate says is owed) and paid (what has arrived) — accrual is earned above certified, outstanding is certified above paid, and the outstanding sum is split by who owes it under the appointment.',
       },
       {
         id: 'CONTINGENCY_EAC',
         question: 'Contingency and estimate at completion?',
-        answered: false,
+        answered: true,
+        from: 'commercial',
         basis:
-          'Not built. No site-services contingency pot or EAC roll-up exists: change exposure is reported at risk-adjusted value, which is an input to an EAC rather than an EAC.',
+          'A contingency pot is set with its basis and drawn against with a reason, never below what has already left it. The estimate at completion is the higher of commitment and earned, plus agreed change at face, plus unagreed change at risk-adjusted value; headroom is budget plus pot less the EAC, and every term is published beside the total.',
       },
     ],
   },
@@ -1141,22 +1167,26 @@ export const WORKSPACES: readonly Workspace[] = [
       {
         id: 'QR_ASSET',
         question: 'QR asset scan?',
-        answered: false,
+        answered: true,
+        from: 'operations',
         basis:
-          'Not built. There is no per-asset register under a composed system — a system is the unit, not the individual cabin — so there is nothing for a code to resolve to.',
+          'Every unit is registered under its composed system with the tag its code carries, unique on the project. A scan resolves the tag to the unit and records the scan, its location and its state against it; a tag that resolves to nothing says so.',
       },
       {
         id: 'DELIVERY_CHECK',
         question: 'Delivery check?',
-        answered: false,
-        basis: 'Not built. Deliveries against a mobilisation gate are attested as evidence, not booked in against a delivery schedule.',
+        answered: true,
+        from: 'operations',
+        basis:
+          'A delivery is scheduled with what is expected and when, and checked in against that: received, short with the discrepancy named, or refused. An expected delivery past its day is overdue on the desk.',
       },
       {
         id: 'OCCUPANCY',
         question: 'Occupancy?',
-        answered: false,
+        answered: true,
+        from: 'operations',
         basis:
-          'Not built at the individual level. Occupancy exists as a headcount driving demand and as a run-down position at demobilisation; who is in which bed tonight is the Accommodation Desk’s missing inventory.',
+          'Who is in which bed tonight, from check-ins against allocations under registered rooms; free beds, arrivals due and rooms awaiting housekeeping beside it, read against the bed demand the brief holds.',
       },
     ],
   },
@@ -1200,16 +1230,18 @@ export const WORKSPACES: readonly Workspace[] = [
       {
         id: 'INVENTORY',
         question: 'Room and bed inventory, allocations, arrivals and housekeeping status?',
-        answered: false,
+        answered: true,
+        from: 'operations',
         basis:
-          'Not built. §4 composes an accommodation system sized against demand; there is no room, bed or allocation record beneath it, so there is nothing to allocate, check in or clean. This is the largest single gap in §13 and it is one entity family, not a screen.',
+          'Rooms are registered beneath the composed accommodation system with their beds; a bed is allocated to a named occupant for dated nights, checked in and checked out. A vacated room goes to cleaning by the record, a room taken out of service refuses allocation, and the desk reads inventory against the demand the system was composed for.',
       },
       {
         id: 'TRANSPORT',
         question: 'Transport?',
-        answered: false,
+        answered: true,
+        from: 'operations',
         basis:
-          'Not built. Transport and logistics exists as a service family with a KPI that is reported rather than enforced; there is no journey, vehicle or booking record.',
+          'Journeys are scheduled with a vehicle, a route, a departure and seats; seats are booked by name, never beyond the seats; a journey departs, arrives or is cancelled with a reason. The desk reads today’s journeys and their load factor.',
       },
     ],
   },

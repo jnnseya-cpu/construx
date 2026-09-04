@@ -100,6 +100,8 @@ import * as sitePackages from '../domain/etablix/procurement.ts';
 import * as siteOperations from '../domain/etablix/operations.ts';
 import * as siteCommercial from '../domain/etablix/commercial.ts';
 import * as siteChange from '../domain/etablix/change.ts';
+import * as siteCash from '../domain/etablix/cash.ts';
+import * as siteDesk from '../domain/etablix/desk.ts';
 import * as siteDemob from '../domain/etablix/demobilisation.ts';
 import * as siteCommand from '../domain/etablix/commandcentre.ts';
 import * as siteWorkflow from '../domain/etablix/workflow.ts';
@@ -8424,6 +8426,205 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => siteCommercial.certifyValuation(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/cash',
+    readOnly: true,
+    description: 'Paid, accrued and outstanding against every valuation — three numbers kept apart',
+    handler: (platform, ctx) => siteCash.cashPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/payment',
+    description: 'Record a payment received against a certified valuation, under the bank’s own reference, never above the certificate',
+    schema: {
+      type: 'object',
+      required: ['valuationId', 'amountMinor', 'reference'],
+      properties: {
+        valuationId: { type: 'string', minLength: 6 },
+        amountMinor: { type: 'integer', minimum: 1 },
+        reference: { type: 'string', minLength: 3, maxLength: 200 },
+        paidAt: { type: 'string' },
+        note: { type: 'string', maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteCash.recordPayment(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/eac',
+    readOnly: true,
+    description: 'The estimate at completion with every term beside it, and the contingency pot against it',
+    handler: (platform, ctx) => siteCash.estimateAtCompletion(projectContext(platform, ctx), ctx.query.get('today') ?? undefined),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/contingency',
+    description: 'Set the site-services contingency pot with its basis',
+    schema: {
+      type: 'object',
+      required: ['potMinor', 'basis'],
+      properties: { potMinor: { type: 'integer', minimum: 0 }, basis: { type: 'string', minLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteCash.setContingency(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/contingency/draw',
+    description: 'Draw on the contingency pot for a stated reason, never beyond what remains',
+    schema: {
+      type: 'object',
+      required: ['amountMinor', 'reason'],
+      properties: { amountMinor: { type: 'integer', minimum: 1 }, reason: { type: 'string', minLength: 10 }, changeId: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteCash.drawContingency(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/site-services/portfolio',
+    readOnly: true,
+    description: 'Every project of this company’s site-services position at once, through the same reads each project uses',
+    handler: (platform, ctx) => siteCash.portfolioRollUp(platform, auth(ctx), ctx.query.get('today') ?? undefined),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/desk',
+    readOnly: true,
+    description: 'The desk: assets and their scans, deliveries against their schedule, rooms and beds tonight, journeys today',
+    handler: (platform, ctx) => siteDesk.deskPosition(projectContext(platform, ctx), ctx.query.get('today') ?? undefined),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/asset',
+    description: 'Register a unit under a composed system with the tag its code carries',
+    schema: {
+      type: 'object',
+      required: ['systemId', 'tag', 'kind'],
+      properties: { systemId: { type: 'string' }, tag: { type: 'string', minLength: 3, maxLength: 60 }, kind: { type: 'string', minLength: 2 }, serial: { type: 'string' }, location: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDesk.registerAsset(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/asset/scan',
+    description: 'Resolve a scanned tag to its unit and record the scan against it',
+    schema: {
+      type: 'object',
+      required: ['tag'],
+      properties: { tag: { type: 'string', minLength: 3 }, status: { type: 'string', enum: ['ON_SITE', 'OFF_SITE', 'DEFECTIVE'] }, location: { type: 'string' }, note: { type: 'string', maxLength: 500 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDesk.scanAsset(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/delivery',
+    description: 'Schedule a delivery: what, from whom, when and how many',
+    schema: {
+      type: 'object',
+      required: ['supplier', 'description', 'expectedOn', 'quantityExpected'],
+      properties: { systemId: { type: 'string' }, supplier: { type: 'string', minLength: 2 }, description: { type: 'string', minLength: 2 }, expectedOn: { type: 'string' }, quantityExpected: { type: 'integer', minimum: 1 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDesk.scheduleDelivery(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/delivery/check',
+    description: 'Check a delivery in against what was scheduled: received, short with the discrepancy, or refused',
+    schema: {
+      type: 'object',
+      required: ['deliveryId', 'quantityReceived'],
+      properties: { deliveryId: { type: 'string' }, quantityReceived: { type: 'integer', minimum: 0 }, receivedOn: { type: 'string' }, discrepancy: { type: 'string' }, refused: { type: 'boolean' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDesk.checkDelivery(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/room',
+    description: 'Register a room with its beds beneath the composed accommodation system',
+    schema: {
+      type: 'object',
+      required: ['systemId', 'block', 'number', 'beds'],
+      properties: { systemId: { type: 'string' }, block: { type: 'string', minLength: 1 }, number: { type: 'string', minLength: 1 }, beds: { type: 'integer', minimum: 1 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDesk.registerRoom(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/room/status',
+    description: 'Set a room ready, cleaning or out of service — occupied is a check-in, not a declaration',
+    schema: {
+      type: 'object',
+      required: ['roomId', 'status'],
+      properties: { roomId: { type: 'string' }, status: { type: 'string', enum: ['READY', 'OCCUPIED', 'CLEANING', 'OUT_OF_SERVICE'] }, reason: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDesk.setRoomStatus(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/bed',
+    description: 'Allocate a bed to a named occupant for dated nights, never beyond the room’s beds',
+    schema: {
+      type: 'object',
+      required: ['roomId', 'occupant', 'from'],
+      properties: { roomId: { type: 'string' }, occupant: { type: 'string', minLength: 2 }, employer: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDesk.allocateBed(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/bed/checkin',
+    description: 'Check an allocated occupant in; the room becomes occupied by the record',
+    schema: { type: 'object', required: ['allocationId'], properties: { allocationId: { type: 'string' } }, additionalProperties: false },
+    handler: (platform, ctx) => siteDesk.checkIn(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/bed/checkout',
+    description: 'Check an occupant out; a vacated room goes to housekeeping by the record',
+    schema: { type: 'object', required: ['allocationId'], properties: { allocationId: { type: 'string' } }, additionalProperties: false },
+    handler: (platform, ctx) => siteDesk.checkOut(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/journey',
+    description: 'Schedule a transport journey: vehicle, route, departure and seats',
+    schema: {
+      type: 'object',
+      required: ['vehicle', 'route', 'departs', 'seats'],
+      properties: { systemId: { type: 'string' }, vehicle: { type: 'string', minLength: 2 }, route: { type: 'string', minLength: 2 }, departs: { type: 'string' }, seats: { type: 'integer', minimum: 1 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDesk.scheduleJourney(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/journey/book',
+    description: 'Book a named passenger onto a scheduled journey, never beyond its seats',
+    schema: { type: 'object', required: ['journeyId', 'passenger'], properties: { journeyId: { type: 'string' }, passenger: { type: 'string', minLength: 2 } }, additionalProperties: false },
+    handler: (platform, ctx) => siteDesk.bookSeat(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/journey/status',
+    description: 'A journey departs, arrives, or is cancelled with a reason',
+    schema: {
+      type: 'object',
+      required: ['journeyId', 'status'],
+      properties: { journeyId: { type: 'string' }, status: { type: 'string', enum: ['DEPARTED', 'ARRIVED', 'CANCELLED'] }, reason: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteDesk.updateJourney(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',

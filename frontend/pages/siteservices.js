@@ -67,8 +67,266 @@ let portalSupplier = '';
 
 const PANEL_TONE = { CRITICAL: 'bad', WARNING: 'warn', INFO: 'info', OK: 'ok' };
 
+/**
+ * The doors onto §13's record families. Each returns a `command` spec, or a
+ * `blocked` reason where the record it needs does not exist yet — a panel that
+ * opens onto an empty select is a door onto nothing.
+ */
+const DESK_COMMANDS = {
+  payment: ({ commercial }) => {
+    const certified = (commercial.error ? [] : commercial.valuations).filter((entry) => entry.status === 'CERTIFIED');
+    if (certified.length === 0) return { blocked: { title: 'Nothing certified', detail: 'Money is recorded against a certificate. Certify a valuation first.' } };
+    return {
+      title: 'Record a payment',
+      intent:
+        'A payment that has already arrived, against a certified valuation, under the bank’s own reference. The same ' +
+        'reference twice records once; a sum above the certificate is refused rather than chased later.',
+      path: `/v1/projects/${state.session.projectId}/site-services/payment`,
+      submitLabel: 'Record',
+      transform: (values) => ({ ...values, amountMinor: Number(values.amountMinor) }),
+      fields: [
+        { name: 'valuationId', label: 'Which valuation', type: 'select', options: certified.map((entry) => ({ value: entry.id, label: `${entry.reference} — ${money(entry.certifiedMinor)} certified` })) },
+        { name: 'amountMinor', label: 'Amount (pence)', type: 'number', hint: '£1,000 is 100000.' },
+        { name: 'reference', label: 'Bank reference', hint: 'Unique for ever. Do not invent one.' },
+        { name: 'paidAt', label: 'Paid on', type: 'date', required: false },
+        { name: 'note', label: 'Note', required: false },
+      ],
+      done: 'Payment recorded',
+      summary: (result) => (result.alreadyRecorded ? 'That reference was already on the record — nothing was recorded twice.' : money(result.payment.amountMinor)),
+    };
+  },
+  contingency: () => ({
+    title: 'Set the contingency pot',
+    intent: 'How much is held against the unknown, and what that figure is sized against. It cannot be set below what has already been drawn.',
+    path: `/v1/projects/${state.session.projectId}/site-services/contingency`,
+    submitLabel: 'Set',
+    transform: (values) => ({ ...values, potMinor: Number(values.potMinor) }),
+    fields: [
+      { name: 'potMinor', label: 'Pot (pence)', type: 'number', hint: '£10,000 is 1000000.' },
+      { name: 'basis', label: 'Sized against', type: 'textarea', hint: 'At least ten characters. "5% of the welfare commitment" is a basis; a number is not.' },
+    ],
+    done: 'Pot set',
+    summary: (result) => money(result.potMinor),
+  }),
+  draw: () => ({
+    title: 'Draw on contingency',
+    intent: 'What the draw pays for. Refused beyond what remains of the pot; raise the pot with its basis, or raise a change.',
+    path: `/v1/projects/${state.session.projectId}/site-services/contingency/draw`,
+    submitLabel: 'Draw',
+    transform: (values) => ({ ...values, amountMinor: Number(values.amountMinor) }),
+    fields: [
+      { name: 'amountMinor', label: 'Amount (pence)', type: 'number' },
+      { name: 'reason', label: 'What it pays for', type: 'textarea' },
+    ],
+    done: 'Drawn',
+    summary: (result) => `${result.draws.length} draw${result.draws.length === 1 ? '' : 's'} on the pot`,
+  }),
+  asset: ({ structure }) => {
+    const systems = structure.error ? [] : structure.systems;
+    if (systems.length === 0) return { blocked: { title: 'No system', detail: 'A unit is registered under a composed system. Compose one first.' } };
+    return {
+      title: 'Register a unit',
+      intent: 'The unit a code on site resolves to. The tag is what the code says; it is unique on the project.',
+      path: `/v1/projects/${state.session.projectId}/site-services/asset`,
+      submitLabel: 'Register',
+      fields: [
+        { name: 'systemId', label: 'Under which system', type: 'select', options: systems.map((system) => ({ value: system.id, label: `${system.label} — ${system.zone}` })) },
+        { name: 'tag', label: 'Tag', hint: 'As printed on the code.' },
+        { name: 'kind', label: 'What it is', hint: 'A cabin, a generator, a bowser.' },
+        { name: 'serial', label: 'Serial', required: false },
+        { name: 'location', label: 'Where', required: false, hint: 'Defaults to the system’s zone.' },
+      ],
+      done: 'Registered',
+      summary: (result) => result.tag,
+    };
+  },
+  scan: ({ desk }) => {
+    if (desk.error || desk.assets.registered === 0) return { blocked: { title: 'Nothing to scan', detail: 'No unit is registered, so no code resolves to anything.' } };
+    return {
+      title: 'Scan a unit',
+      intent: 'What the code says, and what was found. The scan is recorded against the unit with where it was and what state it is in.',
+      path: `/v1/projects/${state.session.projectId}/site-services/asset/scan`,
+      submitLabel: 'Record the scan',
+      fields: [
+        { name: 'tag', label: 'Tag', hint: 'As scanned.' },
+        { name: 'status', label: 'State', type: 'select', required: false, options: [{ value: 'ON_SITE', label: 'On site' }, { value: 'OFF_SITE', label: 'Off site' }, { value: 'DEFECTIVE', label: 'Defective' }] },
+        { name: 'location', label: 'Where', required: false },
+        { name: 'note', label: 'Note', required: false },
+      ],
+      done: 'Scan recorded',
+      summary: (result) => `${result.tag} — ${result.kind}, ${result.status.toLowerCase().replace('_', ' ')}`,
+    };
+  },
+  delivery: ({ structure }) => ({
+    title: 'Schedule a delivery',
+    intent: 'What is expected, from whom, when and how many, so the gate can check it in against something.',
+    path: `/v1/projects/${state.session.projectId}/site-services/delivery`,
+    submitLabel: 'Schedule',
+    transform: (values) => ({ ...values, quantityExpected: Number(values.quantityExpected), ...(values.systemId ? {} : { systemId: undefined }) }),
+    fields: [
+      { name: 'systemId', label: 'For which system', type: 'select', required: false, options: (structure.error ? [] : structure.systems).map((system) => ({ value: system.id, label: `${system.label} — ${system.zone}` })) },
+      { name: 'supplier', label: 'Supplier' },
+      { name: 'description', label: 'What' },
+      { name: 'expectedOn', label: 'Expected on', type: 'date' },
+      { name: 'quantityExpected', label: 'How many', type: 'number' },
+    ],
+    done: 'Scheduled',
+    summary: (result) => `${result.description} on ${result.expectedOn}`,
+  }),
+  deliverycheck: ({ desk }) => {
+    const expected = desk.error ? [] : desk.deliveries.items.filter((entry) => entry.status === 'EXPECTED');
+    if (expected.length === 0) return { blocked: { title: 'Nothing expected', detail: 'Every scheduled delivery has been checked. Schedule one first.' } };
+    return {
+      title: 'Check a delivery in',
+      intent: 'How many actually arrived. Short, say what is missing and why; refused, say so.',
+      path: `/v1/projects/${state.session.projectId}/site-services/delivery/check`,
+      submitLabel: 'Check in',
+      transform: (values) => ({ ...values, quantityReceived: Number(values.quantityReceived), refused: Boolean(values.refused) }),
+      fields: [
+        { name: 'deliveryId', label: 'Which delivery', type: 'select', options: expected.map((entry) => ({ value: entry.id, label: `${entry.description} from ${entry.supplier}, ${entry.quantityExpected} expected ${entry.expectedOn}` })) },
+        { name: 'quantityReceived', label: 'Arrived', type: 'number' },
+        { name: 'discrepancy', label: 'What is short, and why', required: false },
+        { name: 'refused', label: 'Refused at the gate', type: 'checkbox', required: false },
+      ],
+      done: 'Checked in',
+      summary: (result) => `${result.description}: ${result.status.toLowerCase()}`,
+    };
+  },
+  room: ({ structure }) => {
+    const systems = (structure.error ? [] : structure.systems).filter((system) => system.family === 'WELFARE_ACCOMMODATION');
+    if (systems.length === 0) return { blocked: { title: 'No accommodation system', detail: 'Rooms live under a composed welfare and accommodation system. Compose one first.' } };
+    return {
+      title: 'Register a room',
+      intent: 'A room and its beds beneath the composed accommodation system. A bed can then be pointed at.',
+      path: `/v1/projects/${state.session.projectId}/site-services/room`,
+      submitLabel: 'Register',
+      transform: (values) => ({ ...values, beds: Number(values.beds) }),
+      fields: [
+        { name: 'systemId', label: 'Under which system', type: 'select', options: systems.map((system) => ({ value: system.id, label: `${system.label} — ${system.zone}` })) },
+        { name: 'block', label: 'Block' },
+        { name: 'number', label: 'Room' },
+        { name: 'beds', label: 'Beds', type: 'number' },
+      ],
+      done: 'Room registered',
+      summary: (result) => `${result.block} ${result.number}, ${result.beds} bed${result.beds === 1 ? '' : 's'}`,
+    };
+  },
+  roomstatus: ({ desk }) => {
+    const rooms = desk.error ? [] : desk.accommodation.rooms;
+    if (rooms.length === 0) return { blocked: { title: 'No room', detail: 'Register a room first.' } };
+    return {
+      title: 'Set a room’s state',
+      intent: 'Ready, cleaning or out of service. Occupied is a check-in, not a declaration, and a room with people in it cannot be taken out of service.',
+      path: `/v1/projects/${state.session.projectId}/site-services/room/status`,
+      submitLabel: 'Set',
+      fields: [
+        { name: 'roomId', label: 'Which room', type: 'select', options: rooms.map((room) => ({ value: room.id, label: `${room.block} ${room.number} — ${room.status.toLowerCase().replace('_', ' ')}` })) },
+        { name: 'status', label: 'State', type: 'select', options: [{ value: 'READY', label: 'Ready' }, { value: 'CLEANING', label: 'Cleaning' }, { value: 'OUT_OF_SERVICE', label: 'Out of service' }] },
+        { name: 'reason', label: 'Why', required: false, hint: 'Required when taking a room out of service.' },
+      ],
+      done: 'Room updated',
+      summary: (result) => `${result.block} ${result.number}: ${result.status.toLowerCase().replace('_', ' ')}`,
+    };
+  },
+  bed: ({ desk }) => {
+    const rooms = (desk.error ? [] : desk.accommodation.rooms).filter((room) => room.free > 0);
+    if (rooms.length === 0) return { blocked: { title: 'No free bed', detail: 'Every registered bed is allocated, or no room is registered.' } };
+    return {
+      title: 'Allocate a bed',
+      intent: 'Who, in which room, from which night. Never beyond the beds the room holds.',
+      path: `/v1/projects/${state.session.projectId}/site-services/bed`,
+      submitLabel: 'Allocate',
+      fields: [
+        { name: 'roomId', label: 'Which room', type: 'select', options: rooms.map((room) => ({ value: room.id, label: `${room.block} ${room.number} — ${room.free} free` })) },
+        { name: 'occupant', label: 'Who' },
+        { name: 'employer', label: 'Employer', required: false },
+        { name: 'from', label: 'First night', type: 'date' },
+        { name: 'to', label: 'Last night', type: 'date', required: false },
+      ],
+      done: 'Allocated',
+      summary: (result) => `${result.occupant} from ${result.from}`,
+    };
+  },
+  checkin: ({ desk }) => {
+    const arriving = (desk.error ? [] : desk.accommodation.allocations).filter((entry) => entry.status === 'ALLOCATED');
+    if (arriving.length === 0) return { blocked: { title: 'Nobody arriving', detail: 'No allocation is waiting to be checked in.' } };
+    const rooms = desk.accommodation.rooms;
+    return {
+      title: 'Check somebody in',
+      intent: 'The room becomes occupied by this record.',
+      path: `/v1/projects/${state.session.projectId}/site-services/bed/checkin`,
+      submitLabel: 'Check in',
+      fields: [{ name: 'allocationId', label: 'Who', type: 'select', options: arriving.map((entry) => { const room = rooms.find((candidate) => candidate.id === entry.roomId); return { value: entry.id, label: `${entry.occupant} — ${room ? `${room.block} ${room.number}` : entry.roomId} from ${entry.from}` }; }) }],
+      done: 'Checked in',
+      summary: (result) => result.occupant,
+    };
+  },
+  checkout: ({ desk }) => {
+    const staying = (desk.error ? [] : desk.accommodation.allocations).filter((entry) => entry.status === 'CHECKED_IN');
+    if (staying.length === 0) return { blocked: { title: 'Nobody in', detail: 'No one is checked in tonight.' } };
+    return {
+      title: 'Check somebody out',
+      intent: 'A vacated room goes to housekeeping by the record.',
+      path: `/v1/projects/${state.session.projectId}/site-services/bed/checkout`,
+      submitLabel: 'Check out',
+      fields: [{ name: 'allocationId', label: 'Who', type: 'select', options: staying.map((entry) => ({ value: entry.id, label: entry.occupant })) }],
+      done: 'Checked out',
+      summary: (result) => result.occupant,
+    };
+  },
+  journey: ({ structure }) => ({
+    title: 'Schedule a journey',
+    intent: 'A vehicle, a route, a departure and the seats on it. Seats are then booked by name.',
+    path: `/v1/projects/${state.session.projectId}/site-services/journey`,
+    submitLabel: 'Schedule',
+    transform: (values) => ({ ...values, seats: Number(values.seats), departs: new Date(values.departs).toISOString(), ...(values.systemId ? {} : { systemId: undefined }) }),
+    fields: [
+      { name: 'systemId', label: 'For which system', type: 'select', required: false, options: (structure.error ? [] : structure.systems).map((system) => ({ value: system.id, label: `${system.label} — ${system.zone}` })) },
+      { name: 'vehicle', label: 'Vehicle' },
+      { name: 'route', label: 'Route', hint: 'From where to where.' },
+      { name: 'departs', label: 'Departs', type: 'datetime-local' },
+      { name: 'seats', label: 'Seats', type: 'number' },
+    ],
+    done: 'Scheduled',
+    summary: (result) => `${result.vehicle}, ${result.route}`,
+  }),
+  book: ({ desk }) => {
+    const open = (desk.error ? [] : desk.transport.journeys).filter((entry) => entry.status === 'SCHEDULED' && entry.booked.length < entry.seats);
+    if (open.length === 0) return { blocked: { title: 'No seat', detail: 'No scheduled journey has a seat left.' } };
+    return {
+      title: 'Book a seat',
+      intent: 'By name, never beyond the seats.',
+      path: `/v1/projects/${state.session.projectId}/site-services/journey/book`,
+      submitLabel: 'Book',
+      fields: [
+        { name: 'journeyId', label: 'Which journey', type: 'select', options: open.map((entry) => ({ value: entry.id, label: `${entry.vehicle} ${entry.route} at ${entry.departs.slice(0, 16).replace('T', ' ')} — ${entry.seats - entry.booked.length} left` })) },
+        { name: 'passenger', label: 'Who' },
+      ],
+      done: 'Booked',
+      summary: (result) => `${result.booked.length} of ${result.seats} seats`,
+    };
+  },
+  journeystatus: ({ desk }) => {
+    const live = (desk.error ? [] : desk.transport.journeys).filter((entry) => entry.status === 'SCHEDULED' || entry.status === 'DEPARTED');
+    if (live.length === 0) return { blocked: { title: 'No live journey', detail: 'Nothing is scheduled or on the road.' } };
+    return {
+      title: 'Move a journey on',
+      intent: 'Departed, arrived, or cancelled with a reason the passengers will be given.',
+      path: `/v1/projects/${state.session.projectId}/site-services/journey/status`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'journeyId', label: 'Which journey', type: 'select', options: live.map((entry) => ({ value: entry.id, label: `${entry.vehicle} ${entry.route} — ${entry.status.toLowerCase()}` })) },
+        { name: 'status', label: 'Now', type: 'select', options: [{ value: 'DEPARTED', label: 'Departed' }, { value: 'ARRIVED', label: 'Arrived' }, { value: 'CANCELLED', label: 'Cancelled' }] },
+        { name: 'reason', label: 'Why', required: false, hint: 'Required for a cancellation.' },
+      ],
+      done: 'Journey updated',
+      summary: (result) => `${result.vehicle}: ${result.status.toLowerCase()}`,
+    };
+  },
+};
+
 export async function siteservices(root) {
-  const [position, readiness, structure, tower, factory, live, commercial, changes, closeout] = await Promise.all([
+  const [position, readiness, structure, tower, factory, live, commercial, changes, closeout, cash, eac, desk, portfolio] = await Promise.all([
     api.get(`/v1/projects/${state.session.projectId}/site-services/appointment`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/brief`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/sbs`).catch((error) => ({ error })),
@@ -78,6 +336,10 @@ export async function siteservices(root) {
     api.get(`/v1/projects/${state.session.projectId}/site-services/commercial`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/change`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/demobilisation`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/cash`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/eac`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/desk`).catch((error) => ({ error })),
+    api.get('/v1/site-services/portfolio').catch((error) => ({ error })),
   ]);
 
   // §13 and §17. Separate from the block above because the workspace is chosen
@@ -367,6 +629,21 @@ export async function siteservices(root) {
             permitted: can('SITE_SERVICES', 'A'),
             reason: blockedReason('SITE_SERVICES', 'A'),
           },
+          { id: 'payment', label: 'Record a payment', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
+          { id: 'contingency', label: 'Set the contingency pot', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
+          { id: 'draw', label: 'Draw on contingency', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
+          { id: 'asset', label: 'Register a unit', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
+          { id: 'scan', label: 'Scan a unit', permitted: can('SITE_SERVICES', 'U'), reason: blockedReason('SITE_SERVICES', 'U') },
+          { id: 'delivery', label: 'Schedule a delivery', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
+          { id: 'deliverycheck', label: 'Check a delivery in', permitted: can('SITE_SERVICES', 'U'), reason: blockedReason('SITE_SERVICES', 'U') },
+          { id: 'room', label: 'Register a room', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
+          { id: 'roomstatus', label: 'Set a room’s state', permitted: can('SITE_SERVICES', 'U'), reason: blockedReason('SITE_SERVICES', 'U') },
+          { id: 'bed', label: 'Allocate a bed', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
+          { id: 'checkin', label: 'Check somebody in', permitted: can('SITE_SERVICES', 'U'), reason: blockedReason('SITE_SERVICES', 'U') },
+          { id: 'checkout', label: 'Check somebody out', permitted: can('SITE_SERVICES', 'U'), reason: blockedReason('SITE_SERVICES', 'U') },
+          { id: 'journey', label: 'Schedule a journey', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
+          { id: 'book', label: 'Book a seat', permitted: can('SITE_SERVICES', 'U'), reason: blockedReason('SITE_SERVICES', 'U') },
+          { id: 'journeystatus', label: 'Move a journey on', permitted: can('SITE_SERVICES', 'U'), reason: blockedReason('SITE_SERVICES', 'U') },
           {
             id: 'credit',
             label: 'Raise a service credit',
@@ -599,7 +876,11 @@ export async function siteservices(root) {
 
       ${live.error ? refusal('Live operations', live.error) : operationsCard(live)}
 
+      ${desk.error ? refusal('The desk', desk.error) : deskCard(desk)}
+
       ${commercial.error ? refusal('Commercial control', commercial.error) : commercialCard(commercial, reconciliation)}
+
+      ${cash.error ? refusal('Cash and the estimate at completion', cash.error) : cashCard(cash, eac, portfolio)}
 
       ${changes.error ? refusal('The change register', changes.error) : changeCard(changes)}
 
@@ -636,6 +917,21 @@ export async function siteservices(root) {
     const button = event.target.closest('[data-command]');
     if (!button) return;
     const which = button.dataset.command;
+
+    // §13's record families: one spec each, the same panel as every other door.
+    const extra = DESK_COMMANDS[which]?.({ commercial, cash, desk, structure });
+    if (extra) {
+      if (extra.blocked) {
+        toast(extra.blocked.title, extra.blocked.detail, 'warn');
+        return;
+      }
+      const result = await command(extra);
+      if (result) {
+        toast(extra.done ?? 'Recorded', extra.summary ? extra.summary(result) : '', 'ok');
+        await again();
+      }
+      return;
+    }
 
     if (which === 'appoint') {
       const result = await command({
@@ -4132,4 +4428,155 @@ function automationCard(measure) {
 function signed(value) {
   if (value === 0) return raw('<span class="metric-sub">0</span>');
   return html`<span class="${value > 0 ? 'ok' : 'bad'}">${value > 0 ? `+${value}` : value}</span>`;
+}
+
+
+function cashCard(cash, eac, portfolio) {
+  const t = cash.totals;
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>Cash and the estimate at completion</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">${cash.statement}</div>
+      <section class="grid g4" style="margin-bottom:14px">
+        <div class="card"><h2>Earned</h2><div class="metric">${money(t.earnedMinor)}</div><div class="metric-sub">accepted work, whether or not a certificate carries it</div></div>
+        <div class="card"><h2>Certified</h2><div class="metric">${money(t.certifiedMinor)}</div><div class="metric-sub">${money(t.accruedMinor)} earned above this is accrual</div></div>
+        <div class="card"><h2>Paid</h2><div class="metric">${money(t.paidMinor)}</div><div class="metric-sub">what has actually arrived</div></div>
+        <div class="card ${raw(t.outstandingMinor > 0 ? 'warn' : '')}"><h2>Outstanding</h2><div class="metric">${money(t.outstandingMinor)}</div><div class="metric-sub">${money(t.outstandingByPayer.ETABLIX)} ETABLIX’s own liability · ${money(t.outstandingByPayer.CUSTOMER)} the customer’s</div></div>
+      </section>
+      ${table({
+        headers: ['Valuation', 'Status', 'Payer', 'Certified', 'Paid', 'Outstanding'],
+        align: ['', '', '', 'num', 'num', 'num'],
+        rows: cash.valuations.map((entry) => [
+          entry.reference,
+          badge(entry.status.toLowerCase(), entry.status === 'CERTIFIED' ? 'ok' : 'info'),
+          entry.payer ?? '—',
+          money(entry.certifiedMinor),
+          money(entry.paidMinor),
+          money(entry.outstandingMinor),
+        ]),
+        empty: 'No valuation yet.',
+      })}
+      ${eac.error
+        ? refusal('The estimate at completion', eac.error)
+        : html`<div style="margin-top:14px">
+            <h2>Estimate at completion</h2>
+            <div class="metric-sub" style="margin:6px 0 12px">${eac.statement}</div>
+            <section class="grid g4" style="margin-bottom:12px">
+              <div class="card"><h2>EAC</h2><div class="metric">${money(eac.eacMinor)}</div><div class="metric-sub">every term below</div></div>
+              <div class="card"><h2>Budget</h2><div class="metric">${money(eac.budgetMinor)}</div><div class="metric-sub">approved across every line</div></div>
+              <div class="card"><h2>Contingency</h2><div class="metric">${money(eac.contingencyRemainingMinor)}</div><div class="metric-sub">${money(eac.contingencyDrawnMinor)} drawn of ${money(eac.contingencyPotMinor)}${eac.contingency ? ` · ${eac.contingency.basis}` : ' · no pot set'}</div></div>
+              <div class="card ${raw(eac.headroomMinor < 0 ? 'bad' : '')}"><h2>${eac.headroomMinor < 0 ? 'Over' : 'Headroom'}</h2><div class="metric">${money(Math.abs(eac.headroomMinor))}</div><div class="metric-sub">budget plus pot, less the EAC</div></div>
+            </section>
+            ${table({
+              headers: ['Term', 'Amount', 'Basis'],
+              align: ['', 'num', ''],
+              rows: eac.terms.map((term) => [term.term, money(term.amountMinor), html`<span class="metric-sub">${term.basis}</span>`]),
+              empty: 'Nothing to forecast from.',
+            })}
+          </div>`}
+      ${portfolio.error
+        ? refusal('The portfolio', portfolio.error)
+        : html`<div style="margin-top:14px">
+            <h2>Every project at once</h2>
+            <div class="metric-sub" style="margin:6px 0 12px">${portfolio.statement}</div>
+            ${table({
+              headers: ['Project', 'Budget', 'Committed', 'Certified', 'Paid', 'Outstanding', 'EAC', 'Headroom', 'Open changes'],
+              align: ['', 'num', 'num', 'num', 'num', 'num', 'num', 'num', 'num'],
+              rows: portfolio.projects.map((entry) => [
+                entry.name,
+                money(entry.budgetMinor),
+                money(entry.commitmentMinor),
+                money(entry.certifiedMinor),
+                money(entry.paidMinor),
+                money(entry.outstandingMinor),
+                money(entry.eacMinor),
+                html`<span class="${raw(entry.headroomMinor < 0 ? 'bad' : '')}">${money(entry.headroomMinor)}</span>`,
+                String(entry.openChanges),
+              ]),
+              empty: 'No project of this company carries a readable site-services position.',
+            })}
+            ${portfolio.skipped.length > 0
+              ? html`<div class="metric-sub" style="margin-top:8px">Skipped, with the reason: ${portfolio.skipped.map((entry) => `${entry.name} (${entry.because})`).join(' · ')}</div>`
+              : ''}
+          </div>`}
+    </div>
+  `;
+}
+
+function deskCard(desk) {
+  const a = desk.accommodation;
+  const t = desk.transport;
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>The desk</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">${desk.statement}</div>
+      <section class="grid g4" style="margin-bottom:14px">
+        <div class="card"><h2>Units</h2><div class="metric">${desk.assets.registered}</div><div class="metric-sub">${desk.assets.onSite} on site · ${desk.assets.defective} defective · ${desk.assets.neverScanned} never scanned</div></div>
+        <div class="card ${raw(desk.deliveries.overdue > 0 ? 'warn' : '')}"><h2>Deliveries expected</h2><div class="metric">${desk.deliveries.expected}</div><div class="metric-sub">${desk.deliveries.overdue} overdue · ${desk.deliveries.short} short · ${desk.deliveries.refused} refused</div></div>
+        <div class="card ${raw(a.demandBeds !== undefined && a.beds < a.demandBeds ? 'warn' : '')}"><h2>In beds tonight</h2><div class="metric">${a.occupiedTonight} / ${a.beds}</div><div class="metric-sub">${a.available} free · ${a.arrivalsDue} due · ${a.cleaning} cleaning · ${a.outOfService} out of service${a.demandBeds !== undefined ? ` · brief accommodates ${a.demandBeds}` : ''}</div></div>
+        <div class="card"><h2>Journeys today</h2><div class="metric">${t.today}</div><div class="metric-sub">${t.seatsBooked} of ${t.seatsOffered} seats booked${t.seatsOffered > 0 ? ` (${t.loadFactorPercent}%)` : ''}</div></div>
+      </section>
+      <div class="grid g-2-1">
+        <div>
+          <h2>Rooms</h2>
+          <div class="metric-sub" style="margin:6px 0 10px">${a.statement}</div>
+          ${table({
+            headers: ['Room', 'Beds', 'State', 'Tonight'],
+            align: ['', 'num', '', ''],
+            rows: a.rooms.map((room) => [
+              `${room.block} ${room.number}`,
+              `${room.beds - room.free} / ${room.beds}`,
+              badge(room.status.toLowerCase().replace('_', ' '), room.status === 'READY' ? 'ok' : room.status === 'OUT_OF_SERVICE' ? 'bad' : room.status === 'CLEANING' ? 'warn' : 'info'),
+              room.occupants.join(', ') || '—',
+            ]),
+            empty: 'No room registered beneath the accommodation system.',
+          })}
+        </div>
+        <div>
+          <h2>Journeys</h2>
+          <div class="metric-sub" style="margin:6px 0 10px">${t.statement}</div>
+          ${table({
+            headers: ['Vehicle', 'Route', 'Departs', 'Seats', 'State'],
+            align: ['', '', '', 'num', ''],
+            rows: t.journeys.map((journey) => [
+              journey.vehicle,
+              journey.route,
+              journey.departs.slice(0, 16).replace('T', ' '),
+              `${journey.booked.length} / ${journey.seats}`,
+              badge(journey.status.toLowerCase(), journey.status === 'ARRIVED' ? 'ok' : journey.status === 'CANCELLED' ? 'bad' : 'info'),
+            ]),
+            empty: 'No journey scheduled.',
+          })}
+        </div>
+      </div>
+      <div style="margin-top:14px">
+        ${table({
+          headers: ['Delivery', 'Supplier', 'Expected', 'Arrived', 'State'],
+          align: ['', '', '', 'num', ''],
+          rows: desk.deliveries.items.map((entry) => [
+            entry.description,
+            entry.supplier,
+            entry.expectedOn,
+            entry.quantityReceived === undefined ? `${entry.quantityExpected} expected` : `${entry.quantityReceived} of ${entry.quantityExpected}`,
+            badge(entry.status.toLowerCase(), entry.status === 'RECEIVED' ? 'ok' : entry.status === 'EXPECTED' ? 'info' : 'bad'),
+          ]),
+          empty: 'No delivery scheduled.',
+        })}
+      </div>
+      <div style="margin-top:14px">
+        ${table({
+          headers: ['Tag', 'Unit', 'Where', 'State', 'Scans'],
+          align: ['mono', '', '', '', 'num'],
+          rows: desk.assets.items.map((asset) => [
+            html`<code>${asset.tag}</code>`,
+            asset.kind,
+            asset.location ?? '—',
+            badge(asset.status.toLowerCase().replace('_', ' '), asset.status === 'ON_SITE' ? 'ok' : asset.status === 'DEFECTIVE' ? 'bad' : 'info'),
+            String(asset.scans),
+          ]),
+          empty: 'No unit registered.',
+        })}
+      </div>
+    </div>
+  `;
 }
