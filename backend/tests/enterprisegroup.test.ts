@@ -195,9 +195,10 @@ describe('§9 — the agreement, subscriptions, seats and invoice grouping (AT-2
     const added = await send('POST', '/v1/users/memberships', tokenFor(jn.admin), { email: etablix.qs.email, roles: ['PM'] });
     assert.equal(added.status, 201, JSON.stringify(added.body));
     const billing = await send('GET', `/v1/groups/${groupId}/billing`, tokenFor(jn.admin));
-    const seats = billing.body.seats as Record<string, number>;
-    const subscriptions = billing.body.subscriptions as Array<Record<string, number>>;
-    assert.equal(seats.used, subscriptions.reduce((sum, s) => sum + s.seatsUsed, 0) + 0 || seats.used);
+    const seats = billing.body.seats as { used: number; distinctPeople: number };
+    const directory = await send('GET', `/v1/groups/${groupId}`, tokenFor(etablix.admin));
+    const people = (directory.body.companies as Array<{ people: number }>).reduce((sum, company) => sum + company.people, 0);
+    assert.equal(seats.used, people, 'one seat per active person per company');
     assert.ok(seats.used > seats.distinctPeople, 'the same address counts once as a person and once per company as a seat');
   });
 
@@ -239,7 +240,7 @@ describe('§9 — the agreement, subscriptions, seats and invoice grouping (AT-2
     const etx = (usage.body.companies as Array<Record<string, unknown>>).find((c) => c.code === 'ETX')!;
     const acu = (etx.meters as Record<string, Record<string, number>>).acu!;
     assert.equal(acu.rawMinor, 400, 'provider cost recorded');
-    assert.ok(acu.billedMinor > 400, 'the charge recorded, whatever the agreement mode');
+    assert.ok(Number(acu.billedMinor) > 400, 'the charge recorded, whatever the agreement mode');
     assert.equal(etx.chargeMode, 'INTERNAL');
   });
 });
