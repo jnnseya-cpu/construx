@@ -295,6 +295,41 @@ on.
 
 ---
 
+## The site answers 502
+
+A 502 is the reverse proxy saying it cannot reach the container. It is never
+the application answering; the application answers 4xx and 5xx with a
+problem+json body and a correlation id. Three causes, checked in this order
+on the host:
+
+```bash
+# 1. Is the container running, or restarting in a loop?
+docker ps -a --filter name=construx
+# 2. What did it say on the way up? A crash loop shows the reason here.
+docker logs --tail 100 construx
+# 3. Does it answer on the host port compose published (CONSTRUX_HOST_PORT in .env)?
+curl -sS http://127.0.0.1:${CONSTRUX_HOST_PORT:-8080}/readyz
+# 4. Is it attached to the proxy's network? The proxy reaches it by name.
+docker network inspect ${CONSTRUX_EDGE_NETWORK:-construx-edge} --format '{{range .Containers}}{{.Name}} {{end}}'
+# 5. What did the last deploy do?
+journalctl -u construx-deploy --since "2 hours ago" --no-pager | tail -60
+```
+
+- **Restarting, and the log ends in `[journal] …`** — another process holds
+  the writer lock on the volume (a previous container that was not stopped),
+  or the chain did not verify. Stop the other container; a chain failure is
+  handled with the backup under "Restore".
+- **Running, `/readyz` answers on the host port, but not in the inspect
+  output** — the container was recreated and lost its attachment to the
+  proxy's network. `docker network connect construx-edge construx` fixes it
+  now; deploying with `-f deploy/compose.edge.yaml` makes the attachment part
+  of the deployment so the next rebuild keeps it.
+- **Running, `/readyz` does not answer on the host port** — the port in
+  `.env` and the port the proxy points at have drifted. Both read
+  `CONSTRUX_HOST_PORT`.
+- **The deploy log says it rolled back** — the new image never reached
+  `/readyz`; the reason is in step 2 of the container it tried.
+
 ## Health and observability
 
 | Endpoint | Purpose |
