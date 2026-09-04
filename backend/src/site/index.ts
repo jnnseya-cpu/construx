@@ -1,4 +1,5 @@
 import type { RequestContext } from '../api/middleware.ts';
+import { NotFoundError } from '../core/errors.ts';
 import type { Platform } from '../platform.ts';
 import { channelStatus } from '../notifications/notify.ts';
 import { SITE_PAGES } from './layout.ts';
@@ -144,7 +145,10 @@ export function render(path: string, platform: Platform, ctx: RequestContext): s
     if (publishedPost(platform, slug)) return blogPost(slug, platform);
   }
 
-  throw new Error(`No public page for ${path}`);
+  // Not found, not failed: a withdrawn post, a mistyped address or a crawler
+  // probing for pages gets a 404. It answered 500 before, which told the
+  // operator's watch that the site was failing and told the crawler to retry.
+  throw new NotFoundError(`No public page for ${path}`);
 }
 
 /**

@@ -197,6 +197,17 @@ export type AITaskInput = {
    */
   toWrites: (output: Record<string, unknown>, confidence: number | undefined) => AIWriteSpec[];
   /**
+   * Refuse a synthetic answer before it is paid for.
+   *
+   * The local stand-in answers every request and is billed like a provider.
+   * A task that cannot use a stand-in — prose that would be published under
+   * the company's name — used to run it, settle the charge, and only then
+   * notice `synthetic` and refuse: a customer paid for a refusal. With this
+   * set, a synthetic answer releases the hold and throws the named error, and
+   * nothing is charged.
+   */
+  requireModel?: { code: string; message: string };
+  /**
    * Hold this task's answer to the AI Output Standard.
    *
    * Declared per task rather than applied to everything, and the distinction is
@@ -360,6 +371,11 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
     : task.request;
 
   let run = await execute(firstRequest);
+
+  if (task.requireModel && run.response.synthetic === true) {
+    run.abandon(task.requireModel.code);
+    throw new DomainError(task.requireModel.code, task.requireModel.message, 503);
+  }
 
   // --- the AI Output Standard ---------------------------------------------
   //

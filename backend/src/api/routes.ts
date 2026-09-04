@@ -2122,6 +2122,10 @@ export const ROUTES: Route[] = [
             currency: tenant.defaultCurrency,
             createdAt: tenant.createdAt,
             closedAt: tenant.closedAt ?? null,
+            // The row says "referred by CODE" when the tenancy arrived on a
+            // partner's link; the screen already read the field and the
+            // payload never carried it.
+            referralCode: tenant.referralCode ?? null,
             tier: subscription.package,
             package: subscription.package,
             packageLabel: pkg.label,
@@ -20378,7 +20382,16 @@ export const ROUTES: Route[] = [
       // Views are passed in rather than imported inside the blog module: the
       // blog is about posts and the view log is about traffic, and a module
       // that reached for the other would make one untestable without the other.
-      return { ...blog.blogPosition(platform, views.viewsFor), views: views.viewsPosition() };
+      return {
+        ...blog.blogPosition(platform, views.viewsFor),
+        views: views.viewsPosition(),
+        // The platform's own wallet, which the draft and the audit spend. The
+        // estate screens list customers only, so this was the one wallet with
+        // no figure on any screen and no door to fund it — and the two AI
+        // actions on this screen were held shut for want of credit nobody
+        // could see or add.
+        wallet: platform.wallet(PLATFORM_TENANT_ID).snapshot(),
+      };
     },
   },
   {

@@ -264,7 +264,11 @@ export function seoScore(findings: readonly SeoFinding[]): SeoScore {
 export function posts(platform: Platform): BlogPost[] {
   return platform.ledger
     .list(BLOG_PROJECT_ID, 'SitePost')
-    .map((row) => row as unknown as BlogPost)
+    // `list` returns entity records; the post is the record's state. Reading
+    // the record as the post gave every field `undefined`, so the first post
+    // ever written from the console made `/v1/site/posts` answer 500 and the
+    // SEO & content screen unreadable — the empty blog had hidden it.
+    .map((row) => row.state as unknown as BlogPost)
     .sort((a, b) => (b.draftedAt ?? '').localeCompare(a.draftedAt ?? ''));
 }
 
@@ -376,21 +380,16 @@ export async function draftPost(
     // The draft is state and is written below under its own event. Returning
     // writes here would commit it twice.
     toWrites: () => [],
-  });
-
-  // The stand-in reasons about nothing and says so. Publishing its output as an
-  // article under the company's name would be a false attribution on the public
-  // internet, which is worse than having no post — so it is refused here rather
-  // than filtered later.
-  if (result.synthetic) {
-    throw new DomainError(
-      'NO_REASONING_PROVIDER',
+    // Refused before it is paid for: a synthetic draft used to run, settle
+    // its charge, and only then be refused — the platform paid for a refusal.
+    requireModel: {
+      code: 'NO_REASONING_PROVIDER',
+      message:
       'This deployment is running the local stand-in, which reasons about nothing. It cannot write an article, and ' +
         'publishing what it returns under the company name would be prose attributed to reasoning that never ' +
         'happened. Configure a reasoning provider and set AI_MODE=live.',
-      503,
-    );
-  }
+    },
+  });
 
   const output = result.output as {
     title?: unknown;
@@ -534,16 +533,13 @@ export async function auditBlog(
       },
     },
     toWrites: () => [],
-  });
-
-  if (result.synthetic) {
-    throw new DomainError(
-      'NO_REASONING_PROVIDER',
+    requireModel: {
+      code: 'NO_REASONING_PROVIDER',
+      message:
       'No reasoning provider is configured, so the local stand-in answered — and it reasons about nothing. An audit ' +
         'from it would be a fabricated professional opinion about the company’s own website. Set a provider key.',
-      503,
-    );
-  }
+    },
+  });
 
   const output = result.output as { findings?: unknown; proposals?: unknown };
   const findings = (Array.isArray(output.findings) ? output.findings : []).map((entry) => {

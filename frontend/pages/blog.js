@@ -2,7 +2,7 @@ import { api } from '../lib/api.js';
 import { lineChart } from '../lib/charts.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { axisDay, head, refusal } from '../lib/estate.js';
-import { badge, html, raw, render, table, time, toast, track } from '../lib/ui.js';
+import { badge, html, money, raw, render, table, time, toast, track } from '../lib/ui.js';
 import { draw } from '../app.js';
 
 /**
@@ -53,6 +53,30 @@ const COMMANDS = {
         hint: 'A sentence at least. "Write about delays" produces an article about nothing — say what the reader should think differently by the end.',
       },
       { name: 'tag', label: 'Tag', required: false, hint: 'Industry, Engineering, Company. Defaults to Industry.' },
+    ],
+  }),
+  fund: () => ({
+    title: 'Fund the platform wallet',
+    intent:
+      'The draft and the audit spend the platform’s own ACU wallet, not a customer’s. This records a payment already ' +
+      'received into the company’s own account and credits the wallet against it. The reference is the bank’s or the ' +
+      'provider’s and is the idempotency key: the same reference twice credits once. Do not invent one.',
+    path: '/v1/admin/tenants/platform/credit',
+    submitLabel: 'Credit the wallet',
+    fields: [
+      { name: 'amountMinor', label: 'Amount (pence)', type: 'number', hint: '£50 is 5000.' },
+      {
+        name: 'method',
+        label: 'How it arrived',
+        type: 'select',
+        options: [
+          { value: 'BANK_TRANSFER', label: 'Bank transfer' },
+          { value: 'CARD', label: 'Card' },
+          { value: 'MANUAL_ADJUSTMENT', label: 'Manual adjustment' },
+        ],
+      },
+      { name: 'reference', label: 'Reference', hint: 'The bank’s or provider’s own identifier. Unique for ever.' },
+      { name: 'note', label: 'Note', required: false },
     ],
   }),
   write: () => ({
@@ -106,6 +130,7 @@ export async function blog(root) {
   const blocked = posts.filter((post) => post.status === 'DRAFT' && !post.publishable);
   const live = posts.filter((post) => post.status === 'PUBLISHED');
   const views = position.views ?? { total: 0, bySlug: [], daily: [], durable: false, note: '' };
+  const wallet = position.wallet ?? null;
 
   render(
     root,
@@ -117,8 +142,20 @@ export async function blog(root) {
           { id: 'draft', label: 'Ask for a draft', permitted: true, tone: 'primary' },
           { id: 'write', label: 'Write one yourself', permitted: true },
           { id: 'audit', label: 'Audit the blog', permitted: true },
+          { id: 'fund', label: 'Fund the platform wallet', permitted: true },
         ]),
       })}
+
+      ${wallet && wallet.availableMinor <= 0
+        ? html`<div class="notice warn" style="margin-bottom:14px">
+            <div>
+              <b>The platform wallet holds ${money(wallet.availableMinor)}, so a draft and an audit are held.</b><br />
+              Both spend the platform’s own ACU wallet rather than a customer’s, and it starts empty: nothing spends
+              without credit behind it. Press <b>Fund the platform wallet</b> to record a payment received into the
+              company’s own account; the quote on each action then clears on its own.
+            </div>
+          </div>`
+        : ''}
 
       <section class="grid g4" style="margin-bottom:14px">
         <div class="card">
@@ -143,6 +180,11 @@ export async function blog(root) {
           <div class="metric-sub">
             requests, not readers${views.durable ? '' : ' · not durable on this process'}
           </div>
+        </div>
+        <div class="card">
+          <h2>Platform wallet</h2>
+          <div class="metric ${raw(wallet && wallet.availableMinor > 0 ? 'good' : 'warn')}">${wallet ? money(wallet.availableMinor) : '—'}</div>
+          <div class="metric-sub">available for the draft and the audit · ${wallet ? money(wallet.heldMinor) : '—'} held against runs in flight</div>
         </div>
         <div class="card ${raw(blocked.length > 0 ? 'warn' : '')}">
           <h2>Blocked by a check</h2>

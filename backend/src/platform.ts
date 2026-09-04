@@ -411,13 +411,12 @@ export class Platform {
       correlationId: ulid(),
       eventType: 'TENANT_CREATED',
       entity: { refType: 'Tenant', refId: tenantId },
-      nextState: {
-        id: tenantId,
-        legalName: input.legalName,
-        jurisdiction: input.jurisdiction,
-        defaultCurrency: input.defaultCurrency,
-        enterpriseId,
-      },
+      // The whole record, as every later tenant event writes it. This one
+      // wrote five fields and left out `createdAt` and `referralCode`, so a
+      // restart rebuilt every tenancy with no joining date and no referral —
+      // and the growth programme, which matches tenancies to partners by that
+      // code, showed every referred tenancy as nobody's after a redeploy.
+      nextState: { ...tenant },
     });
 
     this.ledger.commit({
@@ -2150,6 +2149,15 @@ export class Platform {
 
     for (const record of this.ledger.entitiesOfType('Tenant')) {
       const state = copy<Tenant>(record);
+      // A journal written before `TENANT_CREATED` carried the joining date
+      // has tenancies with none. The event that created it is dated, and that
+      // is the date.
+      if (!state.createdAt) {
+        const created = this.ledger
+          .events({ tenantId: state.id })
+          .find((event) => event.eventType === 'TENANT_CREATED' && event.entity.refId === state.id);
+        if (created) state.createdAt = created.timestamp;
+      }
       this.#tenants.set(state.id, state);
     }
 
@@ -2161,6 +2169,21 @@ export class Platform {
     for (const record of this.ledger.entitiesOfType('OrgUnit')) {
       const state = copy<OrgUnit>(record);
       this.#units.set(state.id, state);
+    }
+
+    // Money received, and the requests it answered. Both are on the record
+    // (`PAYMENT_RECEIVED`, `TOPUP_REQUESTED`, `TOPUP_SETTLED`) and neither was
+    // rebuilt, so a restart forgot every receipt: lifetime revenue read £0 on
+    // Tenants & users and Customer value, the growth programme attributed
+    // nothing, and a bank reference already credited would have credited
+    // again — the one thing the reference exists to prevent.
+    for (const record of this.ledger.entitiesOfType('PaymentReceipt')) {
+      const state = copy<PaymentReceipt>(record);
+      this.#receiptsByReference.set(state.reference, state);
+    }
+    for (const record of this.ledger.entitiesOfType('TopUpIntent')) {
+      const state = copy<TopUpIntent>(record);
+      this.#topUpIntents.set(state.id, state);
     }
 
     for (const record of this.ledger.entitiesOfType('RefundObligation')) {
@@ -2657,7 +2680,38 @@ export class Platform {
       .sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
   }
 
+  /**
+   * Open a wallet on the ledger that exists in memory but not on the record.
+   *
+   * Every customer wallet is opened by `createTenant`. The platform's own is
+   * built in memory by `#ensurePlatformTenancy` and never written, so the
+   * first credit to it — the only way the blog draft and audit could ever be
+   * funded — was refused as `ENTITY_NOT_FOUND` on the `ACU_TOPPED_UP` event.
+   * Opened here, once, at the first write that needs it: a restored process
+   * finds the record already there and writes nothing.
+   */
+  #ensureWalletOpened(tenantId: string): void {
+    if (this.ledger.get({ refType: 'ACUWallet', refId: tenantId })) return;
+    const wallet = this.wallet(tenantId);
+    this.ledger.commit({
+      tenantId,
+      projectId: `${tenantId}-governance`,
+      actor: { refType: 'System', refId: 'billing' },
+      source: 'SYSTEM',
+      correlationId: ulid(),
+      eventType: 'ACU_WALLET_OPENED',
+      entity: { refType: 'ACUWallet', refId: tenantId },
+      nextState: {
+        id: tenantId,
+        tenantId,
+        balanceMinor: wallet.snapshot().balanceMinor,
+        openedAt: new Date().toISOString(),
+      },
+    });
+  }
+
   #creditWallet(tenantId: string, amountMinor: number, note: string): void {
+    this.#ensureWalletOpened(tenantId);
     const wallet = this.wallet(tenantId);
     wallet.topUp(amountMinor, `Prepaid ACU purchase — ${note}`);
 
@@ -2699,6 +2753,7 @@ export class Platform {
    * own chain under the person who did it, like a cap set from inside.
    */
   setAcuCapsFor(tenantId: string, actorId: string, caps: ACUCaps, reason: string): ReturnType<ACUWallet['snapshot']> {
+    this.#ensureWalletOpened(tenantId);
     const wallet = this.wallet(tenantId);
     const previous = wallet.snapshot().caps;
     wallet.setCaps(caps);

@@ -8337,6 +8337,56 @@ hash vouching for it is still `FAILED_HASH`. **Tests that edited ledger
 state in place** (`goldenthread.test.ts`, `estimating.test.ts`) now assert
 the refusal or write a legacy-shaped record through the ledger.
 
+### The operator screens, driven control by control
+
+Every button on SEO & content, Newsletter, Growth partners, Influencers,
+Company profile, Reports, Platform operations, Blueprint and Audit logs was
+pressed in Chromium against a journal-backed process, and four things that
+had never been exercised were found broken. **The blog could not hold a
+post.** `site/blog.ts` `posts()` read each ledger entity record as the post
+instead of its state, so every field was `undefined` and the first post
+written from the console made `/v1/site/posts` answer 500 and the screen
+unreadable; the five posts compiled into the build had hidden it. Fixed;
+`blog.test.ts` writes, gates, publishes, reads on the public site through
+the gateway, withdraws and replays. **An unknown or withdrawn post address
+answered 500**, not 404 (`site/index.ts` threw a plain `Error`); it is a
+`NotFoundError` now. **The AI draft and the audit could never run.** Both
+spend the platform's own ACU wallet, which starts empty by design, and no
+screen showed its balance or offered to fund it: Tenants & users lists
+customers only. Worse, the wallet was built in memory and never opened on
+the ledger, so a credit to it was refused as `ENTITY_NOT_FOUND` on the
+top-up event. `Platform.#ensureWalletOpened` opens a wallet on the record at
+its first write; the blog position carries the platform wallet snapshot;
+SEO & content shows the balance, warns while it is empty and has "Fund the
+platform wallet" posting to the existing operator credit route. A draft on a
+deployment with no reasoning provider is still refused, with the reason on
+the panel. **Referral attribution had no test.** `growth.test.ts` enrols a
+partner and an influencer, verifies signups carrying their codes, settles
+receipts, checks commission and bounty, records a payout once under a
+repeated reference, ends an agreement and replays — and the replay found
+two more. **A restart forgot every payment receipt and top-up request**:
+both are on the record (`PAYMENT_RECEIVED`, `TOPUP_REQUESTED`,
+`TOPUP_SETTLED`) and neither was rebuilt by `rehydrate()`, so after a
+redeploy lifetime revenue read £0 on Tenants & users and Customer value,
+the growth programme attributed nothing, and a bank reference already
+credited would have credited again. Both maps are rebuilt from their
+entities now. **`TENANT_CREATED` wrote five fields** and left out
+`createdAt` and `referralCode`, so a restart rebuilt every tenancy with no
+joining date and no referral; it writes the whole record now, and a journal
+written before this takes the joining date from the creating event's
+timestamp on restore; the Tenants & users row now carries the code it
+already tried to show. **A refused draft was paid for.** `draftPost` and
+`auditBlog` ran the engine, settled the charge, and only then noticed the
+answer was the local stand-in and refused it — 45p debited from the
+platform wallet for a 503. `runAI` takes `requireModel` now: a synthetic
+answer releases the hold and throws the named refusal before anything is
+charged (`blog.test.ts` asserts the balance is untouched and no debit is
+written). Verified working and
+unchanged: newsletter issue and preference, deliveries, partner status and
+payout doors, landing picture add and clear, all six reports, the four
+platform-operations commands, the blueprint read (with `docs/` in the
+image), and the audit chain.
+
 ### Pictures behind the gateway, and two operator-screen labels
 
 An account picture uploaded, hashed and recorded correctly and still showed
