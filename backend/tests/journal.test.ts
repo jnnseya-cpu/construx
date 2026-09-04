@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
+import { canonicalize, EMPTY_STATE_HASH, sha256 } from '../src/core/canonical.ts';
 import { Journal } from '../src/goldenthread/journal.ts';
 import { GoldenThreadLedger } from '../src/goldenthread/ledger.ts';
 import { Platform } from '../src/platform.ts';
@@ -438,5 +439,101 @@ describe('money across a restart', () => {
       captured.some((entry) => entry.tenantId === tenant.id),
       'a tenancy created after boot was not journalled',
     );
+  });
+});
+
+describe('the state hash is taken over what is written', () => {
+  it('a Date or a Buffer in a proposal is hashed as the JSON it becomes, so the journal replays', async () => {
+    const path = nextPath();
+    const journal = new Journal(path, { fsync: false });
+    const platform = new Platform();
+    platform.ledger.attachJournal(journal);
+    await seedDemoProject(platform);
+    const projectId = platform.ledger.events()[0]!.projectId;
+    // What a caller can hand the ledger without noticing: a Date where an ISO
+    // string was meant, bytes where a hash was meant.
+    platform.ledger.commit({
+      tenantId: platform.ledger.events()[0]!.tenantId,
+      projectId,
+      actor: { refType: 'System', refId: 'test' },
+      source: 'SYSTEM',
+      correlationId: 'date-in-state',
+      eventType: 'EVIDENCE_REGISTERED',
+      entity: { refType: 'EvidenceItem', refId: 'ev-date' },
+      nextState: { id: 'ev-date', type: 'PHOTO', hash: 'sha256:0', capturedAt: new Date('2026-09-04T15:39:36.796Z') as unknown as string, capturedBy: 'x', bytes: Buffer.from('abc') as unknown as string, linkedEntities: [] },
+    });
+    journal.close();
+    const stored = platform.ledger.get({ refType: 'EvidenceItem', refId: 'ev-date' })!;
+    assert.equal(typeof stored.state.capturedAt, 'string', 'the state the ledger holds is the state it wrote');
+
+    const restored = new Platform();
+    const result = restored.ledger.restore(new Journal(path).read().events);
+    assert.deepEqual(result.discrepancies, []);
+    assert.equal(restored.ledger.chainHead(projectId), platform.ledger.chainHead(projectId));
+  });
+
+  it('replays an event whose recorded state hash was computed over a value JSON changed, reports it, and refuses a tampered one', async () => {
+    const path = nextPath();
+    const { platform: original } = await seededJournal(path);
+    const lines = readFileSync(path, 'utf8').split('\n').filter(Boolean);
+    const events = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+
+    // Reproduce what an earlier build wrote: the state hash taken over an
+    // object holding a Date, the patch holding the string it serialised to.
+    const target = 5;
+    const event = events[target]!;
+    const key = `${(event.entity as { refType: string }).refType}:${(event.entity as { refId: string }).refId}`;
+    const wrongHash = sha256('the hash of the object in memory, not of the JSON');
+    event.afterHash = wrongHash;
+    // The process carried on from the object it had: the next event it wrote
+    // for that entity chains from the hash it recorded.
+    const next = events.slice(target + 1).find((candidate) => `${(candidate.entity as { refType: string }).refType}:${(candidate.entity as { refId: string }).refId}` === key);
+    if (next) next.beforeHash = wrongHash;
+    // Re-seal the chain as that process would have: every chain hash is over
+    // the body as written, including the recorded state hashes.
+    const heads = new Map<string, string>();
+    for (const held of events) {
+      const previous = heads.get(held.projectId as string) ?? EMPTY_STATE_HASH;
+      const { chainHash: _c, previousChainHash: _p, ...body } = held;
+      held.previousChainHash = previous;
+      held.chainHash = sha256(`${previous}\n${canonicalize(body)}`);
+      heads.set(held.projectId as string, held.chainHash as string);
+    }
+    const resealed = nextPath();
+    writeFileSync(resealed, `${events.map((held) => JSON.stringify(held)).join('\n')}\n`);
+
+    const platform = new Platform();
+    const result = platform.ledger.restore(new Journal(resealed).read().events);
+    assert.equal(result.restored, events.length, 'every event replayed');
+    assert.equal(result.discrepancies.length, 1);
+    assert.equal(result.discrepancies[0]!.eventId, event.eventId);
+    assert.equal(result.discrepancies[0]!.recorded, wrongHash);
+    assert.deepEqual(platform.ledger.discrepancies(), result.discrepancies);
+    // The state is what the patches produce, the same as the original process held.
+    const [refType, refId] = key.split(':') as [string, string];
+    assert.deepEqual(platform.ledger.get({ refType, refId })!.state, original.ledger.get({ refType, refId })!.state);
+
+    // Work continues from the replayed state, and the whole record — the old
+    // discrepancy and the new event — replays again on the next restart.
+    platform.ledger.commit({
+      tenantId: event.tenantId as string,
+      projectId: event.projectId as string,
+      actor: { refType: 'System', refId: 'test' },
+      source: 'SYSTEM',
+      correlationId: 'after-discrepancy',
+      eventType: 'EVIDENCE_REGISTERED',
+      entity: { refType: 'EvidenceItem', refId: 'ev-after' },
+      nextState: { id: 'ev-after', type: 'PHOTO', hash: 'sha256:1', capturedAt: '2026-09-04T16:00:00.000Z', capturedBy: 'x', linkedEntities: [] },
+    });
+    const again = new Platform().ledger.restore(platform.ledger.events());
+    assert.equal(again.discrepancies.length, 1, 'the discrepancy is reported on every replay; nothing is rewritten');
+
+    // A genuinely altered event is still refused: change the patch and leave
+    // the chain hash as it was.
+    const tampered = events.map((held) => ({ ...held }));
+    tampered[target]!.diff = [{ op: 'add', path: '/tamperedField', value: 'injected' }];
+    const tamperedPath = nextPath();
+    writeFileSync(tamperedPath, `${tampered.map((held) => JSON.stringify(held)).join('\n')}\n`);
+    throwsCode(() => new Platform().ledger.restore(new Journal(tamperedPath).read().events), 'JOURNAL_CHAIN_BROKEN');
   });
 });

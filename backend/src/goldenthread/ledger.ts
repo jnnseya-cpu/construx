@@ -75,6 +75,22 @@ function entityKey(ref: EntityRef): string {
 }
 
 /** Canonical body used for chain hashing — excludes the chain fields themselves. */
+/**
+ * An event whose chain hash verifies — it is the event as written — but whose
+ * recorded state hash is not the hash of the state its own patch produces.
+ * The one known cause is a value that JSON serialisation changed between the
+ * hash and the write (a `Date`, a `Buffer`), which the commit path no longer
+ * allows to happen. Reported at boot; the record is not rewritten.
+ */
+export type StateHashDiscrepancy = {
+  index: number;
+  eventId: string;
+  eventType: string;
+  entity: EntityRef;
+  recorded: string;
+  computed: string;
+};
+
 function chainBody(event: GoldenThreadEvent): string {
   const { chainHash: _chain, previousChainHash: _previous, ...body } = event;
   return canonicalize(body);
@@ -88,6 +104,14 @@ export class GoldenThreadLedger {
   readonly #subscribers: LedgerSubscriber[] = [];
   /** eventId de-duplication — replayed sync batches must be idempotent. */
   readonly #seenEventIds = new Set<string>();
+  /**
+   * Per entity, the state hash the last replayed event *recorded* where it
+   * differed from the hash of the replayed state. The writer that recorded it
+   * carried on from the object it had, so the next event it wrote chains
+   * from this value; replay accepts either.
+   */
+  readonly #recordedHashes = new Map<string, string>();
+  readonly #discrepancies: StateHashDiscrepancy[] = [];
   /**
    * Durable log, when one is configured. Absent means in-process only, which
    * is correct for a test and is data loss on restart anywhere else.
@@ -183,7 +207,16 @@ export class GoldenThreadLedger {
     //
     // Committed history cannot be hostage to what a caller does next, so the
     // ledger takes its own copy before it derives anything from the proposal.
-    const proposed = structuredClone(input.nextState);
+    //
+    // The copy is a JSON round trip, not `structuredClone`, and the
+    // difference is what a production journal refused to replay. A clone
+    // keeps a `Date`, a `Buffer` or a `Map` as it is; the journal writes JSON,
+    // where a Date is a string and a Buffer is `{ type, data }`. The hash was
+    // computed over the object in memory and recorded beside a patch that,
+    // read back from disk, produced a different object — and the chain
+    // refused to start on its own record. Hashing what will be written, as it
+    // will be read, is the only way the two can agree.
+    const proposed = JSON.parse(JSON.stringify(input.nextState)) as Record<string, unknown>;
     const diff: PatchOp[] = orderPatch(diffState(beforeState ?? {}, proposed));
     validatePatch(diff);
     if (diff.length === 0 && existing) {
@@ -280,14 +313,21 @@ export class GoldenThreadLedger {
    * permissions may since have changed; re-evaluating them now would rewrite
    * history according to today's permission matrix.
    */
-  restore(events: readonly GoldenThreadEvent[]): { restored: number; entities: number } {
+  restore(events: readonly GoldenThreadEvent[]): { restored: number; entities: number; discrepancies: StateHashDiscrepancy[] } {
+    const discrepancies: StateHashDiscrepancy[] = [];
     for (const [index, event] of events.entries()) {
       const key = entityKey(event.entity);
       const existing = this.#entities.get(key);
       const beforeState = existing?.state;
 
+      // The hash the process that wrote the next event believed this entity
+      // had. Normally the hash of the replayed state; where an earlier event
+      // recorded a hash over a value JSON changed, the process kept working
+      // from the object in memory, and the events it wrote afterwards chain
+      // from the hash it recorded — which is the one to accept.
       const beforeHash = beforeState === undefined ? EMPTY_STATE_HASH : hashState(beforeState);
-      if (event.beforeHash !== beforeHash) {
+      const recorded = this.#recordedHashes.get(key);
+      if (event.beforeHash !== beforeHash && event.beforeHash !== recorded) {
         throw new DomainError(
           'JOURNAL_CHAIN_BROKEN',
           `Journal event ${index + 1} (${event.eventId}) expects prior state ${event.beforeHash} for ` +
@@ -298,13 +338,12 @@ export class GoldenThreadLedger {
 
       const afterState = applyPatch<Record<string, unknown>>((beforeState ?? {}) as Record<string, unknown>, event.diff);
       const afterHash = hashState(afterState);
-      if (event.afterHash !== afterHash) {
-        throw new DomainError(
-          'JOURNAL_STATE_MISMATCH',
-          `Journal event ${index + 1} (${event.eventId}) records state hash ${event.afterHash}, ` +
-            `but applying its own patch produces ${afterHash}. The event has been altered.`,
-        );
-      }
+      // Decided after the chain hash below has verified: the chain hash
+      // covers the patch and the recorded state hash together, so an event
+      // that verifies is the event as written, and a state hash that still
+      // disagrees with its own patch is the writer's arithmetic, not an
+      // alteration. It is recorded and reported, never hidden.
+      const stateMismatch = event.afterHash !== afterHash;
 
       const previousChainHash = this.#chainHeads.get(event.projectId) ?? EMPTY_STATE_HASH;
       if (event.previousChainHash !== previousChainHash) {
@@ -324,6 +363,20 @@ export class GoldenThreadLedger {
         );
       }
 
+      if (stateMismatch) {
+        discrepancies.push({
+          index: index + 1,
+          eventId: event.eventId,
+          eventType: event.eventType,
+          entity: { refType: event.entity.refType, refId: event.entity.refId },
+          recorded: event.afterHash,
+          computed: afterHash,
+        });
+        this.#recordedHashes.set(key, event.afterHash);
+      } else {
+        this.#recordedHashes.delete(key);
+      }
+
       this.#events.push(event);
       this.#seenEventIds.add(event.eventId);
       this.#entities.set(key, {
@@ -332,6 +385,9 @@ export class GoldenThreadLedger {
         tenantId: event.tenantId,
         projectId: event.projectId,
         state: afterState,
+        // The hash of the state as replayed — what the next commit chains
+        // from, and what every commit from now on records, since the hash is
+        // now taken over the JSON that is written.
         stateHash: afterHash,
         lastEventId: event.eventId,
         version: (existing?.version ?? 0) + 1,
@@ -339,7 +395,13 @@ export class GoldenThreadLedger {
       this.#chainHeads.set(event.projectId, event.chainHash);
     }
 
-    return { restored: events.length, entities: this.#entities.size };
+    this.#discrepancies.push(...discrepancies);
+    return { restored: events.length, entities: this.#entities.size, discrepancies };
+  }
+
+  /** Every state-hash discrepancy found on replay since this ledger was built. */
+  discrepancies(): readonly StateHashDiscrepancy[] {
+    return this.#discrepancies;
   }
 
   /** Idempotent ingestion of an event minted elsewhere (offline device, replica). */

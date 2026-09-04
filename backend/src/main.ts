@@ -82,8 +82,19 @@ if (config.ledger.journalPath !== '') {
   // loading a record that has been altered. Refusing to start is the correct
   // response: a platform that boots on a broken chain is one that will be asked
   // to prove something from it later.
-  const { restored, entities } = platform.ledger.restore(events);
+  const { restored, entities, discrepancies } = platform.ledger.restore(events);
   if (stats.truncated) journal.repair(events);
+  for (const found of discrepancies) {
+    // Said on the way up, every boot, until the record is examined. The chain
+    // hash of this event verifies, so it is the event as written; what does
+    // not agree is the state hash it recorded against its own patch, which is
+    // what an earlier build produced by hashing a value JSON then changed.
+    process.stderr.write(
+      `[journal] event ${found.index} (${found.eventId}, ${found.eventType} on ${found.entity.refType} ${found.entity.refId}) ` +
+        `records state hash ${found.recorded} but its patch produces ${found.computed}. The chain hash verifies; ` +
+        'the replayed state is the one its patch produces. See docs/RUNBOOK.md, "State-hash discrepancies".\n',
+    );
+  }
 
   // ACU entries are a separate double-entry ledger by a settled decision —
   // folding them into the chain would create a second source of truth for
@@ -140,6 +151,7 @@ if (config.ledger.journalPath !== '') {
     `${stats.path} — ${restored} event${restored === 1 ? '' : 's'} restored into ${entities} entities, ` +
     `${identity.users} users across ${identity.tenants} tenancies, ${records.length} ACU entries, ` +
     `${brandings} branding${brandings === 1 ? '' : 's'}`;
+  if (discrepancies.length > 0) durability += ` — ${discrepancies.length} STATE-HASH DISCREPANC${discrepancies.length === 1 ? 'Y' : 'IES'} (see stderr)`;
   if (!config.ledger.fsync) durability += ' (fsync OFF)';
 }
 

@@ -8289,6 +8289,22 @@ product); BitriPay and any invoicing run (the statement moves no money);
 document-generation job API; RLS and Kafka (no database, no broker — the
 policies and topics are recorded as the contract in `docs/GROUP_TENANCY.md`).
 
+### The ledger hashes what it writes
+
+A production journal refused to replay (`JOURNAL_STATE_MISMATCH` at one
+event): the commit path hashed the after-state over the object in memory
+(`structuredClone`) and wrote JSON, so a proposal carrying a `Date` or a
+`Buffer` recorded a hash the written patch could never reproduce. The commit
+path now takes its copy as a JSON round trip and hashes that, so the hash
+recorded is the hash of what is read back. Replay no longer refuses an event
+whose chain hash verifies but whose recorded state hash disagrees with its
+own patch: the patched state is taken, the discrepancy is reported on every
+boot (stderr and the boot line) and kept on `ledger.discrepancies()`, and
+the next event a writer chained from the recorded hash is accepted. A
+tampered event — chain hash not verifying — is refused as before.
+`journal.test.ts`. The runbook has the section "State-hash discrepancies on
+replay".
+
 ### The Enterprise / Group specification v1.0 — CONSTRUX side, on top of the group tenancy
 
 The second specification (§1–§20, AT-01..AT-44) is implemented over the

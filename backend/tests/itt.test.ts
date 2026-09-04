@@ -418,7 +418,10 @@ describe('A compliance matrix stays readable after the session that produced it'
     assert.equal(read.clientName, written.clientName);
     assert.equal(read.readyToPrice, written.readyToPrice);
     assert.equal(read.quantifiedExposureMinor, written.quantifiedExposureMinor);
-    assert.deepEqual(read.matrix, written.matrix);
+    // The record holds what was written, and what is written is JSON: a line
+    // whose `dueBy` was left undefined has no `dueBy` on the record, in this
+    // process and in the one that replays the journal alike.
+    assert.deepEqual(read.matrix, JSON.parse(JSON.stringify(written.matrix)));
     // The order matters and is the reason the terms are sorted before the
     // write rather than after it: worst first is how the list is read.
     assert.deepEqual(read.terms.map((t) => t.severity), written.terms.map((t) => t.severity));

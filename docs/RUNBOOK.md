@@ -330,6 +330,33 @@ journalctl -u construx-deploy --since "2 hours ago" --no-pager | tail -60
 - **The deploy log says it rolled back** — the new image never reached
   `/readyz`; the reason is in step 2 of the container it tried.
 
+## State-hash discrepancies on replay
+
+Every event carries three hashes: the state before, the state after, and
+the chain hash over the whole event including both. Replay recomputes all
+three. Builds before 4 September 2026 computed the after-state hash over
+the object in memory and then wrote JSON — so a `Date` or a `Buffer` in a
+proposal was hashed as one thing and written as another, and the journal
+refused to replay its own record (`JOURNAL_STATE_MISMATCH`, seen on
+construxvg.com at event 3634). The commit path now hashes the JSON that is
+written, so no new event can disagree with itself.
+
+An event already written that way is not rewritten. On replay, where the
+chain hash verifies — proving the event is as written — and the recorded
+after-state hash still disagrees with the state its own patch produces, the
+platform boots, takes the patched state as the state, and reports the
+discrepancy on stderr and on the boot line:
+
+```
+[journal] event 3634 (01M1PH…, CLIENT_BRANDING_SET on ClientBrandingRecord …) records state hash sha256:e881… but its patch produces sha256:d4a1…. The chain hash verifies; the replayed state is the one its patch produces.
+Ledger   /data/ledger.jsonl — 4,102 events restored into 1,207 entities, … — 1 STATE-HASH DISCREPANCY (see stderr)
+```
+
+An event whose chain hash does not verify is still refused, whatever its
+state hash says: that is an altered record, not a writer's arithmetic. The
+discrepancy stays on every boot as a matter of record; `docs/STATE.md`
+names the build that wrote it.
+
 ## Health and observability
 
 | Endpoint | Purpose |
