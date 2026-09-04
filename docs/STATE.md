@@ -8230,6 +8230,93 @@ to. Until they are set, the audit's phone, address and profile findings stand,
 correctly. "Contact route" and "Schema.org" are answered on every page now,
 with the email alone.
 
+### The Group above the companies — GN-SPEC-TENANCY-001, CONSTRUX side
+
+The specification (Groupe Nseya Digital, 4 September 2026) is implemented
+against `docs/GROUP_TENANCY.md`, which maps every section to what is built,
+what is built differently and why, and what is not. The structural decision
+it settles: **a Company is a tenancy** — the isolation boundary every read
+already applies, never shared between legal entities — and the **Group** is
+above tenancies: one licence agreement, one statement, one cost centre per
+company, the group-level roles. Nothing operational lives at group level. A
+group holds up to five companies (`GROUP_LICENCE.maxCompanies` in
+`billing/seats.ts`). Everything else on the platform is unchanged.
+
+**Built** (`backend/src/group/`): `directory.ts` — `Group` with billing
+account and cost centres (charge mode INTERNAL / INTERCOMPANY / EXTERNAL, rate
+card), `Tenant.groupId`, group roles GROUP_ADMIN / GROUP_FINANCE / GROUP_VIEWER
+keyed by email, one person as several memberships (the same address in more
+than one company; `GET /v1/users/me` lists them, `POST /v1/auth/switch-company`
+moves between them with a new session and the old token revoked, the console
+header carries the switcher), entitlements per company as the spec's claims,
+usage per company derived from the wallet, the users, the exports and the
+evidence store, and the consolidated statement with a section per cost centre
+and CSV per group or per company. `profile.ts` — the issuer profile
+(registered issuer block, numbering rules, signatories), versioned on every
+change including a brand change, every version replayable from the chain;
+document numbers allocated atomically per (company, type, scope) on the chain
+— gapless under 25 concurrent requests. Exports pin `issuer: { companyId,
+profileVersion }` on the document and on the `Export` record and take their
+reference from the company's `report` rule where one exists; a later profile
+change leaves the issued record unchanged. `sharing.ts` — explicit per-record
+read-only shares between companies of one group, expiring, revocable, read
+through their own route with the owner's branding and a shared-by marker,
+deliberately not wired into the generic entity read. `support.ts` —
+break-glass operator access: opened against a ticket with a reason, 5–240
+minutes, on the company's own chain, every read recorded, visible and
+closable on Team & Access. What it opens is the governance record, read-only;
+projects stay closed to operators as before.
+
+**Console:** Group screen (directory, usage, statement with month picker and
+export, roles, per-company entitlements, hard limit, audit); Tenants & Users
+gains Groups (create, bring a company in, cost centre, billing terms, group
+role) and break-glass support access; Team & Access gains the support-access
+record and "Add from another company"; Documents gains the issuer profile,
+numbering rules, signatories, number allocation, version history and shares.
+
+**Tests:** `grouptenancy.test.ts` — one block per §13 criterion that reaches
+CONSTRUX. Verified in Chromium: the whole operator set-up, the group console,
+the issuer profile and the team page, no page errors.
+
+**Built differently, and why.** No viewer role exists, so a new membership
+does not default to one: the administrator names the roles. Tokens are the
+platform's own with a 15-minute TTL, not OIDC; entitlement claims are
+published by `/v1/users/me` and the gateway reads live state. Meters are
+derived from records rather than emitted as a `usage_events` table, so there
+is one source of truth. **Not built:** VERYX and product workspaces (one
+product); BitriPay and any invoicing run (the statement moves no money);
+`group_shared` ACU pools; queueing AI jobs at the hard limit; the async
+document-generation job API; RLS and Kafka (no database, no broker — the
+policies and topics are recorded as the contract in `docs/GROUP_TENANCY.md`).
+
+### Requests: new → contacted → qualified → provisioned
+
+Enterprise and group accounts were "provisioned with an agreement rather
+than a form" and the form did not exist: the public site said to email, and
+the operator had nowhere to see who had asked. `identity/requests.ts` is the
+queue that makes a form honest. `/contact` carries the request form (posting
+to the public `POST /v1/requests`, which answers the same whether or not the
+address has asked before); the Onboarding queue shows every request with its
+status and the acts: mark contacted, mark qualified, **provision** — one act
+that creates the tenancy, its subscription and wallet, the contact as first
+administrator, and the invitation to sign in, emailed where a mail server is
+configured and recorded otherwise — or decline with a reason. A declined
+request can be deleted: the prospect's name, address and message go, and the
+chain keeps that a request existed. `requests.test.ts`. The public site
+policy now carries `connect-src 'self'` unconditionally, which the form needs
+and which was previously only present when an advertising tag was configured.
+
+### Deleting a closed person now, and revoking a module from the register
+
+A deactivated person, or one whose deletion is scheduled, can be fully
+deleted at once by the company's administrator ("Delete now" on Enterprise &
+Portfolio) or by the platform operator on the company's request ("People" on
+a tenancy row lists the closed people). `Platform.eraseUserNow` refuses an
+active identity — deactivate first — and acts on the company's own chain
+under the operator's name. `erasenow.test.ts`. The Private modules register
+on Tenants & Users now carries Revoke / Grant again on every row, posting to
+the existing module decision route.
+
 **Not built, stated so it is not mistaken for missing by accident:** no QR
 code is rendered — the key is typed or the link opened on the phone; drawing
 one is a dependency or a hand-written encoder and neither is warranted for a

@@ -30,6 +30,7 @@ export const state = {
   projects: [],      // every project this identity may open, for the picker
   gate: null,        // current phase gate evaluation
   wallet: null,      // ACU snapshot
+  me: null,          // this person: memberships across companies, the group and its roles
 };
 
 // --- navigation model -------------------------------------------------------
@@ -74,6 +75,10 @@ export const NAV = [
       // the governance in force. Under ENTERPRISE_STRUCTURE, which is the
       // area that governs people; every action on it needs the administrator.
       { id: 'team', label: 'Team & Access', area: 'ENTERPRISE_STRUCTURE', icon: 'key', tenantScoped: true },
+      // The group above the companies: directory, usage, statement, roles.
+      // Shown only to a person holding a group role; the route refuses
+      // everybody else by name, so this is a courtesy rather than a control.
+      { id: 'group', label: 'Group', area: 'ENTERPRISE_STRUCTURE', icon: 'layers', tenantScoped: true, groupOnly: true },
       { id: 'overview', label: 'Project Command Centre', area: 'PROJECT_SETUP', icon: 'grid' },
       // Assembled per person from seven functions over four questions. Under
       // PROJECT_SETUP read because that is the narrowest thing every seat
@@ -719,6 +724,43 @@ export async function signIn(identity) {
  * take the identity off this handset — refusing to would leave somebody signed
  * in *because* the network was down, which is precisely backwards.
  */
+/**
+ * One person, several companies. The switcher lists every company this
+ * address is a member of and moves the session between them: a new session
+ * for the other company, the old one revoked, and nothing already running
+ * changes. Shown only when there is more than one; a person in one company
+ * has nothing to switch to and should not be shown a control that does
+ * nothing.
+ */
+function companySwitcher() {
+  const memberships = (state.me?.memberships ?? []).filter((membership) => membership.active);
+  if (memberships.length < 2) return '';
+  const current = state.session?.user?.tenantId ?? state.me?.activeCompany?.tenantId;
+  return html`<label class="company-switch" title="Switch company">
+    <span class="metric-sub">Company</span>
+    <select id="company-switch" aria-label="Active company">
+      ${memberships.map((membership) => html`<option value="${membership.tenantId}" ${raw(membership.tenantId === current ? 'selected' : '')}>${membership.companyName}</option>`)}
+    </select>
+  </label>`;
+}
+
+document.addEventListener('change', async (event) => {
+  const select = event.target.closest('#company-switch');
+  if (!select) return;
+  const tenantId = select.value;
+  try {
+    const switched = await api.post('/v1/auth/switch-company', { tenantId });
+    session.set({ accessToken: switched.accessToken, refreshToken: switched.refreshToken, user: switched.user });
+    // Everything below the session belongs to the company just left. A full
+    // reload rebuilds it from the new session rather than trusting a partial
+    // reset to have reached every corner.
+    location.assign('/app');
+  } catch (error) {
+    toast('Could not switch company', error.message, 'err');
+    select.value = state.session?.user?.tenantId ?? '';
+  }
+});
+
 export async function signOut() {
   try {
     // No refresh token is sent, and none is needed: the pair shares one
@@ -911,6 +953,9 @@ function reachable(item) {
   // exists, which is exactly what a company that has not been given it must
   // never learn. The server refuses the routes either way.
   if (item.module && !hasModule(item.module)) return false;
+  // The group console is for a group role, which is not a capability area:
+  // absent for everybody else, whatever areas they hold.
+  if (item.groupOnly) return Boolean(state.me?.group?.roles?.length);
   return readableAreas(item).some((area) => can(area, 'R'));
 }
 
@@ -1035,6 +1080,7 @@ function topbar() {
     </div>
     <div class="spacer"></div>
     ${isOperator() ? html`<span class="phase-tag">OPERATOR</span>` : state.project ? html`<span class="phase-tag">${state.project.phase}</span>` : ''}
+    ${companySwitcher()}
     <button class="user-chip" id="user-chip" aria-label="Signed in as ${user?.name ?? 'this identity'}. Sign out.">
       <span class="avatar">${
         user?.pictureHash
@@ -1063,6 +1109,12 @@ async function loadContext() {
   // An operator has no project context to load — asking for one would be denied,
   // correctly, by the same rule that hides delivery navigation from them.
   if (isOperator()) return;
+
+  // Who this person is across the group: every membership, for the company
+  // switcher, and the group and its roles, for the Group screen. Not fatal
+  // when it fails — a company outside any group has one membership and no
+  // group, which is what the page shows without it.
+  state.me = await api.get('/v1/users/me').catch(() => null);
 
   const { projectId } = state.session;
 

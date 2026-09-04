@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command } from '../lib/command.js';
-import { badge, html, humanise, notice, positionReport, raw, render, table, toast } from '../lib/ui.js';
+import { badge, date, html, humanise, notice, positionReport, raw, render, table, toast } from '../lib/ui.js';
 // No `can` gate on the row buttons: the navigation already reaches this screen
 // only for a role holding EVIDENCE_AUDIT read, which is the same authority
 // generation checks. A second copy of that rule here would be a second place
@@ -377,8 +377,11 @@ export async function documents(root) {
           have to stand behind. A document with no cover image still gets a cover — typographic rather than blank.
         </div>
       </div>
+
+      <div id="issuer-host"></div>
     `,
   );
+  void issuerPanels(root.querySelector('#issuer-host'));
 
   // --- the branding door -----------------------------------------------------
   const brandingError = (message) => {
@@ -613,4 +616,245 @@ export async function documents(root) {
     );
     await draw();
   });
+}
+
+// --- the issuing company: profile, numbers, shares -----------------------------
+
+/**
+ * Who issues this company's documents, how they are numbered, and what has
+ * been shared with other companies in the group. The profile is versioned:
+ * every document pins the version it went out under, and a later change
+ * never alters it. Rendered after the main panel so a refusal here — a role
+ * without ENTERPRISE_STRUCTURE — costs the page nothing.
+ */
+async function issuerPanels(host) {
+  if (!host) return;
+  const [issuer, shares] = await Promise.all([
+    api.get('/v1/company/issuer').catch((error) => ({ error })),
+    api.get('/v1/shares').catch((error) => ({ error })),
+  ]);
+  if (issuer.error && shares.error) return;
+  const profile = issuer.profile;
+  const rules = Object.entries(profile?.numberingRules ?? {});
+  render(
+    host,
+    html`
+      ${issuer.error
+        ? ''
+        : html`<div class="card" style="margin-top:14px" data-issuer>
+            <h2>Who issues these documents <span class="metric-sub">version ${profile.version}</span></h2>
+            <div class="metric-sub" style="margin:6px 0 12px">
+              The issuing company decides what a document says about who issued it — never the person, never the group.
+              Every document pins the profile version it went out under; changing the profile leaves issued documents exactly as issued.
+            </div>
+            <div class="grid g3" style="gap:14px">
+              <div>
+                <div class="metric-sub">Registered issuer</div>
+                <b>${profile.issuer.registeredName || '—'}</b>
+                ${profile.issuer.tradingName && profile.issuer.tradingName !== profile.issuer.registeredName ? html`<div class="metric-sub">trading as ${profile.issuer.tradingName}</div>` : ''}
+                <div class="metric-sub">${[profile.issuer.registrationNo ? `No. ${profile.issuer.registrationNo}` : '', profile.issuer.vatNumber ? `VAT ${profile.issuer.vatNumber}` : ''].filter(Boolean).join(' · ') || 'no registration recorded'}</div>
+                <div class="metric-sub">${[profile.issuer.registeredAddress.line1, profile.issuer.registeredAddress.city, profile.issuer.registeredAddress.postcode, profile.issuer.registeredAddress.country].filter(Boolean).join(', ') || 'no registered address'}</div>
+              </div>
+              <div>
+                <div class="metric-sub">Footer on contractual documents</div>
+                <div>${profile.issuer.footerLegalText || html`<span class="metric-sub">not set</span>`}</div>
+              </div>
+              <div>
+                <div class="metric-sub">Signatories</div>
+                ${profile.signatories.length ? profile.signatories.map((s) => html`<div>${s.title} <span class="metric-sub">— ${s.documents.join(', ')}</span></div>`) : html`<span class="metric-sub">none named</span>`}
+              </div>
+            </div>
+            <h3 style="margin-top:14px">Numbering</h3>
+            ${table({
+              headers: ['Document type', 'Prefix', 'Pattern', 'Sequence'],
+              rows: rules.map(([type, rule]) => [type, rule.prefix, rule.pattern, rule.seqScope === 'year' ? 'restarts each year' : 'continuous']),
+              empty: 'No numbering rule. Exports keep their reference prefix; quotations and invoices cannot be numbered until a rule exists.',
+            })}
+            <div class="actions" style="margin-top:12px;flex-wrap:wrap">
+              <button class="btn" data-issuer-action="issuer">Set the issuer details</button>
+              <button class="btn quiet" data-issuer-action="rule">Set a numbering rule</button>
+              <button class="btn quiet" data-issuer-action="signatory">Name a signatory</button>
+              <button class="btn quiet" data-issuer-action="allocate">Allocate a number</button>
+              ${profile.version > 0 ? html`<button class="btn quiet" data-issuer-action="version">See a past version</button>` : ''}
+            </div>
+            <div id="issuer-result" style="margin-top:12px"></div>
+          </div>`}
+
+      ${shares.error
+        ? ''
+        : html`<div class="card" style="margin-top:14px" data-shares>
+            <h2>Shared with other companies in the group</h2>
+            <div class="metric-sub" style="margin:6px 0 12px">
+              By explicit grant, one record at a time, read-only, until it expires or is ended. Ownership never moves:
+              quotations, margins and correspondence stay private unless individually shared. A record shared with you
+              renders with the owner’s branding and says who shared it.
+            </div>
+            ${table({
+              headers: ['Direction', 'Company', 'Record', 'Note', 'Until', ''],
+              rows: [
+                ...shares.given.map((share) => [
+                  badge('given', 'neutral'),
+                  share.granteeName,
+                  html`${share.refType}<div class="metric-sub">${share.refId}</div>`,
+                  share.note,
+                  share.revokedAt ? html`ended ${date(share.revokedAt)}` : share.expiresAt ? date(share.expiresAt) : 'until ended',
+                  share.revokedAt ? '' : html`<button class="btn quiet sm" data-share-revoke="${share.id}">End</button>`,
+                ]),
+                ...shares.received.map((share) => [
+                  badge('shared with us', 'ok'),
+                  share.ownerName,
+                  html`${share.refType}<div class="metric-sub">${share.refId}</div>`,
+                  share.note,
+                  share.revokedAt ? html`ended ${date(share.revokedAt)}` : share.expiresAt ? date(share.expiresAt) : 'until ended',
+                  share.revokedAt ? '' : html`<button class="btn quiet sm" data-share-open="${share.id}">Open</button>`,
+                ]),
+              ],
+              empty: shares.companies.length ? 'Nothing shared yet.' : 'This company is not in a group, so there is nobody to share with.',
+            })}
+            ${shares.companies.length ? html`<div class="actions" style="margin-top:12px"><button class="btn quiet" data-share-new>Share a record</button></div>` : ''}
+            <div id="share-result" style="margin-top:12px"></div>
+          </div>`}
+    `,
+  );
+
+  const again = () => issuerPanels(host);
+  const issuerResult = host.querySelector('#issuer-result');
+
+  for (const button of host.querySelectorAll('[data-issuer-action]')) {
+    button.addEventListener('click', async () => {
+      const action = button.dataset.issuerAction;
+      if (action === 'issuer') {
+        const a = profile.issuer;
+        const result = await command({
+          title: 'The registered issuer',
+          intent: 'What contractual documents carry. The registered name appears on them; the brand may use the trading name.',
+          path: '/v1/company/issuer',
+          method: 'PUT',
+          submitLabel: 'Save as a new version',
+          fields: [
+            { name: 'registeredName', label: 'Registered name', value: a.registeredName },
+            { name: 'tradingName', label: 'Trading name', value: a.tradingName, required: false },
+            { name: 'registrationNo', label: 'Company number', value: a.registrationNo, required: false, hint: 'Companies House, RCCM or equivalent' },
+            { name: 'vatNumber', label: 'VAT number', value: a.vatNumber, required: false },
+            { name: 'line1', label: 'Registered address', value: a.registeredAddress.line1, required: false },
+            { name: 'city', label: 'City', value: a.registeredAddress.city, required: false },
+            { name: 'postcode', label: 'Postcode', value: a.registeredAddress.postcode, required: false },
+            { name: 'country', label: 'Country code', value: a.registeredAddress.country, required: false, hint: 'GB, CD, FR…' },
+            { name: 'phone', label: 'Phone', value: a.contact.phone, required: false },
+            { name: 'email', label: 'Email', value: a.contact.email, required: false },
+            { name: 'web', label: 'Web', value: a.contact.web, required: false },
+            { name: 'footerLegalText', label: 'Footer legal text', type: 'textarea', value: a.footerLegalText, required: false, hint: 'e.g. ETABLIX LTD, registered in England & Wales No. 12345678' },
+          ],
+          transform: (v) => ({
+            issuer: {
+              registeredName: v.registeredName,
+              tradingName: v.tradingName ?? '',
+              registrationNo: v.registrationNo ?? '',
+              vatNumber: v.vatNumber ?? '',
+              registeredAddress: { line1: v.line1 ?? '', line2: a.registeredAddress.line2 ?? '', city: v.city ?? '', postcode: v.postcode ?? '', country: v.country ?? '' },
+              contact: { phone: v.phone ?? '', email: v.email ?? '', web: v.web ?? '' },
+              footerLegalText: v.footerLegalText ?? '',
+            },
+          }),
+        });
+        if (result) again();
+      }
+      if (action === 'rule') {
+        const result = await command({
+          title: 'A numbering rule',
+          intent: 'One per document type. {YYYY}, {YY} and {MM} are the date; {seq:5} is a five-digit sequence. A yearly sequence restarts on 1 January.',
+          path: '/v1/company/issuer',
+          method: 'PUT',
+          submitLabel: 'Save as a new version',
+          fields: [
+            { name: 'documentType', label: 'Document type', type: 'select', options: (issuer.documentTypes ?? []).map((t) => ({ value: t, label: t })) },
+            { name: 'prefix', label: 'Prefix', placeholder: 'ETX-Q-' },
+            { name: 'pattern', label: 'Pattern', value: '{YYYY}-{seq:5}' },
+            { name: 'seqScope', label: 'Sequence', type: 'select', options: [{ value: 'year', label: 'Restarts each year' }, { value: 'all', label: 'Continuous' }] },
+          ],
+          transform: (v) => ({ numberingRules: { ...profile.numberingRules, [v.documentType]: { prefix: v.prefix, pattern: v.pattern, seqScope: v.seqScope } } }),
+        });
+        if (result) again();
+      }
+      if (action === 'signatory') {
+        const people = await api.get('/v1/users').catch(() => ({ users: [] }));
+        const result = await command({
+          title: 'Name a signatory',
+          intent: 'Who signs which kinds of document for this company. Recorded on the profile; a new version.',
+          path: '/v1/company/issuer',
+          method: 'PUT',
+          submitLabel: 'Save as a new version',
+          fields: [
+            { name: 'userId', label: 'Person', type: 'select', options: (people.users ?? []).map((u) => ({ value: u.id, label: u.name })) },
+            { name: 'title', label: 'Title', placeholder: 'Directeur Général' },
+            { name: 'documents', label: 'Signs', type: 'multiselect', options: (issuer.documentTypes ?? []).map((t) => ({ value: t, label: t })) },
+          ],
+          transform: (v) => ({ signatories: [...profile.signatories.filter((s) => s.userId !== v.userId), { userId: v.userId, title: v.title, documents: v.documents ?? [] }] }),
+        });
+        if (result) again();
+      }
+      if (action === 'allocate') {
+        const result = await command({
+          title: 'Allocate a document number',
+          intent: 'The next number under this company’s rule for the type. Atomic and gapless: a number handed out is used.',
+          path: '/v1/documents/numbers/allocate',
+          submitLabel: 'Allocate',
+          fields: [{ name: 'documentType', label: 'Document type', type: 'select', options: rules.map(([type]) => ({ value: type, label: type })) }],
+        });
+        if (result) render(issuerResult, html`<div class="notice"><div><b>${result.number}</b> — ${result.documentType} #${result.seq}, profile version ${result.profileVersion}</div></div>`);
+      }
+      if (action === 'version') {
+        const version = Number(window.prompt(`Which version? 1 to ${profile.version}`, String(Math.max(1, profile.version - 1))));
+        if (!Number.isInteger(version)) return;
+        try {
+          const past = await api.get(`/v1/company/issuer/versions/${version}`);
+          render(issuerResult, html`<div class="notice"><div><b>Version ${past.version}</b> · ${past.change.toLowerCase()} · ${date(past.updatedAt)}<br />
+            Issuer ${past.issuer.registeredName} · footer “${past.issuer.footerLegalText || '—'}” · brand ${past.brand?.clientName ?? '—'} · rules ${Object.keys(past.numberingRules).join(', ') || 'none'}</div></div>`);
+        } catch (error) {
+          render(issuerResult, html`<div class="notice warn"><div>${error.message}</div></div>`);
+        }
+      }
+    });
+  }
+
+  host.querySelector('[data-share-new]')?.addEventListener('click', async () => {
+    const result = await command({
+      title: 'Share a record with another company',
+      intent: 'Read-only, one record, until it expires or you end it. The other company sees it with your branding and “shared by” on it.',
+      path: '/v1/shares',
+      submitLabel: 'Share',
+      fields: [
+        { name: 'granteeTenantId', label: 'Company', type: 'select', options: shares.companies.map((c) => ({ value: c.tenantId, label: c.name })) },
+        { name: 'refType', label: 'Record type', placeholder: 'Project', hint: 'As the record is named in the audit feed' },
+        { name: 'refId', label: 'Record id' },
+        { name: 'expiresAt', label: 'Until', type: 'date', iso: true, required: false },
+        { name: 'note', label: 'Why', required: false, placeholder: 'Site services on the depot' },
+      ],
+      transform: (v) => ({ granteeTenantId: v.granteeTenantId, refType: v.refType, refId: v.refId, ...(v.expiresAt ? { expiresAt: v.expiresAt } : {}), ...(v.note ? { note: v.note } : {}) }),
+    });
+    if (result) again();
+  });
+  for (const button of host.querySelectorAll('[data-share-revoke]')) {
+    button.addEventListener('click', async () => {
+      try {
+        await api.post(`/v1/shares/${button.dataset.shareRevoke}/revoke`, {});
+        toast('Share ended', 'The other company stops reading it on its next request.', 'ok');
+        again();
+      } catch (error) {
+        toast('Could not end the share', error.message, 'err');
+      }
+    });
+  }
+  for (const button of host.querySelectorAll('[data-share-open]')) {
+    button.addEventListener('click', async () => {
+      const result = host.querySelector('#share-result');
+      try {
+        const opened = await api.get(`/v1/shares/${button.dataset.shareOpen}/record`);
+        render(result, html`<div class="notice"><div><b>Shared by ${opened.sharedBy.name}</b> · ${opened.share.refType} · ${opened.share.note || ''}<br />
+          <code style="white-space:pre-wrap;font-size:12px">${JSON.stringify(opened.record, null, 2).slice(0, 4000)}</code></div></div>`);
+      } catch (error) {
+        render(result, html`<div class="notice warn"><div>${error.message}</div></div>`);
+      }
+    });
+  }
 }

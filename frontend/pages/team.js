@@ -34,6 +34,7 @@ function administers() {
 
 export async function team(root) {
   let position;
+  const support = await api.get('/v1/team/support-access').catch(() => null);
   try {
     position = await api.get('/v1/team');
   } catch (error) {
@@ -95,6 +96,13 @@ export async function team(root) {
               reason: seats.remaining === 0 ? 'Every seat is taken or invited. Buy a seat on ACU & Billing, or move package.' : 'Only an enterprise admin may add people',
             },
             { id: 'report', label: 'Export user report', tone: '', permitted: admin, reason: 'Only an enterprise admin may export the user report' },
+            {
+              id: 'membership',
+              label: 'Add from another company',
+              tone: '',
+              permitted: admin && Boolean(state.me?.group),
+              reason: !state.me?.group ? 'Memberships across companies are a group feature; this company is not in a group.' : 'Only an enterprise admin may add people',
+            },
           ]))}
         </div>
       </div>
@@ -232,6 +240,27 @@ export async function team(root) {
           <div class="metric-sub" style="margin-top:8px">R read · C create · U update · A approve · I import/export · X run AI · G governance. The full matrix is on Permissions.</div>
         </div>
 
+        <div class="card" data-support-access>
+          <h2>Support access</h2>
+          <div class="metric-sub" style="margin:6px 0 10px">
+            Every time the platform operator opened a window on this company’s governance record: who, why, the ticket,
+            the window, and what was read. Operators have no other way in. End a window early from here.
+          </div>
+          ${table({
+            headers: ['Opened', 'Operator', 'Ticket', 'Why', 'Until', 'Reads', ''],
+            rows: (support?.grants ?? []).map((grant) => [
+              date(grant.openedAt),
+              grant.operatorName,
+              grant.ticketRef,
+              grant.reason,
+              grant.closedAt ? html`closed ${date(grant.closedAt)}` : new Date(grant.expiresAt) > new Date() ? badge('open', 'warn') : badge('expired', 'neutral'),
+              grant.uses.length,
+              !grant.closedAt && new Date(grant.expiresAt) > new Date() && admin ? html`<button class="btn quiet sm" data-support-close="${grant.id}">End now</button>` : '',
+            ]),
+            empty: 'No operator has opened support access on this company.',
+          })}
+        </div>
+
         <div class="card">
           <h2>Governance in force</h2>
           <p class="metric-sub" style="margin-bottom:12px">
@@ -356,7 +385,22 @@ export async function team(root) {
           }
           await refresh();
         }
-      } else if (button.dataset.command === 'report') {
+      } else if (button.dataset.command === 'membership') {
+      const result = await command({
+        title: 'Add somebody from another company in the group',
+        intent:
+          'The same person, a second membership: they keep their identity and their sign-in, take a seat here, and hold exactly the roles you name here. Nothing of their other company comes with them.',
+        path: '/v1/users/memberships',
+        submitLabel: 'Add',
+        fields: [
+          { name: 'email', label: 'Their email, as it is in the other company' },
+          { name: 'roles', label: 'Roles here', type: 'multiselect', options: tenantGrantableRoles().map((role) => ({ value: role, label: humanise(role) })) },
+        ],
+      });
+      if (result) draw();
+      return;
+    }
+    if (button.dataset.command === 'report') {
         await api.download('/v1/team/report', {});
         toast('User report', 'Downloaded as a spreadsheet.', 'ok');
       }
@@ -364,6 +408,18 @@ export async function team(root) {
       toast('Could not do that', error.message, 'err');
     }
   });
+
+  for (const button of root.querySelectorAll('[data-support-close]')) {
+    button.addEventListener('click', async () => {
+      try {
+        await api.post(`/v1/team/support-access/${button.dataset.supportClose}/close`, {});
+        toast('Support access ended', 'The operator’s window on this company is closed.', 'ok');
+        draw();
+      } catch (error) {
+        toast('Could not end it', error.message, 'err');
+      }
+    });
+  }
 
   root.querySelector('[data-mfa-policy]')?.addEventListener('click', async () => {
     try {

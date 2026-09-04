@@ -998,3 +998,13 @@ img, svg { max-width: 100%; }
 .origin-lede b { color: var(--text); }
 .origin-body { margin-top: 14px; font-size: 15px; line-height: 1.7; color: var(--text-3); max-width: 66ch; }
 .origin .cta-row { margin-top: 24px; }
+
+/* The account request form on /contact. */
+.request-form label { display: block; font-size: 13px; color: var(--text-3); margin-top: 12px; }
+.request-form input, .request-form select, .request-form textarea {
+  display: block; width: 100%; margin-top: 5px; padding: 9px 11px; font: inherit; color: var(--text);
+  background: var(--slate); border: 1px solid var(--line-strong); border-radius: 8px;
+}
+.request-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+.request-result { margin-top: 12px; color: var(--text-2); }
+@media (max-width: 720px) { .request-grid { grid-template-columns: 1fr; } }

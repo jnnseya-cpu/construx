@@ -948,6 +948,33 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // Whether the tenancy demands a second factor of nobody, its administrators
   // or everybody. Set by the tenancy's administrator; enforced at sign-in.
   def('SECURITY_POLICY_SET', 'SecurityPolicy', 'UPDATE', 'GOVERNANCE', { creates: true }),
+
+  // The group above the tenancies (GN-SPEC-TENANCY-001): one licence, one
+  // bill, several legal entities. A company is a tenancy; the group holds the
+  // billing account, one cost centre per company and the group-level roles.
+  def('GROUP_CREATED', 'Group', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('GROUP_UPDATED', 'Group', 'UPDATE', 'GOVERNANCE'),
+  def('GROUP_ROLE_GRANTED', 'GroupRole', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('GROUP_ROLE_REVOKED', 'GroupRole', 'UPDATE', 'GOVERNANCE'),
+  def('TENANT_GROUPED', 'Tenant', 'UPDATE', 'GOVERNANCE'),
+  // The issuing company's profile — issuer block, numbering rules,
+  // signatories — versioned so a document pins the version it went out under.
+  def('ISSUER_PROFILE_UPDATED', 'IssuerProfile', 'UPDATE', 'GOVERNANCE', { creates: true }),
+  def('DOCUMENT_NUMBER_ALLOCATED', 'DocumentSequence', 'UPDATE', 'GOVERNANCE', { creates: true }),
+  // Controlled sharing between companies in a group: explicit, per record, read-only, revocable.
+  def('RECORD_SHARED', 'RecordShare', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('RECORD_SHARE_REVOKED', 'RecordShare', 'UPDATE', 'GOVERNANCE'),
+  // Break-glass support access by a platform operator: opened, used, closed — all on the company's own chain.
+  def('SUPPORT_ACCESS_OPENED', 'SupportAccessGrant', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('SUPPORT_ACCESS_USED', 'SupportAccessGrant', 'UPDATE', 'GOVERNANCE'),
+  def('SUPPORT_ACCESS_CLOSED', 'SupportAccessGrant', 'UPDATE', 'GOVERNANCE'),
+  // Account requests from the public site: new → contacted → qualified →
+  // provisioned, or declined and then deleted. On the platform's own tenancy.
+  def('ACCOUNT_REQUEST_RECEIVED', 'AccountRequest', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('ACCOUNT_REQUEST_ADVANCED', 'AccountRequest', 'UPDATE', 'GOVERNANCE'),
+  def('ACCOUNT_REQUEST_DECLINED', 'AccountRequest', 'UPDATE', 'GOVERNANCE'),
+  def('ACCOUNT_REQUEST_PROVISIONED', 'AccountRequest', 'UPDATE', 'GOVERNANCE'),
+  def('ACCOUNT_REQUEST_DELETED', 'AccountRequest', 'UPDATE', 'GOVERNANCE'),
   // Its own entity, not `User`. A user record already lives in the tenancy's
   // own project, and the ledger refuses to move an entity between projects —
   // correctly, because an entity that could change project is one that could

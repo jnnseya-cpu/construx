@@ -130,6 +130,34 @@ import * as lifecycleControl from '../lifecycle/control.ts';
 import * as stages from '../lifecycle/stages.ts';
 import * as costModel from '../engines/maths/costModel.ts';
 import * as structure from '../domain/structure.ts';
+import {
+  addMembership,
+  attachCompany,
+  createGroup,
+  entitlementsOf,
+  grantGroupRole,
+  groupDirectory,
+  groupOf,
+  groupOfTenant,
+  groupStatement,
+  groupUsage,
+  groups,
+  membershipsByEmail,
+  requireGroupRole,
+  revokeGroupRole,
+  setCostCentre,
+  statementCsv,
+  updateGroupBilling,
+  whoAmI,
+  type ChargeMode,
+  type GroupRoleName,
+  type InvoiceMode,
+  type RateCard,
+} from '../group/directory.ts';
+import { allocateDocumentNumber, DOCUMENT_TYPES, issuerProfile, issuerProfileVersion, recordBrandChange, setIssuerProfile } from '../group/profile.ts';
+import { readSharedRecord, revokeShare, shareRecord, sharesGiven, sharesReceived } from '../group/sharing.ts';
+import { closeSupportAccess, openSupportAccess, readUnderSupportAccess, supportGrants } from '../group/support.ts';
+import { accountRequests, advanceAccountRequest, declineAccountRequest, deleteAccountRequest, provisionAccountRequest, receiveAccountRequest, recordProvisionNotice, REQUEST_STATUSES } from '../identity/requests.ts';
 import * as bim from '../engines/bim.ts';
 import * as claims from '../engines/claims.ts';
 import * as cost from '../engines/cost.ts';
@@ -1229,10 +1257,18 @@ export const ROUTES: Route[] = [
     pattern: '/v1/auth/login',
     public: true,
     description: 'Authenticate and receive an MFA challenge',
-    schema: { type: 'object', required: ['email'], properties: { email: stringField }, additionalProperties: false },
+    schema: { type: 'object', required: ['email'], properties: { email: stringField, tenantId: { type: 'string' } }, additionalProperties: false },
     handler: async (platform, ctx) => {
-      const { email } = body<{ email: string }>(ctx);
-      const user = platform.userByEmail(email);
+      const { email, tenantId } = body<{ email: string; tenantId?: string }>(ctx);
+      // One person, several companies: the same address may be a member of
+      // more than one. The company named wins; otherwise the first active
+      // membership, and the switcher moves between them after sign-in. The
+      // list itself is not returned here — this route answers before the
+      // person has proved anything, and which companies an address belongs to
+      // is not for the asking.
+      const memberships = membershipsByEmail(platform, email).filter((membership) => membership.active);
+      const chosen = tenantId ? memberships.find((membership) => membership.tenantId === tenantId) : memberships[0];
+      const user = chosen ? platform.user(chosen.userId) : platform.userByEmail(email);
 
       // An unknown address gets the same answer a known one does.
       //
@@ -6237,6 +6273,644 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => ({
       enterprises: platform.ledger.listByTenant(auth(ctx).tenantId, 'Enterprise').map((r) => r.state),
     }),
+  },
+
+  // --- The group above the companies (GN-SPEC-TENANCY-001) --------------------
+  //
+  // Operator routes set the group up: create it, bring companies in, set cost
+  // centres and billing terms, bootstrap the first group administrator. The
+  // group console routes are for holders of a group role and publish figures,
+  // never one company's records to another.
+  {
+    method: 'POST',
+    pattern: '/v1/admin/groups',
+    description: 'Create a group: one licence agreement and one bill over several companies (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['displayName', 'currency'],
+      properties: {
+        displayName: stringField,
+        slug: { type: 'string' },
+        currency: stringField,
+        invoiceMode: { type: 'string', enum: ['CONSOLIDATED', 'PER_COMPANY'] },
+        termsDays: { type: 'integer', minimum: 0, maximum: 120 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator creates groups', 'PLATFORM_ADMIN_REQUIRED');
+      return createGroup(platform, actor, body(ctx));
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/groups',
+    description: 'Every group on the platform with its companies (platform operator only)',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator lists groups', 'PLATFORM_ADMIN_REQUIRED');
+      return {
+        groups: groups(platform).map((group) => ({
+          ...group,
+          companies: group.costCentres.map((centre) => {
+            const tenant = platform.tenant(centre.tenantId);
+            return { ...centre, name: tenant.legalName, jurisdiction: tenant.jurisdiction, closed: Boolean(tenant.closedAt) };
+          }),
+        })),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/groups/:groupId/companies',
+    description: 'Bring a tenancy into a group as one of its companies, with a cost centre (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['tenantId', 'code'],
+      properties: {
+        tenantId: stringField,
+        code: stringField,
+        slug: { type: 'string' },
+        chargeMode: { type: 'string', enum: ['INTERNAL', 'INTERCOMPANY', 'EXTERNAL'] },
+        rateCard: { type: 'string', enum: ['GROUP_INTERNAL', 'ENTERPRISE_GROUP', 'RETAIL'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator changes a group', 'PLATFORM_ADMIN_REQUIRED');
+      return attachCompany(platform, actor, ctx.params.groupId as string, body(ctx));
+    },
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/admin/groups/:groupId/companies/:tenantId/cost-centre',
+    description: "Change a company's cost centre: code, whether it is invoiced, and the rate card (platform operator only)",
+    schema: {
+      type: 'object',
+      properties: {
+        code: { type: 'string' },
+        chargeMode: { type: 'string', enum: ['INTERNAL', 'INTERCOMPANY', 'EXTERNAL'] },
+        rateCard: { type: 'string', enum: ['GROUP_INTERNAL', 'ENTERPRISE_GROUP', 'RETAIL'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator changes a group', 'PLATFORM_ADMIN_REQUIRED');
+      return setCostCentre(platform, actor, ctx.params.groupId as string, ctx.params.tenantId as string, body<{ code?: string; chargeMode?: ChargeMode; rateCard?: RateCard }>(ctx));
+    },
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/admin/groups/:groupId/billing',
+    description: "The group's billing account: invoice mode, terms, payment customer reference (platform operator only)",
+    schema: {
+      type: 'object',
+      properties: {
+        displayName: { type: 'string' },
+        invoiceMode: { type: 'string', enum: ['CONSOLIDATED', 'PER_COMPANY'] },
+        termsDays: { type: 'integer', minimum: 0, maximum: 120 },
+        paymentCustomerRef: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator changes a group', 'PLATFORM_ADMIN_REQUIRED');
+      return updateGroupBilling(platform, actor, ctx.params.groupId as string, body<{ invoiceMode?: InvoiceMode; termsDays?: number; paymentCustomerRef?: string; displayName?: string }>(ctx));
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/groups/:groupId/roles',
+    description: 'Grant a group role to somebody already in one of its companies — how the first group administrator is appointed (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['email', 'role'],
+      properties: { email: stringField, role: { type: 'string', enum: ['GROUP_ADMIN', 'GROUP_FINANCE', 'GROUP_VIEWER'] } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator changes a group', 'PLATFORM_ADMIN_REQUIRED');
+      return grantGroupRole(platform, actor, ctx.params.groupId as string, body<{ email: string; role: GroupRoleName }>(ctx));
+    },
+  },
+
+  // The group console.
+  {
+    method: 'GET',
+    pattern: '/v1/groups/:groupId',
+    description: 'The group directory: every company with its standing, package, entitlements, seats and cost centre (group role)',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const held = requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN', 'GROUP_FINANCE', 'GROUP_VIEWER']);
+      return { ...groupDirectory(platform, ctx.params.groupId as string), yourRoles: held };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/groups/:groupId/usage',
+    description: 'Usage per company over a window: ACU by module, seats, documents, storage (group role)',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN', 'GROUP_FINANCE', 'GROUP_VIEWER']);
+      const to = ctx.query.get('to') ?? new Date().toISOString();
+      const from = ctx.query.get('from') ?? new Date(Date.parse(to) - 30 * 86_400_000).toISOString();
+      return groupUsage(platform, ctx.params.groupId as string, from, to);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/groups/:groupId/statement',
+    description: 'The consolidated statement for a month: one section per cost centre and a group total (group admin or finance)',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN', 'GROUP_FINANCE']);
+      const month = ctx.query.get('month') ?? new Date().toISOString().slice(0, 7);
+      return groupStatement(platform, ctx.params.groupId as string, month);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/groups/:groupId/statement/export',
+    binary: true,
+    description: 'The statement as CSV for finance, for the group or one company (group admin or finance)',
+    schema: {
+      type: 'object',
+      required: ['month'],
+      properties: { month: { type: 'string', pattern: '^\\d{4}-\\d{2}$' }, tenantId: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN', 'GROUP_FINANCE']);
+      const { month, tenantId } = body<{ month: string; tenantId?: string }>(ctx);
+      const statement = groupStatement(platform, ctx.params.groupId as string, month);
+      return {
+        bytes: Buffer.from(statementCsv(statement, tenantId), 'utf8'),
+        contentType: 'text/csv; charset=utf-8',
+        filename: `${statement.group.slug}-${month}${tenantId ? `-${tenantId}` : ''}-statement.csv`,
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/groups/:groupId/companies/:tenantId/entitlements',
+    description: "One company's entitlements: product, plan, modules, seats, and the claims its tokens carry (group role)",
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN', 'GROUP_FINANCE', 'GROUP_VIEWER']);
+      const group = groupOf(platform, ctx.params.groupId as string);
+      const tenantId = ctx.params.tenantId as string;
+      if (!group.costCentres.some((centre) => centre.tenantId === tenantId)) throw new NotFoundError(`${tenantId} is not a company in ${group.displayName}`);
+      return entitlementsOf(platform, tenantId);
+    },
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/groups/:groupId/companies/:tenantId/usage-account',
+    description: "A company's monthly AI hard limit, set from the group (group admin or finance). Null lifts it",
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { monthlyHardLimitMinor: { type: ['integer', 'null'], minimum: 0 }, reason: { type: 'string', minLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN', 'GROUP_FINANCE']);
+      const group = groupOf(platform, ctx.params.groupId as string);
+      const tenantId = ctx.params.tenantId as string;
+      if (!group.costCentres.some((centre) => centre.tenantId === tenantId)) throw new NotFoundError(`${tenantId} is not a company in ${group.displayName}`);
+      const { monthlyHardLimitMinor, reason } = body<{ monthlyHardLimitMinor: number | null; reason: string }>(ctx);
+      const current = platform.wallet(tenantId).snapshot().caps;
+      const { monthlyMinor: _lifted, ...rest } = current;
+      const snapshot = platform.setAcuCapsFor(tenantId, actor.actorId, monthlyHardLimitMinor === null ? rest : { ...rest, monthlyMinor: monthlyHardLimitMinor }, reason);
+      return { tenantId, poolMode: 'DEDICATED', alertThresholds: [50, 80, 100], monthlyHardLimitMinor: snapshot.caps.monthlyMinor ?? null, monthBilledMinor: snapshot.monthBilledMinor };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/groups/:groupId/roles',
+    description: 'Grant a group role to somebody in one of the companies (group admin)',
+    schema: {
+      type: 'object',
+      required: ['email', 'role'],
+      properties: { email: stringField, role: { type: 'string', enum: ['GROUP_ADMIN', 'GROUP_FINANCE', 'GROUP_VIEWER'] } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN']);
+      return grantGroupRole(platform, actor, ctx.params.groupId as string, body<{ email: string; role: GroupRoleName }>(ctx));
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/groups/:groupId/roles/:roleId/revoke',
+    description: 'Revoke a group role (group admin). The last administrator cannot be revoked',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN']);
+      return revokeGroupRole(platform, actor, ctx.params.groupId as string, ctx.params.roleId as string);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/groups/:groupId/audit',
+    description: 'Everything one company did between two dates — its governance record, for the group administrator (group admin)',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN']);
+      const group = groupOf(platform, ctx.params.groupId as string);
+      const tenantId = ctx.query.get('tenantId') ?? '';
+      if (!group.costCentres.some((centre) => centre.tenantId === tenantId)) throw new NotFoundError(`${tenantId || '(none)'} is not a company in ${group.displayName}`);
+      const from = ctx.query.get('from') ?? undefined;
+      const to = ctx.query.get('to') ?? undefined;
+      const events = platform.ledger
+        .events({ tenantId, ...(from ? { from } : {}), ...(to ? { until: to } : {}) })
+        .filter((event) => event.projectId === `${tenantId}-governance`)
+        .map((event) => ({ eventId: event.eventId, timestamp: event.timestamp, eventType: event.eventType, entity: event.entity, actor: event.actor, correlationId: event.correlationId }));
+      return { company: { tenantId, name: platform.tenant(tenantId).legalName }, from: from ?? null, to: to ?? null, events };
+    },
+  },
+
+  // One identity, several companies.
+  {
+    method: 'GET',
+    pattern: '/v1/users/me',
+    description: 'This person: the active company, every membership, the group and its roles, and what the active company is entitled to',
+    readOnly: true,
+    handler: (platform, ctx) => whoAmI(platform, auth(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/auth/switch-company',
+    description: 'Move this session to another company the same person is a member of. A new session; nothing already running changes',
+    schema: { type: 'object', required: ['tenantId'], properties: { tenantId: stringField }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const me = platform.user(actor.actorId);
+      const { tenantId } = body<{ tenantId: string }>(ctx);
+      const target = membershipsByEmail(platform, me.email).find((membership) => membership.tenantId === tenantId && membership.active);
+      if (!target) throw new ForbiddenError('You are not a member of that company', 'NOT_A_MEMBER');
+      const user = platform.user(target.userId);
+      // The person has proved who they are once; the proof carries to the
+      // other membership. A company that requires a second factor still
+      // holds the new session to enrolment if this one has none.
+      const tokens = issueTokens({
+        actorId: user.id,
+        tenantId: user.tenantId,
+        partyId: user.partyId,
+        roles: user.roles,
+        mfaSatisfied: actor.mfaSatisfied,
+        ...(actor.deviceId ? { deviceId: actor.deviceId } : {}),
+      });
+      revokeToken(actor.tokenId);
+      return {
+        ...tokens,
+        user: { id: user.id, name: user.name, email: user.email, roles: user.roles, tenantId: user.tenantId },
+        company: { tenantId: user.tenantId, name: platform.tenant(user.tenantId).legalName },
+        ...(platform.secondFactorRequiredFor(user.id) && !actor.mfaSatisfied ? { enrolmentRequired: true } : {}),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/users/memberships',
+    description: 'Add somebody who already exists in another company of the group to this company, as the same person with the roles named',
+    schema: {
+      type: 'object',
+      required: ['email', 'roles'],
+      properties: { email: stringField, roles: { type: 'array', items: { type: 'string' }, minItems: 1 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'C');
+      const input = body<{ email: string; roles: string[] }>(ctx);
+      for (const role of input.roles) {
+        if (!(TENANT_GRANTABLE_ROLES as readonly string[]).includes(role)) throw new ValidationError(`${role} is not a role this company can grant`, [{ field: 'roles', message: `${role} is not grantable` }]);
+      }
+      return addMembership(platform, actor, { email: input.email, roles: input.roles as (typeof TENANT_GRANTABLE_ROLES)[number][] });
+    },
+  },
+
+  // The issuing company's profile and its numbers.
+  {
+    method: 'GET',
+    pattern: '/v1/company/issuer',
+    description: "This company's issuer profile: registered issuer block, numbering rules, signatories, brand snapshot and version",
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      return { profile: issuerProfile(platform, actor.tenantId), documentTypes: DOCUMENT_TYPES };
+    },
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/company/issuer',
+    description: 'Set the issuer block, numbering rules and signatories. A new profile version; documents already issued are unchanged',
+    schema: {
+      type: 'object',
+      properties: {
+        issuer: { type: 'object' },
+        numberingRules: { type: 'object' },
+        signatories: { type: 'array', items: { type: 'object' } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => setIssuerProfile(platform, authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'U'), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/company/issuer/versions/:version',
+    description: 'A past version of the issuer profile, exactly as it was',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      const version = Number(ctx.params.version);
+      if (!Number.isInteger(version) || version < 0) throw new ValidationError('The version is a whole number', [{ field: 'version', message: 'not a version' }]);
+      return issuerProfileVersion(platform, actor.tenantId, version);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/documents/numbers/allocate',
+    description: 'Allocate the next document number for a type under this company\'s numbering rule — atomic, gapless, recorded',
+    schema: {
+      type: 'object',
+      required: ['documentType'],
+      properties: { documentType: { type: 'string', enum: [...DOCUMENT_TYPES] } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      // Anybody who may take a document out of this company may number one.
+      const actor = authoriseTenant(ctx, 'EVIDENCE_AUDIT', 'R');
+      return allocateDocumentNumber(platform, actor, body<{ documentType: string }>(ctx).documentType);
+    },
+  },
+
+  // Controlled sharing between companies.
+  {
+    method: 'GET',
+    pattern: '/v1/shares',
+    description: 'Records this company has shared with others in the group, and records shared with it',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      const name = (tenantId: string) => platform.tenant(tenantId).legalName;
+      return {
+        given: sharesGiven(platform, actor.tenantId).map((share) => ({ ...share, granteeName: name(share.granteeTenantId) })),
+        received: sharesReceived(platform, actor.tenantId).map((share) => ({ ...share, ownerName: name(share.ownerTenantId) })),
+        companies: (groupOfTenant(platform, actor.tenantId)?.costCentres ?? [])
+          .filter((centre) => centre.tenantId !== actor.tenantId)
+          .map((centre) => ({ tenantId: centre.tenantId, name: name(centre.tenantId) })),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/shares',
+    description: 'Share one record, read-only, with another company in the group. Ownership never moves',
+    schema: {
+      type: 'object',
+      required: ['granteeTenantId', 'refType', 'refId'],
+      properties: { granteeTenantId: stringField, refType: stringField, refId: stringField, expiresAt: { type: 'string' }, note: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => shareRecord(platform, authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'U'), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/shares/:shareId/revoke',
+    description: 'End a share. The other company stops reading the record on its next request',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => revokeShare(platform, authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'U'), ctx.params.shareId as string),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/shares/:shareId/record',
+    description: "Read a record another company shared with this one, with the owner's branding and a shared-by marker",
+    readOnly: true,
+    handler: (platform, ctx) => readSharedRecord(platform, auth(ctx), ctx.params.shareId as string),
+  },
+
+  // Deleting a closed identity now, from either side.
+  {
+    method: 'POST',
+    pattern: '/v1/users/:id/erase',
+    description: 'Fully delete a deactivated person now, without the grace period. Name, email and phone go; the project record stays against a pseudonym',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 10 } }, additionalProperties: false },
+    handler: (platform, ctx) => platform.eraseUserNow(requireTenantAdministrator(ctx, 'delete a person'), { userId: ctx.params.id as string, reason: body<{ reason: string }>(ctx).reason }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/tenants/:id/users',
+    description: "A tenancy's closed people — deactivated, deletion pending or erased — for the operator to delete on request (platform operator only)",
+    readOnly: true,
+    handler: (platform, ctx) => {
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator sees this', 'PLATFORM_ADMIN_REQUIRED');
+      const tenant = platform.tenant(ctx.params.id as string);
+      return {
+        tenant: { id: tenant.id, legalName: tenant.legalName },
+        users: platform
+          .users(tenant.id)
+          .filter((user) => user.status !== 'ACTIVE' || user.erasureRequestedAt || user.erasedAt)
+          .map((user) => ({ id: user.id, name: user.name, email: user.email, status: user.status, roles: user.roles, erasureDueAt: user.erasureDueAt ?? null, erasedAt: user.erasedAt ?? null })),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:id/users/:userId/erase',
+    description: "Fully delete one of a tenancy's deactivated people now, on the company's request (platform operator only)",
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 10 } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator deletes on a company\'s behalf', 'PLATFORM_ADMIN_REQUIRED');
+      const user = platform.user(ctx.params.userId as string);
+      if (user.tenantId !== ctx.params.id) throw new NotFoundError(`No user ${ctx.params.userId} in that tenancy`);
+      return platform.eraseUserNow(actor, { userId: user.id, reason: body<{ reason: string }>(ctx).reason });
+    },
+  },
+
+  // Account requests: the pipeline behind "Talk to us".
+  {
+    method: 'POST',
+    pattern: '/v1/requests',
+    public: true,
+    description: 'Ask for an enterprise or group account. Answers the same whether or not the address has asked before',
+    schema: {
+      type: 'object',
+      required: ['organisationName', 'contactName', 'email', 'jurisdiction', 'currency'],
+      properties: {
+        organisationName: { type: 'string', minLength: 2, maxLength: 200 },
+        contactName: { type: 'string', minLength: 2, maxLength: 120 },
+        email: { type: 'string', minLength: 3, maxLength: 254 },
+        phone: { type: 'string', maxLength: 40 },
+        jurisdiction: { type: 'string', enum: Object.keys(JURISDICTIONS) },
+        currency: { type: 'string', enum: Object.keys(CURRENCIES) },
+        kind: { type: 'string', enum: ['ENTERPRISE', 'GROUP'] },
+        companies: { type: 'integer', minimum: 1, maximum: 5 },
+        message: { type: 'string', maxLength: 2000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const received = receiveAccountRequest(platform, body(ctx));
+      return { received: true, reference: received.id.slice(-8), message: 'Thank you. Somebody will be in touch at that address to agree terms; nothing is provisioned until they have.' };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/requests',
+    description: 'Every account request and where it is in the pipeline (platform operator only)',
+    readOnly: true,
+    handler: (platform, ctx) => {
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator sees requests', 'PLATFORM_ADMIN_REQUIRED');
+      const requests = accountRequests(platform);
+      return {
+        statuses: REQUEST_STATUSES,
+        requests,
+        counts: Object.fromEntries(REQUEST_STATUSES.map((status) => [status, requests.filter((request) => request.status === status).length])),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/requests/:id/advance',
+    description: 'Move a request forward: new → contacted → qualified, with a note (platform operator only)',
+    schema: { type: 'object', required: ['status'], properties: { status: { type: 'string', enum: ['CONTACTED', 'QUALIFIED'] }, note: { type: 'string', maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator works requests', 'PLATFORM_ADMIN_REQUIRED');
+      return advanceAccountRequest(platform, actor, ctx.params.id as string, body<{ status: 'CONTACTED' | 'QUALIFIED'; note?: string }>(ctx));
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/requests/:id/decline',
+    description: 'Decline a request with a reason. A declined request can then be deleted (platform operator only)',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 1000 } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator works requests', 'PLATFORM_ADMIN_REQUIRED');
+      return declineAccountRequest(platform, actor, ctx.params.id as string, body<{ reason: string }>(ctx).reason);
+    },
+  },
+  {
+    method: 'DELETE',
+    pattern: '/v1/admin/requests/:id',
+    description: 'Delete a declined request: the prospect asked once and was told no (platform operator only)',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator works requests', 'PLATFORM_ADMIN_REQUIRED');
+      return deleteAccountRequest(platform, actor, ctx.params.id as string);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/requests/:id/provision',
+    description: 'One act: the tenancy, its first administrator, and the invitation to sign in. Only a qualified request (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['tier', 'package'],
+      properties: {
+        tier: { type: 'string', enum: ['ENTERPRISE', 'BUSINESS', 'TEAM'] },
+        package: { type: 'string', enum: ['ENTERPRISE', 'PROFESSIONAL_DELIVERY', 'CORE_PROJECT'] },
+        enterpriseName: { type: 'string', maxLength: 200 },
+      },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator provisions', 'PLATFORM_ADMIN_REQUIRED');
+      const input = body<{ tier: 'ENTERPRISE' | 'BUSINESS' | 'TEAM'; package: PackageTier; enterpriseName?: string }>(ctx);
+      const provisioned = provisionAccountRequest(platform, actor, ctx.params.id as string, input);
+      const administrator = platform.user(provisioned.administratorId);
+      const tenant = platform.tenant(provisioned.tenantId);
+      let notified = 'RECORDED';
+      try {
+        const dispatch = await notifyEngine.notify(platform, {
+          code: 'invitation.sent',
+          recipients: [{ id: administrator.id, name: administrator.name, email: administrator.email, tenantId: tenant.id }],
+          payload: {
+            actor: platform.user(actor.actorId).name,
+            enterprise: tenant.legalName,
+            actionUrl: '/app',
+            actionLabel: 'Sign in',
+            detail:
+              `${tenant.legalName} is set up on CONSTRUX and you are its first administrator. Sign in at ${config.publicBaseUrl}/app ` +
+              'with this email address — there is no password; a one-time code is emailed to you each time.',
+          },
+          channels: ['EMAIL'],
+          branding: platform.exports.brandingIfConfigured(tenant.id) ?? PLATFORM_BRANDING,
+          actorId: actor.actorId,
+          correlationId: ctx.correlationId,
+        });
+        notified = String((dispatch as { deliveries?: Array<{ status?: string }> }).deliveries?.[0]?.status ?? 'SENT');
+      } catch {
+        notified = 'FAILED';
+      }
+      const request = recordProvisionNotice(platform, actor, provisioned.request.id, notified);
+      return { request, tenant, administrator, notified };
+    },
+  },
+
+  // Break-glass support access: opened by the operator, visible to the company.
+  {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:id/support-access',
+    description: "Open time-boxed, logged support access to a company's governance record, against a ticket (platform operator only)",
+    schema: {
+      type: 'object',
+      required: ['reason', 'ticketRef'],
+      properties: { reason: stringField, ticketRef: stringField, minutes: { type: 'integer', minimum: 5, maximum: 240 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => openSupportAccess(platform, auth(ctx), { tenantId: ctx.params.id as string, ...body<{ reason: string; ticketRef: string; minutes?: number }>(ctx) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:id/support-access/:grantId/close',
+    description: 'Close support access early (the operator who opened it)',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => closeSupportAccess(platform, auth(ctx), ctx.params.id as string, ctx.params.grantId as string),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/tenants/:id/support-access/audit',
+    description: "Read a company's governance record under open support access. Every read is written to the grant the company can see",
+    readOnly: true,
+    handler: (platform, ctx) =>
+      readUnderSupportAccess(platform, auth(ctx), ctx.params.id as string, 'governance record', ctx.query.get('from') ?? undefined, ctx.query.get('to') ?? undefined),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/team/support-access',
+    description: 'Every time a platform operator opened support access to this company: who, why, the ticket, the window, and what was read',
+    readOnly: true,
+    handler: (platform, ctx) => ({ grants: supportGrants(platform, authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R').tenantId) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/team/support-access/:grantId/close',
+    description: 'End an open support window early (company administrator)',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = requireTenantAdministrator(ctx, 'close support access');
+      return closeSupportAccess(platform, actor, actor.tenantId, ctx.params.grantId as string);
+    },
   },
   {
     method: 'GET',
@@ -18112,6 +18786,9 @@ export const ROUTES: Route[] = [
       // PROJECT_SETUP update for the same reason at its own scope.
       const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'U');
       platform.exports.setBranding(actor.tenantId, body(ctx), undefined, actor.actorId);
+      // The brand kit is part of the issuer profile a document pins, so the
+      // profile version moves with it.
+      recordBrandChange(platform, actor);
       return platform.exports.branding(actor.tenantId);
     },
   },
@@ -18134,6 +18811,7 @@ export const ROUTES: Route[] = [
       const existing = platform.exports.branding(actor.tenantId);
       const stored = await storeBrandImage(platform, actor.tenantId, ctx.rawBody ?? Buffer.alloc(0));
       platform.exports.setBranding(actor.tenantId, { ...existing, coverEvidenceHash: stored.hash }, undefined, actor.actorId);
+      recordBrandChange(platform, actor);
       return stored;
     },
   },

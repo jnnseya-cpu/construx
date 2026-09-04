@@ -2,6 +2,7 @@ import { AIOrchestrator } from './ai/orchestrator.ts';
 import { EvidenceStore } from './evidence/store.ts';
 import { SigningAuthority } from './signing/signature.ts';
 import { ExportService } from './export/exporter.ts';
+import { allocateDocumentNumber, issuerProfile } from './group/profile.ts';
 import { SyncEngine } from './field/sync.ts';
 import { ACUWallet, TRIAL_GRANT_NOTE, type ACUCaps, type ACUEntry } from './billing/acu.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
@@ -68,6 +69,14 @@ export type Tenant = {
   defaultCurrency: string;
   enterpriseId?: string;
   createdAt: string;
+  /**
+   * The group this company belongs to, where it is one of several legal
+   * entities under one licence agreement (GN-SPEC-TENANCY-001). A tenancy is
+   * one company; the group is above it and never shares it. Absent for a
+   * company standing alone.
+   */
+  groupId?: string;
+  groupSlug?: string;
   /**
    * Closed by the operator. The tenancy's record is kept, read-only; nobody
    * in it can sign in; what it was owed is a refund obligation.
@@ -293,6 +302,14 @@ export class Platform {
     // enforcing a commercial term against a statutory right.
     this.exports = new ExportService(this.ledger, (tenantId, roles) => {
       const position = standing(this.#subscriptions.get(tenantId), roles);
+    // Documents pin the issuing company's profile version and take their
+    // number from its numbering rule where one is set (GN-SPEC-TENANCY-001
+    // §8.3). The profile lives in the group module; the exporter only asks.
+    this.exports.useIssuerProfiles({
+      profileVersionOf: (tenantId) => issuerProfile(this, tenantId).version,
+      allocateReference: (auth, documentType) =>
+        issuerProfile(this, auth.tenantId).numberingRules[documentType] ? allocateDocumentNumber(this, auth, documentType).number : undefined,
+    });
       return position.mayExport
         ? { permitted: true }
         : { permitted: false, ...(position.reason ? { reason: position.reason } : {}) };
@@ -1605,6 +1622,34 @@ export class Platform {
    * a second channel should not have to wait, and it is recorded on the event
    * so an auditor can see the window was deliberately not served.
    */
+  /**
+   * Erase a closed identity now, without the grace period.
+   *
+   * For the company's administrator and for the platform operator alike: a
+   * person who has been deactivated, or whose deletion is already scheduled,
+   * can be fully deleted at once when the decision is made — a leaver's
+   * written request, a duplicate account, a record that must go today. An
+   * active identity is refused: deactivate first, so that "delete" is never
+   * the first thing that happens to somebody who can still sign in. The
+   * operator acts on the company's own chain under their own name, like every
+   * other governance act.
+   */
+  eraseUserNow(actor: AuthContext, input: { userId: string; reason: string }): { userId: string; erasedAt: string } {
+    const user = this.#users.get(input.userId);
+    if (!user) throw new NotFoundError(`No user ${input.userId}`);
+    const operator = actor.roles.includes('PLATFORM_ADMIN');
+    if (!operator && user.tenantId !== actor.tenantId) throw new NotFoundError(`No user ${input.userId}`);
+    if (user.roles.includes('PLATFORM_ADMIN')) throw new DomainError('OPERATOR_NOT_ERASABLE', 'A platform operator is retired through operator administration, not erased here', 422);
+    if (user.erasedAt !== undefined) throw new DomainError('ALREADY_ERASED', 'That identity has already been erased', 409);
+    if (user.status !== 'SUSPENDED' && user.erasureRequestedAt === undefined) {
+      throw new DomainError('ERASE_ACTIVE_USER', `${user.name} is still active. Deactivate them first; deletion is not the first thing that happens to somebody who can sign in.`, 409);
+    }
+    if (input.reason.trim().length < 10) throw new DomainError('REASON_REQUIRED', 'Say why, in at least ten characters; the record keeps it');
+    const asCompany: AuthContext = operator ? { ...actor, tenantId: user.tenantId } : actor;
+    if (user.erasureRequestedAt === undefined) this.requestErasure(asCompany, { userId: user.id, reason: input.reason });
+    return this.eraseUser(asCompany, { userId: user.id, force: true });
+  }
+
   eraseUser(
     actor: AuthContext,
     input: { userId: string; force?: boolean; now?: Date },
@@ -2243,6 +2288,28 @@ export class Platform {
     return user;
   }
 
+  /**
+   * Record that a tenancy is a company in a group. The tenancy keeps
+   * everything; what changes is the pointer, on the tenancy's own chain, so
+   * the company's audit feed shows when it joined and who put it there.
+   */
+  groupTenant(actorId: string, tenantId: string, groupId: string, slug: string): Tenant {
+    const tenant = this.tenant(tenantId);
+    const grouped: Tenant = { ...tenant, groupId, groupSlug: slug };
+    this.#tenants.set(tenantId, grouped);
+    this.ledger.commit({
+      tenantId,
+      projectId: `${tenantId}-governance`,
+      actor: { refType: 'User', refId: actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'TENANT_GROUPED',
+      entity: { refType: 'Tenant', refId: tenantId },
+      nextState: { ...grouped } as unknown as Record<string, unknown>,
+    });
+    return grouped;
+  }
+
   userByEmail(email: string): PlatformUser | undefined {
     return [...this.#users.values()].find((u) => u.email.toLowerCase() === email.toLowerCase());
   }
@@ -2575,23 +2642,32 @@ export class Platform {
    * of any kind.
    */
   setAcuCaps(actor: AuthContext, caps: ACUCaps, reason: string): ReturnType<ACUWallet['snapshot']> {
-    const wallet = this.wallet(actor.tenantId);
+    return this.setAcuCapsFor(actor.tenantId, actor.actorId, caps, reason);
+  }
+
+  /**
+   * The same act on a named company, for a group's finance role setting a
+   * company's hard limit from the group console. Recorded on the company's
+   * own chain under the person who did it, like a cap set from inside.
+   */
+  setAcuCapsFor(tenantId: string, actorId: string, caps: ACUCaps, reason: string): ReturnType<ACUWallet['snapshot']> {
+    const wallet = this.wallet(tenantId);
     const previous = wallet.snapshot().caps;
     wallet.setCaps(caps);
     const snapshot = wallet.snapshot();
 
     this.ledger.commit({
-      tenantId: actor.tenantId,
-      projectId: `${actor.tenantId}-governance`,
+      tenantId,
+      projectId: `${tenantId}-governance`,
       // A person, not the system. That is the whole point of recording it.
-      actor: { refType: 'User', refId: actor.actorId },
+      actor: { refType: 'User', refId: actorId },
       source: 'WEB',
       correlationId: ulid(),
       eventType: 'ACU_CAPS_SET',
-      entity: { refType: 'ACUWallet', refId: actor.tenantId },
+      entity: { refType: 'ACUWallet', refId: tenantId },
       nextState: {
-        id: actor.tenantId,
-        tenantId: actor.tenantId,
+        id: tenantId,
+        tenantId,
         balanceMinor: snapshot.balanceMinor,
         caps: snapshot.caps,
         previousCaps: previous,

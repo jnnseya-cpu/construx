@@ -185,6 +185,14 @@ export type ExportDocument = {
   title: string;
   subtitle?: string;
   branding: ClientBranding;
+  /**
+   * Who issued it and under which version of their profile. The company is
+   * the tenancy the document was built in — never the person who pressed the
+   * button, never the group above the company — and the version is the one
+   * in force at that moment, so a later change to the profile leaves this
+   * document exactly as issued.
+   */
+  issuer?: { companyId: string; profileVersion: number; documentType: 'report' };
   audience: ExportAudience;
   format: ExportFormat;
   generatedAt: string;
@@ -259,6 +267,12 @@ function brandedHeader(branding: ClientBranding, title: string, subtitle?: strin
  */
 export type ExportEntitlement = { permitted: boolean; reason?: string };
 
+/** The issuing company's profile, as the platform provides it to the exporter. */
+export type IssuerProfiles = {
+  profileVersionOf: (tenantId: string) => number;
+  allocateReference: (auth: AuthContext, documentType: string) => string | undefined;
+};
+
 export class ExportService {
   readonly #ledger: GoldenThreadLedger;
   /**
@@ -287,6 +301,16 @@ export class ExportService {
   readonly #brandingByProject = new Map<string, ClientBranding>();
   readonly #entitlement: (tenantId: string, roles?: readonly string[]) => ExportEntitlement;
   #sequence = 0;
+  /**
+   * The issuing company's profile, where the platform provides one: the
+   * version a document pins, and the number its numbering rule allocates.
+   * Absent in a service built bare, which numbers documents as it always did.
+   */
+  #issuerProfiles: IssuerProfiles | null = null;
+
+  useIssuerProfiles(profiles: IssuerProfiles): void {
+    this.#issuerProfiles = profiles;
+  }
 
   constructor(ledger: GoldenThreadLedger, entitlement?: (tenantId: string, roles?: readonly string[]) => ExportEntitlement) {
     this.#ledger = ledger;
@@ -452,8 +476,10 @@ export class ExportService {
     blocks.push({ kind: 'PARAGRAPH', text: branding.legalFooter });
 
     const id = ulid();
-    const reference = `${branding.documentReferencePrefix}-${String(this.#sequence).padStart(5, '0')}`;
-    const contentHash = hashEvidence(JSON.stringify({ branding, blocks }));
+    const allocated = this.#issuerProfiles?.allocateReference(auth, 'report');
+    const reference = allocated ?? `${branding.documentReferencePrefix}-${String(this.#sequence).padStart(5, '0')}`;
+    const issuer = { companyId: auth.tenantId, profileVersion: this.#issuerProfiles?.profileVersionOf(auth.tenantId) ?? 0, documentType: 'report' as const };
+    const contentHash = hashEvidence(JSON.stringify({ branding, issuer, blocks }));
 
     const document: ExportDocument = {
       id,
@@ -461,6 +487,7 @@ export class ExportService {
       title: input.title,
       subtitle: input.subtitle,
       branding,
+      issuer,
       audience: input.audience,
       format: input.format,
       generatedAt: new Date().toISOString(),
@@ -509,6 +536,9 @@ export class ExportService {
         format: input.format,
         contentHash: document.contentHash,
         clientName: branding.clientName,
+        // Who issued it and under which profile version — on the record, so
+        // the answer survives any later change to the profile.
+        issuer,
         generatedAt: document.generatedAt,
         generatedBy: auth.actorId,
       },

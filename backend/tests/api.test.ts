@@ -176,6 +176,7 @@ describe('the routing table itself', () => {
       'POST /v1/booking',
       'POST /v1/console/identities',
       'POST /v1/console/session',
+      'POST /v1/requests',
       'POST /v1/signup',
       'POST /v1/signup/verify',
       // The mobile-money rail. Same arrangement as the card one below: KODA

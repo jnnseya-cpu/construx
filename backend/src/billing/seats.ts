@@ -405,3 +405,13 @@ export function seatValueMinor(roles: Role[][]): number {
     return sum + (seat?.monthlyPriceMinor ?? 0);
   }, 0);
 }
+
+/**
+ * The group licence (GN-SPEC-TENANCY-001): one agreement over several
+ * companies. How many is a commercial term, not a structural one, and lives
+ * here with the other business values so nobody has to find it in code.
+ */
+export const GROUP_LICENCE = {
+  /** Companies one group may hold. */
+  maxCompanies: 5,
+} as const;

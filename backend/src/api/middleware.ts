@@ -544,7 +544,11 @@ const CSP = {
   PUBLIC_SITE:
     `default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'${analyticsCspHosts().script}; ` +
     `img-src 'self' data:${analyticsCspHosts().img}; ` +
-    (analyticsCspHosts().connect ? `connect-src 'self'${analyticsCspHosts().connect}; ` : '') +
+    // `connect-src 'self'` always: the account request form on /contact posts
+    // to this origin, and a policy that only allowed it when an advertising
+    // tag was configured would make the form work on a deployment that
+    // measures and fail on one that does not.
+    `connect-src 'self'${analyticsCspHosts().connect}; ` +
     "font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   /**
    * The application shell. It was being written with no security headers at all

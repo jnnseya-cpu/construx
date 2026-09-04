@@ -19,11 +19,12 @@ import { badge, date, html, money, raw, render, table, time, toast, track } from
  */
 
 export async function tenants(root) {
-  const [estate, vocab, register, refunds] = await Promise.all([
+  const [estate, vocab, register, refunds, groupsHeld] = await Promise.all([
     api.get('/v1/admin/tenants').catch((error) => ({ error })),
     api.get('/v1/signup/account-types').catch(() => null),
     api.get('/v1/admin/modules').catch(() => null),
     api.get('/v1/admin/refunds').catch(() => null),
+    api.get('/v1/admin/groups').catch(() => null),
   ]);
 
   if (estate.error) {
@@ -45,7 +46,9 @@ export async function tenants(root) {
           'here — the account layer refuses to serve them, which is a stronger guarantee than this screen not asking.',
         actions:
           '<button class="btn primary" data-command="onboard">Onboard a tenancy</button>' +
-          '<button class="btn quiet" data-command="operator">Appoint an operator</button>',
+          '<button class="btn quiet" data-command="operator">Appoint an operator</button>' +
+          '<button class="btn quiet" data-command="group">Create a group</button>' +
+          '<button class="btn quiet" data-command="support">Support access</button>',
       })}
 
       <section class="grid g4" style="margin-bottom:14px">
@@ -149,6 +152,7 @@ export async function tenants(root) {
                   <button class="btn quiet sm" data-package="${tenant.id}">Package</button>
                   <button class="btn quiet sm" data-status="${tenant.id}">Status</button>
                   <button class="btn quiet sm" data-modules="${tenant.id}">Modules</button>
+                  <button class="btn quiet sm" data-people="${tenant.id}">People</button>
                   ${tenant.demonstration ? '' : html`<button class="btn quiet danger sm" data-close="${tenant.id}">Close</button>`}`,
           ]),
           empty: 'No tenancy on the estate yet.',
@@ -200,7 +204,7 @@ export async function tenants(root) {
             )}
             <div style="padding:12px 0 0">
               ${table({
-                headers: ['Tenancy', 'Module', 'Status', 'Granted', 'Reason', 'Revoked'],
+                headers: ['Tenancy', 'Module', 'Status', 'Granted', 'Reason', 'Revoked', ''],
                 rows: register.grants.map((grant) => [
                   grant.legalName,
                   grant.moduleName,
@@ -210,6 +214,9 @@ export async function tenants(root) {
                   grant.revokedAt
                     ? html`${date(grant.revokedAt)}<div class="metric-sub">${grant.revokedByName}</div>`
                     : '—',
+                  grant.status === 'ACTIVE'
+                    ? html`<button class="btn quiet danger sm" data-module-decision="REVOKED" data-tenant="${grant.tenantId}" data-module="${grant.moduleId}" data-name="${grant.legalName}" data-module-name="${grant.moduleName}">Revoke</button>`
+                    : html`<button class="btn quiet sm" data-module-decision="ACTIVE" data-tenant="${grant.tenantId}" data-module="${grant.moduleId}" data-name="${grant.legalName}" data-module-name="${grant.moduleName}">Grant again</button>`,
                 ]),
                 // Revoked grants stay on this table on purpose: "who had this,
                 // and between which dates" is what an access review asks, and a
@@ -219,14 +226,209 @@ export async function tenants(root) {
             </div>
           </div>`
         : ''}
+
+      <div class="card pad0" style="margin-top:14px" data-groups>
+        <h2 style="padding:15px 17px 0">Groups</h2>
+        <div class="metric-sub" style="padding:6px 17px 10px">
+          One licence agreement and one statement over several companies. A company is a tenancy — its own people,
+          records, wallet and identity — and joins a group with a cost centre. Up to five companies to a group.
+        </div>
+        ${(groupsHeld?.groups ?? []).length === 0
+          ? html`<div class="metric-sub" style="padding:0 17px 15px">No group yet. Create one, then bring tenancies in as its companies.</div>`
+          : (groupsHeld.groups ?? []).map(
+              (g) => html`<div style="padding:8px 17px 14px;border-top:1px solid var(--line)">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                  <div><b>${g.displayName}</b> <span class="metric-sub">${g.slug} · ${g.billing.currency} · ${g.billing.invoiceMode.toLowerCase()} · ${g.billing.termsDays} day terms</span></div>
+                  <span class="row-actions">
+                    <button class="btn quiet sm" data-group-action="attach" data-group="${g.id}" data-name="${g.displayName}">Bring a company in</button>
+                    <button class="btn quiet sm" data-group-action="billing" data-group="${g.id}" data-name="${g.displayName}">Billing terms</button>
+                    <button class="btn quiet sm" data-group-action="role" data-group="${g.id}" data-name="${g.displayName}">Group role</button>
+                  </span>
+                </div>
+                ${table({
+                  headers: ['Cost centre', 'Company', 'Charge mode', 'Rate card', 'Joined', ''],
+                  rows: g.companies.map((c) => [
+                    html`<b>${c.code}</b><div class="metric-sub">${c.slug}</div>`,
+                    html`${c.name}<div class="metric-sub">${c.jurisdiction}${c.closed ? ' · closed' : ''}</div>`,
+                    c.chargeMode.toLowerCase(),
+                    c.rateCard.toLowerCase(),
+                    date(c.joinedAt),
+                    html`<button class="btn quiet sm" data-group-action="centre" data-group="${g.id}" data-tenant="${c.tenantId}" data-name="${c.name}" data-code="${c.code}" data-mode="${c.chargeMode}" data-card="${c.rateCard}">Cost centre</button>`,
+                  ]),
+                  empty: 'No company in this group yet.',
+                })}
+              </div>`,
+            )}
+      </div>
+      <div id="support-panel"></div>
     `,
   );
 
   const again = () => tenants(root);
 
+  /**
+   * Break-glass support access: one company at a time, from a select, so the
+   * command that opens it posts to that company's own path.
+   */
+  function renderSupportPanel() {
+    const panel = root.querySelector('#support-panel');
+    render(
+      panel,
+      html`<div class="card" style="margin-top:14px" data-support>
+        <h2>Support access</h2>
+        <div class="metric-sub" style="margin:6px 0 10px">
+          Break-glass. A time-boxed, logged window on one company’s governance record, against a ticket. The company sees
+          it was opened, by whom, why, and every read made through it. It opens nothing else.
+        </div>
+        <div class="actions" style="flex-wrap:wrap;gap:10px;align-items:center">
+          <select id="support-tenant">${tenantOptions.map((option) => html`<option value="${option.value}">${option.label}</option>`)}</select>
+          <button class="btn" data-support-action="open">Open a window</button>
+          <button class="btn quiet" data-support-action="read">Read under an open window</button>
+        </div>
+        <div id="support-result" style="margin-top:12px"></div>
+      </div>`,
+    );
+    panel.querySelector('[data-support-action="open"]')?.addEventListener('click', async () => {
+      const tenantId = panel.querySelector('#support-tenant').value;
+      const result = await command({
+        title: `Open support access — ${byId.get(tenantId)?.legalName ?? tenantId}`,
+        intent: 'The reason is read by the company. Five minutes to four hours.',
+        path: `/v1/admin/tenants/${tenantId}/support-access`,
+        submitLabel: 'Open',
+        fields: [
+          { name: 'ticketRef', label: 'Ticket', placeholder: 'SUP-4411' },
+          { name: 'reason', label: 'Why, in the company’s words', placeholder: 'Customer reports a missing gate decision' },
+          { name: 'minutes', label: 'Window, minutes', type: 'number', value: 60 },
+        ],
+        transform: (values) => ({ ticketRef: values.ticketRef, reason: values.reason, minutes: Number(values.minutes) }),
+      });
+      if (result) toast('Support access open', `Until ${time(result.expiresAt)} · ticket ${result.ticketRef}`, 'ok');
+    });
+    panel.querySelector('[data-support-action="read"]')?.addEventListener('click', async () => {
+      const tenantId = panel.querySelector('#support-tenant').value;
+      const host = panel.querySelector('#support-result');
+      try {
+        const read = await api.get(`/v1/admin/tenants/${tenantId}/support-access/audit`);
+        render(
+          host,
+          html`<div class="notice"><div><b>${read.company.name}</b> · ticket ${read.grant.ticketRef} · window until ${time(read.grant.expiresAt)} · ${read.grant.uses.length} read${read.grant.uses.length === 1 ? '' : 's'} recorded
+            <button class="btn quiet sm" style="margin-left:10px" data-support-close="${read.grant.id}" data-support-tenant="${tenantId}">Close the window</button></div></div>
+            ${table({
+              headers: ['When', 'What', 'On', 'By'],
+              rows: read.events.slice(-100).reverse().map((e) => [time(e.timestamp), e.eventType, e.entity.refType, e.actor.refId]),
+              empty: 'Nothing on the record in this window.',
+            })}`,
+        );
+        host.querySelector('[data-support-close]')?.addEventListener('click', async (event) => {
+          try {
+            await api.post(`/v1/admin/tenants/${event.target.dataset.supportTenant}/support-access/${event.target.dataset.supportClose}/close`, {});
+            toast('Support access closed', 'The company sees the window ended.', 'ok');
+            render(host, html``);
+          } catch (error) {
+            toast('Could not close', error.message, 'err');
+          }
+        });
+      } catch (error) {
+        render(host, html`<div class="notice warn"><div><b>${error.code ?? 'Refused'}</b><br />${error.message}</div></div>`);
+      }
+    });
+  }
+
+  for (const button of root.querySelectorAll('[data-group-action]')) {
+    button.addEventListener('click', async () => {
+      const { groupAction, group: groupId, name, tenant, code, mode, card } = button.dataset;
+      let result = null;
+      if (groupAction === 'attach') {
+        const inGroups = new Set((groupsHeld?.groups ?? []).flatMap((g) => g.companies.map((c) => c.tenantId)));
+        result = await command({
+          title: `Bring a company into ${name}`,
+          intent: 'The tenancy keeps everything it has and gains a cost centre. A tenancy is in one group at most.',
+          path: `/v1/admin/groups/${groupId}/companies`,
+          submitLabel: 'Bring in',
+          fields: [
+            { name: 'tenantId', label: 'Company', type: 'select', options: tenantOptions.filter((option) => !inGroups.has(option.value)) },
+            { name: 'code', label: 'Cost centre code', placeholder: 'ETX', hint: '2 to 8 letters or digits, unique in the group' },
+            { name: 'slug', label: 'Slug', required: false, hint: 'Made from the legal name when blank' },
+            { name: 'chargeMode', label: 'Charge mode', type: 'select', options: [{ value: 'INTERNAL', label: 'Internal — tracked, not invoiced' }, { value: 'INTERCOMPANY', label: 'Intercompany — cross-charged' }, { value: 'EXTERNAL', label: 'External — invoiced' }] },
+            { name: 'rateCard', label: 'Rate card', type: 'select', options: [{ value: 'GROUP_INTERNAL', label: 'Group internal' }, { value: 'ENTERPRISE_GROUP', label: 'Enterprise group' }, { value: 'RETAIL', label: 'Retail' }] },
+          ],
+          transform: (values) => ({ ...values, ...(values.slug ? {} : { slug: undefined }) }),
+        });
+      }
+      if (groupAction === 'billing') {
+        result = await command({
+          title: `${name} — billing terms`,
+          intent: 'Invoice mode, payment terms and the payment provider’s customer reference. Nothing here moves money.',
+          path: `/v1/admin/groups/${groupId}/billing`,
+          method: 'PUT',
+          submitLabel: 'Save',
+          fields: [
+            { name: 'invoiceMode', label: 'Invoicing', type: 'select', options: [{ value: 'CONSOLIDATED', label: 'One consolidated statement' }, { value: 'PER_COMPANY', label: 'One per company' }] },
+            { name: 'termsDays', label: 'Payment terms, days', type: 'number', value: 14 },
+            { name: 'paymentCustomerRef', label: 'Payment customer reference', required: false },
+          ],
+          transform: (values) => ({ invoiceMode: values.invoiceMode, termsDays: Number(values.termsDays), ...(values.paymentCustomerRef ? { paymentCustomerRef: values.paymentCustomerRef } : {}) }),
+        });
+      }
+      if (groupAction === 'role') {
+        result = await command({
+          title: `${name} — grant a group role`,
+          intent: 'To somebody already in one of the group’s companies. This is how the first group administrator is appointed.',
+          path: `/v1/admin/groups/${groupId}/roles`,
+          submitLabel: 'Grant',
+          fields: [
+            { name: 'email', label: 'Their email' },
+            { name: 'role', label: 'Role', type: 'select', options: [{ value: 'GROUP_ADMIN', label: 'Group admin' }, { value: 'GROUP_FINANCE', label: 'Group finance' }, { value: 'GROUP_VIEWER', label: 'Group viewer' }] },
+          ],
+        });
+      }
+      if (groupAction === 'centre') {
+        result = await command({
+          title: `${name} — cost centre`,
+          intent: 'Whether this company is invoiced, cross-charged or only tracked, and on which rate card. Usage is metered either way.',
+          path: `/v1/admin/groups/${groupId}/companies/${tenant}/cost-centre`,
+          method: 'PUT',
+          submitLabel: 'Save',
+          fields: [
+            { name: 'code', label: 'Cost centre code', value: code },
+            { name: 'chargeMode', label: 'Charge mode', type: 'select', value: mode, options: [{ value: 'INTERNAL', label: 'Internal — tracked, not invoiced' }, { value: 'INTERCOMPANY', label: 'Intercompany — cross-charged' }, { value: 'EXTERNAL', label: 'External — invoiced' }] },
+            { name: 'rateCard', label: 'Rate card', type: 'select', value: card, options: [{ value: 'GROUP_INTERNAL', label: 'Group internal' }, { value: 'ENTERPRISE_GROUP', label: 'Enterprise group' }, { value: 'RETAIL', label: 'Retail' }] },
+          ],
+        });
+      }
+      if (result) again();
+    });
+  }
+
+  const tenantOptions = rows.filter((tenant) => tenant.id !== 'platform').map((tenant) => ({ value: tenant.id, label: tenant.legalName }));
+
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
     if (!button) return;
+
+    if (button.dataset.command === 'group') {
+      const result = await command({
+        title: 'Create a group',
+        intent: 'One agreement, one statement, several companies. The slug becomes the group’s permanent identifier.',
+        path: '/v1/admin/groups',
+        submitLabel: 'Create',
+        fields: [
+          { name: 'displayName', label: 'Group name', placeholder: 'Groupe Nseya' },
+          { name: 'slug', label: 'Slug', required: false, placeholder: 'groupe-nseya', hint: 'Letters, digits and dashes. Made from the name when blank.' },
+          { name: 'currency', label: 'Billing currency', type: 'select', options: (vocab?.currencies ?? []).map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` })) },
+          { name: 'invoiceMode', label: 'Invoicing', type: 'select', options: [{ value: 'CONSOLIDATED', label: 'One consolidated statement to the group' }, { value: 'PER_COMPANY', label: 'One per company from the same account' }] },
+          { name: 'termsDays', label: 'Payment terms, days', type: 'number', value: 14 },
+        ],
+        transform: (values) => ({ ...values, termsDays: Number(values.termsDays), ...(values.slug ? {} : { slug: undefined }) }),
+      });
+      if (result) again();
+      return;
+    }
+
+    if (button.dataset.command === 'support') {
+      renderSupportPanel();
+      return;
+    }
 
     if (button.dataset.command === 'onboard') {
       const result = await command({
@@ -494,6 +696,71 @@ export async function tenants(root) {
       if (result) {
         toast(`${tenant?.legalName ?? 'Tenancy'} — ${result.status}`, result.effect, result.status === 'ACTIVE' ? 'ok' : 'warn');
         await again();
+      }
+    });
+  }
+
+  for (const button of root.querySelectorAll('[data-module-decision]')) {
+    button.addEventListener('click', async () => {
+      const { moduleDecision, tenant, module, name, moduleName } = button.dataset;
+      const revoke = moduleDecision === 'REVOKED';
+      const result = await command({
+        title: `${revoke ? 'Revoke' : 'Grant again'} — ${moduleName} for ${name}`,
+        intent: revoke
+          ? 'The module closes for this tenancy on its next request: routes, commands and agents alike. What was written stays on the ledger. The reason is recorded against the decision.'
+          : 'The module reopens for this tenancy. The earlier grant and revocation stay on the register.',
+        path: `/v1/admin/tenants/${tenant}/modules/${module}`,
+        submitLabel: revoke ? 'Revoke' : 'Grant',
+        fields: [{ name: 'reason', label: 'Reason', hint: 'In your own words. Recorded against the decision.' }],
+        transform: (values) => ({ status: moduleDecision, reason: values.reason }),
+      });
+      if (result) again();
+    });
+  }
+
+  for (const button of root.querySelectorAll('[data-people]')) {
+    button.addEventListener('click', async () => {
+      const tenantId = button.getAttribute('data-people');
+      const panel = root.querySelector('#support-panel');
+      const closed = await api.get(`/v1/admin/tenants/${tenantId}/users`).catch((error) => ({ error }));
+      render(
+        panel,
+        html`<div class="card" style="margin-top:14px" data-closed-people>
+          <h2>${closed.tenant?.legalName ?? byId.get(tenantId)?.legalName ?? 'Tenancy'} — closed people</h2>
+          <div class="metric-sub" style="margin:6px 0 10px">
+            Deactivated, deletion pending or erased. On the company's request a deactivated person can be fully deleted
+            now, without the grace period; the project record stays against a pseudonym. Active people are the
+            company's own to manage.
+          </div>
+          ${closed.error
+            ? html`<div class="notice warn"><div>${closed.error.message}</div></div>`
+            : table({
+                headers: ['Name', 'Email', 'Roles', 'State', ''],
+                rows: (closed.users ?? []).map((person) => [
+                  person.name,
+                  person.email,
+                  person.roles.join(', '),
+                  person.erasedAt ? badge('erased', 'neutral') : person.erasureDueAt ? badge(`deletion ${date(person.erasureDueAt)}`, 'warn') : badge('deactivated', 'warn'),
+                  person.erasedAt ? '' : html`<button class="btn quiet danger sm" data-erase-user="${person.id}" data-erase-tenant="${tenantId}" data-name="${person.name}">Delete now</button>`,
+                ]),
+                empty: 'Nobody closed in this tenancy.',
+              })}
+        </div>`,
+      );
+      for (const erase of panel.querySelectorAll('[data-erase-user]')) {
+        erase.addEventListener('click', async () => {
+          const result = await command({
+            title: `Delete ${erase.dataset.name} now`,
+            intent: 'No grace period. Name, email and phone go at once; the project record stays against a pseudonym. Recorded on the company\'s own chain under your name. This cannot be undone.',
+            path: `/v1/admin/tenants/${erase.dataset.eraseTenant}/users/${erase.dataset.eraseUser}/erase`,
+            submitLabel: 'Delete now',
+            fields: [{ name: 'reason', label: 'Reason', hint: 'At least ten characters. Quote the company\'s request.' }],
+          });
+          if (result) {
+            toast('Deleted', `${erase.dataset.name} has been erased.`, 'warn');
+            button.click();
+          }
+        });
       }
     });
   }

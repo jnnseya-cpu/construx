@@ -2,7 +2,7 @@ import { esc } from '../messaging/render.ts';
 import { PACKAGES } from '../billing/seats.ts';
 import type { ExposurePosition } from './exposure.ts';
 import { config } from '../config.ts';
-import { formatMoney } from '../domain/locale.ts';
+import { CURRENCIES, JURISDICTIONS, formatMoney } from '../domain/locale.ts';
 import { NOTIFICATION_EVENTS, CATEGORIES } from '../notifications/catalogue.ts';
 import { EVENT_TYPES } from '../goldenthread/eventTypes.ts';
 import { ROUTES } from '../api/routes.ts';
@@ -630,11 +630,41 @@ export function contact(): string {
   <div class="wrap narrow">
     <h2>Reaching a person</h2>
     <p>
-      There is no contact form on this page, deliberately. A form that posts into a queue nobody has wired up is worse
-      than an address, and this platform does not ship things that pretend to work. Until the enquiry pipeline is
-      connected to a real inbox, the honest instruction is the one below.
+      For anything that is not an enterprise or group account, write to the address below. The account request form
+      further down posts into a queue an operator works — it exists because that queue exists, not the other way round.
     </p>
     ${contactDetails()}
+  </div>
+</section>
+
+<section class="prose" id="request">
+  <div class="wrap narrow">
+    <h2>Ask for an enterprise or group account</h2>
+    <p>
+      Enterprise and group accounts are provisioned with an agreement rather than a form. This form starts that
+      conversation: somebody reads it, gets in touch at the address you give, and once terms are agreed the account,
+      its first administrator and the invitation to sign in are created together. Nothing is provisioned until then.
+    </p>
+    <form id="account-request" class="request-form" novalidate>
+      <div class="request-grid">
+        <label>Organisation<input name="organisationName" required maxlength="200" autocomplete="organization"></label>
+        <label>Your name<input name="contactName" required maxlength="120" autocomplete="name"></label>
+        <label>Work email<input name="email" type="email" required maxlength="254" autocomplete="email"></label>
+        <label>Phone<input name="phone" maxlength="40" autocomplete="tel"></label>
+        <label>Jurisdiction<select name="jurisdiction">${Object.values(JURISDICTIONS)
+          .map((j) => `<option value="${esc(j.code)}"${j.code === 'GB' ? ' selected' : ''}>${esc(j.name)}</option>`)
+          .join('')}</select></label>
+        <label>Currency<select name="currency">${Object.values(CURRENCIES)
+          .map((c) => `<option value="${esc(c.code)}"${c.code === 'GBP' ? ' selected' : ''}>${esc(c.code)} — ${esc(c.name)}</option>`)
+          .join('')}</select></label>
+        <label>Companies in the group<select name="companies"><option value="1">One company</option><option value="2">Two</option><option value="3">Three</option><option value="4">Four</option><option value="5">Five</option></select></label>
+      </div>
+      <label>What you are looking to do<textarea name="message" rows="4" maxlength="2000"></textarea></label>
+      <div class="cta-row" style="justify-content:flex-start;margin-top:14px">
+        <button class="btn" type="submit">Send the request</button>
+      </div>
+      <p class="request-result" aria-live="polite"></p>
+    </form>
   </div>
 </section>`,
   );
@@ -722,7 +752,7 @@ export function getStarted(): string {
         ${
           t.selfServe
             ? `<a class="btn${t.package === 'CORE_PROJECT' ? '' : ' ghost'}" href="/app/signup?package=${esc(t.package)}">Start with ${esc(t.label)}</a>`
-            : '<a class="btn ghost" href="/contact">Talk to us</a>'
+            : '<a class="btn ghost" href="/contact#request">Talk to us</a>'
         }
       </article>`,
         )

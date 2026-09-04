@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { command } from '../lib/command.js';
 import { head, refusal } from '../lib/estate.js';
 import { badge, date, days, html, money, raw, render, table, time } from '../lib/ui.js';
 
@@ -23,11 +24,12 @@ import { badge, date, days, html, money, raw, render, table, time } from '../lib
  */
 
 export async function onboarding(root) {
-  const [estate, overview, events, forecast] = await Promise.all([
+  const [estate, overview, events, forecast, requests] = await Promise.all([
     api.get('/v1/admin/tenants').catch((error) => ({ error })),
     api.get('/v1/admin/overview').catch(() => null),
     api.get('/v1/admin/events').catch(() => null),
     api.get('/v1/admin/forecast').catch(() => null),
+    api.get('/v1/admin/requests').catch(() => null),
   ]);
 
   if (estate.error) {
@@ -58,6 +60,8 @@ export async function onboarding(root) {
           'Everything between somebody signing up and being a working customer. Each queue below is derived from the ' +
           'record rather than maintained by hand, so a tenancy cannot fail to appear because nobody remembered to add it.',
       })}
+
+      ${requestsCard(requests)}
 
       <section class="grid g4" style="margin-bottom:14px">
         <div class="card">
@@ -196,4 +200,103 @@ export async function onboarding(root) {
         : ''}
     `,
   );
+
+  wireRequests(root, () => onboarding(root));
+}
+
+// --- account requests: new → contacted → qualified → provisioned, or declined and deleted ---
+
+const STEP_LABEL = { NEW: 'new', CONTACTED: 'contacted', QUALIFIED: 'qualified', PROVISIONED: 'provisioned', DECLINED: 'declined' };
+const STEP_TONE = { NEW: 'info', CONTACTED: 'warn', QUALIFIED: 'ok', PROVISIONED: 'ok', DECLINED: 'neutral' };
+
+function requestsCard(requests) {
+  if (!requests) return '';
+  const counts = requests.counts ?? {};
+  return html`<div class="card pad0" style="margin-bottom:14px" data-requests>
+    <h2 style="padding:15px 17px 0">
+      Requests
+      ${badge(`${counts.NEW ?? 0} new`, counts.NEW ? 'info' : 'neutral')}
+      ${badge(`${counts.CONTACTED ?? 0} contacted`, 'neutral')}
+      ${badge(`${counts.QUALIFIED ?? 0} qualified`, counts.QUALIFIED ? 'ok' : 'neutral')}
+    </h2>
+    <div class="metric-sub" style="padding:6px 17px 10px">
+      Enterprise and group accounts asked for on the site. New → contacted → qualified → provisioned: the last is one act —
+      the tenancy, its first administrator and the invitation to sign in. Declined requests can be deleted.
+    </div>
+    ${table({
+      headers: ['Received', 'Organisation', 'Contact', 'Asked for', 'Status', 'Last note', ''],
+      rows: (requests.requests ?? []).map((r) => [
+        date(r.receivedAt),
+        html`<b>${r.organisationName}</b><div class="metric-sub">${r.jurisdiction} · ${r.currency}</div>`,
+        html`${r.contactName}<div class="metric-sub">${r.email}${r.phone ? ` · ${r.phone}` : ''}</div>`,
+        html`${r.kind === 'GROUP' ? `Group, ${r.companies} companies` : 'Enterprise'}${r.message ? html`<div class="metric-sub" title="${r.message}">${r.message.slice(0, 90)}${r.message.length > 90 ? '…' : ''}</div>` : ''}`,
+        badge(STEP_LABEL[r.status] ?? r.status, STEP_TONE[r.status] ?? 'neutral'),
+        r.notes.length ? html`${r.notes[r.notes.length - 1].note || '—'}<div class="metric-sub">${date(r.notes[r.notes.length - 1].at)}</div>` : html`<span class="metric-sub">—</span>`,
+        html`<span class="row-actions">
+          ${r.status === 'NEW' ? html`<button class="btn quiet sm" data-request-action="CONTACTED" data-request="${r.id}" data-name="${r.organisationName}">Mark contacted</button>` : ''}
+          ${r.status === 'CONTACTED' ? html`<button class="btn quiet sm" data-request-action="QUALIFIED" data-request="${r.id}" data-name="${r.organisationName}">Mark qualified</button>` : ''}
+          ${r.status === 'QUALIFIED' ? html`<button class="btn sm" data-request-action="PROVISION" data-request="${r.id}" data-name="${r.organisationName}" data-kind="${r.kind}">Provision</button>` : ''}
+          ${['NEW', 'CONTACTED', 'QUALIFIED'].includes(r.status) ? html`<button class="btn quiet danger sm" data-request-action="DECLINE" data-request="${r.id}" data-name="${r.organisationName}">Decline</button>` : ''}
+          ${r.status === 'DECLINED' ? html`<button class="btn quiet danger sm" data-request-action="DELETE" data-request="${r.id}" data-name="${r.organisationName}">Delete</button>` : ''}
+          ${r.status === 'PROVISIONED' && r.provisioned ? html`<span class="metric-sub">invitation ${String(r.provisioned.notified).toLowerCase()}</span>` : ''}
+        </span>`,
+      ]),
+      empty: 'No request yet. They arrive from “Talk to us” on the public site.',
+    })}
+  </div>`;
+}
+
+function wireRequests(root, again) {
+  for (const button of root.querySelectorAll('[data-request-action]')) {
+    button.addEventListener('click', async () => {
+      const { requestAction, request, name, kind } = button.dataset;
+      let result = null;
+      if (requestAction === 'CONTACTED' || requestAction === 'QUALIFIED') {
+        result = await command({
+          title: `${name} — mark ${STEP_LABEL[requestAction]}`,
+          intent: requestAction === 'CONTACTED' ? 'You have been in touch. Note what was said.' : 'Terms are agreed in principle and this is a real customer. Note the basis; provisioning is the next step.',
+          path: `/v1/admin/requests/${request}/advance`,
+          submitLabel: `Mark ${STEP_LABEL[requestAction]}`,
+          fields: [{ name: 'note', label: 'Note', required: false, placeholder: 'Spoke to them on the phone; sending terms' }],
+          transform: (values) => ({ status: requestAction, ...(values.note ? { note: values.note } : {}) }),
+        });
+      }
+      if (requestAction === 'DECLINE') {
+        result = await command({
+          title: `${name} — decline`,
+          intent: 'The request comes to nothing. The reason is kept until the request is deleted.',
+          path: `/v1/admin/requests/${request}/decline`,
+          submitLabel: 'Decline',
+          fields: [{ name: 'reason', label: 'Why' }],
+        });
+      }
+      if (requestAction === 'DELETE') {
+        if (!confirm(`Delete the request from ${name}? Their name, address and message go; the chain keeps that a request existed.`)) return;
+        try {
+          await api.delete(`/v1/admin/requests/${request}`);
+          result = { deleted: true };
+        } catch (error) {
+          alert(error.message);
+        }
+      }
+      if (requestAction === 'PROVISION') {
+        result = await command({
+          title: `Provision ${name}`,
+          intent:
+            'One act: the tenancy, its subscription and wallet, the contact as first administrator, and the invitation to sign in — ' +
+            'emailed where a mail server is configured, recorded otherwise. Recorded in the ledger and not undone.' +
+            (kind === 'GROUP' ? ' A group: provision the first company here, then create the group on Tenants & Users and bring the companies in.' : ''),
+          path: `/v1/admin/requests/${request}/provision`,
+          submitLabel: 'Provision',
+          fields: [
+            { name: 'tier', label: 'Tier', type: 'select', options: [{ value: 'ENTERPRISE', label: 'Enterprise' }, { value: 'BUSINESS', label: 'Business' }, { value: 'TEAM', label: 'Team' }] },
+            { name: 'package', label: 'Package', type: 'select', options: [{ value: 'ENTERPRISE', label: 'Enterprise' }, { value: 'PROFESSIONAL_DELIVERY', label: 'Professional Delivery' }, { value: 'CORE_PROJECT', label: 'Core Project' }] },
+            { name: 'enterpriseName', label: 'Enterprise name', required: false, hint: 'Defaults to the organisation name' },
+          ],
+          transform: (values) => ({ tier: values.tier, package: values.package, ...(values.enterpriseName ? { enterpriseName: values.enterpriseName } : {}) }),
+        });
+      }
+      if (result) again();
+    });
+  }
 }

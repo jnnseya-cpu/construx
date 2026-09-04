@@ -156,6 +156,7 @@ describe('what an anonymous caller can obtain', () => {
       'POST /v1/booking',
       'POST /v1/console/identities',
       'POST /v1/console/session',
+      'POST /v1/requests',
       'POST /v1/signup',
       'POST /v1/signup/verify',
       // The two public routes that move money, and the most dangerous pair on

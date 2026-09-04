@@ -139,8 +139,8 @@ function personActions(person) {
   if (self || person.erasedAt) return '';
   const act = (action, label, tone = 'quiet') =>
     html`<button class="btn ${tone} sm" data-person-action="${action}" data-user="${person.id}" data-name="${person.name}">${label}</button>`;
-  if (person.erasureDueAt) return act('cancel-erasure', 'Cancel deletion');
-  if (person.status === 'SUSPENDED') return html`${act('reactivate', 'Reactivate')} ${act('delete', 'Delete', 'quiet danger')}`;
+  if (person.erasureDueAt) return html`${act('cancel-erasure', 'Cancel deletion')} ${act('erase', 'Delete now', 'quiet danger')}`;
+  if (person.status === 'SUSPENDED') return html`${act('reactivate', 'Reactivate')} ${act('delete', 'Delete', 'quiet danger')} ${act('erase', 'Delete now', 'quiet danger')}`;
   return act('deactivate', 'Deactivate');
 }
 
@@ -829,6 +829,21 @@ export async function enterprise(root) {
         });
         if (done) {
           toast('Deletion scheduled', `${name} will be erased on ${date(done.dueAt)}.`, 'warn');
+          await draw();
+        }
+      } else if (action === 'erase') {
+        const done = await command({
+          title: `Delete ${name} now`,
+          intent:
+            'No grace period. Their name, email address and telephone number are removed from the platform at once; ' +
+            'the project record they took part in is kept, as the law requires, against an identity that no longer ' +
+            'names anybody. This cannot be undone.',
+          path: `/v1/users/${userId}/erase`,
+          submitLabel: 'Delete now',
+          fields: [reasonField('At least ten characters. Quote the written request or the decision this rests on.')],
+        });
+        if (done) {
+          toast('Deleted', `${name} has been erased.`, 'warn');
           await draw();
         }
       } else if (action === 'cancel-erasure') {

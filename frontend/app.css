@@ -1407,3 +1407,7 @@ input:focus, select:focus, textarea:focus {
    nobody could be expected to guess at. */
 .sign-out { margin-left: 8px; white-space: nowrap; }
 .sign-out span[aria-hidden] { opacity: .7; margin-right: 2px; }
+
+/* The company switcher in the header, for a person in more than one company of a group. */
+.company-switch { display: inline-flex; align-items: center; gap: 8px; margin-right: 10px; }
+.company-switch select { max-width: 220px; }
