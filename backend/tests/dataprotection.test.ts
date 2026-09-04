@@ -268,6 +268,18 @@ describe('transport, and what a process serving plain HTTP can honestly say', ()
   });
 });
 
+/**
+ * A hash that differs from the real one by exactly one character. The earlier
+ * version wrote a `0` over the last character, and on the day the real hash
+ * ended in `0` the "altered" hash was the real hash and the tamper tests
+ * passed a genuine document as tampered-with-and-refused — CI failed once the
+ * generation date rolled the content onto such a hash.
+ */
+function altered(hash: string): string {
+  const last = hash.slice(-1);
+  return `${hash.slice(0, -1)}${last === '0' ? '1' : '0'}`;
+}
+
 describe('a document that has left the platform', () => {
   let platform: Platform;
   let seed: SeedResult;
@@ -365,7 +377,7 @@ describe('a document that has left the platform', () => {
     // exactly why the hash alone was never proof.
     const outcome = await check({
       reference: document.reference,
-      contentHash: `${document.contentHash.slice(0, -1)}0`,
+      contentHash: altered(document.contentHash),
       verification: document.verification,
     });
     assert.equal(outcome.verified, false);
@@ -439,7 +451,7 @@ describe('a document that has left the platform', () => {
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         reference: document.reference,
-        contentHash: `${document.contentHash.slice(0, -1)}0`,
+        contentHash: altered(document.contentHash),
         verification: document.verification,
       }).toString(),
     });
