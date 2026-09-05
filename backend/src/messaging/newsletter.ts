@@ -7,6 +7,9 @@ import { MARKETING_PROJECT_ID, resolveAudience, suppressedAddresses, unsubscribe
 import { FEATURES, featuresFor } from './content.ts';
 import { buildMime, renderCampaign, type CampaignCopy } from './render.ts';
 import { sendMail } from './smtp.ts';
+import { postUrl } from '../site/article.ts';
+import { publishedPosts } from '../site/blog.ts';
+import { POSTS } from '../site/posts.ts';
 
 /**
  * The weekly issue: composing it, sending it, and recording what happened.
@@ -114,7 +117,7 @@ export function isoWeek(date: Date): string {
  * produces the same issue: a resend after a failure is the message the reader
  * was already promised, and a preview shows what will actually be sent.
  */
-export function copyForWeek(week: string): CampaignCopy {
+export function copyForWeek(week: string, posts: CampaignCopy['posts'] = []): CampaignCopy {
   const index = Number(week.slice(-2));
   const lead = FEATURES[index % FEATURES.length]!;
 
@@ -125,7 +128,35 @@ export function copyForWeek(week: string): CampaignCopy {
     intro:
       'One data spine from concept to thirty years of operation: seven engines doing real arithmetic on your project, ' +
       'an append-only record that detects its own tampering, and agents that propose while people decide.',
+    posts,
   };
+}
+
+/** How many blog posts an issue carries. Three is a section; ten is a second newsletter. */
+export const POSTS_PER_ISSUE = 3;
+
+/**
+ * The newest posts on the public blog, compiled and published alike.
+ *
+ * Read from the record when the issue is composed rather than written into
+ * the copy, so a post the marketing agent published this morning is in this
+ * week's email without anybody editing anything. Only what is public: a draft
+ * has no address to link to.
+ */
+export function latestPosts(platform: Platform, limit = POSTS_PER_ISSUE): NonNullable<CampaignCopy['posts']> {
+  const entries = [
+    ...POSTS.map((post) => ({ title: post.title, standfirst: post.standfirst, slug: post.slug, date: post.date })),
+    ...(platform.ledger ? publishedPosts(platform) : []).map((post) => ({
+      title: post.title,
+      standfirst: post.standfirst,
+      slug: post.slug,
+      date: (post.publishedAt ?? '').slice(0, 10),
+    })),
+  ];
+  return entries
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, limit)
+    .map((post) => ({ title: post.title, standfirst: post.standfirst, url: postUrl(post.slug) }));
 }
 
 // --- Reading ----------------------------------------------------------------
@@ -153,8 +184,8 @@ export function deliveriesFor(platform: Platform, campaignId: string): Delivery[
 }
 
 /** What a named recipient would receive, without sending anything. */
-export function previewFor(recipient: Recipient, week = isoWeek(new Date())) {
-  const copy = copyForWeek(week);
+export function previewFor(recipient: Recipient, week = isoWeek(new Date()), posts: CampaignCopy['posts'] = []) {
+  const copy = copyForWeek(week, posts);
   const rendered = renderCampaign(copy, recipient);
   return {
     week,
@@ -162,7 +193,42 @@ export function previewFor(recipient: Recipient, week = isoWeek(new Date())) {
     html: rendered.html,
     text: rendered.text,
     features: featuresFor(recipient.roles).map((feature) => ({ id: feature.id, title: feature.title, path: feature.path })),
+    posts: copy.posts ?? [],
   };
+}
+
+/**
+ * Send this week's issue to one person, now, and record nothing against the
+ * week.
+ *
+ * The operator's own address, before the audience gets it: the real message,
+ * through the real relay, with the relay's answer returned. Refused rather than
+ * "recorded" when no relay is configured — a test that quietly succeeds
+ * without leaving the building proves nothing about deliverability.
+ */
+export async function sendTestIssue(
+  platform: Platform,
+  recipient: Recipient,
+  options: { week?: string; transport?: { send: typeof sendMail } } = {},
+): Promise<{ to: string; subject: string; week: string; response: string }> {
+  if (!options.transport && !config.smtp.host) {
+    throw new DomainError('NO_RELAY', 'No SMTP host is configured, so a test cannot leave the platform. Set SMTP_HOST first.', 409);
+  }
+  const week = options.week ?? isoWeek(new Date());
+  const copy = copyForWeek(week, latestPosts(platform));
+  const rendered = renderCampaign(copy, recipient);
+  const raw = buildMime({
+    to: recipient.email,
+    toName: recipient.name,
+    subject: `[TEST] ${rendered.subject}`,
+    html: rendered.html,
+    text: rendered.text,
+    unsubscribe: unsubscribeUrl(recipient.userId),
+    messageId: `test-${ulid()}`,
+  });
+  const send = options.transport?.send ?? sendMail;
+  const result = await send({ from: config.newsletter.fromAddress, to: recipient.email, raw });
+  return { to: recipient.email, subject: `[TEST] ${rendered.subject}`, week, response: result.response };
 }
 
 // --- Issuing ----------------------------------------------------------------
@@ -401,7 +467,7 @@ export async function issueNewsletter(
     }
   }
 
-  const copy = copyForWeek(week);
+  const copy = copyForWeek(week, latestPosts(platform));
   const { recipients, excluded } = resolveAudience(platform);
   const channel: Campaign['channel'] = options.transport || config.smtp.host ? 'SMTP' : 'RECORD_ONLY';
 

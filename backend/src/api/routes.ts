@@ -238,8 +238,11 @@ import {
   previewFor,
   clearSuppression,
   recordBounce,
+  latestPosts,
+  sendTestIssue,
   type BounceInput,
 } from '../messaging/newsletter.ts';
+import { newsletterPosition } from '../messaging/newsletterengine.ts';
 import { documentVerificationPage, unsubscribePage, verificationPage } from '../messaging/render.ts';
 import { exposurePosition, readExposureInput } from '../site/exposure.ts';
 import { exposure as exposurePage } from '../site/pages.ts';
@@ -2988,13 +2991,17 @@ export const ROUTES: Route[] = [
         source: consent?.source ?? 'DEFAULT',
         // Stated rather than implied: a role can be excluded while consent says yes.
         excludedByRole: user.roles.some((role) => config.newsletter.excludedRoles.includes(role)),
-        preview: previewFor({
-          userId: user.id,
-          tenantId: user.tenantId,
-          name: user.name,
-          email: user.email,
-          roles: user.roles,
-        }),
+        preview: previewFor(
+          {
+            userId: user.id,
+            tenantId: user.tenantId,
+            name: user.name,
+            email: user.email,
+            roles: user.roles,
+          },
+          undefined,
+          latestPosts(platform),
+        ),
       };
     },
   },
@@ -3044,6 +3051,28 @@ export const ROUTES: Route[] = [
         }, {}),
         excluded,
       };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/newsletter/position',
+    readOnly: true,
+    description: 'The newsletter read as a whole: the deliverability sweep and its health score, reach, this week’s issue, the schedule and what to do next (platform operator only)',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read the newsletter position');
+      return newsletterPosition(platform);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/newsletter/test',
+    readOnly: true,
+    description: 'Send this week’s issue to your own address now, through the real relay, recorded against nothing. Refused while no relay is configured (platform operator only)',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      operatorOnly(ctx, 'send a newsletter test');
+      const user = platform.user(auth(ctx).actorId);
+      return sendTestIssue(platform, { userId: user.id, tenantId: user.tenantId, name: user.name, email: user.email, roles: user.roles });
     },
   },
   {

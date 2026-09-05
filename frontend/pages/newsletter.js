@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { lineChart } from '../lib/charts.js';
 import { command } from '../lib/command.js';
 import { badge, html, humanise, raw, render, table, time, toast } from '../lib/ui.js';
 import { draw, isOperator, state } from '../app.js';
@@ -16,9 +17,18 @@ import { draw, isOperator, state } from '../app.js';
  * own state rather than folded into "sent": a message that was composed but
  * never transmitted has not reached anybody, and a screen that says otherwise
  * would be the only place in this platform that lies.
+ *
+ * Above that, for the operator, the newsletter read as a whole — the engine:
+ * a deliverability sweep of eleven things read off this week's rendered
+ * message, the configuration and the delivery record; a health score that is
+ * the weights of what passes and decides nothing; reach, issue by issue; what
+ * the agent recommends doing next, each with its door; and a test send of the
+ * real message to the operator's own address through the real relay.
  */
 
 const STATUS_TONE = { SENT: 'ok', RECORDED: 'info', FAILED: 'bad' };
+const BAND_TONE = { STRONG: 'ok', WORKABLE: 'warn', WEAK: 'bad' };
+const PRIORITY_TONE = { HIGH: 'bad', MEDIUM: 'warn', LOW: 'info' };
 
 const EXCLUSION_REASON = {
   UNSUBSCRIBED: 'Asked not to receive it',
@@ -32,11 +42,14 @@ const EXCLUSION_REASON = {
 export async function newsletter(root) {
   const operator = isOperator();
 
-  const [me, audience, campaigns] = await Promise.all([
+  const [me, audience, campaigns, position] = await Promise.all([
     api.get('/v1/me/newsletter'),
     operator ? api.get('/v1/newsletter/audience').catch(() => null) : Promise.resolve(null),
     operator ? api.get('/v1/newsletter/campaigns').catch(() => ({ campaigns: [] })) : Promise.resolve({ campaigns: [] }),
+    operator ? api.get('/v1/newsletter/position').catch((error) => ({ error })) : Promise.resolve(null),
   ]);
+
+  const engine = position && !position.error ? position : null;
 
   render(
     root,
@@ -46,18 +59,26 @@ export async function newsletter(root) {
           <h1>Newsletter</h1>
           <p>
             A weekly issue about what the platform does, sent to registered users who have not asked otherwise.
-            It carries no project, commercial or safety data — only links back into the application.
+            It carries no project, commercial or safety data — only links back into the application, and the
+            newest posts from the blog.
           </p>
         </div>
         ${
           operator
             ? html`<div class="actions cmd-bar">
                 <button class="btn" id="issue">Issue this week now</button>
+                <button class="btn quiet" id="test">Send a test to me</button>
                 <button class="btn quiet" id="bounce">Record a bounce</button>
               </div>`
             : ''
         }
       </div>
+
+      ${operator && position?.error
+        ? html`<div class="notice err" style="margin-bottom:14px"><div><b>The newsletter position could not be read.</b><br />${position.error.message}</div></div>`
+        : ''}
+
+      ${engine ? enginePanels(engine) : ''}
 
       ${operator && audience ? operatorSummary(audience) : ''}
 
@@ -103,6 +124,18 @@ export async function newsletter(root) {
               </div>`,
             )}
           </div>
+          ${(me.preview.posts ?? []).length > 0
+            ? html`<h3 style="margin-top:14px">From the blog</h3>
+                <div class="metric-sub" style="margin-bottom:6px">The newest published posts, read from the record when the issue is composed.</div>
+                <div class="split-list">
+                  ${me.preview.posts.map(
+                    (post) => html`<div class="row" style="align-items:flex-start">
+                      <span class="lbl" style="flex:1 1 0;min-width:0"><b>${post.title}</b><br /><span class="metric-sub">${post.standfirst}</span></span>
+                      <span class="val"><a class="btn quiet sm" href="${post.url}" target="_blank" rel="noreferrer">Open</a></span>
+                    </div>`,
+                  )}
+                </div>`
+            : ''}
         </div>
       </div>
 
@@ -119,6 +152,13 @@ export async function newsletter(root) {
       </div>
 
       ${operator ? campaignHistory(campaigns.campaigns ?? []) : ''}
+
+      ${engine
+        ? html`<div class="metric-sub" style="margin-top:14px">
+            <b>What this screen is not.</b>
+            ${engine.limits.map((limit) => html`<div>· ${limit}</div>`)}
+          </div>`
+        : ''}
     `,
   );
 
@@ -164,11 +204,11 @@ export async function newsletter(root) {
 
   // --- issuing ----------------------------------------------------------------
 
-  root.querySelector('#issue')?.addEventListener('click', async (event) => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    button.textContent = 'Issuing…';
-
+  const issueNow = async (button) => {
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Issuing…';
+    }
     try {
       const report = await api.post('/v1/newsletter/campaigns', {});
       if (report.alreadyIssued) {
@@ -183,10 +223,40 @@ export async function newsletter(root) {
       await draw();
     } catch (error) {
       toast('Could not issue', error.message, 'err');
-      button.disabled = false;
-      button.textContent = 'Issue this week now';
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Issue this week now';
+      }
     }
-  });
+  };
+
+  root.querySelector('#issue')?.addEventListener('click', (event) => issueNow(event.currentTarget));
+
+  // --- the test send ----------------------------------------------------------
+  //
+  // The real message, through the real relay, to the operator's own address,
+  // recorded against nothing. Refused rather than "recorded" when no relay is
+  // configured: a test that succeeds without leaving the building proves
+  // nothing about whether the issue can arrive.
+  const sendTest = async (button) => {
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Sending…';
+    }
+    try {
+      const result = await api.post('/v1/newsletter/test', {});
+      toast('Test sent', `${result.subject} → ${result.to}. Relay answered: ${result.response}`, 'ok');
+    } catch (error) {
+      toast('No test went', error.message, 'err');
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Send a test to me';
+      }
+    }
+  };
+
+  root.querySelector('#test')?.addEventListener('click', (event) => sendTest(event.currentTarget));
 
   // --- bounces ----------------------------------------------------------------
   //
@@ -248,6 +318,29 @@ export async function newsletter(root) {
 
   root.querySelector('#bounce')?.addEventListener('click', () => recordBounce());
 
+  // --- the agent's doors ------------------------------------------------------
+  //
+  // A recommendation's button is the same door the bar offers, pressed from
+  // the line that says why. `configure` and `suppressions` have no command
+  // behind them: one is a setting on the server, the other is the exclusions
+  // table further down.
+  for (const button of root.querySelectorAll('[data-act]')) {
+    button.addEventListener('click', async () => {
+      const act = button.getAttribute('data-act');
+      if (act === 'issue') await issueNow(root.querySelector('#issue'));
+      else if (act === 'test') await sendTest(root.querySelector('#test'));
+      else if (act === 'bounce') await recordBounce();
+      else if (act === 'suppressions') root.querySelector('[data-exclusions]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      else if (act === 'configure') {
+        toast(
+          'Set on the server',
+          'SMTP_HOST for the relay; NEWSLETTER_FROM_ADDRESS on the site’s own domain; PUBLIC_BASE_URL as https. Restart, and the sweep reads the change.',
+          'err',
+        );
+      }
+    });
+  }
+
   // --- delivery drill-down ----------------------------------------------------
 
   root.querySelector('#campaigns')?.addEventListener('click', async (event) => {
@@ -299,6 +392,109 @@ export async function newsletter(root) {
       button.disabled = false;
     }
   });
+}
+
+/** The newsletter read as a whole: score, reach, recommendations, sweep. */
+function enginePanels(engine) {
+  const health = engine.health;
+  const totals = engine.reach.totals;
+  const next = engine.schedule.nextRunAt;
+  return html`
+    <section class="grid g4" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Deliverability</h2>
+        <div class="metric ${raw(health.band === 'STRONG' ? 'good' : health.band === 'WORKABLE' ? 'warn' : 'bad')}">${health.score}</div>
+        <div class="metric-sub">${health.passing} of ${health.total} checks passing · ${health.band.toLowerCase()}</div>
+      </div>
+      <div class="card">
+        <h2>Reach</h2>
+        <div class="metric">${totals.sent.toLocaleString('en-GB')}</div>
+        <div class="metric-sub">
+          copies the relay accepted across ${totals.issues} issue${totals.issues === 1 ? '' : 's'} · ${totals.recorded} recorded only ·
+          ${totals.failed} refused · ${totals.bounced} bounced later
+        </div>
+      </div>
+      <div class="card">
+        <h2>Audience now</h2>
+        <div class="metric">${engine.reach.audience}</div>
+        <div class="metric-sub">${engine.reach.excluded} excluded with reasons · ${engine.reach.suppressed} suppressed</div>
+      </div>
+      <div class="card">
+        <h2>This week — ${engine.issue.week}</h2>
+        <div class="metric" style="font-size:19px">${engine.issue.issued ? 'Issued' : next ? `Sends ${next.slice(0, 16).replace('T', ' ')} UTC` : 'Not armed'}</div>
+        <div class="metric-sub">
+          ${engine.issue.issued
+            ? `went out ${time(engine.issue.issued.issuedAt)} by ${engine.issue.issued.issuedBy === 'scheduler' ? 'the schedule' : 'an operator'} via ${engine.issue.issued.channel === 'SMTP' ? 'the relay' : 'record only'}`
+            : engine.schedule.enabled
+              ? `via ${engine.schedule.channel === 'SMTP' ? 'the relay' : 'record only — no SMTP host'}`
+              : 'NEWSLETTER_ENABLED is off; the button above sends it'}
+          · ${engine.issue.posts.length} blog post${engine.issue.posts.length === 1 ? '' : 's'} carried
+        </div>
+      </div>
+    </section>
+
+    ${engine.recommendations.length > 0
+      ? html`<div class="card" style="margin-bottom:14px">
+          <h2>What the agent recommends</h2>
+          <div class="metric-sub" style="margin:8px 0 12px">
+            Derived from the sweep and the delivery record — no model, no invented figure. Each names what it costs and offers
+            the door that fixes it. It proposes; you press.
+          </div>
+          <div class="split-list">
+            ${engine.recommendations.map(
+              (item) => html`<div class="row" style="align-items:flex-start;gap:14px">
+                <span class="lbl" style="flex:1 1 0;min-width:0">
+                  ${badge(item.priority.toLowerCase(), PRIORITY_TONE[item.priority] ?? 'info')} <b>${item.title}</b><br />
+                  <span class="metric-sub">${item.detail}</span>
+                </span>
+                ${item.action ? html`<span class="val"><button class="btn quiet sm" data-act="${item.action.command}">${item.action.label}</button></span>` : ''}
+              </div>`,
+            )}
+          </div>
+        </div>`
+      : ''}
+
+    <div class="card" style="margin-bottom:14px">
+      <h2>Deliverability sweep ${badge(`${health.score} / 100`, BAND_TONE[health.band] ?? 'neutral')}</h2>
+      <div class="metric-sub" style="margin:8px 0 12px">
+        ${health.summary} Every check reads this week's rendered message, the configuration as loaded, or the delivery
+        record — never a setting that says it is fine. The score decides nothing: the schedule and the button send regardless.
+      </div>
+      ${raw(
+        table({
+          headers: ['Check', 'Verdict', 'Weight', 'Detail'],
+          align: ['', '', 'num', ''],
+          rows: engine.sweep.map((finding) => [
+            html`<b>${finding.check}</b>`,
+            finding.ok ? badge('ok', 'ok') : badge('fix', 'bad'),
+            String(finding.weight),
+            finding.detail,
+          ]),
+        }),
+      )}
+    </div>
+
+    ${engine.reach.series.length > 0
+      ? html`<div class="card chart-card" style="margin-bottom:14px">
+          <h2>Reach, issue by issue</h2>
+          <div class="metric-sub" style="margin-bottom:12px">
+            Copies the relay accepted, copies recorded without a relay, and copies refused or bounced — per weekly issue.
+            Acceptance is not a reader's eyes: no pixel and no redirect is in the message.
+          </div>
+          ${lineChart({
+            title: 'Copies per issue',
+            data: engine.reach.series.map((entry) => ({ label: entry.week.slice(5), sent: entry.sent, recorded: entry.recorded, failed: entry.failed + entry.bounced })),
+            series: [
+              { key: 'sent', label: 'Sent' },
+              { key: 'recorded', label: 'Recorded only' },
+              { key: 'failed', label: 'Refused or bounced' },
+            ],
+            format: (value) => String(value),
+            empty: 'No issue has gone out yet.',
+          })}
+        </div>`
+      : ''}
+  `;
 }
 
 function operatorSummary(audience) {
@@ -355,7 +551,7 @@ function operatorSummary(audience) {
           empty: 'Nobody is currently in the audience',
         })}
       </div>
-      <div class="card pad0">
+      <div class="card pad0" data-exclusions>
         <h2 style="padding:15px 17px 0">Who does not, and why</h2>
         ${table({
           headers: ['Person', 'Reason'],

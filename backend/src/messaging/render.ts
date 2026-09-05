@@ -52,7 +52,31 @@ export type CampaignCopy = {
   subject: string;
   headline: string;
   intro: string;
+  /**
+   * The newest posts on the public blog, carried in the issue so the weekly
+   * email is where the marketing library actually reaches people. Read from
+   * the record at compose time; absent, the section is not drawn.
+   */
+  posts?: Array<{ title: string; standfirst: string; url: string }>;
 };
+
+function postsBlock(posts: NonNullable<CampaignCopy['posts']>): string {
+  if (posts.length === 0) return '';
+  return `
+          <tr>
+            <td style="background:${BRAND.paper};padding:4px 16px 8px 16px">
+              <p style="margin:0 0 10px 0;font-size:12px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:${BRAND.muted}">From the blog</p>
+              ${posts
+                .map(
+                  (post) => `<p style="margin:0 0 10px 0;font-size:14px;line-height:1.5">
+                <a href="${esc(post.url)}" style="color:${BRAND.ink};font-weight:700;text-decoration:none">${esc(post.title)}</a><br>
+                <span style="color:${BRAND.muted}">${esc(post.standfirst)}</span>
+              </p>`,
+                )
+                .join('')}
+            </td>
+          </tr>`;
+}
 
 // --- HTML -------------------------------------------------------------------
 
@@ -131,6 +155,7 @@ function renderHtml(copy: CampaignCopy, recipient: Recipient, features: Feature[
               </table>
             </td>
           </tr>
+${postsBlock(copy.posts ?? [])}
 
           <tr>
             <td style="background:${BRAND.paper};padding:6px 20px 20px 20px">
@@ -187,6 +212,11 @@ function renderText(copy: CampaignCopy, recipient: Recipient, features: Feature[
 
   for (const feature of features) {
     lines.push(`* ${feature.title}`, `  ${feature.blurb}`, `  ${feature.cta}: ${absolute(feature.path)}`, '');
+  }
+
+  if (copy.posts && copy.posts.length > 0) {
+    lines.push('From the blog', '');
+    for (const post of copy.posts) lines.push(`* ${post.title}`, `  ${post.standfirst}`, `  ${post.url}`, '');
   }
 
   lines.push(

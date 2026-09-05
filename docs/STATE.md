@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,940 passing, 0 failing, 0 skipped, across 263 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 5,952 passing, 0 failing, 0 skipped, across 264 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 301 TypeScript files, 196,700 lines |
-| Application | 77 ES modules, 44,800 lines (including a service worker) |
-| API routes | 1,084 — 736 writes, 348 reads (49 public across both) |
+| Backend | 302 TypeScript files, 197,200 lines |
+| Application | 77 ES modules, 45,000 lines (including a service worker) |
+| API routes | 1,086 — 736 writes, 350 reads (49 public across both) |
 | Event types | 726 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 335, all classified for access |
 | Agents | 81 across the divisions the registry declares |
@@ -11487,6 +11487,80 @@ not where it ranks); no automatic re-sharing of old posts; no OAuth flow to
 obtain the LinkedIn or X token — each is issued in the network's developer
 console and set on the server; email goes to one operator-owned address, not to
 the consented newsletter audience, which keeps its weekly, per-person consent.
+
+### The newsletter engine: whether what goes out can arrive, and whether it has
+
+Asked for as "the newsletter engine screen, the same way". The weekly issue
+already composed itself, sent itself once per ISO week, recorded every copy as
+sent, recorded-only or failed, and took a bounce back. What it could not do was
+stand back and say whether any of that was worth anything: whether a relay
+existed, whether the sender would fail alignment, whether the links opened,
+whether the unsubscribe the headers promised actually verified, whether anybody
+was in the audience, when an issue last went out. `messaging/newsletterengine.ts`
+answers those the way `site/visibility.ts` answers them for the site — by
+reading the real thing — and the Newsletter screen carries it above the panels
+that were already there.
+
+**The deliverability sweep reads this week's rendered message, the
+configuration as loaded and the delivery record.** Eleven checks with weights
+that sum to a hundred: a relay (`SMTP_HOST`), sender alignment
+(`foreignSenderDomain` against `PUBLIC_BASE_URL`), every link https, one-click
+unsubscribe (`List-Unsubscribe` and `List-Unsubscribe-Post` on the built MIME
+*and* the signed token in the link verifying against this deployment's secret),
+a plain-text part carrying the same links, the subject within what a client
+shows whole, every link landing on something this deployment serves (the
+console, the landing page, or a public HTML route in the table), the HTML under
+Gmail's clipping threshold, an audience of at least one, the last issue's
+failed-and-bounced rate under five per cent, and an issue inside fourteen days.
+`healthScore` is the weights of what passes, banded, and **decides nothing**:
+the schedule and the button send whatever it says, because a newsletter that
+waits for a dashboard to go green is a newsletter that never goes out. On a
+development checkout it reads 38 and says exactly why — no relay, a sender on
+`construxvg.com` while the site is `localhost`, seventeen http links — which is
+the truth about a development checkout.
+
+**Reach is the delivery record, issue by issue.** Copies the relay accepted,
+copies recorded without a relay, copies refused, copies bounced later; totals
+and a per-week series the screen draws as a line. Acceptance is labelled as the
+relay's, never as a reader's: there is no pixel and no redirect in the message,
+and the limits on the screen say so.
+
+**The issue carries the blog.** `latestPosts` reads the three newest published
+posts — compiled notes and posts the marketing agent or a person published,
+never a draft — when the issue is composed, and `renderCampaign` sets them as a
+*From the blog* section in the HTML and the text parts. The weekly email is now
+where the marketing library actually reaches the people who signed up, without
+anybody editing anything, and the preview on the screen shows the same section
+because it is the same render.
+
+**A test send is the real message through the real relay.** `sendTestIssue`
+renders this week's issue for the operator, marks the subject `[TEST]`, sends
+it to their own address and returns the relay's answer; it creates no campaign
+and no delivery record, so the week is still free to go out. With no relay it
+is refused (`NO_RELAY`) rather than "recorded": a test that never leaves the
+building proves nothing about arrival.
+
+**Recommendations propose; the operator presses.** Each failing check names
+what it costs and the door that fixes it — issue now, send a test, review who
+bounced, see who is suppressed, or the variables to set on the server — once
+per door rather than once per check.
+
+Routes, operator-only: `GET /v1/newsletter/position`, `POST
+/v1/newsletter/test`. `tests/newsletterengine.test.ts` holds it: the posts in
+both parts of the message and the draft kept out; the sweep on a seeded
+platform and the alignment and https verdicts turning on the configuration as
+loaded; cadence and bounce health turning on the record once an issue goes out
+through an accepting relay and a bounce is recorded; one recommendation per
+door; the next scheduled send from day and hour; the test refused with no
+relay, sent through a stand-in transport and through a socket that answers like
+a relay, recorded against nothing; the routes refused to a customer. Driven in
+Chromium against a booted server.
+
+**Not built:** open and click tracking (deliberately — no pixel, no redirect);
+reading a bounce mailbox (a bounce reaches the record when somebody records it,
+as before); a DNS lookup of SPF and DMARC (the alignment check compares the
+sender domain to the site's, which is what alignment turns on, and does not
+query the zone).
 
 ---
 
