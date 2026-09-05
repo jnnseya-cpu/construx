@@ -699,6 +699,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
     requiresEvidence: true,
   }),
   def('SITE_DIARY_RECORDED', 'SiteDiary', 'CREATE', 'DELIVERY', { requiresEvidence: true }),
+  // The plant register. What is on hire, from whom, at what rate, from when;
+  // utilisation is derived from the diary and the site observations rather
+  // than recorded twice, so there is no event for it.
+  def('PLANT_ON_HIRED', 'PlantItem', 'CREATE', 'DELIVERY'),
+  def('PLANT_OFF_HIRED', 'PlantItem', 'UPDATE', 'DELIVERY'),
   // CN-WF-03. A shift is captured across a day on a device, often with no
   // signal, and submitted once at the end of it. The draft carries the id the
   // device minted, so a capture interrupted by a flat battery is the same

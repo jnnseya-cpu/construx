@@ -1248,9 +1248,11 @@ export async function confirm(
     };
   } else if (draft.task === 'EQUIPMENT_RECOGNITION') {
     const items = (extraction.items as Array<Record<string, unknown>> | undefined) ?? [];
-    // There is no plant register on this platform, so this does not pretend to
-    // update one. What plant was on site, working or standing, is a site
-    // observation — the same record a walker makes by hand.
+    // What plant was on site, working or standing, is a site observation —
+    // the same record a walker makes by hand. The plant register
+    // (`domain/plant.ts`) reads these observations as sightings of the items
+    // on hire, matched by description; it is not updated here directly,
+    // because a photograph says what was seen and not what was hired.
     const category = input.category ?? 'PROGRESS';
     if (!values(SITE_OBSERVATION_CATEGORY).includes(category)) {
       throw new DomainError(

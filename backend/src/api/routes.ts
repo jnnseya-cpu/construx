@@ -251,6 +251,7 @@ import { estateOverview } from '../billing/overview.ts';
 import { isPlatformGovernanceEvent } from '../goldenthread/eventTypes.ts';
 import * as evidence from '../evidence/registry.ts';
 import * as ingestion from '../evidence/pipeline.ts';
+import * as plant from '../domain/plant.ts';
 import * as siteMedia from '../site/media.ts';
 import * as blog from '../site/blog.ts';
 import * as conflicts from '../field/conflicts.ts';
@@ -20353,6 +20354,52 @@ export const ROUTES: Route[] = [
         entries,
       };
     },
+  },
+
+  // --- The plant register ------------------------------------------------------
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/plant',
+    readOnly: true,
+    description: 'Plant on hire: what it costs to date and this week, hours worked and standing from the diary, sightings, and what has not turned a wheel',
+    handler: (platform, ctx) => plant.plantPosition(projectContext(platform, ctx), ctx.query.get('today') ?? undefined),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/plant',
+    description: 'On-hire a plant item: what it is, from whom, at what rate and basis, from when',
+    schema: {
+      type: 'object',
+      required: ['description', 'rateMinor', 'rateBasis', 'onHireFrom'],
+      properties: {
+        description: stringField,
+        reference: { type: 'string' },
+        ownership: { type: 'string', enum: ['HIRED', 'OWNED'] },
+        supplierId: { type: 'string' },
+        supplierName: { type: 'string' },
+        rateMinor: { type: 'integer', minimum: 0 },
+        rateBasis: { type: 'string', enum: ['HOUR', 'DAY', 'WEEK'] },
+        onHireFrom: stringField,
+        expectedOffHire: { type: 'string' },
+        minimumHireDays: { type: 'integer', minimum: 0 },
+        purpose: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => plant.onHirePlant(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/plant/:plantId/off-hire',
+    description: 'Off-hire a plant item on a date, with the reason; a minimum term still to run is reported, not hidden',
+    schema: {
+      type: 'object',
+      required: ['offHiredOn'],
+      properties: { offHiredOn: stringField, reason: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      plant.offHirePlant(projectContext(platform, ctx), { plantId: ctx.params.plantId as string, ...body<{ offHiredOn: string; reason?: string }>(ctx) }),
   },
 
   // --- Ingestion -------------------------------------------------------------

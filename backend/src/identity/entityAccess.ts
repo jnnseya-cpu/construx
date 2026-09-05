@@ -449,6 +449,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   WorkOrder: { area: 'FIELD_EXECUTION' },
   ProgressMeasurement: { area: 'FIELD_EXECUTION' },
   SiteDiary: { area: 'FIELD_EXECUTION' },
+  PlantItem: { area: 'FIELD_EXECUTION' },
   SiteObservation: { area: 'FIELD_EXECUTION' },
   // The site visit lives with constraints rather than with field execution: it
   // is walked before construction starts, and FIELD_EXECUTION is phase-gated to

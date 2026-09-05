@@ -48,7 +48,7 @@ const VISION_TASKS = [
   {
     task: 'EQUIPMENT_RECOGNITION',
     label: 'Plant',
-    lands: 'a site observation naming the plant and whether it was standing',
+    lands: 'a site observation naming the plant and whether it was standing, which the plant register reads as a sighting',
   },
   { task: 'DEFECT_DETECTION', label: 'Defects', lands: 'one NCR per defect, each closed on its own' },
   {
@@ -657,6 +657,13 @@ export async function field(root) {
   // matters is the one furthest down.
   const walk = await api.read(`/v1/projects/${projectId}/observations/position`, 'FIELD_EXECUTION').catch(() => null);
 
+  // What is on hire, what it is costing, and whether the diary says it is
+  // working. Utilisation is derived from the diary lines above and the plant
+  // sightings the equipment reading files, never entered a second time.
+  const plant = await api.read(`/v1/projects/${projectId}/plant`, 'FIELD_EXECUTION').catch(() => null);
+  const register = await api.get('/v1/supply-chain?all=true').catch(() => null);
+  const gbp = (minor) => (Number(minor ?? 0) / 100).toLocaleString('en-GB', { style: 'currency', currency: 'GBP' });
+
   // Whether this deployment can actually transcribe. A recording is worth
   // filing either way — it is what a delay claim is argued from — but the
   // screen must not imply a transcript is coming when no provider can produce
@@ -787,6 +794,8 @@ export async function field(root) {
               { id: 'work-order', label: 'Raise work order', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
               { id: 'walk', label: 'Log site observation', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
               { id: 'close-walk', label: 'Close an observation', permitted: can('FIELD_EXECUTION', 'U'), reason: blockedReason('FIELD_EXECUTION', 'U') },
+              { id: 'plant-on', label: 'On-hire plant', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
+              { id: 'plant-off', label: 'Off-hire plant', permitted: can('FIELD_EXECUTION', 'U'), reason: blockedReason('FIELD_EXECUTION', 'U') },
               // The site visit sits under LOOKAHEAD_CONSTRAINTS rather than
               // FIELD_EXECUTION: a pre-construction walk happens before the
               // phase that gates field work opens, and gating it there would
@@ -918,6 +927,52 @@ export async function field(root) {
               ${
                 diary.lateEntries.length > 0
                   ? html`<div class="metric-sub" style="margin-top:6px">Written late: ${diary.lateEntries.slice(0, 8).map((e) => `${date(e.diaryDate)} (+${e.daysLate}d)`).join(' · ')}</div>`
+                  : ''
+              }
+            </div>`
+          : ''
+      }
+
+      ${
+        plant
+          ? html`<div class="card" style="margin-bottom:14px">
+              <h2>Plant on hire</h2>
+              <p class="metric-sub" style="margin-bottom:12px">${plant.statement}</p>
+              <div class="grid g4" style="margin-bottom:11px">
+                <div><div class="metric">${plant.onHire}</div><div class="metric-sub">on hire · ${plant.items.length - plant.onHire} off-hired</div></div>
+                <div><div class="metric">${gbp(plant.weeklyRunRateMinor)}</div><div class="metric-sub">a week on what is on hire, by the day and week rates</div></div>
+                <div><div class="metric">${gbp(plant.costToDateMinor)}</div><div class="metric-sub">to date, where the basis allows it</div></div>
+                <div><div class="metric ${raw(plant.standingCostMinor > 0 ? 'warn' : '')}">${gbp(plant.standingCostMinor)}</div><div class="metric-sub">paid for standing time the diary recorded</div></div>
+              </div>
+              ${table({
+                headers: ['Item', 'Hirer', 'Rate', 'On hire', 'Days', 'Worked / idle', 'Utilisation', 'Cost to date', ''],
+                align: ['', '', 'num', '', 'num', 'num', 'num', 'num', ''],
+                rows: plant.items.map((item) => [
+                  html`${item.description}${item.reference ? html` <span class="metric-sub">${item.reference}</span>` : ''}${item.purpose ? html`<br /><span class="metric-sub">${item.purpose}</span>` : ''}`,
+                  item.ownership === 'OWNED' ? 'Owned' : item.supplierName ?? '—',
+                  `${gbp(item.rateMinor)} / ${item.rateBasis.toLowerCase()}`,
+                  html`${date(item.onHireFrom)}${item.offHiredOn ? html` → ${date(item.offHiredOn)}` : item.expectedOffHire ? html`<br /><span class="metric-sub">expected off ${date(item.expectedOffHire)}</span>` : ''}${
+                    item.minimumHireShortfallDays ? html`<br /><span class="metric-sub">${item.minimumHireShortfallDays} day(s) of the minimum term still bill</span>` : ''
+                  }`,
+                  String(item.hireDays),
+                  item.diaryDays > 0 ? `${item.hoursWorked} / ${item.hoursIdle} h` : html`<span class="metric-sub">no diary line</span>`,
+                  item.utilisationPercent !== undefined ? pct(item.utilisationPercent, 0) : '—',
+                  html`${item.costToDateMinor !== undefined ? gbp(item.costToDateMinor) : '—'}<br /><span class="metric-sub">${item.costBasis}</span>`,
+                  html`${item.status === 'OFF_HIRE' ? badge('off hire', 'info') : badge('on hire', 'ok')}${
+                    item.idleAlert ? html`<br /><span class="metric-sub" style="color:var(--warn)">${item.idleAlert}</span>` : ''
+                  }${item.sightings > 0 ? html`<br /><span class="metric-sub">${item.sightings} sighting(s) in photographs, last ${date(item.lastSeen)}</span>` : ''}`,
+                ]),
+                empty: 'Nothing on the register. On-hire the plant that is on site so its cost and its standing time are visible.',
+              })}
+              ${
+                plant.unregistered.length > 0
+                  ? html`<h2 style="margin-top:14px">In the diary and not on the register</h2>
+                      <p class="metric-sub">Plant the diary says worked on site that matches nothing on hire here — either the register is behind, or a machine is being paid for outside it.</p>
+                      ${table({
+                        headers: ['As the diary names it', 'Days', 'Worked / idle', 'Last diary'],
+                        align: ['', 'num', 'num', ''],
+                        rows: plant.unregistered.map((entry) => [entry.description, String(entry.days), `${entry.hoursWorked} / ${entry.hoursIdle} h`, date(entry.lastDate)]),
+                      })}`
                   : ''
               }
             </div>`
@@ -1234,6 +1289,58 @@ export async function field(root) {
   const openFindings = (site?.findings ?? []).filter((f) => f.status === 'OPEN');
 
   const COMMANDS = {
+    'plant-on': {
+      title: 'On-hire plant',
+      intent:
+        'What the machine is, as the site diary will name it, who it is from, what it costs and from when. From here the ' +
+        'register reads the diary for its hours and the photographs for sightings; nothing about its use is entered twice.',
+      path: `/v1/projects/${projectId}/plant`,
+      submitLabel: 'On-hire',
+      fields: [
+        { name: 'description', label: 'What it is', type: 'text', placeholder: '13t excavator', hint: 'Exactly as the diary names it, so the hours match.' },
+        { name: 'reference', label: 'Fleet or asset number', type: 'text', required: false },
+        { name: 'ownership', label: 'Hired or owned', type: 'select', options: [{ value: 'HIRED', label: 'Hired' }, { value: 'OWNED', label: 'Owned' }] },
+        {
+          name: 'supplierId',
+          label: 'Hirer on the register',
+          type: 'select',
+          required: false,
+          placeholder: 'Not on the register',
+          options: (register?.suppliers ?? []).map((supplier) => ({ value: supplier.id, label: supplier.legalName })),
+        },
+        { name: 'supplierName', label: 'Hirer', type: 'text', required: false, hint: 'Required for hired plant not on the register.' },
+        { name: 'rateMinor', label: 'Rate', type: 'number', money: true, hint: 'In pounds; stored in pence.' },
+        { name: 'rateBasis', label: 'Per', type: 'select', options: [{ value: 'DAY', label: 'Day' }, { value: 'WEEK', label: 'Week' }, { value: 'HOUR', label: 'Hour worked' }] },
+        { name: 'onHireFrom', label: 'On hire from', type: 'date' },
+        { name: 'expectedOffHire', label: 'Expected off-hire', type: 'date', required: false },
+        { name: 'minimumHireDays', label: 'Minimum term (days)', type: 'number', min: 0, required: false },
+        { name: 'purpose', label: 'For', type: 'text', required: false, placeholder: 'Bulk dig, inlet works' },
+      ],
+      transform: (v) => ({
+        ...v,
+        ...(v.supplierId && register?.suppliers ? { supplierName: v.supplierName || register.suppliers.find((s) => s.id === v.supplierId)?.legalName } : {}),
+        ...(v.minimumHireDays !== undefined ? { minimumHireDays: Number(v.minimumHireDays) } : {}),
+      }),
+    },
+
+    'plant-off': {
+      title: 'Off-hire plant',
+      intent: 'The day the machine was released, and why. A minimum term still to run is reported, so the invoice is not a surprise.',
+      path: (v) => `/v1/projects/${projectId}/plant/${v.plantId}/off-hire`,
+      submitLabel: 'Off-hire',
+      fields: [
+        {
+          name: 'plantId',
+          label: 'Which item',
+          type: 'select',
+          options: (plant?.items ?? []).filter((item) => item.status === 'ON_HIRE').map((item) => ({ value: item.id, label: `${item.description}${item.reference ? ` (${item.reference})` : ''} — on hire since ${item.onHireFrom}` })),
+        },
+        { name: 'offHiredOn', label: 'Off-hired on', type: 'date', max: today() },
+        { name: 'reason', label: 'Why', type: 'text', required: false, placeholder: 'Dig complete' },
+      ],
+      transform: ({ plantId, ...rest }) => rest,
+    },
+
     'site-visit': {
       title: 'Record a site visit',
       intent:
@@ -2165,7 +2272,7 @@ export async function field(root) {
         title: 'Plant read from a photograph',
         intent:
           `${read} ${items.map((item) => `${item.count} × ${item.description} (${humanise(item.state)})`).join('; ')}. ` +
-          'There is no plant register on this platform, so this is filed as a site observation naming what was seen.',
+          'Filed as a site observation naming what was seen; the plant register reads it as a sighting of whatever is on hire under that description.',
         path,
         submitLabel: 'File the observation',
         fields: [

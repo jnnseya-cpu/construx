@@ -15,9 +15,9 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,805 passing, 0 failing, 0 skipped, across 256 files · plus 24 against a live Postgres 16 (the client and the ledger store), now also run in CI |
+| Tests | 5,817 passing, 0 failing, 0 skipped, across 257 files · plus 24 against a live Postgres 16 (the client and the ledger store), now also run in CI |
 | Typecheck | clean |
-| Backend | 296 TypeScript files, 190,700 lines |
+| Backend | 297 TypeScript files, 190,700 lines |
 | Application | 77 ES modules, 43,500 lines (including a service worker) |
 | API routes | 1,058 — 725 writes, 333 reads (48 of them public) |
 | Event types | 712 Golden Thread (closed) · the communication catalogue is separate and closed |
@@ -8640,6 +8640,37 @@ the Documents screen and the row says *Read · 2 pages*; a scan says what was
 seen and, on this deployment with no provider that can see, why no
 transcription is offered.
 
+## The plant register
+
+Plant reached the platform three ways and none was a register: the site diary
+recorded a machine's hours worked and standing each day, a photograph read by
+the equipment task filed what was seen as a site observation, and the estimate
+carried a plant cost head. Nobody could answer what was on hire now, what it
+was costing this week, or which machine had not turned a wheel since it
+arrived. `domain/plant.ts` records the hire — description as the diary names
+it, the hirer (from the register or by name; owned plant needs neither), the
+rate and its basis (hour worked, day or week), the on-hire date, an expected
+off-hire and the hirer's minimum term — under `PLANT_ON_HIRED`, and the
+release under `PLANT_OFF_HIRED` with a minimum term still to bill reported as
+a shortfall rather than hidden. Utilisation is **derived**, never entered: a
+diary line naming the machine (by fleet number or description, either way
+round, stated on the result) gives its hours worked and idle inside the hire
+window; a photograph reading naming it is a sighting. From those the position
+gives hire days, cost to date on the rate basis — whole weeks at a week rate,
+days at a day rate, hours worked at an hour rate, and for hourly plant named
+in no diary *no figure and the reason* rather than zero — utilisation, the
+share of the hire cost paid for standing time, and an alert for anything on
+hire a week or more and named in no diary. A diary line matching nothing on
+the register is reported as plant working on site that nobody has hired,
+which is a register that is behind or a machine paid for outside it. The
+Field screen carries the card beneath the diary with *On-hire plant* and
+*Off-hire plant* doors under the field authority; the equipment reading's
+copy no longer says there is no register. Driven in Chromium on the project
+on site: on-hire from the console, the card shows the rate, days and cost,
+the run rate is the day rate over five days, off-hire states the minimum-term
+shortfall. `plant.test.ts` covers the derivation against diaries and a
+sighting, every refusal, and the planner's read-only standing.
+
 ## The ledger in Postgres
 
 The schema had been verified against a live Postgres 16, the client too, and
@@ -8913,9 +8944,12 @@ parsing work, not wiring.
 - **Any semantic embedding** — the document index is feature hashing over words
   and word pairs, and the field is named `lexicalVector` because it finds a
   near-duplicate revision, not a paraphrase
-- **A plant register** — plant recognised in a photograph is filed as a site
-  observation naming what was seen and whether it was standing. There is no
-  register of plant on hire, and utilisation is not derived
+- ~~**A plant register**~~ — built; see *The plant register* below. Plant on
+  hire is recorded with its hirer, rate, basis and dates, and utilisation is
+  derived from the site diary's plant lines and the equipment reading's
+  sightings rather than entered a second time. What is not built: matching is
+  by description, stated on the result, not by a tag the machine carries; and
+  the hire is a record, not a contract with the hirer
 - **Deployment topology** — Terraform, Kong, MSK, RDS, S3
 - **Native Android and iOS clients** — the installed PWA covers the field case
   today, including offline capture, and the `ANDROID`/`IOS` event sources exist
