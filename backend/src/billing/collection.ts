@@ -5,6 +5,7 @@ import { ulid } from '../core/ids.ts';
 import type { Platform } from '../platform.ts';
 import { PACKAGES, type PackageTier } from './seats.ts';
 import { subscriptionPriceMinor } from '../group/agreement.ts';
+import { groupOfTenant } from '../group/directory.ts';
 import { purchasedBlocks } from './storage.ts';
 import { monthlySubscriptionCharge, purchasedSeatChargeMinor } from './subscription.ts';
 import type { Subscription } from './subscription.ts';
@@ -147,6 +148,18 @@ export function pastDue(
 }
 
 /**
+ * How long an unpaid period runs before the tenancy stops.
+ *
+ * The platform's grace, or the group's payment terms where the tenancy is a
+ * company of a group — its periods are lines on the group's statement, settled
+ * by the group on the terms it agreed, and a company stopped on day seven of a
+ * fourteen-day term would be stopped for a bill that was not yet late.
+ */
+function graceDaysFor(platform: Platform, tenantId: string): number {
+  return Math.max(config.billing.subscriptionGraceDays, groupOfTenant(platform, tenantId)?.billing.termsDays ?? 0);
+}
+
+/**
  * Raise the charge for a period that has fallen due.
  *
  * Idempotent by period, not by call. A scheduler that fires twice in a minute,
@@ -197,7 +210,6 @@ export function raiseCharge(
   // somebody signed up for from the one the process was born with.
   if (!platform.ledger.get({ refType: 'Subscription', refId: subscription.id })) return undefined;
 
-  const graceDays = config.billing.subscriptionGraceDays;
   const charge: SubscriptionCharge = {
     id: ulid(),
     tenantId,
@@ -207,7 +219,7 @@ export function raiseCharge(
     currency: platform.tenant(tenantId).defaultCurrency,
     periodStart,
     dueAt: periodStart,
-    graceEndsAt: new Date(Date.parse(periodStart) + graceDays * DAY_MS).toISOString(),
+    graceEndsAt: new Date(Date.parse(periodStart) + graceDaysFor(platform, tenantId) * DAY_MS).toISOString(),
     status: 'DUE',
     raisedAt: now.toISOString(),
     attempts: [],
@@ -253,6 +265,8 @@ export function raiseOpeningCharge(
 ): { charge: SubscriptionCharge; alreadyRaised: boolean } | undefined {
   const subscription = platform.subscription(tenantId);
   if (!subscription || subscription.status === 'CANCELLED') return undefined;
+  // A package the operator has given away owes nothing for its first month either.
+  if (subscription.grantedFree) return undefined;
   const amountMinor = subscriptionPriceMinor(platform, tenantId, PACKAGES[subscription.package].monthlyPriceMinor).amountMinor;
   if (amountMinor <= 0) return undefined;
   if (!platform.ledger.get({ refType: 'Subscription', refId: subscription.id })) return undefined;
@@ -276,7 +290,7 @@ export function raiseOpeningCharge(
     graceEndsAt:
       subscription.status === 'AWAITING_PAYMENT'
         ? now.toISOString()
-        : new Date(now.getTime() + config.billing.subscriptionGraceDays * DAY_MS).toISOString(),
+        : new Date(now.getTime() + graceDaysFor(platform, tenantId) * DAY_MS).toISOString(),
     status: 'DUE',
     raisedAt: now.toISOString(),
     attempts: [],

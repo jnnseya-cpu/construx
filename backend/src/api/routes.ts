@@ -1988,8 +1988,10 @@ export const ROUTES: Route[] = [
         tenantId,
         previousPackage: before.package,
         package: updated.package,
-        grantedFree: input.grantFree === true,
-        monthlyPriceMinor: input.grantFree === true ? 0 : definition.monthlyPriceMinor,
+        // Read back from the subscription, which is what the charge cycle reads.
+        grantedFree: updated.grantedFree === true,
+        status: updated.status,
+        monthlyPriceMinor: updated.grantedFree === true ? 0 : definition.monthlyPriceMinor,
         listPriceMinor: definition.monthlyPriceMinor,
         // `null` is unlimited, and is returned as null rather than as a
         // number this route invented.
@@ -2154,6 +2156,8 @@ export const ROUTES: Route[] = [
             tier: subscription.package,
             package: subscription.package,
             packageLabel: pkg.label,
+            // Given away by the operator: no monthly charge is raised for it.
+            grantedFree: subscription.grantedFree === true,
             status: subscription.status,
             renewsAt: subscription.renewsAt,
             // What the tenancy owes for the platform itself. A paid package
@@ -2174,7 +2178,8 @@ export const ROUTES: Route[] = [
             // Bought beyond the package. On the row, because "12 of 10" with no
             // explanation reads as a defect.
             seatsPurchased: purchasedSeats(platform.ledger, tenant.id),
-            monthlyPriceMinor: pkg.monthlyPriceMinor,
+            monthlyPriceMinor: subscription.grantedFree ? 0 : pkg.monthlyPriceMinor,
+            listPriceMinor: pkg.monthlyPriceMinor,
             monthlyPriceUsd: definition.monthlyPriceUsd,
             isolatedTenancy: pkg.isolatedTenancy,
             wallet: platform.wallet(tenant.id).snapshot(),
@@ -6997,10 +7002,8 @@ export const ROUTES: Route[] = [
           { id: person.id, name: person.name, email: person.email, tenantId: person.tenantId },
           'invited you to',
           `${platform.user(actor.actorId).name} set up ${result.company.name} on CONSTRUX under ${groupName} and named you its administrator. ` +
-            `Sign in at ${config.publicBaseUrl}/app with this email address — there is no password; a one-time code is emailed to you each time.` +
-            (result.openingCharge
-              ? ` The first month, ${formatMoney(result.openingCharge.amountMinor, BILLING_CURRENCY)}, is due before the company opens: pay it from ACU & Billing by card, or by transfer quoting ${result.openingCharge.paymentReference}.`
-              : ''),
+            `Sign in at ${config.publicBaseUrl}/app with this email address — there is no password; a one-time code is emailed to you each time. ` +
+            `The company is open now. Nothing is billed to you: its subscription is on ${groupName}'s statement, and AI credit is bought by topping up its wallet.`,
           { tenantId: result.company.tenantId },
         );
         invitations.push({ email: person.email, notified });
@@ -20376,7 +20379,12 @@ export const ROUTES: Route[] = [
           status: subscription.status,
           package: subscription.package,
           packageLabel: PACKAGES[subscription.package].label,
-          monthlyPriceMinor: PACKAGES[subscription.package].monthlyPriceMinor,
+          // What this tenancy is actually charged. A package the operator has
+          // given away costs nothing a month, and the screen says so rather
+          // than quoting a list price nobody will be asked for.
+          monthlyPriceMinor: subscription.grantedFree ? 0 : PACKAGES[subscription.package].monthlyPriceMinor,
+          listPriceMinor: PACKAGES[subscription.package].monthlyPriceMinor,
+          grantedFree: subscription.grantedFree === true,
           startedAt: subscription.startedAt,
           renewsAt: subscription.renewsAt,
         },
@@ -20402,6 +20410,14 @@ export const ROUTES: Route[] = [
         // passed while its grace period runs. The tenancy is still open; the
         // date it stops is named so nobody is surprised by the suspension.
         pastDue: collection.pastDue(charges),
+        // A company of a group pays nothing itself: the periods above are
+        // lines on the group's consolidated statement, settled by the group on
+        // its payment terms. Named so the screen stops asking this company's
+        // administrators for money that is not theirs to pay.
+        billedTo: (() => {
+          const group = groupOfTenant(platform, actor.tenantId);
+          return group ? { groupId: group.id, displayName: group.displayName, termsDays: group.billing.termsDays } : null;
+        })(),
         // The rails this deployment can take the payment on. Card when Stripe
         // is configured; a transfer always, recorded by the operator against
         // the reference above.

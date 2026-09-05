@@ -121,6 +121,16 @@ export type Subscription = {
   assignedIdentities: string[];
   startedAt: string;
   renewsAt: string;
+  /**
+   * The operator has given this package away: no monthly charge is raised for
+   * it, at the first month or any renewal. The wallet is untouched by it — the
+   * tenancy still tops up its own account before an engine will run.
+   *
+   * On the subscription rather than only on the event that decided it, because
+   * the event was all it was ever written to: the response said £0 a month and
+   * `raiseCharge` read the list price at every renewal. Absent means paid.
+   */
+  grantedFree?: boolean;
 };
 
 /**
@@ -222,9 +232,9 @@ export function revokeIdentity(subscription: Subscription, userId: string): Subs
   return { ...subscription, assignedIdentities: subscription.assignedIdentities.filter((id) => id !== userId) };
 }
 
-/** The monthly charge in pence. A suspended subscription is not billed. */
+/** The monthly charge in pence. A suspended subscription is not billed, and neither is one granted free of charge. */
 export function monthlySubscriptionCharge(subscription: Subscription): number {
-  return subscription.status === 'ACTIVE' ? PACKAGES[subscription.package].monthlyPriceMinor : 0;
+  return subscription.status === 'ACTIVE' && !subscription.grantedFree ? PACKAGES[subscription.package].monthlyPriceMinor : 0;
 }
 
 /**

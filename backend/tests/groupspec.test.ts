@@ -228,6 +228,8 @@ describe('§9.4 — rate cards are approved pricing, and they price the subscrip
     const expected = Math.floor(PACKAGES.CORE_PROJECT.monthlyPriceMinor * 0.75);
     assert.ok(added.openingCharge, 'no first month was charged');
     assert.equal(added.openingCharge.amountMinor, expected, 'the first month is at the group’s approved price, not the list price');
+    // Open before the group has paid: the company's administrators owe nothing.
+    assert.equal(platform.subscription(discountedId).status, 'ACTIVE');
 
     platform.recordSubscriptionPayment({ tenantId: discountedId, chargeId: added.openingCharge.id, method: 'BANK_TRANSFER', reference: 'BACS-HOMES-1', recordedBy: operator.id });
     assert.equal(platform.subscription(discountedId).status, 'ACTIVE');

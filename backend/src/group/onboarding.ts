@@ -369,7 +369,12 @@ export function addCompany(platform: Platform, actor: AuthContext, groupId: stri
     package: input.package,
     enterpriseName: displayName,
     trialGrant: false,
-    opensOn: 'FIRST_PAYMENT',
+    // A company under a group opens at once. Its administrators pay nothing:
+    // the subscription is a line on the group's consolidated statement and the
+    // group settles it on its payment terms. It used to wait AWAITING_PAYMENT
+    // with its own administrators told to pay the first month — the rule the
+    // group exists to replace.
+    opensOn: 'CREATION',
     // Priced once it is a company of the group: the agreement's rate card
     // applies to the first month like every month after it.
     deferOpeningCharge: true,

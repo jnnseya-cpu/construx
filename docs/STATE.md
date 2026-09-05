@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,977 passing, 0 failing, 0 skipped, across 267 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 5,985 passing, 0 failing, 0 skipped, across 268 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 304 TypeScript files, 198,400 lines |
 | Application | 77 ES modules, 45,450 lines (including a service worker) |
@@ -8317,9 +8317,12 @@ names the company rather than the actor's own. An address already in one of
 the group's companies becomes a second membership of the same identity; an
 address held outside the group is refused `EMAIL_IN_USE` before anything is
 created; the sixth company is refused `GROUP_FULL`. Each company is a
-tenancy like any other: its first month is charged, it waits
-`AWAITING_PAYMENT`, its wallet opens empty, and its administrators see the
-bill on ACU & Billing and can sign in at once. `POST
+tenancy like any other, and **open from creation**: its first month is raised
+at the group's price as a line on the group's statement, its wallet opens
+empty, and its administrators pay nothing themselves (see "Companies under a
+group never pay" below; this paragraph first said the company waited
+`AWAITING_PAYMENT` for its own administrators to pay, which was the rule the
+group exists to replace). `POST
 /v1/groups/:groupId/companies/:tenantId/administrators` (group admin) names a
 further administrator for one of the group's companies — a company outside
 the group reads as no company; somebody already there is refused rather than
@@ -11690,6 +11693,69 @@ administrator inside a customer's tenancy — a tenancy with none is named and
 the door offered is closure; a seat or storage fault produced on purpose (the
 seat cap refuses the over-assignment, so the check is asserted passing rather
 than driven failing); any read of what a tenancy is building.
+
+### A package granted free of charge owes nothing, and the tenancy still tops up
+
+Reported as: one account is exempt from any monthly cost but buys its ACUs by
+topping up. The operator's door for that — *Package* on Tenants & Users, with
+*Grant free of charge* — existed and recorded the decision on the
+`SUBSCRIPTION_PACKAGE_CHANGED` event; nothing read it. The response said £0 a
+month, `raiseCharge` read the list price at every renewal, and a signup waiting
+for its first month stayed waiting with the charge still due. **The grant is
+now a fact on the subscription** (`Subscription.grantedFree`), carried by every
+event that writes the entity (a seat event's diff used to be able to drop a
+field it did not write) and restored on rehydration. `monthlySubscriptionCharge`
+and `raiseOpeningCharge` return nothing for it, so no period is ever raised;
+granting writes off every period already raised and unpaid, with the decision
+as the reason, and opens a tenancy that was waiting for its first payment. The
+wallet is not touched: AI is bought by topping up, and the response says so.
+The same package granted free again changes nothing; withdrawing the grant
+(same package, unticked) charges again from the next renewal. The estate row
+badges *free of charge* and states £0 with the list price beside it; the
+customer's ACU & Billing says the package is granted free and where AI credit
+comes from. `tests/freegrant.test.ts` drives a paid signup through the grant,
+the renewal that raises nothing, the customer's and the operator's reads, the
+top-up, a seat change and a restart, the no-op and the withdrawal.
+
+### Companies under a group never pay; the group does
+
+Said by the customer, more than once: sub-enterprise administrators pay
+nothing; billing and the package are on the enterprise (group) account. A
+company added by the group administrator used to be created `AWAITING_PAYMENT`
+with an invitation telling its administrators the first month was due before
+it opened. Now it **opens at once**: `addCompany` creates it on creation, the
+first month is still raised at the group's agreed price after the company is
+attached — that is the line on the group's consolidated statement — and the
+invitation says the company is open, nothing is billed to them, AI credit is a
+top-up. A group company's periods run on the **group's payment terms**
+(`graceDaysFor` in `billing/collection.ts`: the larger of the platform grace
+and the group's `termsDays`), so a company is never stopped for a bill that was
+not yet late under the terms the group agreed. `GET /v1/billing/subscription`
+carries `billedTo` for a group company, and ACU & Billing says the period is on
+the group's statement, names who pays it, and offers no card button to the
+company. The Group screen's *Add a company* says the same. The group's own
+founding company is unchanged: it is the payer, and its exemption, where one is
+agreed, is the operator's free grant above. `groupsignup`, `groupfound` and
+`groupspec` tests assert the new rule; `groupfound` asserts the grace equals
+the group's terms.
+
+### Two things the console said badly
+
+**A validation failure inside a nested value vanished.** *Add a company to the
+group* answered `VALIDATION_FAILED — request body failed schema validation` and
+nothing else when the second administrator's name was missing: the failure's
+path was `administrators[1].name`, the form had no box of that name, and the
+detail was dropped. `lib/command.js` now lists every failure the form has no
+field for in the panel's own notice, so the sentence to correct is on the
+screen. The form also trims what it sends, upper-cases the cost centre code,
+says the code is two to eight letters or digits, and sends a half-named second
+administrator so the schema can say which half is missing rather than dropping
+the pair. **A dead sign-in code read as a typo.** One-time codes live in the
+server's memory for five minutes; a restart between *send* and *sign in* — a
+deploy, for instance — ends every code in flight, and the form then invited
+the person to retype a code that could never work again. The failure now says
+so and offers *Send a new code*, which restarts the challenge against the same
+address without leaving the page.
 
 ---
 

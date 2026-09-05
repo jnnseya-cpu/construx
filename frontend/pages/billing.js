@@ -75,18 +75,22 @@ export async function billing(root) {
         subscription && dueCharges.length > 0
           ? html`<div class="card ${raw(awaitingFirst ? 'warn' : '')}" style="margin-bottom:14px" data-subscription-due>
               <h2>
-                ${awaitingFirst
-                  ? 'Your first month is due before the platform opens'
-                  : subscription.pastDue
-                    ? `A subscription period is past due — the platform goes read-only on ${subscription.pastDue.graceEndsAt.slice(0, 10)}`
-                    : 'A subscription period is unpaid'}
+                ${subscription.billedTo
+                  ? `A subscription period is on ${subscription.billedTo.displayName}'s statement`
+                  : awaitingFirst
+                    ? 'Your first month is due before the platform opens'
+                    : subscription.pastDue
+                      ? `A subscription period is past due — the platform goes read-only on ${subscription.pastDue.graceEndsAt.slice(0, 10)}`
+                      : 'A subscription period is unpaid'}
                 ${badge(exact(subscription.outstandingMinor), awaitingFirst || subscription.pastDue ? 'bad' : 'warn')}
               </h2>
               <p class="metric-sub" style="margin:6px 0 12px">
-                ${awaitingFirst
-                  ? `${subscription.subscription.packageLabel} is ${exact(subscription.subscription.monthlyPriceMinor)} a month. Nothing on a paid package is free before it is paid: ` +
-                    `the tenancy exists and is read-only until the first month settles, and the month's AI allowance (${subscription.payment.allowancePercent}% of the price) is credited the moment it does.`
-                  : `Pay the period below to keep the tenancy open. Past its grace date the platform goes read-only until it is paid; the period's AI allowance is credited when it settles.`}
+                ${subscription.billedTo
+                  ? `Billed to ${subscription.billedTo.displayName}, not to this company. The period below is a line on the group's statement and the group settles it on its ${subscription.billedTo.termsDays}-day terms; nothing is due from you here. AI credit is separate: top up this company's wallet below.`
+                  : awaitingFirst
+                    ? `${subscription.subscription.packageLabel} is ${exact(subscription.subscription.monthlyPriceMinor)} a month. Nothing on a paid package is free before it is paid: ` +
+                      `the tenancy exists and is read-only until the first month settles, and the month's AI allowance (${subscription.payment.allowancePercent}% of the price) is credited the moment it does.`
+                    : `Pay the period below to keep the tenancy open. Past its grace date the platform goes read-only until it is paid; the period's AI allowance is credited when it settles.`}
               </p>
               ${table({
                 headers: ['Period from', 'Amount', 'Due', 'Pay by transfer, quoting', ''],
@@ -96,7 +100,9 @@ export async function billing(root) {
                   exact(charge.amountMinor),
                   charge.dueAt.slice(0, 10),
                   html`<code>${charge.paymentReference}</code>`,
-                  can('BILLING_ACU', 'U')
+                  subscription.billedTo
+                    ? html`<span class="metric-sub">Paid by ${subscription.billedTo.displayName}</span>`
+                    : can('BILLING_ACU', 'U')
                     ? subscription.payment.card
                       ? html`<button class="btn sm" data-pay-charge="${charge.id}">Pay by card</button>`
                       : html`<span class="metric-sub">Card payment is not configured on this deployment — pay by transfer and the operator records it</span>`
@@ -112,6 +118,16 @@ export async function billing(root) {
               <div>
                 <b>Subscription paid.</b> ${subscription.subscription.packageLabel}, ${exact(subscription.subscription.monthlyPriceMinor)} a month,
                 renews ${subscription.subscription.renewsAt.slice(0, 10)}. Each month's AI allowance is credited when that month is paid.
+              </div>
+            </div>`
+          : ''
+      }
+      ${
+        subscription && subscription.subscription.grantedFree
+          ? html`<div class="notice ok" style="margin-bottom:14px">
+              <div>
+                <b>${subscription.subscription.packageLabel}, granted free of charge.</b> No monthly subscription is raised for this
+                account. AI is a separate purchase: top up the wallet below and every engine runs against that credit, nothing else.
               </div>
             </div>`
           : ''

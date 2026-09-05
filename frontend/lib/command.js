@@ -372,18 +372,27 @@ export function command({ title, intent, path, fields, submitLabel = 'Submit', t
 
       const fieldErrors = error instanceof ApiError ? error.fieldErrors : [];
       let handled = 0;
+      const unplaced = [];
       for (const detail of fieldErrors) {
         const name = String(detail.path ?? detail.field ?? '').replace(/^\//, '');
         const box = host.querySelector(`[data-field="${CSS.escape(name)}"] .field-error`);
-        if (!box) continue;
+        if (!box) {
+          // A failure inside a nested value — `administrators[1].name` — has
+          // no box of its own. It used to vanish, and the person read a bare
+          // "VALIDATION_FAILED — request body failed schema validation" with
+          // nothing to correct. Kept, and said below.
+          unplaced.push(`${name || 'request'} ${detail.message ?? 'is invalid'}`);
+          continue;
+        }
         box.textContent = detail.message ?? 'Invalid';
         box.hidden = false;
         handled += 1;
       }
 
-      // A denial or a domain rule is about the command, not one field.
-      if (handled === 0) {
-        errorBox.textContent = `${error.code ? `${error.code} — ` : ''}${error.message}`;
+      // A denial or a domain rule is about the command, not one field — and so
+      // is a failure the form has no field for.
+      if (handled === 0 || unplaced.length > 0) {
+        errorBox.textContent = unplaced.length > 0 ? `${error.code ? `${error.code} — ` : ''}${unplaced.join('; ')}` : `${error.code ? `${error.code} — ` : ''}${error.message}`;
         errorBox.hidden = false;
       }
     }

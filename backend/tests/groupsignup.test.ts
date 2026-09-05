@@ -191,10 +191,12 @@ describe('JNN GLOBAL LTD signs up as a group of companies', () => {
       assert.ok(admin, `${email} was not created in the new company`);
       assert.deepEqual(admin.roles, ['ENTERPRISE_ADMIN']);
     }
-    // A tenancy like any other: its own group membership, its own first month.
+    // Its own group membership; open at once, because a company under a group
+    // pays nothing itself — the first month is a line on the group's statement.
     assert.equal(platform.tenant(tenantId).groupId, groupId);
-    assert.equal(platform.subscription(tenantId).status, 'AWAITING_PAYMENT');
+    assert.equal(platform.subscription(tenantId).status, 'ACTIVE');
     assert.equal(added.body.openingCharge.amountMinor, PACKAGES.CORE_PROJECT.monthlyPriceMinor);
+    assert.equal(collection.outstanding(platform, tenantId).length, 1, 'the period is raised, for the group to settle');
     assert.equal(platform.wallet(tenantId).snapshot().balanceMinor, 0, 'a group company was credited before anything was paid');
 
     // And its administrator can start a sign-in.
@@ -289,7 +291,10 @@ describe('JNN GLOBAL LTD signs up as a group of companies', () => {
     assert.equal(holding.awaitingFirstPayment, false);
     assert.equal(holding.outstandingMinor, 0);
     assert.equal(holding.paymentReference, null);
-    assert.equal(directory.body.companies.filter((c: { awaitingFirstPayment: boolean }) => c.awaitingFirstPayment).length, GROUP_LICENCE.maxCompanies - 1);
+    // The companies the administrator added never waited: a company under a
+    // group is open from creation and its periods are the group's to pay.
+    assert.equal(directory.body.companies.filter((c: { awaitingFirstPayment: boolean }) => c.awaitingFirstPayment).length, 0);
+    assert.equal(directory.body.companies.length, GROUP_LICENCE.maxCompanies);
   });
 
   it('gives a second group with the same name its own slug', async () => {

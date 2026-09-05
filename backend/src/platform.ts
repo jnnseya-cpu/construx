@@ -8,6 +8,7 @@ import { ACUWallet, TRIAL_GRANT_NOTE, type ACUCaps, type ACUEntry , type WalletS
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
 import {
   assignIdentity,
+  monthlySubscriptionCharge,
   packageForTier,
   purchasedSeatEntitlements,
   purchasedSeats,
@@ -527,6 +528,7 @@ export class Platform {
         assignedIdentities: [],
         startedAt: subscription.startedAt,
         renewsAt: subscription.renewsAt,
+        grantedFree: false,
       },
     });
 
@@ -951,9 +953,13 @@ export class Platform {
           tier: updated.tier,
           package: updated.package,
           includedSeats: PACKAGES[updated.package].includedSeats,
-          monthlyPriceMinor: PACKAGES[updated.package].monthlyPriceMinor,
+          monthlyPriceMinor: monthlySubscriptionCharge(updated),
           status: updated.status,
           assignedIdentities: updated.assignedIdentities,
+          // Every writer of this entity carries the grant, or the next seat
+          // event's diff removes it and a restart bills a customer the
+          // operator had exempted.
+          grantedFree: updated.grantedFree === true,
         },
       });
     }
@@ -1190,9 +1196,10 @@ export class Platform {
         tier: subscription.tier,
         package: subscription.package,
         includedSeats: PACKAGES[subscription.package].includedSeats,
-        monthlyPriceMinor: PACKAGES[subscription.package].monthlyPriceMinor,
+        monthlyPriceMinor: monthlySubscriptionCharge(subscription),
         status: subscription.status,
         assignedIdentities: subscription.assignedIdentities,
+        grantedFree: subscription.grantedFree === true,
       },
     });
   }
@@ -2008,9 +2015,10 @@ export class Platform {
         tier: updated.tier,
         package: updated.package,
         includedSeats: PACKAGES[updated.package].includedSeats,
-        monthlyPriceMinor: PACKAGES[updated.package].monthlyPriceMinor,
+        monthlyPriceMinor: monthlySubscriptionCharge(updated),
         status: updated.status,
         assignedIdentities: updated.assignedIdentities,
+        grantedFree: updated.grantedFree === true,
       },
     });
   }
@@ -2175,7 +2183,9 @@ export class Platform {
     }
 
     const subscription = this.subscription(input.tenantId);
-    if (subscription.package === input.package && !input.grantFree) return subscription;
+    // Nothing to do only when neither the package nor its price moves. The same
+    // package granted free, or a free grant withdrawn, is a change.
+    if (subscription.package === input.package && (subscription.grantedFree === true) === input.grantFree) return subscription;
 
     const target = PACKAGES[input.package];
     const assigned = subscription.assignedIdentities.length;
@@ -2199,7 +2209,9 @@ export class Platform {
     // has CORE_PROJECT and PROFESSIONAL_DELIVERY — so assigning one to the
     // other would write a value that is not a member of the type, and the
     // seat and price lookups read `package` anyway.
-    const updated: Subscription = { ...subscription, package: input.package };
+    // The grant lives on the subscription, so the charge cycle reads it at
+    // every renewal. A package change nobody said was free is paid for.
+    const updated: Subscription = { ...subscription, package: input.package, grantedFree: input.grantFree };
     this.#subscriptions.set(input.tenantId, updated);
 
     const evidenceId = ulid();
@@ -2257,6 +2269,26 @@ export class Platform {
       },
       evidenceRefs: [{ refType: 'EvidenceItem', refId: evidenceId }],
     });
+
+    if (input.grantFree) {
+      // Nothing is owed for a package that has been given away: the periods
+      // raised and unpaid are written off, on the record, with the decision
+      // that discharged them. A tenancy that was waiting for its first month
+      // opens — what its opening awaited was the payment, and the operator has
+      // decided none is due. The wallet is not touched: AI is still bought by
+      // topping up.
+      for (const charge of chargesFor(this, input.tenantId).filter((candidate) => candidate.status === 'DUE')) {
+        writeOffCharge(this, { chargeId: charge.id, reason: `Package granted free of charge by the operator: ${input.reason}` });
+      }
+      if (updated.status === 'AWAITING_PAYMENT') {
+        return this.setSubscriptionStatus({
+          tenantId: input.tenantId,
+          status: 'ACTIVE',
+          reason: `Package ${input.package} granted free of charge; the tenancy opens with nothing owed: ${input.reason}`,
+          decidedBy: input.decidedBy,
+        });
+      }
+    }
 
     return updated;
   }

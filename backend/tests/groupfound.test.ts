@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import type { Server } from 'node:http';
 import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
-import { groupDirectory, groupRolesFor } from '../src/group/directory.ts';
+import * as collection from '../src/billing/collection.ts';
+import { config } from '../src/config.ts';
+import { groupDirectory, groupOf, groupRolesFor } from '../src/group/directory.ts';
 import { addCompany, foundGroup } from '../src/group/onboarding.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
@@ -69,7 +71,15 @@ describe('founding a group from an existing company', () => {
     assert.equal(added.administrators.length, 2);
     assert.ok(added.administrators.every((person) => platform.user(person.id).roles.includes('ENTERPRISE_ADMIN')));
     assert.equal(groupDirectory(platform, groupId).companies.length, 2);
-    assert.ok(added.openingCharge, 'a paid package raises its first month; the company opens when it is paid');
+    assert.ok(added.openingCharge, 'a paid package raises its first month, on the group’s statement');
+    assert.equal(platform.subscription(added.company.tenantId).status, 'ACTIVE', 'a company under a group opens at once; its administrators pay nothing');
+    // The period runs on the group's payment terms, not the platform's grace:
+    // a company stopped on day seven of a fourteen-day term would be stopped
+    // for a bill that was not yet late.
+    const charge = collection.chargesFor(platform, added.company.tenantId)[0]!;
+    const termsDays = groupOf(platform, groupId).billing.termsDays;
+    assert.ok(termsDays >= 14);
+    assert.equal(Math.round((Date.parse(charge.graceEndsAt) - Date.parse(charge.dueAt)) / 86_400_000), Math.max(termsDays, config.billing.subscriptionGraceDays));
   });
 
   it('gives a second group a distinct slug when two companies share a name', () => {

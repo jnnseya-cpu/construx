@@ -304,31 +304,36 @@ export async function group(root) {
     if (button.dataset.command === 'company') {
       const result = await command({
         title: 'Add a company to the group',
-        intent: `A new organisation under ${held.displayName}: its own tenancy, people, records and wallet. Its first month is charged and it opens when that is paid — the administrators you name are invited by email and see the bill on ACU & Billing. ${companies.length} of ${maxCompanies} companies used.`,
+        intent: `A new organisation under ${held.displayName}: its own tenancy, people, records and wallet, open at once. Its administrators pay nothing — the subscription is a line on the group's statement, settled by the group; they are invited by email and top up the company's own AI wallet. ${companies.length} of ${maxCompanies} companies used.`,
         path: `/v1/groups/${held.id}/companies`,
         submitLabel: 'Add the company',
         fields: [
           { name: 'displayName', label: 'Company name', placeholder: 'JNN Homes Ltd' },
-          { name: 'code', label: 'Cost centre code', placeholder: 'Derived from the name if left blank', required: false },
+          { name: 'code', label: 'Cost centre code', placeholder: 'Derived from the name if left blank', required: false, hint: '2 to 8 letters or digits, unique in the group — JNNH, not the company name' },
           { name: 'jurisdiction', label: 'Jurisdiction', type: 'select', options: (directory.jurisdictions ?? []).map((j) => ({ value: j.code, label: j.name })), value: 'GB' },
           { name: 'currency', label: 'Currency', type: 'select', options: (directory.currencies ?? []).map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` })), value: currency },
           { name: 'package', label: 'Package', type: 'select', options: (directory.packages ?? []).map((p) => ({ value: p.package, label: `${p.label} — ${money(p.monthlyPriceMinor, 'GBP')} a month` })) },
           { name: 'admin1Name', label: 'First administrator — name', placeholder: 'Rowan Blake' },
           { name: 'admin1Email', label: 'First administrator — email', placeholder: 'rowan@company.com' },
-          { name: 'admin2Name', label: 'Second administrator — name', placeholder: 'Optional', required: false },
+          { name: 'admin2Name', label: 'Second administrator — name', placeholder: 'Optional', required: false, hint: 'Both name and email, or neither' },
           { name: 'admin2Email', label: 'Second administrator — email', placeholder: 'Optional', required: false },
         ],
         transform: (values) => {
-          const administrators = [{ name: values.admin1Name, email: values.admin1Email }];
-          if (values.admin2Email) administrators.push({ name: values.admin2Name, email: values.admin2Email });
-          const payload = { displayName: values.displayName, jurisdiction: values.jurisdiction, currency: values.currency, package: values.package, administrators };
-          if (values.code) payload.code = values.code;
+          const clean = (value) => String(value ?? '').trim();
+          const administrators = [{ name: clean(values.admin1Name), email: clean(values.admin1Email) }];
+          // Either half of the second administrator names a person; the
+          // schema then says what is missing rather than the pair being
+          // silently dropped.
+          if (clean(values.admin2Email) || clean(values.admin2Name)) administrators.push({ name: clean(values.admin2Name), email: clean(values.admin2Email) });
+          const payload = { displayName: clean(values.displayName), jurisdiction: values.jurisdiction, currency: values.currency, package: values.package, administrators };
+          const code = clean(values.code).toUpperCase();
+          if (code) payload.code = code;
           return payload;
         },
       });
       if (result) {
         const sent = (result.invitations ?? []).map((i) => `${i.email} · ${String(i.notified).toLowerCase()}`).join(', ');
-        toast(`${result.company.name} added`, result.openingCharge ? `First month ${money(result.openingCharge.amountMinor, currency)} due · quote ${result.openingCharge.paymentReference}. Invitations: ${sent}` : `Invitations: ${sent}`, 'ok');
+        toast(`${result.company.name} added and open`, result.openingCharge ? `First month ${money(result.openingCharge.amountMinor, currency)} on the group's statement · quote ${result.openingCharge.paymentReference}. Invitations: ${sent}` : `Invitations: ${sent}`, 'ok');
         again();
       }
     }

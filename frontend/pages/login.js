@@ -325,7 +325,39 @@ function wireCredentials() {
       // A wrong code is worth another attempt against the same challenge; a
       // failure at the email step means starting over.
       if ((challenge || factor) && /code|challenge|mfa|verification/i.test(String(error.message))) {
-        fail(`${error.message} — check the code and try again.`);
+        // The platform says the same thing for a mistyped code, a code older
+        // than five minutes, a code from an earlier request, and a challenge
+        // the server no longer holds — it keeps them in memory, so a restart
+        // between "send" and "sign in" ends every code in flight. Retyping
+        // cannot recover three of those four; a fresh code recovers all of
+        // them, so the door to one is here rather than a reload away.
+        const email = challenge?.email ?? emailInput.value.trim();
+        render(
+          errorHost,
+          html`<div class="notice err" style="margin-top:12px">
+            <div>
+              ${error.message}. Check the code — and if it is more than five minutes old, from an earlier request, or the
+              platform was updated since it was sent, it will not work again.
+              <button class="btn quiet sm" type="button" data-new-code style="margin-left:8px">Send a new code</button>
+            </div>
+          </div>`,
+        );
+        errorHost.querySelector('[data-new-code]')?.addEventListener('click', async () => {
+          clearError();
+          submit.disabled = true;
+          try {
+            challenge = null;
+            factor = null;
+            factorField.hidden = true;
+            codeInput.value = '';
+            askForCode(await api.post('/v1/auth/login', { email }, { anonymous: true }), email);
+            codeHint.textContent = `A new code has been sent to ${email}. Codes sent before it no longer work.`;
+          } catch (again) {
+            fail(String(again.message));
+          } finally {
+            submit.disabled = false;
+          }
+        });
       } else {
         challenge = null;
         factor = null;

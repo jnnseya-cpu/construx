@@ -256,6 +256,10 @@ export async function tenants(root) {
                 // counted in none of the figures on the screens around this one.
                 tenant.demonstration ? badge('demonstration', 'info') : ''
               }${
+                // The operator has given this package away: no monthly charge
+                // is raised. The wallet is still the tenancy's own to fund.
+                tenant.grantedFree ? badge('free of charge', 'ai') : ''
+              }${
                 // What the estate sweep found wrong with this tenancy, on the
                 // row, so the register and the engine tell one story.
                 (attention.get(tenant.id) ?? []).map((flag) => badge(flag, flag === 'ready to delete' ? 'neutral' : 'bad'))
@@ -1118,7 +1122,8 @@ export async function tenants(root) {
             name: 'grantFree',
             label: 'Grant free of charge',
             type: 'checkbox',
-            hint: 'No monthly charge is raised for this package at renewal',
+            value: tenant?.grantedFree === true,
+            hint: 'No monthly charge is raised for this package — not the first month, not a renewal. Any period already raised and unpaid is written off, and a tenancy waiting for its first payment opens. Untick to charge again from the next renewal.',
           },
           { name: 'reason', label: 'Reason', hint: 'Recorded as evidence against this decision' },
         ],
@@ -1127,7 +1132,7 @@ export async function tenants(root) {
       if (result) {
         toast(
           `${tenant?.legalName ?? 'Tenancy'} — ${result.package}`,
-          `${result.grantedFree ? 'Granted free of charge. ' : `${money(result.monthlyPriceMinor)} a month. `}` +
+          `${result.grantedFree ? `Granted free of charge${result.status === 'ACTIVE' ? ', open' : ''}. ` : `${money(result.monthlyPriceMinor)} a month. `}` +
             `${result.includedSeats === null ? 'Unlimited' : result.includedSeats} seats, ${result.storageGb} GB. ` +
             'The wallet is untouched — this tenancy still funds its own AI spend.',
           'ok',
