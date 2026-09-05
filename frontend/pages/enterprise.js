@@ -1,4 +1,4 @@
-import { api } from '../lib/api.js';
+import { api, session } from '../lib/api.js';
 import { badge, date, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
 import { blockedReason, can, openProject, state, tenantGrantableRoles } from '../app.js';
 import { command, commandBar } from '../lib/command.js';
@@ -378,8 +378,8 @@ export async function enterprise(root) {
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Portfolios</h2>
         ${table({
-          headers: ['Portfolio', 'Governance', 'Region', 'Budget target', 'Cadence', 'Risk appetite'],
-          align: ['', '', '', 'num', '', ''],
+          headers: ['Portfolio', 'Governance', 'Region', 'Budget target', 'Cadence', 'Risk appetite', ''],
+          align: ['', '', '', 'num', '', '', 'num'],
           rows: portfolios.portfolios.map((p) => [
             p.name,
             p.governanceModel,
@@ -389,6 +389,11 @@ export async function enterprise(root) {
             p.targets?.budgetMinor ? money(p.targets.budgetMinor) : '—',
             humanise(p.reportingCadence ?? ''),
             p.riskAppetite ? `${p.riskAppetite.costTolerancePercent}% cost · ${p.riskAppetite.scheduleToleranceDays}d schedule` : '—',
+            // A portfolio goes when nothing live is filed under it; the platform
+            // refuses otherwise and names the projects. The record is kept.
+            can('ENTERPRISE_STRUCTURE', 'A')
+              ? html`<button class="btn quiet danger" data-delete-portfolio="${p.id}" data-name="${p.name}">Delete</button>`
+              : '',
           ]),
           empty: 'No portfolios',
         })}
@@ -397,8 +402,8 @@ export async function enterprise(root) {
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Project control</h2>
         ${table({
-          headers: ['Project', 'Sector', 'Phase', 'Progress', 'Cost', 'Schedule', 'Risk', 'Open', 'Value'],
-          align: ['', '', '', 'num', '', '', 'num', 'num', 'num'],
+          headers: ['Project', 'Sector', 'Phase', 'Progress', 'Cost', 'Schedule', 'Risk', 'Open', 'Value', ''],
+          align: ['', '', '', 'num', '', '', 'num', 'num', 'num', 'num'],
           rows: projects.map((p) => [
             p.name,
             sectorLabel(p.sectorType),
@@ -411,6 +416,12 @@ export async function enterprise(root) {
             p.riskScore === undefined ? '—' : String(p.riskScore),
             String(p.openIssues),
             money(p.contractValueMinor, p.currency),
+            // The record is kept; the project leaves the estate and takes no
+            // further command. The platform refuses where money is certified or
+            // a contract is executed, and says which.
+            can('PROJECT_SETUP', 'A')
+              ? html`<button class="btn quiet danger" data-delete-project="${p.projectId}" data-name="${p.name}">Delete</button>`
+              : '',
           ]),
           empty: 'No projects',
         })}
@@ -871,6 +882,54 @@ export async function enterprise(root) {
       toast('Could not do that', error.message, 'err');
     }
   });
+
+  // Deleting a portfolio or a project. Each takes a reason the record keeps;
+  // the platform decides whether it may go and says why not otherwise — a
+  // portfolio still holding projects, a project with certified money or an
+  // executed contract — and the refusal is shown as a refusal.
+  root.querySelectorAll('[data-delete-portfolio]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const portfolioId = button.getAttribute('data-delete-portfolio');
+      const result = await command({
+        title: `Delete ${button.getAttribute('data-name')}`,
+        intent:
+          'The portfolio leaves the estate and its record is kept. It cannot go while a project is still filed under it — delete or move those first.',
+        path: `/v1/portfolios/${portfolioId}/delete`,
+        submitLabel: 'Delete the portfolio',
+        fields: [{ name: 'reason', label: 'Why', type: 'textarea', hint: 'At least ten characters. This is the sentence the record keeps.' }],
+      });
+      if (result) await draw();
+    }),
+  );
+  root.querySelectorAll('[data-delete-project]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const projectId = button.getAttribute('data-delete-project');
+      const result = await command({
+        title: `Delete ${button.getAttribute('data-name')}`,
+        intent:
+          'The project leaves the estate, every screen and the picker, and takes no further command. Its record is kept and stays readable by its id. Refused where money has been certified or a contract is executed.',
+        path: `/v1/projects/${projectId}/delete`,
+        submitLabel: 'Delete the project',
+        fields: [{ name: 'reason', label: 'Why', type: 'textarea', hint: 'At least ten characters. This is the sentence the record keeps.' }],
+      });
+      if (!result) return;
+      // The workspace was on the project just deleted: move to another, or to
+      // none, rather than leaving a deleted project as the workspace.
+      if (state.session?.projectId === projectId) {
+        const listed = await api.get('/v1/projects').catch(() => ({ projects: [] }));
+        const next = (listed.projects ?? []).find((project) => (project.id ?? project.projectId) !== projectId);
+        if (next) {
+          await openProject(next.id ?? next.projectId);
+          return;
+        }
+        session.set({ ...session.get(), projectId: null });
+        state.session = session.get();
+        state.project = null;
+        state.gate = null;
+      }
+      await draw();
+    }),
+  );
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');

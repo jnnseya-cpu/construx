@@ -4,6 +4,7 @@ import { classifyEntity } from '../identity/entityAccess.ts';
 import { evaluateAccess } from '../identity/abac.ts';
 import { AUTHZ_OPTIONS } from '../engines/context.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
+import { livePortfolios, liveProjects } from './structure.ts';
 
 /**
  * The enterprise position, computed rather than assembled in a browser.
@@ -206,7 +207,7 @@ export function portfolioForecast(
 ): PortfolioForecast {
   authorise(ctx, 'ENTERPRISE_STRUCTURE', 'R');
 
-  const projects = ctx.ledger.listByTenant(ctx.tenantId, 'Project');
+  const projects = liveProjects(ctx.ledger, ctx.tenantId);
   const rows: PortfolioForecast['projects'] = [];
   const notSimulated: PortfolioForecast['notSimulated'] = [];
   const currencies = new Set<string>();
@@ -298,7 +299,7 @@ export function changeWindow(ctx: EngineContext, from: string, to: string, sampl
   authorise(ctx, 'ENTERPRISE_STRUCTURE', 'R');
 
   const names = new Map<string, string>();
-  for (const record of ctx.ledger.listByTenant(ctx.tenantId, 'Project')) {
+  for (const record of liveProjects(ctx.ledger, ctx.tenantId)) {
     names.set(record.refId, String(record.state.name ?? record.refId));
   }
   // Tenant-level governance — creating a portfolio, changing a role, updating a
@@ -386,7 +387,7 @@ function scheduleStatus(delayDays: number, severity: string): 'ON_TRACK' | 'AT_R
 export function enterpriseCommand(ctx: EngineContext): EnterpriseCommand {
   authorise(ctx, 'ENTERPRISE_STRUCTURE', 'R');
 
-  const projects = ctx.ledger.listByTenant(ctx.tenantId, 'Project');
+  const projects = liveProjects(ctx.ledger, ctx.tenantId);
   const withheld: string[] = [];
 
   const byPhase: Record<string, number> = {};
@@ -553,7 +554,7 @@ export function enterpriseCommand(ctx: EngineContext): EnterpriseCommand {
  * and a view that hid it would hide the thing somebody has to go and correct.
  */
 function regionRows(ctx: EngineContext, rows: ProjectRow[]): RegionRow[] {
-  const portfolios = ctx.ledger.listByTenant(ctx.tenantId, 'Portfolio');
+  const portfolios = livePortfolios(ctx.ledger, ctx.tenantId);
   const regionOf = new Map<string, string | null>();
   const byRegion = new Map<string | null, RegionRow & { currencies: Set<string> }>();
 

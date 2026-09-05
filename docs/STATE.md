@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,996 passing, 0 failing, 0 skipped, across 269 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,009 passing, 0 failing, 0 skipped, across 271 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 305 TypeScript files, 198,950 lines |
-| Application | 78 ES modules, 45,840 lines (including a service worker) |
-| API routes | 1,094 — 740 writes, 354 reads (49 public across both) |
+| Backend | 305 TypeScript files, 199,200 lines |
+| Application | 78 ES modules, 45,920 lines (including a service worker) |
+| API routes | 1,096 — 742 writes, 354 reads (49 public across both) |
 | Event types | 726 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 335, all classified for access |
 | Agents | 81 across the divisions the registry declares |
@@ -11863,6 +11863,67 @@ charged and marks the plan `covered`; `tenantSubscriptionItems` prices a
 granted-free subscription at nothing with the reason in the price version; the
 Group screen's cells say *covered by the group's subscription* and *written
 off* rather than a figure.
+
+### The founding administrator owns the company
+
+Reported as a Site Services screen with sixty-three locked doors and the
+instruction that none of it may be a placeholder. The doors were not
+placeholders; the person could not open them. Every account's first person was
+created as `ENTERPRISE_ADMIN` and nothing more — the mandate to bring the
+organisation in — and that role is read-only on Site Services and nearly every
+delivery area. Nobody may change their own roles (`SELF_ROLE_CHANGE`), so a
+one-person company was trapped: every delivery door locked, and no second
+person with the authority to unlock them. `OWNER` was defined long ago as
+everything anybody in the tenancy may do, for exactly the people running the
+tenancies being sold; the founder is that person.
+
+**Founders are owners.** Public signup, the operator's onboarding and a
+group's add-company and found-a-group all create the first administrator as
+`['OWNER', 'ENTERPRISE_ADMIN']`. **Companies created before the rule are
+brought under it at boot**: `Platform.ownFoundingAdministrators` makes each
+active administrator an owner in every open tenancy where nobody holds anything
+but the administrator's role — so nobody could have changed anybody's roles —
+recorded as the system's `USER_ROLE_ASSIGNED` with the reason and the date. A
+tenancy that has organised its roles is left exactly as it is; a company with
+two administrators and nobody else is included, since either could have
+promoted the other. Idempotent, said on stdout when it changes something, one
+writer of a role change (`#applyRoles`) shared with the governed command so the
+two cannot drift. The seat is unchanged: owner and administrator are the same
+seat class. `founders.test.ts` covers the trap, the reconciliation, the
+untouched company, idempotence and the seat; signup, group signup and
+onboarding tests assert the two roles at creation.
+
+**A bar where every door is locked now says why, once, on the screen.**
+`commandBar` appends a sentence when three or more doors are all refused —
+the same reason the tooltip carried, plus where roles are changed — instead of
+sixty padlocks and no words. A screen belonging to a private module the
+company does not hold stays absent rather than locked, as before: that is the
+module gate's requirement, and it is the operator who grants the module.
+
+### A project or a portfolio can be deleted
+
+Asked for plainly. `POST /v1/projects/:projectId/delete` (`PROJECT_SETUP` `A`)
+and `POST /v1/portfolios/:portfolioId/delete` (`ENTERPRISE_STRUCTURE` `A`),
+each with a reason of ten characters or more that the record keeps.
+`PROJECT_DELETED` and `PORTFOLIO_DELETED` are appended; nothing is removed
+from the chain, and a deleted project stays readable by its id with
+`status: DELETED`, who deleted it and why. It leaves the estate: the project
+and portfolio listings, the enterprise rollup, portfolio performance, cost
+intelligence, the group's reporting, the ETABLIX cash position and the
+morning briefing all read `liveProjects` / `livePortfolios`; the picker drops
+it and the console moves to another project, or to none, if the deleted one
+was the workspace; and every project-scoped command is refused
+(`PROJECT_DELETED`, 409) at `projectContext`, where all of them pass. Two
+refusals: a project on which a payment certificate has been issued
+(`PROJECT_HAS_CERTIFIED_PAYMENTS`) or a contract executed
+(`PROJECT_HAS_EXECUTED_CONTRACT`) is closed out, not deleted; a portfolio
+still holding a live project (`PORTFOLIO_HOLDS_PROJECTS`) names the projects
+and waits for them to go first, each on its own record. A project cannot be
+filed under a deleted portfolio. Doors: *Delete* on every portfolio and
+project row of Enterprise & Portfolio, shown only to a role that may approve
+the act. `structuredelete.test.ts` covers the authority, the reason, the
+listing, the kept record, the refused command, both refusals and the
+portfolio's order of operations; both were driven in Chromium.
 
 ---
 

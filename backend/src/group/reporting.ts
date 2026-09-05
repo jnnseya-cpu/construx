@@ -4,6 +4,7 @@ import type { AuthContext } from '../identity/auth.ts';
 import type { Platform } from '../platform.ts';
 import { GROUP_ROLES, groupOf, groupOfTenant, type GroupRoleName } from './directory.ts';
 import { issuancesOf } from './issuance.ts';
+import { liveProjects } from '../domain/structure.ts';
 
 /**
  * Reporting grants and grant-filtered group reports (enterprise
@@ -194,9 +195,9 @@ export function readMetric(platform: Platform, tenantId: string, metric: ReportM
   const tenant = platform.tenant(tenantId);
   switch (metric) {
     case 'projects.count':
-      return { value: platform.ledger.listByTenant(tenantId, 'Project').length, unit: 'count', source: 'construx', asOf };
+      return { value: liveProjects(platform.ledger, tenantId).length, unit: 'count', source: 'construx', asOf };
     case 'projects.contract_value': {
-      const projects = platform.ledger.listByTenant(tenantId, 'Project').map((record) => record.state);
+      const projects = liveProjects(platform.ledger, tenantId).map((record) => record.state);
       const value = projects.reduce((sum, project) => sum + (typeof project.contractValueMinor === 'number' ? project.contractValueMinor : 0), 0);
       return { value, unit: 'money', currency: tenant.defaultCurrency, source: 'construx', asOf };
     }

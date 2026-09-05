@@ -227,6 +227,11 @@ export function createProject(
   assertOrder(input.plannedStart, input.plannedCompletion, 'plannedStart', 'plannedCompletion');
 
   const portfolio = ctx.ledger.require({ refType: 'Portfolio', refId: input.portfolioId });
+  if (portfolio.state.status === 'DELETED') {
+    throw new DomainError('PORTFOLIO_DELETED', `${String(portfolio.state.name)} was deleted on ${String(portfolio.state.deletedAt ?? '').slice(0, 10)}; file the project under a live portfolio.`, 409, [
+      { field: 'portfolioId', message: 'That portfolio has been deleted' },
+    ]);
+  }
 
   // The project has to sit inside the portfolio it is filed under.
   //
@@ -312,6 +317,129 @@ export function createProject(
   );
 
   return { projectId, phase: 'CONCEPT' };
+}
+
+/**
+ * Whether a project is still part of the estate. A deleted project keeps every
+ * record it ever had — the chain is append-only — and leaves every register,
+ * rollup and picker.
+ */
+export function isLiveProject(state: Record<string, unknown>): boolean {
+  return state.status !== 'DELETED';
+}
+
+/** The tenancy's projects that have not been deleted. What every listing and rollup should read. */
+export function liveProjects(ledger: EngineContext['ledger'], tenantId: string): ReturnType<EngineContext['ledger']['listByTenant']> {
+  return ledger.listByTenant(tenantId, 'Project').filter((record) => isLiveProject(record.state));
+}
+
+/** The portfolios that have not been deleted. */
+export function livePortfolios(ledger: EngineContext['ledger'], tenantId: string): ReturnType<EngineContext['ledger']['listByTenant']> {
+  return ledger.listByTenant(tenantId, 'Portfolio').filter((record) => record.state.status !== 'DELETED');
+}
+
+/**
+ * Delete a project.
+ *
+ * Asked for plainly: a project can be deleted. The record is kept — every
+ * event on the project's chain stays where it is and readable by its id — and
+ * the project leaves the estate: the project list, the picker, every rollup,
+ * and every command, which refuses it from here on. Two things stop it. A
+ * project on which money has been certified is a financial record with a
+ * counterparty, and is closed out rather than deleted; a project with an
+ * executed contract is a live liability, and the contract is what governs its
+ * end. Everything else — a test project, a duplicate, a job that never started
+ * — goes, with the reason on the record.
+ */
+export function deleteProject(ctx: EngineContext, input: { reason: string }): { projectId: string; deletedAt: string } {
+  authorise(ctx, 'PROJECT_SETUP', 'A');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  if (!isLiveProject(project.state)) {
+    throw new DomainError('PROJECT_ALREADY_DELETED', `${String(project.state.name)} was deleted on ${String(project.state.deletedAt ?? '').slice(0, 10)}`, 409);
+  }
+  if (input.reason.trim().length < 10) {
+    throw new DomainError('REASON_REQUIRED', 'Say why the project is being deleted; it is the sentence the record keeps.', 422, [
+      { field: 'reason', message: 'At least ten characters' },
+    ]);
+  }
+
+  const certified = ctx.ledger.list(ctx.projectId, 'PaymentCertificate').length;
+  if (certified > 0) {
+    throw new DomainError(
+      'PROJECT_HAS_CERTIFIED_PAYMENTS',
+      `${certified} payment certificate${certified === 1 ? '' : 's'} ${certified === 1 ? 'has' : 'have'} been issued on this project. Money certified to a counterparty is closed out, not deleted.`,
+      409,
+    );
+  }
+  const executed = ctx.ledger.list(ctx.projectId, 'Contract').filter((record) => record.state.status === 'EXECUTED').length;
+  if (executed > 0) {
+    throw new DomainError(
+      'PROJECT_HAS_EXECUTED_CONTRACT',
+      `${executed} executed contract${executed === 1 ? '' : 's'} ${executed === 1 ? 'is' : 'are'} in force on this project. A live contract governs how the job ends; it cannot be deleted from under it.`,
+      409,
+    );
+  }
+
+  const deletedAt = new Date().toISOString();
+  write(ctx, {
+    eventType: 'PROJECT_DELETED',
+    entity: { refType: 'Project', refId: ctx.projectId },
+    nextState: {
+      ...project.state,
+      status: 'DELETED',
+      deletedAt,
+      deletedBy: ctx.auth.actorId,
+      deletionReason: input.reason.trim(),
+    },
+  });
+  return { projectId: ctx.projectId, deletedAt };
+}
+
+/**
+ * Delete a portfolio. A portfolio is a filing structure; it goes when nothing
+ * live is filed under it, and refuses while a project still is, naming them —
+ * the projects are deleted or moved first, each on its own record.
+ */
+export function deletePortfolio(ctx: EngineContext, input: { portfolioId: string; reason: string }): { portfolioId: string; deletedAt: string } {
+  authorise(ctx, 'ENTERPRISE_STRUCTURE', 'A');
+
+  const portfolio = ctx.ledger.require({ refType: 'Portfolio', refId: input.portfolioId });
+  if (portfolio.state.tenantId !== ctx.tenantId) {
+    throw new DomainError('PORTFOLIO_NOT_FOUND', `No portfolio ${input.portfolioId}`, 404);
+  }
+  if (portfolio.state.status === 'DELETED') {
+    throw new DomainError('PORTFOLIO_ALREADY_DELETED', `${String(portfolio.state.name)} was deleted on ${String(portfolio.state.deletedAt ?? '').slice(0, 10)}`, 409);
+  }
+  if (input.reason.trim().length < 10) {
+    throw new DomainError('REASON_REQUIRED', 'Say why the portfolio is being deleted; it is the sentence the record keeps.', 422, [
+      { field: 'reason', message: 'At least ten characters' },
+    ]);
+  }
+
+  const filed = liveProjects(ctx.ledger, ctx.tenantId).filter((record) => record.state.portfolioId === input.portfolioId);
+  if (filed.length > 0) {
+    throw new DomainError(
+      'PORTFOLIO_HOLDS_PROJECTS',
+      `${filed.length} project${filed.length === 1 ? ' is' : 's are'} still filed under ${String(portfolio.state.name)}: ${filed.map((record) => String(record.state.name)).join(', ')}. Delete them first, each with its own reason.`,
+      409,
+    );
+  }
+
+  const deletedAt = new Date().toISOString();
+  write(ctx, {
+    projectId: `${ctx.tenantId}-governance`,
+    eventType: 'PORTFOLIO_DELETED',
+    entity: { refType: 'Portfolio', refId: input.portfolioId },
+    nextState: {
+      ...portfolio.state,
+      status: 'DELETED',
+      deletedAt,
+      deletedBy: ctx.auth.actorId,
+      deletionReason: input.reason.trim(),
+    },
+  });
+  return { portfolioId: input.portfolioId, deletedAt };
 }
 
 export function createScopePackage(

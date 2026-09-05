@@ -189,7 +189,7 @@ describe('JNN GLOBAL LTD signs up as a group of companies', () => {
     for (const email of ['kemi@jnnhomes.example', 'rowan@jnnhomes.example']) {
       const admin = platform.users(tenantId).find((user) => user.email === email);
       assert.ok(admin, `${email} was not created in the new company`);
-      assert.deepEqual(admin.roles, ['ENTERPRISE_ADMIN']);
+      assert.deepEqual(admin.roles, ['OWNER', 'ENTERPRISE_ADMIN']);
     }
     // Its own group membership; open at once, on the holding company's package
     // and covered by its subscription — a company under a group pays nothing.
@@ -274,7 +274,7 @@ describe('JNN GLOBAL LTD signs up as a group of companies', () => {
     assert.equal(appointed.status, 201, JSON.stringify(appointed.body));
     assert.equal(appointed.body.administrator.existing, false);
     assert.equal(appointed.body.invitations.length, 1);
-    assert.deepEqual(platform.users(tenantId).find((u) => u.email === 'esi@jnnhomes.example')!.roles, ['ENTERPRISE_ADMIN']);
+    assert.deepEqual(platform.users(tenantId).find((u) => u.email === 'esi@jnnhomes.example')!.roles, ['OWNER', 'ENTERPRISE_ADMIN']);
 
     const again = await call('POST', `/v1/groups/${groupId}/companies/${tenantId}/administrators`, founderToken, { name: 'Esi Mensah', email: 'esi@jnnhomes.example' });
     assert.equal(again.status, 409);

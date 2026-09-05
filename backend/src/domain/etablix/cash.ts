@@ -8,6 +8,7 @@ import { appointmentInForce } from './appointment.ts';
 import { changePosition } from './change.ts';
 import { commercialPosition, type Valuation } from './commercial.ts';
 import { demobilisationPosition } from './demobilisation.ts';
+import { liveProjects } from '../structure.ts';
 
 /**
  * §13 Commercial, the two questions it could not answer, and the executive
@@ -424,7 +425,7 @@ export function portfolioRollUp(platform: Platform, auth: AuthContext, today?: s
   const projects: PortfolioProject[] = [];
   const skipped: PortfolioRollUp['skipped'] = [];
 
-  for (const record of platform.ledger.listByTenant(auth.tenantId, 'Project')) {
+  for (const record of liveProjects(platform.ledger, auth.tenantId)) {
     const projectId = String(record.state.id ?? record.refId);
     const name = String(record.state.name ?? projectId);
     try {

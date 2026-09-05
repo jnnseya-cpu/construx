@@ -1,5 +1,6 @@
 import { DomainError } from '../core/errors.ts';
 import { authorise, type EngineContext } from '../engines/context.ts';
+import { liveProjects } from './structure.ts';
 
 /**
  * The cost intelligence database.
@@ -149,7 +150,7 @@ type EstimateLine = {
 export function harvestRates(ctx: EngineContext): RateObservation[] {
   const observations: RateObservation[] = [];
 
-  for (const project of ctx.ledger.listByTenant(ctx.tenantId, 'Project')) {
+  for (const project of liveProjects(ctx.ledger, ctx.tenantId)) {
     const projectId = String(project.state.id);
     const projectName = String(project.state.name ?? projectId);
 
@@ -200,7 +201,7 @@ export function harvestRates(ctx: EngineContext): RateObservation[] {
 function harvestOutturns(ctx: EngineContext): PackageOutturn[] {
   const outturns: PackageOutturn[] = [];
 
-  for (const project of ctx.ledger.listByTenant(ctx.tenantId, 'Project')) {
+  for (const project of liveProjects(ctx.ledger, ctx.tenantId)) {
     const projectId = String(project.state.id);
     const projectName = String(project.state.name ?? projectId);
 

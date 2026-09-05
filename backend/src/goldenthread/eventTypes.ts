@@ -221,9 +221,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // --- Portfolio / project structure ---------------------------------------
   def('PORTFOLIO_CREATED', 'Portfolio', 'CREATE', 'PROJECT_CONTROL'),
   def('PORTFOLIO_TARGETS_SET', 'Portfolio', 'UPDATE', 'PROJECT_CONTROL'),
+  def('PORTFOLIO_DELETED', 'Portfolio', 'UPDATE', 'PROJECT_CONTROL'),
   def('PROGRAMME_CREATED', 'Programme', 'CREATE', 'PROJECT_CONTROL'),
   def('PROJECT_CREATED', 'Project', 'CREATE', 'PROJECT_CONTROL'),
   def('PROJECT_PHASE_TRANSITIONED', 'Project', 'UPDATE', 'PROJECT_CONTROL', { requiresEvidence: true }),
+  def('PROJECT_DELETED', 'Project', 'UPDATE', 'PROJECT_CONTROL'),
   def('PACKAGE_CREATED', 'ScopePackage', 'CREATE', 'PROJECT_CONTROL'),
   def('WORKPACKAGE_CREATED', 'WorkPackage', 'CREATE', 'PROJECT_CONTROL'),
 

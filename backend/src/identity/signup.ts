@@ -459,7 +459,11 @@ export function verify(
     opensOn: 'FIRST_PAYMENT',
   });
 
-  const roles: Role[] = ['ENTERPRISE_ADMIN'];
+  // The founder owns the company: everything anybody in it may do, and the
+  // administrator's mandate to bring the rest of the organisation in. An
+  // administrator alone is read-only on delivery and cannot change their own
+  // roles, so a one-person company created that way could act on nothing.
+  const roles: Role[] = ['OWNER', 'ENTERPRISE_ADMIN'];
   const user = platform.createUser({
     tenantId: tenant.id,
     name: record.contactName,

@@ -470,6 +470,16 @@ const coverGroups = (target: typeof platform): void => {
 };
 if (!follower) coverGroups(platform);
 
+// The founding administrators of a company are its owners. Companies created
+// before that rule — one administrator, read-only on delivery, nobody able to
+// change their roles — are brought under it here. Said on stdout when it
+// changes something; see `Platform.ownFoundingAdministrators`.
+if (!follower) {
+  for (const entry of platform.ownFoundingAdministrators()) {
+    process.stdout.write(`[identity] ${entry.userId} of ${entry.tenantId} made owner: founding administrator, nobody else could have\n`);
+  }
+}
+
 const collection = follower
   ? { stop: (): void => undefined }
   : startCollectionSchedule(

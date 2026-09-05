@@ -1018,45 +1018,102 @@ export class Platform {
       throw new DomainError('ROLE_CHANGE_UNEXPLAINED', 'Say why the roles are changing');
     }
 
+    return this.#applyRoles(user, input.roles, input.reason, { refType: 'User', refId: actor.actorId }, 'WEB');
+  }
+
+  /**
+   * The one writer of a role change, shared by the governed command above and
+   * the platform's own reconciliation below, so the two cannot drift on what a
+   * `USER_ROLE_ASSIGNED` carries.
+   */
+  #applyRoles(
+    user: PlatformUser,
+    roles: Role[],
+    reason: string,
+    actor: { refType: 'User' | 'System'; refId: string },
+    source: EventSource,
+  ): { userId: string; previousRoles: Role[]; roles: Role[] } {
     const previousRoles = [...user.roles];
 
     // Seats are priced by role, so a change is a revoke and a re-assign rather
     // than an edit. If the new roles do not fit the tier this throws and the
     // identity keeps the roles it had.
-    const subscription = this.subscription(actor.tenantId);
+    const subscription = this.subscription(user.tenantId);
     const reseated = assignIdentity(
-      revokeIdentity(subscription, input.userId),
-      input.userId,
-      input.roles,
-      purchasedSeats(this.ledger, actor.tenantId),
+      revokeIdentity(subscription, user.id),
+      user.id,
+      roles,
+      purchasedSeats(this.ledger, user.tenantId),
     );
-    this.#subscriptions.set(actor.tenantId, reseated);
-    user.roles = input.roles;
+    this.#subscriptions.set(user.tenantId, reseated);
+    user.roles = roles;
 
     this.ledger.commit({
-      tenantId: actor.tenantId,
-      projectId: `${actor.tenantId}-governance`,
-      actor: { refType: 'User', refId: actor.actorId },
-      source: 'WEB',
+      tenantId: user.tenantId,
+      projectId: `${user.tenantId}-governance`,
+      actor,
+      source,
       correlationId: ulid(),
       eventType: 'USER_ROLE_ASSIGNED',
-      entity: { refType: 'User', refId: input.userId },
+      entity: { refType: 'User', refId: user.id },
       nextState: {
-        id: input.userId,
+        id: user.id,
         tenantId: user.tenantId,
         name: user.name,
         email: user.email,
-        roles: input.roles,
+        roles,
         previousRoles,
         partyId: user.partyId,
         status: user.status,
-        reason: input.reason,
-        changedBy: actor.actorId,
+        reason,
+        changedBy: actor.refId,
         changedAt: new Date().toISOString(),
       },
     });
 
-    return { userId: input.userId, previousRoles, roles: input.roles };
+    return { userId: user.id, previousRoles, roles };
+  }
+
+  /**
+   * The founding administrators of a company are its owners.
+   *
+   * An account's first person used to be created as `ENTERPRISE_ADMIN` and
+   * nothing more — the mandate to invite the rest of the organisation. The
+   * administrator is read-only on nearly every delivery area, and nobody may
+   * change their own roles, so a one-person company was trapped: every door on
+   * Site Services and the delivery screens locked, and no second person with
+   * the authority to unlock them. `OWNER` is defined as everything anybody in
+   * the tenancy may do, for exactly the people running the tenancies being
+   * sold; the person who founded the company is that person.
+   *
+   * Founders are created with both roles now. This brings the companies
+   * created before that rule under it: in every open tenancy where **nobody
+   * holds anything but the administrator's role** — so nobody could have
+   * changed anybody's roles — each active administrator becomes an owner too,
+   * recorded as the system's role change with the reason. A tenancy that has
+   * organised its roles already is left exactly as it is. Idempotent.
+   */
+  ownFoundingAdministrators(now: Date = new Date()): Array<{ tenantId: string; userId: string }> {
+    const owned: Array<{ tenantId: string; userId: string }> = [];
+    for (const tenant of this.tenants()) {
+      if (tenant.id === PLATFORM_TENANT_ID || tenant.closedAt || tenant.deletedAt) continue;
+      const active = this.users(tenant.id).filter((user) => user.status === 'ACTIVE');
+      if (active.length === 0) continue;
+      const onlyAdministrators = active.every((user) => user.roles.every((role) => role === 'ENTERPRISE_ADMIN'));
+      if (!onlyAdministrators) continue;
+      for (const user of active) {
+        if (user.roles.includes('OWNER')) continue;
+        this.#applyRoles(
+          user,
+          ['OWNER', 'ENTERPRISE_ADMIN'],
+          `Founding administrator of ${tenant.legalName}: the company's owner, with everything anybody in it may do. Nobody else here could have granted it. (${now.toISOString().slice(0, 10)})`,
+          { refType: 'System', refId: 'platform' },
+          'SYSTEM',
+        );
+        owned.push({ tenantId: tenant.id, userId: user.id });
+      }
+    }
+    return owned;
   }
 
   /**

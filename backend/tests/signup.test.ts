@@ -183,7 +183,7 @@ describe('completing a registration', () => {
 
     const user = platform.userByEmail('founder@harbourworks.example');
     assert.ok(user, 'no administrator was created');
-    assert.deepEqual(user.roles, ['ENTERPRISE_ADMIN'], 'the first user must be able to invite the rest');
+    assert.deepEqual(user.roles, ['OWNER', 'ENTERPRISE_ADMIN'], 'the founder owns the company and can invite the rest');
 
     // Branding is a precondition for every export; without it the first export
     // fails on a logo rather than on anything the customer did.
@@ -377,7 +377,7 @@ describe('the page the confirmation link lands on', () => {
 
     const user = platform.userByEmail('pressed@northgate.example');
     assert.ok(user, 'no account exists');
-    assert.deepEqual(user.roles, ['ENTERPRISE_ADMIN'], 'the first user must be able to invite the rest');
+    assert.deepEqual(user.roles, ['OWNER', 'ENTERPRISE_ADMIN'], 'the founder owns the company and can invite the rest');
 
     // The invariant the console-session hole broke: an account, never a session.
     assert.doesNotMatch(done.html, /accessToken|refreshToken/, 'a page must not hand out a token');

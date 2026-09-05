@@ -542,6 +542,16 @@ function projectContext(platform: Platform, ctx: RequestContext, overrideProject
   if (!project || project.tenantId !== auth(ctx).tenantId) {
     throw new NotFoundError(`Project ${projectId} not found`);
   }
+  // A deleted project keeps its record and stays readable by its id; nothing
+  // further is written against it. Refused here, where every project-scoped
+  // command passes, rather than in each of them.
+  if (!structure.isLiveProject(project.state) && ctx.method !== 'GET') {
+    throw new DomainError(
+      'PROJECT_DELETED',
+      `${String(project.state.name)} was deleted on ${String(project.state.deletedAt ?? '').slice(0, 10)}; its record is kept and nothing more is written to it.`,
+      409,
+    );
+  }
 
   return platform.context(auth(ctx), projectId, { correlationId: ctx.correlationId, source: sourceOf(ctx) });
 }
@@ -1844,14 +1854,15 @@ export const ROUTES: Route[] = [
 
       const { adminName, adminEmail, ...tenancy } = input;
       const result = platform.createTenant(tenancy);
-      // ENTERPRISE_ADMIN and nothing more. Somebody has to be able to invite
-      // the rest of the organisation, and that is the whole of the mandate —
-      // the same role and the same reasoning as public signup.
+      // The founder owns the company and administers it — the same two roles
+      // and the same reasoning as public signup: an administrator alone is
+      // read-only on delivery and cannot change their own roles, so a
+      // one-person company created that way could act on nothing.
       const administrator = platform.createUser({
         tenantId: result.tenant.id,
         name: adminName,
         email: adminEmail,
-        roles: ['ENTERPRISE_ADMIN'],
+        roles: ['OWNER', 'ENTERPRISE_ADMIN'],
       });
 
       return {
@@ -7949,8 +7960,24 @@ export const ROUTES: Route[] = [
     pattern: '/v1/portfolios',
     description: 'List portfolios for the tenant',
     handler: (platform, ctx) => ({
-      portfolios: platform.ledger.listByTenant(auth(ctx).tenantId, 'Portfolio').map((r) => r.state),
+      portfolios: structure.livePortfolios(platform.ledger, auth(ctx).tenantId).map((r) => r.state),
     }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/portfolios/:portfolioId/delete',
+    description: 'Delete a portfolio. The record is kept; it leaves the estate. Refused while a project is still filed under it',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 10, maxLength: 500 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      structure.deletePortfolio(
+        platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, { correlationId: ctx.correlationId }),
+        { portfolioId: ctx.params.portfolioId as string, reason: body<{ reason: string }>(ctx).reason },
+      ),
   },
   {
     method: 'POST',
@@ -8037,8 +8064,20 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects',
     description: 'List projects for the tenant',
     handler: (platform, ctx) => ({
-      projects: platform.ledger.listByTenant(auth(ctx).tenantId, 'Project').map((r) => r.state),
+      projects: structure.liveProjects(platform.ledger, auth(ctx).tenantId).map((r) => r.state),
     }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/delete',
+    description: 'Delete a project. The record is kept and readable by its id; it leaves the estate and takes no further command. Refused where money has been certified or a contract is executed',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 10, maxLength: 500 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => structure.deleteProject(projectContext(platform, ctx), body<{ reason: string }>(ctx)),
   },
   {
     method: 'GET',

@@ -5,6 +5,7 @@ import { authorise, type EngineContext } from '../engines/context.ts';
 import { compliancePosition } from '../engines/maths/constructionAct.ts';
 import { AGENTS } from './registry.ts';
 import { AGENT_DIVISIONS, type AgentDivision } from './types.ts';
+import { liveProjects } from '../domain/structure.ts';
 
 /**
  * The morning briefing — what the business needs to know before nine o'clock.
@@ -193,7 +194,7 @@ export function morningBriefing(
   }
 
   // --- Delivery, across every project ---------------------------------------
-  const projects = ctx.ledger.listByTenant(ctx.tenantId, 'Project').map((r) => r.state);
+  const projects = liveProjects(ctx.ledger, ctx.tenantId).map((r) => r.state);
   let worstDelayDays = 0;
   let worstDelayProject: string | undefined;
   let marginErosionMinor = 0;

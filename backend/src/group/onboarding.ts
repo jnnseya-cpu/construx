@@ -200,7 +200,9 @@ export function onboardGroup(platform: Platform, actor: AuthContext, input: Onbo
   let administratorCreated = false;
   if (!administrator) {
     if (platform.userByEmail(email)) throw new DomainError('EMAIL_IN_USE', `${email} already holds an identity in another company; add them to this one as a member instead`, 409);
-    administrator = platform.createUser({ tenantId, name: company.administrator.name.trim(), email, roles: ['ENTERPRISE_ADMIN'] });
+    // The founding administrator owns the company as well as administering it;
+    // see `Platform.ownFoundingAdministrators` for why both.
+    administrator = platform.createUser({ tenantId, name: company.administrator.name.trim(), email, roles: ['OWNER', 'ENTERPRISE_ADMIN'] });
     administratorCreated = true;
     invited.push(administrator);
   }
@@ -305,11 +307,11 @@ function placeAdministrator(
     if (!inGroup) {
       throw new DomainError('EMAIL_IN_USE', `${email} already holds an identity outside ${group.displayName}; name a different administrator`, 409);
     }
-    const membership = platform.createUser({ tenantId, name: held.name, email: held.email, roles: ['ENTERPRISE_ADMIN'] });
+    const membership = platform.createUser({ tenantId, name: held.name, email: held.email, roles: ['OWNER', 'ENTERPRISE_ADMIN'] });
     invited.push(membership);
     return { id: membership.id, name: membership.name, email: membership.email, existing: true };
   }
-  const created = platform.createUser({ tenantId, name: person.name.trim(), email, roles: ['ENTERPRISE_ADMIN'] });
+  const created = platform.createUser({ tenantId, name: person.name.trim(), email, roles: ['OWNER', 'ENTERPRISE_ADMIN'] });
   invited.push(created);
   return { id: created.id, name: created.name, email: created.email, existing: false };
 }

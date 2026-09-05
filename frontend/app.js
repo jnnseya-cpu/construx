@@ -1175,10 +1175,24 @@ async function loadContext() {
     // without signing out, and this already runs on every context load.
     api.get('/v1/projects').catch(() => null),
   ]);
+  state.projects = listed?.projects ?? listed?.items ?? (Array.isArray(listed) ? listed : []);
+  // The remembered project has been deleted since it was chosen: its record is
+  // still readable by id, which is why the read above succeeded, but it is no
+  // longer part of the estate. Move to one that is, or to none, rather than
+  // showing a deleted project as the workspace.
+  if (detail.project?.status === 'DELETED') {
+    const next = state.projects.find((project) => (project.id ?? project.projectId) !== projectId);
+    session.set({ ...session.get(), projectId: next ? next.id ?? next.projectId : null });
+    state.session = session.get();
+    state.project = null;
+    state.gate = null;
+    state.wallet = wallet;
+    if (next) return loadContext();
+    return;
+  }
   state.project = detail.project;
   state.gate = detail.gate;
   state.wallet = wallet;
-  state.projects = listed?.projects ?? listed?.items ?? (Array.isArray(listed) ? listed : []);
 }
 
 /**

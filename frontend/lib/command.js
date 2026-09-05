@@ -631,12 +631,21 @@ export function confirmCost({ title, intent, path, runLabel = 'Run' }) {
  * role that cannot run the command sees why rather than a button that fails.
  */
 export function commandBar(entries) {
-  return entries
-    .filter((entry) => entry)
+  const live = entries.filter((entry) => entry);
+  const buttons = live
     .map((entry) =>
       entry.permitted
         ? `<button class="btn ${esc(entry.tone ?? 'quiet')}" data-command="${esc(entry.id)}">${esc(entry.label)}</button>`
         : `<button class="btn quiet locked" disabled title="${esc(entry.reason ?? 'Not permitted for your role')}">${esc(entry.label)} 🔒</button>`,
     )
     .join('');
+  // A bar where every door is locked reads as a broken screen. The reason was
+  // only ever in a tooltip nobody hovers, so a person saw sixty locks and no
+  // sentence. When nothing at all is permitted, say once why and where it is
+  // changed — the same words the tooltip carries, on the screen.
+  const locked = live.length >= 3 && live.every((entry) => !entry.permitted);
+  const why = locked ? live.find((entry) => entry.reason)?.reason ?? 'Not permitted for your role' : '';
+  return locked
+    ? `${buttons}<div class="metric-sub cmd-bar-locked" style="flex-basis:100%">Every action here is outside your role — ${esc(why)}. Roles are changed on Team &amp; Access by an administrator or the owner; the person who founded the company holds both.</div>`
+    : buttons;
 }

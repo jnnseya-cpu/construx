@@ -10,6 +10,7 @@ import {
   type ControlStage,
 } from '../lifecycle/control.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
+import { liveProjects } from './structure.ts';
 
 /**
  * Corporate project control, and the memory it produces.
@@ -264,8 +265,7 @@ export type EstateControl = {
 export function estateControl(ctx: EngineContext): EstateControl {
   authorise(ctx, 'PROJECT_SETUP', 'R');
 
-  const projects = ctx.ledger
-    .listByTenant(ctx.tenantId, 'Project')
+  const projects = liveProjects(ctx.ledger, ctx.tenantId)
     .map((r) => r.state)
     .filter((p) => typeof p.phase === 'string');
 

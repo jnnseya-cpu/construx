@@ -77,7 +77,7 @@ describe('onboarding a tenancy', () => {
     };
 
     assert.ok(body.administrator, 'a tenancy was provisioned with no administrator');
-    assert.deepEqual(body.administrator.roles, ['ENTERPRISE_ADMIN']);
+    assert.deepEqual(body.administrator.roles, ['OWNER', 'ENTERPRISE_ADMIN']);
     assert.equal(body.administrator.tenantId, body.tenant.id, 'the administrator was put in the wrong tenancy');
   });
 
