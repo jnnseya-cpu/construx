@@ -135,16 +135,26 @@ function pdfTextString(text: string): string {
   return `<${hex.toUpperCase()}>`;
 }
 
-function widthOf(text: string, font: FontName, size: number): number {
+/**
+ * The advance of one WinAnsi byte in a standard font, in 1/1000 em.
+ *
+ * Courier is monospaced at 600. Outside the tabulated range, fall back to the
+ * width of a lowercase n, which is close enough for a stray accent and never
+ * produces a line that overflows by more than a character.
+ *
+ * Exported for the PDF reader in `evidence/pdftext.ts`: a file that sets its
+ * text in a standard font carries no widths of its own, and the reader needs
+ * the same metrics this renderer used to put the text where it is.
+ */
+export function standardWidth(byte: number, font: FontName): number {
+  if (font === 'Courier') return 600;
   const table = font === 'Helvetica-Bold' ? HELVETICA_BOLD_WIDTHS : HELVETICA_WIDTHS;
+  return byte >= 32 && byte <= 126 ? (table[byte - 32] ?? 556) : 556;
+}
+
+function widthOf(text: string, font: FontName, size: number): number {
   let total = 0;
-  for (const byte of toWinAnsi(text)) {
-    // Courier is monospaced at 600. Outside the tabulated range, fall back to
-    // the width of a lowercase n, which is close enough for a stray accent and
-    // never produces a line that overflows by more than a character.
-    if (font === 'Courier') total += 600;
-    else total += byte >= 32 && byte <= 126 ? (table[byte - 32] ?? 556) : 556;
-  }
+  for (const byte of toWinAnsi(text)) total += standardWidth(byte, font);
   return (total / 1000) * size;
 }
 

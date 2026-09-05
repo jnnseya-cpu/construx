@@ -291,6 +291,11 @@ export async function documents(root) {
                           </span>`,
                     file.extraction.method === 'NATIVE'
                       ? html`Read${file.extraction.pages ? ` · ${file.extraction.pages} page${file.extraction.pages === 1 ? '' : 's'}` : ''}${
+                          (file.extraction.pageTables ?? []).length > 0
+                            ? html` · ${file.extraction.pageTables.length} table${file.extraction.pageTables.length === 1 ? '' : 's'} as rows
+                                <button class="btn quiet sm" data-tables="${file.ingestionId}">Show rows</button>`
+                            : ''
+                        }${
                           file.extraction.note ? html`<br /><span class="metric-sub">${file.extraction.note}</span>` : ''
                         }`
                       : file.extraction.method === 'OCR'
@@ -320,6 +325,26 @@ export async function documents(root) {
                   ? 'No files are held on this project yet. A hash on its own cannot be read.'
                   : 'This deployment holds no evidence files, so there is nothing to read.',
               }))}
+              ${(ingestion.files ?? [])
+                .slice(0, 15)
+                .filter((file) => (file.extraction.pageTables ?? []).length > 0)
+                .map(
+                  (file) => html`<div id="tables-${file.ingestionId}" hidden style="padding:8px 4px 4px">
+                    <p class="metric-sub">
+                      Rows recovered from where the text sits on the page, header row first. A blank is a blank on the page; a
+                      description wrapped over two lines is joined. Nothing here is a reading of what the words mean.
+                    </p>
+                    ${file.extraction.pageTables.map(
+                      (found, index) => html`<div style="margin-top:8px">
+                        <div class="metric-sub" style="margin-bottom:4px">
+                          Table ${index + 1} · page ${found.page} · ${found.rows.length - 1} row${found.rows.length === 2 ? '' : 's'} under
+                          ${found.rows[0].length} columns
+                        </div>
+                        ${raw(table({ headers: found.rows[0], rows: found.rows.slice(1), empty: 'A header row and nothing under it' }))}
+                      </div>`,
+                    )}
+                  </div>`,
+                )}
 
               ${
                 transcriptions.length > 0
@@ -685,6 +710,15 @@ export async function documents(root) {
       } catch (error) {
         toast('Not rejected', error.message, 'err');
       }
+      return;
+    }
+
+    const rows = event.target.closest('[data-tables]');
+    if (rows) {
+      const target = root.querySelector(`#tables-${rows.dataset.tables}`);
+      if (!target) return;
+      target.hidden = !target.hidden;
+      rows.textContent = target.hidden ? 'Show rows' : 'Hide rows';
       return;
     }
 

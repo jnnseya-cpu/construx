@@ -1,4 +1,5 @@
 import { inflateSync } from 'node:zlib';
+import { standardWidth } from '../export/pdf.ts';
 
 /**
  * The text a PDF carries, read from its own bytes.
@@ -24,6 +25,15 @@ import { inflateSync } from 'node:zlib';
  * does not decode. Each is counted and reported rather than guessed at, and a
  * page that draws images and no text is reported as what a scan looks like —
  * the case that still needs a model that can see.
+ *
+ * Tables are recovered from where the text sits, not from what it says. Every
+ * shown string is also kept as a run with its position and advance — the text
+ * matrix and the current transformation are tracked, and each glyph's width is
+ * taken from the font's own `Widths` or `W` array, or from the standard-font
+ * metrics the platform's renderer uses when the font carries none. Runs on one
+ * baseline are cells; cells whose horizontal extents never cross across three
+ * or more consecutive lines are columns. See `recoverTables` for the rules and
+ * what they refuse.
  *
  * Zero dependencies, as settled. Node's own `zlib` inflates the streams.
  */
@@ -51,6 +61,17 @@ export type PdfReading = {
   encrypted: boolean;
   /** Pages separated by a blank line. Empty where nothing was read. */
   text: string;
+  /**
+   * Tables recovered from the positions of the text, page by page, each as its
+   * rows with the header row first. Empty where the text lines up into none.
+   */
+  tables: PdfTable[];
+};
+
+export type PdfTable = {
+  /** 1-based, in the page order the file reads in. */
+  page: number;
+  rows: string[][];
 };
 
 type PdfObject = { dict: string; stream?: Buffer };
@@ -63,7 +84,43 @@ type Decoder = {
   simple?: string[];
   /** A composite font with no ToUnicode: glyph indices, not characters. */
   undecodable: boolean;
+  /** Glyph advances by code in 1/1000 em, from `Widths` or `W`. */
+  widths?: Map<number, number>;
+  /** The advance for a code the font gives none: `MissingWidth`, `DW`, or the standard metrics. */
+  fallbackWidth: (code: number) => number;
 };
+
+/** A shown string with where it sits on the page, in device points. */
+type Run = {
+  x: number;
+  y: number;
+  /** Where the advance left the pen: the run's right edge. */
+  end: number;
+  /** The font size as it appears on the page. */
+  size: number;
+  text: string;
+};
+
+type Matrix = [number, number, number, number, number, number];
+const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
+
+/** `m × n` in PDF's row-vector convention: apply `m`, then `n`. */
+function multiply(m: Matrix, n: Matrix): Matrix {
+  return [
+    m[0] * n[0] + m[1] * n[2],
+    m[0] * n[1] + m[1] * n[3],
+    m[2] * n[0] + m[3] * n[2],
+    m[2] * n[1] + m[3] * n[3],
+    m[4] * n[0] + m[5] * n[2] + n[4],
+    m[4] * n[1] + m[5] * n[3] + n[5],
+  ];
+}
+
+function matrixOf(tokens: string[]): Matrix | undefined {
+  if (tokens.length < 6) return undefined;
+  const numbers = tokens.slice(-6).map(Number);
+  return numbers.some((n) => !Number.isFinite(n)) ? undefined : (numbers as Matrix);
+}
 
 // --- Encodings ---------------------------------------------------------------
 
@@ -578,15 +635,68 @@ function parseCMap(text: string): { map: Map<number, string>; bytesPerCode?: 1 |
   return { map, ...(bytesPerCode ? { bytesPerCode } : {}) };
 }
 
+/**
+ * Glyph advances, so the reader knows where a run ends.
+ *
+ * A simple font lists `Widths` from `FirstChar`; a composite font's descendant
+ * lists `W` as runs and ranges with `DW` for the rest. A standard font embeds
+ * neither and is measured with the metrics the platform's own renderer uses —
+ * Helvetica and Courier exactly, anything else at an average that is wrong by
+ * a few percent, which is enough to find a column and not enough to typeset.
+ */
+function widthsFor(file: PdfFile, fontDict: string, subtype: string | undefined): Pick<Decoder, 'widths' | 'fallbackWidth'> {
+  const base = (get(fontDict, 'BaseFont') ?? '').replace(/^\/[A-Z]{6}\+/, '/');
+  const bold = /bold/i.test(base);
+  const standard = /courier|mono/i.test(base)
+    ? (): number => 600
+    : /helvetica|arial/i.test(base)
+      ? (code: number): number => standardWidth(code, bold ? 'Helvetica-Bold' : 'Helvetica')
+      : (): number => 500;
+
+  if (subtype === '/Type0') {
+    const descendant = file.resolve(elements(file.resolve(get(fontDict, 'DescendantFonts')) ?? '')[0]);
+    const defaultWidth = Number(descendant ? get(descendant, 'DW') ?? 1000 : 1000);
+    const widths = new Map<number, number>();
+    const items = elements(file.resolve(descendant ? get(descendant, 'W') : undefined) ?? '');
+    for (let at = 0; at < items.length; ) {
+      const first = Number(items[at]);
+      const next = items[at + 1];
+      if (next === undefined || !Number.isFinite(first)) break;
+      if (next.startsWith('[')) {
+        elements(next).forEach((w, index) => widths.set(first + index, Number(w)));
+        at += 2;
+      } else {
+        const last = Math.min(Number(next), first + 65535);
+        const w = Number(items[at + 2]);
+        for (let code = first; code <= last; code += 1) widths.set(code, w);
+        at += 3;
+      }
+    }
+    return { ...(widths.size > 0 ? { widths } : {}), fallbackWidth: () => defaultWidth };
+  }
+
+  const firstChar = Number(file.resolve(get(fontDict, 'FirstChar')) ?? 0);
+  const listed = elements(file.resolve(get(fontDict, 'Widths')) ?? '').map((token) => Number(file.resolve(token) ?? token));
+  const descriptor = file.resolve(get(fontDict, 'FontDescriptor'));
+  const missing = Number(descriptor ? get(descriptor, 'MissingWidth') ?? Number.NaN : Number.NaN);
+  if (listed.length === 0) return { fallbackWidth: standard };
+  const widths = new Map<number, number>();
+  listed.forEach((w, index) => {
+    if (Number.isFinite(w)) widths.set(firstChar + index, w);
+  });
+  return { widths, fallbackWidth: Number.isFinite(missing) ? () => missing : standard };
+}
+
 function decoderFor(file: PdfFile, fontDict: string): Decoder {
   const subtype = get(fontDict, 'Subtype');
   const toUnicode = file.objectOf(get(fontDict, 'ToUnicode'));
   const cmapBytes = toUnicode.number === undefined ? undefined : file.decoded(toUnicode.number);
   const cmap = cmapBytes ? parseCMap(cmapBytes.toString('latin1')) : undefined;
+  const metrics = widthsFor(file, fontDict, subtype);
 
   if (subtype === '/Type0') {
-    if (cmap && cmap.map.size > 0) return { bytesPerCode: cmap.bytesPerCode ?? 2, map: cmap.map, undecodable: false };
-    return { bytesPerCode: 2, undecodable: true };
+    if (cmap && cmap.map.size > 0) return { bytesPerCode: cmap.bytesPerCode ?? 2, map: cmap.map, undecodable: false, ...metrics };
+    return { bytesPerCode: 2, undecodable: true, ...metrics };
   }
 
   const encoding = get(fontDict, 'Encoding');
@@ -610,11 +720,11 @@ function decoderFor(file: PdfFile, fontDict: string): Decoder {
     // its own, and reading it as WinAnsi would be a guess dressed as text.
     const descriptor = file.resolve(get(fontDict, 'FontDescriptor'));
     const flags = Number(descriptor ? get(descriptor, 'Flags') ?? 0 : 0);
-    if ((flags & 4) !== 0 && (flags & 32) === 0 && subtype !== '/Type3') return { bytesPerCode: 1, undecodable: true };
+    if ((flags & 4) !== 0 && (flags & 32) === 0 && subtype !== '/Type3') return { bytesPerCode: 1, undecodable: true, ...metrics };
   }
   const simple = encodingTable(base);
   for (const [code, char] of differences) simple[code] = char;
-  return { bytesPerCode: 1, ...(cmap && cmap.map.size > 0 ? { map: cmap.map } : {}), simple, undecodable: false };
+  return { bytesPerCode: 1, ...(cmap && cmap.map.size > 0 ? { map: cmap.map } : {}), simple, undecodable: false, ...metrics };
 }
 
 function fontsOf(file: PdfFile, resources: string | undefined, cache: Map<string, Decoder>): Map<string, Decoder> {
@@ -627,7 +737,7 @@ function fontsOf(file: PdfFile, resources: string | undefined, cache: Map<string
     let decoder = cache.get(key);
     if (!decoder) {
       const dict = file.resolve(token);
-      decoder = dict ? decoderFor(file, dict) : { bytesPerCode: 1, simple: encodingTable('WinAnsiEncoding'), undecodable: false };
+      decoder = dict ? decoderFor(file, dict) : DEFAULT_DECODER;
       cache.set(key, decoder);
     }
     fonts.set(name, decoder);
@@ -642,10 +752,34 @@ type PageState = {
   pending: '' | ' ' | '\n';
   undecodable: number;
   images: number;
+  /** Every shown string with where it sits, for `recoverTables`. */
+  runs: Run[];
+  /** The run the next string continues, if it lands beside it. */
+  current?: Run;
+};
+
+/** Text state inside a content stream: the matrices and the parameters that move the pen. */
+type TextState = {
+  ctm: Matrix;
+  tm: Matrix;
+  tlm: Matrix;
+  size: number;
+  charSpacing: number;
+  wordSpacing: number;
+  hscale: number;
+  leading: number;
+  rise: number;
+};
+
+const DEFAULT_DECODER: Decoder = {
+  bytesPerCode: 1,
+  simple: encodingTable('WinAnsiEncoding'),
+  undecodable: false,
+  fallbackWidth: (code) => standardWidth(code, 'Helvetica'),
 };
 
 function decodeString(bytes: string, font: Decoder | undefined, state: PageState): string {
-  const decoder = font ?? { bytesPerCode: 1 as const, simple: encodingTable('WinAnsiEncoding'), undecodable: false };
+  const decoder = font ?? DEFAULT_DECODER;
   if (decoder.undecodable) {
     state.undecodable += 1;
     return '';
@@ -678,14 +812,87 @@ function emit(state: PageState, text: string): void {
   state.pending = '';
 }
 
-function walkContent(file: PdfFile, content: string, resources: string | undefined, state: PageState, cache: Map<string, Decoder>, depth: number): void {
+/** How far a string moves the pen, in unscaled text space (before `Tm` and the CTM). */
+function advanceOf(bytes: string, font: Decoder | undefined, text: TextState): number {
+  const decoder = font ?? DEFAULT_DECODER;
+  let advance = 0;
+  const step = decoder.bytesPerCode;
+  for (let index = 0; index + step <= bytes.length; index += step) {
+    const code = step === 2 ? (bytes.charCodeAt(index) << 8) | bytes.charCodeAt(index + 1) : bytes.charCodeAt(index);
+    const width = decoder.widths?.get(code) ?? decoder.fallbackWidth(code);
+    advance += (width / 1000) * text.size + text.charSpacing + (step === 1 && code === 32 ? text.wordSpacing : 0);
+  }
+  return advance * text.hscale;
+}
+
+/**
+ * Show a string: emit it for the text, keep it as a run for the tables, and
+ * move the pen by what it measured.
+ *
+ * A string that lands where the last one left off continues that run — it is
+ * the rest of the same cell, or the same word set in pieces for kerning. One
+ * that lands further along the same baseline than half a font size, or on
+ * another baseline, starts a new run: another cell, or another line.
+ */
+function show(bytes: string, font: Decoder | undefined, state: PageState, text: TextState): void {
+  const decoded = decodeString(bytes, font, state);
+  emit(state, decoded);
+  const advance = advanceOf(bytes, font, text);
+  const device = multiply(text.tm, text.ctm);
+  const rendered = multiply(multiply([text.size * text.hscale, 0, 0, text.size, 0, text.rise], text.tm), text.ctm);
+  const size = Math.hypot(rendered[2], rendered[3]) || text.size;
+  const x = device[4];
+  const y = device[5] + text.rise * Math.hypot(device[2], device[3]);
+  text.tm = multiply([1, 0, 0, 1, advance, 0], text.tm);
+  const end = multiply(text.tm, text.ctm)[4];
+  const current = state.current;
+  const gap = current ? x - current.end : Number.POSITIVE_INFINITY;
+  // Within two-thirds of a font size is a word space, Courier's included; a
+  // column's padding is wider than that in every layout this has met.
+  const beside = current !== undefined && Math.abs(y - current.y) <= 0.35 * Math.max(size, current.size) && gap > -0.2 * size && gap < 0.65 * size;
+  if (decoded === '') {
+    // An empty string moves nothing but the pen. Beside the current run it
+    // widens it (a space set on its own); anywhere else — an empty cell drawn
+    // at its own column — it is not part of any run.
+    if (beside) current.end = Math.max(current.end, end);
+    return;
+  }
+  if (beside) {
+    current.text += (gap > 0.13 * size && !/\s$/.test(current.text) && !/^\s/.test(decoded) ? ' ' : '') + decoded;
+    current.end = Math.max(current.end, end);
+    current.size = Math.max(current.size, size);
+  } else {
+    const run: Run = { x, y, end, size, text: decoded };
+    state.runs.push(run);
+    state.current = run;
+  }
+}
+
+function walkContent(
+  file: PdfFile,
+  content: string,
+  resources: string | undefined,
+  state: PageState,
+  cache: Map<string, Decoder>,
+  depth: number,
+  ctm: Matrix = IDENTITY,
+): void {
   const fonts = fontsOf(file, resources, cache);
   const xobjects = file.resolve(get(resources ?? '', 'XObject'));
   let font: Decoder | undefined;
-  const saved: Array<Decoder | undefined> = [];
+  const text: TextState = { ctm, tm: IDENTITY, tlm: IDENTITY, size: 0, charSpacing: 0, wordSpacing: 0, hscale: 1, leading: 0, rise: 0 };
+  const saved: Array<{ font: Decoder | undefined; ctm: Matrix }> = [];
   const operands: string[] = [];
   let lastY: number | undefined;
   let at = 0;
+  const number = (index: number): number => {
+    const value = Number(operands[operands.length - index] ?? 0);
+    return Number.isFinite(value) ? value : 0;
+  };
+  const newline = (leading = text.leading): void => {
+    text.tlm = multiply([1, 0, 0, 1, 0, -leading], text.tlm);
+    text.tm = text.tlm;
+  };
 
   while (at < content.length) {
     const token = readValue(content, at);
@@ -701,63 +908,112 @@ function walkContent(file: PdfFile, content: string, resources: string | undefin
 
     // An operator.
     switch (value) {
+      case 'BT':
+        text.tm = IDENTITY;
+        text.tlm = IDENTITY;
+        break;
       case 'Tf':
         font = fonts.get((operands[operands.length - 2] ?? '').slice(1));
+        text.size = number(1);
+        break;
+      case 'Tc':
+        text.charSpacing = number(1);
+        break;
+      case 'Tw':
+        text.wordSpacing = number(1);
+        break;
+      case 'Tz':
+        text.hscale = number(1) / 100 || 1;
+        break;
+      case 'TL':
+        text.leading = number(1);
+        break;
+      case 'Ts':
+        text.rise = number(1);
         break;
       case 'Tj':
-        emit(state, decodeString(stringBytes(operands[operands.length - 1] ?? '()'), font, state));
+        show(stringBytes(operands[operands.length - 1] ?? '()'), font, state, text);
         break;
       case "'":
         state.pending = '\n';
-        emit(state, decodeString(stringBytes(operands[operands.length - 1] ?? '()'), font, state));
+        newline();
+        show(stringBytes(operands[operands.length - 1] ?? '()'), font, state, text);
         break;
       case '"':
         state.pending = '\n';
-        emit(state, decodeString(stringBytes(operands[operands.length - 1] ?? '()'), font, state));
+        text.wordSpacing = number(3);
+        text.charSpacing = number(2);
+        newline();
+        show(stringBytes(operands[operands.length - 1] ?? '()'), font, state, text);
         break;
       case 'TJ': {
         for (const item of elements(operands[operands.length - 1] ?? '[]')) {
-          if (item.startsWith('(') || item.startsWith('<')) emit(state, decodeString(stringBytes(item), font, state));
-          else if (Number(item) < WORD_GAP && state.pending === '') state.pending = ' ';
+          if (item.startsWith('(') || item.startsWith('<')) show(stringBytes(item), font, state, text);
+          else {
+            const adjustment = Number(item);
+            if (!Number.isFinite(adjustment)) continue;
+            if (adjustment < WORD_GAP && state.pending === '') state.pending = ' ';
+            text.tm = multiply([1, 0, 0, 1, (-adjustment / 1000) * text.size * text.hscale, 0], text.tm);
+          }
         }
         break;
       }
       case 'T*':
         state.pending = '\n';
+        newline();
         break;
       case 'Td':
       case 'TD': {
-        const ty = Number(operands[operands.length - 1] ?? 0);
-        const tx = Number(operands[operands.length - 2] ?? 0);
+        const ty = number(1);
+        const tx = number(2);
         if (ty !== 0) state.pending = '\n';
         else if (tx > 0 && state.pending === '') state.pending = ' ';
+        if (value === 'TD') text.leading = -ty;
+        text.tlm = multiply([1, 0, 0, 1, tx, ty], text.tlm);
+        text.tm = text.tlm;
         break;
       }
       case 'Tm': {
-        const y = Number(operands[operands.length - 1] ?? 0);
+        const y = number(1);
         if (lastY !== undefined && Math.abs(y - lastY) > 0.5) state.pending = '\n';
         else if (state.pending === '') state.pending = ' ';
         lastY = y;
+        const matrix = matrixOf(operands);
+        if (matrix) {
+          text.tlm = matrix;
+          text.tm = matrix;
+        }
         break;
       }
       case 'ET':
         state.pending = '\n';
         break;
+      case 'cm': {
+        const matrix = matrixOf(operands);
+        if (matrix) text.ctm = multiply(matrix, text.ctm);
+        break;
+      }
       case 'q':
-        saved.push(font);
+        saved.push({ font, ctm: text.ctm });
         break;
-      case 'Q':
-        font = saved.length > 0 ? saved.pop() : font;
+      case 'Q': {
+        const restored = saved.pop();
+        if (restored) {
+          font = restored.font;
+          text.ctm = restored.ctm;
+        }
         break;
+      }
       case 'Do': {
         const name = (operands[operands.length - 1] ?? '').slice(1);
-        const { number, object } = file.objectOf(get(xobjects ?? '', name));
+        const { number: objectNumber, object } = file.objectOf(get(xobjects ?? '', name));
         if (object && /\/Subtype\s*\/Image\b/.test(object.dict)) state.images += 1;
-        else if (number !== undefined && object && /\/Subtype\s*\/Form\b/.test(object.dict) && depth < MAX_FORM_DEPTH) {
-          const data = file.decoded(number);
+        else if (objectNumber !== undefined && object && /\/Subtype\s*\/Form\b/.test(object.dict) && depth < MAX_FORM_DEPTH) {
+          const data = file.decoded(objectNumber);
           if (data) {
             const own = file.resolve(get(object.dict, 'Resources'));
-            walkContent(file, data.toString('latin1'), own ?? resources, state, cache, depth + 1);
+            const formMatrix = matrixOf(elements(file.resolve(get(object.dict, 'Matrix')) ?? ''));
+            walkContent(file, data.toString('latin1'), own ?? resources, state, cache, depth + 1, formMatrix ? multiply(formMatrix, text.ctm) : text.ctm);
           }
         }
         break;
@@ -799,9 +1055,188 @@ function tidy(text: string): string {
     .trim();
 }
 
+// --- Tables -----------------------------------------------------------------------
+
+/** A full stop that ends a sentence. Column headings do not contain one. Shared with the delimited parser. */
+export const SENTENCE_END = /\.(\s|$)/;
+/** Rows in one recovered table. A bill runs to hundreds; a record has to end somewhere. */
+const MAX_TABLE_ROWS = 500;
+/**
+ * A wrapped line sits this many font sizes under the one above, at most. Text
+ * is leaded at 1.15 to 1.35; a table row carries padding on top of that.
+ */
+const LINE_HEIGHT = 1.35;
+
+type Cell = { start: number; end: number; text: string };
+type Line = { y: number; size: number; cells: Cell[] };
+
+/** Runs grouped onto baselines, top of the page first, each line's cells left to right. */
+function linesOf(runs: Run[]): Line[] {
+  const lines: Line[] = [];
+  for (const run of [...runs].sort((a, b) => b.y - a.y || a.x - b.x)) {
+    const line = lines[lines.length - 1];
+    if (line && Math.abs(line.y - run.y) <= 0.35 * Math.max(line.size, run.size)) {
+      line.cells.push({ start: run.x, end: run.end, text: run.text.trim() });
+      line.size = Math.max(line.size, run.size);
+    } else {
+      lines.push({ y: run.y, size: run.size, cells: [{ start: run.x, end: run.end, text: run.text.trim() }] });
+    }
+  }
+  for (const line of lines) {
+    line.cells.sort((a, b) => a.start - b.start);
+    // Two runs that abut on one baseline are one cell: a word set in pieces
+    // across a font change, or a figure and its unit.
+    const merged: Cell[] = [];
+    for (const cell of line.cells) {
+      const last = merged[merged.length - 1];
+      if (last && cell.start - last.end < 0.65 * line.size) {
+        last.text = `${last.text}${cell.start - last.end > 0.13 * line.size ? ' ' : ''}${cell.text}`.trim();
+        last.end = Math.max(last.end, cell.end);
+      } else merged.push({ ...cell });
+    }
+    line.cells = merged.filter((cell) => cell.text !== '');
+  }
+  return lines.filter((line) => line.cells.length > 0);
+}
+
+/** Column extents: the horizontal spans no cell in the block crosses, merged where cells overlap. */
+function columnsOf(lines: Line[]): Array<{ start: number; end: number }> {
+  const spans = lines
+    .flatMap((line) => line.cells.map((cell) => ({ start: cell.start, end: cell.end })))
+    .sort((a, b) => a.start - b.start);
+  const columns: Array<{ start: number; end: number }> = [];
+  for (const span of spans) {
+    const last = columns[columns.length - 1];
+    if (last && span.start <= last.end + 1) last.end = Math.max(last.end, span.end);
+    else columns.push({ ...span });
+  }
+  return columns;
+}
+
+function columnIndex(columns: Array<{ start: number; end: number }>, cell: Cell): number {
+  return columns.findIndex((column) => cell.start >= column.start - 1 && cell.end <= column.end + 1);
+}
+
+/** A column heading: `Item`, `Unit`, `Rate`. Not a sentence, and not a paragraph's first line. */
+function headingLike(text: string): boolean {
+  return text !== '' && !SENTENCE_END.test(text) && text.length <= 80;
+}
+
+/** Short enough to be a unit, a quantity, a clause number or a date rather than prose. */
+function shortCell(text: string): boolean {
+  return text.length <= 16 || text.split(/\s+/).length <= 3;
+}
+
+/**
+ * A block of consecutive lines as a table, or nothing.
+ *
+ * Deliberately conservative, for the same reason the delimited parser is: a
+ * table with the wrong columns is read as a bill of quantities by somebody who
+ * did not build it. The rules, and what each refuses:
+ *
+ * 1. At least three lines, each with at least two cells. One line of two
+ *    things side by side is a heading and a date.
+ * 2. Columns are the horizontal spans no cell crosses. Prose set word by word
+ *    has words at every position, so its lines merge into one span and there
+ *    is no table. Left-, right- and centre-aligned columns all qualify, since
+ *    the rule is about extents rather than starting points.
+ * 3. No line has two cells in one column, and the header row has a cell in
+ *    every column with no sentence in it. A block where the header fills two
+ *    columns and the body five is a paragraph beside a list, not a table.
+ * 4. At least one column is short cells — a unit, a quantity, a clause number.
+ *    Two columns of wrapped prose line up perfectly and are not a table.
+ * 5. Every column carries text on at least two lines.
+ *
+ * A line set one line-height beneath a row, with cells only where that row
+ * already has text, is the rest of those cells — a wrapped description — and
+ * is joined to them rather than read as a row of blanks.
+ */
+function tableOf(block: Line[]): string[][] | undefined {
+  if (block.length < 3) return undefined;
+  const columns = columnsOf(block);
+  if (columns.length < 2) return undefined;
+
+  const rows: string[][] = [];
+  let previousY = Number.NaN;
+  for (const line of block) {
+    const row = new Array<string>(columns.length).fill('');
+    for (const cell of line.cells) {
+      const index = columnIndex(columns, cell);
+      if (index < 0 || row[index] !== '') return undefined;
+      row[index] = cell.text;
+    }
+    // The rest of a wrapped cell: one line-height down, in fewer columns than
+    // the row above, and only in columns that row already fills. A line that
+    // fills as many columns as the row above is the next row however close.
+    const last = rows[rows.length - 1];
+    const continuation =
+      last !== undefined &&
+      rows.length > 1 &&
+      Number.isFinite(previousY) &&
+      previousY - line.y <= LINE_HEIGHT * line.size &&
+      line.cells.length < last.filter((text) => text !== '').length &&
+      row.every((text, index) => text === '' || last[index] !== '');
+    if (continuation) {
+      row.forEach((text, index) => {
+        if (text !== '') last![index] = `${last![index]} ${text}`;
+      });
+    } else rows.push(row);
+    previousY = line.y;
+  }
+
+  if (rows.length < 3) return undefined;
+  const header = rows[0]!;
+  if (!header.every(headingLike)) return undefined;
+  if (!columns.some((_column, index) => rows.slice(1).every((row) => row[index] === '' || shortCell(row[index]!)))) return undefined;
+  if (!columns.every((_column, index) => rows.filter((row) => row[index] !== '').length >= 2)) return undefined;
+  return rows.slice(0, MAX_TABLE_ROWS);
+}
+
+/**
+ * The tables on one page, from where its text sits.
+ *
+ * Lines with two or more cells, consecutive and no further apart than three
+ * font sizes, form a block; a line with one cell that is not the continuation
+ * of a wrapped cell ends it. Each block is a table on `tableOf`'s terms or it
+ * is nothing.
+ */
+export function recoverTables(runs: Run[]): string[][][] {
+  const lines = linesOf(runs);
+  const tables: string[][][] = [];
+  let block: Line[] = [];
+  const close = (): void => {
+    const table = tableOf(block);
+    if (table) tables.push(table);
+    block = [];
+  };
+  for (const line of lines) {
+    const previous = block[block.length - 1];
+    if (previous && previous.y - line.y > 3 * Math.max(previous.size, line.size)) close();
+    if (line.cells.length >= 2) {
+      block.push(line);
+      continue;
+    }
+    // One cell. The rest of a wrapped cell, if it sits one line-height under
+    // the line above and inside a column the last full row fills; otherwise
+    // the block ends here. A description wrapped over three lines is two
+    // such lines in a row, each measured against the one above it.
+    const above = block[block.length - 1];
+    const row = [...block].reverse().find((entry) => entry.cells.length >= 2);
+    const columns = row ? columnsOf(block.filter((entry) => entry.cells.length >= 2)) : [];
+    const index = columnIndex(columns, line.cells[0]!);
+    if (above && row && index >= 0 && above.y - line.y <= LINE_HEIGHT * line.size && row.cells.some((c) => columnIndex(columns, c) === index)) {
+      block.push(line);
+    } else {
+      close();
+    }
+  }
+  close();
+  return tables;
+}
+
 /** Read what a PDF says. Never throws: a file this cannot parse reads as no pages. */
 export function readPdfText(bytes: Buffer): PdfReading {
-  const empty: PdfReading = { pages: 0, textPages: 0, imageOnlyPages: 0, undecodableStrings: 0, unreadableStreams: 0, encrypted: false, text: '' };
+  const empty: PdfReading = { pages: 0, textPages: 0, imageOnlyPages: 0, undecodableStrings: 0, unreadableStreams: 0, encrypted: false, text: '', tables: [] };
   try {
     const raw = bytes.toString('latin1');
     if (/\/Encrypt\s*(\d+\s+\d+\s+R|<<)/.test(raw)) return { ...empty, encrypted: true };
@@ -809,11 +1244,12 @@ export function readPdfText(bytes: Buffer): PdfReading {
     const pages = file.pages();
     const cache = new Map<string, Decoder>();
     const texts: string[] = [];
+    const tables: PdfTable[] = [];
     let textPages = 0;
     let imageOnlyPages = 0;
     let undecodable = 0;
-    for (const page of pages) {
-      const state: PageState = { out: [], pending: '', undecodable: 0, images: 0 };
+    pages.forEach((page, index) => {
+      const state: PageState = { out: [], pending: '', undecodable: 0, images: 0, runs: [] };
       const content = pageContent(file, page);
       if (content !== undefined) walkContent(file, content, page.resources, state, cache, 0);
       const text = tidy(state.out.join(''));
@@ -821,8 +1257,9 @@ export function readPdfText(bytes: Buffer): PdfReading {
       if (text !== '') {
         textPages += 1;
         texts.push(text);
+        for (const rows of recoverTables(state.runs)) tables.push({ page: index + 1, rows });
       } else if (state.images > 0) imageOnlyPages += 1;
-    }
+    });
     return {
       pages: pages.length,
       textPages,
@@ -831,6 +1268,7 @@ export function readPdfText(bytes: Buffer): PdfReading {
       unreadableStreams: file.unreadableStreams,
       encrypted: false,
       text: texts.join('\n\n'),
+      tables,
     };
   } catch {
     return empty;

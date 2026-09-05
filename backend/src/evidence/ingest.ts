@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readPdfText } from './pdftext.ts';
+import { readPdfText, SENTENCE_END, type PdfTable } from './pdftext.ts';
 
 /**
  * The file ingestion pipeline: what happens to a file between arriving and
@@ -505,8 +505,14 @@ export function classify(input: {
 export type Extraction = {
   /** The text, where the bytes are the text — or, under `OCR`, what a model transcribed and a person confirmed. */
   text?: string;
-  /** Rows, where the file is delimited. Never inferred from prose. */
+  /**
+   * Rows, where the file is delimited or a PDF's text lines up into columns.
+   * Never inferred from prose. Where a PDF carries several tables this is the
+   * first of them, and `pageTables` carries them all.
+   */
   tables?: string[][];
+  /** Every table recovered from a PDF, with the page it sits on. */
+  pageTables?: PdfTable[];
   /**
    * `NATIVE`: read from the bytes themselves. `OCR`: transcribed by a
    * multimodal provider through the perception pipeline and confirmed by a
@@ -566,7 +572,15 @@ export function extractText(bytes: Buffer, actualType: string | undefined): Extr
       if (read.unreadableStreams > 0) {
         notes.push(`${plural(read.unreadableStreams, 'stream')} under a compression this reader does not decode were skipped`);
       }
-      return { text: read.text, method: 'NATIVE', pages: read.pages, ...(notes.length > 0 ? { note: `${notes.join('; ')}.` } : {}) };
+      // The tables are carried, not noted: the note is for what a read left
+      // out, and the screen counts `pageTables` itself.
+      return {
+        text: read.text,
+        ...(read.tables.length > 0 ? { tables: read.tables[0]!.rows, pageTables: read.tables } : {}),
+        method: 'NATIVE',
+        pages: read.pages,
+        ...(notes.length > 0 ? { note: `${notes.join('; ')}.` } : {}),
+      };
     }
     if (read.pages === 0) {
       return {
@@ -602,9 +616,6 @@ export function extractText(bytes: Buffer, actualType: string | undefined): Extr
     reason: `Nothing in this platform reads ${actualType ?? 'an unrecognised format'}. The file is held; it is not read.`,
   };
 }
-
-/** A full stop that ends a sentence. Column headings do not contain one. */
-const SENTENCE_END = /\.(\s|$)/;
 
 /**
  * Rows out of a delimited file, or nothing.

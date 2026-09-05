@@ -230,6 +230,149 @@ describe('what it refuses, by name', () => {
   });
 });
 
+/**
+ * Tables, from where the text sits.
+ *
+ * Courier throughout, because its advance is 600/1000 em for every glyph and
+ * so every position below can be worked out by hand: a cell's right edge is its
+ * start plus 0.6 × size × its length. That is what lets the quantity column be
+ * right-aligned to x = 400 exactly, which is the case a start-position
+ * clustering would get wrong and this reader must not.
+ */
+function courierPage(content: string, extra: string[] = []): Buffer {
+  return assemble([
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> ${extra.length > 0 ? '/XObject << /Fm1 6 0 R >> ' : ''}>> >>`,
+    stream(content),
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>',
+    ...extra,
+  ]);
+}
+
+/** A bill: left-aligned item and unit, a quantity column right-aligned to x = 400, a wrapped description, a paragraph after. */
+const BILL =
+  'BT /F1 10 Tf 72 700 Td (Item) Tj 200 0 Td (Unit) Tj 100 0 Td (Qty) Tj ET ' +
+  // The item set in two kerned pieces: still one cell.
+  'BT /F1 10 Tf 72 686 Td [(Exca) -20 (vation)] TJ 200 0 Td (m3) Tj 110 0 Td (420) Tj ET ' +
+  'BT /F1 10 Tf 72 672 Td (Blinding) Tj 200 0 Td (m2) Tj 98 0 Td (1,250) Tj ET ' +
+  // A row with nothing measured: the quantity cell is blank on the page and blank in the row.
+  'BT /F1 10 Tf 72 658 Td (Disposal) Tj 200 0 Td (m3) Tj ET ' +
+  'BT /F1 10 Tf 72 644 Td (Reinforced concrete) Tj 200 0 Td (m3) Tj 122 0 Td (8) Tj ET ' +
+  // The description wrapped onto a second line, one line-height down, under nothing else.
+  'BT /F1 10 Tf 72 632 Td (in foundations) Tj ET ' +
+  'BT /F1 10 Tf 72 610 Td (Carried to summary, provisional sums separately.) Tj ET';
+
+describe('tables recovered from where the text sits', () => {
+  it('finds the rows of a bill, right-aligned figures and blank cells included, and joins a wrapped description', () => {
+    const reading = readPdfText(courierPage(BILL));
+    assert.equal(reading.tables.length, 1, JSON.stringify(reading.tables));
+    assert.equal(reading.tables[0]!.page, 1);
+    assert.deepEqual(reading.tables[0]!.rows, [
+      ['Item', 'Unit', 'Qty'],
+      ['Excavation', 'm3', '420'],
+      ['Blinding', 'm2', '1,250'],
+      ['Disposal', 'm3', ''],
+      ['Reinforced concrete in foundations', 'm3', '8'],
+    ]);
+    // The text is exactly what it was before tables existed: nothing about the
+    // line breaking changed to make room for them.
+    assert.match(reading.text, /^Item Unit Qty\nExcavation m3 420\n/);
+    assert.match(reading.text, /Carried to summary, provisional sums separately\.$/);
+  });
+
+  it('does not call prose set word by word a table, nor two columns of prose', () => {
+    // Justified text: every word its own string at its own position. The
+    // words' extents overlap from line to line, so there is one column, and
+    // one column is no table.
+    const justified =
+      'BT /F1 10 Tf 72 500 Td (Further) Tj 54 0 Td (to) Tj 24 0 Td (your) Tj 36 0 Td (letter) Tj ET ' +
+      'BT /F1 10 Tf 72 488 Td (dated) Tj 42 0 Td (3) Tj 18 0 Td (March) Tj 42 0 Td (we) Tj ET ' +
+      'BT /F1 10 Tf 72 476 Td (write) Tj 42 0 Td (to) Tj 24 0 Td (confirm) Tj 54 0 Td (it) Tj ET';
+    assert.deepEqual(readPdfText(courierPage(justified)).tables, []);
+
+    // Two newspaper columns line up perfectly and neither is short cells.
+    const columns =
+      'BT /F1 10 Tf 72 500 Td (The works proceed as instructed) Tj 228 0 Td (and the engineer attends each day) Tj ET ' +
+      'BT /F1 10 Tf 72 488 Td (by the contract administrator) Tj 228 0 Td (to record progress on the wall) Tj ET ' +
+      'BT /F1 10 Tf 72 476 Td (under clause four of the deed) Tj 228 0 Td (chart kept in the site office) Tj ET';
+    assert.deepEqual(readPdfText(courierPage(columns)).tables, []);
+
+    // A heading beside a date is one line of two things, not a table.
+    const heading = 'BT /F1 10 Tf 72 700 Td (Progress report) Tj 300 0 Td (3 March 2026) Tj ET BT /F1 10 Tf 72 680 Td (The works proceed.) Tj ET';
+    assert.deepEqual(readPdfText(courierPage(heading)).tables, []);
+  });
+
+  it('refuses a block whose header does not fill the columns or reads as a sentence', () => {
+    // Body rows of three cells under a header of two: a paragraph beside a
+    // list, not a table. Refused rather than given an invented third heading.
+    const short =
+      'BT /F1 10 Tf 72 700 Td (Item) Tj 200 0 Td (Unit) Tj ET ' +
+      'BT /F1 10 Tf 72 686 Td (Excavation) Tj 200 0 Td (m3) Tj 110 0 Td (420) Tj ET ' +
+      'BT /F1 10 Tf 72 672 Td (Blinding) Tj 200 0 Td (m2) Tj 110 0 Td (180) Tj ET ' +
+      'BT /F1 10 Tf 72 658 Td (Disposal) Tj 200 0 Td (m3) Tj 110 0 Td (96) Tj ET';
+    assert.deepEqual(readPdfText(courierPage(short)).tables, []);
+
+    const sentence = BILL.replace('(Item) Tj', '(We write to confirm.) Tj');
+    assert.deepEqual(readPdfText(courierPage(sentence)).tables, []);
+  });
+
+  it('follows the transformation into a form XObject placed by its matrix', () => {
+    const form = stream(
+      'BT /F1 10 Tf 0 0 Td (Ref) Tj 100 0 Td (Clause) Tj 100 0 Td (Due) Tj ET ' +
+        'BT /F1 10 Tf 0 -14 Td (O-1) Tj 100 0 Td (4.1) Tj 100 0 Td (28 days) Tj ET ' +
+        'BT /F1 10 Tf 0 -28 Td (O-2) Tj 100 0 Td (4.7) Tj 100 0 Td (7 days) Tj ET ' +
+        'BT /F1 10 Tf 0 -42 Td (O-3) Tj 100 0 Td (8.2) Tj 100 0 Td (14 days) Tj ET',
+      '/Type /XObject /Subtype /Form /BBox [0 0 400 100] /Matrix [1 0 0 1 72 600] /Resources << /Font << /F1 5 0 R >> >> ',
+    );
+    const reading = readPdfText(courierPage('q /Fm1 Do Q', [form]));
+    assert.deepEqual(reading.tables.map((t) => t.rows), [
+      [
+        ['Ref', 'Clause', 'Due'],
+        ['O-1', '4.1', '28 days'],
+        ['O-2', '4.7', '7 days'],
+        ['O-3', '8.2', '14 days'],
+      ],
+    ]);
+  });
+
+  it('recovers the table the platform’s own renderer drew, columns and blanks as drawn', () => {
+    const bill: ExportDocument = {
+      ...platformDocument(),
+      blocks: [
+        { kind: 'HEADING', level: 1, text: 'Bill of quantities' },
+        { kind: 'PARAGRAPH', text: 'Measured in accordance with NRM2. Rates exclude VAT.' },
+        {
+          kind: 'TABLE',
+          caption: 'Section 2 — Substructure',
+          headers: ['Item', 'Description', 'Unit', 'Qty', 'Rate'],
+          rows: [
+            ['2.1', 'Excavation to reduce levels, not exceeding 2m deep, in material other than rock', 'm3', '420', '18.50'],
+            ['2.2', 'Blinding concrete C16/20, 50mm thick', 'm2', '180', '12.00'],
+            ['2.3', 'Disposal of excavated material off site', 'm3', '', ''],
+            ['2.4', 'Reinforced concrete C32/40 in foundations', 'm3', '96', '185.00'],
+          ],
+        },
+        { kind: 'PARAGRAPH', text: 'Carried to summary. Provisional sums are listed separately in Section 9.' },
+      ],
+    };
+    const reading = readPdfText(Buffer.from(renderPdf(bill)));
+    // The cover page's reference block is a two-column table of its own, and
+    // is reported as one; the bill is the table on page 2.
+    const found = reading.tables.find((t) => t.rows[0]?.[0] === 'Item');
+    assert.ok(found, JSON.stringify(reading.tables));
+    assert.equal(found.page, 2);
+    assert.deepEqual(found.rows[0], ['Item', 'Description', 'Unit', 'Qty', 'Rate']);
+    assert.deepEqual(found.rows[1], ['2.1', 'Excavation to reduce levels, not exceeding 2m deep, in material other than rock', 'm3', '420', '18.50']);
+    assert.deepEqual(found.rows[3], ['2.3', 'Disposal of excavated material off site', 'm3', '', '']);
+    assert.equal(found.rows.length, 5, 'the paragraph after the table is not a row of it');
+  });
+
+  it('a word processor’s letter has no table in it', () => {
+    assert.deepEqual(readPdfText(wordProcessorPdf()).tables, []);
+  });
+});
+
 describe('ingestion’s extraction stage, now that a PDF can be read', () => {
   it('reads a PDF with a text layer natively, with its page count', () => {
     const result = extractText(Buffer.from(renderPdf(platformDocument())), 'application/pdf');
@@ -243,6 +386,17 @@ describe('ingestion’s extraction stage, now that a PDF can be read', () => {
     const result = extractText(wordProcessorPdf(), 'application/pdf');
     assert.equal(result.method, 'NATIVE');
     assert.match(result.note ?? '', /1 of 2 pages carries only images and no text layer/);
+    assert.equal(result.tables, undefined);
+    assert.equal(result.pageTables, undefined);
+  });
+
+  it('carries a PDF’s tables as rows, the first where the delimited parser puts one and all of them by page', () => {
+    const result = extractText(courierPage(BILL), 'application/pdf');
+    assert.equal(result.method, 'NATIVE');
+    assert.deepEqual(result.tables?.[1], ['Excavation', 'm3', '420']);
+    assert.equal(result.pageTables?.length, 1);
+    assert.equal(result.pageTables?.[0]?.page, 1);
+    assert.equal(result.note, undefined, 'a table found is not something left out');
   });
 
   it('routes a scan to a model that can see, saying what it saw', () => {

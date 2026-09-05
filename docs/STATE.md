@@ -15,10 +15,10 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,821 passing, 0 failing, 0 skipped, across 257 files · plus 24 against a live Postgres 16 (the client and the ledger store), now also run in CI |
+| Tests | 5,828 passing, 0 failing, 0 skipped, across 257 files · plus 24 against a live Postgres 16 (the client and the ledger store), now also run in CI |
 | Typecheck | clean |
-| Backend | 297 TypeScript files, 191,300 lines |
-| Application | 77 ES modules, 43,700 lines (including a service worker) |
+| Backend | 297 TypeScript files, 191,700 lines |
+| Application | 77 ES modules, 43,800 lines (including a service worker) |
 | API routes | 1,062 — 728 writes, 334 reads (48 public across both) |
 | Event types | 715 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 330, all classified for access |
@@ -8932,11 +8932,11 @@ named so it is not mistaken for finished.
 | Model ingestion | Records the model, hash, discipline, LOD and the declared element count as a governed event; once the IFC is held, `readModel` parses it (`engines/ifc.ts`) and records the schema, view definition, authoring application, spatial structure, length unit, element count by class and a geometry hash per element, keeping the declared count beside the read one where they disagree; two read revisions are compared element by element by GlobalId; a federation is held to the unit the file carries | Geometry is fingerprinted, not evaluated: no volumes, bounding boxes or intersections, so clash detection still needs an engine that computes them; RVT, NWD and DWG are proprietary binaries and are not read; ifcXML and ifcZIP are not read |
 | Digital twin | Reconciles observed against expected element status | Observations are structured input, not derived from imagery |
 | Evidence capture | Real SHA-256 over the real file, recorded against the event, the file itself held in a tenant-scoped content-addressed store, and every ingested file sent to a signature scanner where one is configured (see *Signature scanning* below) | A deletion policy, deliberately: evidence under the golden thread is retained, and `evidence/registry.ts` reports what the record names against what the volume holds rather than deciding what is old enough to remove |
-| File ingestion | Structural inspection, rules classification with its signals, native text and table extraction — a PDF's own text layer included, page by page, through its fonts — and a lexical index over what was read. A scan reports `NEEDS_OCR` with what was seen (pages, image-only pages) and is transcribed by a model through `DOCUMENT_TEXT`, confirmed by a person, into the same record. A file that is not what it claims to be is quarantined with the finding on the record | A photograph or a scan on a deployment with no multimodal provider stays unread and says so; the transcription path is proven against a stub, not a real model; the index is lexical, so it finds a near-duplicate and not a paraphrase |
+| File ingestion | Structural inspection, rules classification with its signals, native text and table extraction — a PDF's own text layer included, page by page, through its fonts, and its tables recovered as rows from where the text sits (the text matrix, the transformation and each font's own glyph widths), shown as rows on the Documents screen — and a lexical index over what was read. A scan reports `NEEDS_OCR` with what was seen (pages, image-only pages) and is transcribed by a model through `DOCUMENT_TEXT`, confirmed by a person, into the same record. A file that is not what it claims to be is quarantined with the finding on the record | A photograph or a scan on a deployment with no multimodal provider stays unread and says so; the transcription path is proven against a stub, not a real model; the index is lexical, so it finds a near-duplicate and not a paraphrase |
 | Signature scanning | `evidence/scanner.ts` speaks clamd's INSTREAM protocol over a socket. Every ingested file is sent to it where one is configured, and the record names the daemon and its signature database. Unset means unscanned and every record and every read says so; configured-and-unreachable refuses the ingestion rather than recording an unscanned file as checked | The platform holds no signatures itself and never will. Verified against a daemon of the suite's own speaking the real protocol, not against ClamAV — no ClamAV exists in this environment |
 | Vision tasks | Progress, PPE, plant and defects read from a held photograph, each as a draft a person confirms into the ordinary domain command | The wire contract is proven against real vendor response shapes, including fenced, prefaced, truncated, empty and non-object replies. What no test here can establish is whether a model reads a photograph correctly |
 | Commitment extraction | Reads a held letter for what it promises and what it demands, drops anything not quoted verbatim from the letter, and registers a confirmed one in the obligation calendar that already exists | Needs a provider that reads prose; a local deployment is refused rather than given an invented undertaking. The wire contract is proven against real vendor response shapes; the reading is not |
-| Clause extraction | From supplied text; a PDF is read into text first by ingestion (its text layer) or by a confirmed model transcription (a scan), and the text supplied | Table extraction from a PDF; reading the file into the clause register in one step |
+| Clause extraction | From supplied text; a PDF is read into text first by ingestion (its text layer, and its tables as rows) or by a confirmed model transcription (a scan), and the text supplied | Reading the file into the clause register in one step; a recovered table is rows on the ingestion record, not yet BoQ items or clauses |
 | 4D scheduling | Twin states link to task ids | No visualisation |
 | Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded, a permanent refusal (5xx) suppressing the address until an operator lifts it from the Newsletter screen, a transient one retried on the next issue. A bounce that arrives after the relay accepted the message is recorded against the delivery it concerns (`POST /v1/newsletter/bounces`, the "Record a bounce" door and a per-recipient button on the Newsletter screen): the delivery becomes `FAILED` with the diagnostic verbatim, a permanent bounce suppresses the address exactly as a synchronous refusal does, a transient one is retried by a forced re-issue | The platform still reads no mailbox: the bounce reaches the record when an operator reads the bounce message and records it, or a relay posts it to the endpoint with an operator credential. No relay is integrated for that; DKIM belongs at the relay, where the key should live |
 
@@ -9865,6 +9865,35 @@ and `FILE_QUARANTINED` is the change of status.
 Ingestion takes `EVIDENCE_AUDIT` **`I`**, not `R`. Every role in the platform can
 read the evidence register; producing a governed statement that a file is a
 specification, or that it is a renamed executable, is an act on the store.
+
+**Tables from a PDF, from where the text sits.** The text layer was read and
+the tables in a bill or a specification were still prose. `pdftext.ts` now
+keeps every shown string as a run with its position and advance — the text
+matrix, the line matrix and the transformation are tracked through `Tm`, `Td`,
+`T*`, `cm`, `q`/`Q` and a form's `Matrix`, and each glyph's advance is taken
+from the font's own `Widths` or `W` array, or from the standard-font metrics
+the platform's renderer uses (exported as `standardWidth`) when the font
+carries none. Runs on one baseline are cells; a column is a horizontal span no
+cell in the block crosses, so left-, right- and centre-aligned columns all
+qualify. The rules are as conservative as the delimited parser's and refuse by
+the same instinct — a table with the wrong columns is read as a bill by
+somebody who did not build it: three or more consecutive lines of two or more
+cells; a header row with a cell in every column and no sentence in it; no line
+with two cells in one column; at least one column of short cells, so two
+columns of wrapped prose are not a table; every column used on at least two
+lines. A line one line-height under a row with cells only where that row has
+text is the rest of a wrapped cell and is joined to it; a blank on the page is
+a blank in the row. `Extraction.tables` carries the first table as it always
+carried a delimited file's rows; `pageTables` carries every table with its
+page, and the Documents screen shows them under "Show rows". Proven against a
+hand-built bill in Courier (right-aligned figures, a blank quantity, a kerned
+item, a wrapped description, a paragraph after), justified prose, two
+newspaper columns, a heading beside a date, a table inside a form XObject
+placed by its matrix, and the platform's own rendered bill. `pdftext.test.ts`.
+Found on the way and left for the renderer, not this reader: `export/pdf.ts`
+wraps a cell mid-token when a table is wider than the page ("7,770.00" set as
+"7,770.0" over "0"), and a heading column too narrow for its word is cut to
+"Quanti". The reader reports what is on the page.
 
 ---
 
