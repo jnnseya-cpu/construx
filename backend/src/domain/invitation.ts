@@ -115,6 +115,12 @@ export function inviteToProject(
     external: boolean;
     /** What they are being brought on to do. Not optional: an invitation nobody can explain is one nobody can review. */
     because: string;
+    /**
+     * The firm on the supply-chain register this person belongs to. Only for
+     * an external `SUPPLIER`; it gives the accepted identity the firm's party,
+     * which is what the supplier portal resolves them to their own firm by.
+     */
+    supplierId?: string;
   },
   now = new Date(),
 ): { invitationId: string; expiresAt: string; seatsRemaining: number | null } {
@@ -155,6 +161,34 @@ export function inviteToProject(
         'EXTERNAL_CANNOT_ADMINISTER',
       );
     }
+  }
+
+  // The firm a supplier sign-in belongs to. Refused where the register does
+  // not hold it, and refused on anybody who is not an external supplier: a
+  // party on an internal identity would make a colleague look like a firm.
+  let party: string | undefined;
+  if (input.supplierId !== undefined) {
+    if (!input.external || !input.roles.includes('SUPPLIER')) {
+      throw new DomainError(
+        'SUPPLIER_LINK_MISPLACED',
+        'A supplier firm is linked to an external invitee holding the SUPPLIER role, and to nobody else.',
+        422,
+        [{ field: 'supplierId', message: 'Only an external SUPPLIER is linked to a firm' }],
+      );
+    }
+    const firm = ctx.ledger
+      .listByTenant(ctx.tenantId, 'Supplier')
+      .map((record) => record.state as { id: string; legalName: string; partyId?: string })
+      .find((entry) => entry.id === input.supplierId);
+    if (!firm) {
+      throw new DomainError('SUPPLIER_NOT_FOUND', 'No such supplier on the supply-chain register', 404, [
+        { field: 'supplierId', message: 'Register the firm before inviting its people' },
+      ]);
+    }
+    if (!firm.partyId) {
+      throw new DomainError('SUPPLIER_PARTY_MISSING', `${firm.legalName} is registered with no party identifier, so nobody can be linked to it.`, 422);
+    }
+    party = firm.partyId;
   }
 
   // An invitation to somebody already here is a role change, and doing it this
@@ -207,6 +241,7 @@ export function inviteToProject(
       external: input.external,
       organisation: input.organisation?.trim(),
       because: input.because,
+      ...(input.supplierId !== undefined ? { supplierId: input.supplierId, partyId: party } : {}),
       invitedBy: ctx.auth.actorId,
       invitedAt: now.toISOString(),
       expiresAt,
@@ -284,6 +319,10 @@ export function acceptInvitation(
     name: String(record.state.name),
     email: String(record.state.email),
     roles,
+    // The firm's party, where the invitation named a firm. This is the whole
+    // of what makes the identity a supplier's rather than a stranger's with a
+    // supplier role.
+    ...(typeof record.state.partyId === 'string' ? { partyId: record.state.partyId } : {}),
   });
 
   write(ctx, {

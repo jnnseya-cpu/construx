@@ -2,6 +2,7 @@ import { api } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { badge, date, html, money, pct, raw, render, table, toast, track } from '../lib/ui.js';
 import { head, refusal } from '../lib/estate.js';
+import { supplierPaymentCard } from '../lib/siteportal.js';
 import { blockedReason, can, modules, state } from '../app.js';
 
 /**
@@ -381,7 +382,7 @@ export async function siteservices(root) {
   // on this page and the supplier portal will not answer without a subject —
   // firing it inside the parallel block would mean re-firing all nine every
   // time somebody switched workspace.
-  const [centre, automation, workflow] = await Promise.all([
+  const [centre, automation, workflow, portal] = await Promise.all([
     api
       .get(
         `/v1/projects/${state.session.projectId}/site-services/command-centre/${chosenWorkspace}` +
@@ -390,6 +391,10 @@ export async function siteservices(root) {
       .catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/automation`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/workflow`).catch((error) => ({ error })),
+    // The chosen supplier's valuation and payment state, beside their portal.
+    chosenWorkspace === 'SUPPLIER_PORTAL' && portalSupplier
+      ? api.get(`/v1/projects/${state.session.projectId}/site-services/portal?supplierId=${encodeURIComponent(portalSupplier)}`).catch((error) => ({ error }))
+      : Promise.resolve(null),
   ]);
 
   // The reconciliation itself, for the valuation that is actually live. It is
@@ -911,6 +916,8 @@ export async function siteservices(root) {
       ${library.error ? refusal('The knowledge library', library.error) : libraryCard(library)}
 
       ${commandCentreCard(centre, factory)}
+
+      ${supplierPaymentCard(portal)}
 
       ${automation.error ? refusal('The automation measure', automation.error) : automationCard(automation)}
 

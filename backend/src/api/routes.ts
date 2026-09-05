@@ -103,6 +103,7 @@ import * as siteChange from '../domain/etablix/change.ts';
 import * as siteCash from '../domain/etablix/cash.ts';
 import * as siteDesk from '../domain/etablix/desk.ts';
 import * as siteLibrary from '../domain/etablix/library.ts';
+import * as sitePortal from '../domain/etablix/portal.ts';
 import * as siteDemob from '../domain/etablix/demobilisation.ts';
 import * as siteCommand from '../domain/etablix/commandcentre.ts';
 import * as siteWorkflow from '../domain/etablix/workflow.ts';
@@ -4344,6 +4345,7 @@ export const ROUTES: Route[] = [
         external: { type: 'boolean' },
         organisation: { type: 'string' },
         because: { type: 'string', minLength: 10 },
+        supplierId: stringField,
       },
       additionalProperties: false,
     },
@@ -8509,6 +8511,18 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => siteLibrary.promoteKnowledge(projectContext(platform, ctx), body<{ note?: string }>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/portal',
+    readOnly: true,
+    description:
+      'The supplier portal: a signed-in supplier sees the firm their identity belongs to and nobody else; an internal reader names the firm. The panel and the firm’s valuation and payment state',
+    handler: (platform, ctx) =>
+      sitePortal.supplierPortal(platform, projectContext(platform, ctx), {
+        ...(ctx.query.get('supplierId') ? { supplierId: ctx.query.get('supplierId') as string } : {}),
+        ...(ctx.query.get('today') ? { today: ctx.query.get('today') as string } : {}),
+      }),
   },
   {
     method: 'POST',

@@ -492,10 +492,7 @@ describe('§13 the eight workspaces', () => {
     // families now (`etablix/cash.ts`, `etablix/desk.ts`). Stated here so
     // that building the last one fails this assertion and forces it to zero.
     const withGaps = WORKSPACES.filter((workspace) => workspace.questions.some((question) => !question.answered));
-    assert.deepEqual(
-      withGaps.map((workspace) => workspace.id).sort(),
-      ['SUPPLIER_PORTAL'],
-    );
+    assert.deepEqual(withGaps.map((workspace) => workspace.id).sort(), []);
   });
 
   it('never lists an entry on a workspace that does not read the position it came from', () => {

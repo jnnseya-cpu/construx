@@ -8552,9 +8552,37 @@ records as built supersedes the earlier "not yet built" note above it.
 ## §13's record families, built
 
 The command centres had declared eight questions unanswerable because the
-record beneath each did not exist. Seven of those records exist now; the
-eighth — a supplier logging into their own portal — needs a supplier account
-layer with its own authentication and is still declared, not implied.
+record beneath each did not exist. All eight records exist now; the eighth —
+a supplier signing in and seeing their own firm — is `etablix/portal.ts`,
+described under *The supplier's own sign-in* below.
+
+## The supplier's own sign-in
+
+The supplier portal had been an internal view: a buyer chose a firm from a
+list. The other direction is now built without a second account layer. An
+identity already carries a `partyId` that the token describes as the
+supplier confinement anchor; a firm on the supply-chain register carries
+one too. An external invitation may now name the firm (`supplierId`),
+refused unless the invitee is an external `SUPPLIER` and the register holds
+the firm, and the identity created on acceptance carries the firm's party.
+`GET /v1/projects/:id/site-services/portal` resolves a `SUPPLIER` caller to
+that firm and refuses a request naming any other (`SUPPLIER_SCOPE`) or a
+sign-in that resolves to no firm (`SUPPLIER_UNLINKED`); an internal caller
+still names the firm. The `SUPPLIER` role holds no `SITE_SERVICES`
+capability on purpose — granting it would open every site-services read on
+the project to every supplier — so the caller is authorised on
+`SUPPLIER_SUBMISSION` and the panel is assembled under a commercial reader
+and filtered to the one firm. The payment state is attributed by award:
+lines on packages where the firm's engagement reached Contracted, certified
+per certificate as the accepted movement on those lines less approved
+credits, and paid sums apportioned by the firm's share where a certificate
+carries other firms' lines, with the apportionment on the record. The
+supplier reads it on Tender & Procurement, the one screen the role reaches;
+the buyer reads it beside the supplier-portal command centre. Driven in
+Chromium end to end: administrator invites the firm's person, that person
+signs in, sees their firm and not the competitor, is refused the
+competitor's portal and the procurement read, and the buyer sees the same
+payment state. `etablix.portal.test.ts`.
 
 **`domain/etablix/cash.ts`.** A payment is recorded against a certified
 valuation under the bank's own reference — the same reference twice records
@@ -8736,7 +8764,7 @@ count.
 | ~~**Room, bed and allocation records**~~ (§13 Accommodation Desk) | Built — `etablix/desk.ts` | Rooms registered beneath the composed accommodation system, beds allocated by name for dated nights, check-in and check-out, a vacated room sent to cleaning by the record, inventory read against the brief's bed demand |
 | ~~**Transport journeys**~~ (§13 Accommodation Desk) | Built — `etablix/desk.ts` | Journeys with a vehicle, route, departure and seats; seats booked by name never beyond the seats; departed, arrived or cancelled with a reason; today's load factor |
 | ~~**QR asset scan and delivery check**~~ (§13 Field Mobile) | Built — `etablix/desk.ts` | Units registered under their system with the tag their code carries; a scan resolves the tag and records state and location; deliveries scheduled and checked in as received, short with the discrepancy, or refused |
-| **Supplier-side authentication** (§13 Supplier Portal) | The same table, and the portal refuses an unscoped read | External project invitations exist; a supplier account layer with its own login does not. The portal is an internal view of one supplier's obligations |
+| ~~**Supplier-side authentication**~~ (§13 Supplier Portal) | Built — `etablix/portal.ts` | An external invitation names the firm on the register and the accepted identity carries the firm's party; the portal resolves a `SUPPLIER` sign-in to that firm and refuses any other, and the reads behind it run under a commercial reader after the caller's own authority is checked, so the supplier role holds no site-services capability of its own. The payment question is answered from the firm's lines under award, paid sums apportioned and said so |
 | ~~**Paid, accrual and cash**~~ (§13 Commercial) | Built — `etablix/cash.ts` | Payments recorded against a certified valuation under the bank's reference, never above the certificate; earned, certified and paid kept apart, outstanding split by who owes it |
 | ~~**Contingency and EAC**~~ (§13 Commercial) | Built — `etablix/cash.ts` | A pot set with its basis and drawn with a reason; the EAC as the higher of commitment and earned plus agreed change plus risk-adjusted exposure, every term published |
 | ~~**The cross-project roll-up**~~ (§13 Executive Portfolio) | Built — `etablix/cash.ts` | Every project of the caller's company through the same project context, skipped with the reason where unreadable |

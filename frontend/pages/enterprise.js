@@ -163,7 +163,7 @@ export async function enterprise(root) {
   const estateVisible = can('ENTERPRISE_STRUCTURE', 'R');
   const refusedLocally = { refused: { message: blockedReason('ENTERPRISE_STRUCTURE', 'R') } };
 
-  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations] = await Promise.all([
+  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations, register] = await Promise.all([
     // Caught rather than thrown. A project-level role is *correctly* refused
     // the estate-wide commercial position — and for every role below
     // enterprise level the refusal once took the whole screen down and
@@ -184,6 +184,10 @@ export async function enterprise(root) {
     // the seat position beside it — an invitation holds a seat, and somebody
     // about to send one needs to know whether there is one to give.
     api.get(`/v1/projects/${state.session.projectId}/invitations`).catch(() => null),
+    // The supply-chain register, so an external supplier can be invited as a
+    // named firm's person rather than a stranger with a supplier role. Null
+    // where the reader may not see the register; the invitation still works.
+    api.get('/v1/supply-chain?all=true').catch(() => null),
   ]);
 
   // What somebody without enterprise authority can still see: where the
@@ -658,6 +662,16 @@ export async function enterprise(root) {
           rows: 3,
           hint: 'A sentence somebody reviewing the project team in six months will understand.',
         },
+        {
+          name: 'supplierId',
+          label: 'Their firm on the supply-chain register',
+          type: 'select',
+          required: false,
+          placeholder: 'Not a supplier’s person',
+          options: (register?.suppliers ?? []).map((firm) => ({ value: firm.id, label: firm.legalName })),
+          hint:
+            'For an external supplier only. Links the sign-in to the firm, which is what lets them open their own portal and nobody else’s.',
+        },
       ],
       // `external` arrives from a select as a string, and `Boolean('false')` is
       // true — the classic way a safety flag inverts itself in transit.
@@ -665,6 +679,7 @@ export async function enterprise(root) {
         ...f,
         external: String(f.external) === 'true',
         roles: Array.isArray(f.roles) ? f.roles : [f.roles].filter(Boolean),
+        ...(f.supplierId ? {} : { supplierId: undefined }),
       }),
     },
 

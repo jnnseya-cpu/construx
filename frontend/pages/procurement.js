@@ -4,6 +4,7 @@ import { CONTRACT_FORM, PRICING_BASIS, today } from '../lib/enums.js';
 import { badge, date, days, drillable, exact, html, humanise, money, pct, positionReport, raw, render, resolveHtml, statusTone, table } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { insightPanel } from '../lib/insight.js';
+import { supplierPaymentCard } from '../lib/siteportal.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -255,6 +256,14 @@ export async function procurement(root) {
   const cheapest = [...scores].sort((x, y) => x.priceMinor - y.priceMinor)[0];
   const cheapestIsNotWinner = cheapest && winner && cheapest.submissionId !== winner.submissionId;
 
+  // A supplier's own portal, on the one screen a supplier identity reaches.
+  // Resolved server-side to the firm the sign-in belongs to; the request names
+  // no firm, and could not choose one. Absent for everybody else.
+  const supplierSignIn = (state.session.user?.roles ?? []).includes('SUPPLIER');
+  const portal = supplierSignIn
+    ? await api.get(`/v1/projects/${projectId}/site-services/portal`).catch((error) => ({ error }))
+    : null;
+
   render(
     root,
     html`
@@ -343,6 +352,8 @@ export async function procurement(root) {
           ]))}
         </div>
       </div>
+
+      ${supplierSignIn ? supplierPortalPanel(portal) : ''}
 
       ${
         master
@@ -1831,4 +1842,50 @@ export async function procurement(root) {
 
 function badgeText(status) {
   return String(status ?? '').toLowerCase();
+}
+
+/**
+ * The supplier portal, for a supplier's own sign-in.
+ *
+ * The panel is §13's supplier workspace — what the firm owes, what is falling
+ * due, what it is waiting on — resolved server-side to the firm the identity
+ * belongs to. A sign-in that belongs to no firm is told so, in the platform's
+ * words, rather than shown somebody else's obligations or an empty screen.
+ */
+function supplierPortalPanel(portal) {
+  if (!portal) return '';
+  if (portal.error) {
+    return html`<div class="card" style="margin-bottom:14px">
+      <h2>Your site-services portal</h2>
+      <div class="notice ${portal.error.code === 'SUPPLIER_UNLINKED' ? 'warn' : 'info'}" style="margin-top:8px">
+        <div>${portal.error.message ?? portal.error.detail ?? 'The portal is not available for this sign-in.'}</div>
+      </div>
+    </div>`;
+  }
+  const { supplier, panel } = portal;
+  const item = (entry) => html`<div style="padding:10px 0;border-top:1px solid var(--line)">
+    <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline">
+      <b>${entry.headline}</b>
+      <span>${entry.overdue ? badge('overdue', 'bad') : entry.withinDays ? badge(`${entry.withinDays}d`, 'warn') : ''}</span>
+    </div>
+    <div class="metric-sub" style="margin-top:4px">${entry.why.evidence}</div>
+    <div class="metric-sub" style="margin-top:4px"><b>Action.</b> ${entry.action.decision}${entry.action.dueAt ? ` By ${date(entry.action.dueAt)}.` : ''}</div>
+  </div>`;
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>Your site-services portal — ${supplier.legalName}</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">${panel.statement}</div>
+      <div class="grid g-2-1">
+        <div>
+          <h2>Now</h2>
+          ${panel.now.length === 0 ? html`<div class="notice ok"><div>Nothing outstanding for ${supplier.legalName} today.</div></div>` : panel.now.map(item)}
+        </div>
+        <div>
+          <h2>Next</h2>
+          ${panel.next.length === 0 ? html`<div class="notice ok"><div>Nothing falls due for ${supplier.legalName} inside the month.</div></div>` : panel.next.map(item)}
+        </div>
+      </div>
+    </div>
+    ${supplierPaymentCard(portal)}
+  `;
 }

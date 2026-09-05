@@ -1128,9 +1128,10 @@ export const WORKSPACES: readonly Workspace[] = [
       {
         id: 'PAYMENT_STATE',
         question: 'Valuation and payment state?',
-        answered: false,
+        answered: true,
+        from: 'commercial',
         basis:
-          'Not built. Valuation is a commercial-in-confidence record and there is no supplier-side identity to scope it to: external project invitations exist, but no supplier account layer with its own authentication. Until there is, this workspace is an internal view of one supplier’s obligations, not a portal that supplier logs into.',
+          'The firm’s own contract lines under award: earned, certified per certificate and paid, apportioned where a certificate carries other firms’ lines. Read by the supplier’s own sign-in, resolved to the firm by the party the invitation gave it (etablix/portal.ts).',
       },
     ],
   },
