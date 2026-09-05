@@ -114,6 +114,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   ServiceCredit: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
   ValuationPayment: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
   SiteServicesContingency: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  ForecastSnapshot: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
   ServiceAsset: { area: 'SITE_SERVICES' },
   ServiceDelivery: { area: 'SITE_SERVICES' },
   AccommodationRoom: { area: 'SITE_SERVICES' },

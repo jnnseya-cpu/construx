@@ -13,6 +13,7 @@ import { operationsPosition } from './operations.ts';
 import { commercialPosition } from './commercial.ts';
 import { changePosition } from './change.ts';
 import { demobilisationPosition } from './demobilisation.ts';
+import { forecastAccuracy } from './cash.ts';
 
 /**
  * §13 — the command centres — and §17 — the automation measure.
@@ -233,6 +234,8 @@ export const ACTIVITIES: Record<string, ActivityDefinition> = {
   SERVICE_CONTINGENCY_SET: { class: 'C', workflow: 'COMMERCIAL' },
   SERVICE_CONTINGENCY_RESET: { class: 'C', workflow: 'COMMERCIAL' },
   SERVICE_CONTINGENCY_DRAWN: { class: 'B', workflow: 'COMMERCIAL' },
+  // Freezing the forecast is "update forecasts", §1.2's Class A example.
+  SERVICE_FORECAST_SNAPSHOT: { class: 'A', workflow: 'COMMERCIAL' },
 
   // §13 — the record families beneath a running system. Scanning a code,
   // checking a delivery, putting a name in a bed and a seat on a bus are
@@ -708,15 +711,28 @@ export function automationMeasure(ctx: EngineContext, today?: string): Automatio
         };
       }
       case 'FORECAST_ACCURACY': {
-        // Deliberately not computed. A forecast is only accurate or otherwise
-        // against an outturn, and an outturn exists once. Reporting a number
-        // here from a live project would be reporting the forecast against
-        // itself, which is always 100%.
-        return {
-          ...base,
-          basis:
-            'Not measurable on a live project: forecast accuracy compares a prior estimate at completion against a final outturn, and no site-services account on this project has been closed out. It becomes measurable at final account.',
-        };
+        // Measured from the frozen forecasts against the final account, once
+        // there is one. A forecast is only accurate or otherwise against an
+        // outturn, and an outturn exists once; reporting a number from a live
+        // account would be reporting the forecast against itself, which is
+        // always 100%. Read behind commercial standing, because a snapshot is
+        // a commercial record; withheld with the reason where the reader has
+        // none.
+        try {
+          const accuracy = forecastAccuracy(ctx);
+          return {
+            ...base,
+            ...(accuracy.measurable && accuracy.meanAbsoluteErrorPercent !== undefined
+              ? { value: Math.max(0, Math.round((100 - accuracy.meanAbsoluteErrorPercent) * 10) / 10) }
+              : {}),
+            basis: accuracy.basis,
+          };
+        } catch (error) {
+          return {
+            ...base,
+            basis: `Withheld: the forecast snapshots are commercial records and this session does not hold commercial standing${error instanceof Error && error.message ? ` (${error.message})` : ''}.`,
+          };
+        }
       }
       case 'REINSTATEMENT_CLOSURE': {
         const demob = demobilisationPosition(ctx);

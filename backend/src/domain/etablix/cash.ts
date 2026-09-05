@@ -7,6 +7,7 @@ import type { Platform } from '../../platform.ts';
 import { appointmentInForce } from './appointment.ts';
 import { changePosition } from './change.ts';
 import { commercialPosition, type Valuation } from './commercial.ts';
+import { demobilisationPosition } from './demobilisation.ts';
 
 /**
  * §13 Commercial, the two questions it could not answer, and the executive
@@ -477,5 +478,190 @@ export function portfolioRollUp(platform: Platform, auth: AuthContext, today?: s
         ? `No project of this company carries a readable site-services position${skipped.length > 0 ? ` (${skipped.length} skipped, each with its reason)` : ''}.`
         : `${projects.length} project${projects.length === 1 ? '' : 's'}: ${major(totals.eacMinor)} estimate at completion against ${major(totals.budgetMinor)} budget, ${major(totals.outstandingMinor)} certified and unpaid, ${totals.openChanges} change${totals.openChanges === 1 ? '' : 's'} open.` +
           (skipped.length > 0 ? ` ${skipped.length} project${skipped.length === 1 ? '' : 's'} skipped, each with its reason.` : ''),
+  };
+}
+
+// --- forecast accuracy -------------------------------------------------------------------
+
+/**
+ * §17's forecast accuracy: a prior estimate at completion against the final
+ * outturn, separated into approved change and customer-driven change.
+ *
+ * A forecast is only accurate or otherwise against an outturn, and an outturn
+ * exists once, at the final account. Until this record existed the metric
+ * could not be measured at all, because nothing kept what the forecast *was*
+ * on a given day — the estimate at completion is arithmetic over the live
+ * record and reads the same whenever it is asked. A snapshot is that
+ * arithmetic frozen with its terms, so that on the day the account closes the
+ * question "what did we think in month three" has an answer somebody can
+ * check rather than a memory.
+ *
+ * Taking one is Class A work — §1.2 names "update forecasts" as an agent's
+ * job — and a person may take one too. Measuring is a read: once every
+ * opened demobilisation workstream is accepted the certified total is the
+ * outturn, and every snapshot is compared against it. The variance is
+ * separated: change agreed after the snapshot that the customer instructed,
+ * change agreed after it from any other trigger, and the rest, which is the
+ * forecasting error proper. Reporting a figure before the account closes
+ * would compare the forecast against itself, which is always right, so the
+ * measure says it is not yet measurable and how many snapshots it is holding.
+ */
+
+export type ForecastSnapshot = {
+  id: string;
+  projectId: string;
+  takenAt: string;
+  asOf: string;
+  eacMinor: number;
+  budgetMinor: number;
+  commitmentMinor: number;
+  earnedMinor: number;
+  certifiedMinor: number;
+  agreedChangeMinor: number;
+  exposureMinor: number;
+  contingencyPotMinor: number;
+  contingencyDrawnMinor: number;
+  headroomMinor: number;
+  terms: EstimateAtCompletion['terms'];
+  takenBy: string;
+  note?: string;
+};
+
+function snapshotsOf(ctx: EngineContext): ForecastSnapshot[] {
+  return ctx.ledger
+    .list(ctx.projectId, 'ForecastSnapshot')
+    .map((record) => record.state as unknown as ForecastSnapshot)
+    .sort((a, b) => a.takenAt.localeCompare(b.takenAt));
+}
+
+/** Freeze the estimate at completion as it stands, with every term. */
+export function snapshotForecast(ctx: EngineContext, input: { note?: string; asOf?: string } = {}): ForecastSnapshot {
+  requireModule(ctx.grantedModules, 'ETABLIX');
+  authorise(ctx, 'SITE_SERVICES', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
+  if (!appointmentInForce(ctx)) {
+    throw new DomainError('SITE_SERVICES_NOT_APPOINTED', 'Nothing is appointed on this project, so there is no account to forecast', 404);
+  }
+  const eac = estimateAtCompletion(ctx, input.asOf);
+  if (eac.commitmentMinor === 0 && eac.earnedMinor === 0) {
+    throw new DomainError(
+      'FORECAST_NOTHING_TO_FREEZE',
+      'No contract line carries a commitment or accepted work yet. A snapshot of an EAC over nothing is a budget restated, and comparing it later would flatter every later forecast.',
+      409,
+    );
+  }
+  const snapshot: ForecastSnapshot = {
+    id: ulid(),
+    projectId: ctx.projectId,
+    takenAt: new Date().toISOString(),
+    asOf: input.asOf ?? new Date().toISOString().slice(0, 10),
+    eacMinor: eac.eacMinor,
+    budgetMinor: eac.budgetMinor,
+    commitmentMinor: eac.commitmentMinor,
+    earnedMinor: eac.earnedMinor,
+    certifiedMinor: eac.certifiedMinor,
+    agreedChangeMinor: eac.agreedChangeMinor,
+    exposureMinor: eac.exposureMinor,
+    contingencyPotMinor: eac.contingencyPotMinor,
+    contingencyDrawnMinor: eac.contingencyDrawnMinor,
+    headroomMinor: eac.headroomMinor,
+    terms: eac.terms,
+    takenBy: ctx.auth.actorId,
+    ...(input.note?.trim() ? { note: input.note.trim() } : {}),
+  };
+  write(ctx, {
+    eventType: 'SERVICE_FORECAST_SNAPSHOT',
+    entity: { refType: 'ForecastSnapshot', refId: snapshot.id },
+    nextState: { ...snapshot },
+  });
+  return snapshot;
+}
+
+export type ForecastAccuracy = {
+  measurable: boolean;
+  /** Why not, or how. Never omitted. */
+  basis: string;
+  snapshots: Array<
+    ForecastSnapshot & {
+      /** Set once the account has closed. */
+      outturnMinor?: number;
+      /** EAC less outturn. Positive was over-forecast, negative under. */
+      varianceMinor?: number;
+      /** The variance as a percentage of the outturn. */
+      variancePercent?: number;
+      /** Change agreed after the snapshot on the customer's instruction. */
+      customerChangeMinor?: number;
+      /** Change agreed after the snapshot from every other trigger. */
+      otherChangeMinor?: number;
+      /** What is left once agreed change is taken out: the forecasting error proper. */
+      forecastErrorMinor?: number;
+      forecastErrorPercent?: number;
+    }
+  >;
+  /** Mean absolute forecasting error across the snapshots, once measurable. */
+  meanAbsoluteErrorPercent?: number;
+  outturnMinor?: number;
+};
+
+/** The variance of every snapshot against the outturn, once there is one. */
+export function forecastAccuracy(ctx: EngineContext, today?: string): ForecastAccuracy {
+  requireModule(ctx.grantedModules, 'ETABLIX');
+  authorise(ctx, 'SITE_SERVICES', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const snapshots = snapshotsOf(ctx);
+  const closeout = demobilisationPosition(ctx);
+  const opened = closeout.workstreams.some((stream) => stream.accepted + stream.open > 0);
+  const complete = opened && closeout.workstreams.every((stream) => stream.open === 0);
+
+  if (!complete) {
+    return {
+      measurable: false,
+      snapshots,
+      basis:
+        snapshots.length === 0
+          ? 'Not measurable: no forecast has been frozen on this project, and no site-services account on this project has been closed out. A snapshot records what the estimate at completion was on a day, so that the final account can be compared against it.'
+          : `Not measurable yet: ${snapshots.length} snapshot${snapshots.length === 1 ? '' : 's'} held, the earliest of ${snapshots[0]!.asOf}, and no site-services account on this project has been closed out. The comparison is made once every opened demobilisation workstream is accepted, because reporting it on a live account would compare the forecast against itself.`,
+    };
+  }
+
+  const commercial = commercialPosition(ctx);
+  const outturnMinor = commercial.totals.certifiedMinor;
+  const changes = changePosition(ctx, today).changes.filter((entry) => entry.status === 'AGREED');
+  const agreedAfter = (snapshot: ForecastSnapshot, customer: boolean): number =>
+    changes
+      .filter((entry) => (entry.trigger === 'CUSTOMER_INSTRUCTION') === customer)
+      .filter((entry) => (entry.history.find((step) => step.status === 'AGREED')?.at ?? entry.raisedAt) > snapshot.takenAt)
+      .reduce((sum, entry) => sum + entry.valueMinor, 0);
+
+  const measured = snapshots.map((snapshot) => {
+    const varianceMinor = snapshot.eacMinor - outturnMinor;
+    const customerChangeMinor = agreedAfter(snapshot, true);
+    const otherChangeMinor = agreedAfter(snapshot, false);
+    // Change agreed after the snapshot is money the forecast could not have
+    // carried at face; taking it out of the variance leaves the error the
+    // forecaster owns.
+    const forecastErrorMinor = varianceMinor + customerChangeMinor + otherChangeMinor;
+    return {
+      ...snapshot,
+      outturnMinor,
+      varianceMinor,
+      variancePercent: outturnMinor === 0 ? 0 : Math.round((varianceMinor / outturnMinor) * 1000) / 10,
+      customerChangeMinor,
+      otherChangeMinor,
+      forecastErrorMinor,
+      forecastErrorPercent: outturnMinor === 0 ? 0 : Math.round((forecastErrorMinor / outturnMinor) * 1000) / 10,
+    };
+  });
+  const meanAbsoluteErrorPercent =
+    measured.length === 0 ? undefined : Math.round((measured.reduce((sum, entry) => sum + Math.abs(entry.forecastErrorPercent), 0) / measured.length) * 10) / 10;
+
+  return {
+    measurable: snapshots.length > 0,
+    snapshots: measured,
+    outturnMinor,
+    ...(meanAbsoluteErrorPercent === undefined ? {} : { meanAbsoluteErrorPercent }),
+    basis:
+      snapshots.length === 0
+        ? `The account is closed at ${major(outturnMinor)} certified, and no forecast was ever frozen against it, so there is nothing to measure. The record can say what the outturn was and not what anybody expected.`
+        : `Outturn ${major(outturnMinor)} certified at close. ${measured.length} snapshot${measured.length === 1 ? '' : 's'} compared, mean absolute forecasting error ${meanAbsoluteErrorPercent}% once change agreed after each snapshot is taken out — customer instructions and the other five triggers separately.`,
   };
 }

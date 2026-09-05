@@ -8584,6 +8584,31 @@ signs in, sees their firm and not the competitor, is refused the
 competitor's portal and the procurement read, and the buyer sees the same
 payment state. `etablix.portal.test.ts`.
 
+## Forecast accuracy against the final account
+
+§17's tenth metric had been declared not measurable, correctly: the live
+estimate at completion compared against itself is always right. What it
+needed was a record of what the forecast *was*. `snapshotForecast` freezes
+the EAC as it stands — every term, the commitment, earned, certified, agreed
+change, exposure, pot and headroom, with a note and an as-of date — as a
+`ForecastSnapshot` under `SERVICE_FORECAST_SNAPSHOT`, refused while nothing
+is committed or earned because an EAC over nothing holds nobody to anything.
+`forecastAccuracy` reports nothing until every opened demobilisation
+workstream is accepted, and then measures each snapshot against the
+certified total: the variance is split into change agreed after the snapshot
+on the customer's instruction, change agreed after it from the other five
+triggers, and what is left, which is the error the forecaster owns. The
+metric is 100 less the mean absolute error across the snapshots. A snapshot
+taken after a change was agreed carries that change and is not credited for
+it. `GET .../site-services/forecast` and `POST .../site-services/forecast/snapshot`;
+the door is *Freeze the forecast* on Site Services, the section sits beneath
+the EAC on the cash card, and the automation card takes its basis from the
+same read. Driven in Chromium: the QS freezes a forecast from the console
+and the card shows it held and not yet measurable; a reader without
+commercial standing is refused the read rather than shown a number.
+`etablix.forecast.test.ts` closes an account at £440,000 against two
+snapshots and asserts the split and the 11.4% mean error.
+
 **`domain/etablix/cash.ts`.** A payment is recorded against a certified
 valuation under the bank's own reference — the same reference twice records
 once, a different valuation or amount under a known reference is refused,
@@ -8769,7 +8794,7 @@ count.
 | ~~**Contingency and EAC**~~ (§13 Commercial) | Built — `etablix/cash.ts` | A pot set with its basis and drawn with a reason; the EAC as the higher of commitment and earned plus agreed change plus risk-adjusted exposure, every term published |
 | ~~**The cross-project roll-up**~~ (§13 Executive Portfolio) | Built — `etablix/cash.ts` | Every project of the caller's company through the same project context, skipped with the reason where unreadable |
 | ~~**An ETABLIX perception task**~~ (§19.10) | Built — `SITE_SERVICES_BRIEF` in `engines/perception.ts` | A workforce curve, welfare schedule or compound layout filed as evidence is read by a provider that can see it into a draft naming each brief item, the words it was read from and the page; a confirmed draft goes through `recordFact` with the document, the model and the confirmer on the source; a deployment with no such provider is refused before anything is charged. §19.10 now runs end to end against this path |
-| **Forecast accuracy** (§17) | The automation card, as not measurable | It compares a prior estimate at completion against a final outturn. No site-services account has been closed out, and reporting it on a live project would compare the forecast against itself |
+| ~~**Forecast accuracy**~~ (§17) | Built — `snapshotForecast` and `forecastAccuracy` in `etablix/cash.ts` | The estimate at completion frozen on a day with every term (`SERVICE_FORECAST_SNAPSHOT`); once every opened demobilisation workstream is accepted, each snapshot's variance against the certified outturn is split into change agreed after it — the customer's instructions and the other five triggers separately — and the error the forecaster owns. The automation card reports 100 less the mean absolute error, and until the account is closed says how many snapshots are held and why no figure is shown |
 
 ---
 
@@ -15132,7 +15157,9 @@ with no records behind it never reports zero**: zero and "nothing has happened
 yet" look identical on a gauge and mean opposite things. Forecast accuracy is
 declared not measurable on a live project at all — it compares a prior estimate
 at completion against a final outturn, and reporting it before close-out would be
-reporting the forecast against itself, which is always 100%.
+reporting the forecast against itself, which is always 100%. It became
+measurable later, once a forecast could be frozen and an account closed out
+against it; see *Forecast accuracy against the final account* below.
 
 **22 of 27 mutations caught.** Three of the five survivors are equivalent
 mutants; two are the module and commercial gates at each entry point, which are

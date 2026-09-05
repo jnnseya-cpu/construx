@@ -122,6 +122,25 @@ const DESK_COMMANDS = {
     done: 'Drawn',
     summary: (result) => `${result.draws.length} draw${result.draws.length === 1 ? '' : 's'} on the pot`,
   }),
+  snapshot: ({ eac }) => {
+    if (eac.error || (eac.commitmentMinor === 0 && eac.earnedMinor === 0)) {
+      return { blocked: { title: 'Nothing to freeze', detail: 'The estimate at completion is every term at once. With nothing committed and nothing earned there is no forecast to hold anybody to.' } };
+    }
+    return {
+      title: 'Freeze the forecast',
+      intent:
+        'A record of what the estimate at completion was today, term by term, so that the final account can be measured against it. ' +
+        'Forecast accuracy is reported only once the account is closed out; until then a live forecast compared against itself is always right.',
+      path: `/v1/projects/${state.session.projectId}/site-services/forecast/snapshot`,
+      submitLabel: 'Freeze',
+      fields: [
+        { name: 'note', label: 'Note', required: false, hint: 'What this forecast was made in the light of: "month one, before any change".' },
+        { name: 'asOf', label: 'As of', type: 'date', required: false, hint: 'Defaults to today.' },
+      ],
+      done: 'Forecast frozen',
+      summary: (result) => `${money(result.eacMinor)} as of ${result.asOf}`,
+    };
+  },
   asset: ({ structure }) => {
     const systems = structure.error ? [] : structure.systems;
     if (systems.length === 0) return { blocked: { title: 'No system', detail: 'A unit is registered under a composed system. Compose one first.' } };
@@ -356,7 +375,7 @@ const DESK_COMMANDS = {
 };
 
 export async function siteservices(root) {
-  const [position, readiness, structure, tower, factory, live, commercial, changes, closeout, cash, eac, desk, portfolio, library, perception, evidence] = await Promise.all([
+  const [position, readiness, structure, tower, factory, live, commercial, changes, closeout, cash, eac, forecast, desk, portfolio, library, perception, evidence] = await Promise.all([
     api.get(`/v1/projects/${state.session.projectId}/site-services/appointment`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/brief`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/sbs`).catch((error) => ({ error })),
@@ -368,6 +387,7 @@ export async function siteservices(root) {
     api.get(`/v1/projects/${state.session.projectId}/site-services/demobilisation`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/cash`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/eac`).catch((error) => ({ error })),
+    api.get(`/v1/projects/${state.session.projectId}/site-services/forecast`).catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/desk`).catch((error) => ({ error })),
     api.get('/v1/site-services/portfolio').catch((error) => ({ error })),
     api.get(`/v1/projects/${state.session.projectId}/site-services/library`).catch((error) => ({ error })),
@@ -678,6 +698,7 @@ export async function siteservices(root) {
           { id: 'payment', label: 'Record a payment', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
           { id: 'contingency', label: 'Set the contingency pot', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
           { id: 'draw', label: 'Draw on contingency', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
+          { id: 'snapshot', label: 'Freeze the forecast', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
           { id: 'asset', label: 'Register a unit', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
           { id: 'scan', label: 'Scan a unit', permitted: can('SITE_SERVICES', 'U'), reason: blockedReason('SITE_SERVICES', 'U') },
           { id: 'delivery', label: 'Schedule a delivery', permitted: can('SITE_SERVICES', 'C'), reason: blockedReason('SITE_SERVICES', 'C') },
@@ -931,7 +952,7 @@ export async function siteservices(root) {
 
       ${commercial.error ? refusal('Commercial control', commercial.error) : commercialCard(commercial, reconciliation)}
 
-      ${cash.error ? refusal('Cash and the estimate at completion', cash.error) : cashCard(cash, eac, portfolio)}
+      ${cash.error ? refusal('Cash and the estimate at completion', cash.error) : cashCard(cash, eac, forecast, portfolio)}
 
       ${changes.error ? refusal('The change register', changes.error) : changeCard(changes)}
 
@@ -1024,7 +1045,7 @@ export async function siteservices(root) {
     const which = button.dataset.command;
 
     // §13's record families: one spec each, the same panel as every other door.
-    const extra = DESK_COMMANDS[which]?.({ commercial, cash, desk, structure, library });
+    const extra = DESK_COMMANDS[which]?.({ commercial, cash, eac, desk, structure, library });
     if (extra) {
       if (extra.blocked) {
         toast(extra.blocked.title, extra.blocked.detail, 'warn');
@@ -4538,7 +4559,55 @@ function signed(value) {
 }
 
 
-function cashCard(cash, eac, portfolio) {
+function forecastSection(forecast) {
+  if (forecast.error) return refusal('Forecast accuracy', forecast.error);
+  const signed = (minor) => (minor > 0 ? `+${money(minor)}` : minor < 0 ? `−${money(-minor)}` : money(0));
+  const percent = (value) => (value === undefined ? '—' : `${value > 0 ? '+' : ''}${value}%`);
+  return html`
+    <div style="margin-top:14px">
+      <h2>Forecast accuracy</h2>
+      <div class="metric-sub" style="margin:6px 0 12px">${forecast.basis}</div>
+      ${forecast.measurable
+        ? html`<section class="grid g4" style="margin-bottom:12px">
+            <div class="card"><h2>Outturn</h2><div class="metric">${money(forecast.outturnMinor)}</div><div class="metric-sub">certified at close</div></div>
+            <div class="card ${raw(forecast.meanAbsoluteErrorPercent > 10 ? 'warn' : '')}"><h2>Mean absolute error</h2><div class="metric">${forecast.meanAbsoluteErrorPercent}%</div><div class="metric-sub">across ${forecast.snapshots.length} snapshot${forecast.snapshots.length === 1 ? '' : 's'}, change agreed after each taken out</div></div>
+            <div class="card"><h2>Accuracy</h2><div class="metric">${Math.round((100 - forecast.meanAbsoluteErrorPercent) * 10) / 10}%</div><div class="metric-sub">§17: 100 less the mean absolute error</div></div>
+            <div class="card"><h2>Snapshots</h2><div class="metric">${forecast.snapshots.length}</div><div class="metric-sub">the earliest of ${forecast.snapshots[0].asOf}</div></div>
+          </section>`
+        : ''}
+      ${table({
+        headers: forecast.measurable
+          ? ['As of', 'EAC then', 'Variance', 'Customer change after', 'Other change after', 'Forecaster’s error', 'Note']
+          : ['As of', 'EAC then', 'Committed', 'Earned', 'Agreed change', 'Exposure', 'Note'],
+        align: forecast.measurable ? ['', 'num', 'num', 'num', 'num', 'num', ''] : ['', 'num', 'num', 'num', 'num', 'num', ''],
+        rows: forecast.snapshots.map((entry) =>
+          forecast.measurable
+            ? [
+                entry.asOf,
+                money(entry.eacMinor),
+                `${signed(entry.varianceMinor)} (${percent(entry.variancePercent)})`,
+                money(entry.customerChangeMinor),
+                money(entry.otherChangeMinor),
+                html`<span class="${raw(Math.abs(entry.forecastErrorPercent) > 10 ? 'bad' : '')}">${signed(entry.forecastErrorMinor)} (${percent(entry.forecastErrorPercent)})</span>`,
+                html`<span class="metric-sub">${entry.note ?? '—'}</span>`,
+              ]
+            : [
+                entry.asOf,
+                money(entry.eacMinor),
+                money(entry.commitmentMinor),
+                money(entry.earnedMinor),
+                money(entry.agreedChangeMinor),
+                money(entry.exposureMinor),
+                html`<span class="metric-sub">${entry.note ?? '—'}</span>`,
+              ],
+        ),
+        empty: 'No forecast has been frozen. Freeze one from the command bar; the final account is measured against it once the closeout is accepted.',
+      })}
+    </div>
+  `;
+}
+
+function cashCard(cash, eac, forecast, portfolio) {
   const t = cash.totals;
   return html`
     <div class="card" style="margin-bottom:14px">
@@ -4581,6 +4650,7 @@ function cashCard(cash, eac, portfolio) {
               empty: 'Nothing to forecast from.',
             })}
           </div>`}
+      ${forecastSection(forecast)}
       ${portfolio.error
         ? refusal('The portfolio', portfolio.error)
         : html`<div style="margin-top:14px">

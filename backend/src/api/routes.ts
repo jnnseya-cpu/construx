@@ -8514,6 +8514,24 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'GET',
+    pattern: '/v1/projects/:projectId/site-services/forecast',
+    readOnly: true,
+    description: 'Every frozen estimate at completion, and once the account is closed, each one against the outturn with agreed change separated out',
+    handler: (platform, ctx) => siteCash.forecastAccuracy(projectContext(platform, ctx), ctx.query.get('today') ?? undefined),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/site-services/forecast/snapshot',
+    description: 'Freeze the estimate at completion as it stands, with every term, so the final account can be measured against it',
+    schema: {
+      type: 'object',
+      properties: { note: { type: 'string', maxLength: 500 }, asOf: { type: 'string', minLength: 10, maxLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => siteCash.snapshotForecast(projectContext(platform, ctx), body<{ note?: string; asOf?: string }>(ctx)),
+  },
+  {
+    method: 'GET',
     pattern: '/v1/projects/:projectId/site-services/portal',
     readOnly: true,
     description:

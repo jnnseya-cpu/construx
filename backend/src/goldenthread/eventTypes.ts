@@ -1878,6 +1878,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SERVICE_CONTINGENCY_SET', 'SiteServicesContingency', 'CREATE', 'COMMERCIAL', { creates: true }),
   def('SERVICE_CONTINGENCY_RESET', 'SiteServicesContingency', 'UPDATE', 'COMMERCIAL'),
   def('SERVICE_CONTINGENCY_DRAWN', 'SiteServicesContingency', 'UPDATE', 'COMMERCIAL'),
+  // The estimate at completion frozen with its terms, so the final account has
+  // something to be measured against. "Update forecasts" is §1.2's own Class A
+  // example, so an agent may take one.
+  def('SERVICE_FORECAST_SNAPSHOT', 'ForecastSnapshot', 'CREATE', 'COMMERCIAL', { aiAllowed: true, creates: true }),
   def('SERVICE_ASSET_REGISTERED', 'ServiceAsset', 'CREATE', 'DELIVERY', { aiAllowed: true, creates: true }),
   def('SERVICE_ASSET_SCANNED', 'ServiceAsset', 'UPDATE', 'DELIVERY', { aiAllowed: true }),
   def('SERVICE_DELIVERY_SCHEDULED', 'ServiceDelivery', 'CREATE', 'DELIVERY', { aiAllowed: true, creates: true }),
