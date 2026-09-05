@@ -13,6 +13,7 @@ import { ACU_BUNDLES, PACKAGES, TOP_UPS } from '../src/billing/seats.ts';
 import { throwsCode } from './helpers.ts';
 import { config } from '../src/config.ts';
 import { Platform } from '../src/platform.ts';
+import * as collection from '../src/billing/collection.ts';
 
 /**
  * The commercial rules, stated once and checked.
@@ -245,9 +246,13 @@ describe('rule 4 — 20% of a subscription buys AI allowance', () => {
     assert.equal(PACKAGES.FREE_TRIAL.monthlyPriceMinor, 0);
   });
 
-  it('credits the allowance when a paid tenancy is created', () => {
+  it('credits nothing when a paid tenancy is created, and the allowance when its first month is paid', () => {
+    // Nothing is free unless the package is. A paid tenancy used to open with
+    // the trial grant and the first month's allowance — £21.00 of AI on a £100
+    // package before a penny had arrived. It opens with nothing, owes its
+    // first month from the day it exists, and the allowance follows the money.
     const platform = new Platform();
-    const { tenant } = platform.createTenant({
+    const { tenant, openingCharge } = platform.createTenant({
       legalName: 'Paid Ltd',
       jurisdiction: 'GB',
       defaultCurrency: 'GBP',
@@ -256,9 +261,19 @@ describe('rule 4 — 20% of a subscription buys AI allowance', () => {
       enterpriseName: 'Paid',
     });
 
-    const expected =
-      config.billing.freeTrialGrantMinor + subscriptionAcuAllocationMinor(PACKAGES.CORE_PROJECT.monthlyPriceMinor);
-    assert.equal(platform.wallet(tenant.id).snapshot().balanceMinor, expected);
+    assert.equal(platform.wallet(tenant.id).snapshot().balanceMinor, 0, 'a paid package opens with no free AI');
+    assert.ok(openingCharge, 'the first month is charged the day the tenancy exists');
+    assert.equal(openingCharge.amountMinor, PACKAGES.CORE_PROJECT.monthlyPriceMinor);
+    assert.equal(openingCharge.status, 'DUE');
+
+    platform.recordSubscriptionPayment({ tenantId: tenant.id, chargeId: openingCharge.id, method: 'BANK_TRANSFER', reference: 'BACS-0001', recordedBy: 'ops' });
+    assert.equal(
+      platform.wallet(tenant.id).snapshot().balanceMinor,
+      subscriptionAcuAllocationMinor(PACKAGES.CORE_PROJECT.monthlyPriceMinor),
+      'paying the month credits its allowance, and only its allowance',
+    );
+    // The receipt is revenue, and is not AI credit.
+    assert.equal(platform.paymentReceipts(tenant.id)[0]?.chargeId, openingCharge.id);
   });
 
   it('gives a trial the grant and nothing else', () => {
@@ -303,13 +318,20 @@ describe('rule 4 — 20% of a subscription buys AI allowance', () => {
     const wallet = platform.wallet(tenant.id);
     const period = new Date().toISOString().slice(0, 7);
 
-    // A new tenancy has exactly one billable period, and creation already
-    // credited it. Reissuing the invoice for it credits nothing further, which
-    // is what makes a corrected or retried invoice safe.
+    // A new tenancy has exactly one billable period, and paying it credits the
+    // allowance once. Issuing the invoice — twice — credits nothing: an invoice
+    // documents a period, it does not pay for one, and paying it again is
+    // answered as the same payment.
+    const opening = collection.chargesFor(platform, tenant.id)[0];
+    assert.ok(opening, 'a paid tenancy is charged its first month at creation');
+    platform.recordSubscriptionPayment({ tenantId: tenant.id, chargeId: opening.id, method: 'CARD', reference: 'pi_reissue_1', recordedBy: 'stripe', source: 'PROVIDER' });
     const atCreation = wallet.snapshot().balanceMinor;
+    assert.equal(atCreation, subscriptionAcuAllocationMinor(PACKAGES.CORE_PROJECT.monthlyPriceMinor));
     platform.issueInvoice(tenant.id, period);
     platform.issueInvoice(tenant.id, period);
-    assert.equal(wallet.snapshot().balanceMinor, atCreation, 'reissuing an invoice credited the allowance again');
+    assert.equal(wallet.snapshot().balanceMinor, atCreation, 'issuing an invoice credited the allowance');
+    platform.recordSubscriptionPayment({ tenantId: tenant.id, chargeId: opening.id, method: 'CARD', reference: 'pi_reissue_1', recordedBy: 'stripe', source: 'PROVIDER' });
+    assert.equal(wallet.snapshot().balanceMinor, atCreation, 'a retried settlement credited the allowance again');
 
     // A month that has not happened cannot have been consumed.
     const nextYear = String(Number(period.slice(0, 4)) + 1);

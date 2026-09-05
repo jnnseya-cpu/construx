@@ -152,30 +152,46 @@ async function stripeRequest(path: string, body: Record<string, string | number 
  * anything the browser sends on the return trip.
  */
 export async function createCheckoutSession(input: {
-  intentId: string;
+  /** The top-up this pays, or — with `chargeId` — absent. */
+  intentId?: string;
+  /**
+   * The subscription charge this pays. A period, not AI credit: the webhook
+   * settles the charge rather than crediting a wallet, and the checkout page
+   * says what is being bought.
+   */
+  chargeId?: string;
   tenantId: string;
   amountMinor: number;
   customerEmail?: string;
   successUrl: string;
   cancelUrl: string;
+  /** What the checkout page names, for a subscription charge. */
+  description?: string;
 }): Promise<{ id: string; url: string }> {
+  if (!input.intentId && !input.chargeId) {
+    throw new DomainError('CHECKOUT_TARGET_REQUIRED', 'A checkout pays a top-up request or a subscription charge', 400);
+  }
+  const target = input.chargeId ? { 'metadata[chargeId]': input.chargeId } : { 'metadata[intentId]': input.intentId };
   const session = await stripeRequest('/checkout/sessions', {
     mode: 'payment',
     'line_items[0][quantity]': 1,
     'line_items[0][price_data][currency]': BILLING_CURRENCY.toLowerCase(),
     'line_items[0][price_data][unit_amount]': input.amountMinor,
-    'line_items[0][price_data][product_data][name]': 'CONSTRUX prepaid AI credit',
-    'line_items[0][price_data][product_data][description]':
-      'Credit added to your AI wallet and drawn down as engines run.',
+    'line_items[0][price_data][product_data][name]': input.chargeId ? 'CONSTRUX subscription' : 'CONSTRUX prepaid AI credit',
+    'line_items[0][price_data][product_data][description]': input.chargeId
+      ? (input.description ?? 'One month of the platform. The period’s AI allowance is credited when this settles.')
+      : 'Credit added to your AI wallet and drawn down as engines run.',
     success_url: input.successUrl,
     cancel_url: input.cancelUrl,
     customer_email: input.customerEmail,
     'metadata[tenantId]': input.tenantId,
-    'metadata[intentId]': input.intentId,
+    ...target,
     // Belt and braces on Stripe's own side: a retried create with the same key
     // returns the same session rather than opening a second one.
     'payment_intent_data[metadata][tenantId]': input.tenantId,
-    'payment_intent_data[metadata][intentId]': input.intentId,
+    ...(input.chargeId
+      ? { 'payment_intent_data[metadata][chargeId]': input.chargeId }
+      : { 'payment_intent_data[metadata][intentId]': input.intentId }),
   });
 
   const url = session.url;
@@ -280,6 +296,8 @@ export type SettledPayment = {
   reference: string;
   tenantId: string;
   intentId?: string;
+  /** The subscription charge the session paid, when it paid one rather than a top-up. */
+  chargeId?: string;
   amountMinor: number;
   currency: string;
 };
@@ -349,6 +367,7 @@ export function settledPayment(event: StripeEvent): SettledPayment | undefined {
     reference,
     tenantId,
     ...(metadata.intentId ? { intentId: metadata.intentId } : {}),
+    ...(metadata.chargeId ? { chargeId: metadata.chargeId } : {}),
     amountMinor,
     currency: currency.toUpperCase(),
   };

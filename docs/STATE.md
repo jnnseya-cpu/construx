@@ -15,12 +15,12 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,857 passing, 0 failing, 0 skipped, across 258 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 5,880 passing, 0 failing, 0 skipped, across 259 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 298 TypeScript files, 192,500 lines |
-| Application | 77 ES modules, 43,900 lines (including a service worker) |
-| API routes | 1,064 — 730 writes, 334 reads (48 public across both) |
-| Event types | 716 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Backend | 299 TypeScript files, 193,700 lines |
+| Application | 77 ES modules, 44,100 lines (including a service worker) |
+| API routes | 1,070 — 734 writes, 336 reads (49 public across both) |
+| Event types | 718 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 330, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
@@ -74,10 +74,12 @@ application. Do not rebuild them.
 3. **Provider cost is charged at 5×.** Revenue 5, cost 1 — every £1 the
    platform spends with a provider produces £5.
 4. **20% of every subscription payment is credited as AI allowance.** Credited
-   at activation and again when each period is invoiced, once per period —
-   invoices get corrected and reissued, and each reissue handing out another
-   month of AI would be free money. Rounded down, because a fraction of an ACU
-   cannot be spent.
+   when the period's charge *settles*, once per period — not at activation and
+   not when an invoice is issued, because a month nobody has paid for is not a
+   payment, and an invoice gets corrected and reissued. Nothing is free unless
+   the package is: the free package carries the trial grant and no allowance;
+   a paid package carries the allowance of each month paid and no grant.
+   Rounded down, because a fraction of an ACU cannot be spent.
 
 The rule under all of them: **the company takes at least 100% profit on every
 AI transaction** — 400%, which is the price: £1 of provider cost produces £5.
@@ -8156,6 +8158,128 @@ its first customer follows *Clearing what testing left behind* in
 `docs/RUNBOOK.md`: the journal files are moved aside, not deleted, and boot
 seeds only what the environment names.
 
+### Nothing is free unless the package is
+
+Reported as: a company signed up and got a free £21.00. It had. A self-serve
+signup on Solo (£100 a month) was created `ACTIVE`, credited 20% of a month it
+had not paid for (£20.00) and the £1.00 trial grant meant for the free package,
+and could run AI against both. The commercial rule, stated directly and now
+enforced: **everyone pays for their ACUs, and unless a free package was given,
+a monthly subscription is paid.**
+
+What changed, from the moment a tenancy exists:
+
+- **A paid package is charged its first month at creation.** `createTenant`
+  raises a `SubscriptionCharge` for the period starting at `startedAt`
+  (`raiseOpeningCharge` in `billing/collection.ts`, idempotent on the period).
+  The free package raises nothing. `SUBSCRIPTION_ACTIVATED` now records the
+  subscription's actual status rather than the literal `ACTIVE` it used to
+  write, which on a restart would have reopened every unpaid tenancy.
+- **A self-serve signup waits for the payment.** `signup.verify` passes
+  `opensOn: 'FIRST_PAYMENT'`, and a paid package is created
+  `AWAITING_PAYMENT` — the fourth subscription status. `standing()` closes
+  writes, AI, top-ups and export on it with a reason that says what is owed and
+  where to pay; the engine gate answers 402 `SUBSCRIPTION_NOT_ACTIVE`, money
+  owed rather than permission refused. The person can sign in and read the
+  empty record. The verification reply and the `/verify` page say the first
+  month is due and send them to `/app/billing`; the reply carries
+  `awaitingPayment` and `amountDueMinor`, never the charge id — that is behind
+  a sign-in. An operator provisioning a customer omits `opensOn` and the
+  tenancy opens at once with the charge outstanding, as before.
+- **The trial grant is the free package's alone.** `createTenant` credits it
+  only when the package's price is zero. A paid tenancy's wallet is empty until
+  a period is paid.
+- **The 20% allowance follows the payment.** `settleCharge` credits
+  `allocateFromSubscription(price, period)` once per period — the wallet's
+  `hasAllocationFor(period)` is the idempotency — then opens an
+  `AWAITING_PAYMENT` or `SUSPENDED` subscription. Nothing is credited at
+  creation or on invoice issue any more; `issueInvoice` no longer allocates.
+  Decision 4 above is amended to say so.
+- **The operator can record the payment.** There was no route that settled a
+  subscription charge: renewals were raised and auto-collected, and a transfer
+  received could not be recorded against one. `GET
+  /v1/admin/tenants/:tenantId/charges` lists every period, and `POST
+  .../charges/:chargeId/settle` records the reference and method through
+  `platform.recordSubscriptionPayment`, which writes the receipt
+  (`PAYMENT_RECEIVED` with `chargeId`), settles the charge and counts in
+  overview revenue. A reference is spent once (409
+  `PAYMENT_REFERENCE_CONFLICT` on a different charge); the same reference again
+  is `alreadyRecorded` and credits nothing; a second, different payment against
+  a settled period is refused 409 `CHARGE_ALREADY_SETTLED` from the operator
+  and, from the provider, credited to the wallet with a note rather than lost.
+- **The customer can see and pay it.** `GET /v1/billing/subscription` is the
+  tenancy's own view: status, standing, every period with a `CX-` payment
+  reference to quote on a transfer, what is outstanding, and which rails this
+  deployment takes (card when Stripe is configured; transfer always). `POST
+  /v1/billing/charges/:chargeId/checkout` opens a Stripe checkout for a `DUE`
+  charge with `chargeId` in the session metadata; the webhook settles it
+  through the same `recordSubscriptionPayment`, refusing an amount that is not
+  the charge (400 `STRIPE_AMOUNT_MISMATCH`) and acknowledging a redelivery
+  without a second credit. ACU & Billing shows the charge table and a *Pay by
+  card* button when card is offered.
+- **Closure writes off what nobody will now pay.** `closeTenant` marks every
+  `DUE` charge `WRITTEN_OFF` (`SUBSCRIPTION_CHARGE_WRITTEN_OFF`) so the
+  register does not carry money owed by a tenancy that has gone.
+
+The pricing page and the plan cards say it in the customer's words: the AI
+allowance is credited each month the subscription is paid, and the first month
+is paid before the account opens. `tests/paywall.test.ts` drives the whole of
+it through HTTP — signup, sign-in, the 402, the bill, the operator's
+settlement, the idempotency, Stripe by card, and the free package opening at
+once with the trial grant and nothing else. `economics.test.ts` rule 4 now
+asserts nothing is credited at creation and the allowance arrives with the
+first payment.
+
+### The onboarding queue shows who signed up, and one code per sign-in
+
+Reported as: nothing on the onboarding request queue, straight able to log in,
+and three copies of the same login code. Three defects.
+
+**The queue listed enterprise requests only.** A self-serve signup went
+straight to the tenancy register and the operator's onboarding screen had no
+idea it had happened. Onboarding now carries two cards over the register it
+already read: *Awaiting first payment* — every open tenancy whose subscription
+is `AWAITING_PAYMENT`, with what is owed, the `CX-` reference the customer was
+shown, and a *Record payment* door onto the settle route above — and *Signed up
+in the last 30 days*, every tenancy created in the window with its package and
+status. The register rows carry `charges`, `outstandingMinor` and
+`awaitingFirstPayment` for it; Tenants & Users badges the status.
+
+**Straight able to log in** was correct and stays: an account exists, so a
+sign-in works. What was wrong is what the sign-in could then do, and that is
+the paywall above.
+
+**Three copies of one code** had two causes in the outbox. `notify()` queued
+the message due immediately and awaited the SMTP send itself; the drain timer
+found the same entry still `QUEUED` and dispatched it again. And a relay that
+took the `DATA` and never answered was recorded `FAILED` and retried, sending
+a message the recipient already had. `notifications/outbox.ts` now holds an
+in-process claim on every entry being sent (`claim`/`release`; `due()` skips
+claimed entries), and `messaging/smtp.ts` reports a failed or timed-out read
+*after* the body was accepted as `indeterminate` — the outbox abandons it as
+`ABANDONED` with the reason rather than retrying, and the person gets one code
+or a fresh challenge. Tested with a concurrent drain and a relay that goes
+silent after `DATA`.
+
+### A closed tenancy can be deleted from the register
+
+Asked for as: "Closed — record kept, read-only" can be deleted. The row stayed
+on Tenants & Users for ever. The operator can now delete a closed tenancy:
+`POST /v1/admin/tenants/:tenantId/delete` (reason, ten characters at least;
+409 `TENANT_NOT_CLOSED` on an open one, 409 `TENANT_ALREADY_DELETED` twice)
+erases every identity of the tenancy now through the erasure that already
+existed for a single user, records `TENANT_DELETED` with `deletedAt`,
+`deletedBy`, the reason and the count erased, and the tenancy leaves the
+register, the overview, the onboarding queue and every operator figure. The
+*Delete* button sits on the closed row.
+
+What is not deleted, by construction: the chain. Every event the tenancy ever
+committed stays, hash-linked, under the retention the ledger is built for;
+"deleted" is a state on the tenant record and a filter on the registers, not a
+removal from the ledger. That is decision 1, and the register is the only thing
+the request asked to be rid of.
+
+
 ### Files without a second setting, and a term the pricing page made
 
 **"Account pictures don't work, for everyone."** Every upload on the
@@ -9089,7 +9213,9 @@ Re-opening these is what caused churn before.
    at least 100% profit on every AI
    transaction** — the multiplier floor is derived from that rule, not
    configured beside it. 20% of every subscription payment is credited as AI
-   allowance. No AI work runs without available ACUs.
+   allowance when that payment settles; nothing is credited for a month that
+   has not been paid, and only the free package carries the trial grant. No AI
+   work runs without available ACUs.
 
    The 5x is confirmed and deliberate. Several specification documents state
    3x and the rate ran at 4x for a period; the instruction given directly is

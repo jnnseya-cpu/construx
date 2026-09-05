@@ -33,6 +33,13 @@ export async function billing(root) {
     // restricted module the company holds (enterprise specification §9).
     api.get('/v1/company/subscription/items').catch(() => null),
   ]);
+  // The subscription itself: what the platform costs, whether it is paid, and
+  // how an unpaid period can be paid. Read after the rest so a refusal here —
+  // a tenancy waiting for its first month has a wallet of zero and nothing
+  // else to show — still renders the screen that explains it.
+  const subscription = await api.get('/v1/billing/subscription').catch(() => null);
+  const dueCharges = (subscription?.charges ?? []).filter((charge) => charge.status === 'DUE');
+  const awaitingFirst = subscription?.subscription?.status === 'AWAITING_PAYMENT';
 
   /** Bytes, at the scale a person reads them. */
   const gb = (bytes) => {
@@ -64,6 +71,47 @@ export async function billing(root) {
         </div>
       </div>
 
+      ${
+        subscription && dueCharges.length > 0
+          ? html`<div class="card ${raw(awaitingFirst ? 'warn' : '')}" style="margin-bottom:14px" data-subscription-due>
+              <h2>
+                ${awaitingFirst ? 'Your first month is due before the platform opens' : 'A subscription period is unpaid'}
+                ${badge(exact(subscription.outstandingMinor), awaitingFirst ? 'bad' : 'warn')}
+              </h2>
+              <p class="metric-sub" style="margin:6px 0 12px">
+                ${awaitingFirst
+                  ? `${subscription.subscription.packageLabel} is ${exact(subscription.subscription.monthlyPriceMinor)} a month. Nothing on a paid package is free before it is paid: ` +
+                    `the tenancy exists and is read-only until the first month settles, and the month's AI allowance (${subscription.payment.allowancePercent}% of the price) is credited the moment it does.`
+                  : `Pay the period below to keep the tenancy open. Past its grace date the platform goes read-only until it is paid; the period's AI allowance is credited when it settles.`}
+              </p>
+              ${table({
+                headers: ['Period from', 'Amount', 'Due', 'Pay by transfer, quoting', ''],
+                align: ['', 'num', '', '', ''],
+                rows: dueCharges.map((charge) => [
+                  charge.periodStart.slice(0, 10),
+                  exact(charge.amountMinor),
+                  charge.dueAt.slice(0, 10),
+                  html`<code>${charge.paymentReference}</code>`,
+                  can('BILLING_ACU', 'U')
+                    ? subscription.payment.card
+                      ? html`<button class="btn sm" data-pay-charge="${charge.id}">Pay by card</button>`
+                      : html`<span class="metric-sub">Card payment is not configured on this deployment — pay by transfer and the operator records it</span>`
+                    : html`<span class="metric-sub">An administrator pays this</span>`,
+                ]),
+              })}
+            </div>`
+          : ''
+      }
+      ${
+        subscription && dueCharges.length === 0 && subscription.subscription.monthlyPriceMinor > 0
+          ? html`<div class="notice ok" style="margin-bottom:14px">
+              <div>
+                <b>Subscription paid.</b> ${subscription.subscription.packageLabel}, ${exact(subscription.subscription.monthlyPriceMinor)} a month,
+                renews ${subscription.subscription.renewsAt.slice(0, 10)}. Each month's AI allowance is credited when that month is paid.
+              </div>
+            </div>`
+          : ''
+      }
       ${
         wallet.aiHalted
           ? html`<div class="notice err"><div><b>AI execution is halted.</b><br>${wallet.haltReason}</div></div>`
@@ -458,6 +506,25 @@ export async function billing(root) {
       toast('Could not request a top-up', error.message, 'err');
     }
   });
+
+  // Paying a subscription period by card. The charge is on the record already;
+  // Stripe's page takes the money, and the webhook settles the charge — the
+  // balance and the tenancy's standing move when Stripe says the money arrived,
+  // not when this button is pressed.
+  for (const button of root.querySelectorAll('[data-pay-charge]')) {
+    button.addEventListener('click', async () => {
+      const chargeId = button.getAttribute('data-pay-charge');
+      button.disabled = true;
+      try {
+        const checkout = await api.post(`/v1/billing/charges/${chargeId}/checkout`, {});
+        toast('Taking you to payment', 'The tenancy opens the moment Stripe confirms the payment.', 'ok');
+        window.location.assign(checkout.checkoutUrl);
+      } catch (error) {
+        toast('Card payment could not be opened', error.message, 'err');
+        button.disabled = false;
+      }
+    });
+  }
 
   document.getElementById('caps')?.addEventListener('click', async () => {
     // A cap is a governance decision, so the reason is part of the command

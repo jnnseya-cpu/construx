@@ -116,6 +116,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // identity deactivated and scheduled for erasure, and what the customer is
   // owed raised as a refund obligation. The record stays.
   def('TENANT_CLOSED', 'Tenant', 'UPDATE', 'GOVERNANCE'),
+  // The operator deleting a closed tenancy from the register: every identity
+  // erased now rather than after the grace period, the row gone from every
+  // operator screen. The events stay — the chain is what makes them evidence —
+  // and this one records that the deletion happened, by whom and why.
+  def('TENANT_DELETED', 'Tenant', 'UPDATE', 'GOVERNANCE'),
   def('REFUND_RAISED', 'RefundObligation', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('REFUND_SETTLED', 'RefundObligation', 'UPDATE', 'GOVERNANCE'),
   // Bringing somebody onto a project, in three events because the states are
@@ -155,6 +160,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SUBSCRIPTION_CHARGE_RAISED', 'SubscriptionCharge', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('SUBSCRIPTION_CHARGE_SETTLED', 'SubscriptionCharge', 'UPDATE', 'GOVERNANCE'),
   def('SUBSCRIPTION_COLLECTION_FAILED', 'SubscriptionCharge', 'UPDATE', 'GOVERNANCE'),
+  // A period nobody will now pay for: the tenancy was closed with it owed. The
+  // charge stops being money awaited; the record of it stays.
+  def('SUBSCRIPTION_CHARGE_WRITTEN_OFF', 'SubscriptionCharge', 'UPDATE', 'GOVERNANCE'),
   // Transaction revenue. Separate entities from SubscriptionCharge because they
   // are a different commercial fact: a subscription charge is what a tenancy
   // pays to hold the platform, a settlement is a fee taken on money the

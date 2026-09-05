@@ -791,7 +791,10 @@ export function getStarted(): string {
           <li>${t.storageGb >= 1000 ? `${(t.storageGb / 1000).toFixed(t.storageGb % 1000 === 0 ? 0 : 1)} TB storage` : `${t.storageGb} GB storage`}</li>
           <li>${
             t.aiAllowanceAcus > 0
-              ? `<b>${t.aiAllowanceAcus.toLocaleString('en-GB')} ACUs</b> of AI included each month`
+              // Credited when the month is paid, and said so: nothing is free
+              // unless the package is, and a card that read "included" let a
+              // signup hold a month's AI before a penny had arrived.
+              ? `<b>${t.aiAllowanceAcus.toLocaleString('en-GB')} ACUs</b> of AI credited each month the subscription is paid`
               // "While allocation lasts" is a material term, not small print:
               // the platform gives away a bounded amount of trial credit a
               // month, and a card promising it unconditionally would promise
@@ -804,7 +807,7 @@ export function getStarted(): string {
               // account and it stops after thirty days. Saying so on the card is
               // the difference between an expiry and a surprise.
               ? 'One trial per account, 30 days'
-              : 'Monthly rolling, cancel any time'
+              : 'Monthly rolling, first month paid before the account opens, cancel any time'
           }</li>
           <li class="${t.export ? 'yes' : 'no'}">${t.export ? 'Branded export and print' : 'No export or print'}</li>
           <li class="${t.apiAccess ? 'yes' : 'no'}">${t.apiAccess ? 'API access' : 'No API access'}</li>
@@ -825,9 +828,10 @@ export function getStarted(): string {
   <div class="wrap narrow">
     <h2>How AI is paid for</h2>
     <p>
-      Every plan includes an AI allowance each month, and you can top it up whenever you want more. The arithmetic
-      behind it matters far less than the guarantee around it: <b>nothing is ever spent without being shown to you
-      first</b>.
+      Every paid plan credits an AI allowance the moment each month's subscription is paid, and you can top it up
+      whenever you want more. Nothing is credited before the payment settles — a paid account opens when its first
+      month is paid, and the free trial is the one package that carries a grant. The arithmetic behind it matters far
+      less than the guarantee around it: <b>nothing is ever spent without being shown to you first</b>.
     </p>
     <p>
       <b>When the ACUs run out, AI stops.</b> Not a warning, not an overdraft, not a surprise line on next month's

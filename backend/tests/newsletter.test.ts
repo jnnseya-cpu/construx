@@ -410,6 +410,39 @@ describe('SMTP transport', () => {
     closed.close();
   });
 
+  it('reports a message the relay took and never answered for as unknown, not failed', async () => {
+    // The relay accepts the whole conversation up to and including the body,
+    // then says nothing. The message may be in the queue behind it; the client
+    // cannot know, and must not say "failed" — a caller that believes that
+    // sends the same message again.
+    const silent = createServer((socket) => {
+      let dataMode = false;
+      socket.setEncoding('utf8');
+      socket.write('220 test.construx ESMTP\r\n');
+      socket.on('data', (chunk: string) => {
+        if (dataMode) return; // took the body, answered nothing
+        if (chunk.startsWith('EHLO')) socket.write('250 test.construx\r\n');
+        else if (chunk.startsWith('DATA')) {
+          dataMode = true;
+          socket.write('354 go ahead\r\n');
+        } else socket.write('250 Ok\r\n');
+      });
+      socket.on('error', () => {});
+    });
+    await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve));
+    const silentPort = (silent.address() as { port: number }).port;
+
+    const result = await sendMail(
+      { from: 'a@construx.ai', to: 'b@example.test', raw: 'Subject: x\r\n\r\nx' },
+      { ...options, port: silentPort, user: '', timeoutMs: 300 },
+    );
+    assert.equal(result.accepted, false);
+    assert.equal(result.indeterminate, true);
+    assert.match(result.response, /No reply after the message was sent/);
+
+    silent.close();
+  });
+
   it('refuses to authenticate in cleartext when TLS is required', async () => {
     await assert.rejects(
       () => sendMail({ from: 'a@construx.ai', to: 'b@example.test', raw: 'x' }, { ...options, port, requireTls: true }),

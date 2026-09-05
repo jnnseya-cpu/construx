@@ -64,6 +64,8 @@ export type EstateOverview = {
     active: number;
     suspended: number;
     cancelled: number;
+    /** Paid packages signed up for and not yet paid for. Not customers yet, and not counted as active. */
+    awaitingPayment: number;
     /**
      * Tenancies the operator has closed.
      *
@@ -108,7 +110,7 @@ type TenancyInput = {
   tenantId: string;
   createdAt: string;
   tier: SubscriptionTier;
-  status: 'ACTIVE' | 'SUSPENDED' | 'CANCELLED';
+  status: 'ACTIVE' | 'SUSPENDED' | 'CANCELLED' | 'AWAITING_PAYMENT';
   seatsUsed: number;
   /** Null where the package caps nothing. */
   seatsIncluded: number | null;
@@ -176,6 +178,7 @@ export function estateOverview(
       active: tenancies.filter((t) => t.status === 'ACTIVE').length,
       suspended: tenancies.filter((t) => t.status === 'SUSPENDED').length,
       cancelled: tenancies.filter((t) => t.status === 'CANCELLED').length,
+      awaitingPayment: tenancies.filter((t) => t.status === 'AWAITING_PAYMENT').length,
       closed,
       onTrial: tenancies.filter((t) => t.status === 'ACTIVE' && t.tier === 'FREE_TRIAL').length,
       // A tenancy nobody can administer cannot invite anybody, cannot be

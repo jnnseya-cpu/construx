@@ -133,7 +133,11 @@ export async function tenants(root) {
             badge(tenant.tier, tenant.tier === 'ENTERPRISE' || tenant.tier === 'SOVEREIGN' ? 'ai' : 'info'),
             tenant.closedAt
               ? html`${badge('closed', 'bad')}<div class="metric-sub">${date(tenant.closedAt)}</div>`
-              : badge(tenant.status, tenant.status === 'ACTIVE' ? 'ok' : 'warn'),
+              : tenant.status === 'AWAITING_PAYMENT'
+                ? html`${badge('awaiting first payment', 'warn')}<div class="metric-sub">${money(tenant.outstandingMinor)} due · Onboarding queue</div>`
+                : html`${badge(tenant.status, tenant.status === 'ACTIVE' ? 'ok' : 'warn')}${
+                    tenant.outstandingMinor > 0 ? html`<div class="metric-sub">${money(tenant.outstandingMinor)} unpaid</div>` : ''
+                  }`,
             tenant.administrators === 0
               ? badge('no administrator', 'bad')
               : `${tenant.identities} (${tenant.administrators} admin${tenant.administrators === 1 ? '' : 's'})`,
@@ -149,7 +153,8 @@ export async function tenants(root) {
             money(tenant.wallet.availableMinor),
             date(tenant.renewsAt),
             tenant.closedAt
-              ? html`<span class="metric-sub">Closed — record kept, read-only</span>`
+              ? html`<span class="metric-sub">Closed — record kept, read-only</span>
+                  <button class="btn quiet danger sm" data-delete="${tenant.id}" data-name="${tenant.legalName}" data-people="${tenant.identities}">Delete</button>`
               : html`<button class="btn quiet sm" data-credit="${tenant.id}">Credit</button>
                   <button class="btn quiet sm" data-package="${tenant.id}">Package</button>
                   <button class="btn quiet sm" data-status="${tenant.id}">Status</button>
@@ -799,6 +804,29 @@ export async function tenants(root) {
           'ok',
         );
         await again();
+      }
+    });
+  }
+
+  // Deleting a closed tenancy from the register. The nearest thing to deletion
+  // an append-only record allows: every identity erased now, the row gone from
+  // every operator screen, the events kept on the chain as evidence.
+  for (const button of root.querySelectorAll('[data-delete]')) {
+    button.addEventListener('click', async () => {
+      const tenantId = button.getAttribute('data-delete');
+      const ok = await command({
+        title: `Delete ${button.dataset.name} from the register`,
+        intent:
+          `${button.dataset.people} identit${button.dataset.people === '1' ? 'y is' : 'ies are'} erased now rather than at the end of the grace period — ` +
+          'name, address and mobile replaced by a token that names nobody — and the tenancy leaves every operator screen. ' +
+          'The events stay on the chain, because the record is evidence; any refund still owed stays owed.',
+        path: `/v1/admin/tenants/${tenantId}/delete`,
+        submitLabel: 'Delete from the register',
+        fields: [{ name: 'reason', label: 'Why', hint: 'At least ten characters. The record keeps it.' }],
+      });
+      if (ok) {
+        toast('Deleted from the register', `${button.dataset.name} is off every operator screen. The chain keeps what happened.`, 'ok');
+        await tenants(root);
       }
     });
   }

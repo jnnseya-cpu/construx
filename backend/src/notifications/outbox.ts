@@ -145,11 +145,24 @@ export function queue(platform: Platform, input: QueueInput): OutboxEntry {
 export function recordAttempt(
   platform: Platform,
   entry: OutboxEntry,
-  outcome: { delivered: boolean; dispatchId?: string; error?: string },
+  outcome: {
+    delivered: boolean;
+    dispatchId?: string;
+    error?: string;
+    /**
+     * Stop here whatever the attempt count. Used when the relay took the
+     * message body and never answered: the message may well have been
+     * delivered, and trying again would send it a second time to somebody who
+     * may already hold it. Recorded as abandoned, with the reason, so the
+     * operator sees a notice that was not confirmed rather than one that
+     * silently went twice.
+     */
+    abandon?: boolean;
+  },
 ): OutboxEntry {
   const now = new Date().toISOString();
   const attempts = entry.attempts + 1;
-  const exhausted = attempts >= config.notifications.maxAttempts;
+  const exhausted = attempts >= config.notifications.maxAttempts || outcome.abandon === true;
 
   const next: OutboxEntry = {
     ...entry,
@@ -185,10 +198,47 @@ export function recordAttempt(
   return next;
 }
 
-/** Everything still owed and due now. Ordered oldest first, as a queue is. */
+/**
+ * Entries this process is dispatching right now.
+ *
+ * `queue` writes an entry due immediately and `notify` then awaits its
+ * dispatch — an SMTP conversation of a few seconds. For those seconds the
+ * entry looked owed to anything else reading the queue: QUEUED, its attempt
+ * time passed, and nothing on the record saying a send was under way. The
+ * drain timer read `due()` on its own clock, dispatched the entry again, and
+ * a person signing in received the same one-time code two and three times.
+ *
+ * The claim is held in memory rather than written, deliberately. A claim on
+ * the ledger would be a second event per notice to close a race that only one
+ * process can have — the primary is the only process that drains — and a
+ * process that dies holding a claim releases it by dying, which is exactly the
+ * case the timer exists for.
+ */
+const inFlight = new Set<string>();
+
+/** Take the entry for dispatch. False when another dispatch of it is already under way. */
+export function claim(outboxId: string): boolean {
+  if (inFlight.has(outboxId)) return false;
+  inFlight.add(outboxId);
+  return true;
+}
+
+export function release(outboxId: string): void {
+  inFlight.delete(outboxId);
+}
+
+/** Test isolation only. */
+export function resetClaims(): void {
+  inFlight.clear();
+}
+
+/** Everything still owed and due now, and not already being sent. Ordered oldest first, as a queue is. */
 export function due(platform: Platform, at: string = new Date().toISOString()): OutboxEntry[] {
   return entriesOf(platform).filter(
-    (entry) => entry.status === 'QUEUED' && (entry.nextAttemptAt === undefined || entry.nextAttemptAt <= at),
+    (entry) =>
+      entry.status === 'QUEUED' &&
+      (entry.nextAttemptAt === undefined || entry.nextAttemptAt <= at) &&
+      !inFlight.has(entry.outboxId),
   );
 }
 
@@ -231,16 +281,14 @@ export async function drain(
   const report: DrainReport = { attempted: 0, sent: 0, retrying: 0, abandoned: 0 };
 
   for (const entry of due(platform, options.at).slice(0, options.limit ?? 100)) {
+    // Two drains can overlap — the timer and a boot pass, or two ticks around
+    // a slow relay — and the list above was read before either began. The
+    // claim is what stops the second sending what the first is sending.
+    if (!claim(entry.outboxId)) continue;
     report.attempted += 1;
     try {
       const dispatch = await dispatchNow(platform, entry);
-      const delivered =
-        dispatch.deliveries.length === 0 || dispatch.deliveries.some((delivery) => delivery.status !== 'FAILED');
-      const settled = recordAttempt(platform, entry, {
-        delivered,
-        dispatchId: dispatch.id,
-        error: delivered ? undefined : dispatch.deliveries.map((delivery) => delivery.detail).join('; '),
-      });
+      const settled = recordAttempt(platform, entry, attemptOutcome(dispatch));
       if (settled.status === 'SENT') report.sent += 1;
       else if (settled.status === 'ABANDONED') report.abandoned += 1;
       else report.retrying += 1;
@@ -254,10 +302,41 @@ export async function drain(
       });
       if (settled.status === 'ABANDONED') report.abandoned += 1;
       else report.retrying += 1;
+    } finally {
+      release(entry.outboxId);
     }
   }
 
   return report;
+}
+
+/**
+ * What a dispatch means for the entry that produced it.
+ *
+ * Delivered when at least one delivery was not a hard failure — `RECORDED`
+ * counts, `SUPPRESSED` counts, and no delivery at all counts, for the reasons
+ * `drain` states. Abandoned, rather than retried, when a delivery is
+ * *indeterminate*: the relay took the whole message and never said whether it
+ * accepted it. That message may be in the mailbox already, and the one thing
+ * worse than a code that did not arrive is the same code arriving three times.
+ */
+export function attemptOutcome(dispatch: {
+  id: string;
+  deliveries: Array<{ status: string; detail: string; indeterminate?: boolean }>;
+}): { delivered: boolean; dispatchId: string; error?: string; abandon?: boolean } {
+  const delivered = dispatch.deliveries.length === 0 || dispatch.deliveries.some((delivery) => delivery.status !== 'FAILED');
+  const indeterminate = !delivered && dispatch.deliveries.some((delivery) => delivery.indeterminate === true);
+  return {
+    delivered,
+    dispatchId: dispatch.id,
+    error: delivered
+      ? undefined
+      : dispatch.deliveries
+          .filter((delivery) => delivery.status === 'FAILED')
+          .map((delivery) => delivery.detail)
+          .join('; '),
+    ...(indeterminate ? { abandon: true } : {}),
+  };
 }
 
 export type OutboxPosition = {

@@ -78,11 +78,12 @@ after(() => server.close());
 describe('the refund position', () => {
   it('refunds the unspent part of what was paid in, never the allowance', () => {
     const position = platform.refundPosition(tenantId);
-    // £40 paid in and nothing spent; the subscription allowance was credited
-    // too but is not the customer's money. The lesser of balance and paid-in
-    // is what is owed — here, exactly what was paid.
+    // £40 paid in and nothing spent. No allowance sits beside it: the first
+    // month has not been paid, and the allowance follows the payment. The
+    // lesser of balance and paid-in is what is owed — here, exactly what was
+    // paid.
     assert.equal(platform.wallet(tenantId).paidInMinor(), 4_000);
-    assert.ok(platform.wallet(tenantId).availableMinor() > 4_000, 'the allowance sits in the wallet too');
+    assert.equal(platform.wallet(tenantId).availableMinor(), 4_000, 'nothing is credited before the subscription is paid');
     assert.equal(position.walletMinor, 4_000);
     assert.equal(position.subscriptionMinor, 0, 'no settled charge yet, so nothing is owed for the period');
     assert.equal(position.totalMinor, position.walletMinor);
@@ -209,6 +210,17 @@ describe('closing', () => {
     assert.equal(after.body.dueMinor, 0);
   });
 
+  it('writes off the periods nobody will now pay for', () => {
+    // The first month was charged the day the tenancy was created and never
+    // paid. Closed, the tenancy cannot owe it: the register must not carry
+    // "unpaid" beside a row marked closed for the rest of time.
+    const charges = collection.chargesFor(platform, tenantId);
+    assert.ok(charges.length >= 1);
+    assert.equal(charges.filter((charge) => charge.status === 'DUE').length, 0, 'a closed tenancy still owes a period');
+    assert.ok(charges.some((charge) => charge.status === 'WRITTEN_OFF'), 'the unpaid month was not written off');
+    assert.ok(charges.some((charge) => charge.status === 'SETTLED'), 'the settled period is untouched');
+  });
+
   it('survives a restart', () => {
     const rebuilt = new Platform();
     rebuilt.ledger.restore(platform.ledger.events());
@@ -217,5 +229,52 @@ describe('closing', () => {
     assert.equal(rebuilt.refunds().length, 1);
     assert.equal(rebuilt.refunds()[0]!.status, 'SETTLED');
     assert.equal(rebuilt.topUpIntents(tenantId)[0]!.status, 'CANCELLED', 'the cancellation is on the record, not in memory');
+  });
+});
+
+describe('deleting a closed tenancy from the register', () => {
+  it('refuses an open tenancy, and anybody but the operator', async () => {
+    const open = platform.createTenant({ legalName: 'Staying Ltd', jurisdiction: 'GB', defaultCurrency: 'GBP', tier: 'TEAM', package: 'CORE_PROJECT', enterpriseName: 'Staying' });
+    const refused = await send('POST', `/v1/admin/tenants/${open.tenant.id}/delete`, operatorToken, { reason: 'Tidying the register' });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.title, 'TENANT_NOT_CLOSED');
+    const admin = await send('POST', `/v1/admin/tenants/${tenantId}/delete`, tokenFor(adminId), { reason: 'Tidying the register' });
+    assert.equal(admin.status, 403);
+  });
+
+  it('erases every identity now, drops the row from the register, and keeps the chain', async () => {
+    // Seen on the live register after a test signup was closed: "Closed —
+    // record kept, read-only", for ever. Deletion is what the operator asked
+    // for, and this is as far as an append-only record can honestly go.
+    const eventsBefore = platform.ledger.events().length;
+    const deleted = await send('POST', `/v1/admin/tenants/${tenantId}/delete`, operatorToken, { reason: 'Test signup, tidied after closure' });
+    assert.equal(deleted.status, 201, JSON.stringify(deleted.body));
+    assert.equal(deleted.body.identitiesErased, 2);
+    assert.ok(deleted.body.deletedAt);
+
+    for (const user of platform.users(tenantId)) {
+      assert.ok(user.erasedAt, `${user.id} was not erased`);
+      assert.ok(!user.email.includes('leaving.example'), 'an address survived the erasure');
+    }
+
+    const tenants = await send('GET', '/v1/admin/tenants', operatorToken);
+    assert.ok(!(tenants.body.tenants as Array<Record<string, unknown>>).some((row) => row.id === tenantId), 'the deleted tenancy is still on the register');
+
+    // Nothing left the chain. The deletion is one more event on it.
+    assert.ok(platform.ledger.events().length > eventsBefore);
+    assert.ok(platform.ledger.events().some((event) => event.eventType === 'TENANT_DELETED' && event.entity.refId === tenantId));
+    assert.ok(platform.tenant(tenantId).deletedAt, 'the record of the tenancy still resolves');
+
+    const again = await send('POST', `/v1/admin/tenants/${tenantId}/delete`, operatorToken, { reason: 'Test signup, tidied after closure' });
+    assert.equal(again.status, 409);
+    assert.equal(again.body.title, 'TENANT_ALREADY_DELETED');
+  });
+
+  it('is still deleted after a restart', () => {
+    const rebuilt = new Platform();
+    rebuilt.ledger.restore(platform.ledger.events());
+    rebuilt.rehydrate();
+    assert.ok(rebuilt.tenant(tenantId).deletedAt);
+    assert.ok(rebuilt.users(tenantId).every((user) => user.erasedAt));
   });
 });

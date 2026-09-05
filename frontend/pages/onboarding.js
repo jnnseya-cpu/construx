@@ -43,13 +43,22 @@ export async function onboarding(root) {
   const now = Date.now();
   const ageDays = (iso) => Math.floor((now - new Date(iso).getTime()) / 86_400_000);
 
-  const trials = tenants.filter((tenant) => tenant.tier === 'FREE_TRIAL' && tenant.status === 'ACTIVE');
-  const unreachable = tenants.filter((tenant) => tenant.administrators === 0);
-  const silent = tenants.filter((tenant) => (writesById.get(tenant.id)?.events ?? 0) === 0);
+  // Closed tenancies are on the register and in no queue: nothing about them
+  // is going to change.
+  const open = tenants.filter((tenant) => !tenant.closedAt);
+  // A paid package somebody signed up for and has not paid for. Nothing is
+  // free unless the package is, so the tenancy waits here, read-only and
+  // empty, until its first month settles — by card through Stripe, or by a
+  // transfer the operator records against the reference on the row.
+  const awaitingPayment = open.filter((tenant) => tenant.status === 'AWAITING_PAYMENT');
+  const trials = open.filter((tenant) => tenant.tier === 'FREE_TRIAL' && tenant.status === 'ACTIVE');
+  const unreachable = open.filter((tenant) => tenant.administrators === 0);
+  const silent = open.filter((tenant) => (writesById.get(tenant.id)?.events ?? 0) === 0 && tenant.status !== 'AWAITING_PAYMENT');
   const unsettled = (forecast?.signals ?? []).filter((signal) => signal.id.startsWith('unsettled:'));
-  const newThisMonth = tenants.filter((tenant) => ageDays(tenant.createdAt) <= 30);
+  const newThisMonth = open.filter((tenant) => ageDays(tenant.createdAt) <= 30);
 
-  const nothingToDo = trials.length === 0 && unreachable.length === 0 && silent.length === 0 && unsettled.length === 0;
+  const nothingToDo =
+    awaitingPayment.length === 0 && trials.length === 0 && unreachable.length === 0 && silent.length === 0 && unsettled.length === 0;
 
   render(
     root,
@@ -68,6 +77,11 @@ export async function onboarding(root) {
           <h2>New in 30 days</h2>
           <div class="metric ${raw(newThisMonth.length > 0 ? 'good' : '')}">${newThisMonth.length}</div>
           <div class="metric-sub">tenancies created</div>
+        </div>
+        <div class="card ${raw(awaitingPayment.length > 0 ? 'warn' : '')}">
+          <h2>Awaiting first payment</h2>
+          <div class="metric ${raw(awaitingPayment.length > 0 ? 'warn' : '')}">${awaitingPayment.length}</div>
+          <div class="metric-sub">paid packages signed up for and not yet paid</div>
         </div>
         <div class="card">
           <h2>On trial</h2>
@@ -88,9 +102,64 @@ export async function onboarding(root) {
 
       ${nothingToDo
         ? html`<div class="empty">
-            <b>Nothing is stuck.</b>No trial is running, no tenancy is without an administrator, nothing has been raised
-            and left unpaid, and every tenancy has written something. That is the queue being genuinely empty rather
-            than not yet built.
+            <b>Nothing is stuck.</b>Nobody is waiting to pay a first month, no trial is running, no tenancy is without an
+            administrator, nothing has been raised and left unpaid, and every tenancy has written something. That is the
+            queue being genuinely empty rather than not yet built.
+          </div>`
+        : ''}
+
+      ${awaitingPayment.length > 0
+        ? html`<div class="card pad0 warn" style="margin-bottom:14px" data-awaiting-payment>
+            <h2 style="padding:15px 17px 0">Awaiting first payment ${badge(String(awaitingPayment.length), 'warn')}</h2>
+            <div class="metric-sub" style="padding:0 17px 10px">
+              Somebody signed up on a paid package and proved their address. Nothing is free unless the package is, so the
+              tenancy exists, read-only and with an empty wallet, until its first month is paid — by card through the
+              payment page, or by a transfer you record here against the reference they were shown. Recording it opens
+              the tenancy and credits the month's AI allowance.
+            </div>
+            ${table({
+              headers: ['Tenancy', 'Package', 'First month', 'Reference', 'Signed up', 'People', ''],
+              align: ['', '', 'num', '', '', 'num', ''],
+              rows: awaitingPayment.map((tenant) => {
+                const charge = (tenant.charges ?? []).find((candidate) => candidate.status === 'DUE');
+                return [
+                  html`<b>${tenant.legalName}</b><div class="metric-sub">${tenant.jurisdiction} · ${tenant.currency}</div>`,
+                  tenant.packageLabel ?? tenant.package,
+                  money(charge?.amountMinor ?? tenant.outstandingMinor ?? tenant.monthlyPriceMinor),
+                  charge ? html`<code>CX-${String(charge.id).slice(-8).toUpperCase()}</code>` : '—',
+                  `${date(tenant.createdAt)} · ${days(ageDays(tenant.createdAt))} ago`,
+                  tenant.identities,
+                  charge
+                    ? html`<button class="btn sm" data-settle-charge="${charge.id}" data-settle-tenant="${tenant.id}" data-name="${tenant.legalName}" data-amount="${charge.amountMinor}">Record payment</button>`
+                    : html`<span class="metric-sub">no charge on record</span>`,
+                ];
+              }),
+            })}
+          </div>`
+        : ''}
+
+      ${newThisMonth.length > 0
+        ? html`<div class="card pad0" style="margin-bottom:14px" data-new-signups>
+            <h2 style="padding:15px 17px 0">Signed up in the last 30 days ${badge(String(newThisMonth.length), 'info')}</h2>
+            <div class="metric-sub" style="padding:0 17px 10px">
+              Every tenancy created in the window, whatever it is doing now — so a signup is on this screen the moment it
+              exists, before any of the queues below has a reason to show it.
+            </div>
+            ${table({
+              headers: ['Tenancy', 'Package', 'Status', 'Created', 'People', 'Paid to date'],
+              align: ['', '', '', '', 'num', 'num'],
+              rows: newThisMonth.map((tenant) => [
+                html`<b>${tenant.legalName}</b><div class="metric-sub">${tenant.jurisdiction} · ${tenant.currency}</div>`,
+                tenant.packageLabel ?? tenant.package,
+                badge(
+                  tenant.status === 'AWAITING_PAYMENT' ? 'awaiting first payment' : String(tenant.status).toLowerCase(),
+                  tenant.status === 'ACTIVE' ? 'ok' : tenant.status === 'AWAITING_PAYMENT' ? 'warn' : 'bad',
+                ),
+                `${date(tenant.createdAt)} · ${days(ageDays(tenant.createdAt))} ago`,
+                tenant.identities,
+                money(tenant.lifetimeRevenueMinor),
+              ]),
+            })}
           </div>`
         : ''}
 
@@ -193,8 +262,9 @@ export async function onboarding(root) {
             </div>
             <div class="metric-sub" style="margin-top:12px">
               Registration is self-serve: a stranger verifies an address, and the tenancy and its first administrator are
-              created together. There is no approval step, so there is no queue of applications — this screen is about
-              what happens after they are already in.
+              created together. A free package opens at once. A paid package waits, read-only, until its first month is
+              paid — that is the one approval step, and it is the customer's money rather than your judgement that gives
+              it. Everything else on this screen is about what happens after they are in.
             </div>
           </div>`
         : ''}
@@ -202,6 +272,37 @@ export async function onboarding(root) {
   );
 
   wireRequests(root, () => onboarding(root));
+
+  // Recording a first month paid by transfer. The reference is the bank's, and
+  // it is spent once: the same transfer recorded twice settles nothing further.
+  for (const button of root.querySelectorAll('[data-settle-charge]')) {
+    button.addEventListener('click', async () => {
+      const { settleCharge, settleTenant, name, amount } = button.dataset;
+      const result = await command({
+        title: `${name} — record the first month paid`,
+        intent:
+          `${money(Number(amount))} received for the first month. Recording it settles the charge, opens the tenancy and ` +
+          `credits the month's AI allowance. The reference is the bank's or provider's own, and is spent once.`,
+        path: `/v1/admin/tenants/${settleTenant}/charges/${settleCharge}/settle`,
+        submitLabel: 'Record payment and open the tenancy',
+        fields: [
+          { name: 'reference', label: 'Payment reference', hint: 'From the bank statement or the card provider. Unique for ever.' },
+          {
+            name: 'method',
+            label: 'How it arrived',
+            type: 'select',
+            options: [
+              { value: 'BANK_TRANSFER', label: 'Bank transfer' },
+              { value: 'CARD', label: 'Card, taken outside the platform' },
+              { value: 'INVOICE_SETTLEMENT', label: 'Invoice settlement' },
+            ],
+          },
+          { name: 'note', label: 'Note', required: false },
+        ],
+      });
+      if (result) onboarding(root);
+    });
+  }
 }
 
 // --- account requests: new → contacted → qualified → provisioned, or declined and deleted ---

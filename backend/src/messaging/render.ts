@@ -283,6 +283,8 @@ export function verificationPage(input: {
   /** On DONE, who was created. On FAILED, why. */
   organisation?: string;
   email?: string;
+  /** On DONE for a paid package: the first month, formatted, owed before the tenancy opens. */
+  amountDue?: string;
   reason?: string;
 }): string {
   const action = `/verify?r=${encodeURIComponent(input.r)}&t=${encodeURIComponent(input.t)}`;
@@ -305,18 +307,29 @@ export function verificationPage(input: {
   }
 
   if (input.state === 'DONE') {
+    // A paid package waits for its first month. Said here, on the page the
+    // person is looking at, rather than at the first command the platform
+    // refuses after they sign in.
+    const payment = input.amountDue
+      ? `<p style="${PARAGRAPH}">
+           The first month, <b>${esc(input.amountDue)}</b>, is due before the platform opens. Sign in, go to
+           <b>ACU &amp; Billing</b>, and pay it by card or by transfer against the reference shown there. Everything
+           opens the moment the payment settles, and the month's AI allowance is credited with it.
+         </p>`
+      : '';
     return plainPage(
       'Account created',
-      'Your account is ready',
+      input.amountDue ? 'Your account exists — the first month is due' : 'Your account is ready',
       `<p style="${PARAGRAPH}">
          <b>${esc(input.organisation ?? 'Your organisation')}</b> exists on the platform and
          <b>${esc(input.email ?? '')}</b> is its administrator.
        </p>
+       ${payment}
        <p style="${QUIET}">
          Sign in with that address. A six-character code will be sent to it — that is the second factor,
          and it is required every time.
        </p>
-       <a href="${esc(absolute('/app'))}" style="${BUTTON}">Sign in</a>`,
+       <a href="${esc(absolute(input.amountDue ? '/app/billing' : '/app'))}" style="${BUTTON}">${input.amountDue ? 'Sign in and pay' : 'Sign in'}</a>`,
     );
   }
 

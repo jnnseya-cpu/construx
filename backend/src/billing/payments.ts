@@ -95,6 +95,12 @@ export type PaymentReceipt = {
   reference: string;
   /** The intent this settles, when it settles one. A direct credit has none. */
   intentId?: string;
+  /**
+   * The subscription charge this pays, when it pays one. A receipt carrying a
+   * charge bought the platform for a period and credited no wallet; the
+   * period's AI allowance follows from the settlement, not from this money.
+   */
+  chargeId?: string;
   recordedBy: string;
   recordedAt: string;
   note?: string;

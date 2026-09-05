@@ -49,6 +49,12 @@ export type Delivery = {
   /** Why the engine allowed or refused this channel for this person. */
   reason: Verdict['reason'];
   at: string;
+  /**
+   * The relay took the whole message and never answered. Recorded as FAILED
+   * because nothing confirmed delivery, and marked so the outbox does not send
+   * it again to somebody who may already hold it.
+   */
+  indeterminate?: boolean;
 };
 
 export type Dispatch = {
@@ -164,7 +170,7 @@ async function deliver(
       // are the diagnosis, so they are what gets printed.
       if (!result.accepted) {
         process.stderr.write(
-          `[mail] REFUSED by ${config.smtp.host} sending as ${config.notifications.fromAddress}: ${result.response}\n`,
+          `[mail] ${result.indeterminate ? 'UNCONFIRMED' : 'REFUSED'} by ${config.smtp.host} sending as ${config.notifications.fromAddress}: ${result.response}\n`,
         );
       }
       return {
@@ -172,6 +178,7 @@ async function deliver(
         destination: input.recipient.email,
         status: result.accepted ? 'SENT' : 'FAILED',
         detail: result.response,
+        ...(result.indeterminate ? { indeterminate: true } : {}),
       };
     } catch (error) {
       process.stderr.write(
@@ -231,19 +238,21 @@ export async function notify(
   // its signature and its inline delivery: the queue is drained immediately,
   // and the returned dispatch is the one this call produced.
   const entry = outbox.queue(platform, input);
-  const dispatch = await dispatchNow(platform, entry);
-  outbox.recordAttempt(platform, entry, {
-    // No delivery at all is not a failure to deliver: the event may route to no
-    // channel this recipient allows, and retrying that four more times would
-    // produce four more identical nothings.
-    delivered: dispatch.deliveries.length === 0 || dispatch.deliveries.some((delivery) => delivery.status !== 'FAILED'),
-    dispatchId: dispatch.id,
-    error: dispatch.deliveries
-      .filter((delivery) => delivery.status === 'FAILED')
-      .map((delivery) => delivery.detail)
-      .join('; '),
-  });
-  return dispatch;
+  // Claimed for the length of the send, so the drain timer — which reads the
+  // queue on its own clock — does not find this entry owed and send it a
+  // second time while the first send is still on the wire.
+  outbox.claim(entry.outboxId);
+  try {
+    const dispatch = await dispatchNow(platform, entry);
+    // No delivery at all is not a failure to deliver: the event may route to
+    // no channel this recipient allows, and retrying that four more times
+    // would produce four more identical nothings. An indeterminate delivery
+    // is not retried either — see `attemptOutcome`.
+    outbox.recordAttempt(platform, entry, outbox.attemptOutcome(dispatch));
+    return dispatch;
+  } finally {
+    outbox.release(entry.outboxId);
+  }
 }
 
 /**

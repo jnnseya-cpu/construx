@@ -44,7 +44,8 @@ import { grantableScopes, issueKey, keyRegister, revokeKey } from '../developer/
 import { subscribe, subscriptionRegister, unsubscribe, webhookPosition } from '../developer/webhooks.ts';
 import type { ACUCaps } from '../billing/acu.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS, TOP_UPS, type PackageTier } from '../billing/seats.ts';
-import { BILLING_CURRENCY } from '../billing/payments.ts';
+import { BILLING_CURRENCY, type PaymentMethod } from '../billing/payments.ts';
+import { standing } from '../billing/entitlement.ts';
 import {
   authenticatorFor,
   authenticatorsForTenant,
@@ -68,7 +69,8 @@ import {
 } from '../billing/subscription.ts';
 import { config, demonstrationEnabled, isProduction } from '../config.ts';
 import * as consistency from '../domain/consistency.ts';
-import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
+import { CURRENCIES, JURISDICTIONS, formatMoney } from '../domain/locale.ts';
+import * as collection from '../billing/collection.ts';
 import { AuthError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../core/errors.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import type { Schema } from '../core/validate.ts';
@@ -1002,13 +1004,18 @@ async function activateRegistration(
     recipients: [{ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }],
     payload: {
       enterprise: activation.enterpriseName,
-      actionUrl: '/app',
-      actionLabel: 'Sign in',
+      actionUrl: activation.awaitingPayment ? '/app/billing' : '/app',
+      actionLabel: activation.awaitingPayment ? 'Sign in and pay the first month' : 'Sign in',
       // Said in the welcome rather than discovered at the first refusal. A
       // wallet that opened empty because the month's trial allocation is spent
-      // is a fact about this month, not about the product.
-      detail:
-        activation.trialGrantMinor > 0
+      // is a fact about this month, not about the product; a paid package that
+      // has not been paid for is a fact about the package.
+      detail: activation.awaitingPayment
+        ? `${activation.enterpriseName} is set up and you are its administrator. ` +
+          `The first month, ${formatMoney(activation.amountDueMinor, BILLING_CURRENCY)}, is due before it opens: sign in, ` +
+          'go to ACU & Billing and pay by card or by transfer against the reference shown there. Everything opens the ' +
+          'moment the payment settles, and the month’s AI allowance is credited with it.'
+        : activation.trialGrantMinor > 0
           ? `${activation.enterpriseName} is set up and you are its administrator. ` +
             `Your workspace opens with ${activation.trialGrantMinor.toLocaleString('en-GB')} ACUs of trial AI credit.`
           : `${activation.enterpriseName} is set up and you are its administrator. ` +
@@ -1887,7 +1894,7 @@ export const ROUTES: Route[] = [
       type: 'object',
       required: ['status', 'reason'],
       properties: {
-        status: { type: 'string', enum: ['ACTIVE', 'SUSPENDED', 'CANCELLED'] },
+        status: { type: 'string', enum: ['ACTIVE', 'SUSPENDED', 'CANCELLED', 'AWAITING_PAYMENT'] },
         // Required, and recorded as evidence. This is the switch that turns off
         // a paying customer's platform; a record of it with no stated reason is
         // useless the day somebody asks why it happened.
@@ -1904,7 +1911,7 @@ export const ROUTES: Route[] = [
       if (!actor.roles.includes('PLATFORM_ADMIN')) {
         throw new ForbiddenError('Only the platform operator may change a subscription status', 'PLATFORM_ADMIN_REQUIRED');
       }
-      const input = body<{ status: 'ACTIVE' | 'SUSPENDED' | 'CANCELLED'; reason: string }>(ctx);
+      const input = body<{ status: 'ACTIVE' | 'SUSPENDED' | 'CANCELLED' | 'AWAITING_PAYMENT'; reason: string }>(ctx);
       const updated = platform.setSubscriptionStatus({
         tenantId: ctx.params.tenantId!,
         status: input.status,
@@ -2116,7 +2123,9 @@ export const ROUTES: Route[] = [
       // listed, because an operator credits and inspects it, and is marked so it
       // is never mistaken for a paying account.
       return {
-        tenants: platform.tenants().filter((tenant) => tenant.id !== PLATFORM_TENANT_ID).map((tenant) => {
+        // A deleted tenancy is on the chain and on no register. Closed ones
+        // stay listed, marked, until the operator deletes them.
+        tenants: platform.tenants().filter((tenant) => tenant.id !== PLATFORM_TENANT_ID && tenant.deletedAt === undefined).map((tenant) => {
           const subscription = platform.subscription(tenant.id);
           const definition = TIERS[subscription.tier];
           // The package, not the tier. The tier is the vocabulary the tenancy
@@ -2142,6 +2151,19 @@ export const ROUTES: Route[] = [
             packageLabel: pkg.label,
             status: subscription.status,
             renewsAt: subscription.renewsAt,
+            // What the tenancy owes for the platform itself. A paid package
+            // waiting to open shows its first month here; a running one shows
+            // any period raised and not yet paid.
+            charges: collection.chargesFor(platform, tenant.id).map((charge) => ({
+              id: charge.id,
+              periodStart: charge.periodStart,
+              amountMinor: charge.amountMinor,
+              status: charge.status,
+              dueAt: charge.dueAt,
+              settledAt: charge.settledAt ?? null,
+            })),
+            outstandingMinor: collection.outstanding(platform, tenant.id).reduce((sum, charge) => sum + charge.amountMinor, 0),
+            awaitingFirstPayment: subscription.status === 'AWAITING_PAYMENT',
             seatsUsed: subscription.assignedIdentities.length,
             seatsIncluded: pkg.includedSeats,
             // Bought beyond the package. On the row, because "12 of 10" with no
@@ -5353,6 +5375,20 @@ export const ROUTES: Route[] = [
   },
   // ------------------------------------------------------------ closing a tenancy
   {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:tenantId/delete',
+    description: 'Delete a closed tenancy from the register: every identity erased now, the row gone from every operator screen. The chain keeps the events (platform operator only)',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 10 } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may delete a tenancy', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const result = platform.deleteClosedTenant(actor, { tenantId: ctx.params.tenantId as string, reason: body<{ reason: string }>(ctx).reason });
+      return { tenantId: result.tenant.id, legalName: result.tenant.legalName, deletedAt: result.tenant.deletedAt, identitiesErased: result.erased };
+    },
+  },
+  {
     method: 'GET',
     pattern: '/v1/admin/tenants/:tenantId/closure',
     readOnly: true,
@@ -6089,8 +6125,16 @@ export const ROUTES: Route[] = [
         status: 'VERIFIED',
         enterpriseName: activation.enterpriseName,
         email,
-        signInPath: '/app',
-        message: 'Your account is ready. Sign in with this address to continue.',
+        signInPath: activation.awaitingPayment ? '/app/billing' : '/app',
+        // Nothing is free unless the package is: a paid package waits for its
+        // first month, and the person is told so here rather than at the
+        // first refused command.
+        awaitingPayment: activation.awaitingPayment,
+        amountDueMinor: activation.amountDueMinor,
+        message: activation.awaitingPayment
+          ? `Your account exists. The first month, ${formatMoney(activation.amountDueMinor, BILLING_CURRENCY)}, is due before it opens — ` +
+            'sign in with this address and pay it from ACU & Billing.'
+          : 'Your account is ready. Sign in with this address to continue.',
       };
     },
   },
@@ -6118,7 +6162,14 @@ export const ROUTES: Route[] = [
       const t = ctx.query.get('t') ?? '';
       try {
         const { activation, email } = await activateRegistration(platform, ctx, r, t);
-        return verificationPage({ state: 'DONE', r, t, organisation: activation.enterpriseName, email });
+        return verificationPage({
+          state: 'DONE',
+          r,
+          t,
+          organisation: activation.enterpriseName,
+          email,
+          ...(activation.awaitingPayment ? { amountDue: formatMoney(activation.amountDueMinor, BILLING_CURRENCY) } : {}),
+        });
       } catch (error) {
         // Rendered as a page rather than rethrown. The error handler answers
         // problem+json, which is right for an API client and useless to someone
@@ -19934,6 +19985,141 @@ export const ROUTES: Route[] = [
     description: 'ACU wallet position, caps and alerts',
     handler: (platform, ctx) => platform.wallet(authoriseTenant(ctx, 'BILLING_ACU', 'R').tenantId).snapshot(),
   },
+
+  // --- The subscription itself: what the platform costs, and whether it is paid --
+  //
+  // Nothing is free unless the package is. A paid package's first month is
+  // charged the day the tenancy exists; a self-serve signup waits for it. This
+  // is where the customer sees what is owed and pays it, and where the record
+  // of every period paid lives. The AI wallet is a different purchase and has
+  // its own routes above.
+  {
+    method: 'GET',
+    pattern: '/v1/billing/subscription',
+    readOnly: true,
+    description: 'The subscription: its status, what it may do, every period charged, and how an unpaid one can be paid',
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'BILLING_ACU', 'R');
+      const subscription = platform.subscription(actor.tenantId);
+      const charges = collection.chargesFor(platform, actor.tenantId);
+      const due = charges.filter((charge) => charge.status === 'DUE');
+      return {
+        subscription: {
+          status: subscription.status,
+          package: subscription.package,
+          packageLabel: PACKAGES[subscription.package].label,
+          monthlyPriceMinor: PACKAGES[subscription.package].monthlyPriceMinor,
+          startedAt: subscription.startedAt,
+          renewsAt: subscription.renewsAt,
+        },
+        standing: standing(subscription, actor.roles),
+        charges: charges
+          .map((charge) => ({
+            id: charge.id,
+            periodStart: charge.periodStart,
+            amountMinor: charge.amountMinor,
+            currency: BILLING_CURRENCY,
+            status: charge.status,
+            dueAt: charge.dueAt,
+            graceEndsAt: charge.graceEndsAt,
+            settledAt: charge.settledAt ?? null,
+            settlementReference: charge.settlementReference ?? null,
+            // What to quote on a bank transfer, so the operator can match the
+            // money to the period without a conversation.
+            paymentReference: `CX-${charge.id.slice(-8).toUpperCase()}`,
+          }))
+          .reverse(),
+        outstandingMinor: due.reduce((sum, charge) => sum + charge.amountMinor, 0),
+        // The rails this deployment can take the payment on. Card when Stripe
+        // is configured; a transfer always, recorded by the operator against
+        // the reference above.
+        payment: {
+          card: stripe.stripeConfigured(),
+          bankTransfer: true,
+          allowancePercent: config.billing.subscriptionAcuAllocationPercent,
+        },
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/billing/charges/:chargeId/checkout',
+    description: 'Open a Stripe checkout page for an unpaid subscription charge. The charge settles when Stripe confirms the payment',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'BILLING_ACU', 'U');
+      const chargeId = ctx.params.chargeId as string;
+      const charge = collection.chargesFor(platform, actor.tenantId).find((candidate) => candidate.id === chargeId);
+      if (!charge) throw new NotFoundError(`No subscription charge ${chargeId}`);
+      if (charge.status !== 'DUE') {
+        throw new DomainError('CHARGE_ALREADY_SETTLED', 'That period has already been paid or written off', 409);
+      }
+      const session = await stripe.createCheckoutSession({
+        chargeId: charge.id,
+        tenantId: actor.tenantId,
+        amountMinor: charge.amountMinor,
+        customerEmail: platform.user(actor.actorId).email,
+        description: `${PACKAGES[charge.package as PackageTier]?.label ?? charge.package} — the period from ${charge.periodStart.slice(0, 10)}. The AI allowance for the period is credited when this settles.`,
+        successUrl: config.stripe.successUrl || `${config.publicBaseUrl}/app/billing?paid=1`,
+        cancelUrl: config.stripe.cancelUrl || `${config.publicBaseUrl}/app/billing`,
+      });
+      return { checkoutUrl: session.url, sessionId: session.id, chargeId: charge.id };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/tenants/:tenantId/charges',
+    readOnly: true,
+    description: 'Every subscription period charged to a tenancy, paid or owed (platform operator only)',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read a tenancy’s subscription charges');
+      const tenantId = ctx.params.tenantId as string;
+      platform.tenant(tenantId);
+      const charges = collection.chargesFor(platform, tenantId);
+      return {
+        tenantId,
+        status: platform.subscription(tenantId).status,
+        charges: charges.map((charge) => ({ ...charge, paymentReference: `CX-${charge.id.slice(-8).toUpperCase()}` })).reverse(),
+        outstandingMinor: charges.filter((charge) => charge.status === 'DUE').reduce((sum, charge) => sum + charge.amountMinor, 0),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:tenantId/charges/:chargeId/settle',
+    description: 'Record that a subscription period was paid — a transfer received, a card payment made outside the platform. Opens a tenancy waiting for its first month (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['reference', 'method'],
+      properties: {
+        // The bank's or provider's own identifier. Spent once, for ever.
+        reference: { type: 'string', minLength: 4, maxLength: 200 },
+        method: { type: 'string', enum: ['BANK_TRANSFER', 'CARD', 'INVOICE_SETTLEMENT', 'CREDIT_NOTE', 'MANUAL_ADJUSTMENT'] },
+        note: { type: 'string', maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      operatorOnly(ctx, 'record a subscription payment');
+      const input = body<{ reference: string; method: PaymentMethod; note?: string }>(ctx);
+      const paid = platform.recordSubscriptionPayment({
+        tenantId: ctx.params.tenantId as string,
+        chargeId: ctx.params.chargeId as string,
+        method: input.method,
+        reference: input.reference,
+        recordedBy: actor.actorId,
+        source: 'OPERATOR',
+        ...(input.note ? { note: input.note } : {}),
+      });
+      return {
+        charge: paid.charge,
+        receipt: paid.receipt,
+        alreadyRecorded: paid.alreadyRecorded,
+        status: platform.subscription(ctx.params.tenantId as string).status,
+      };
+    },
+  },
   {
     method: 'GET',
     pattern: '/v1/billing/attribution',
@@ -20111,6 +20297,32 @@ export const ROUTES: Route[] = [
       // retries anything that is not a 2xx for days; answering 400 to an event
       // we were never going to process would have it retried until it expired.
       if (!payment) return { received: true, acted: false, type: event.type };
+
+      // A subscription charge paid by card. The money bought a period, not AI
+      // credit: the charge settles, the tenancy opens if it was waiting, and
+      // the period's allowance follows from the settlement. The amount Stripe
+      // signed is checked against the charge rather than trusted.
+      if (payment.chargeId) {
+        const charge = collection.chargesFor(platform, payment.tenantId).find((candidate) => candidate.id === payment.chargeId);
+        if (!charge) throw new NotFoundError(`No subscription charge ${payment.chargeId} on ${payment.tenantId}`);
+        if (charge.amountMinor !== payment.amountMinor) {
+          throw new DomainError(
+            'STRIPE_AMOUNT_MISMATCH',
+            `Stripe settled ${payment.amountMinor} against a charge of ${charge.amountMinor}. A subscription charge is paid in full or not at all.`,
+            400,
+          );
+        }
+        const paid = platform.recordSubscriptionPayment({
+          tenantId: payment.tenantId,
+          chargeId: charge.id,
+          method: 'CARD',
+          reference: payment.reference,
+          recordedBy: 'stripe',
+          source: 'PROVIDER',
+          note: `Stripe ${event.type}`,
+        });
+        return { received: true, acted: true, receiptId: paid.receipt.id, chargeId: charge.id, alreadyRecorded: paid.alreadyRecorded };
+      }
 
       const { receipt, alreadyRecorded } = platform.creditFromPayment({
         tenantId: payment.tenantId,

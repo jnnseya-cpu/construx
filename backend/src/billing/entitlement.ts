@@ -103,6 +103,24 @@ export function standing(
 
   const definition = PACKAGES[subscription.package];
 
+  // A paid package nobody has paid for. Not suspended — nothing was taken
+  // away — and not active: nothing has been bought. The person who signed up
+  // can sign in, read the empty record and pay; everything else waits for the
+  // first month's payment to settle, which is the one act that opens it.
+  if (subscription.status === 'AWAITING_PAYMENT') {
+    return {
+      status: 'AWAITING_PAYMENT',
+      mayWrite: false,
+      mayRunAI: false,
+      // The subscription is what is owed, not AI credit. Top-ups open with it.
+      mayTopUp: false,
+      mayExport: false,
+      reason:
+        `The first month of the ${definition.label} package has not been paid, so the tenancy is not open yet. ` +
+        'Pay it from ACU & Billing — by card, or by transfer against the reference shown there — and everything opens the moment it settles.',
+    };
+  }
+
   if (subscription.status !== 'ACTIVE') {
     const ended = subscription.status === 'CANCELLED' ? 'cancelled' : 'suspended';
     return {

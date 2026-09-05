@@ -355,9 +355,18 @@ export type Activation = {
    * What the wallet opened with. Zero where the organisation had already had
    * its trial, or where the month's trial allocation is spent — and in either
    * case the person is told, because a wallet that opens empty with no word
-   * reads as AI that does not work.
+   * reads as AI that does not work. Always zero on a paid package: nothing is
+   * free unless the package is.
    */
   trialGrantMinor: number;
+  /**
+   * A paid package: the tenancy exists and opens when the first month is paid.
+   * `amountDueMinor` is that month, in the billing currency, and `chargeId`
+   * the charge that paying settles.
+   */
+  awaitingPayment: boolean;
+  amountDueMinor: number;
+  chargeId?: string;
 };
 
 /**
@@ -403,7 +412,7 @@ export function verify(
   // provisioning a customer should not be second-guessed by it.
   const grantTrial = trialGrantAllowed(record.email);
 
-  const { tenant, trialGrantMinor } = platform.createTenant({
+  const { tenant, trialGrantMinor, openingCharge } = platform.createTenant({
     trialGrant: grantTrial,
     legalName: record.organisationName,
     jurisdiction: record.jurisdiction,
@@ -415,6 +424,9 @@ export function verify(
     // credits a partner is the one the person actually arrived on — not
     // whatever link happened to be open when they finished verifying.
     referralCode: record.referralCode,
+    // A stranger on a paid package has proved an address and nothing else.
+    // The tenancy waits for its first month; a free package opens now.
+    opensOn: 'FIRST_PAYMENT',
   });
 
   const roles: Role[] = ['ENTERPRISE_ADMIN'];
@@ -457,5 +469,8 @@ export function verify(
     userId: user.id,
     enterpriseName: record.organisationName,
     trialGrantMinor,
+    awaitingPayment: openingCharge !== undefined,
+    amountDueMinor: openingCharge?.amountMinor ?? 0,
+    ...(openingCharge ? { chargeId: openingCharge.id } : {}),
   };
 }

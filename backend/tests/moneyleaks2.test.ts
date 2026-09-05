@@ -267,14 +267,16 @@ describe('one free trial per mailbox, not per signup form', () => {
   });
 
   it('withholds the grant and nothing else', () => {
-    // Two identical tenancies, one refused the grant. The difference between
-    // their opening balances is exactly the free credit, which is the figure
-    // the farm was harvesting — and what remains is the subscription's own AI
-    // allowance, which is paid for and must still be there.
+    // Two identical free tenancies, one refused the grant. The difference
+    // between their opening balances is exactly the free credit, which is the
+    // figure the farm was harvesting. On the free package, because that is the
+    // only package that carries a grant at all: a paid package opens with
+    // nothing and its allowance follows its first payment.
     const spec = {
       jurisdiction: 'GB',
       defaultCurrency: 'GBP',
-      tier: 'TEAM' as const,
+      tier: 'FREE_TRIAL' as const,
+      package: 'FREE_TRIAL' as const,
     };
 
     const first = platform.createTenant({
@@ -295,7 +297,7 @@ describe('one free trial per mailbox, not per signup form', () => {
     assert.ok(granted > withheld, 'refusing the trial grant changed nothing');
     // The account is real and the customer may pay for credit. Refusing the
     // free grant must not refuse the signup — that would turn a spend control
-    // into a lost sale — and the paid allowance is untouched.
+    // into a lost sale.
     assert.ok(second.tenant.id);
     assert.equal(
       withheld,

@@ -23,6 +23,18 @@ export type SmtpResult = {
   accepted: boolean;
   /** Final response from the server, kept verbatim for the delivery record. */
   response: string;
+  /**
+   * The whole message was handed to the relay and no reply came back.
+   *
+   * Everything before the message body is a question the relay answers before
+   * anything has been sent, so a failure there is a failure and the message
+   * can be retried. After the body it is different: the relay holds the
+   * message and may deliver it whether or not its `250` ever reached us — a
+   * timeout at that point, or a connection dropped on the way back, leaves
+   * delivery *unknown*, not failed. Said so, rather than reported as failed,
+   * because a caller that retries an unknown sends the same message twice.
+   */
+  indeterminate?: boolean;
 };
 
 class SmtpError extends Error {
@@ -243,7 +255,20 @@ export async function sendMail(
     const body = message.raw.replaceAll('\r\n.', '\r\n..');
     connection.socket.write(body.endsWith('\r\n') ? `${body}.\r\n` : `${body}\r\n.\r\n`);
 
-    const accepted = await withTimeout(connection.read(), deadline, 'Message acceptance');
+    let accepted: string;
+    try {
+      accepted = await withTimeout(connection.read(), deadline, 'Message acceptance');
+    } catch (error) {
+      // The message has left. Whether the relay took it is unknown, and
+      // unknown is what is returned — a throw here would be read as "not
+      // sent" and retried, which is how the same one-time code reached one
+      // person three times.
+      return {
+        accepted: false,
+        indeterminate: true,
+        response: `No reply after the message was sent: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
     if (!accepted.startsWith('250')) throw new SmtpError(`Message rejected: ${accepted}`, 'SMTP_REJECTED');
 
     try {

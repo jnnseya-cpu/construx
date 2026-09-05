@@ -3,6 +3,7 @@ import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { Platform } from '../platform.ts';
+import { PACKAGES, type PackageTier } from './seats.ts';
 import { purchasedBlocks } from './storage.ts';
 import { monthlySubscriptionCharge, purchasedSeatChargeMinor } from './subscription.ts';
 import type { Subscription } from './subscription.ts';
@@ -200,6 +201,75 @@ export function raiseCharge(
   return { charge, alreadyRaised: false };
 }
 
+/**
+ * Raise the first period's charge, the moment a paid tenancy is created.
+ *
+ * A paid package used to be charged for the first time thirty days in: the
+ * tenancy opened, ran for a month, and only then was asked for anything —
+ * while its wallet had already been credited with a share of the price nobody
+ * had paid. Nothing is free unless the package is, so the first month is owed
+ * from the day the tenancy exists, and the tenancy's opening is what settling
+ * it buys: a self-serve signup waits for it (`AWAITING_PAYMENT`), an operator-
+ * provisioned customer runs on the same grace the renewals get.
+ *
+ * Idempotent by period, like `raiseCharge`: the period is the subscription's
+ * own start, and a second call finds the charge already raised.
+ */
+export function raiseOpeningCharge(
+  platform: Platform,
+  tenantId: string,
+  now = new Date(),
+): { charge: SubscriptionCharge; alreadyRaised: boolean } | undefined {
+  const subscription = platform.subscription(tenantId);
+  if (!subscription || subscription.status === 'CANCELLED') return undefined;
+  const amountMinor = PACKAGES[subscription.package].monthlyPriceMinor;
+  if (amountMinor <= 0) return undefined;
+  if (!platform.ledger.get({ refType: 'Subscription', refId: subscription.id })) return undefined;
+
+  const periodStart = subscription.startedAt;
+  const existing = chargesFor(platform, tenantId).find((charge) => charge.periodStart === periodStart);
+  if (existing) return { charge: existing, alreadyRaised: true };
+
+  const charge: SubscriptionCharge = {
+    id: ulid(),
+    tenantId,
+    subscriptionId: subscription.id,
+    package: subscription.package,
+    amountMinor,
+    currency: platform.tenant(tenantId).defaultCurrency,
+    periodStart,
+    dueAt: now.toISOString(),
+    // A tenancy waiting to open has nothing to lose to a grace window — it is
+    // not open — so its grace ends when it is due. One the operator opened on
+    // agreed terms gets the same grace every renewal gets.
+    graceEndsAt:
+      subscription.status === 'AWAITING_PAYMENT'
+        ? now.toISOString()
+        : new Date(now.getTime() + config.billing.subscriptionGraceDays * DAY_MS).toISOString(),
+    status: 'DUE',
+    raisedAt: now.toISOString(),
+    attempts: [],
+  };
+
+  platform.ledger.commit({
+    tenantId,
+    projectId: governanceProject(tenantId),
+    actor: { refType: 'System', refId: 'billing' },
+    source: 'SYSTEM',
+    correlationId: ulid(),
+    eventType: 'SUBSCRIPTION_CHARGE_RAISED',
+    entity: { refType: 'SubscriptionCharge', refId: charge.id },
+    nextState: { ...charge },
+  });
+
+  return { charge, alreadyRaised: false };
+}
+
+/** The period a charge covers, as the wallet keys its allowance: the day it starts. */
+export function allowancePeriodOf(charge: Pick<SubscriptionCharge, 'periodStart'>): string {
+  return charge.periodStart.slice(0, 10);
+}
+
 /** Try to take the money, and record what happened either way. */
 export async function attemptCollection(
   platform: Platform,
@@ -279,10 +349,30 @@ export function settleCharge(
     nextState: { ...settled },
   });
 
+  // Paying for the period is what buys the period's AI allowance — twenty per
+  // cent of the plan, credited here and nowhere else. It used to be credited
+  // at creation and again whenever an invoice was issued, neither of which is
+  // money arriving. Keyed by the period's start day, so a charge settled twice
+  // (a retried webhook, an operator pressing again) credits once.
+  const pkg = PACKAGES[charge.package as PackageTier];
+  if (pkg) platform.wallet(charge.tenantId).allocateFromSubscription(pkg.monthlyPriceMinor, allowancePeriodOf(charge));
+
+  const subscription = platform.subscription(charge.tenantId);
+
+  // A tenancy that was waiting for its first month opens now. Nothing else
+  // opens it: not a top-up, not the operator's patience, not time.
+  if (subscription?.status === 'AWAITING_PAYMENT') {
+    platform.setSubscriptionStatus({
+      tenantId: charge.tenantId,
+      status: 'ACTIVE',
+      reason: `First subscription period paid against ${charge.id} (${input.reference}); the tenancy opens`,
+      decidedBy: 'billing:collection',
+    });
+  }
+
   // Back on, if nothing else is outstanding. A tenancy with two unpaid periods
   // that settles one has not caught up, and reinstating it there would let
   // somebody stay live for ever by always paying the oldest invoice.
-  const subscription = platform.subscription(charge.tenantId);
   if (subscription?.status === 'SUSPENDED' && outstanding(platform, charge.tenantId).length === 0) {
     platform.setSubscriptionStatus({
       tenantId: charge.tenantId,
@@ -293,6 +383,32 @@ export function settleCharge(
   }
 
   return settled;
+}
+
+/**
+ * Write off a period nobody will now pay for.
+ *
+ * Called when a tenancy is closed with charges still owed. A closed tenancy's
+ * unpaid month would otherwise sit on the register as money awaited for ever;
+ * writing it off says, on the record, that the business has stopped waiting.
+ * Settled charges are untouched — money that arrived stays arrived.
+ */
+export function writeOffCharge(platform: Platform, input: { chargeId: string; reason: string }, now = new Date()): SubscriptionCharge {
+  const record = platform.ledger.require({ refType: 'SubscriptionCharge', refId: input.chargeId });
+  const charge = record.state as unknown as SubscriptionCharge;
+  if (charge.status !== 'DUE') return charge;
+  const written: SubscriptionCharge = { ...charge, status: 'WRITTEN_OFF', attempts: [...charge.attempts, { at: now.toISOString(), because: `Written off: ${input.reason}` }] };
+  platform.ledger.commit({
+    tenantId: charge.tenantId,
+    projectId: governanceProject(charge.tenantId),
+    actor: { refType: 'System', refId: 'billing' },
+    source: 'SYSTEM',
+    correlationId: ulid(),
+    eventType: 'SUBSCRIPTION_CHARGE_WRITTEN_OFF',
+    entity: { refType: 'SubscriptionCharge', refId: charge.id },
+    nextState: { ...written },
+  });
+  return written;
 }
 
 /**

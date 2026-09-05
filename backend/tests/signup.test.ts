@@ -202,7 +202,10 @@ describe('completing a registration', () => {
     // through a different door.
     assert.ok(!('accessToken' in reply.body), 'verification returned an access token');
     assert.ok(!('refreshToken' in reply.body), 'verification returned a refresh token');
-    assert.equal(reply.body.signInPath, '/app');
+    // A paid package is not open until its first month is paid, so the door
+    // it is sent through is the billing screen, where the charge is.
+    assert.equal(reply.body.awaitingPayment, true);
+    assert.equal(reply.body.signInPath, '/app/billing');
   });
 
   it('refuses a wrong token, and answers the same as an unknown registration', async () => {

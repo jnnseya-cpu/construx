@@ -110,7 +110,13 @@ export type Subscription = {
   tier: SubscriptionTier;
   /** The commercial package. Seat caps and the monthly charge come from here. */
   package: PackageTier;
-  status: 'ACTIVE' | 'SUSPENDED' | 'CANCELLED';
+  /**
+   * `AWAITING_PAYMENT` is a paid package somebody signed up for and nobody has
+   * paid for yet. The tenancy exists — its administrator can sign in and see
+   * what is owed — and nothing else opens until the first period's charge is
+   * settled, when it becomes ACTIVE on its own. A free package never holds it.
+   */
+  status: 'ACTIVE' | 'SUSPENDED' | 'CANCELLED' | 'AWAITING_PAYMENT';
   /** Named identities currently assigned. Seats are assignable, revocable, reusable. */
   assignedIdentities: string[];
   startedAt: string;

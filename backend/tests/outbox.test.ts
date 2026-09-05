@@ -39,6 +39,7 @@ let seed: SeedResult;
 beforeEach(async () => {
   platform = new Platform();
   seed = await seedDemoProject(platform);
+  outbox.resetClaims();
 });
 
 function recipient() {
@@ -125,6 +126,47 @@ describe('what survives a process that died mid-send', () => {
     assert.equal(second.attempted, 0);
   });
 
+  it('does not send what a concurrent drain is already sending', async () => {
+    // Seen live: a person signing in received the same one-time code three
+    // times. `notify` queues an entry due immediately and then awaits the
+    // relay; for those seconds the entry read as owed to the drain timer,
+    // which sent it again. Two drains started together stand in for the timer
+    // and the inline send here — both read the queue before either dispatched.
+    const entry = queueOne();
+    const dispatchesBefore = platform.ledger.list(NOTIFICATIONS_PROJECT_ID, 'NotificationDispatch').length;
+    const [first, second] = await Promise.all([outbox.drain(platform), outbox.drain(platform)]);
+    assert.equal(first.attempted + second.attempted, 1, 'one of the two drains must have stood aside');
+    assert.equal(platform.ledger.list(NOTIFICATIONS_PROJECT_ID, 'NotificationDispatch').length - dispatchesBefore, 1, 'dispatched once');
+    const settled = entries().find((item) => item.outboxId === entry.outboxId)!;
+    assert.equal(settled.status, 'SENT');
+    assert.equal(settled.attempts, 1);
+    // And the claim is released with the send, so a genuinely later drain
+    // still sees a settled entry rather than a locked one.
+    assert.equal(outbox.claim(entry.outboxId), true);
+    outbox.release(entry.outboxId);
+  });
+
+  it('is claimed for the length of an inline notify, so the timer cannot send it too', async () => {
+    // The moment `notify` has queued, the entry is due and would be picked up
+    // by a drain; the claim is what the timer respects. Observed from inside
+    // the send by a drain run while the dispatch is in flight.
+    const before = outbox.due(platform).length;
+    const inFlight = notify(platform, {
+      code: 'account.verification.successful',
+      recipients: [recipient()],
+      payload: { enterprise: 'Meridian', detail: 'Claimed' },
+      branding: BRANDING,
+      actorId: 'test',
+      correlationId: 'corr-claim',
+    });
+    // Synchronously after the call: queued, and already claimed.
+    assert.equal(outbox.due(platform).length, before, 'the entry `notify` just queued reads as owed to a concurrent drain');
+    const drained = await outbox.drain(platform);
+    assert.equal(drained.attempted, 0);
+    await inFlight;
+    assert.equal(outbox.due(platform).length, 0);
+  });
+
   it('reports what is owed and how old the oldest is', () => {
     queueOne();
     queueOne();
@@ -162,6 +204,31 @@ describe('retry, and knowing when to stop', () => {
     // is not helped by being asked again in the same millisecond.
     assert.ok(String(settled.nextAttemptAt) > new Date().toISOString());
     assert.equal(outbox.due(platform).length, 0);
+  });
+
+  it('does not retry a message the relay took and never answered for', () => {
+    // Everything before the message body is a question the relay answers
+    // before anything has been sent. After the body the relay holds the
+    // message, and a timeout there means "unknown", not "failed" — retrying
+    // an unknown is how one code arrived three times.
+    const entry = queueOne();
+    const outcome = outbox.attemptOutcome({
+      id: 'dispatch-1',
+      deliveries: [{ status: 'FAILED', detail: 'No reply after the message was sent: Message acceptance timed out after 15000ms', indeterminate: true }],
+    });
+    assert.equal(outcome.delivered, false);
+    assert.equal(outcome.abandon, true);
+    const settled = outbox.recordAttempt(platform, entry, outcome);
+    assert.equal(settled.status, 'ABANDONED', 'not owed again');
+    assert.equal(settled.attempts, 1);
+    assert.match(String(settled.lastError), /No reply after the message was sent/);
+    assert.equal(outbox.due(platform).length, 0);
+    // The operator sees it on the abandoned list, with the reason.
+    assert.equal(outbox.outboxPosition(platform).abandonedEntries[0]?.outboxId, entry.outboxId);
+
+    // A plain refusal before the body is still retried.
+    const refused = outbox.attemptOutcome({ id: 'dispatch-2', deliveries: [{ status: 'FAILED', detail: '450 try later' }] });
+    assert.equal(refused.abandon, undefined);
   });
 
   it('gives up after the configured attempts rather than retrying for ever', async () => {

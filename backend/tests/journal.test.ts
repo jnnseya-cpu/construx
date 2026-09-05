@@ -431,13 +431,18 @@ describe('money across a restart', () => {
     const platform = new Platform();
     platform.attachWalletSink((entry) => captured.push(entry));
 
-    const { tenant } = platform.createTenant({
+    const { tenant, openingCharge } = platform.createTenant({
       legalName: 'Late Arrival Ltd',
       jurisdiction: 'GB',
       defaultCurrency: 'GBP',
       tier: 'TEAM',
       enterpriseName: 'Late Arrival',
     });
+    // A paid tenancy's wallet holds nothing until its first month is paid, so
+    // the first entry the sink must see is the allowance that payment credits.
+    assert.ok(openingCharge, 'a paid tenancy was not charged its first month');
+    assert.equal(captured.some((entry) => entry.tenantId === tenant.id), false, 'a paid tenancy was credited before anything was paid');
+    platform.recordSubscriptionPayment({ tenantId: tenant.id, chargeId: openingCharge.id, method: 'BANK_TRANSFER', reference: 'BACS-LATE-1', recordedBy: 'ops' });
 
     assert.ok(
       captured.some((entry) => entry.tenantId === tenant.id),

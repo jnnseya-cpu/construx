@@ -8,6 +8,7 @@ import { resetIdempotency } from '../src/api/middleware.ts';
 import { assertBillablePeriod, assertCreditableAmount, normaliseReference } from '../src/billing/payments.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
+import * as collection from '../src/billing/collection.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
 /**
@@ -368,8 +369,14 @@ describe('the money paths that must keep working', () => {
       package: 'CORE_PROJECT',
       enterpriseName: 'Skint',
     });
+    // Nothing is free unless the package is: a paid tenancy's wallet is empty
+    // until its first month is paid, and the allowance arrives with the payment.
+    const opening = collection.chargesFor(platform, tenant.id)[0];
+    assert.ok(opening, 'a paid tenancy was not charged its first month');
+    platform.recordSubscriptionPayment({ tenantId: tenant.id, chargeId: opening.id, method: 'BANK_TRANSFER', reference: 'BACS-SKINT-1', recordedBy: 'ops' });
     const wallet = platform.wallet(tenant.id);
     const available = wallet.snapshot().availableMinor;
+    assert.ok(available > 0, 'the paid month credited no allowance, so this proves nothing');
 
     // Spend it all, then ask for more. The raw cost that exhausts the balance is
     // derived from the rate rather than written as `/ 4`: a fixture pinned to

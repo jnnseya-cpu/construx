@@ -32,7 +32,7 @@ import {
 } from './billing/payments.ts';
 import { PACKAGES, UNCHARGED_ROLES, type PackageTier } from './billing/seats.ts';
 import * as storage from './billing/storage.ts';
-import { chargesFor } from './billing/collection.ts';
+import { chargesFor, raiseOpeningCharge, settleCharge, writeOffCharge, type SubscriptionCharge } from './billing/collection.ts';
 import { config } from './config.ts';
 import { SIGNATURES } from './site/media.ts';
 import { DomainError, ForbiddenError, NotFoundError } from './core/errors.ts';
@@ -84,6 +84,13 @@ export type Tenant = {
   closedAt?: string;
   closedBy?: string;
   closureReason?: string;
+  /**
+   * Deleted from the register by the operator, after closure. Every identity
+   * erased, the row shown nowhere; the events stay on the chain.
+   */
+  deletedAt?: string;
+  deletedBy?: string;
+  deletionReason?: string;
   /**
    * The referral code this tenancy arrived with, if any.
    *
@@ -356,7 +363,25 @@ export class Platform {
      * worth seeing.
      */
     referralCode?: string;
-  }): { tenant: Tenant; subscription: Subscription; wallet: ACUWallet; trialGrantMinor: number } {
+    /**
+     * When a paid package opens.
+     *
+     * `CREATION` is the operator provisioning a customer they have agreed terms
+     * with: the tenancy is active from the start, its first month is charged
+     * and collected like any other, and the operator suspends it if the money
+     * never comes. `FIRST_PAYMENT` is a stranger on the signup form: the
+     * tenancy waits, read-only and empty, until the first month is paid. A
+     * free package ignores this — it has nothing to pay.
+     */
+    opensOn?: 'CREATION' | 'FIRST_PAYMENT';
+  }): {
+    tenant: Tenant;
+    subscription: Subscription;
+    wallet: ACUWallet;
+    trialGrantMinor: number;
+    /** The first period's charge, on a paid package. Absent on a free one. */
+    openingCharge?: SubscriptionCharge;
+  } {
     const tenantId = ulid();
     const enterpriseId = ulid();
 
@@ -371,12 +396,16 @@ export class Platform {
     };
     this.#tenants.set(tenantId, tenant);
 
+    const pkg = input.package ?? packageForTier(input.tier);
+    const paid = PACKAGES[pkg].monthlyPriceMinor > 0;
     const subscription: Subscription = {
       id: ulid(),
       tenantId,
       tier: input.tier,
-      package: input.package ?? packageForTier(input.tier),
-      status: 'ACTIVE',
+      package: pkg,
+      // A paid package a stranger signed up for opens when its first month is
+      // paid, not before. Everything else opens now.
+      status: paid && input.opensOn === 'FIRST_PAYMENT' ? 'AWAITING_PAYMENT' : 'ACTIVE',
       assignedIdentities: [],
       startedAt: new Date().toISOString(),
       renewsAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
@@ -385,27 +414,21 @@ export class Platform {
 
     const wallet = new ACUWallet(tenantId, { volumeIncentive: input.tier === 'ENTERPRISE' || input.tier === 'SOVEREIGN' });
     if (this.#walletSink) wallet.attachSink(this.#walletSink);
-    // Every tenant, paid or trial, starts with the trial grant so AI can be
-    // tried without a payment method — and stops when it runs out. Unless this
-    // organisation has already had one: the grant is an offer to a customer,
-    // not a per-mailbox entitlement. And never beyond the month's budget: the
-    // grant is provider spend with nothing paid against it, and a free tier
-    // whose cost scales with its own popularity is a liability. Once the
-    // month's allocation is issued the tenancy is still created, the wallet
-    // opens empty, and the caller is told how much was granted so it can say so.
+    // Nothing is free unless the package is.
+    //
+    // Every tenancy used to open with the trial grant *and*, on a paid package,
+    // the first month's AI allowance — twenty per cent of a price nobody had
+    // paid. A company that signed up on Solo held £21.00 of AI credit before a
+    // penny had arrived. The rule now: the free package carries the trial
+    // grant, once per organisation and never beyond the month's budget; a paid
+    // package carries nothing until its subscription is paid, and the period's
+    // allowance is credited when that period's charge settles
+    // (`collection.settleCharge`), for the first month and every month after.
     let trialGrantMinor = 0;
-    if (input.trialGrant !== false) {
+    if (!paid && input.trialGrant !== false) {
       trialGrantMinor = Math.min(config.billing.freeTrialGrantMinor, this.trialBudgetPosition().remainingMinor);
       if (trialGrantMinor > 0) wallet.grantTrialCredit(trialGrantMinor);
     }
-    // A paid plan additionally credits its AI allowance for the first period.
-    // A free plan allocates nothing and therefore has only the trial grant,
-    // which is the whole reason AI stops working on a trial that runs out
-    // rather than continuing on credit nobody paid for.
-    wallet.allocateFromSubscription(
-      PACKAGES[subscription.package].monthlyPriceMinor,
-      new Date().toISOString().slice(0, 7),
-    );
     this.#wallets.set(tenantId, wallet);
 
     const systemActor = { refType: 'System' as const, refId: 'platform' };
@@ -453,8 +476,13 @@ export class Platform {
         package: subscription.package,
         includedSeats: PACKAGES[subscription.package].includedSeats,
         monthlyPriceMinor: PACKAGES[subscription.package].monthlyPriceMinor,
-        status: 'ACTIVE',
+        // The subscription's own status, which is AWAITING_PAYMENT for a paid
+        // package a stranger signed up for. Written as a literal ACTIVE, a
+        // restart would have opened every unpaid tenancy on the estate.
+        status: subscription.status,
         assignedIdentities: [],
+        startedAt: subscription.startedAt,
+        renewsAt: subscription.renewsAt,
       },
     });
 
@@ -496,7 +524,96 @@ export class Platform {
         .slice(0, 4),
     });
 
-    return { tenant, subscription, wallet, trialGrantMinor };
+    // The first month, owed from the day the tenancy exists. Raised after the
+    // subscription is on the record, because the charge names it.
+    const openingCharge = paid ? raiseOpeningCharge(this, tenantId)?.charge : undefined;
+
+    return { tenant, subscription, wallet, trialGrantMinor, ...(openingCharge ? { openingCharge } : {}) };
+  }
+
+  /**
+   * Record that a subscription charge was paid, and settle it.
+   *
+   * The counterpart of `creditFromPayment` for money that bought the platform
+   * rather than AI. The receipt is the same kind of record — a reference spent
+   * once, a method, who recorded it — and it credits no wallet: what the
+   * customer receives for it is the period, and the period's AI allowance
+   * follows from the settlement (`settleCharge`), not from the money.
+   *
+   * A reference already recorded against this same charge and amount is a
+   * retry and is answered as success; against anything else it is a conflict.
+   */
+  recordSubscriptionPayment(input: {
+    tenantId: string;
+    chargeId: string;
+    method: PaymentMethod;
+    reference: string;
+    recordedBy: string;
+    source?: 'PROVIDER' | 'OPERATOR';
+    note?: string;
+  }): { receipt: PaymentReceipt; charge: SubscriptionCharge; alreadyRecorded: boolean } {
+    const reference = normaliseReference(input.reference);
+    const charge = chargesFor(this, input.tenantId).find((candidate) => candidate.id === input.chargeId);
+    if (!charge) throw new NotFoundError(`No subscription charge ${input.chargeId} on this tenancy`);
+
+    const existing = this.#receiptsByReference.get(reference);
+    if (existing) {
+      if (existing.tenantId !== input.tenantId || existing.amountMinor !== charge.amountMinor || existing.chargeId !== charge.id) {
+        throw new DomainError(
+          'PAYMENT_REFERENCE_CONFLICT',
+          `Reference ${reference} is already recorded against a different tenancy, amount or charge. ` +
+            'A payment reference identifies one payment and cannot be reused.',
+          409,
+        );
+      }
+      return { receipt: existing, charge: settleCharge(this, { chargeId: charge.id, reference }), alreadyRecorded: true };
+    }
+
+    if (charge.status === 'SETTLED') {
+      if (input.source === 'PROVIDER') {
+        // A second real payment against a settled charge — the customer paid
+        // the same month twice. The processor holds the money; it is recorded
+        // as a receipt on the tenancy and credited to the wallet, which is the
+        // only place it can go without inventing a refund rail.
+        const credited = this.creditFromPayment({
+          tenantId: input.tenantId,
+          amountMinor: charge.amountMinor,
+          method: input.method,
+          reference,
+          recordedBy: input.recordedBy,
+          source: 'PROVIDER',
+          note: `Paid twice against subscription charge ${charge.id}; credited to the wallet`,
+        });
+        return { receipt: credited.receipt, charge, alreadyRecorded: credited.alreadyRecorded };
+      }
+      throw new DomainError('CHARGE_ALREADY_SETTLED', `Charge ${charge.id} was settled on ${String(charge.settledAt).slice(0, 10)}`, 409);
+    }
+
+    const receipt: PaymentReceipt = {
+      id: ulid(),
+      tenantId: input.tenantId,
+      amountMinor: charge.amountMinor,
+      currency: BILLING_CURRENCY,
+      method: input.method,
+      reference,
+      chargeId: charge.id,
+      recordedBy: input.recordedBy,
+      recordedAt: new Date().toISOString(),
+      ...(input.note ? { note: input.note } : {}),
+    };
+    this.#receiptsByReference.set(reference, receipt);
+    this.ledger.commit({
+      tenantId: input.tenantId,
+      projectId: `${input.tenantId}-governance`,
+      actor: { refType: 'System', refId: 'billing' },
+      source: 'SYSTEM',
+      correlationId: ulid(),
+      eventType: 'PAYMENT_RECEIVED',
+      entity: { refType: 'PaymentReceipt', refId: receipt.id },
+      nextState: { ...receipt },
+    });
+
+    return { receipt, charge: settleCharge(this, { chargeId: charge.id, reference }), alreadyRecorded: false };
   }
 
   /**
@@ -1411,6 +1528,16 @@ export class Platform {
       cancelledTopUps.push(cancelled.id);
     }
 
+    // A period still owed by a tenancy that has just closed is a period nobody
+    // will pay for. Written off, so the register does not carry "£950 unpaid"
+    // beside a row marked closed for the rest of time.
+    const writtenOff: string[] = [];
+    for (const charge of chargesFor(this, tenant.id)) {
+      if (charge.status !== 'DUE') continue;
+      writeOffCharge(this, { chargeId: charge.id, reason: `Tenancy closed: ${input.reason}` });
+      writtenOff.push(charge.id);
+    }
+
     const closed: Tenant = { ...tenant, closedAt, closedBy: actor.actorId, closureReason: input.reason };
     this.#tenants.set(tenant.id, closed);
     this.ledger.commit({
@@ -1427,10 +1554,58 @@ export class Platform {
         refundId: refund?.id ?? null,
         refundMinor: refund?.totalMinor ?? 0,
         topUpsCancelled: cancelledTopUps.length,
+        chargesWrittenOff: writtenOff.length,
       },
     });
 
     return { tenant: closed, deactivated, refund, cancelledTopUps };
+  }
+
+  /**
+   * Delete a closed tenancy from the register.
+   *
+   * The nearest thing to deletion an append-only record allows, and it is
+   * near enough: every identity is erased now rather than at the end of its
+   * grace period — name, address and mobile replaced by a token that names
+   * nobody — and the tenancy leaves every operator screen. What stays is the
+   * chain of events, which is evidence and not a register entry, and the
+   * refund obligation if one was raised, because money owed does not stop
+   * being owed when the row goes.
+   *
+   * Only a closed tenancy. Closure is the act with the consequences — the
+   * cancellation, the notices to the people in it, the refund — and deletion
+   * is the tidy-up after it, never a shortcut past it.
+   */
+  deleteClosedTenant(actor: AuthContext, input: { tenantId: string; reason: string }): { tenant: Tenant; erased: number } {
+    const tenant = this.#tenants.get(input.tenantId);
+    if (!tenant) throw new NotFoundError(`No tenant ${input.tenantId}`);
+    if (!tenant.closedAt) {
+      throw new DomainError('TENANT_NOT_CLOSED', `${tenant.legalName} is open. Close it first; deletion is the tidy-up after closure, not a way round it.`, 409);
+    }
+    if (tenant.deletedAt) throw new DomainError('TENANT_ALREADY_DELETED', `${tenant.legalName} was deleted on ${tenant.deletedAt.slice(0, 10)}`, 409);
+    if (input.reason.trim().length < 10) throw new DomainError('REASON_REQUIRED', 'Say why, in at least ten characters; the record keeps it');
+
+    let erased = 0;
+    for (const user of this.users(tenant.id)) {
+      if (user.erasedAt !== undefined) continue;
+      this.eraseUserNow(actor, { userId: user.id, reason: `Tenancy deleted: ${input.reason}` });
+      erased += 1;
+    }
+
+    const deletedAt = new Date().toISOString();
+    const deleted: Tenant = { ...tenant, deletedAt, deletedBy: actor.actorId, deletionReason: input.reason };
+    this.#tenants.set(tenant.id, deleted);
+    this.ledger.commit({
+      tenantId: tenant.id,
+      projectId: `${tenant.id}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'TENANT_DELETED',
+      entity: { refType: 'Tenant', refId: tenant.id },
+      nextState: { ...deleted, identitiesErased: erased },
+    });
+    return { tenant: deleted, erased };
   }
 
   /** Every refund obligation on the estate, unsettled first. */
@@ -2865,12 +3040,11 @@ export class Platform {
     // primary control; this is the one that holds even if that is ever relaxed.
     assertBillablePeriod(period, subscription.startedAt);
 
-    // Billing the period is what buys the period's AI allowance, so it is
-    // credited here rather than on a timer. The wallet refuses a second
-    // allocation for the same period, which is what makes a reissued invoice
-    // safe — an invoice gets corrected and retried, and each retry handing out
-    // another month of AI would be free money.
-    this.wallet(tenantId).allocateFromSubscription(PACKAGES[subscription.package].monthlyPriceMinor, period);
+    // An invoice documents a period; it does not pay for one. The period's AI
+    // allowance used to be credited here, on issue — which is to say on an
+    // operator pressing a button, whether or not the money ever came. It is
+    // credited when the period's charge settles (`collection.settleCharge`)
+    // and nowhere else, so reissuing an invoice moves nothing.
 
     const invoice = buildInvoice(
       subscription,

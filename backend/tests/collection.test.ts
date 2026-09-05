@@ -30,9 +30,15 @@ beforeEach(() => {
   collection.setCollector(collection.NO_PAYMENT_METHOD);
 });
 
-/** A paying tenancy, and the day its first period falls due. */
+/**
+ * A paying tenancy, and the day its first *renewal* falls due.
+ *
+ * The first month is charged the day the tenancy exists and is paid here, so
+ * that everything below is about the renewal cycle — which is what this file
+ * is about. `paywall.test.ts` covers the opening charge itself.
+ */
 function paying(packageTier: 'SOLO' | 'CORE_PROJECT' = 'CORE_PROJECT') {
-  const { tenant } = platform.createTenant({
+  const { tenant, openingCharge } = platform.createTenant({
     legalName: 'Paying Ltd',
     jurisdiction: 'GB',
     defaultCurrency: 'GBP',
@@ -40,6 +46,8 @@ function paying(packageTier: 'SOLO' | 'CORE_PROJECT' = 'CORE_PROJECT') {
     package: packageTier,
     enterpriseName: 'Paying',
   });
+  assert.ok(openingCharge, 'a paid package is charged for its first month at creation');
+  collection.settleCharge(platform, { chargeId: openingCharge.id, reference: `opening-${tenant.id}` });
   const subscription = platform.subscription(tenant.id)!;
   return { tenant, subscription, dueAt: new Date(Date.parse(subscription.renewsAt)) };
 }
@@ -74,7 +82,8 @@ describe('a period that falls due is charged', () => {
     // — `alreadyRaised` behind it catches a period that somehow comes round
     // twice, which is the case a clock change or a restored journal produces.
     assert.equal(collection.raiseCharge(platform, tenant.id, after(dueAt, 1)), undefined);
-    assert.equal(collection.chargesFor(platform, tenant.id).length, 1);
+    // The paid opening month and the one renewal: two charges, one owed.
+    assert.equal(collection.chargesFor(platform, tenant.id).length, 2);
     assert.equal(collection.outstanding(platform, tenant.id).length, 1, 'one period billed once');
   });
 
@@ -91,7 +100,7 @@ describe('a period that falls due is charged', () => {
   });
 
   it('charges a free trial nothing', () => {
-    const { tenant } = platform.createTenant({
+    const { tenant, openingCharge } = platform.createTenant({
       legalName: 'Evaluating Ltd',
       jurisdiction: 'GB',
       defaultCurrency: 'GBP',
@@ -99,6 +108,7 @@ describe('a period that falls due is charged', () => {
       package: 'FREE_TRIAL',
       enterpriseName: 'Evaluating',
     });
+    assert.equal(openingCharge, undefined, 'a free package has no first month to charge');
     const renews = new Date(Date.parse(platform.subscription(tenant.id)!.renewsAt));
     assert.equal(collection.raiseCharge(platform, tenant.id, after(renews, 1)), undefined);
   });
