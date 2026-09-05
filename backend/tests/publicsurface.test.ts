@@ -159,6 +159,12 @@ describe('what an anonymous caller can obtain', () => {
       'POST /v1/requests',
       'POST /v1/signup',
       'POST /v1/signup/verify',
+      // A press on a post's share bar or call to action, reported by the public
+      // site's script. Three enumerated fields and a slug; it writes a line to
+      // the view journal, never the ledger, and answers "unrecorded" rather
+      // than 404 for a slug that is not a published page, so it cannot be used
+      // to find out whether a draft's address exists.
+      'POST /v1/site/engagement',
       // The two public routes that move money, and the most dangerous pair on
       // the platform. Neither provider can present a credential of ours, so in
       // both cases the signature is the credential: unverified, either endpoint

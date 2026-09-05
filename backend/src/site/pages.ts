@@ -11,6 +11,7 @@ import { absolute, cards, cta, jsonLd, organisation, page, pageHead, SITE_PAGES 
 import { addressBlock, businessDetails, emailLink, phoneLink, socialLinks } from './business.ts';
 import { POSTS, longDate } from './posts.ts';
 import { publishedPost, publishedPosts } from './blog.ts';
+import { articleCta, byline, hyperlink, postUrl, readMinutes, setBody, shareBar, wordsOf } from './article.ts';
 import type { Platform } from '../platform.ts';
 
 /**
@@ -416,20 +417,25 @@ export function blogPost(slug: string, platform?: Platform): string {
   // trusted markup and untrusted text stated in code rather than assumed.
   const stored = !fixed && platform?.ledger ? publishedPost(platform, slug) : undefined;
   const post = fixed
-    ? { ...fixed, paragraphs: fixed.body, date: fixed.date }
+    ? { ...fixed, paragraphs: fixed.body, date: fixed.date, authorship: undefined, keyword: undefined, metaDescription: undefined }
     : stored
       ? { ...stored, paragraphs: stored.body.map((line) => esc(line)), date: (stored.publishedAt ?? '').slice(0, 10) }
       : undefined;
 
   if (!post) throw new Error(`No post ${slug}`);
 
+  const url = postUrl(post.slug);
+  // The article's own address is never a link inside it.
+  const { paragraphs } = hyperlink(post.paragraphs, { exclude: `/blog/${post.slug}` });
+  const minutes = readMinutes(post.paragraphs);
+
   return page(
     {
       title: post.title,
-      // The standfirst is already the one-sentence version of the post, which
-      // is exactly what a search result and a link preview want. Writing a
-      // second summary would give two answers to one question.
-      description: post.standfirst,
+      // The meta description a stored post was written with; the standfirst
+      // for a compiled one, which is already its one-sentence version and is
+      // what a search result and a link preview want.
+      description: post.metaDescription || post.standfirst,
       path: `/blog/${post.slug}`,
       type: 'article',
       published: post.date,
@@ -442,21 +448,27 @@ export function blogPost(slug: string, platform?: Platform): string {
         headline: post.title,
         description: post.standfirst,
         datePublished: post.date,
-        url: absolute(`/blog/${post.slug}`),
-        mainEntityOfPage: { '@type': 'WebPage', '@id': absolute(`/blog/${post.slug}`) },
+        url,
+        mainEntityOfPage: { '@type': 'WebPage', '@id': url },
         image: absolute('/landing-hero.png'),
         publisher: organisation(),
         author: organisation(),
         articleSection: post.tag,
+        wordCount: wordsOf(post.paragraphs),
+        timeRequired: `PT${minutes}M`,
+        ...(post.keyword ? { keywords: post.keyword } : {}),
       }),
     },
     `${pageHead({ eyebrow: post.tag, title: post.title, standfirst: post.standfirst })}
 
 <section class="prose">
   <div class="wrap narrow">
-    <p class="post-date"><time datetime="${esc(post.date)}">${esc(longDate(post.date))}</time></p>
-    ${post.paragraphs.map((paragraph) => `<p>${paragraph}</p>`).join('\n    ')}
-    <p class="note"><a href="/blog">← All engineering notes</a></p>
+    ${byline({ tag: post.tag, authorship: post.authorship, body: post.paragraphs, date: post.date, longDate: longDate(post.date) })}
+    ${shareBar({ slug: post.slug, url, title: post.title, position: 'top' })}
+    ${setBody(paragraphs)}
+    ${articleCta(post.slug)}
+    ${shareBar({ slug: post.slug, url, title: post.title, position: 'bottom' })}
+    <p class="note"><a href="/blog">← All posts</a></p>
   </div>
 </section>`,
   );
@@ -472,13 +484,21 @@ export function blog(platform?: Platform): string {
   // that cannot reach a ledger has no stored posts — it still has the six in
   // the build, and rendering those is the right answer rather than an error.
   const entries = [
-    ...POSTS.map((post) => ({ slug: post.slug, title: post.title, standfirst: post.standfirst, tag: post.tag, date: post.date })),
+    ...POSTS.map((post) => ({
+      slug: post.slug,
+      title: post.title,
+      standfirst: post.standfirst,
+      tag: post.tag,
+      date: post.date,
+      minutes: readMinutes(post.body),
+    })),
     ...(platform?.ledger ? publishedPosts(platform) : []).map((post) => ({
       slug: post.slug,
       title: post.title,
       standfirst: post.standfirst,
       tag: post.tag,
       date: (post.publishedAt ?? '').slice(0, 10),
+      minutes: readMinutes(post.body),
     })),
   ].sort((a, b) => b.date.localeCompare(a.date));
 
@@ -501,7 +521,7 @@ export function blog(platform?: Platform): string {
     <div class="posts">
       ${entries.map(
         (post) => `<article class="post">
-        <div class="post-meta"><span class="tag">${esc(post.tag)}</span><time datetime="${esc(post.date)}">${esc(
+        <div class="post-meta"><span class="tag">${esc(post.tag)}</span><span class="byline-read">${post.minutes} min read</span><time datetime="${esc(post.date)}">${esc(
           longDate(post.date),
         )}</time></div>
         <h3><a href="/blog/${esc(post.slug)}">${esc(post.title)}</a></h3>

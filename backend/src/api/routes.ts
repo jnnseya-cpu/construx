@@ -5904,6 +5904,38 @@ export const ROUTES: Route[] = [
     },
   },
 
+  // A press on a post's share bar or its call to action, reported by the page's
+  // script. Public because the reader has no account, and narrow because of
+  // it: three enumerated fields, a slug that has to name a page the site
+  // actually serves, and a line in the view journal — a slug and a channel,
+  // nothing about the person. A report about a page that does not exist is
+  // answered as unrecorded rather than 404, so the route cannot be used to ask
+  // whether a draft's address is real.
+  {
+    method: 'POST',
+    pattern: '/v1/site/engagement',
+    public: true,
+    readOnly: true,
+    description: 'A share-link or call-to-action press on a blog post, counted as a request',
+    schema: {
+      type: 'object',
+      required: ['slug', 'kind', 'channel'],
+      properties: {
+        slug: { type: 'string', minLength: 1, maxLength: 80 },
+        kind: { type: 'string', enum: ['share', 'click'] },
+        channel: { type: 'string', enum: ['copy', 'linkedin', 'x', 'whatsapp', 'email', 'demo'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const { slug, kind, channel } = body<{ slug: string; kind: views.EngagementKind; channel: string }>(ctx);
+      const exists = POST_PAGES.some((post) => post.slug === slug) || blog.publishedPost(platform, slug) !== undefined;
+      if (!exists) return { recorded: false };
+      views.recordEngagement(slug, kind, channel);
+      return { recorded: true };
+    },
+  },
+
   // Blog posts, each at its own address. Registered separately from
   // `SITE_PAGES` because that list also drives the navigation and the footer,
   // and engineering notes belong in neither — they are reached from the blog

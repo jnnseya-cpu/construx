@@ -880,6 +880,29 @@ img, svg { max-width: 100%; }
 .post-more a:hover { text-decoration: underline; }
 .post-date { color: var(--text-3); font-size: 13.5px; margin: 0 0 18px; }
 
+/* The article: byline, share bar, sections, pull-quote and the closing call.
+ *
+ * One rule of spacing runs through all of it: the share bar sits on a hairline
+ * above and below, so the article's edges are marked the way the prose column's
+ * left edge already is, and nothing in it competes with the text for colour —
+ * the links are the site's orange because that is what a link is here. */
+.post-byline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-3); font-size: 13.5px; margin: 0 0 14px; }
+.post-byline time, .byline-read, .byline-engine { color: var(--text-3); font-size: 13.5px; }
+.byline-sep { color: var(--line-strong); }
+.post-meta .byline-read { font-size: 12px; }
+.share-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 12px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 0 0 26px; font-size: 13.5px; }
+.share-bar.share-bottom { margin: 30px 0 0; }
+.share-label { color: var(--text-3); font-weight: 600; letter-spacing: .2px; }
+.share-link { color: var(--orange); background: none; border: 0; padding: 0; font: inherit; font-size: 13.5px; cursor: pointer; text-decoration: none; }
+.prose .share-link { text-decoration: none; }
+.share-link:hover, .prose .share-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+.share-link:focus-visible { outline: 2px solid var(--orange); outline-offset: 3px; border-radius: 3px; }
+.share-link[data-copied] { color: var(--success); }
+.pullquote { margin: 26px 0; padding: 4px 0 4px 22px; border-left: 3px solid var(--orange); }
+.pullquote p { font-family: var(--display); font-size: 21px; line-height: 1.4; color: var(--text); letter-spacing: -.2px; margin: 0; text-wrap: balance; }
+.post-cta { margin: 34px 0 0; padding: 22px 24px; border: 1px solid var(--orange-line); border-radius: var(--radius); background: var(--orange-wash); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; }
+.post-cta p { margin: 0; color: var(--text); font-weight: 600; }
+
 /* ------------------------------------------------- money, refusal and exit */
 
 /* The three sections added when the page stopped leading with its architecture.

@@ -97,7 +97,9 @@ const COMMANDS = {
         name: 'body',
         label: 'Body',
         type: 'textarea',
-        hint: 'One paragraph per line. At least 300 words, or the page is treated as thin.',
+        hint:
+          'One paragraph per line. At least 300 words, or the page is treated as thin. A line starting "## " is a section ' +
+          'heading and one starting "> " is a pull-quote; the page links the first mention of a phrase that has a page on the site.',
       },
       { name: 'tag', label: 'Tag', required: false },
     ],
@@ -471,7 +473,7 @@ export async function blog(root) {
             type: 'textarea',
             value: (post.body ?? []).join('\n'),
             required: false,
-            hint: 'One paragraph per line.',
+            hint: 'One paragraph per line. "## " starts a section heading, "> " a pull-quote.',
           },
         ],
         transform: (fields) => {

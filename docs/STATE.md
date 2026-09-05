@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,844 passing, 0 failing, 0 skipped, across 257 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 5,857 passing, 0 failing, 0 skipped, across 258 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 298 TypeScript files, 192,500 lines |
 | Application | 77 ES modules, 43,900 lines (including a service worker) |
@@ -11017,6 +11017,55 @@ against a standard they were never written to would produce a page of failures
 nobody intends to act on and drag the average down with noise. They are handed to
 the model as titles instead, so it does not propose an article that already
 exists.
+
+### The article, as it is set on the page
+
+Asked for: a heavily hyperlinked blog, and every post with a byline
+(`Category · engine · N min read · date`), a share bar at the top and the foot
+(Copy link · LinkedIn · X · WhatsApp · Email), sections, a pull-quote and a
+closing call to action. `site/article.ts` is where a post's data becomes the
+article a reader sees, and it is used by the post page and the index alike so
+"how long is this to read" has one answer.
+
+**The byline reads the record.** The engine name comes from the post's
+authorship — `CONSTRUX Editorial` for a post a person wrote, `CONSTRUX AI
+Content Engine` for one a model drafted, `CONSTRUX Engineering` for the notes
+compiled into the build, which have no authorship field because they are the
+notes the engineers wrote — so a post a model drafted says so on its face. The
+reading time is words over 220 a minute, never under one, and is in the
+`BlogPosting` structured data as `timeRequired` beside `wordCount` and the
+post's keyword.
+
+**The share bar is links.** Each is the network's own public composer with the
+post's absolute address in it — no SDK, no script from the network, nothing in
+the content-security policy changed — and works with scripting off. The one
+control a link cannot be, copying the address, is a button the site's script
+wires. A press on any of them, and on the call to action, is reported by that
+script to `POST /v1/site/engagement` and written to the view journal as a
+share (with its channel) or a click: a count of reports, labelled that way
+beside the request count, and dropped without a 404 for a slug the site does
+not serve, so the route cannot be used to find out whether a draft's address is
+real. Three enumerated fields; nothing about the reader.
+
+**The links are a glossary.** `LINK_GLOSSARY` maps a phrase to a page on this
+site; `hyperlink` links the first appearance of each phrase, at most two in a
+paragraph, never inside `<code>` or an existing link, never to the page being
+read, and once per destination. `article.test.ts` holds every glossary path
+against the public HTML routes, so a link to a page that does not exist cannot
+be published. The compiled notes pass through the same linker with their
+trusted markup intact.
+
+**Sections are two prefixes on the paragraphs the record already holds.** A
+paragraph beginning `## ` is a heading and one beginning `> ` a pull-quote; a
+post written before this existed renders exactly as it did. The "Write one
+yourself" and "Edit" forms say so in their hints. Every post ends on the one
+call to action that lets a reader do what the article described rather than
+read about it: *Launch the demo environment*.
+
+Driven in Chromium against a booted server: byline, both bars, five controls
+each, the copy button confirming and the clipboard holding the address, the
+engagement report answered 200 for the copy and for the call to action, the
+index showing minutes, and the SEO & Content screen still reading.
 
 ### A second exception, argued rather than appended
 

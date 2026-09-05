@@ -21,6 +21,50 @@ if (toggle && nav) {
   });
 }
 
+// --- sharing a post -----------------------------------------------------------
+//
+// The share links are ordinary links to each network's own composer and work
+// with this script absent. What the script adds is the one control a link
+// cannot be — copying the address — and a report of the press to
+// `/v1/site/engagement`, counted as a request and labelled that way on the
+// SEO screen. Nothing about the reader travels with it: a slug and a channel.
+const report = (slug, kind, channel) => {
+  const body = JSON.stringify({ slug, kind, channel });
+  try {
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon('/v1/site/engagement', new Blob([body], { type: 'application/json' }));
+      return;
+    }
+  } catch {
+    // Fall through to fetch.
+  }
+  fetch('/v1/site/engagement', { method: 'POST', headers: { 'content-type': 'application/json' }, body, keepalive: true }).catch(() => undefined);
+};
+
+for (const control of document.querySelectorAll('[data-share][data-slug]')) {
+  control.addEventListener('click', async () => {
+    const channel = control.getAttribute('data-share');
+    const slug = control.getAttribute('data-slug');
+    if (channel === 'copy') {
+      const url = control.getAttribute('data-url') ?? window.location.href;
+      try {
+        await navigator.clipboard.writeText(url);
+        const label = control.textContent;
+        control.textContent = 'Link copied';
+        control.setAttribute('data-copied', '');
+        setTimeout(() => {
+          control.textContent = label;
+          control.removeAttribute('data-copied');
+        }, 1800);
+      } catch {
+        // No clipboard permission: show the address so it can be copied by hand.
+        control.textContent = url;
+      }
+    }
+    report(slug, channel === 'demo' ? 'click' : 'share', channel);
+  });
+}
+
 // --- the account request form on /contact ------------------------------------
 //
 // Posts to the request queue the operator works. The result is said on the

@@ -180,6 +180,11 @@ describe('the routing table itself', () => {
       'POST /v1/requests',
       'POST /v1/signup',
       'POST /v1/signup/verify',
+      // A share-bar or call-to-action press on a blog post, reported by the
+      // public site's script and counted as a request in the view journal.
+      // Enumerated fields only; nothing about the reader; unrecorded rather
+      // than 404 for a slug that is not a published page.
+      'POST /v1/site/engagement',
       // The mobile-money rail. Same arrangement as the card one below: KODA
       // holds no credential of ours, so the HMAC over the raw body is the
       // credential. It signs no timestamp, so there is no tolerance window to

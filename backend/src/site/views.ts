@@ -33,16 +33,38 @@ import { config } from '../config.ts';
  * tag. It is not built here and is not implied by anything on the screen.
  */
 
-/** One request for one post's page. A slug and a day; nothing about a person. */
-export type PostView = { slug: string; day: string; at: string };
+/**
+ * One request for one post's page. A slug and a day; nothing about a person.
+ *
+ * `kind` arrived later and is absent on every record written before it: a
+ * record with no kind is a page view, which is what every record was. A
+ * `share` is a press on one of the share links (`channel` names which), a
+ * `click` a press on the article's call to action. Both are reported by the
+ * page's script, so a reader with scripting off shares and clicks uncounted —
+ * they are counts of reports, and the screen says so.
+ */
+export type EngagementKind = 'share' | 'click';
+export type PostView = { slug: string; day: string; at: string; kind?: EngagementKind; channel?: string };
 
 let journal: RecordJournal<PostView> | undefined;
 
 /** Counts held in memory, rebuilt from the journal at boot. */
 const totals = new Map<string, number>();
 const daily = new Map<string, Map<string, number>>();
+const shares = new Map<string, Map<string, number>>();
+const clicks = new Map<string, number>();
 
 function remember(view: PostView): void {
+  if (view.kind === 'share') {
+    const byChannel = shares.get(view.slug) ?? new Map<string, number>();
+    byChannel.set(view.channel ?? 'unknown', (byChannel.get(view.channel ?? 'unknown') ?? 0) + 1);
+    shares.set(view.slug, byChannel);
+    return;
+  }
+  if (view.kind === 'click') {
+    clicks.set(view.slug, (clicks.get(view.slug) ?? 0) + 1);
+    return;
+  }
   totals.set(view.slug, (totals.get(view.slug) ?? 0) + 1);
   const days = daily.get(view.slug) ?? new Map<string, number>();
   days.set(view.day, (days.get(view.day) ?? 0) + 1);
@@ -62,8 +84,39 @@ export function attachViewJournal(path: string, options: { fsync?: boolean } = {
   const { records, truncated } = journal.read();
   totals.clear();
   daily.clear();
+  shares.clear();
+  clicks.clear();
   for (const record of records) remember(record);
   return { restored: records.length, truncated };
+}
+
+/**
+ * Record a share or a click the page reported.
+ *
+ * Same journal, same rule as a view: never throws, identifies nobody. The
+ * caller has already established that the slug is a published post — a report
+ * about a page that does not exist is dropped before it reaches here, so a
+ * script cannot manufacture engagement for articles that were never written.
+ */
+export function recordEngagement(slug: string, kind: EngagementKind, channel: string): void {
+  const now = new Date();
+  const view: PostView = { slug, day: now.toISOString().slice(0, 10), at: now.toISOString(), kind, channel };
+  remember(view);
+  try {
+    journal?.append(view);
+  } catch {
+    // As for a view: a broken volume is reported once by `viewsPosition`.
+  }
+}
+
+/** Shares and clicks reported for one post. */
+export function engagementFor(slug: string): { shares: number; clicks: number; byChannel: Record<string, number> } {
+  const byChannel = Object.fromEntries(shares.get(slug) ?? []);
+  return {
+    shares: Object.values(byChannel).reduce((sum, count) => sum + count, 0),
+    clicks: clicks.get(slug) ?? 0,
+    byChannel,
+  };
 }
 
 /**
@@ -94,7 +147,10 @@ export type ViewsPosition = {
   /** Whether counts survive a restart. */
   durable: boolean;
   total: number;
-  bySlug: { slug: string; views: number; last30: number }[];
+  /** Share-link presses and call-to-action presses the page reported, estate-wide. */
+  shares: number;
+  clicks: number;
+  bySlug: { slug: string; views: number; last30: number; shares: number; clicks: number }[];
   /** Estate-wide daily totals over the window, for a line. */
   daily: { date: string; views: number }[];
   windowDays: number;
@@ -107,28 +163,37 @@ export function viewsPosition(windowDays = WINDOW_DAYS): ViewsPosition {
   const since = new Date(Date.now() - windowDays * 86_400_000).toISOString().slice(0, 10);
   const estateDaily = new Map<string, number>();
 
-  const bySlug = [...totals.entries()]
-    .map(([slug, views]) => {
+  // A post shared or clicked before it was ever viewed is not possible from
+  // the page, but the union is taken anyway so a count cannot go missing.
+  const slugs = new Set<string>([...totals.keys(), ...shares.keys(), ...clicks.keys()]);
+  const bySlug = [...slugs]
+    .map((slug) => {
+      const views = totals.get(slug) ?? 0;
       let last30 = 0;
       for (const [day, count] of daily.get(slug) ?? []) {
         if (day < since) continue;
         last30 += count;
         estateDaily.set(day, (estateDaily.get(day) ?? 0) + count);
       }
-      return { slug, views, last30 };
+      const engagement = engagementFor(slug);
+      return { slug, views, last30, shares: engagement.shares, clicks: engagement.clicks };
     })
     .sort((a, b) => b.views - a.views);
 
   return {
     durable: journal !== undefined,
     total: bySlug.reduce((sum, entry) => sum + entry.views, 0),
+    shares: bySlug.reduce((sum, entry) => sum + entry.shares, 0),
+    clicks: bySlug.reduce((sum, entry) => sum + entry.clicks, 0),
     bySlug,
     daily: [...estateDaily.entries()].map(([date, views]) => ({ date, views })).sort((a, b) => a.date.localeCompare(b.date)),
     windowDays,
     note:
       'Server-rendered requests for a post’s page, one per request. A crawler counts; one person reading twice counts ' +
       'twice; nobody is identified, because no cookie, address or fingerprint is recorded — the log holds a slug and a ' +
-      'day. It is a count of requests, not of readers, and is labelled that way everywhere it appears.' +
+      'day. It is a count of requests, not of readers, and is labelled that way everywhere it appears. Shares and ' +
+      'clicks are presses on the share bar and the call to action that the page’s script reported — a reader with ' +
+      'scripting off is not counted.' +
       (journal ? '' : ' No journal is attached on this process, so these counts are lost on restart.'),
   };
 }
@@ -143,4 +208,6 @@ export function resetViews(): void {
   journal = undefined;
   totals.clear();
   daily.clear();
+  shares.clear();
+  clicks.clear();
 }
