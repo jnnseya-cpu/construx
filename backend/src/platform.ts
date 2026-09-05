@@ -3,6 +3,7 @@ import { EvidenceStore } from './evidence/store.ts';
 import { SigningAuthority } from './signing/signature.ts';
 import { ExportService } from './export/exporter.ts';
 import { allocateDocumentNumber, issuerProfile } from './group/profile.ts';
+import { groupOf } from './group/directory.ts';
 import { SyncEngine } from './field/sync.ts';
 import { ACUWallet, TRIAL_GRANT_NOTE, type ACUCaps, type ACUEntry , type WalletSignal } from './billing/acu.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
@@ -2782,6 +2783,39 @@ export class Platform {
     return wallet;
   }
 
+  /**
+   * The wallet a tenancy spends AI from.
+   *
+   * Its own — unless it is a company of a group covered by the group's
+   * subscription, in which case the group's primary company's: the enterprise
+   * account tops up once and every company under it draws on that credit.
+   * That is the customer's rule ("JNN GLOBAL LTD must top up so its
+   * sub-companies can use ACUs"), and it is resolved here rather than by
+   * redirecting `wallet()` itself, because a company's own wallet is still
+   * what is refunded on closure and what a payment reversal reaches.
+   */
+  spendingWallet(tenantId: string): { wallet: ACUWallet; sharedFrom: { tenantId: string; name: string } | null } {
+    const own = this.wallet(tenantId);
+    const tenant = this.#tenants.get(tenantId);
+    const subscription = this.#subscriptions.get(tenantId);
+    if (!tenant?.groupId || subscription?.grantedFree !== true) return { wallet: own, sharedFrom: null };
+    let primary: Tenant | undefined;
+    try {
+      for (const centre of groupOf(this, tenant.groupId).costCentres) {
+        const candidate = this.#tenants.get(centre.tenantId);
+        if (candidate && !candidate.closedAt && !candidate.deletedAt) {
+          primary = candidate;
+          break;
+        }
+      }
+    } catch {
+      primary = undefined;
+    }
+    const shared = primary && primary.id !== tenantId ? this.#wallets.get(primary.id) : undefined;
+    if (!primary || !shared) return { wallet: own, sharedFrom: null };
+    return { wallet: shared, sharedFrom: { tenantId: primary.id, name: primary.legalName } };
+  }
+
   subscription(tenantId: string): Subscription {
     const subscription = this.#subscriptions.get(tenantId);
     if (!subscription) throw new NotFoundError(`No subscription for tenant ${tenantId}`);
@@ -3315,6 +3349,24 @@ export class Platform {
     return wallet.snapshot();
   }
 
+  /**
+   * Write a wallet's available credit down to nothing.
+   *
+   * The operator's act, with the reason on the entry. Asked for when the
+   * demonstration tenancies were holding thousands of pounds of seeded credit
+   * that was never money, and an account held an allowance credited before the
+   * rule that nothing is free until it is paid. Held amounts are not touched —
+   * a running execution keeps its reservation — and nothing already spent is
+   * rewritten: this is one more debit on the record, not an erasure.
+   */
+  writeOffCredit(actorId: string, tenantId: string, reason: string): { writtenOffMinor: number; wallet: ReturnType<ACUWallet['snapshot']> } {
+    if (reason.trim().length < 5) throw new DomainError('REASON_REQUIRED', 'Say why the credit is written off');
+    const wallet = this.wallet(tenantId);
+    const writtenOffMinor = wallet.availableMinor();
+    wallet.closeOut(`Credit written off by the operator (${actorId}): ${reason.trim()}`);
+    return { writtenOffMinor, wallet: wallet.snapshot() };
+  }
+
   /** Every finance exception, open first. */
   paymentExceptions(): PaymentException[] {
     return this.ledger
@@ -3574,7 +3626,8 @@ export class Platform {
     return {
       ledger: this.ledger,
       orchestrator: this.orchestrator,
-      wallet: this.wallet(auth.tenantId),
+      // The wallet the spend comes from: the group's, for a covered company.
+      wallet: this.spendingWallet(auth.tenantId).wallet,
       auth,
       source: options.source ?? 'WEB',
       correlationId: options.correlationId ?? ulid(),

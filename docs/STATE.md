@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,986 passing, 0 failing, 0 skipped, across 268 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 5,988 passing, 0 failing, 0 skipped, across 268 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 304 TypeScript files, 198,400 lines |
 | Application | 77 ES modules, 45,450 lines (including a service worker) |
@@ -11747,6 +11747,30 @@ and open is moved there, its unpaid periods written off, its
 hold (more people than seats) is reported on stdout and left as it is. The
 directory carries `coveredByGroup` per company and the Group screen says
 "covered by the group's subscription" on the row.
+
+**The group's AI credit is one wallet: the primary company's.** Asked for as
+"JNN GLOBAL LTD must top up so its two sub-companies can use ACUs".
+`Platform.spendingWallet(tenantId)` is the wallet a tenancy spends from: its
+own, unless it is a covered company of a group, in which case the primary
+company's. The engine context, the document render charge and
+`GET /v1/billing/wallet` read it; a covered company's ACU & Billing says whose
+wallet it spends from, shows that balance and offers no top-up of its own; the
+Group screen's *AI available* shows the shared balance on every covered row.
+`wallet()` itself is not redirected — a company's own wallet is still what a
+closure refunds and a payment reversal reaches. Not carried across: a covered
+company's own monthly hard limit does not apply to spend from the group's
+wallet, and the group statement's per-company AI meter reads each company's own
+wallet, which a covered company no longer spends from. Both are recorded here
+rather than hidden.
+
+**Credit can be written down to nothing.** `POST
+/v1/admin/tenants/:tenantId/wallet/write-off` and *Zero wallet* on the row:
+the available credit becomes one debit with the reason and the operator on
+the entry; holds and past spend are untouched. Asked for because the two
+demonstration tenancies held thousands of pounds of seeded credit that was
+never money, and JNN GLOBAL LTD held an allowance credited before the rule that
+nothing is free until paid. `freegrant.test.ts` covers the refusal to a
+customer, the short reason, the write-off, the no-op and the top-up after.
 
 Still true: a group company's own periods, where any exist, run on the
 **group's payment terms** (`graceDaysFor` in `billing/collection.ts`: the larger

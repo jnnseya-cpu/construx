@@ -755,7 +755,8 @@ export function groupDirectory(platform: Platform, groupId: string): {
     companies: group.costCentres.map((centre) => {
       const tenant: Tenant = platform.tenant(centre.tenantId);
       const users = platform.users(centre.tenantId);
-      const wallet = platform.wallet(centre.tenantId).snapshot();
+      // What the company can spend: the group's wallet where it is covered.
+      const wallet = platform.spendingWallet(centre.tenantId).wallet.snapshot();
       const due = chargesFor(platform, centre.tenantId).filter((charge) => charge.status === 'DUE');
       return {
         tenantId: centre.tenantId,

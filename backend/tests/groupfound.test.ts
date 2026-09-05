@@ -117,6 +117,22 @@ describe('founding a group from an existing company', () => {
     assert.equal(again.refused.length, 0);
   });
 
+  it('spends AI from the founding company’s wallet: the group tops up once', () => {
+    const groupId = platform.tenant(tenantId).groupId!;
+    const sub = groupOf(platform, groupId).costCentres.find((centre) => centre.tenantId !== tenantId)!.tenantId;
+    platform.wallet(tenantId).topUp(5_000, 'JNN GLOBAL LTD tops up for the group');
+    const spending = platform.spendingWallet(sub);
+    assert.equal(spending.sharedFrom?.tenantId, tenantId);
+    assert.equal(spending.wallet, platform.wallet(tenantId), 'the covered company spends from the founding company’s wallet');
+    assert.equal(spending.wallet.availableMinor(), 5_000);
+    assert.equal(platform.wallet(sub).availableMinor(), 0, 'its own wallet is untouched');
+    // The founding company itself, and a tenancy outside any group, spend their own.
+    assert.equal(platform.spendingWallet(tenantId).sharedFrom, null);
+    const subAdmin = platform.users(sub).find((user) => user.roles.includes('ENTERPRISE_ADMIN'))!;
+    const context = platform.context(authOf(platform, subAdmin.id), `${sub}-governance`);
+    assert.equal(context.wallet, platform.wallet(tenantId), 'an engine run by the company draws on the group’s credit');
+  });
+
   it('gives a second group a distinct slug when two companies share a name', () => {
     const twin = platform.createTenant({ legalName: 'JNN GLOBAL LTD', jurisdiction: 'GB', defaultCurrency: 'GBP', tier: 'TEAM', enterpriseName: 'JNN GLOBAL 2', trialGrant: false });
     const twinAdmin = platform.createUser({ tenantId: twin.tenant.id, name: 'Twin', email: 'twin@example.test', roles: ['OWNER'] });

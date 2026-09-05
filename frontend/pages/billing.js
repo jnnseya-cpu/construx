@@ -60,7 +60,7 @@ export async function billing(root) {
           <p>Prepaid AI credit with hard caps. No provider is contacted on an empty wallet, and nothing is charged until the output is committed.</p>
         </div>
         <div class="actions">
-          ${can('BILLING_ACU', 'U') ? html`<button class="btn ghost" id="topup">Top up</button>` : ''}
+          ${can('BILLING_ACU', 'U') && !wallet.sharedFrom ? html`<button class="btn ghost" id="topup">Top up</button>` : ''}
           ${
             can('BILLING_ACU', 'U') && seats && seats.package?.includedSeats !== null
               ? html`<button class="btn quiet" id="buy-seat">Add a seat</button>`
@@ -71,6 +71,16 @@ export async function billing(root) {
         </div>
       </div>
 
+      ${
+        wallet.sharedFrom
+          ? html`<div class="notice ok" style="margin-bottom:14px">
+              <div>
+                <b>AI credit is shared across the group.</b> This company spends from ${wallet.sharedFrom.name}'s wallet, which is what
+                the figures below show. Top-ups are made there, by ${wallet.sharedFrom.name}'s administrator; nothing is bought here.
+              </div>
+            </div>`
+          : ''
+      }
       ${
         subscription && dueCharges.length > 0
           ? html`<div class="card ${raw(awaitingFirst ? 'warn' : '')}" style="margin-bottom:14px" data-subscription-due>

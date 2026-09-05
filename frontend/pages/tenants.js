@@ -307,6 +307,7 @@ export async function tenants(root) {
                   <button class="btn quiet sm" data-status="${tenant.id}">Status</button>
                   <button class="btn quiet sm" data-modules="${tenant.id}">Modules</button>
                   <button class="btn quiet sm" data-people="${tenant.id}">People</button>
+                  ${tenant.wallet.availableMinor > 0 ? html`<button class="btn quiet danger sm" data-zero="${tenant.id}">Zero wallet</button>` : ''}
                   ${tenant.demonstration ? '' : html`<button class="btn quiet danger sm" data-close="${tenant.id}">Close</button>`}`,
           ]),
           empty: 'No tenancy on the estate yet.',
@@ -1100,6 +1101,29 @@ export async function tenants(root) {
             : `${money(result.receipt.amountMinor)} · available ${money(result.wallet.availableMinor)}`,
           result.alreadyRecorded ? 'warn' : 'ok',
         );
+        await again();
+      }
+    });
+  }
+
+  // Writing a wallet's available credit down to nothing. Seeded demonstration
+  // credit that was never money, or an allowance credited before the rule that
+  // nothing is free until it is paid. One more debit on the record.
+  for (const button of root.querySelectorAll('[data-zero]')) {
+    button.addEventListener('click', async () => {
+      const tenantId = button.getAttribute('data-zero');
+      const tenant = byId.get(tenantId);
+      const result = await command({
+        title: `Zero the wallet — ${tenant?.legalName ?? 'tenancy'}`,
+        intent:
+          `${money(tenant?.wallet.availableMinor ?? 0)} of available credit is written off as a debit on the record. Anything held against a running ` +
+          'execution is untouched, nothing already spent is rewritten, and the reason is kept. The tenancy tops up again to spend.',
+        path: `/v1/admin/tenants/${tenantId}/wallet/write-off`,
+        submitLabel: 'Write off the credit',
+        fields: [{ name: 'reason', label: 'Why', hint: 'At least five characters. Recorded on the wallet entry.' }],
+      });
+      if (result) {
+        toast('Credit written off', `${money(result.writtenOffMinor)} written off · ${money(result.wallet.availableMinor)} available`, 'warn');
         await again();
       }
     });

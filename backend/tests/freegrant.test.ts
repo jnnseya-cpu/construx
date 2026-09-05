@@ -129,6 +129,25 @@ describe('granting the package free of charge', () => {
     assert.equal(collection.outstanding(platform, tenantId).length, 0);
   });
 
+  it('the operator can write the credit down to nothing, with the reason on the record', async () => {
+    const refused = await send('POST', `/v1/admin/tenants/${tenantId}/wallet/write-off`, adminToken, { reason: 'Not mine to do' });
+    assert.equal(refused.status, 403);
+    const short = await send('POST', `/v1/admin/tenants/${tenantId}/wallet/write-off`, operatorToken, { reason: 'x' });
+    assert.equal(short.status, 400);
+    const written = await send('POST', `/v1/admin/tenants/${tenantId}/wallet/write-off`, operatorToken, { reason: 'Seeded allowance, never money' });
+    assert.equal(written.status, 201, JSON.stringify(written.body));
+    assert.equal(written.body.writtenOffMinor, 10_000);
+    assert.equal((written.body.wallet as { availableMinor: number }).availableMinor, 0);
+    const entries = platform.wallet(tenantId).entries();
+    assert.match(String(entries.at(-1)!.note), /written off by the operator/);
+    // A second write-off of nothing is nothing.
+    const nothing = await send('POST', `/v1/admin/tenants/${tenantId}/wallet/write-off`, operatorToken, { reason: 'Nothing left to take' });
+    assert.equal(nothing.body.writtenOffMinor, 0);
+    // Topping up again works as before.
+    await send('POST', `/v1/admin/tenants/${tenantId}/credit`, operatorToken, { amountMinor: 2_500, method: 'BANK_TRANSFER', reference: 'FPS-JNN-0002' });
+    assert.equal(platform.wallet(tenantId).snapshot().availableMinor, 2_500);
+  });
+
   it('survives a seat change and a restart', () => {
     platform.createUser({ tenantId, name: 'Esi Mensah', email: 'esi@jnnglobal.example', roles: ['PLANNER'] });
     const rebuilt = new Platform();

@@ -5527,6 +5527,17 @@ export const ROUTES: Route[] = [
     },
   },
   {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:tenantId/wallet/write-off',
+    description: 'Write a wallet’s available credit down to nothing, with the reason on the record. Held amounts and past spend are untouched (platform operator only)',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 500 } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      operatorOnly(ctx, 'write off a wallet’s credit');
+      return platform.writeOffCredit(actor.actorId, ctx.params.tenantId as string, body<{ reason: string }>(ctx).reason);
+    },
+  },
+  {
     method: 'GET',
     pattern: '/v1/admin/ai/unreconciled',
     readOnly: true,
@@ -18639,7 +18650,7 @@ export const ROUTES: Route[] = [
       });
 
       return renderAndCharge(
-        platform.wallet(actor.tenantId),
+        platform.spendingWallet(actor.tenantId).wallet,
         document,
         { format: chosen, projectId: ctx.params.projectId as string, userId: actor.actorId },
         { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
@@ -18737,7 +18748,7 @@ export const ROUTES: Route[] = [
       });
 
       return renderAndCharge(
-        platform.wallet(actor.tenantId),
+        platform.spendingWallet(actor.tenantId).wallet,
         document,
         { format: chosen, projectId, userId: actor.actorId },
         { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
@@ -20353,8 +20364,11 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/billing/wallet',
-    description: 'ACU wallet position, caps and alerts',
-    handler: (platform, ctx) => platform.wallet(authoriseTenant(ctx, 'BILLING_ACU', 'R').tenantId).snapshot(),
+    description: 'ACU wallet position, caps and alerts — the group’s wallet for a company covered by its group, and it says so',
+    handler: (platform, ctx) => {
+      const spending = platform.spendingWallet(authoriseTenant(ctx, 'BILLING_ACU', 'R').tenantId);
+      return { ...spending.wallet.snapshot(), sharedFrom: spending.sharedFrom };
+    },
   },
 
   // --- The subscription itself: what the platform costs, and whether it is paid --
