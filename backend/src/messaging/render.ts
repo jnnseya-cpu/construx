@@ -285,6 +285,8 @@ export function verificationPage(input: {
   email?: string;
   /** On DONE for a paid package: the first month, formatted, owed before the tenancy opens. */
   amountDue?: string;
+  /** On DONE for a group signup: the group founded, and how many companies its licence covers. */
+  group?: { displayName: string; maxCompanies: number };
   reason?: string;
 }): string {
   const action = `/verify?r=${encodeURIComponent(input.r)}&t=${encodeURIComponent(input.t)}`;
@@ -324,6 +326,15 @@ export function verificationPage(input: {
          <b>${esc(input.organisation ?? 'Your organisation')}</b> exists on the platform and
          <b>${esc(input.email ?? '')}</b> is its administrator.
        </p>
+       ${
+         input.group
+           ? `<p style="${PARAGRAPH}">
+                It is the first company of the group <b>${esc(input.group.displayName)}</b>, and you are its group
+                administrator. From the <b>Group</b> screen you add the other organisations — up to
+                ${input.group.maxCompanies} — each its own tenancy with the administrators you name.
+              </p>`
+           : ''
+       }
        ${payment}
        <p style="${QUIET}">
          Sign in with that address. A six-character code will be sent to it — that is the second factor,

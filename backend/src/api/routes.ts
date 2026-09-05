@@ -43,7 +43,7 @@ import { centreCatalogue, commandCentre, type CentreFunctionId } from '../comman
 import { grantableScopes, issueKey, keyRegister, revokeKey } from '../developer/keys.ts';
 import { subscribe, subscriptionRegister, unsubscribe, webhookPosition } from '../developer/webhooks.ts';
 import type { ACUCaps } from '../billing/acu.ts';
-import { ACU_BUNDLES, PACKAGES, SEATS, TOP_UPS, type PackageTier } from '../billing/seats.ts';
+import { ACU_BUNDLES, GROUP_LICENCE, PACKAGES, SEATS, TOP_UPS, type PackageTier } from '../billing/seats.ts';
 import { BILLING_CURRENCY, type PaymentMethod } from '../billing/payments.ts';
 import { standing } from '../billing/entitlement.ts';
 import {
@@ -169,7 +169,7 @@ import { approveDocument, createDraft, documentOf, documentsOf, generateRevision
 import { legalReadiness, verifyIssuerProfile } from '../group/profile.ts';
 import { createReportingGrant, grantsGiven, groupReports, readGroupReport, REPORT_METRICS, revokeReportingGrant, runGroupReport } from '../group/reporting.ts';
 import { approveTransferCase, cancelTransferCase, executeTransferCase, openTransferCase, reviewTransferCase, scheduleTransferCase, transferCases, transferCasesFor } from '../group/transfer.ts';
-import { onboardGroup, readinessOf, type OnboardingInput } from '../group/onboarding.ts';
+import { addCompany, appointAdministrator, GROUP_COMPANY_PACKAGES, onboardGroup, readinessOf, type AddCompanyInput, type OnboardingInput } from '../group/onboarding.ts';
 import { accountRequests, advanceAccountRequest, declineAccountRequest, deleteAccountRequest, provisionAccountRequest, receiveAccountRequest, recordProvisionNotice, REQUEST_STATUSES } from '../identity/requests.ts';
 import * as bim from '../engines/bim.ts';
 import * as claims from '../engines/claims.ts';
@@ -1049,10 +1049,16 @@ async function tellNewIdentity(
   person: { id: string; name: string; email: string; tenantId: string },
   verb: 'added you to' | 'invited you to',
   detail?: string,
+  /**
+   * The tenancy the place is on, where it is not the actor's own — a group
+   * administrator appointing a company's administrator writes from outside
+   * that company, and the email names the company, not the group's.
+   */
+  about: { tenantId: string } = { tenantId: actor.tenantId },
 ): Promise<string> {
   const enterprise =
-    String(platform.ledger.listByTenant(actor.tenantId, 'Enterprise')[0]?.state.name ?? '') ||
-    platform.tenant(actor.tenantId).legalName;
+    String(platform.ledger.listByTenant(about.tenantId, 'Enterprise')[0]?.state.name ?? '') ||
+    platform.tenant(about.tenantId).legalName;
   const by = platform.user(actor.actorId).name;
   try {
     const dispatch = await notifyEngine.notify(platform, {
@@ -1069,7 +1075,7 @@ async function tellNewIdentity(
             'there is no password; a one-time code is emailed to you each time.',
       },
       channels: ['EMAIL'],
-      branding: platform.exports.brandingIfConfigured(actor.tenantId) ?? PLATFORM_BRANDING,
+      branding: platform.exports.brandingIfConfigured(about.tenantId) ?? PLATFORM_BRANDING,
       actorId: actor.actorId,
       correlationId: ctx.correlationId,
     });
@@ -6024,6 +6030,19 @@ export const ROUTES: Route[] = [
       accountTypes: signup.accountTypes(),
       currencies: Object.values(CURRENCIES),
       jurisdictions: Object.values(JURISDICTIONS),
+      // One company, or a group of them. The count a group may hold is the
+      // licence's term, published here so the form states it from the source.
+      structures: [
+        { structure: 'COMPANY', label: 'One company', detail: 'A single organisation: its own people, records, wallet and package.' },
+        {
+          structure: 'GROUP',
+          label: 'A group of companies',
+          detail:
+            `A holding company and up to ${GROUP_LICENCE.maxCompanies} organisations under one group console. This organisation is the first; ` +
+            'you add the others afterwards, each its own tenancy with the administrators you name.',
+        },
+      ],
+      groupLicence: { maxCompanies: GROUP_LICENCE.maxCompanies },
       note:
         'Enterprise is provisioned with an agreement rather than a form. Selecting it registers an enquiry.',
     }),
@@ -6043,6 +6062,8 @@ export const ROUTES: Route[] = [
         jurisdiction: { type: 'string', enum: Object.keys(JURISDICTIONS) },
         currency: { type: 'string', enum: Object.keys(CURRENCIES) },
         package: { type: 'string', enum: signup.SELF_SERVE_PACKAGES },
+        // One company, or a group of companies with this one as its first.
+        structure: { type: 'string', enum: [...signup.ACCOUNT_STRUCTURES] },
         // A referral code from a partner's link. Optional, bounded, and stored
         // whether or not anybody in the programme holds it — an unknown code is
         // reported as unattributed rather than dropped, because a typo in
@@ -6131,6 +6152,8 @@ export const ROUTES: Route[] = [
         // first refused command.
         awaitingPayment: activation.awaitingPayment,
         amountDueMinor: activation.amountDueMinor,
+        structure: activation.structure,
+        group: activation.group,
         message: activation.awaitingPayment
           ? `Your account exists. The first month, ${formatMoney(activation.amountDueMinor, BILLING_CURRENCY)}, is due before it opens — ` +
             'sign in with this address and pay it from ACU & Billing.'
@@ -6169,6 +6192,7 @@ export const ROUTES: Route[] = [
           organisation: activation.enterpriseName,
           email,
           ...(activation.awaitingPayment ? { amountDue: formatMoney(activation.amountDueMinor, BILLING_CURRENCY) } : {}),
+          ...(activation.group ? { group: { displayName: activation.group.displayName, maxCompanies: activation.group.maxCompanies } } : {}),
         });
       } catch (error) {
         // Rendered as a page rather than rethrown. The error handler answers
@@ -6604,7 +6628,18 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => {
       const actor = auth(ctx);
       const held = requireGroupRole(platform, actor, ctx.params.groupId as string, ['GROUP_ADMIN', 'GROUP_FINANCE', 'GROUP_VIEWER']);
-      return { ...groupDirectory(platform, ctx.params.groupId as string), yourRoles: held };
+      return {
+        ...groupDirectory(platform, ctx.params.groupId as string),
+        yourRoles: held,
+        // What the administrator's "Add a company" form offers, from the same
+        // tables the signup form reads: the licence's count, the jurisdictions
+        // and currencies the platform holds rules for, the packages a group
+        // may put a company on without the operator.
+        maxCompanies: GROUP_LICENCE.maxCompanies,
+        jurisdictions: Object.values(JURISDICTIONS),
+        currencies: Object.values(CURRENCIES),
+        packages: GROUP_COMPANY_PACKAGES.map((tier) => ({ package: tier, label: PACKAGES[tier].label, monthlyPriceMinor: PACKAGES[tier].monthlyPriceMinor })),
+      };
     },
   },
   {
@@ -6690,6 +6725,95 @@ export const ROUTES: Route[] = [
       const { monthlyMinor: _lifted, ...rest } = current;
       const snapshot = platform.setAcuCapsFor(tenantId, actor.actorId, monthlyHardLimitMinor === null ? rest : { ...rest, monthlyMinor: monthlyHardLimitMinor }, reason);
       return { tenantId, poolMode: 'DEDICATED', alertThresholds: [50, 80, 100], monthlyHardLimitMinor: snapshot.caps.monthlyMinor ?? null, monthBilledMinor: snapshot.monthBilledMinor };
+    },
+  },
+  // ------------------------------------------ the group runs itself
+  //
+  // The operator onboards a group once (or a signup founds one). From then on
+  // its administrator adds the organisations under it and names who runs each,
+  // up to what the licence covers. Each company is a tenancy like any other:
+  // its first month is charged, it waits for the payment, and the group sees
+  // what is owed on its directory.
+  {
+    method: 'POST',
+    pattern: '/v1/groups/:groupId/companies',
+    description: 'Add an organisation to the group: a new company on a paid package with the administrators named, each invited by email. The group licence caps the count (group admin)',
+    schema: {
+      type: 'object',
+      required: ['displayName', 'jurisdiction', 'currency', 'package', 'administrators'],
+      properties: {
+        displayName: { type: 'string', minLength: 2, maxLength: 200 },
+        code: { type: 'string', minLength: 2, maxLength: 8 },
+        jurisdiction: { type: 'string', enum: Object.keys(JURISDICTIONS) },
+        currency: { type: 'string', enum: Object.keys(CURRENCIES) },
+        package: { type: 'string', enum: [...GROUP_COMPANY_PACKAGES] },
+        administrators: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 5,
+          items: {
+            type: 'object',
+            required: ['name', 'email'],
+            properties: { name: { type: 'string', minLength: 2, maxLength: 120 }, email: { type: 'string', minLength: 3, maxLength: 254 } },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      const groupId = ctx.params.groupId as string;
+      const result = addCompany(platform, actor, groupId, body<AddCompanyInput>(ctx));
+      const groupName = result.group.displayName;
+      const invitations: Array<{ email: string; notified: string }> = [];
+      for (const person of result.invited) {
+        const notified = await tellNewIdentity(
+          platform,
+          ctx,
+          actor,
+          { id: person.id, name: person.name, email: person.email, tenantId: person.tenantId },
+          'invited you to',
+          `${platform.user(actor.actorId).name} set up ${result.company.name} on CONSTRUX under ${groupName} and named you its administrator. ` +
+            `Sign in at ${config.publicBaseUrl}/app with this email address — there is no password; a one-time code is emailed to you each time.` +
+            (result.openingCharge
+              ? ` The first month, ${formatMoney(result.openingCharge.amountMinor, BILLING_CURRENCY)}, is due before the company opens: pay it from ACU & Billing by card, or by transfer quoting ${result.openingCharge.paymentReference}.`
+              : ''),
+          { tenantId: result.company.tenantId },
+        );
+        invitations.push({ email: person.email, notified });
+      }
+      const { invited: _invited, ...rest } = result;
+      return { ...rest, companies: result.group.costCentres.length, maxCompanies: GROUP_LICENCE.maxCompanies, invitations };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/groups/:groupId/companies/:tenantId/administrators',
+    description: 'Name a further administrator for one of the group’s companies, invited by email (group admin)',
+    schema: {
+      type: 'object',
+      required: ['name', 'email'],
+      properties: { name: { type: 'string', minLength: 2, maxLength: 120 }, email: { type: 'string', minLength: 3, maxLength: 254 } },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      const result = appointAdministrator(platform, actor, ctx.params.groupId as string, ctx.params.tenantId as string, body<{ name: string; email: string }>(ctx));
+      const invitations: Array<{ email: string; notified: string }> = [];
+      for (const person of result.invited) {
+        const notified = await tellNewIdentity(
+          platform,
+          ctx,
+          actor,
+          { id: person.id, name: person.name, email: person.email, tenantId: person.tenantId },
+          'invited you to',
+          undefined,
+          { tenantId: result.company.tenantId },
+        );
+        invitations.push({ email: person.email, notified });
+      }
+      return { administrator: result.administrator, company: result.company, invitations };
     },
   },
   {

@@ -729,6 +729,12 @@ export function groupDirectory(platform: Platform, groupId: string): {
     administrators: number;
     walletAvailableMinor: number;
     hardLimitMinor: number | null;
+    /** A paid package whose first month has not been paid: the company exists and waits. */
+    awaitingFirstPayment: boolean;
+    /** Subscription periods charged and not yet paid, in the billing currency. */
+    outstandingMinor: number;
+    /** What a transfer against the oldest unpaid period quotes; null when nothing is owed. */
+    paymentReference: string | null;
   }>;
   roles: GroupRole[];
 } {
@@ -739,6 +745,7 @@ export function groupDirectory(platform: Platform, groupId: string): {
       const tenant: Tenant = platform.tenant(centre.tenantId);
       const users = platform.users(centre.tenantId);
       const wallet = platform.wallet(centre.tenantId).snapshot();
+      const due = chargesFor(platform, centre.tenantId).filter((charge) => charge.status === 'DUE');
       return {
         tenantId: centre.tenantId,
         name: tenant.legalName,
@@ -753,6 +760,9 @@ export function groupDirectory(platform: Platform, groupId: string): {
         administrators: users.filter((user) => user.status === 'ACTIVE' && (user.roles.includes('ENTERPRISE_ADMIN') || user.roles.includes('OWNER'))).length,
         walletAvailableMinor: wallet.availableMinor,
         hardLimitMinor: wallet.caps.monthlyMinor ?? null,
+        awaitingFirstPayment: platform.subscription(centre.tenantId).status === 'AWAITING_PAYMENT',
+        outstandingMinor: due.reduce((sum, charge) => sum + charge.amountMinor, 0),
+        paymentReference: due[0] ? `CX-${due[0].id.slice(-8).toUpperCase()}` : null,
       };
     }),
     roles: groupRoles(platform, groupId),

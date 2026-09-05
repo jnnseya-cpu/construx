@@ -5,7 +5,9 @@ import { DomainError, NotFoundError, ValidationError } from '../core/errors.ts';
 import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
 import type { Platform } from '../platform.ts';
 import { acusFromMinor, subscriptionAcuAllocationMinor } from '../billing/acu.ts';
-import { PACKAGES, type PackageTier } from '../billing/seats.ts';
+import { GROUP_LICENCE, PACKAGES, type PackageTier } from '../billing/seats.ts';
+import type { AuthContext } from './auth.ts';
+import { attachCompany, createGroup, grantGroupRole, groupBySlug } from '../group/directory.ts';
 import type { Role } from './roles.ts';
 
 /**
@@ -98,6 +100,20 @@ export function accountTypes(): AccountType[] {
 
 export type RegistrationStatus = 'PENDING_VERIFICATION' | 'VERIFIED' | 'EXPIRED' | 'SUPERSEDED';
 
+/** What is being set up: a single company, or a group that will hold several. */
+export type AccountStructure = 'COMPANY' | 'GROUP';
+export const ACCOUNT_STRUCTURES: readonly AccountStructure[] = ['COMPANY', 'GROUP'];
+
+/** The same slug rule the group directory applies, so a name maps to one slug everywhere. */
+function slugOf(name: string): string {
+  return name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'group';
+}
+
+/** A cost centre code for the founding company: its first letters, 'CO' where a name has none. */
+function codeOf(name: string): string {
+  return name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3) || 'CO';
+}
+
 export type Registration = {
   id: string;
   /** Lower-cased. The address is the identity of a registration. */
@@ -107,6 +123,13 @@ export type Registration = {
   jurisdiction: string;
   currency: string;
   package: PackageTier;
+  /**
+   * One company, or a group of companies. A group signup creates the group
+   * with this organisation as its first company and the person as its first
+   * group administrator; the other organisations are added from the Group
+   * console afterwards. Absent on registrations made before the choice existed.
+   */
+  structure?: AccountStructure;
   /** The referral code the signup link carried, if any. Fixed at registration. */
   referralCode?: string;
   status: RegistrationStatus;
@@ -255,6 +278,8 @@ export function register(
     jurisdiction: string;
     currency: string;
     package: PackageTier;
+    /** One company (the default) or a group of companies. */
+    structure?: AccountStructure;
     /**
      * A referral code from the link they arrived on.
      *
@@ -324,6 +349,7 @@ export function register(
     jurisdiction: input.jurisdiction,
     currency: input.currency,
     package: input.package,
+    structure: input.structure ?? 'COMPANY',
     referralCode: input.referralCode?.trim() || undefined,
     status: 'PENDING_VERIFICATION',
     createdAt: now.toISOString(),
@@ -359,6 +385,10 @@ export type Activation = {
    * free unless the package is.
    */
   trialGrantMinor: number;
+  /** One company, or the first company of a group founded by this signup. */
+  structure: AccountStructure;
+  /** The group founded by this signup, with what its licence covers. Null on a single company. */
+  group: { id: string; slug: string; displayName: string; maxCompanies: number } | null;
   /**
    * A paid package: the tenancy exists and opens when the first month is paid.
    * `amountDueMinor` is that month, in the billing currency, and `chargeId`
@@ -456,6 +486,36 @@ export function verify(
   // after the month's allocation was spent has not had its trial.
   if (grantTrial && trialGrantMinor > 0) recordTrialTaken(record.email);
 
+  // A group signup: the group exists from the first moment, with this
+  // organisation as its first company and this person as its first group
+  // administrator. The other organisations are theirs to add from the Group
+  // console — up to what the group licence covers — with the administrators
+  // they name. The acts are the directory's own, under the new
+  // administrator's identity, so the chain says who founded the group.
+  let group: Activation['group'] = null;
+  if (record.structure === 'GROUP') {
+    const founder: AuthContext = {
+      actorId: user.id,
+      tenantId: tenant.id,
+      partyId: user.partyId,
+      roles: user.roles,
+      scopes: [],
+      tokenId: 'signup',
+      mfaSatisfied: true,
+      regulatorAiEnabled: false,
+      expiresAt: Date.now(),
+    };
+    // Two groups may share a name; a slug is unique, so a second "Northgate"
+    // becomes "northgate-2" rather than a refusal on the one page a stranger
+    // cannot retry from.
+    let candidate = record.organisationName;
+    for (let n = 2; groupBySlug(platform, slugOf(candidate)); n++) candidate = `${record.organisationName} ${n}`;
+    const created = createGroup(platform, founder, { displayName: record.organisationName, slug: slugOf(candidate), currency: record.currency });
+    attachCompany(platform, founder, created.id, { tenantId: tenant.id, code: codeOf(record.organisationName) });
+    grantGroupRole(platform, founder, created.id, { email: user.email, role: 'GROUP_ADMIN' });
+    group = { id: created.id, slug: created.slug, displayName: created.displayName, maxCompanies: GROUP_LICENCE.maxCompanies };
+  }
+
   record.status = 'VERIFIED';
   record.verifiedAt = new Date().toISOString();
   record.tenantId = tenant.id;
@@ -472,5 +532,7 @@ export function verify(
     awaitingPayment: openingCharge !== undefined,
     amountDueMinor: openingCharge?.amountMinor ?? 0,
     ...(openingCharge ? { chargeId: openingCharge.id } : {}),
+    structure: record.structure ?? 'COMPANY',
+    group,
   };
 }

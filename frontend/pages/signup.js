@@ -123,6 +123,16 @@ export async function signup(root) {
           </div>
 
           <div class="field">
+            <label for="structure">Account structure</label>
+            <select id="structure" name="structure">
+              ${(offer.structures ?? []).map(
+                (s) => html`<option value="${s.structure}" ${s.structure === 'COMPANY' ? 'selected' : ''}>${s.label}</option>`,
+              )}
+            </select>
+            <p class="hint" style="margin:6px 0 0" id="structure-detail"></p>
+          </div>
+
+          <div class="field">
             <label for="package">Package</label>
             <select id="package" name="package">
               ${packages.map(
@@ -146,11 +156,23 @@ export async function signup(root) {
     </div>`,
   );
 
-  wire(packages);
+  wire(packages, offer.structures ?? []);
 }
 
-function wire(packages) {
+function wire(packages, structures) {
   const form = document.getElementById('signup');
+  const structureSelect = document.getElementById('structure');
+  const structureDetail = document.getElementById('structure-detail');
+
+  // The two structures in the platform's own words, including how many
+  // companies a group holds — a licence term the server publishes, not a
+  // number this form remembers.
+  const describeStructure = () => {
+    const chosen = structures.find((item) => item.structure === structureSelect.value);
+    structureDetail.textContent = chosen ? chosen.detail : '';
+  };
+  structureSelect.addEventListener('change', describeStructure);
+  describeStructure();
   const submit = document.getElementById('submit');
   const errorHost = document.getElementById('signup-error');
   const packageSelect = document.getElementById('package');
@@ -208,6 +230,7 @@ function wire(packages) {
       jurisdiction: document.getElementById('jurisdiction').value,
       currency: document.getElementById('currency').value,
       package: packageSelect.value,
+      structure: structureSelect.value,
     };
 
     try {

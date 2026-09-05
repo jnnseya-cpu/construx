@@ -1,11 +1,11 @@
 import { DomainError, ValidationError } from '../core/errors.ts';
 import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
-import type { PackageTier } from '../billing/seats.ts';
+import { GROUP_LICENCE, PACKAGES, type PackageTier } from '../billing/seats.ts';
 import type { SubscriptionTier } from '../billing/subscription.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import type { Platform, PlatformUser } from '../platform.ts';
 import { agreementInForce, agreementOf, chargeModeFor, setAgreement, type AgreementMode, type AgreementParty } from './agreement.ts';
-import { attachCompany, createGroup, grantGroupRole, groupBySlug, groupRolesFor, type Group } from './directory.ts';
+import { attachCompany, createGroup, grantGroupRole, groupBySlug, groupOf, groupRolesFor, requireGroupRole, type Group } from './directory.ts';
 import { issuerProfile, legalReadiness } from './profile.ts';
 
 /**
@@ -173,4 +173,199 @@ export function onboardGroup(platform: Platform, actor: AuthContext, input: Onbo
     readiness: readinessOf(platform, tenantId),
     invited,
   };
+}
+
+// --- the group administrator's own acts -------------------------------------------
+//
+// The operator onboards a group once. From then on the group runs itself: its
+// administrator adds the organisations under it and names who administers
+// each. Nothing here reaches into a company's records — a company is created,
+// attached and given its first people, and everything after that is theirs.
+
+export type AddCompanyInput = {
+  displayName: string;
+  /** Cost centre code, 2–8 letters or digits. Derived from the name when omitted. */
+  code?: string;
+  jurisdiction: string;
+  currency: string;
+  package: PackageTier;
+  /** One or more enterprise administrators for the new company. */
+  administrators: Array<{ name: string; email: string }>;
+};
+
+export type AddCompanyResult = {
+  group: Group;
+  company: { tenantId: string; name: string; code: string; slug: string };
+  administrators: Array<{ id: string; name: string; email: string; existing: boolean }>;
+  /** The first month, owed before the company opens; absent on a free package. */
+  openingCharge: { id: string; amountMinor: number; paymentReference: string } | null;
+  /** Administrators created in this act, for the invitation the route sends. */
+  invited: PlatformUser[];
+};
+
+/** The packages a group administrator may put a company on without the operator. */
+export const GROUP_COMPANY_PACKAGES: readonly PackageTier[] = ['SOLO', 'CORE_PROJECT', 'PROFESSIONAL_DELIVERY'];
+
+/** What a bank transfer against a subscription charge quotes; the same rule the billing screen shows. */
+export function paymentReferenceOf(chargeId: string): string {
+  return `CX-${chargeId.slice(-8).toUpperCase()}`;
+}
+
+function costCentreCodeFor(name: string, taken: readonly string[]): string {
+  const letters = name.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const base = letters.slice(0, 3) || 'CO';
+  if (!taken.includes(base)) return base;
+  for (let n = 2; n < 100; n++) {
+    const candidate = `${base.slice(0, 6)}${n}`;
+    if (!taken.includes(candidate)) return candidate;
+  }
+  throw new DomainError('COST_CENTRE_CODE_INVALID', 'Give the company a cost centre code; none could be derived from its name');
+}
+
+/**
+ * Where an address stands before it is made an administrator of a company in
+ * this group. A stranger is created there. A person already in one of the
+ * group's companies gets a second membership — same name, same address, one
+ * identity. An address held outside the group is refused: the group does not
+ * get to pull somebody else's people in.
+ */
+function placeAdministrator(
+  platform: Platform,
+  group: Group,
+  tenantId: string,
+  person: { name: string; email: string },
+  invited: PlatformUser[],
+): { id: string; name: string; email: string; existing: boolean } {
+  const email = person.email.trim().toLowerCase();
+  if (!EMAIL.test(email)) throw new ValidationError(`${person.email} is not an email address`, [{ field: 'administrators', message: 'not an address' }]);
+  if (person.name.trim().length < 2) throw new ValidationError('An administrator needs a name', [{ field: 'administrators', message: 'name required' }]);
+  const already = platform.users(tenantId).find((user) => user.email.toLowerCase() === email && user.status === 'ACTIVE');
+  if (already) return { id: already.id, name: already.name, email: already.email, existing: true };
+  const held = platform.userByEmail(email);
+  if (held) {
+    const inGroup = group.costCentres.some((centre) => centre.tenantId === held.tenantId);
+    if (!inGroup) {
+      throw new DomainError('EMAIL_IN_USE', `${email} already holds an identity outside ${group.displayName}; name a different administrator`, 409);
+    }
+    const membership = platform.createUser({ tenantId, name: held.name, email: held.email, roles: ['ENTERPRISE_ADMIN'] });
+    invited.push(membership);
+    return { id: membership.id, name: membership.name, email: membership.email, existing: true };
+  }
+  const created = platform.createUser({ tenantId, name: person.name.trim(), email, roles: ['ENTERPRISE_ADMIN'] });
+  invited.push(created);
+  return { id: created.id, name: created.name, email: created.email, existing: false };
+}
+
+/**
+ * A group administrator adds an organisation to the group: a new tenancy on
+ * one of the self-serve paid packages, attached as a cost centre, with the
+ * administrators named. The group licence caps the count (`attachCompany`
+ * refuses the sixth). Nothing is free unless the package is: the company's
+ * first month is charged and it waits for the payment like any signup —
+ * the group sees what is owed on the directory, the company's administrator
+ * sees it on ACU & Billing, and the operator can record a transfer against
+ * the reference.
+ */
+export function addCompany(platform: Platform, actor: AuthContext, groupId: string, input: AddCompanyInput): AddCompanyResult {
+  requireGroupRole(platform, actor, groupId, ['GROUP_ADMIN']);
+  let group = groupOf(platform, groupId);
+  const displayName = input.displayName.trim();
+  if (displayName.length < 2) throw new ValidationError('The company needs a name', [{ field: 'displayName', message: 'required' }]);
+  if (!JURISDICTIONS[input.jurisdiction]) throw new ValidationError(`${input.jurisdiction} is not a jurisdiction the platform holds rules for`, [{ field: 'jurisdiction', message: 'unknown' }]);
+  if (!CURRENCIES[input.currency]) throw new ValidationError(`${input.currency} is not a currency the platform counts in`, [{ field: 'currency', message: 'unknown' }]);
+  if (!GROUP_COMPANY_PACKAGES.includes(input.package)) {
+    throw new DomainError(
+      'PACKAGE_NOT_SELF_SERVE',
+      `${PACKAGES[input.package]?.label ?? input.package} is provisioned with the platform operator, not from the group console`,
+    );
+  }
+  if (!input.administrators?.length) throw new ValidationError('Name at least one administrator for the company', [{ field: 'administrators', message: 'required' }]);
+  // Every administrator takes a seat, and the package decides how many there
+  // are. Checked before anything exists: a company created with one of its two
+  // administrators and a seat refusal for the other is the half-made record
+  // this act must never leave behind.
+  const seats = PACKAGES[input.package].includedSeats;
+  if (seats !== null && input.administrators.length > seats) {
+    throw new DomainError(
+      'SEAT_LIMIT_REACHED',
+      `The ${PACKAGES[input.package].label} package includes ${seats} seat${seats === 1 ? '' : 's'}; name ${seats === 1 ? 'one administrator' : `at most ${seats} administrators`} or choose a larger package`,
+      422,
+    );
+  }
+  if (group.costCentres.length >= GROUP_LICENCE.maxCompanies) {
+    throw new DomainError('GROUP_FULL', `${group.displayName} already holds ${GROUP_LICENCE.maxCompanies} companies, which is what the group licence covers`, 409);
+  }
+  // Every address checked before anything is created, so a refusal leaves no
+  // half-made company behind.
+  const emails = input.administrators.map((person) => person.email.trim().toLowerCase());
+  if (new Set(emails).size !== emails.length) throw new ValidationError('The same address is named twice', [{ field: 'administrators', message: 'duplicate' }]);
+  for (const person of input.administrators) {
+    const email = person.email.trim().toLowerCase();
+    if (!EMAIL.test(email)) throw new ValidationError(`${person.email} is not an email address`, [{ field: 'administrators', message: 'not an address' }]);
+    const held = platform.userByEmail(email);
+    if (held && !group.costCentres.some((centre) => centre.tenantId === held.tenantId)) {
+      throw new DomainError('EMAIL_IN_USE', `${email} already holds an identity outside ${group.displayName}; name a different administrator`, 409);
+    }
+  }
+  const code = (input.code?.trim() || costCentreCodeFor(displayName, group.costCentres.map((centre) => centre.code))).toUpperCase();
+
+  const created = platform.createTenant({
+    legalName: displayName,
+    jurisdiction: input.jurisdiction,
+    defaultCurrency: input.currency,
+    tier: 'TEAM',
+    package: input.package,
+    enterpriseName: displayName,
+    trialGrant: false,
+    opensOn: 'FIRST_PAYMENT',
+  });
+  const tenantId = created.tenant.id;
+  const agreement = agreementOf(platform, group.id);
+  const mode = agreementInForce(agreement)?.mode ?? agreement?.versions[agreement.versions.length - 1]?.mode;
+  group = attachCompany(platform, actor, group.id, { tenantId, code, chargeMode: mode ? chargeModeFor(mode) : 'INTERNAL' });
+
+  const invited: PlatformUser[] = [];
+  const administrators = input.administrators.map((person) => placeAdministrator(platform, group, tenantId, person, invited));
+  const centre = group.costCentres.find((entry) => entry.tenantId === tenantId)!;
+  return {
+    group,
+    company: { tenantId, name: displayName, code: centre.code, slug: centre.slug },
+    administrators,
+    openingCharge: created.openingCharge
+      ? { id: created.openingCharge.id, amountMinor: created.openingCharge.amountMinor, paymentReference: paymentReferenceOf(created.openingCharge.id) }
+      : null,
+    invited,
+  };
+}
+
+/**
+ * A group administrator names a further administrator for one of the group's
+ * companies — the second person who can run it, or the first after the
+ * original has left. The company must be one of this group's; a closed one
+ * takes nobody new.
+ */
+export function appointAdministrator(
+  platform: Platform,
+  actor: AuthContext,
+  groupId: string,
+  tenantId: string,
+  person: { name: string; email: string },
+): { administrator: { id: string; name: string; email: string; existing: boolean }; company: { tenantId: string; name: string }; invited: PlatformUser[] } {
+  requireGroupRole(platform, actor, groupId, ['GROUP_ADMIN']);
+  const group = groupOf(platform, groupId);
+  if (!group.costCentres.some((centre) => centre.tenantId === tenantId)) {
+    throw new DomainError('NOT_IN_GROUP', `That company is not one of ${group.displayName}'s`, 404);
+  }
+  const tenant = platform.tenant(tenantId);
+  if (tenant.closedAt) throw new DomainError('TENANT_CLOSED', `${tenant.legalName} is closed`, 409);
+  const invited: PlatformUser[] = [];
+  const administrator = placeAdministrator(platform, group, tenantId, person, invited);
+  if (administrator.existing && invited.length === 0) {
+    const user = platform.user(administrator.id);
+    if (!user.roles.includes('ENTERPRISE_ADMIN')) {
+      throw new DomainError('ALREADY_A_MEMBER', `${administrator.email} is already a person in ${tenant.legalName}; its administrator can change their roles from Team & Access`, 409);
+    }
+    throw new DomainError('ALREADY_A_MEMBER', `${administrator.email} already administers ${tenant.legalName}`, 409);
+  }
+  return { administrator, company: { tenantId, name: tenant.legalName }, invited };
 }

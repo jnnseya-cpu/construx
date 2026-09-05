@@ -25,7 +25,7 @@ export async function group(root) {
     render(
       root,
       html`<div class="view-head"><div><h1>Group</h1><p>This company is not part of a group.</p></div></div>
-        ${notice('A group is set up by the platform operator: one licence agreement, one statement, several companies. Ask them to bring this company into one.', 'info')}`,
+        ${notice('A group is founded at signup — choose “a group of companies” on the form — or set up by the platform operator: one licence agreement, one statement, several companies. Ask the operator to bring this company into one.', 'info')}`,
     );
     return;
   }
@@ -53,6 +53,7 @@ export async function group(root) {
   }
 
   const companies = directory.companies ?? [];
+  const maxCompanies = directory.maxCompanies ?? companies.length;
   const currency = directory.group?.billing?.currency ?? 'GBP';
   const usageByCompany = new Map((usage.companies ?? []).map((company) => [company.tenantId, company]));
 
@@ -69,14 +70,15 @@ export async function group(root) {
           </p>
         </div>
         <div class="actions cmd-bar">
-          ${isAdmin ? html`<button class="btn" data-command="role">Grant a group role</button>` : ''}
+          ${isAdmin && companies.length < maxCompanies ? html`<button class="btn" data-command="company">Add a company</button>` : ''}
+          ${isAdmin ? html`<button class="btn${companies.length < maxCompanies ? ' quiet' : ''}" data-command="role">Grant a group role</button>` : ''}
           <button class="btn quiet" data-command="report">Run a report</button>
           ${isFinance ? html`<button class="btn quiet" data-command="export">Export statement</button>` : ''}
         </div>
       </div>
 
       <div class="grid g4" style="margin-bottom:14px">
-        ${raw(metric({ label: 'Companies', value: companies.length, sub: `${companies.filter((c) => c.status === 'ACTIVE').length} active` }))}
+        ${raw(metric({ label: 'Companies', value: `${companies.length} of ${maxCompanies}`, sub: `${companies.filter((c) => c.status === 'ACTIVE').length} active · ${companies.filter((c) => c.awaitingFirstPayment).length} awaiting first payment` }))}
         ${raw(metric({ label: 'People', value: companies.reduce((sum, c) => sum + c.people, 0), sub: 'active across the group' }))}
         ${raw(metric({ label: 'AI spend, last 30 days', value: money((usage.companies ?? []).reduce((sum, c) => sum + (c.meters?.acu?.billedMinor ?? 0), 0), currency), sub: 'billed, every company' }))}
         ${raw(metric({ label: 'Documents issued', value: (usage.companies ?? []).reduce((sum, c) => sum + (c.meters?.document ?? 0), 0), sub: 'last 30 days' }))}
@@ -93,7 +95,9 @@ export async function group(root) {
           rows: companies.map((c) => [
             html`<b>${c.code}</b><div class="metric-sub">${c.slug}</div>`,
             html`${c.name}<div class="metric-sub">${c.jurisdiction}</div>`,
-            badge(c.status.toLowerCase(), c.status === 'ACTIVE' ? 'ok' : 'bad'),
+            c.awaitingFirstPayment
+              ? html`${badge('awaiting first payment', 'warn')}<div class="metric-sub">${money(c.outstandingMinor, currency)} · quote ${c.paymentReference}</div>`
+              : badge(c.status.toLowerCase(), c.status === 'ACTIVE' ? 'ok' : 'bad'),
             html`${c.entitlements.product.planLabel}<div class="metric-sub">${c.entitlements.product.status.toLowerCase()}</div>`,
             c.entitlements.modules.length ? html`${c.entitlements.modules.map((m) => badge(m.moduleKey, 'ok'))}` : html`<span class="metric-sub">none</span>`,
             html`${c.people}<div class="metric-sub">${c.administrators} admin${c.administrators === 1 ? '' : 's'}</div>`,
@@ -104,9 +108,10 @@ export async function group(root) {
               <button class="btn quiet sm" data-company-action="entitlements" data-tenant="${c.tenantId}" data-name="${c.name}">Entitlements</button>
               ${isFinance ? html`<button class="btn quiet sm" data-company-action="limit" data-tenant="${c.tenantId}" data-name="${c.name}">Hard limit</button>` : ''}
               ${isAdmin ? html`<button class="btn quiet sm" data-company-action="audit" data-tenant="${c.tenantId}" data-name="${c.name}">Audit</button>` : ''}
+              ${isAdmin && c.status === 'ACTIVE' ? html`<button class="btn quiet sm" data-company-action="administrator" data-tenant="${c.tenantId}" data-name="${c.name}">Add an administrator</button>` : ''}
             </span>`,
           ]),
-          empty: 'No company has been brought into this group yet.',
+          empty: isAdmin ? 'No company yet. Add the first with the button above.' : 'No company has been brought into this group yet.',
         })}
       </div>
 
@@ -268,6 +273,37 @@ export async function group(root) {
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
     if (!button) return;
+    if (button.dataset.command === 'company') {
+      const result = await command({
+        title: 'Add a company to the group',
+        intent: `A new organisation under ${held.displayName}: its own tenancy, people, records and wallet. Its first month is charged and it opens when that is paid — the administrators you name are invited by email and see the bill on ACU & Billing. ${companies.length} of ${maxCompanies} companies used.`,
+        path: `/v1/groups/${held.id}/companies`,
+        submitLabel: 'Add the company',
+        fields: [
+          { name: 'displayName', label: 'Company name', placeholder: 'JNN Homes Ltd' },
+          { name: 'code', label: 'Cost centre code', placeholder: 'Derived from the name if left blank', required: false },
+          { name: 'jurisdiction', label: 'Jurisdiction', type: 'select', options: (directory.jurisdictions ?? []).map((j) => ({ value: j.code, label: j.name })), value: 'GB' },
+          { name: 'currency', label: 'Currency', type: 'select', options: (directory.currencies ?? []).map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` })), value: currency },
+          { name: 'package', label: 'Package', type: 'select', options: (directory.packages ?? []).map((p) => ({ value: p.package, label: `${p.label} — ${money(p.monthlyPriceMinor, 'GBP')} a month` })) },
+          { name: 'admin1Name', label: 'First administrator — name', placeholder: 'Rowan Blake' },
+          { name: 'admin1Email', label: 'First administrator — email', placeholder: 'rowan@company.com' },
+          { name: 'admin2Name', label: 'Second administrator — name', placeholder: 'Optional', required: false },
+          { name: 'admin2Email', label: 'Second administrator — email', placeholder: 'Optional', required: false },
+        ],
+        transform: (values) => {
+          const administrators = [{ name: values.admin1Name, email: values.admin1Email }];
+          if (values.admin2Email) administrators.push({ name: values.admin2Name, email: values.admin2Email });
+          const payload = { displayName: values.displayName, jurisdiction: values.jurisdiction, currency: values.currency, package: values.package, administrators };
+          if (values.code) payload.code = values.code;
+          return payload;
+        },
+      });
+      if (result) {
+        const sent = (result.invitations ?? []).map((i) => `${i.email} · ${String(i.notified).toLowerCase()}`).join(', ');
+        toast(`${result.company.name} added`, result.openingCharge ? `First month ${money(result.openingCharge.amountMinor, currency)} due · quote ${result.openingCharge.paymentReference}. Invitations: ${sent}` : `Invitations: ${sent}`, 'ok');
+        again();
+      }
+    }
     if (button.dataset.command === 'role') {
       const result = await command({
         title: 'Grant a group role',
@@ -398,6 +434,23 @@ export async function group(root) {
           transform: (values) => ({ monthlyHardLimitMinor: values.monthlyHardLimitMinor === '' || values.monthlyHardLimitMinor === undefined ? null : Number(values.monthlyHardLimitMinor), reason: values.reason }),
         });
         if (result) again();
+      }
+      if (companyAction === 'administrator') {
+        const result = await command({
+          title: `Add an administrator to ${name}`,
+          intent: 'A second person who can run the company — or the first after the original has left. They are invited by email and hold the company’s administrator role; somebody already in one of the group’s companies is added under the same identity.',
+          path: `/v1/groups/${held.id}/companies/${tenant}/administrators`,
+          submitLabel: 'Add and invite',
+          fields: [
+            { name: 'name', label: 'Name', placeholder: 'Kemi Adeyemi' },
+            { name: 'email', label: 'Email', placeholder: 'kemi@company.com' },
+          ],
+        });
+        if (result) {
+          const sent = (result.invitations ?? []).map((i) => `${i.email} · ${String(i.notified).toLowerCase()}`).join(', ');
+          toast(`${result.administrator.email} administers ${name}`, sent ? `Invitation: ${sent}` : 'Already held an identity here', 'ok');
+          again();
+        }
       }
       if (companyAction === 'audit') {
         const from = new Date(Date.now() - 30 * 86_400_000).toISOString();

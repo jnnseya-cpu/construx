@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,880 passing, 0 failing, 0 skipped, across 259 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 5,893 passing, 0 failing, 0 skipped, across 260 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 299 TypeScript files, 193,700 lines |
-| Application | 77 ES modules, 44,100 lines (including a service worker) |
-| API routes | 1,070 — 734 writes, 336 reads (49 public across both) |
+| Backend | 299 TypeScript files, 194,100 lines |
+| Application | 77 ES modules, 44,200 lines (including a service worker) |
+| API routes | 1,072 — 736 writes, 336 reads (49 public across both) |
 | Event types | 718 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 330, all classified for access |
 | Agents | 81 across the divisions the registry declares |
@@ -8278,6 +8278,74 @@ committed stays, hash-linked, under the retention the ledger is built for;
 "deleted" is a state on the tenant record and a filter on the registers, not a
 removal from the ledger. That is decision 1, and the register is the only thing
 the request asked to be rid of.
+
+
+### A group that runs itself: founded at signup, extended by its administrator
+
+Asked as: how does a company like JNN GLOBAL LTD say at signup that it is a
+group account rather than a normal one, and how does it create the
+administrators of its organisations? Until this, a group was the operator's
+to found (*Onboard a group* on Tenants & Users) and the operator's to extend,
+one company at a time; a self-serve signup made a single company with no way
+to say otherwise, and a group administrator could grant group roles but not
+add an organisation or name who ran it.
+
+**The structure is chosen at signup.** `GET /v1/signup/account-types`
+publishes two structures — *One company* and *A group of companies* — with
+the licence's count (`GROUP_LICENCE.maxCompanies`, 5) in the wording, and
+`POST /v1/signup` takes `structure`. The console form has the choice above
+the package; the public *Get started* page says any package can be started
+as a group. On verification of a `GROUP` registration, `signup.verify` founds
+the group with the directory's own acts under the new administrator's
+identity — `createGroup` (slug from the name, `-2` where a slug is already
+taken), `attachCompany` with a cost centre code from the name, and
+`grantGroupRole(GROUP_ADMIN)` to the signer — so the chain records who
+founded it. The organisation named is the group's first company; the reply,
+the verification page and `/v1/users/me` say so. The paywall is unchanged by
+the structure: a paid package's first month is charged and the holding
+company waits for it like any signup.
+
+**The administrator adds the organisations.** `POST
+/v1/groups/:groupId/companies` (group admin) creates a new tenancy on one of
+the paid self-serve packages (`GROUP_COMPANY_PACKAGES`: Solo, Core Project,
+Professional Delivery — never the free trial, which would be trial farming,
+and never Enterprise, which the operator provisions), attaches it as a cost
+centre under the agreement's charge mode, and creates the administrators
+named — one to five, each `ENTERPRISE_ADMIN` of the new company, each
+invited by email through the existing `invitation.sent` notice, which now
+names the company rather than the actor's own. An address already in one of
+the group's companies becomes a second membership of the same identity; an
+address held outside the group is refused `EMAIL_IN_USE` before anything is
+created; the sixth company is refused `GROUP_FULL`. Each company is a
+tenancy like any other: its first month is charged, it waits
+`AWAITING_PAYMENT`, its wallet opens empty, and its administrators see the
+bill on ACU & Billing and can sign in at once. `POST
+/v1/groups/:groupId/companies/:tenantId/administrators` (group admin) names a
+further administrator for one of the group's companies — a company outside
+the group reads as no company; somebody already there is refused rather than
+duplicated.
+
+**The directory says what is owed.** `GET /v1/groups/:groupId` now carries,
+per company, `awaitingFirstPayment`, `outstandingMinor` and the `CX-` payment
+reference the operator settles against, plus what the *Add a company* form
+offers (the licence count, jurisdictions, currencies, packages) so the
+console holds no list of its own. The Group screen shows *Companies n of 5*,
+badges a company awaiting its first month with the amount and reference,
+has *Add a company* (hidden once the licence is full) and *Add an
+administrator* on each open company's row, and tells a company outside any
+group that a group is founded at signup or by the operator.
+
+`tests/groupsignup.test.ts` drives it through HTTP: the structures offered,
+a plain signup founding nothing, JNN GLOBAL LTD founding its group and
+signing in to a console with room for four more, two administrators created
+and invited on a new company, a second membership for an address already in
+the group, the refusals (outside address, missing role, free trial,
+Enterprise, the sixth company, a repeated appointment, a company outside the
+group), the holding company opening when the operator records its first
+month, and a second group of the same name taking its own slug. What the
+operator could already do is unchanged: *Onboard a group* and *Bring a
+company in* remain, for a group whose terms are agreed rather than
+self-served.
 
 
 ### Files without a second setting, and a term the pricing page made

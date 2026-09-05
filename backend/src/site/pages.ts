@@ -1,5 +1,5 @@
 import { esc } from '../messaging/render.ts';
-import { PACKAGES } from '../billing/seats.ts';
+import { GROUP_LICENCE, PACKAGES } from '../billing/seats.ts';
 import type { ExposurePosition } from './exposure.ts';
 import { config } from '../config.ts';
 import { CURRENCIES, JURISDICTIONS, formatMoney } from '../domain/locale.ts';
@@ -855,6 +855,14 @@ export function getStarted(): string {
       Two roles are exempt from that limit and the second is the one that matters. A regulator's export is an access the
       asset owner is obliged to provide, so refusing it on the contractor's subscription would be this platform
       enforcing a commercial term against a statutory right. It does not get to make that trade.
+    </p>
+
+    <h2>One company, or a group of them</h2>
+    <p>
+      Any package can be started as a group. Choose <b>a group of companies</b> on the form and the organisation
+      you name becomes the first company of a group you administer; from the Group screen you add the others —
+      up to ${GROUP_LICENCE.maxCompanies} — each its own tenancy with its own people, records and wallet, and each
+      with the administrators you name. One console over all of them, and nothing operational shared between them.
     </p>
 
     <h2>What happens when you press the button</h2>
