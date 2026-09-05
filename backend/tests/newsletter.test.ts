@@ -419,7 +419,7 @@ describe('SMTP transport', () => {
 });
 
 import { suppressedAddresses as suppressedNow } from '../src/messaging/audience.ts';
-import { clearSuppression } from '../src/messaging/newsletter.ts';
+import { clearSuppression, recordBounce } from '../src/messaging/newsletter.ts';
 
 describe('an address the relay refuses for good', () => {
   let platform: Platform;
@@ -489,5 +489,141 @@ describe('an address the relay refuses for good', () => {
     restored.rehydrate();
     assert.equal(suppressedNow(restored).size, 0, 'cleared stays cleared');
     assert.equal(restored.ledger.list('platform-marketing', 'NewsletterSuppression')[0]!.state.status, 'CLEARED');
+  });
+});
+
+/**
+ * A bounce that arrives after the relay said 250.
+ *
+ * The relay accepting a message is not the message arriving. The platform
+ * reads no mailbox, so the bounce reaches the record when an operator (or a
+ * relay posting to the endpoint) reports it — and from then on the campaign
+ * report says FAILED where the message never arrived, and a dead address is
+ * suppressed exactly as if the relay had refused it at the door.
+ */
+describe('a message accepted by the relay and bounced later', () => {
+  let platform: Platform;
+  let seed: SeedResult;
+  let operatorId = '';
+  let campaignId = '';
+  let gone = { userId: '', email: '' };
+  let full = { userId: '', email: '' };
+  const accepting = { send: async () => ({ accepted: true as const, response: '250 2.0.0 Ok: queued as 4XyZ' }) };
+
+  before(async () => {
+    platform = new Platform();
+    seed = await seedDemoProject(platform);
+    const report = await issueNewsletter(platform, { issuedBy: seed.users.admin!.id, week: '2031-W20', transport: accepting });
+    campaignId = report.campaign.id;
+    // Created after the issue and unsubscribed, so this is a person the
+    // platform knows and has never written to, and will not write to on a retry.
+    const operator = platform.createOperator({ name: 'Ruth', email: 'ops-bounce@construx.example' });
+    operatorId = operator.id;
+    setConsent(platform, { user: operator, subscribed: false, source: 'PREFERENCE_PAGE' });
+    assert.ok(report.sent >= 3, 'the relay accepted everything, so every delivery is SENT');
+    gone = { userId: report.deliveries[0]!.userId, email: report.deliveries[0]!.email };
+    full = { userId: report.deliveries[1]!.userId, email: report.deliveries[1]!.email };
+  });
+
+  it('turns SENT into FAILED against the delivery it concerns, and suppresses a dead address', () => {
+    const diagnostic = '550 5.1.1 <' + gone.email + '>: Recipient address rejected: User unknown in virtual mailbox table';
+    const { delivery, suppressed } = recordBounce(platform, {
+      actorId: operatorId,
+      email: gone.email.toUpperCase(),
+      kind: 'PERMANENT',
+      diagnostic,
+    });
+    assert.equal(delivery.userId, gone.userId);
+    assert.equal(delivery.status, 'FAILED');
+    assert.equal(delivery.failure, 'PERMANENT');
+    assert.equal(delivery.bounce?.diagnostic, diagnostic);
+    assert.equal(delivery.bounce?.reportedBy, 'Ruth', 'recorded under the operator by name by default');
+    assert.match(delivery.detail, /Accepted by the relay \(250 2\.0\.0 Ok: queued as 4XyZ\); bounced later: 550 5\.1\.1/);
+    assert.equal(suppressed, true);
+
+    // The campaign report now tells the truth, and so does the audience.
+    const onRecord = deliveriesFor(platform, campaignId).find((d) => d.userId === gone.userId)!;
+    assert.equal(onRecord.status, 'FAILED');
+    assert.equal(onRecord.id, delivery.id, 'the same delivery record, updated, not a second one');
+    assert.equal(suppressedNow(platform).get(gone.email.toLowerCase())?.status, 'ACTIVE');
+    const excluded = resolveAudience(platform).excluded.find((entry) => entry.userId === gone.userId);
+    assert.equal(excluded?.reason, 'SUPPRESSED');
+    assert.match(String(excluded?.detail), /Bounced after acceptance: 550 5\.1\.1/);
+  });
+
+  it('records a transient bounce without suppressing, and a forced re-issue tries the address again', async () => {
+    const { delivery, suppressed } = recordBounce(platform, {
+      actorId: operatorId,
+      email: full.email,
+      campaignId,
+      kind: 'TRANSIENT',
+      diagnostic: '452 4.2.2 Mailbox full',
+      reportedBy: 'relay.example (webhook)',
+    });
+    assert.equal(delivery.status, 'FAILED');
+    assert.equal(delivery.failure, 'TRANSIENT');
+    assert.equal(delivery.bounce?.reportedBy, 'relay.example (webhook)');
+    assert.equal(suppressed, false);
+    assert.equal(suppressedNow(platform).has(full.email.toLowerCase()), false);
+    assert.ok(resolveAudience(platform).recipients.some((entry) => entry.userId === full.userId), 'still in the audience');
+
+    // The issue now has a failed delivery to retry: the full mailbox is tried
+    // again, the dead one is not, and nobody already reached is mailed twice.
+    const retry = await issueNewsletter(platform, { issuedBy: operatorId, week: '2031-W20', force: true, transport: accepting });
+    assert.equal(retry.deliveries.length, 1, 'only the transient bounce is retried');
+    assert.equal(retry.deliveries[0]!.userId, full.userId);
+    assert.equal(retry.deliveries[0]!.status, 'SENT');
+  });
+
+  it('refuses what cannot have bounced, and says why', async () => {
+    // Nobody this platform has ever mailed.
+    throwsCode(
+      () => recordBounce(platform, { actorId: operatorId, email: 'stranger@nowhere.example', kind: 'PERMANENT', diagnostic: '550' }),
+      'BOUNCE_ADDRESS_UNKNOWN',
+    );
+    // A user the platform knows and has never sent an issue.
+    throwsCode(
+      () => recordBounce(platform, { actorId: operatorId, email: 'ops-bounce@construx.example', kind: 'PERMANENT', diagnostic: '550' }),
+      'BOUNCE_NO_DELIVERY',
+    );
+    // Already on the record.
+    throwsCode(
+      () => recordBounce(platform, { actorId: operatorId, email: gone.email, campaignId, kind: 'PERMANENT', diagnostic: '550 again' }),
+      'BOUNCE_ALREADY_RECORDED',
+    );
+    // An issue that does not exist, an empty diagnostic, a kind that is neither.
+    throwsCode(
+      () => recordBounce(platform, { actorId: operatorId, email: full.email, campaignId: 'no-such-issue', kind: 'PERMANENT', diagnostic: '550' }),
+      'BOUNCE_CAMPAIGN_UNKNOWN',
+    );
+    throwsCode(() => recordBounce(platform, { actorId: operatorId, email: full.email, kind: 'PERMANENT', diagnostic: '  ' }), 'BOUNCE_DIAGNOSTIC_REQUIRED');
+    throwsCode(
+      () => recordBounce(platform, { actorId: operatorId, email: full.email, kind: 'SOFT' as 'PERMANENT', diagnostic: '550' }),
+      'BOUNCE_KIND_INVALID',
+    );
+
+    // A message that never left the box cannot have bounced. This environment
+    // has no SMTP host, so an issue with no transport is composed and recorded.
+    assert.equal(config.smtp.host, '');
+    const recorded = await issueNewsletter(platform, { issuedBy: operatorId, week: '2031-W21' });
+    const someone = recorded.deliveries.find((d) => d.status === 'RECORDED')!;
+    throwsCode(
+      () => recordBounce(platform, { actorId: operatorId, email: someone.email, campaignId: recorded.campaign.id, kind: 'PERMANENT', diagnostic: '550' }),
+      'BOUNCE_NOT_SENT',
+    );
+  });
+
+  it('is on the ledger as an update to the delivery, under the operator, and survives a restart', () => {
+    const events = platform.ledger.events().filter((event) => event.eventType === 'NEWSLETTER_DELIVERY_BOUNCED');
+    assert.equal(events.length, 2);
+    assert.ok(events.every((event) => event.actor.refType === 'User' && event.actor.refId === operatorId));
+    assert.ok(events.every((event) => event.correlationId === campaignId), 'correlated to the issue it concerns');
+
+    const restored = new Platform();
+    restored.ledger.restore(platform.ledger.events());
+    restored.rehydrate();
+    const after = deliveriesFor(restored, campaignId);
+    assert.equal(after.find((d) => d.userId === gone.userId)?.bounce?.diagnostic.slice(0, 9), '550 5.1.1');
+    assert.equal(suppressedNow(restored).get(gone.email.toLowerCase())?.status, 'ACTIVE');
   });
 });

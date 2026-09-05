@@ -44,6 +44,20 @@ export type Delivery = {
    * suppresses the address; a transient one is retried on the next issue.
    */
   failure?: 'PERMANENT' | 'TRANSIENT';
+  /**
+   * Present when the relay accepted the message and a downstream server
+   * bounced it later. The platform reads no mailbox, so the bounce reaches the
+   * record only when an operator, or a relay posting to the bounce endpoint,
+   * reports it. Recorded against the delivery it concerns, so the campaign
+   * report shows what actually reached people rather than what the relay took.
+   */
+  bounce?: {
+    /** The bounce diagnostic, verbatim: the DSN status and the remote server's text. */
+    diagnostic: string;
+    reportedAt: string;
+    /** The operator who recorded it, or the relay that posted it. */
+    reportedBy: string;
+  };
 };
 
 export type Campaign = {
@@ -154,7 +168,12 @@ export function previewFor(recipient: Recipient, week = isoWeek(new Date())) {
 // --- Issuing ----------------------------------------------------------------
 
 /** Record a permanent refusal against the address. One active record per address. */
-function suppressAddress(platform: Platform, recipient: Recipient, campaignId: string, detail: string): void {
+function suppressAddress(
+  platform: Platform,
+  recipient: Pick<Recipient, 'userId' | 'email'>,
+  campaignId: string,
+  detail: string,
+): void {
   const email = recipient.email.trim().toLowerCase();
   if (suppressedAddresses(platform).has(email)) return;
   const suppression: Suppression = {
@@ -176,6 +195,121 @@ function suppressAddress(platform: Platform, recipient: Recipient, campaignId: s
     entity: { refType: 'NewsletterSuppression', refId: suppression.id },
     nextState: suppression as unknown as Record<string, unknown>,
   });
+}
+
+function nameOf(platform: Platform, userId: string): string {
+  try {
+    return platform.user(userId).name;
+  } catch {
+    return userId;
+  }
+}
+
+export type BounceKind = NonNullable<Delivery['failure']>;
+
+export type BounceInput = {
+  /** The operator recording the bounce. */
+  actorId: string;
+  /** The address the bounce names. Matched against the delivery record, not the current user record. */
+  email: string;
+  /** The issue concerned, where the bounce message says. Absent, the most recent message sent to the address. */
+  campaignId?: string;
+  kind: BounceKind;
+  /** The bounce diagnostic, verbatim. */
+  diagnostic: string;
+  /** Who reported it: the operator by default, or the relay's name when it posted the bounce. */
+  reportedBy?: string;
+};
+
+/**
+ * Record a bounce that arrived after the relay accepted the message.
+ *
+ * The relay's `250` means the relay took the message, not that a mailbox
+ * received it. A domain that later says the user is unknown, a full mailbox,
+ * a greylisting server that never came back: each of these is a bounce
+ * message to the sender's mailbox, and this platform reads no mailbox. What
+ * it does instead is take the report — an operator reading the bounce, or a
+ * relay posting it — and record it against the delivery it concerns, so the
+ * campaign report says `FAILED` where the message never arrived.
+ *
+ * A permanent bounce suppresses the address exactly as a synchronous
+ * permanent refusal does: sending to a dead address next week is how a sender
+ * gets blocklisted. A transient bounce leaves the address in the audience.
+ */
+export function recordBounce(platform: Platform, input: BounceInput): { delivery: Delivery; suppressed: boolean } {
+  const email = (input.email ?? '').trim().toLowerCase();
+  if (!email.includes('@')) throw new DomainError('BOUNCE_EMAIL_REQUIRED', 'The bounced address is required.', 400);
+  const diagnostic = (input.diagnostic ?? '').trim();
+  if (!diagnostic) {
+    throw new DomainError('BOUNCE_DIAGNOSTIC_REQUIRED', 'The bounce diagnostic is required, verbatim from the bounce message.', 400);
+  }
+  if (input.kind !== 'PERMANENT' && input.kind !== 'TRANSIENT') {
+    throw new DomainError('BOUNCE_KIND_INVALID', 'A bounce is PERMANENT (the address is gone) or TRANSIENT (try again next issue).', 400);
+  }
+  if (input.campaignId && !campaigns(platform).some((campaign) => campaign.id === input.campaignId)) {
+    throw new DomainError('BOUNCE_CAMPAIGN_UNKNOWN', 'No issue with that id.', 404);
+  }
+
+  const forAddress = platform.ledger
+    .list(MARKETING_PROJECT_ID, 'NewsletterDelivery')
+    .map((record) => record.state as unknown as Delivery)
+    .filter((delivery) => delivery.email.trim().toLowerCase() === email)
+    .filter((delivery) => !input.campaignId || delivery.campaignId === input.campaignId)
+    .sort((a, b) => b.attemptedAt.localeCompare(a.attemptedAt));
+
+  if (forAddress.length === 0) {
+    if (!platform.userByEmail(email)) {
+      throw new DomainError('BOUNCE_ADDRESS_UNKNOWN', `${email} is not an address this platform has ever mailed.`, 404);
+    }
+    throw new DomainError(
+      'BOUNCE_NO_DELIVERY',
+      input.campaignId
+        ? `${email} was not sent the issue named. Nothing to bounce.`
+        : `${email} has been sent no issue. Nothing to bounce.`,
+      409,
+    );
+  }
+
+  const latest = forAddress[0]!;
+  if (latest.bounce) {
+    throw new ConflictError(`The ${latest.week} issue to ${email} is already recorded as bounced.`, 'BOUNCE_ALREADY_RECORDED');
+  }
+  if (latest.status !== 'SENT') {
+    throw new ConflictError(
+      latest.status === 'RECORDED'
+        ? `The ${latest.week} issue to ${email} was composed and recorded, never transmitted, so it cannot have bounced.`
+        : `The ${latest.week} issue to ${email} was refused by the relay at send time and is already recorded as failed.`,
+      'BOUNCE_NOT_SENT',
+    );
+  }
+
+  // The operator's name rather than their id, because this is read on a screen
+  // by a person, and the event's actor already carries the id.
+  const reportedBy = (input.reportedBy ?? '').trim() || nameOf(platform, input.actorId);
+  const bounced: Delivery = {
+    ...latest,
+    status: 'FAILED',
+    failure: input.kind,
+    detail: `Accepted by the relay (${latest.detail}); bounced later: ${diagnostic}`,
+    bounce: { diagnostic, reportedAt: new Date().toISOString(), reportedBy },
+  };
+  platform.ledger.commit({
+    tenantId: PLATFORM_TENANT_ID,
+    projectId: MARKETING_PROJECT_ID,
+    actor: { refType: 'User', refId: input.actorId },
+    source: 'WEB',
+    correlationId: bounced.campaignId,
+    eventType: 'NEWSLETTER_DELIVERY_BOUNCED',
+    entity: { refType: 'NewsletterDelivery', refId: bounced.id },
+    nextState: bounced as unknown as Record<string, unknown>,
+  });
+
+  let suppressed = false;
+  if (input.kind === 'PERMANENT') {
+    suppressed = !suppressedAddresses(platform).has(email);
+    suppressAddress(platform, { userId: bounced.userId, email }, bounced.campaignId, `Bounced after acceptance: ${diagnostic}`);
+  }
+  return { delivery: bounced, suppressed };
 }
 
 /**

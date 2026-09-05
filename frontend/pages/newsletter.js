@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { command } from '../lib/command.js';
 import { badge, html, humanise, raw, render, table, time, toast } from '../lib/ui.js';
 import { draw, isOperator, state } from '../app.js';
 
@@ -52,6 +53,7 @@ export async function newsletter(root) {
           operator
             ? html`<div class="actions cmd-bar">
                 <button class="btn" id="issue">Issue this week now</button>
+                <button class="btn quiet" id="bounce">Record a bounce</button>
               </div>`
             : ''
         }
@@ -186,9 +188,74 @@ export async function newsletter(root) {
     }
   });
 
+  // --- bounces ----------------------------------------------------------------
+  //
+  // The relay's 250 means the relay took the message, not that a mailbox
+  // received it. A bounce that arrives later lands in the sender's mailbox,
+  // which this platform does not read — so an operator reading it records it
+  // here, against the delivery it concerns, and the campaign report tells the
+  // truth about who was reached. A permanent bounce suppresses the address.
+  const recordBounce = async (preset = {}) => {
+    const issued = campaigns.campaigns ?? [];
+    const result = await command({
+      title: 'Record a bounce',
+      intent:
+        'A message the relay accepted and a downstream server bounced later. Paste the diagnostic from the bounce message as it stands.',
+      path: '/v1/newsletter/bounces',
+      submitLabel: 'Record the bounce',
+      fields: [
+        { name: 'email', label: 'Bounced address', type: 'text', value: preset.email ?? '', placeholder: 'name@example.com' },
+        {
+          name: 'campaignId',
+          label: 'Issue',
+          type: 'select',
+          required: false,
+          value: preset.campaignId ?? '',
+          placeholder: 'The most recent message sent to the address',
+          options: issued.map((campaign) => ({ value: campaign.id, label: `${campaign.week} — ${campaign.subject}` })),
+        },
+        {
+          name: 'kind',
+          label: 'Kind',
+          type: 'select',
+          value: 'PERMANENT',
+          options: [
+            { value: 'PERMANENT', label: 'Permanent — the address is gone; suppress it' },
+            { value: 'TRANSIENT', label: 'Transient — mailbox full or server busy; try again next issue' },
+          ],
+        },
+        {
+          name: 'diagnostic',
+          label: 'Bounce diagnostic',
+          type: 'textarea',
+          rows: 4,
+          placeholder: '550 5.1.1 <name@example.com>: Recipient address rejected: User unknown',
+          hint: 'Verbatim from the bounce message: the status code and the remote server’s text.',
+        },
+        { name: 'reportedBy', label: 'Reported by', type: 'text', required: false, hint: 'Leave blank to record it under your own name; name the relay when it posted the bounce.' },
+      ],
+    });
+    if (!result) return;
+    toast(
+      'Bounce recorded',
+      result.suppressed
+        ? `${result.delivery.email} is now suppressed until an operator lifts it.`
+        : `The ${result.delivery.week} issue to ${result.delivery.email} is recorded as failed.`,
+      result.suppressed ? 'warn' : 'ok',
+    );
+    await draw();
+  };
+
+  root.querySelector('#bounce')?.addEventListener('click', () => recordBounce());
+
   // --- delivery drill-down ----------------------------------------------------
 
   root.querySelector('#campaigns')?.addEventListener('click', async (event) => {
+    const bounce = event.target.closest('[data-bounce]');
+    if (bounce) {
+      await recordBounce({ email: bounce.dataset.bounce, campaignId: bounce.dataset.campaign });
+      return;
+    }
     const button = event.target.closest('[data-deliveries]');
     if (!button) return;
 
@@ -205,12 +272,21 @@ export async function newsletter(root) {
       render(
         target,
         table({
-          headers: ['Recipient', 'Outcome', 'Attempted', 'Detail'],
+          headers: ['Recipient', 'Outcome', 'Attempted', 'Detail', ''],
           rows: deliveries.map((d) => [
             d.email,
-            badge(humanise(d.status), STATUS_TONE[d.status] ?? 'neutral'),
+            html`${badge(humanise(d.status), STATUS_TONE[d.status] ?? 'neutral')}${
+              d.bounce ? html` ${badge(`Bounced · ${humanise(d.failure ?? '')}`, 'warn')}` : ''
+            }`,
             time(d.attemptedAt),
-            html`<span class="metric-sub">${d.detail}</span>`,
+            html`<span class="metric-sub">${d.detail}${
+              d.bounce ? html`<br />Bounce recorded ${time(d.bounce.reportedAt)} by ${d.bounce.reportedBy}` : ''
+            }</span>`,
+            // Only a message the relay took can bounce later. A recorded one
+            // never left; a failed one was refused at the door.
+            d.status === 'SENT'
+              ? html`<button class="btn quiet sm" data-bounce="${d.email}" data-campaign="${d.campaignId}">Bounced</button>`
+              : '',
           ]),
           empty: 'No delivery records',
         }),

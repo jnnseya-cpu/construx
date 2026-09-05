@@ -13,7 +13,10 @@ import { config } from '../config.ts';
  *
  * What this deliberately does not do: connection pooling, DKIM signing, bounce
  * parsing, or retry scheduling. DKIM in particular belongs at the relay, which
- * is where the private key should live rather than in this process.
+ * is where the private key should live rather than in this process. A bounce
+ * that arrives after the relay's 250 lands in a mailbox this process does not
+ * read; it is recorded through `recordBounce` in `newsletter.ts` when an
+ * operator or a relay reports it.
  */
 
 export type SmtpResult = {

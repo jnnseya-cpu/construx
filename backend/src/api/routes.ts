@@ -234,6 +234,8 @@ import {
   listCampaigns,
   previewFor,
   clearSuppression,
+  recordBounce,
+  type BounceInput,
 } from '../messaging/newsletter.ts';
 import { documentVerificationPage, unsubscribePage, verificationPage } from '../messaging/render.ts';
 import { exposurePosition, readExposureInput } from '../site/exposure.ts';
@@ -3065,6 +3067,29 @@ export const ROUTES: Route[] = [
       const campaignId = ctx.params.campaignId;
       if (!campaignId) throw new NotFoundError('Campaign id missing from path');
       return { deliveries: deliveriesFor(platform, campaignId) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/newsletter/bounces',
+    description:
+      'Record a bounce that arrived after the relay accepted the message, against the delivery it concerns; a permanent bounce suppresses the address (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['email', 'kind', 'diagnostic'],
+      properties: {
+        email: { type: 'string', minLength: 3, maxLength: 320 },
+        campaignId: { type: 'string', maxLength: 64 },
+        kind: { type: 'string', enum: ['PERMANENT', 'TRANSIENT'] },
+        diagnostic: { type: 'string', minLength: 1, maxLength: 4000 },
+        reportedBy: { type: 'string', maxLength: 200 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'record a newsletter bounce');
+      const input = body<Omit<BounceInput, 'actorId'>>(ctx);
+      return recordBounce(platform, { ...input, actorId: auth(ctx).actorId });
     },
   },
 

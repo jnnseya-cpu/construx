@@ -1065,6 +1065,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SITE_POST_PUBLISHED', 'SitePost', 'APPROVE', 'GOVERNANCE'),
   def('SITE_POST_WITHDRAWN', 'SitePost', 'UPDATE', 'GOVERNANCE'),
   def('NEWSLETTER_DELIVERY_RECORDED', 'NewsletterDelivery', 'CREATE', 'GOVERNANCE'),
+  // A message the relay accepted and a downstream server bounced later. The
+  // platform reads no mailbox, so the bounce arrives by an operator or a relay
+  // posting it; this is what turns "SENT" into the truth.
+  def('NEWSLETTER_DELIVERY_BOUNCED', 'NewsletterDelivery', 'UPDATE', 'GOVERNANCE'),
   def('NEWSLETTER_ADDRESS_SUPPRESSED', 'NewsletterSuppression', 'CREATE', 'GOVERNANCE'),
   def('NEWSLETTER_SUPPRESSION_CLEARED', 'NewsletterSuppression', 'UPDATE', 'GOVERNANCE'),
 

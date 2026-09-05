@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,817 passing, 0 failing, 0 skipped, across 257 files · plus 24 against a live Postgres 16 (the client and the ledger store), now also run in CI |
+| Tests | 5,821 passing, 0 failing, 0 skipped, across 257 files · plus 24 against a live Postgres 16 (the client and the ledger store), now also run in CI |
 | Typecheck | clean |
-| Backend | 297 TypeScript files, 190,700 lines |
-| Application | 77 ES modules, 43,500 lines (including a service worker) |
-| API routes | 1,058 — 725 writes, 333 reads (48 of them public) |
-| Event types | 712 Golden Thread (closed) · the communication catalogue is separate and closed |
-| Entity types | 329, all classified for access |
+| Backend | 297 TypeScript files, 191,300 lines |
+| Application | 77 ES modules, 43,700 lines (including a service worker) |
+| API routes | 1,062 — 728 writes, 334 reads (48 public across both) |
+| Event types | 715 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Entity types | 330, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
@@ -8545,6 +8545,30 @@ same row ("Try this address again"), recorded under their name; the refusal
 stays on the record. `issueNewsletter` takes a transport for tests so the
 relay's answers can be exercised without a relay. `newsletter.test.ts`.
 
+**A bounce after the relay's 250.** The relay accepting a message is not the
+message arriving: a domain that later says the user is unknown, a full
+mailbox, a server that never came back each send a bounce to the sender's
+mailbox, and this platform reads no mailbox. `recordBounce` in
+`messaging/newsletter.ts` takes the report instead — an operator reading the
+bounce message, or a relay posting it under an operator credential — and
+writes `NEWSLETTER_DELIVERY_BOUNCED` against the delivery it concerns: the
+delivery becomes `FAILED` with the diagnostic verbatim beside the relay's
+original acceptance, the issue and the reporter on the record. A `PERMANENT`
+bounce suppresses the address exactly as a synchronous 5xx does; a
+`TRANSIENT` one leaves the address in the audience and a forced re-issue
+tries it again. It refuses what cannot have bounced, and says why: an address
+the platform has never mailed (404), a person it has never sent an issue
+(409), a delivery that was composed and recorded but never transmitted or
+was refused at the door (409), and a second report of the same bounce (409).
+`POST /v1/newsletter/bounces`, operator only; on the Newsletter screen as
+"Record a bounce" in the command bar and as a "Bounced" button on every sent
+recipient row, which pre-fills the address and the issue. Bounced deliveries
+show as failed with a bounce badge, the diagnostic and who reported it when.
+What is still not done is the reading of the mailbox itself: no relay is
+integrated to post bounces, and `smtp.ts` still parses none. `newsletter.test.ts`
+("a message accepted by the relay and bounced later"), `api.test.ts` (the
+route refuses a project user).
+
 **The record's own figures.** The *At a glance* table had stood at 3,931
 tests and 763 routes while the tree held 5,707 and 1,029; it is counted again
 above and says how. The partial-table rows for evidence capture and
@@ -8914,7 +8938,7 @@ named so it is not mistaken for finished.
 | Commitment extraction | Reads a held letter for what it promises and what it demands, drops anything not quoted verbatim from the letter, and registers a confirmed one in the obligation calendar that already exists | Needs a provider that reads prose; a local deployment is refused rather than given an invented undertaking. The wire contract is proven against real vendor response shapes; the reading is not |
 | Clause extraction | From supplied text; a PDF is read into text first by ingestion (its text layer) or by a confirmed model transcription (a scan), and the text supplied | Table extraction from a PDF; reading the file into the clause register in one step |
 | 4D scheduling | Twin states link to task ids | No visualisation |
-| Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded, a permanent refusal (5xx) suppressing the address until an operator lifts it from the Newsletter screen, a transient one retried on the next issue | Asynchronous bounces — a message accepted by the relay and bounced later arrives at a mailbox this platform does not read; DKIM belongs at the relay, where the key should live |
+| Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded, a permanent refusal (5xx) suppressing the address until an operator lifts it from the Newsletter screen, a transient one retried on the next issue. A bounce that arrives after the relay accepted the message is recorded against the delivery it concerns (`POST /v1/newsletter/bounces`, the "Record a bounce" door and a per-recipient button on the Newsletter screen): the delivery becomes `FAILED` with the diagnostic verbatim, a permanent bounce suppresses the address exactly as a synchronous refusal does, a transient one is retried by a forced re-issue | The platform still reads no mailbox: the bounce reaches the record when an operator reads the bounce message and records it, or a relay posts it to the endpoint with an operator credential. No relay is integrated for that; DKIM belongs at the relay, where the key should live |
 
 ---
 

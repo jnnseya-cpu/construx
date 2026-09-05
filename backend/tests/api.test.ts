@@ -277,6 +277,13 @@ describe('authorisation is enforced at the edge, not only in the engines', () =>
       const reply = await call('GET', path, { token: tokenFor('qs') });
       assert.equal(reply.status, 403, `${path} should be operator-only`);
     }
+    // A bounce report names an address and marks its delivery failed. Only the
+    // operator who runs the newsletter may say so.
+    const bounce = await call('POST', '/v1/newsletter/bounces', {
+      token: tokenFor('qs'),
+      body: { email: 'anyone@example.test', kind: 'PERMANENT', diagnostic: '550 5.1.1 User unknown' },
+    });
+    assert.equal(bounce.status, 403, 'a project user recorded a newsletter bounce');
   });
 
   it('refuses project data to the platform operator', async () => {
