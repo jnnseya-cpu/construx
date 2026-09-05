@@ -52,8 +52,6 @@ const NOT_EMITTED: Record<string, string> = {
   ACU_HELD: 'Held in the ACU ledger, which is the single source of truth for spend.',
   ACU_CONSUMED: 'Debited in the ACU ledger.',
   ACU_RELEASED: 'Released in the ACU ledger.',
-  ACU_CAP_BREACHED: 'Enforced in the ACU ledger.',
-  ACU_ALERT_RAISED: 'Raised from the ACU ledger.',
 
   // --- Platform internals ---------------------------------------------------
   REPLAY_SNAPSHOT_TAKEN:

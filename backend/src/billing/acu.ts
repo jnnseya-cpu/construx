@@ -120,6 +120,17 @@ export type ACUAlert = {
  * The floor in `minimumMultiplier` still guards it: nothing here can take a
  * charge below the company's profit rule, whatever the bands say.
  */
+/**
+ * What a wallet says about itself as it is spent, to whoever is listening:
+ * a threshold of the monthly limit crossed (once per threshold per month), or
+ * the hard limit reached and a request refused (once per scope per month).
+ * GN-SPEC-TENANCY-001 §9.3: the company's administrators and the group's
+ * finance are told; the wallet itself only raises the signal.
+ */
+export type WalletSignal =
+  | { kind: 'THRESHOLD'; alert: ACUAlert }
+  | { kind: 'LIMIT_REACHED'; breach: CapBreach; requestedMinor: number };
+
 export const VOLUME_BANDS: Array<{ upToRawMinor: number; multiplier: number }> = [
   { upToRawMinor: 200_000, multiplier: 5.0 },
   { upToRawMinor: 1_000_000, multiplier: 5.0 },
@@ -259,6 +270,10 @@ export type WalletSnapshot = {
   alerts: ACUAlert[];
   aiHalted: boolean;
   haltReason?: string;
+  /** Set while a disputed payment has the wallet frozen (Enterprise / Group v1.0 §10.2). */
+  frozen: { reason: string; at: string } | null;
+  /** Holds whose provider call ended without evidence either way, waiting on the operator (§10.2 reconciliation_required). */
+  unresolvedHolds: number;
 };
 
 function monthKey(iso: string): string {
@@ -417,6 +432,13 @@ export class ACUWallet {
     module?: string;
     feature?: string;
   }): Hold {
+    if (this.#frozen) {
+      throw new DomainError(
+        'WALLET_FROZEN',
+        `This wallet is frozen (${this.#frozen.reason}). AI is paused until the platform operator resolves the payment exception; everything else is unaffected.`,
+        409,
+      );
+    }
     const multiplier = effectiveMultiplier(this.monthRawSpendMinor(), this.#volumeIncentive);
     const heldMinor = Math.ceil(input.estimatedRawCostMinor * multiplier);
 
@@ -427,7 +449,17 @@ export class ACUWallet {
     }
 
     const capBreach = this.#checkCaps(heldMinor, input.projectId, input.module, input.userId);
-    if (capBreach) throw new ACUExhaustedError(capBreach);
+    if (capBreach) {
+      // The limit is reached: said once per scope per month, however many
+      // requests are refused against it. Non-AI work is unaffected by design.
+      const breach = this.#capBreach(heldMinor, input.projectId, input.module, input.userId)!;
+      const key = `${monthKey(new Date().toISOString())}:${breach.scope}:${breach.scopeId ?? ''}`;
+      if (!this.#limitSignalKeys.has(key)) {
+        this.#limitSignalKeys.add(key);
+        this.#emit({ kind: 'LIMIT_REACHED', breach, requestedMinor: heldMinor });
+      }
+      throw new ACUExhaustedError(capBreach);
+    }
 
     const hold: Hold = {
       holdId: ulid(),
@@ -626,6 +658,28 @@ export class ACUWallet {
     });
   }
 
+  /**
+   * Listen for the wallet's own signals. A listener that throws is contained:
+   * telling somebody about a threshold must never fail the settlement that
+   * crossed it.
+   */
+  onSignal(listener: (signal: WalletSignal) => void): void {
+    this.#signalListeners.push(listener);
+  }
+
+  #signalListeners: Array<(signal: WalletSignal) => void> = [];
+  #limitSignalKeys = new Set<string>();
+
+  #emit(signal: WalletSignal): void {
+    for (const listener of this.#signalListeners) {
+      try {
+        listener(signal);
+      } catch (error) {
+        process.stderr.write(`wallet signal listener failed for ${this.tenantId}: ${(error as Error).message}\n`);
+      }
+    }
+  }
+
   alerts(): ACUAlert[] {
     return [...this.#alerts];
   }
@@ -648,9 +702,94 @@ export class ACUWallet {
       monthBilledMinor: this.monthBilledMinor(),
       caps: this.#caps,
       alerts: this.alerts(),
-      aiHalted: halted,
-      haltReason: halted ? 'ACU balance exhausted — top up to resume AI execution' : undefined,
+      aiHalted: halted || this.#frozen !== null,
+      haltReason: this.#frozen
+        ? `Wallet frozen: ${this.#frozen.reason}`
+        : halted
+          ? 'ACU balance exhausted — top up to resume AI execution'
+          : undefined,
+      frozen: this.#frozen,
+      unresolvedHolds: this.#unresolved.size,
     };
+  }
+
+  // --- disputed funding ---------------------------------------------------------
+
+  #frozen: { reason: string; at: string } | null = null;
+
+  /**
+   * Freeze the wallet: nothing further is reserved until it is unfrozen.
+   * A disputed payment's unspent credit stays where it is (§10.2: "unspent
+   * affected credits can be frozen"); the balance is not touched, and non-AI
+   * work is unaffected because nothing but `reserve` reads this.
+   */
+  freeze(reason: string, at = new Date().toISOString()): void {
+    this.#frozen = { reason, at };
+  }
+
+  unfreeze(): void {
+    this.#frozen = null;
+  }
+
+  frozen(): { reason: string; at: string } | null {
+    return this.#frozen;
+  }
+
+  /**
+   * Reverse funding that has gone back to the payer — a refund, a chargeback.
+   * An explicit debit of what is still available, never a rewrite of the
+   * top-up and never a negative balance: what was already consumed cannot be
+   * taken back from a wallet, and is returned as the shortfall for the
+   * finance exception the caller raises (§10.2).
+   */
+  reverse(amountMinor: number, note: string): { reversedMinor: number; shortfallMinor: number; entry: ACUEntry | null } {
+    if (!Number.isInteger(amountMinor) || amountMinor <= 0) {
+      throw new DomainError('ACU_INVALID_AMOUNT', 'A reversal is a positive integer in minor units');
+    }
+    const reversedMinor = Math.min(this.availableMinor(), amountMinor);
+    const entry =
+      reversedMinor > 0
+        ? this.#record({ type: 'DEBIT', rawCostMinor: 0, acuUnits: 0, billedMinor: reversedMinor, effectiveMultiplier: 0, note }, -reversedMinor)
+        : null;
+    return { reversedMinor, shortfallMinor: amountMinor - reversedMinor, entry };
+  }
+
+  // --- holds whose outcome is unknown -------------------------------------------
+
+  readonly #unresolved = new Map<string, { hold: Hold; reason: string; parkedAt: string }>();
+
+  /**
+   * A provider call that ended with no evidence either way — a timeout after
+   * the request left — must not be released (the provider may have done the
+   * work and billed us) and must not be charged (the customer may have got
+   * nothing). The hold stays reserved and waits for the operator's evidence
+   * (Enterprise / Group v1.0 §10.2: reconciliation_required).
+   */
+  parkHold(holdId: string, reason: string): void {
+    const hold = this.#holds.get(holdId);
+    if (!hold) throw new DomainError('ACU_HOLD_NOT_FOUND', `Hold ${holdId} does not exist or is already settled`);
+    this.#unresolved.set(holdId, { hold, reason, parkedAt: new Date().toISOString() });
+  }
+
+  unresolvedHolds(): Array<Hold & { reason: string; parkedAt: string }> {
+    return [...this.#unresolved.values()].map(({ hold, reason, parkedAt }) => ({ ...hold, reason, parkedAt }));
+  }
+
+  /**
+   * The operator's answer for a parked hold, with the evidence in the note:
+   * the provider's account shows the call completed (charge what it cost), or
+   * it shows nothing (release). Exactly one of the two, once.
+   */
+  reconcileHold(holdId: string, outcome: { kind: 'CHARGE'; actualRawCostMinor: number; provider: string } | { kind: 'RELEASE'; note: string }): ACUEntry | undefined {
+    const parked = this.#unresolved.get(holdId);
+    if (!parked) throw new DomainError('ACU_HOLD_NOT_UNRESOLVED', `Hold ${holdId} is not waiting for reconciliation`, 409);
+    this.#unresolved.delete(holdId);
+    return outcome.kind === 'CHARGE' ? this.settle(holdId, outcome.actualRawCostMinor, outcome.provider) : this.release(holdId, outcome.note);
+  }
+
+  /** Every hold not yet settled or released, parked ones included. */
+  openHolds(): Hold[] {
+    return [...this.#holds.values()];
   }
 
   /** Cost attribution per engine — the "explainable AI billing" audit view. */
@@ -753,13 +892,15 @@ export class ACUWallet {
         const key = `${month}:MONTHLY:${threshold}`;
         if (this.#raisedAlertKeys.has(key)) continue;
         this.#raisedAlertKeys.add(key);
-        this.#alerts.push({
+        const alert: ACUAlert = {
           threshold,
           scope: 'MONTHLY',
           raisedAt: new Date().toISOString(),
           consumedMinor: consumed,
           capMinor: cap,
-        });
+        };
+        this.#alerts.push(alert);
+        this.#emit({ kind: 'THRESHOLD', alert });
       }
     }
   }

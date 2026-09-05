@@ -107,7 +107,10 @@ export const SEATS: Record<SeatType, SeatDefinition> = {
     monthlyPriceMinor: 7_000,
     // The seat list predates the O&M module; facilities management is operational
     // authority at the same level, so it is priced at the same seat.
-    roles: ['SUPERVISOR', 'QAQC', 'SAFETY', 'FM'],
+    // A viewer is a licensed person who reads and changes nothing; priced at
+    // the lowest internal seat rather than left unpriced, so buying one beyond
+    // the package is never free.
+    roles: ['SUPERVISOR', 'QAQC', 'SAFETY', 'FM', 'VIEWER'],
   },
   SUBCONTRACTOR: {
     seat: 'SUBCONTRACTOR',

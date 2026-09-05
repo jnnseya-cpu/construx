@@ -3,6 +3,8 @@ import { counters } from '../api/telemetry.ts';
 import { ping, scannerAddress, scannerConfigured } from '../evidence/scanner.ts';
 import { entriesByCodePrefix, outboxPosition, queue } from '../notifications/outbox.ts';
 import { deliveries } from '../notifications/notify.ts';
+import { webhookHealth } from '../billing/stripe.ts';
+import { issuancesOf } from '../group/issuance.ts';
 import type { Platform } from '../platform.ts';
 
 /**
@@ -571,9 +573,54 @@ export type WatchPosition = {
    * correct behaviour and is also an operator who will never be woken.
    */
   recordedNotSent: number;
+  /**
+   * Enterprise / Group v1.0 §17: the figures the specification names as
+   * metrics, each read from what exists — counted, never modelled.
+   */
+  operational: {
+    authorisationDenialsByReason: Array<{ reason: string; count: number }>;
+    unreconciledProviderOutcomes: number;
+    oldestUnreconciledSeconds: number | null;
+    openHolds: number;
+    oldestOpenHoldSeconds: number | null;
+    frozenWallets: number;
+    openPaymentExceptions: number;
+    issuanceFailures: number;
+    webhookSignatureFailures: number;
+    ledgerDiscrepancies: number;
+  };
 };
 
 /** What is firing, what is clear, and whether anybody would be told. */
+function operationalFigures(platform: Platform): WatchPosition['operational'] {
+  const now = Date.now();
+  const denials = new Map<string, number>();
+  for (const series of counters.read('authz_denies_total')) {
+    const reason = String(series.labels.policyId ?? 'unknown');
+    denials.set(reason, (denials.get(reason) ?? 0) + series.value);
+  }
+  const wallets = [platform.wallet('platform'), ...platform.tenants().filter((tenant) => tenant.id !== 'platform').map((tenant) => platform.wallet(tenant.id))];
+  const holds = wallets.flatMap((wallet) => wallet.openHolds());
+  const unresolved = platform.orchestrator.unresolved();
+  const age = (iso: string) => Math.floor((now - Date.parse(iso)) / 1000);
+  const issuanceFailures = platform
+    .tenants()
+    .flatMap((tenant) => issuancesOf(platform, tenant.id))
+    .filter((issuance) => issuance.status === 'PENDING' && issuance.attempts > 0).length;
+  return {
+    authorisationDenialsByReason: [...denials.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count),
+    unreconciledProviderOutcomes: unresolved.length,
+    oldestUnreconciledSeconds: unresolved.length ? Math.max(...unresolved.map((execution) => age(execution.unresolved?.since ?? execution.startedAt))) : null,
+    openHolds: holds.length,
+    oldestOpenHoldSeconds: holds.length ? Math.max(...holds.map((hold) => age(hold.createdAt))) : null,
+    frozenWallets: wallets.filter((wallet) => wallet.frozen() !== null).length,
+    openPaymentExceptions: platform.paymentExceptions().filter((exception) => exception.status === 'OPEN').length,
+    issuanceFailures,
+    webhookSignatureFailures: webhookHealth().rejected,
+    ledgerDiscrepancies: platform.ledger.discrepancies().length,
+  };
+}
+
 export function watchPosition(platform: Platform): WatchPosition {
   const all = watchStates();
   // The platform's own notices live under the `platform` tenancy, which is why
@@ -616,6 +663,7 @@ export function watchPosition(platform: Platform): WatchPosition {
       detail: delivery.detail,
     })),
     recordedNotSent: alerts.filter((delivery) => delivery.status === 'RECORDED').length,
+    operational: operationalFigures(platform),
   };
 }
 

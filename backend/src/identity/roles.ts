@@ -99,6 +99,10 @@ export type Role =
   | 'SUPERVISOR'
   | 'FM'
   | 'SUPPLIER'
+  // Read-only across the company's record (GN-SPEC-TENANCY-001 §6): what a
+  // new membership holds until an administrator names more. Never a seat at
+  // the money, the AI or the platform's own administration.
+  | 'VIEWER'
   | 'REGULATOR';
 
 /** Permission codes, per the platform permission matrix. */
@@ -175,6 +179,7 @@ export const ROLE_ACCOUNT_LAYER: Record<Role, AccountLayer> = {
   SUPERVISOR: 'TENANT_USER',
   FM: 'TENANT_USER',
   SUPPLIER: 'TENANT_USER',
+  VIEWER: 'TENANT_USER',
   REGULATOR: 'TENANT_USER',
 };
 
@@ -668,6 +673,34 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
   },
 
   // Regulator: read-only on approved/published data. No AI unless explicitly enabled.
+  // Least privilege (GN-SPEC-TENANCY-001 §6): a viewer reads the company's
+  // record and changes nothing. Excluded by construction: the platform's own
+  // administration, running AI (it spends the wallet) and billing.
+  VIEWER: {
+    BUSINESS_DEVELOPMENT: ['R'],
+    ENTERPRISE_STRUCTURE: ['R'],
+    PROJECT_SETUP: ['R'],
+    DESIGN_INFORMATION: ['R'],
+    WORKPACKAGES_TASKS: ['R'],
+    PROGRAMME_BASELINES: ['R'],
+    LOOKAHEAD_CONSTRAINTS: ['R'],
+    BOQ_TAKEOFF: ['R'],
+    ESTIMATE_TENDER: ['R'],
+    PROCUREMENT_AWARD: ['R'],
+    SUPPLIER_SUBMISSION: ['R'],
+    BUDGET_COST: ['R'],
+    PAYMENT_APPLICATIONS: ['R'],
+    CHANGE_VARIATION: ['R'],
+    CONTRACTS_CLAIMS: ['R'],
+    RISK_REGISTER: ['R'],
+    SAFETY_RAMS: ['R'],
+    FIELD_EXECUTION: ['R'],
+    QUALITY_COMMISSIONING: ['R'],
+    BIM_TWIN: ['R'],
+    HANDOVER_OM: ['R'],
+    EVIDENCE_AUDIT: ['R'],
+    SITE_SERVICES: ['R'],
+  },
   REGULATOR: {
     PROJECT_SETUP: ['R'],
     PROGRAMME_BASELINES: ['R'],

@@ -291,6 +291,48 @@ export function verifyWebhook(rawBody: Buffer, signatureHeader: string | undefin
   return event;
 }
 
+/**
+ * Money going back the other way (Enterprise / Group v1.0 §10.2, AT-25): a
+ * refund of a charge, or a dispute opened against it. Read from the object
+ * Stripe signed; the reference is the payment intent, which is the same id
+ * the settlement carried, so the reversal finds the receipt it undoes.
+ */
+export type ReversedPayment = {
+  reference: string;
+  amountMinor: number;
+  currency: string;
+  kind: 'REFUND' | 'DISPUTE';
+  eventId: string;
+};
+
+const REFUND_EVENTS = new Set(['charge.refunded', 'charge.refund.updated']);
+const DISPUTE_EVENTS = new Set(['charge.dispute.created', 'charge.dispute.funds_withdrawn']);
+
+export function reversedPayment(event: StripeEvent): ReversedPayment | undefined {
+  const refund = REFUND_EVENTS.has(event.type);
+  const dispute = DISPUTE_EVENTS.has(event.type);
+  if (!refund && !dispute) return undefined;
+  const object = event.data.object;
+  const reference = typeof object.payment_intent === 'string' ? object.payment_intent : undefined;
+  // A refunded charge carries the running total refunded; a dispute carries its
+  // own amount. Both are the object's own figures, never the request's.
+  const amountMinor = refund
+    ? typeof object.amount_refunded === 'number'
+      ? object.amount_refunded
+      : typeof object.amount === 'number'
+        ? object.amount
+        : undefined
+    : typeof object.amount === 'number'
+      ? object.amount
+      : undefined;
+  const currency = typeof object.currency === 'string' ? object.currency : undefined;
+  if (!reference || amountMinor === undefined || amountMinor <= 0 || !currency) return undefined;
+  if (currency.toUpperCase() !== BILLING_CURRENCY) {
+    throw new DomainError('STRIPE_CURRENCY_MISMATCH', `Stripe reversed ${currency.toUpperCase()} against a platform that prices in ${BILLING_CURRENCY}.`, 400);
+  }
+  return { reference, amountMinor, currency: currency.toUpperCase(), kind: refund ? 'REFUND' : 'DISPUTE', eventId: event.id };
+}
+
 /** What a paid event says, once it has been verified. */
 export type SettledPayment = {
   reference: string;

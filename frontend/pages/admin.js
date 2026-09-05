@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { command } from '../lib/command.js';
 import { lineChart } from '../lib/charts.js';
 import { axisDay, gb, head, movement, providerName, refusal } from '../lib/estate.js';
 import { badge, html, humanise, money, pct, raw, render, table, time, track } from '../lib/ui.js';
@@ -36,7 +37,7 @@ function lead({ title, value, tone, sub, to, cta }) {
 }
 
 export async function admin(root) {
-  const [overview, burn, forecast, watch, ready, plane, support, estate, trialBudget] = await Promise.all([
+  const [overview, burn, forecast, watch, ready, plane, support, estate, trialBudget, unreconciled] = await Promise.all([
     api.get('/v1/admin/overview').catch((error) => ({ error })),
     api.get('/v1/admin/burn').catch(() => null),
     api.get('/v1/admin/forecast').catch(() => null),
@@ -49,6 +50,7 @@ export async function admin(root) {
     // the one line of the business whose cost scales with signups rather than
     // revenue, so the ceiling on it belongs on the first screen.
     api.get('/v1/admin/trial-budget').catch(() => null),
+    api.get('/v1/admin/ai/unreconciled').catch(() => null),
   ]);
 
   if (overview.error) {
@@ -276,6 +278,17 @@ export async function admin(root) {
                   <span class="lbl">Rules firing</span>
                   <span class="val">${badge(String(firing.length), firing.length > 0 ? 'warn' : 'ok')}</span>
                 </div>
+                <div class="row">
+                  <span class="lbl">AI outcomes unreconciled</span>
+                  <span class="val">${badge(String((unreconciled?.executions ?? []).length), (unreconciled?.executions ?? []).length > 0 ? 'warn' : 'ok')}</span>
+                </div>
+                ${(unreconciled?.executions ?? []).map(
+                  (e) => html`<div class="row">
+                    <span class="lbl">${e.legalName}</span>
+                    <span class="val">${money(e.heldMinor)} held · ${e.provider} · ${Math.round(e.ageSeconds / 60)} min
+                      <button class="btn quiet sm" data-reconcile="${e.id}" data-name="${e.legalName}" data-held="${e.heldMinor}">Reconcile</button></span>
+                  </div>`,
+                )}
                 ${estate?.estate
                   ? html`<div class="row">
                       <span class="lbl">Evidence held</span>
@@ -332,5 +345,26 @@ export async function admin(root) {
 
   for (const button of root.querySelectorAll('[data-go]')) {
     button.addEventListener('click', () => navigate(button.getAttribute('data-go')));
+  }
+
+  // An AI call that timed out after it left: the provider may have done the
+  // work. The hold stays reserved until the operator says what the provider's
+  // account shows — charge its cost, or release. Evidence is required.
+  for (const button of root.querySelectorAll('[data-reconcile]')) {
+    button.addEventListener('click', async () => {
+      const result = await command({
+        title: `Reconcile — ${button.dataset.name}`,
+        intent: `${money(Number(button.dataset.held))} is held for a call whose outcome is unknown. Check the provider's account: if the call completed, charge what it cost; if nothing is there, release the hold. Say which, and what you saw.`,
+        path: `/v1/admin/ai/executions/${button.dataset.reconcile}/reconcile`,
+        submitLabel: 'Reconcile',
+        fields: [
+          { name: 'outcome', label: 'Outcome', type: 'select', options: [{ value: 'RELEASE', label: 'Release — the provider shows nothing' }, { value: 'CHARGE', label: 'Charge — the provider shows the call completed' }] },
+          { name: 'rawCostMinor', label: 'Provider cost (pence, for a charge)', type: 'number', required: false },
+          { name: 'note', label: 'What the provider’s account shows', type: 'textarea' },
+        ],
+        transform: (v) => ({ outcome: v.outcome, note: v.note, ...(v.outcome === 'CHARGE' ? { rawCostMinor: Number(v.rawCostMinor) } : {}) }),
+      });
+      if (result) admin(root);
+    });
   }
 }

@@ -41,6 +41,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // commercial-in-confidence for the same reasons the balance is.
   TopUpIntent: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   PaymentReceipt: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
+  PaymentReversal: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
+  PaymentException: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
+  GroupPurchase: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   AIRequest: { area: 'AI_EXECUTION' },
 
   // Structure and setup

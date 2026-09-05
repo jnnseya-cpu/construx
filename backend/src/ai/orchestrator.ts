@@ -2,7 +2,7 @@ import { config } from '../config.ts';
 import type { DataSensitivity } from '../identity/abac.ts';
 import { clearanceFor, mayReceive, sensitivityOf } from './sensitivity.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
-import { DomainError, ForbiddenError } from '../core/errors.ts';
+import { DomainError, ForbiddenError , NotFoundError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { ACUWallet, CapBreach } from '../billing/acu.ts';
 import type { AIProvider, EntityRef } from '../goldenthread/types.ts';
@@ -233,13 +233,17 @@ export type AIExecutionRecord = {
   aiRequestId: string;
   provider: AIProvider;
   modelClass: string;
-  status: 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+  status: 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNRESOLVED';
   startedAt: string;
   endedAt?: string;
   rawCostMinor: number;
   acuHeld: number;
   acuConsumed: number;
   outputRefs: EntityRef[];
+  /** Set while the outcome is unknown and the hold is parked (§10.2 reconciliation_required). */
+  unresolved?: { holdId: string; tenantId: string; reason: string; since: string };
+  /** How the operator resolved it, with their evidence. */
+  reconciled?: { outcome: 'CHARGE' | 'RELEASE'; note: string; by: string; at: string };
 };
 
 export type ExecuteInput = {
@@ -574,6 +578,19 @@ export class AIOrchestrator {
     try {
       response = await adapter.execute(input.request);
     } catch (error) {
+      // No answer within the deadline is not a failure to be released: the
+      // provider may have completed and billed. The hold stays reserved and the
+      // execution waits for the operator's evidence (§10.2, AT-22). Every other
+      // failure is certain, and the hold goes back.
+      if (error instanceof DomainError && error.code === 'AI_PROVIDER_TIMEOUT') {
+        wallet.parkHold(hold.holdId, error.message);
+        execution.status = 'UNRESOLVED';
+        execution.endedAt = new Date().toISOString();
+        execution.unresolved = { holdId: hold.holdId, tenantId: input.tenantId, reason: error.message, since: execution.endedAt };
+        this.#unresolvedWallets.set(execution.id, wallet);
+        aiRequest.status = 'FAILED';
+        throw error;
+      }
       wallet.release(hold.holdId, 'AI execution failed');
       execution.status = 'FAILED';
       execution.endedAt = new Date().toISOString();
@@ -614,6 +631,49 @@ export class AIOrchestrator {
 
   requests(): AIRequestRecord[] {
     return [...this.#requests.values()];
+  }
+
+  readonly #unresolvedWallets = new Map<string, ACUWallet>();
+
+  /** Executions whose provider outcome is unknown and whose hold is parked. */
+  unresolved(): AIExecutionRecord[] {
+    return [...this.#executions.values()].filter((execution) => execution.status === 'UNRESOLVED');
+  }
+
+  /**
+   * The operator's answer for an unresolved execution, with the evidence
+   * named: the provider's account shows the call completed (charge its cost),
+   * or shows nothing (release the hold). Exactly one outcome, once; a replay
+   * is refused because the hold is no longer parked.
+   */
+  reconcile(
+    executionId: string,
+    outcome: { kind: 'CHARGE'; actualRawCostMinor: number } | { kind: 'RELEASE' },
+    evidence: { note: string; by: string },
+  ): AIExecutionRecord {
+    const execution = this.#executions.get(executionId);
+    if (!execution) throw new NotFoundError(`No AI execution ${executionId}`);
+    if (execution.status !== 'UNRESOLVED' || !execution.unresolved) {
+      throw new DomainError('AI_EXECUTION_NOT_UNRESOLVED', `Execution ${executionId} is ${execution.status.toLowerCase()}, not waiting for reconciliation`, 409);
+    }
+    if (!evidence.note.trim()) throw new DomainError('EVIDENCE_REQUIRED', 'Say what the provider’s account shows');
+    const wallet = this.#unresolvedWallets.get(executionId);
+    if (!wallet) throw new DomainError('AI_EXECUTION_NOT_UNRESOLVED', `Execution ${executionId} has no wallet to reconcile against`, 409);
+    const at = new Date().toISOString();
+    if (outcome.kind === 'CHARGE') {
+      const entry = wallet.reconcileHold(execution.unresolved.holdId, { kind: 'CHARGE', actualRawCostMinor: outcome.actualRawCostMinor, provider: execution.provider });
+      execution.status = 'SUCCEEDED';
+      execution.rawCostMinor = outcome.actualRawCostMinor;
+      execution.acuConsumed = entry?.billedMinor ?? 0;
+    } else {
+      wallet.reconcileHold(execution.unresolved.holdId, { kind: 'RELEASE', note: `Reconciled by the operator: ${evidence.note}` });
+      execution.status = 'FAILED';
+    }
+    execution.reconciled = { outcome: outcome.kind, note: evidence.note.trim(), by: evidence.by, at };
+    this.#unresolvedWallets.delete(executionId);
+    const request = this.#requests.get(execution.aiRequestId);
+    if (request) request.status = outcome.kind === 'CHARGE' ? 'SUCCEEDED' : 'FAILED';
+    return execution;
   }
 
   executions(): AIExecutionRecord[] {

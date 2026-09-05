@@ -19,13 +19,14 @@ import { badge, date, html, money, raw, render, table, time, toast, track } from
  */
 
 export async function tenants(root) {
-  const [estate, vocab, register, refunds, groupsHeld, transfers] = await Promise.all([
+  const [estate, vocab, register, refunds, groupsHeld, transfers, exceptions] = await Promise.all([
     api.get('/v1/admin/tenants').catch((error) => ({ error })),
     api.get('/v1/signup/account-types').catch(() => null),
     api.get('/v1/admin/modules').catch(() => null),
     api.get('/v1/admin/refunds').catch(() => null),
     api.get('/v1/admin/groups').catch(() => null),
     api.get('/v1/admin/transfer-cases').catch(() => null),
+    api.get('/v1/admin/payments/exceptions').catch(() => null),
   ]);
 
   if (estate.error) {
@@ -156,6 +157,7 @@ export async function tenants(root) {
               ? html`<span class="metric-sub">Closed — record kept, read-only</span>
                   <button class="btn quiet danger sm" data-delete="${tenant.id}" data-name="${tenant.legalName}" data-people="${tenant.identities}">Delete</button>`
               : html`<button class="btn quiet sm" data-credit="${tenant.id}">Credit</button>
+                <button class="btn quiet sm" data-reverse="${tenant.id}">Refund / chargeback</button>
                   <button class="btn quiet sm" data-package="${tenant.id}">Package</button>
                   <button class="btn quiet sm" data-status="${tenant.id}">Status</button>
                   <button class="btn quiet sm" data-modules="${tenant.id}">Modules</button>
@@ -191,6 +193,35 @@ export async function tenants(root) {
                   : '',
               ]),
               empty: 'No tenancy has been closed with money owed.',
+            })}
+          </div>`
+        : ''}
+
+      ${exceptions
+        ? html`<div class="card" style="margin-top:14px" data-payment-exceptions>
+            <h2>Payment exceptions</h2>
+            <p class="metric-sub" style="margin-bottom:12px">
+              Money that went back after it was spent — a refund or chargeback against credit already consumed on AI — or a subscription
+              payment undone. Each is an explicit record; nothing is rewritten and no sibling wallet is touched. A disputed payment
+              freezes the wallet until you lift it here.
+              ${exceptions.frozenWallets.length ? html`<b>${exceptions.frozenWallets.length} wallet${exceptions.frozenWallets.length === 1 ? '' : 's'} frozen.</b>` : ''}
+            </p>
+            ${table({
+              headers: ['Tenancy', 'Kind', 'Reversed', 'Shortfall', 'Why', 'Raised', 'Status', ''],
+              rows: (exceptions.exceptions ?? []).map((e) => [
+                html`<b>${e.legalName}</b><div class="metric-sub">${e.reference}</div>`,
+                badge(e.kind.toLowerCase(), e.kind === 'DISPUTE' ? 'bad' : 'warn'),
+                money(e.amountMinor),
+                money(e.shortfallMinor),
+                html`<span class="metric-sub">${e.reason}</span>`,
+                date(e.raisedAt),
+                e.status === 'RESOLVED' ? html`${badge('resolved', 'good')}<div class="metric-sub">${e.resolution}</div>` : badge('open', 'warn'),
+                html`<span class="row-actions">
+                  ${e.status === 'OPEN' ? html`<button class="btn quiet sm" data-resolve-exception="${e.id}" data-name="${e.legalName}">Resolve</button>` : ''}
+                  ${e.walletFrozen ? html`<button class="btn quiet sm" data-unfreeze="${e.tenantId}" data-name="${e.legalName}">Unfreeze wallet</button>` : ''}
+                </span>`,
+              ]),
+              empty: 'No payment has been reversed after it was spent.',
             })}
           </div>`
         : ''}
@@ -250,6 +281,7 @@ export async function tenants(root) {
                     <button class="btn quiet sm" data-group-action="attach" data-group="${g.id}" data-name="${g.displayName}">Bring a company in</button>
                     <button class="btn quiet sm" data-group-action="billing" data-group="${g.id}" data-name="${g.displayName}">Billing terms</button>
                     <button class="btn quiet sm" data-group-action="agreement" data-group="${g.id}" data-name="${g.displayName}" data-currency="${g.billing.currency}">Agreement</button>
+                    <button class="btn quiet sm" data-group-action="credit" data-group="${g.id}" data-name="${g.displayName}" data-currency="${g.billing.currency}">Credit the group</button>
                     <button class="btn quiet sm" data-group-action="role" data-group="${g.id}" data-name="${g.displayName}">Group role</button>
                   </span>
                 </div>
@@ -441,6 +473,9 @@ export async function tenants(root) {
             { name: 'currency', label: 'Currency', value: button.dataset.currency },
             { name: 'cadence', label: 'Billing cadence', type: 'select', options: [{ value: 'MONTHLY', label: 'Monthly' }, { value: 'QUARTERLY', label: 'Quarterly' }, { value: 'ANNUAL', label: 'Annual' }] },
             { name: 'effectiveFrom', label: 'Effective from', type: 'date', iso: true, required: false },
+            { name: 'groupInternalDiscount', label: 'Group internal rate card — discount % off list', type: 'number', value: 0, placeholder: '0' },
+            { name: 'enterpriseGroupDiscount', label: 'Enterprise group rate card — discount % off list', type: 'number', value: 0, placeholder: '0' },
+            { name: 'retailDiscount', label: 'Retail rate card — discount % off list', type: 'number', value: 0, placeholder: '0' },
             { name: 'note', label: 'Note', type: 'textarea', required: false, placeholder: 'Terms as approved by finance on …' },
           ],
           transform: (v) => ({
@@ -450,9 +485,50 @@ export async function tenants(root) {
             currency: v.currency,
             cadence: v.cadence,
             ...(v.effectiveFrom ? { effectiveFrom: v.effectiveFrom } : {}),
+            rateCards: {
+              GROUP_INTERNAL: { discountPercent: Number(v.groupInternalDiscount || 0) },
+              ENTERPRISE_GROUP: { discountPercent: Number(v.enterpriseGroupDiscount || 0) },
+              RETAIL: { discountPercent: Number(v.retailDiscount || 0) },
+            },
             ...(v.note ? { note: v.note } : {}),
           }),
         });
+      }
+      if (groupAction === 'credit') {
+        const inGroup = (groupsHeld?.groups ?? []).find((g) => g.id === groupId)?.companies ?? [];
+        result = await command({
+          title: `${name} — record a group purchase`,
+          intent:
+            'Group money funding the companies’ AI wallets. One payment, one reference; you say which company gets how much, and the allocations must total the amount exactly — nothing is spread or guessed. Each company is credited as its own receipt under the reference and its cost centre code.',
+          path: `/v1/admin/groups/${groupId}/credit`,
+          submitLabel: 'Record and credit',
+          fields: [
+            { name: 'amountMinor', label: 'Amount received (pence)', type: 'number', hint: 'In minor units of the billing currency. £500 is 50000.' },
+            {
+              name: 'method',
+              label: 'How it arrived',
+              type: 'select',
+              options: [
+                { value: 'BANK_TRANSFER', label: 'Bank transfer' },
+                { value: 'CARD', label: 'Card' },
+                { value: 'INVOICE_SETTLEMENT', label: 'Invoice settlement' },
+                { value: 'CREDIT_NOTE', label: 'Credit note' },
+                { value: 'MANUAL_ADJUSTMENT', label: 'Manual adjustment' },
+              ],
+            },
+            { name: 'reference', label: 'Payment reference', hint: 'The bank’s or provider’s identifier. Unique for ever; the companies’ receipts carry it with their cost centre code.' },
+            ...inGroup.map((c) => ({ name: `alloc:${c.tenantId}`, label: `${c.name} (${c.code}) — allocation (pence)`, type: 'number', required: false, placeholder: '0' })),
+            { name: 'note', label: 'Note', required: false },
+          ],
+          transform: (v) => ({
+            amountMinor: Number(v.amountMinor),
+            method: v.method,
+            reference: v.reference,
+            allocations: inGroup.map((c) => ({ tenantId: c.tenantId, amountMinor: Number(v[`alloc:${c.tenantId}`] || 0) })).filter((a) => a.amountMinor > 0),
+            ...(v.note ? { note: v.note } : {}),
+          }),
+        });
+        if (result) toast(result.alreadyRecorded ? 'Already recorded' : 'Group purchase recorded', result.wallets.map((w) => `${w.code} now ${money(w.availableMinor)}`).join(' · '), result.alreadyRecorded ? 'warn' : 'ok');
       }
       if (groupAction === 'readiness') {
         const host = root.querySelector('#support-panel');
@@ -712,6 +788,55 @@ export async function tenants(root) {
     }
   });
 
+  for (const button of root.querySelectorAll('[data-resolve-exception]')) {
+    button.addEventListener('click', async () => {
+      const result = await command({
+        title: `Resolve — ${button.dataset.name}`,
+        intent: 'Close the finance exception with how it was resolved: recovered from the customer, written off, or the period re-charged. The reversal and the exception stay on the record.',
+        path: `/v1/admin/payments/exceptions/${button.dataset.resolveException}/resolve`,
+        submitLabel: 'Resolve',
+        fields: [{ name: 'note', label: 'How it was resolved', type: 'textarea' }],
+      });
+      if (result) again();
+    });
+  }
+  for (const button of root.querySelectorAll('[data-unfreeze]')) {
+    button.addEventListener('click', async () => {
+      const result = await command({
+        title: `Unfreeze wallet — ${button.dataset.name}`,
+        intent: 'AI resumes for this tenancy. Do it once the dispute is settled; the reason is recorded.',
+        path: `/v1/admin/tenants/${button.dataset.unfreeze}/wallet/unfreeze`,
+        submitLabel: 'Unfreeze',
+        fields: [{ name: 'reason', label: 'Reason' }],
+      });
+      if (result) again();
+    });
+  }
+  for (const button of root.querySelectorAll('[data-reverse]')) {
+    button.addEventListener('click', async () => {
+      const tenantId = button.getAttribute('data-reverse');
+      const tenant = byId.get(tenantId);
+      const result = await command({
+        title: `Refund or chargeback — ${tenant?.legalName ?? 'tenancy'}`,
+        intent:
+          'Records money that went back to the payer against a payment this platform recorded. What is still in the wallet is debited as its own entry; what was already spent becomes a finance exception. A dispute freezes the wallet. The event id is the bank’s or provider’s own, spent once.',
+        path: `/v1/admin/tenants/${tenantId}/payments/reverse`,
+        submitLabel: 'Record',
+        fields: [
+          { name: 'reference', label: 'Payment reference reversed', hint: 'The reference of the payment as it was recorded here' },
+          { name: 'amountMinor', label: 'Amount reversed (pence)', type: 'number' },
+          { name: 'kind', label: 'Kind', type: 'select', options: [{ value: 'REFUND', label: 'Refund — money returned' }, { value: 'DISPUTE', label: 'Dispute / chargeback — freezes the wallet' }] },
+          { name: 'eventId', label: 'Reversal id', hint: 'The bank’s or provider’s identifier for the refund or dispute' },
+          { name: 'note', label: 'Note', required: false },
+        ],
+        transform: (v) => ({ reference: v.reference, amountMinor: Number(v.amountMinor), kind: v.kind, eventId: v.eventId, ...(v.note ? { note: v.note } : {}) }),
+      });
+      if (result) {
+        toast(result.alreadyRecorded ? 'Already recorded' : `${result.reversal.kind === 'DISPUTE' ? 'Dispute' : 'Refund'} recorded`, `${money(result.reversal.reversedMinor)} taken back from the wallet · ${money(result.reversal.shortfallMinor)} shortfall${result.exception ? ' — exception raised' : ''}${result.frozen ? ' — wallet frozen' : ''}`, result.exception ? 'warn' : 'ok');
+        again();
+      }
+    });
+  }
   for (const button of root.querySelectorAll('[data-credit]')) {
     button.addEventListener('click', async () => {
       const tenantId = button.getAttribute('data-credit');
@@ -1035,11 +1160,13 @@ export async function tenants(root) {
             ],
           },
           { name: 'reason', label: 'Reason', hint: 'Why this company, in your own words. Recorded against the decision.' },
+          { name: 'validFrom', label: 'Starts (optional — scheduled until then)', type: 'date', iso: true, required: false },
+          { name: 'validTo', label: 'Expires (optional — closes from that day)', type: 'date', iso: true, required: false },
         ],
         // `moduleId` went into the address, so it is dropped from the body —
         // the route's schema is `additionalProperties: false` and would refuse
         // it, correctly.
-        transform: (values) => ({ status: values.status, reason: values.reason }),
+        transform: (values) => ({ status: values.status, reason: values.reason, ...(values.validFrom ? { validFrom: values.validFrom } : {}), ...(values.validTo ? { validTo: values.validTo } : {}) }),
       });
 
       if (choice) {

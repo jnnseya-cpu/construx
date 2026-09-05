@@ -4,6 +4,7 @@ import { GROUP_LICENCE, PACKAGES } from '../billing/seats.ts';
 import { chargesFor } from '../billing/collection.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import type { Platform, PlatformUser, Tenant } from '../platform.ts';
+import { grantLifecycle } from '../identity/modules.ts';
 
 /**
  * The Group: one licence agreement, one bill, several legal entities.
@@ -478,17 +479,16 @@ export function addMembership(
   if (!group) throw new DomainError('NOT_IN_GROUP', 'Memberships across companies are a group feature; this company is not in a group', 422);
   const sameGroup = existing.some((membership) => group.costCentres.some((centre) => centre.tenantId === membership.tenantId));
   if (!sameGroup) throw new DomainError('NOT_IN_GROUP', `${email} is not a person in any company of ${group.displayName}`, 422);
-  // Least privilege is a choice the administrator makes, not a default the
-  // platform picks: the role catalogue has no bare viewer, and quietly
-  // handing over the least of the real roles would still be handing over a
-  // role nobody chose.
-  if (!input.roles || input.roles.length === 0) throw new DomainError('ROLES_REQUIRED', 'Say which roles this membership holds here');
+  // Least privilege by default (GN-SPEC-TENANCY-001 §6): a membership with no
+  // roles named is a viewer — the company's record, read-only — until an
+  // administrator names more. Nothing operational is handed over unasked.
+  const roles = input.roles && input.roles.length > 0 ? input.roles : (['VIEWER'] as PlatformUser['roles']);
   const source = platform.user(existing[0]!.userId);
   return platform.createUser({
     tenantId: actor.tenantId,
     name: source.name,
     email: source.email,
-    roles: input.roles,
+    roles,
   });
 }
 
@@ -505,7 +505,9 @@ export function entitlementClaims(platform: Platform, tenantId: string): string[
 export function entitlementsOf(platform: Platform, tenantId: string): {
   company: { tenantId: string; name: string };
   product: { product: 'construx'; plan: string; planLabel: string; status: string; validFrom: string; validTo: string | null };
-  modules: Array<{ moduleKey: string; status: 'ACTIVE' }>;
+  modules: Array<{ moduleKey: string; status: 'ACTIVE'; validFrom: string | null; validTo: string | null }>;
+  /** Grants that are not live now: scheduled to start, or expired. Never inherited, never guessed. */
+  pendingModules: Array<{ moduleKey: string; lifecycle: 'SCHEDULED' | 'EXPIRED'; validFrom: string | null; validTo: string | null }>;
   seats: { included: number | null; used: number };
   claims: string[];
 } {
@@ -522,7 +524,14 @@ export function entitlementsOf(platform: Platform, tenantId: string): {
       validFrom: subscription.startedAt,
       validTo: subscription.status === 'ACTIVE' ? null : subscription.renewsAt,
     },
-    modules: platform.grantedModules(tenantId).map((moduleKey) => ({ moduleKey, status: 'ACTIVE' as const })),
+    modules: platform
+      .moduleGrants()
+      .filter((grant) => grant.tenantId === tenantId && grantLifecycle(grant) === 'ACTIVE')
+      .map((grant) => ({ moduleKey: grant.moduleId, status: 'ACTIVE' as const, validFrom: grant.validFrom ?? null, validTo: grant.validTo ?? null })),
+    pendingModules: platform
+      .moduleGrants()
+      .filter((grant) => grant.tenantId === tenantId && (grantLifecycle(grant) === 'SCHEDULED' || grantLifecycle(grant) === 'EXPIRED'))
+      .map((grant) => ({ moduleKey: grant.moduleId, lifecycle: grantLifecycle(grant) as 'SCHEDULED' | 'EXPIRED', validFrom: grant.validFrom ?? null, validTo: grant.validTo ?? null })),
     seats: { included: pkg.includedSeats, used: subscription.assignedIdentities.length },
     claims: entitlementClaims(platform, tenantId),
   };

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from '../config.ts';
 import { DomainError, ForbiddenError, NotFoundError, ValidationError } from '../core/errors.ts';
 import type { Platform } from '../platform.ts';
+import { notifyWalletSignal } from '../billing/usagealerts.ts';
 import {
   applyRateLimit,
   authenticate,
@@ -141,6 +142,16 @@ async function readRawBody(req: IncomingMessage, limit: number): Promise<Buffer>
 }
 
 export function createGateway(platform: Platform): Server {
+  // A wallet crossing a threshold of its monthly limit, or refusing at the
+  // limit, is told to the company's administrators and the group's finance
+  // (GN-SPEC-TENANCY-001 §9.3). The platform has already put the signal on
+  // the record; this is the telling, through the outbox, never awaited by
+  // the spend that raised it.
+  platform.onWalletSignal((tenantId, signal) => {
+    void notifyWalletSignal(platform, tenantId, signal).catch((error: Error) => {
+      process.stderr.write(`usage notice for ${tenantId} failed: ${error.message}\n`);
+    });
+  });
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     void handle(platform, req, res);
   });

@@ -30,6 +30,18 @@ import { fillTemplate, type NotificationEvent } from './catalogue.ts';
 
 export type Branding = ClientBranding;
 
+/**
+ * CONSTRUX writing as itself: a registration has no tenancy yet, a group's
+ * finance is written to from outside any one company, and the platform's own
+ * notices have no customer to borrow a brand from.
+ */
+export const PLATFORM_BRANDING: Branding = {
+  clientName: 'CONSTRUX',
+  primaryColour: '#ff6600',
+  documentReferencePrefix: 'CXA',
+  legalFooter: 'CONSTRUX — construction operating system',
+};
+
 const NEUTRAL = {
   paper: '#f4f4f5',
   ink: '#1a1a1c',

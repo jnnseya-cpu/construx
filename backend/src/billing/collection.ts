@@ -4,6 +4,7 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { Platform } from '../platform.ts';
 import { PACKAGES, type PackageTier } from './seats.ts';
+import { subscriptionPriceMinor } from '../group/agreement.ts';
 import { purchasedBlocks } from './storage.ts';
 import { monthlySubscriptionCharge, purchasedSeatChargeMinor } from './subscription.ts';
 import type { Subscription } from './subscription.ts';
@@ -119,6 +120,33 @@ export function outstanding(platform: Platform, tenantId: string): SubscriptionC
 }
 
 /**
+ * past_due (Enterprise / Group v1.0 §9.3): the oldest period whose due date
+ * has passed while its grace period still runs. The tenancy is open; the day
+ * it stops is on the record. Null while nothing is late, and null once the
+ * grace has ended — that is the suspension `enforceUnpaid` applies, not a
+ * warning about one.
+ */
+export function pastDue(
+  charges: readonly SubscriptionCharge[],
+  now = new Date(),
+): { chargeId: string; periodStart: string; amountMinor: number; dueAt: string; graceEndsAt: string; daysLate: number } | null {
+  const at = now.toISOString();
+  const late = charges
+    .filter((charge) => charge.status === 'DUE' && charge.dueAt < at && charge.graceEndsAt > at)
+    .sort((a, b) => a.dueAt.localeCompare(b.dueAt));
+  const oldest = late[0];
+  if (!oldest) return null;
+  return {
+    chargeId: oldest.id,
+    periodStart: oldest.periodStart,
+    amountMinor: oldest.amountMinor,
+    dueAt: oldest.dueAt,
+    graceEndsAt: oldest.graceEndsAt,
+    daysLate: Math.floor((now.getTime() - Date.parse(oldest.dueAt)) / DAY_MS),
+  };
+}
+
+/**
  * Raise the charge for a period that has fallen due.
  *
  * Idempotent by period, not by call. A scheduler that fires twice in a minute,
@@ -142,9 +170,12 @@ export function raiseCharge(
   // plus seats bought beyond it. This raised the package alone, so a tenancy
   // that had bought capacity was invoiced for it and never collected on it.
   // The invoice and the charge are computed from the same three parts now.
+  // The package part is priced through the group's agreement where the
+  // tenancy is a company of one (a rate-card discount is a term the group
+  // approved); storage and seats bought beyond the package are at list.
   const amountMinor =
     subscription.status === 'ACTIVE'
-      ? monthlySubscriptionCharge(subscription) +
+      ? subscriptionPriceMinor(platform, tenantId, monthlySubscriptionCharge(subscription)).amountMinor +
         purchasedBlocks(platform.ledger, tenantId) * config.billing.storageBlockPriceMinor +
         purchasedSeatChargeMinor(platform.ledger, tenantId)
       : 0;
@@ -222,7 +253,7 @@ export function raiseOpeningCharge(
 ): { charge: SubscriptionCharge; alreadyRaised: boolean } | undefined {
   const subscription = platform.subscription(tenantId);
   if (!subscription || subscription.status === 'CANCELLED') return undefined;
-  const amountMinor = PACKAGES[subscription.package].monthlyPriceMinor;
+  const amountMinor = subscriptionPriceMinor(platform, tenantId, PACKAGES[subscription.package].monthlyPriceMinor).amountMinor;
   if (amountMinor <= 0) return undefined;
   if (!platform.ledger.get({ refType: 'Subscription', refId: subscription.id })) return undefined;
 
@@ -354,8 +385,10 @@ export function settleCharge(
   // at creation and again whenever an invoice was issued, neither of which is
   // money arriving. Keyed by the period's start day, so a charge settled twice
   // (a retried webhook, an operator pressing again) credits once.
+  // Twenty per cent of the *payment*: a company priced through its group's
+  // agreement is credited against what it paid, not the list price.
   const pkg = PACKAGES[charge.package as PackageTier];
-  if (pkg) platform.wallet(charge.tenantId).allocateFromSubscription(pkg.monthlyPriceMinor, allowancePeriodOf(charge));
+  if (pkg) platform.wallet(charge.tenantId).allocateFromSubscription(charge.amountMinor, allowancePeriodOf(charge));
 
   const subscription = platform.subscription(charge.tenantId);
 

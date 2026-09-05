@@ -435,13 +435,14 @@ export async function team(root) {
       const result = await command({
         title: 'Add somebody from another company in the group',
         intent:
-          'The same person, a second membership: they keep their identity and their sign-in, take a seat here, and hold exactly the roles you name here. Nothing of their other company comes with them.',
+          'The same person, a second membership: they keep their identity and their sign-in, take a seat here, and hold exactly the roles you name here — a viewer, read-only, if you name none. Nothing of their other company comes with them.',
         path: '/v1/users/memberships',
         submitLabel: 'Add',
         fields: [
           { name: 'email', label: 'Their email, as it is in the other company' },
-          { name: 'roles', label: 'Roles here', type: 'multiselect', options: tenantGrantableRoles().map((role) => ({ value: role, label: humanise(role) })) },
+          { name: 'roles', label: 'Roles here (viewer if none)', type: 'multiselect', required: false, options: tenantGrantableRoles().map((role) => ({ value: role, label: humanise(role) })) },
         ],
+        transform: (v) => ({ email: v.email, ...(Array.isArray(v.roles) && v.roles.length ? { roles: v.roles } : typeof v.roles === 'string' && v.roles ? { roles: [v.roles] } : {}) }),
       });
       if (result) draw();
       return;

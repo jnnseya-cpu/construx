@@ -75,8 +75,12 @@ export async function billing(root) {
         subscription && dueCharges.length > 0
           ? html`<div class="card ${raw(awaitingFirst ? 'warn' : '')}" style="margin-bottom:14px" data-subscription-due>
               <h2>
-                ${awaitingFirst ? 'Your first month is due before the platform opens' : 'A subscription period is unpaid'}
-                ${badge(exact(subscription.outstandingMinor), awaitingFirst ? 'bad' : 'warn')}
+                ${awaitingFirst
+                  ? 'Your first month is due before the platform opens'
+                  : subscription.pastDue
+                    ? `A subscription period is past due — the platform goes read-only on ${subscription.pastDue.graceEndsAt.slice(0, 10)}`
+                    : 'A subscription period is unpaid'}
+                ${badge(exact(subscription.outstandingMinor), awaitingFirst || subscription.pastDue ? 'bad' : 'warn')}
               </h2>
               <p class="metric-sub" style="margin:6px 0 12px">
                 ${awaitingFirst

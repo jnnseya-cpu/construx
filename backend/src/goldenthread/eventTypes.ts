@@ -970,6 +970,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('GROUP_ROLE_GRANTED', 'GroupRole', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('GROUP_ROLE_REVOKED', 'GroupRole', 'UPDATE', 'GOVERNANCE'),
   def('TENANT_GROUPED', 'Tenant', 'UPDATE', 'GOVERNANCE'),
+  // Group money funding company wallets: one purchase, explicit allocations that
+  // total exactly the amount, each credited to its company as its own receipt.
+  def('GROUP_PURCHASE_RECORDED', 'GroupPurchase', 'CREATE', 'AI_BILLING', { creates: true }),
   // The issuing company's profile — issuer block, numbering rules,
   // signatories — versioned so a document pins the version it went out under.
   def('ISSUER_PROFILE_UPDATED', 'IssuerProfile', 'UPDATE', 'GOVERNANCE', { creates: true }),
@@ -1646,6 +1649,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('ACU_RELEASED', 'ACUWallet', 'UPDATE', 'AI_BILLING'),
   def('ACU_CAP_BREACHED', 'ACUWallet', 'UPDATE', 'AI_BILLING'),
   def('ACU_ALERT_RAISED', 'ACUWallet', 'UPDATE', 'AI_BILLING'),
+  // Funding that went back to the payer (Enterprise / Group v1.0 §10.2, AT-25):
+  // an explicit reversing entry, a finance exception where the money was
+  // already consumed, and a wallet frozen while a dispute stands.
+  def('PAYMENT_REVERSED', 'PaymentReversal', 'CREATE', 'AI_BILLING', { creates: true }),
+  def('PAYMENT_EXCEPTION_RAISED', 'PaymentException', 'CREATE', 'AI_BILLING', { creates: true }),
+  def('PAYMENT_EXCEPTION_RESOLVED', 'PaymentException', 'UPDATE', 'AI_BILLING'),
+  def('ACU_WALLET_FROZEN', 'ACUWallet', 'UPDATE', 'AI_BILLING'),
+  def('ACU_WALLET_UNFROZEN', 'ACUWallet', 'UPDATE', 'AI_BILLING'),
   def('INVOICE_ISSUED', 'Invoice', 'ISSUE', 'AI_BILLING', { requiresEvidence: true, creates: true }),
   // Money entering the platform, in two halves that must never be one event.
   //

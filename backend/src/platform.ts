@@ -4,7 +4,7 @@ import { SigningAuthority } from './signing/signature.ts';
 import { ExportService } from './export/exporter.ts';
 import { allocateDocumentNumber, issuerProfile } from './group/profile.ts';
 import { SyncEngine } from './field/sync.ts';
-import { ACUWallet, TRIAL_GRANT_NOTE, type ACUCaps, type ACUEntry } from './billing/acu.ts';
+import { ACUWallet, TRIAL_GRANT_NOTE, type ACUCaps, type ACUEntry , type WalletSignal } from './billing/acu.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
 import {
   assignIdentity,
@@ -46,7 +46,7 @@ import { bindCredentialStores } from './identity/credentialstore.ts';
 import type { AuthContext } from './identity/auth.ts';
 import { issueTokens, type TokenPair } from './identity/auth.ts';
 import type { Role } from './identity/roles.ts';
-import { MODULES, grantRef, isModuleId, type ModuleGrant, type ModuleId } from './identity/modules.ts';
+import { MODULES, grantRef, isModuleId, type ModuleGrant, type ModuleId , grantLifecycle } from './identity/modules.ts';
 import { dueAt, graceDays, isDue, pseudonym, retentionBasis } from './identity/erasure.ts';
 
 /**
@@ -61,6 +61,43 @@ import { dueAt, graceDays, isDue, pseudonym, retentionBasis } from './identity/e
  * collide with it — tenant ids are ULIDs.
  */
 export const PLATFORM_TENANT_ID = 'platform';
+
+/** A refund or chargeback against a recorded payment: its own record, never a rewrite of the receipt. */
+export type PaymentReversal = {
+  id: string;
+  tenantId: string;
+  receiptId: string;
+  reference: string;
+  kind: 'REFUND' | 'DISPUTE';
+  amountMinor: number;
+  /** What the wallet gave back — what was still available. */
+  reversedMinor: number;
+  /** What could not be taken back because it was already consumed; the exception carries it. */
+  shortfallMinor: number;
+  exceptionId?: string;
+  source: 'PROVIDER' | 'OPERATOR';
+  recordedBy: string;
+  recordedAt: string;
+  note?: string;
+};
+
+/** Funding that went back after it was spent, or a subscription payment undone: finance decides, on the record. */
+export type PaymentException = {
+  id: string;
+  tenantId: string;
+  receiptId: string;
+  reference: string;
+  kind: 'REFUND' | 'DISPUTE';
+  amountMinor: number;
+  shortfallMinor: number;
+  reason: string;
+  status: 'OPEN' | 'RESOLVED';
+  raisedAt: string;
+  raisedBy: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  resolution?: string;
+};
 
 export type Tenant = {
   id: string;
@@ -374,6 +411,13 @@ export class Platform {
      * free package ignores this — it has nothing to pay.
      */
     opensOn?: 'CREATION' | 'FIRST_PAYMENT';
+    /**
+     * Leave the first month unraised. A group administrator adding a company
+     * attaches it to the group *after* it exists, and the price the group's
+     * agreement gives it is only known then; the caller raises the charge
+     * itself once the attachment is on the record.
+     */
+    deferOpeningCharge?: boolean;
   }): {
     tenant: Tenant;
     subscription: Subscription;
@@ -412,7 +456,7 @@ export class Platform {
     };
     this.#subscriptions.set(tenantId, subscription);
 
-    const wallet = new ACUWallet(tenantId, { volumeIncentive: input.tier === 'ENTERPRISE' || input.tier === 'SOVEREIGN' });
+    const wallet = this.#watchWallet(new ACUWallet(tenantId, { volumeIncentive: input.tier === 'ENTERPRISE' || input.tier === 'SOVEREIGN' }));
     if (this.#walletSink) wallet.attachSink(this.#walletSink);
     // Nothing is free unless the package is.
     //
@@ -526,7 +570,7 @@ export class Platform {
 
     // The first month, owed from the day the tenancy exists. Raised after the
     // subscription is on the record, because the charge names it.
-    const openingCharge = paid ? raiseOpeningCharge(this, tenantId)?.charge : undefined;
+    const openingCharge = paid && !input.deferOpeningCharge ? raiseOpeningCharge(this, tenantId)?.charge : undefined;
 
     return { tenant, subscription, wallet, trialGrantMinor, ...(openingCharge ? { openingCharge } : {}) };
   }
@@ -700,7 +744,7 @@ export class Platform {
       });
     }
 
-    const wallet = new ACUWallet(PLATFORM_TENANT_ID, { volumeIncentive: true });
+    const wallet = this.#watchWallet(new ACUWallet(PLATFORM_TENANT_ID, { volumeIncentive: true }));
     if (this.#walletSink) wallet.attachSink(this.#walletSink);
     // No trial grant. The trial is an offer to a customer deciding whether to
     // buy, and the platform is not deciding. It starts empty and is credited
@@ -2237,7 +2281,19 @@ export class Platform {
     status: ModuleGrant['status'];
     reason: string;
     decidedBy: string;
+    /** Scheduled start and expiry (Enterprise / Group v1.0 §7). Omitted: from now, open-ended. */
+    validFrom?: string;
+    validTo?: string;
   }): ModuleGrant {
+    if (input.validFrom !== undefined && Number.isNaN(Date.parse(input.validFrom))) {
+      throw new DomainError('MODULE_DATES_INVALID', 'validFrom is an ISO date-time');
+    }
+    if (input.validTo !== undefined && Number.isNaN(Date.parse(input.validTo))) {
+      throw new DomainError('MODULE_DATES_INVALID', 'validTo is an ISO date-time');
+    }
+    if (input.validFrom && input.validTo && input.validTo <= input.validFrom) {
+      throw new DomainError('MODULE_DATES_INVALID', 'An entitlement ends after it starts');
+    }
     if (!isModuleId(input.moduleId)) {
       throw new DomainError('MODULE_UNKNOWN', `${input.moduleId} is not a module this platform has`, 404);
     }
@@ -2251,7 +2307,10 @@ export class Platform {
 
     const ref = grantRef(input.moduleId, input.tenantId);
     const existing = this.#moduleGrants.get(ref);
-    if (existing && existing.status === input.status) return existing;
+    // The same decision again is idempotent — unless it carries new dates,
+    // which is a re-grant on new terms and is recorded as one.
+    const sameDates = existing?.validFrom === input.validFrom && existing?.validTo === input.validTo;
+    if (existing && existing.status === input.status && (input.status === 'REVOKED' || sameDates)) return existing;
     if (!existing && input.status === 'REVOKED') {
       // There is nothing to take back. Refused rather than recorded, because a
       // revocation with no grant behind it would have to name a grantor who
@@ -2272,6 +2331,8 @@ export class Platform {
           moduleId: input.moduleId,
           tenantId: tenant.id,
           status: 'ACTIVE',
+          ...(input.validFrom ? { validFrom: new Date(input.validFrom).toISOString() } : {}),
+          ...(input.validTo ? { validTo: new Date(input.validTo).toISOString() } : {}),
           grantedBy: input.decidedBy,
           grantedAt: decidedAt,
           reason: input.reason,
@@ -2321,9 +2382,9 @@ export class Platform {
    * cached copy is a second source of truth for the same fact, and the one that
    * goes stale is always the one an access check reads.
    */
-  grantedModules(tenantId: string): ModuleId[] {
+  grantedModules(tenantId: string, now = new Date().toISOString()): ModuleId[] {
     return this.moduleGrants()
-      .filter((grant) => grant.tenantId === tenantId && grant.status === 'ACTIVE')
+      .filter((grant) => grant.tenantId === tenantId && grantLifecycle(grant, now) === 'ACTIVE')
       .map((grant) => grant.moduleId);
   }
 
@@ -2439,14 +2500,19 @@ export class Platform {
     for (const record of this.ledger.entitiesOfType('ACUWallet')) {
       const tenantId = record.tenantId;
       const subscription = this.#subscriptions.get(tenantId);
-      const wallet = new ACUWallet(tenantId, {
-        volumeIncentive: subscription?.tier === 'ENTERPRISE' || subscription?.tier === 'SOVEREIGN',
-      });
+      const wallet = this.#watchWallet(
+        new ACUWallet(tenantId, {
+          volumeIncentive: subscription?.tier === 'ENTERPRISE' || subscription?.tier === 'SOVEREIGN',
+        }),
+      );
       // Folded from the entries rather than read from a stored total. A stored
       // balance is a second source of truth for the same money, and the two
       // disagree the first time either is rebuilt. No trial grant is re-issued
       // here: the original grant is one of the entries.
       wallet.restoreEntries(walletEntries.get(tenantId) ?? []);
+      // A dispute that froze the wallet is still a dispute after a restart.
+      const frozenState = (record.state as { frozen?: { reason: string; at: string } | null }).frozen;
+      if (frozenState) wallet.freeze(frozenState.reason, frozenState.at);
       // Attached after the replay, so restoring does not re-journal what is
       // already on disk.
       if (this.#walletSink) wallet.attachSink(this.#walletSink);
@@ -2616,6 +2682,60 @@ export class Platform {
    */
   allUsers(): PlatformUser[] {
     return [...this.#users.values()];
+  }
+
+  #walletSignalHandler: ((tenantId: string, signal: WalletSignal) => void) | null = null;
+
+  /**
+   * Who is told when a wallet signals a threshold crossed or its limit
+   * reached (GN-SPEC-TENANCY-001 §9.3). The platform records the signal on
+   * the tenancy's own chain itself; telling people is the gateway's, which
+   * holds the notification engine. One handler, set at boot.
+   */
+  onWalletSignal(handler: (tenantId: string, signal: WalletSignal) => void): void {
+    this.#walletSignalHandler = handler;
+  }
+
+  /**
+   * Every wallet this platform opens reports its signals here: the alert is
+   * written to the record first (`ACU_ALERT_RAISED`, `ACU_CAP_BREACHED` —
+   * two event types that were in the catalogue and, until now, never
+   * emitted), then handed to whoever is listening. A failure in either never
+   * reaches the spend that raised it.
+   */
+  #watchWallet(wallet: ACUWallet): ACUWallet {
+    wallet.onSignal((signal) => {
+      const tenantId = wallet.tenantId;
+      try {
+        this.#ensureWalletOpened(tenantId);
+        const snapshot = wallet.snapshot();
+        this.ledger.commit({
+          tenantId,
+          projectId: `${tenantId}-governance`,
+          actor: { refType: 'System', refId: 'billing' },
+          source: 'SYSTEM',
+          correlationId: ulid(),
+          eventType: signal.kind === 'THRESHOLD' ? 'ACU_ALERT_RAISED' : 'ACU_CAP_BREACHED',
+          entity: { refType: 'ACUWallet', refId: tenantId },
+          nextState: {
+            id: tenantId,
+            tenantId,
+            balanceMinor: snapshot.balanceMinor,
+            ...(signal.kind === 'THRESHOLD'
+              ? { lastAlert: { ...signal.alert } }
+              : { lastCapBreach: { ...signal.breach, requestedMinor: signal.requestedMinor, at: new Date().toISOString() } }),
+          },
+        });
+      } catch (error) {
+        process.stderr.write(`wallet signal for ${tenantId} could not be recorded: ${(error as Error).message}\n`);
+      }
+      try {
+        this.#walletSignalHandler?.(tenantId, signal);
+      } catch (error) {
+        process.stderr.write(`wallet signal handler failed for ${tenantId}: ${(error as Error).message}\n`);
+      }
+    });
+    return wallet;
   }
 
   wallet(tenantId: string): ACUWallet {
@@ -2889,6 +3009,300 @@ export class Platform {
     return [...this.#topUpIntents.values()]
       .filter((intent) => tenantId === undefined || intent.tenantId === tenantId)
       .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
+  }
+
+  /**
+   * Group money funds a purchase of AI credit, allocated across the group's
+   * company wallets (Enterprise / Group v1.0 §10.1: "allocations must be
+   * explicit and total exactly the purchased quantity"). One payment, one
+   * reference; each company is credited its allocation as a receipt of its
+   * own under `<reference>/<cost centre code>`, so the money is traceable
+   * both ways and a replayed reference credits nothing twice. Every
+   * allocation is checked before any wallet moves; nothing is ever spread
+   * "evenly" or guessed.
+   */
+  recordGroupPurchase(input: {
+    groupId: string;
+    amountMinor: number;
+    method: PaymentMethod;
+    reference: string;
+    allocations: Array<{ tenantId: string; amountMinor: number }>;
+    recordedBy: string;
+    note?: string;
+  }): {
+    purchase: {
+      id: string;
+      groupId: string;
+      amountMinor: number;
+      method: PaymentMethod;
+      reference: string;
+      allocations: Array<{ tenantId: string; code: string; amountMinor: number; receiptId: string }>;
+      recordedBy: string;
+      recordedAt: string;
+      note?: string;
+    };
+    alreadyRecorded: boolean;
+  } {
+    const reference = normaliseReference(input.reference);
+    assertCreditableAmount(input.amountMinor);
+    const group = this.ledger.get({ refType: 'Group', refId: input.groupId })?.state as unknown as
+      | { id: string; displayName: string; costCentres: Array<{ tenantId: string; code: string }> }
+      | undefined;
+    if (!group) throw new NotFoundError(`No group ${input.groupId}`);
+
+    const existing = this.ledger.get({ refType: 'GroupPurchase', refId: `${group.id}:${reference}` });
+    if (existing) {
+      const held = existing.state as unknown as ReturnType<Platform['recordGroupPurchase']>['purchase'];
+      if (held.amountMinor !== input.amountMinor) {
+        throw new DomainError('PAYMENT_REFERENCE_CONFLICT', `Reference ${reference} is already recorded against ${group.displayName} for a different amount`, 409);
+      }
+      return { purchase: held, alreadyRecorded: true };
+    }
+
+    if (input.allocations.length === 0) throw new DomainError('ALLOCATIONS_REQUIRED', 'Say which company wallets the purchase funds, and by how much');
+    const seen = new Set<string>();
+    let total = 0;
+    const planned = input.allocations.map((allocation) => {
+      if (seen.has(allocation.tenantId)) throw new DomainError('ALLOCATION_DUPLICATE', 'A company is allocated once in a purchase');
+      seen.add(allocation.tenantId);
+      assertCreditableAmount(allocation.amountMinor);
+      const centre = group.costCentres.find((entry) => entry.tenantId === allocation.tenantId);
+      if (!centre) throw new DomainError('ALLOCATION_NOT_IN_GROUP', `That company is not one of ${group.displayName}'s`, 422);
+      if (this.tenant(allocation.tenantId).closedAt) throw new DomainError('TENANT_CLOSED', `${this.tenant(allocation.tenantId).legalName} is closed and takes no credit`, 409);
+      total += allocation.amountMinor;
+      return { ...allocation, code: centre.code };
+    });
+    if (total !== input.amountMinor) {
+      throw new DomainError(
+        'ALLOCATIONS_MUST_TOTAL',
+        `The allocations total ${total} against a purchase of ${input.amountMinor}. Group money is allocated exactly, never approximately.`,
+        422,
+      );
+    }
+    for (const allocation of planned) {
+      if (this.#receiptsByReference.has(`${reference}/${allocation.code}`)) {
+        throw new DomainError('PAYMENT_REFERENCE_CONFLICT', `${reference}/${allocation.code} is already a recorded payment`, 409);
+      }
+    }
+
+    const recordedAt = new Date().toISOString();
+    const allocations = planned.map((allocation) => {
+      const { receipt } = this.creditFromPayment({
+        tenantId: allocation.tenantId,
+        amountMinor: allocation.amountMinor,
+        method: input.method,
+        reference: `${reference}/${allocation.code}`,
+        recordedBy: input.recordedBy,
+        source: 'OPERATOR',
+        note: `Group purchase ${reference} by ${group.displayName} — allocation to ${allocation.code}${input.note ? ` · ${input.note}` : ''}`,
+      });
+      return { tenantId: allocation.tenantId, code: allocation.code, amountMinor: allocation.amountMinor, receiptId: receipt.id };
+    });
+    const purchase = {
+      id: `${group.id}:${reference}`,
+      groupId: group.id,
+      amountMinor: input.amountMinor,
+      method: input.method,
+      reference,
+      allocations,
+      recordedBy: input.recordedBy,
+      recordedAt,
+      ...(input.note ? { note: input.note } : {}),
+    };
+    this.ledger.commit({
+      tenantId: group.id,
+      projectId: `${group.id}-governance`,
+      actor: { refType: 'User', refId: input.recordedBy },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'GROUP_PURCHASE_RECORDED',
+      entity: { refType: 'GroupPurchase', refId: purchase.id },
+      nextState: { ...purchase },
+    });
+    return { purchase, alreadyRecorded: false };
+  }
+
+  /**
+   * Money that went back to the payer (Enterprise / Group v1.0 §10.2, AT-25).
+   *
+   * A refund or a chargeback against a payment this platform recorded. The
+   * receipt is never rewritten: a reversal is its own record, the wallet is
+   * debited what is still available as an explicit entry, and what had
+   * already been consumed becomes a finance exception with the shortfall on
+   * it — nothing goes negative and nothing is taken from a sibling wallet. A
+   * dispute freezes the wallet until the operator resolves the exception;
+   * everything but AI keeps working. Keyed by the provider's event so a
+   * redelivery records nothing twice.
+   */
+  reversePayment(input: {
+    reference: string;
+    amountMinor: number;
+    kind: 'REFUND' | 'DISPUTE';
+    /** The provider's event id, or an operator's own reference for a manual record. */
+    eventId: string;
+    recordedBy: string;
+    source: 'PROVIDER' | 'OPERATOR';
+    note?: string;
+    /**
+     * The amount is the running total refunded on the payment so far (Stripe's
+     * `amount_refunded`), not this refund alone: what is reversed here is the
+     * part not already reversed. An operator's manual record is the refund
+     * itself and is not cumulative.
+     */
+    cumulative?: boolean;
+  }): { reversal: PaymentReversal; exception: PaymentException | null; frozen: boolean; alreadyRecorded: boolean } {
+    const reference = normaliseReference(input.reference);
+    assertCreditableAmount(input.amountMinor);
+    const receipt = this.#receiptsByReference.get(reference);
+    if (!receipt) throw new NotFoundError(`No payment ${reference} is recorded on this platform`);
+    const id = `${receipt.id}:${input.eventId}`;
+    const existing = this.ledger.get({ refType: 'PaymentReversal', refId: id });
+    if (existing) {
+      const held = existing.state as unknown as PaymentReversal;
+      const exception = held.exceptionId ? ((this.ledger.get({ refType: 'PaymentException', refId: held.exceptionId })?.state as unknown as PaymentException) ?? null) : null;
+      return { reversal: held, exception, frozen: this.wallet(receipt.tenantId).frozen() !== null, alreadyRecorded: true };
+    }
+    const priorReversals = this.ledger
+      .entitiesOfType('PaymentReversal')
+      .map((record) => record.state as unknown as PaymentReversal)
+      .filter((held) => held.receiptId === receipt.id && held.kind === input.kind);
+    const alreadyReversed = priorReversals.reduce((sum, held) => sum + held.amountMinor, 0);
+    const amountMinor = input.cumulative ? input.amountMinor - alreadyReversed : input.amountMinor;
+    if (amountMinor <= 0) {
+      // A running total no higher than what is already recorded: the same
+      // refund seen again under a new event id. Nothing new to reverse.
+      const last = priorReversals.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))[0]!;
+      return { reversal: last, exception: null, frozen: this.wallet(receipt.tenantId).frozen() !== null, alreadyRecorded: true };
+    }
+    if (alreadyReversed + amountMinor > receipt.amountMinor) {
+      throw new DomainError('PAYMENT_REVERSAL_EXCEEDS', `A reversal of ${amountMinor} on top of ${alreadyReversed} against a payment of ${receipt.amountMinor}. Nothing more than was paid can go back.`, 422);
+    }
+
+    const tenantId = receipt.tenantId;
+    this.#ensureWalletOpened(tenantId);
+    const wallet = this.wallet(tenantId);
+    const at = new Date().toISOString();
+    // A subscription payment credited no wallet: the period's allowance did.
+    // Reversing it is a finance exception in full — the period is no longer
+    // paid for, and that is the operator's to act on, not the wallet's.
+    const reversed = receipt.chargeId
+      ? { reversedMinor: 0, shortfallMinor: amountMinor, entry: null }
+      : wallet.reverse(amountMinor, `${input.kind === 'REFUND' ? 'Refund' : 'Dispute'} of payment ${reference}${input.note ? ` — ${input.note}` : ''}`);
+
+    let exception: PaymentException | null = null;
+    if (reversed.shortfallMinor > 0) {
+      exception = {
+        id: ulid(),
+        tenantId,
+        receiptId: receipt.id,
+        reference,
+        kind: input.kind,
+        amountMinor: amountMinor,
+        shortfallMinor: reversed.shortfallMinor,
+        reason: receipt.chargeId
+          ? `The payment settled subscription charge ${receipt.chargeId}; that period is no longer paid for.`
+          : `${reversed.shortfallMinor} of the ${input.kind === 'REFUND' ? 'refunded' : 'disputed'} funding had already been consumed on AI and cannot be taken back from the wallet.`,
+        status: 'OPEN',
+        raisedAt: at,
+        raisedBy: input.recordedBy,
+      };
+      this.ledger.commit({
+        tenantId,
+        projectId: `${tenantId}-governance`,
+        actor: { refType: 'System', refId: 'billing' },
+        source: 'SYSTEM',
+        correlationId: ulid(),
+        eventType: 'PAYMENT_EXCEPTION_RAISED',
+        entity: { refType: 'PaymentException', refId: exception.id },
+        nextState: { ...exception },
+      });
+    }
+
+    let frozen = wallet.frozen() !== null;
+    if (input.kind === 'DISPUTE' && !frozen) {
+      wallet.freeze(`payment ${reference} is disputed`, at);
+      frozen = true;
+      this.#commitWalletFreeze(tenantId, 'ACU_WALLET_FROZEN', input.recordedBy);
+    }
+
+    const reversal: PaymentReversal = {
+      id,
+      tenantId,
+      receiptId: receipt.id,
+      reference,
+      kind: input.kind,
+      amountMinor: amountMinor,
+      reversedMinor: reversed.reversedMinor,
+      shortfallMinor: reversed.shortfallMinor,
+      ...(exception ? { exceptionId: exception.id } : {}),
+      source: input.source,
+      recordedBy: input.recordedBy,
+      recordedAt: at,
+      ...(input.note ? { note: input.note } : {}),
+    };
+    this.ledger.commit({
+      tenantId,
+      projectId: `${tenantId}-governance`,
+      actor: input.source === 'PROVIDER' ? { refType: 'System', refId: 'billing' } : { refType: 'User', refId: input.recordedBy },
+      source: input.source === 'PROVIDER' ? 'SYSTEM' : 'WEB',
+      correlationId: ulid(),
+      eventType: 'PAYMENT_REVERSED',
+      entity: { refType: 'PaymentReversal', refId: reversal.id },
+      nextState: { ...reversal },
+    });
+    return { reversal, exception, frozen, alreadyRecorded: false };
+  }
+
+  #commitWalletFreeze(tenantId: string, eventType: 'ACU_WALLET_FROZEN' | 'ACU_WALLET_UNFROZEN', actorId: string): void {
+    const wallet = this.wallet(tenantId);
+    this.ledger.commit({
+      tenantId,
+      projectId: `${tenantId}-governance`,
+      actor: { refType: 'User', refId: actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType,
+      entity: { refType: 'ACUWallet', refId: tenantId },
+      nextState: { id: tenantId, tenantId, balanceMinor: wallet.snapshot().balanceMinor, frozen: wallet.frozen() },
+    });
+  }
+
+  /** The operator lifts a freeze once the dispute is resolved, with the reason on the record. */
+  unfreezeWallet(actorId: string, tenantId: string, reason: string): ReturnType<ACUWallet['snapshot']> {
+    if (!reason.trim()) throw new DomainError('REASON_REQUIRED', 'Say why the wallet is unfrozen');
+    const wallet = this.wallet(tenantId);
+    if (!wallet.frozen()) throw new DomainError('WALLET_NOT_FROZEN', 'This wallet is not frozen', 409);
+    wallet.unfreeze();
+    this.#commitWalletFreeze(tenantId, 'ACU_WALLET_UNFROZEN', actorId);
+    return wallet.snapshot();
+  }
+
+  /** Every finance exception, open first. */
+  paymentExceptions(): PaymentException[] {
+    return this.ledger
+      .entitiesOfType('PaymentException')
+      .map((record) => record.state as unknown as PaymentException)
+      .sort((a, b) => (a.status === b.status ? b.raisedAt.localeCompare(a.raisedAt) : a.status === 'OPEN' ? -1 : 1));
+  }
+
+  resolvePaymentException(actorId: string, exceptionId: string, note: string): PaymentException {
+    if (note.trim().length < 5) throw new DomainError('RESOLUTION_REQUIRED', 'Say how the exception was resolved');
+    const record = this.ledger.get({ refType: 'PaymentException', refId: exceptionId });
+    if (!record) throw new NotFoundError(`No payment exception ${exceptionId}`);
+    const exception = record.state as unknown as PaymentException;
+    if (exception.status === 'RESOLVED') throw new DomainError('EXCEPTION_RESOLVED', 'That exception is already resolved', 409);
+    const resolved: PaymentException = { ...exception, status: 'RESOLVED', resolvedAt: new Date().toISOString(), resolvedBy: actorId, resolution: note.trim() };
+    this.ledger.commit({
+      tenantId: exception.tenantId,
+      projectId: `${exception.tenantId}-governance`,
+      actor: { refType: 'User', refId: actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'PAYMENT_EXCEPTION_RESOLVED',
+      entity: { refType: 'PaymentException', refId: exception.id },
+      nextState: { ...resolved },
+    });
+    return resolved;
   }
 
   paymentReceipts(tenantId?: string): PaymentReceipt[] {

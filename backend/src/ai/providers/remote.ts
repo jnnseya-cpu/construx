@@ -529,6 +529,13 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
     } catch (error) {
       if (error instanceof DomainError) throw error;
       this.#consecutiveFailures += 1;
+      // The request left and no answer came back within the deadline. The
+      // provider may have done the work and billed for it, or dropped it: the
+      // outcome is unknown, and the orchestrator holds the reservation for
+      // reconciliation rather than releasing or charging it (§10.2).
+      if ((error as Error).name === 'TimeoutError' || (error as Error).name === 'AbortError') {
+        throw new DomainError('AI_PROVIDER_TIMEOUT', `${this.name} did not answer within the deadline; the call may have completed`, 504);
+      }
       throw new DomainError('AI_PROVIDER_UNREACHABLE', `${this.name} call failed: ${String(error)}`, 502);
     }
   }

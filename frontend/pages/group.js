@@ -191,6 +191,9 @@ export async function group(root) {
                   <div class="row"><span class="lbl">Seller</span><span class="val">${billing.inForce.seller.legalName}</span></div>
                   <div class="row"><span class="lbl">Payer</span><span class="val">${billing.inForce.payer.legalName}</span></div>
                   <div class="row"><span class="lbl">Terms</span><span class="val">${billing.inForce.currency} · ${billing.inForce.cadence.toLowerCase()} · price list ${billing.inForce.pricingPolicyVersion}</span></div>
+                  <div class="row"><span class="lbl">Rate cards</span><span class="val">${['GROUP_INTERNAL', 'ENTERPRISE_GROUP', 'RETAIL']
+                    .map((card) => `${humanise(card.toLowerCase())} ${billing.inForce.rateCards?.[card]?.discountPercent ? `−${billing.inForce.rateCards[card].discountPercent}%` : 'list price'}`)
+                    .join(' · ')}</span></div>
                 </div>`
               : notice('No approved agreement is in force. The platform operator sets the terms as a draft; the group approves them here.', 'warn')}
             ${(billing.agreement?.versions ?? []).filter((v) => v.status === 'DRAFT').map((v) => html`<div class="notice" style="margin-bottom:12px"><div>

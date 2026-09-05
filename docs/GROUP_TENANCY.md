@@ -68,7 +68,7 @@ Not built: `PUT /companies/{id}/entitlements/{product}`; plans are changed by th
 
 ## §6 Roles
 
-Group roles as specified. Company roles are the existing catalogue; `company_admin` = ENTERPRISE_ADMIN/OWNER, `company_finance` ≈ BILLING_ACU holders. **No viewer role exists**, so a new membership does not default to viewer: the administrator names the roles (`ROLES_REQUIRED` otherwise). Adding a bare viewer role would change the settled permission matrix; recorded rather than done.
+Group roles as specified. Company roles are the existing catalogue; `company_admin` = ENTERPRISE_ADMIN/OWNER, `company_finance` ≈ BILLING_ACU holders. **Viewer:** `VIEWER` — read on every area of the company's record, never platform administration, AI execution or billing; grantable by an administrator; priced at the lowest internal seat. Least privilege by default: a membership added with no roles named is a viewer (`POST /v1/users/memberships`).
 
 ## §7 Isolation
 
@@ -98,9 +98,9 @@ Every read is by tenancy already. The spec's table, mapped:
 
 - Meters per company from records: `acu` (wallet debits, raw and billed, by module), `seat` (active users), `document` (exports), `storage` (evidence bytes). `api_call` not metered.
 - Dedicated pools by construction: one wallet per company. `group_shared` pool: not built.
-- Hard limit: the wallet's monthly cap, set from the group by finance; at the cap AI is refused with the existing cap refusal and everything else continues. Queueing of AI jobs at the limit: not built.
+- Hard limit: the wallet's monthly cap, set from the group by finance; at the cap AI is refused with the existing cap refusal and everything else continues. **Thresholds and the limit are told** (§9.3, `usage.threshold` / `usage.limit_reached`): the wallet signals 50 / 80 / 100 per cent once each per month and the limit once per scope, the platform records `ACU_ALERT_RAISED` / `ACU_CAP_BREACHED` on the company's chain, and `billing/usagealerts.ts` notifies the company's administrators and the group's finance and administrators (`acu.threshold`, `acu.limit_reached`). Queueing of AI jobs at the limit: not built — the specification's v1.0 successor refuses at the budget, which is what happens.
 - Statement: `GET /v1/groups/:id/statement?month=` — one section per cost centre (plan as charged plus list price, seats, ACU, documents, storage), group totals, invoiced vs tracked by charge mode, companies included. CSV per group or per company. It is a statement: nothing moves money, BitriPay is not integrated, `invoice_mode` is recorded on the billing account for the invoicing run that does not yet exist.
-- Rate cards are recorded per cost centre and shown; they do not yet change prices.
+- Rate cards **price the subscription**: the agreement version carries `rateCards` (a whole-percentage discount per card), the group approves it with the terms, `subscriptionPriceMinor()` prices every renewal and first month through the company's card, the allowance follows the amount paid, and the statement shows list and charged (§9.4).
 
 ## §10 API surface (this platform's paths)
 
@@ -200,7 +200,7 @@ their specification numbers.
 
 Unchanged from Part 1. The gateway derives the tenancy from the session, never from a header or a body; every read here checks the record's tenancy and answers a foreign id as no record (AT-05, AT-16, AT-30 are tested through the new routes too). Roles: the spec's Group Owner / Billing Admin / Analyst are GROUP_ADMIN / GROUP_FINANCE / GROUP_VIEWER; Tenant Admin is ENTERPRISE_ADMIN; `documents.approve` is held by a named signatory or, where none is named for the type, a company administrator; `documents.generate` / `documents.issue` by anybody who may take a document out of the company (EVIDENCE_AUDIT I).
 
-## §7 Entitlements — unchanged plus the registry entry. Scheduled/expiring entitlements are not built: a grant is ACTIVE or REVOKED, revocation is immediate.
+## §7 Entitlements — unchanged plus the registry entry. **Scheduled and expiring entitlements are built:** a grant carries `validFrom` / `validTo`; `grantLifecycle()` reads SCHEDULED, ACTIVE, EXPIRED or REVOKED against the clock; `grantedModules()` holds only what is live; the entitlement read lists live and pending grants; the operator's decision has the dates. Revocation is immediate.
 
 ## §8 Documents
 
@@ -215,13 +215,16 @@ Unchanged from Part 1. The gateway derives the tenancy from the session, never f
 
 - `PUT /v1/admin/groups/:id/agreement` (operator, draft) → `POST /v1/groups/:id/agreement/:version/approve` (group admin or finance). `GET /v1/groups/:id/billing`: the version in force, subscriptions as line items, seats used and distinct people (AT-27), and `invoicing`: one invoice only where seller, payer, currency and period agree; otherwise separate invoices plus the consolidated statement, with the reasons named (AT-28, AT-29). Internal-allocation companies are listed as allocation-only.
 - Seats: `SEAT_LIMIT_REACHED` on activation is the existing rule (AT-26).
-- Not built: the invoicing run and payment adapter (unchanged from Part 1); proration; subscription states beyond ACTIVE / SUSPENDED / CANCELLED.
+- Subscription states: ACTIVE / SUSPENDED / CANCELLED, plus `AWAITING_PAYMENT` (a paid package before its first month is paid) and `past_due` derived (`collection.pastDue()`: a period due and unpaid while its grace runs, on `GET /v1/billing/subscription` and the billing screen). Payment adapter: Stripe Checkout settles top-ups and subscription charges; refunds and disputes are read and recorded (§10). Not built: the invoicing run (the statement moves no money); proration.
 
 ## §10 Wallets
 
 - Holds are reservations against available balance, never negative; `settle` charges once and a replayed settlement returns the same entry without moving the balance; `release` after settle is a no-op (commit and release are mutually exclusive). The §10.3 arithmetic is `enterprisegroup.test.ts` AT-20/21 (100 → 70 held, 40 refused, 55 settled → 45 available, 0 held, 55 consumed, replay unchanged).
 - Budgets: monthly, per project, per module and — new — per person (`perUserMinor`, set on Billing).
-- Not built: micro-ACU denomination (1 ACU = 1 minor unit is a settled decision), `running` / `reconciliation_required` states and worker leases (AI runs in-process and synchronously — there is no worker to fence), credit lots and cross-tenant credit transfer (disabled by default in the spec; absent here).
+- **reconciliation_required (AT-22):** a remote call that times out after it left (`AI_PROVIDER_TIMEOUT`) parks its hold — neither released nor charged — and the execution is `UNRESOLVED` until the operator reconciles it with evidence (`GET /v1/admin/ai/unreconciled`, `POST /v1/admin/ai/executions/:id/reconcile`: charge the call's cost or release; once; a replayed settlement moves nothing). Worker leases are not needed: AI runs in-process and synchronously.
+- **Refunds, chargebacks and disputed funding (AT-25):** Stripe `charge.refunded` (running total) and `charge.dispute.created` are recorded as explicit `PaymentReversal`s against the receipt; what is still available is debited, what was consumed is a `PaymentException` with the shortfall; a dispute freezes the wallet (`WALLET_FROZEN` on reserve, everything else continues, survives a restart) until the operator lifts it with a reason; the operator records reversals by hand and resolves exceptions; Tenants & Users carries the card.
+- **Group money funding wallets (§10.1):** `POST /v1/admin/groups/:id/credit` records one payment with explicit allocations totalling exactly the amount, each company credited as its own receipt under `<reference>/<code>`.
+- Not built: micro-ACU denomination (1 ACU = 1 minor unit is a settled decision), credit lots and cross-tenant credit transfer (disabled by default in the spec; absent here).
 
 ## §11 Events
 
@@ -266,8 +269,8 @@ The spec's `/enterprise/v1` catalogue is served under this platform's `/v1` with
 
 ## §17 Targets
 
-Live authority: every read here checks the grant, share or membership on the request; tokens are 15-minute. Not measured: the latency targets (no load rig here; recorded as unmeasured rather than met).
+Live authority: every read here checks the grant, share or membership on the request; tokens are 15-minute. **Metrics (§17):** `GET /v1/admin/watch` carries `operational` — authorisation denials by reason, unreconciled provider outcomes and the oldest, open reservations and the oldest, frozen wallets, open payment exceptions, issuance failures pending retry, webhook signature failures, ledger state-hash discrepancies — counted from the record and shown on Risk & alerts. Not measured: the latency targets (no load rig here; recorded as unmeasured rather than met).
 
 ## §18 Acceptance — `backend/tests/enterprisegroup.test.ts`
 
-Tested by number: AT-01, 02, 11, 13, 14, 15, 16, 17, 18, 20, 21, 23, 26, 27, 28, 29, 30, 31, 32, 33, 36, 37, 38, 43, 44, plus a restart replay (AT-42 as far as the ledger goes). Covered by Part 1 tests: AT-03, 05, 10. Not applicable on one synchronous product with no external identity provider, worker or payment adapter: AT-04, 06, 07, 08, 09, 12, 19, 22, 24, 25, 34, 35, 39, 40, 41.
+Tested by number: AT-01, 02, 11, 13, 14, 15, 16, 17, 18, 20, 21, 23, 26, 27, 28, 29, 30, 31, 32, 33, 36, 37, 38, 43, 44, plus a restart replay (AT-42 as far as the ledger goes). Covered by Part 1 tests: AT-03, 05, 10. AT-22 (unknown completion held for reconciliation; a stale settlement moves nothing) and AT-25 (refund and chargeback as immutable adjustment and exception, no sibling charge) in `groupspec2.test.ts`; AT-24 (duplicate webhook, forged success) in `stripe.test.ts`. Not applicable on one synchronous product with no external identity provider or worker: AT-04, 06, 07, 08, 09, 12, 19, 34, 35, 39, 40, 41.

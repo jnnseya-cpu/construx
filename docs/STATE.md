@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,893 passing, 0 failing, 0 skipped, across 260 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 5,917 passing, 0 failing, 0 skipped, across 262 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 299 TypeScript files, 194,100 lines |
-| Application | 77 ES modules, 44,200 lines (including a service worker) |
-| API routes | 1,072 — 736 writes, 336 reads (49 public across both) |
-| Event types | 718 Golden Thread (closed) · the communication catalogue is separate and closed |
-| Entity types | 330, all classified for access |
+| Backend | 300 TypeScript files, 195,400 lines |
+| Application | 77 ES modules, 44,400 lines (including a service worker) |
+| API routes | 1,079 — 741 writes, 338 reads (49 public across both) |
+| Event types | 724 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Entity types | 333, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
@@ -8347,6 +8347,126 @@ operator could already do is unchanged: *Onboard a group* and *Bring a
 company in* remain, for a group whose terms are agreed rather than
 self-served.
 
+
+### The group specifications, clause by clause: what was recorded is now built
+
+Asked for as: a deep dive over both specifications — GN-SPEC-TENANCY-001
+(Group & Company Tenancy) and the Enterprise / Group account specification
+v1.0 — with every word implemented, activated and functioning on the
+CONSTRUX side. `docs/GROUP_TENANCY.md` had mapped each section to what was
+built and had named, honestly, what was recorded rather than done. This
+closes those, one vertical at a time, each with its own test. Wherever the
+specifications say VERYX or "both products", read CONSTRUX, as before.
+
+**§9.3 / §11 usage.threshold and usage.limit_reached — the people are told.**
+The wallet raised its 50 / 80 / 100 per cent alerts and recorded a cap breach,
+and `ACU_ALERT_RAISED` and `ACU_CAP_BREACHED` sat in the closed catalogue
+never emitted: nobody was told anything. `ACUWallet.onSignal` now raises a
+`WalletSignal` — a threshold crossed, once per threshold per month, or the
+hard limit reached, once per scope per month — the platform writes it to the
+tenancy's own chain under those two event types, and the gateway hands it to
+`billing/usagealerts.ts`, which resolves the recipients the specification
+names: the company's administrators, and the group's finance and
+administrators at whichever of their memberships is active, each once. Two
+notice codes (`acu.threshold`, `acu.limit_reached`) go through the outbox
+like every other notice. Non-AI work is untouched, and proven so.
+
+**§6 least privilege — a viewer, and a viewer by default.** The role
+catalogue had no bare viewer, so a new membership had to be handed a real
+role. `VIEWER` now exists: read on every area of the company's record, never
+the platform's administration, AI execution or billing; grantable by an
+administrator; priced at the lowest internal seat so buying one beyond the
+package is never free. A membership added with no roles named
+(`POST /v1/users/memberships`) is a viewer until an administrator says more.
+
+**§9.4 rate cards price the subscription.** Rate cards were recorded per cost
+centre and changed nothing. They are now approved pricing: the agreement's
+version carries `rateCards` — a whole-percentage discount off list per card
+(`GROUP_INTERNAL`, `ENTERPRISE_GROUP`, `RETAIL`), set by the operator on the
+draft and approved by the group with the rest of the terms.
+`subscriptionPriceMinor()` reads a company's price through its group's
+agreement in force and its cost centre's card; every renewal and every first
+month is raised at that price (a company added by the group administrator has
+its first month raised *after* it is attached, so the card applies from day
+one); the 20% AI allowance is credited against what was paid, not the list
+price; the statement shows list and charged side by side; the Group screen
+names the cards in force.
+
+**Enterprise / Group v1.0 §9.3 past_due.** `collection.pastDue()` names the
+oldest period due and unpaid while its grace runs, with the day the platform
+stops; `GET /v1/billing/subscription` carries it and ACU & Billing says so
+before the suspension rather than after.
+
+**§7 entitlement lifecycle — scheduled → active → expired.** A module grant
+takes `validFrom` and `validTo`; `grantLifecycle()` reads SCHEDULED, ACTIVE,
+EXPIRED or REVOKED against the clock, `grantedModules()` holds only what is
+live now, the entitlement read lists live and pending grants separately, and
+the operator's module decision has the two dates. An entitlement that ends
+before it starts is refused.
+
+**§10.1 group money funds company wallets, explicitly.** `POST
+/v1/admin/groups/:groupId/credit` records one payment by the group with
+allocations that must total the amount exactly — never spread, never
+guessed — each company credited as its own receipt under
+`<reference>/<cost centre code>`, checked in full before any wallet moves
+(a company outside the group, a wrong total, a closed company: refused, and
+nothing credited). `GROUP_PURCHASE_RECORDED` on the group's chain;
+*Credit the group* on Tenants & Users.
+
+**§10.2 / AT-25 refunds, chargebacks and disputed funding.** Stripe's
+`charge.refunded` and `charge.dispute.created` are read (`reversedPayment`;
+the refund figure is Stripe's running total, so a second partial refund
+reverses only the new part) and recorded through
+`Platform.reversePayment`: an explicit `PaymentReversal` against the receipt
+— the receipt itself is never rewritten — the wallet debited what is still
+available as its own entry, and what had already been consumed raised as a
+`PaymentException` with the shortfall on it. Nothing goes negative; no
+sibling wallet is touched; a payment this platform never recorded is
+acknowledged and not acted on. A dispute freezes the wallet
+(`ACU_WALLET_FROZEN`): `reserve()` refuses `WALLET_FROZEN`, everything but
+AI continues, the freeze survives a restart, and only the operator lifts it
+with a reason (`ACU_WALLET_UNFROZEN`). The operator records a refund or
+chargeback by hand (`/v1/admin/tenants/:id/payments/reverse`), reads and
+resolves exceptions (`/v1/admin/payments/exceptions`), and Tenants & Users
+carries the *Payment exceptions* card with Resolve and Unfreeze.
+
+**§10.2 / AT-22 reconciliation_required.** A remote provider call that timed
+out after it left is no longer released: `AI_PROVIDER_TIMEOUT` parks the hold
+(`ACUWallet.parkHold`), the execution is `UNRESOLVED`, and the reservation
+stays where it is until the operator says what the provider's account shows
+— `POST /v1/admin/ai/executions/:id/reconcile` charges the call's cost or
+releases the hold, with the evidence required and recorded; exactly one
+outcome, once, and a stale worker settling again moves nothing. The command
+centre lists unreconciled outcomes with a *Reconcile* door.
+
+**§17 operational figures.** `GET /v1/admin/watch` carries `operational`:
+authorisation denials by reason, unreconciled provider outcomes and the
+oldest, open reservations and the oldest, frozen wallets, open payment
+exceptions, issuance failures pending retry, webhook signature failures and
+ledger state-hash discrepancies — each counted from the record. Risk & alerts
+shows them.
+
+`tests/groupspec.test.ts` and `tests/groupspec2.test.ts` carry the proof:
+the recipients and the two thresholds told once; the limit refusing AI and
+leaving a write alone; the viewer's matrix and the default membership; the
+25% card pricing a first month, its allowance and its statement, and list
+price on an undiscounted card; past_due's edges; scheduled, active and
+expired grants; a group purchase allocated, replayed and refused; a refund
+reversed once and a running total handled; consumed funding raised as an
+exception; a dispute freezing, surviving a restart and being lifted; a
+timeout parked, charged once, and a replayed settlement moving nothing; the
+§17 figures read live.
+
+**Still not built on this side, stated so it is not mistaken for missing by
+accident:** VERYX and product workspaces (one product); external identity
+providers and OIDC; the asynchronous document job with ACU reservation
+(rendering is synchronous); cross-tenant credit transfer (disabled by default
+in the specification; absent here); FX conversion and intercompany
+elimination rules (original currency is kept and totals are per currency);
+proration of a seat bought mid-period; micro-ACU denomination (one ACU is one
+minor unit, a settled decision); RLS and Kafka (no database, no broker — the
+contract is recorded in `docs/GROUP_TENANCY.md`); the latency targets, which
+are unmeasured rather than met.
 
 ### Files without a second setting, and a term the pricing page made
 

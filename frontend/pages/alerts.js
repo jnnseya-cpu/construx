@@ -88,6 +88,34 @@ export async function alerts(root) {
           </div>`
         : ''}
 
+      ${!watch.error && watch.operational
+        ? html`<div class="card" style="margin-bottom:14px" data-operational>
+            <h2>Operational figures</h2>
+            <p class="metric-sub" style="margin-bottom:10px">
+              The measures the Enterprise / Group specification names (§17), each counted from the record — nothing here is modelled.
+              A non-zero on unreconciled outcomes, frozen wallets or open exceptions is a finance decision waiting on the Tenants &amp; Users screen.
+            </p>
+            <div class="split-list">
+              <div class="row"><span class="lbl">Authorisation denials, by reason</span><span class="val">${
+                watch.operational.authorisationDenialsByReason.length
+                  ? watch.operational.authorisationDenialsByReason.slice(0, 6).map((d) => `${d.reason} ${d.count}`).join(' · ')
+                  : 'none since start'
+              }</span></div>
+              <div class="row"><span class="lbl">Unreconciled provider outcomes</span><span class="val">${badge(String(watch.operational.unreconciledProviderOutcomes), watch.operational.unreconciledProviderOutcomes > 0 ? 'warn' : 'ok')}${
+                watch.operational.oldestUnreconciledSeconds !== null ? html` <span class="metric-sub">oldest ${Math.round(watch.operational.oldestUnreconciledSeconds / 60)} min</span>` : ''
+              }</span></div>
+              <div class="row"><span class="lbl">Open AI reservations</span><span class="val">${watch.operational.openHolds}${
+                watch.operational.oldestOpenHoldSeconds !== null ? html` <span class="metric-sub">oldest ${watch.operational.oldestOpenHoldSeconds}s</span>` : ''
+              }</span></div>
+              <div class="row"><span class="lbl">Frozen wallets</span><span class="val">${badge(String(watch.operational.frozenWallets), watch.operational.frozenWallets > 0 ? 'bad' : 'ok')}</span></div>
+              <div class="row"><span class="lbl">Open payment exceptions</span><span class="val">${badge(String(watch.operational.openPaymentExceptions), watch.operational.openPaymentExceptions > 0 ? 'warn' : 'ok')}</span></div>
+              <div class="row"><span class="lbl">Issuance failures pending retry</span><span class="val">${watch.operational.issuanceFailures}</span></div>
+              <div class="row"><span class="lbl">Webhook signature failures</span><span class="val">${badge(String(watch.operational.webhookSignatureFailures), watch.operational.webhookSignatureFailures > 0 ? 'warn' : 'ok')}</span></div>
+              <div class="row"><span class="lbl">Ledger state-hash discrepancies</span><span class="val">${badge(String(watch.operational.ledgerDiscrepancies), watch.operational.ledgerDiscrepancies > 0 ? 'warn' : 'ok')}</span></div>
+            </div>
+          </div>`
+        : ''}
+
       ${watch.error
         ? refusal('The platform watch', watch.error)
         : html`<div class="card pad0" style="margin-bottom:14px">

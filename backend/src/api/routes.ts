@@ -21,6 +21,7 @@ import { SIGNATURES } from '../site/media.ts';
 import * as notifications from '../notifications/catalogue.ts';
 import { CATEGORIES, CATEGORY_TITLES, NOTIFICATION_EVENTS } from '../notifications/catalogue.ts';
 import * as notifyEngine from '../notifications/notify.ts';
+import { PLATFORM_BRANDING } from '../notifications/render.ts';
 import * as preferences from '../notifications/preferences.ts';
 import * as notificationRender from '../notifications/render.ts';
 import type { Engine } from '../ai/orchestrator.ts';
@@ -164,7 +165,7 @@ import {
 import { allocateDocumentNumber, DOCUMENT_TYPES, issuerProfile, issuerProfileVersion, recordBrandChange, setIssuerProfile } from '../group/profile.ts';
 import { acceptShare, readSharedRecord, revokeShare, shareRecord, sharesGiven, sharesReceived } from '../group/sharing.ts';
 import { closeSupportAccess, openSupportAccess, readUnderSupportAccess, supportGrants } from '../group/support.ts';
-import { AGREEMENT_MODES, approveAgreement, BILLING_CADENCES, groupBilling, setAgreement, tenantSubscriptionItems, type AgreementMode, type AgreementParty, type BillingCadence } from '../group/agreement.ts';
+import { AGREEMENT_MODES, approveAgreement, BILLING_CADENCES, groupBilling, RATE_CARDS, setAgreement, tenantSubscriptionItems, type AgreementMode, type AgreementParty, type BillingCadence, type RateCardTerms } from '../group/agreement.ts';
 import { approveDocument, createDraft, documentOf, documentsOf, generateRevision, issuancesOf, issueDocument, issuedBytes, rejectDocument, submitForApproval, voidIssuance, type DocumentBody } from '../group/issuance.ts';
 import { legalReadiness, verifyIssuerProfile } from '../group/profile.ts';
 import { createReportingGrant, grantsGiven, groupReports, readGroupReport, REPORT_METRICS, revokeReportingGrant, runGroupReport } from '../group/reporting.ts';
@@ -244,7 +245,7 @@ import { exposurePosition, readExposureInput } from '../site/exposure.ts';
 import { exposure as exposurePage } from '../site/pages.ts';
 import { evaluateAccess, SENSITIVITY_CLEARANCE, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { ENTITY_ACCESS } from '../identity/entityAccess.ts';
-import { MODULES, isModuleId, requireModule } from '../identity/modules.ts';
+import { MODULES, isModuleId, requireModule , grantLifecycle } from '../identity/modules.ts';
 import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, revokeToken, shapeMfaResponse, verifyMfaChallenge, verifyToken, type AuthContext } from '../identity/auth.ts';
 import { lockedSubjects } from '../identity/lockout.ts';
 import { renderAndCharge, quoteRender, type RenderableFormat } from '../export/render.ts';
@@ -800,12 +801,6 @@ async function storeBrandImage(
  * A registration has no tenancy yet, so there is no customer branding to use.
  * This is CONSTRUX writing as itself, which is what the message actually is.
  */
-const PLATFORM_BRANDING = {
-  clientName: 'CONSTRUX',
-  primaryColour: '#ff6600',
-  documentReferencePrefix: 'CXA',
-  legalFooter: 'CONSTRUX — construction operating system',
-} as const;
 
 const AGENT_COMMANDS: Record<string, (ctx: ReturnType<typeof projectContext>, input: Record<string, unknown>) => Promise<unknown>> = {
   'planning:forecastDelay': (ctx, input) => planning.forecastDelay(ctx, input as never),
@@ -2040,6 +2035,10 @@ export const ROUTES: Route[] = [
         // this hands a named company capability that is not on the price list,
         // and a record of that with no stated basis is unreviewable.
         reason: { type: 'string', minLength: 3 },
+        // Scheduled start and expiry (Enterprise / Group v1.0 §7). Either may
+        // be omitted; a grant with neither is from now, open-ended.
+        validFrom: { type: 'string' },
+        validTo: { type: 'string' },
       },
       additionalProperties: false,
     },
@@ -2056,16 +2055,19 @@ export const ROUTES: Route[] = [
       if (!isModuleId(moduleId)) {
         throw new DomainError('MODULE_UNKNOWN', `${moduleId} is not a module this platform has`, 404);
       }
-      const input = body<{ status: 'ACTIVE' | 'REVOKED'; reason: string }>(ctx);
+      const input = body<{ status: 'ACTIVE' | 'REVOKED'; reason: string; validFrom?: string; validTo?: string }>(ctx);
       const grant = platform.setModuleGrant({
         moduleId,
         tenantId: ctx.params.tenantId!,
         status: input.status,
         reason: input.reason,
         decidedBy: actor.actorId,
+        ...(input.validFrom ? { validFrom: input.validFrom } : {}),
+        ...(input.validTo ? { validTo: input.validTo } : {}),
       });
       return {
         ...grant,
+        lifecycle: grantLifecycle(grant),
         moduleName: MODULES[moduleId].name,
         // Stated back rather than left implied, exactly as the subscription
         // switch does: an operator should see what they have just handed over.
@@ -2104,6 +2106,7 @@ export const ROUTES: Route[] = [
         // register showing only live grants cannot answer it.
         grants: platform.moduleGrants().map((grant) => ({
           ...grant,
+          lifecycle: grantLifecycle(grant),
           moduleName: MODULES[grant.moduleId].name,
           legalName: names.get(grant.tenantId) ?? grant.tenantId,
           grantedByName: person(grant.grantedBy),
@@ -5394,6 +5397,125 @@ export const ROUTES: Route[] = [
       return { tenantId: result.tenant.id, legalName: result.tenant.legalName, deletedAt: result.tenant.deletedAt, identitiesErased: result.erased };
     },
   },
+  // ------------------------------------------ money that went back, and AI nobody can account for
+  {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:tenantId/payments/reverse',
+    description: 'Record a refund or chargeback against a payment this platform recorded: an explicit reversing entry, a finance exception for what was already spent, and a frozen wallet while a dispute stands (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['reference', 'amountMinor', 'kind', 'eventId'],
+      properties: {
+        reference: { type: 'string', minLength: 4, maxLength: 200 },
+        amountMinor: { type: 'integer', minimum: 1 },
+        kind: { type: 'string', enum: ['REFUND', 'DISPUTE'] },
+        // The bank's or provider's own identifier for the reversal, spent once.
+        eventId: { type: 'string', minLength: 3, maxLength: 200 },
+        note: { type: 'string', maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      operatorOnly(ctx, 'record a payment reversal');
+      const input = body<{ reference: string; amountMinor: number; kind: 'REFUND' | 'DISPUTE'; eventId: string; note?: string }>(ctx);
+      const receipt = platform.paymentReceipts(ctx.params.tenantId as string).find((held) => held.reference === input.reference.trim());
+      if (!receipt) throw new NotFoundError(`No payment ${input.reference} on this tenancy`);
+      return platform.reversePayment({ ...input, recordedBy: actor.actorId, source: 'OPERATOR' });
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/payments/exceptions',
+    readOnly: true,
+    description: 'Finance exceptions: funding reversed after it was spent, and subscription payments undone — open first, with the frozen wallets (platform operator only)',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read payment exceptions');
+      const names = new Map(platform.tenants().map((tenant) => [tenant.id, tenant.legalName]));
+      return {
+        exceptions: platform.paymentExceptions().map((exception) => ({
+          ...exception,
+          legalName: names.get(exception.tenantId) ?? exception.tenantId,
+          walletFrozen: platform.wallet(exception.tenantId).frozen(),
+        })),
+        frozenWallets: platform
+          .tenants()
+          .filter((tenant) => platform.wallet(tenant.id).frozen() !== null)
+          .map((tenant) => ({ tenantId: tenant.id, legalName: tenant.legalName, frozen: platform.wallet(tenant.id).frozen() })),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/payments/exceptions/:exceptionId/resolve',
+    description: 'Close a finance exception with how it was resolved (platform operator only)',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 5, maxLength: 500 } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      operatorOnly(ctx, 'resolve a payment exception');
+      return platform.resolvePaymentException(actor.actorId, ctx.params.exceptionId as string, body<{ note: string }>(ctx).note);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:tenantId/wallet/unfreeze',
+    description: 'Lift the freeze a disputed payment put on a wallet, with the reason on the record (platform operator only)',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5, maxLength: 500 } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      operatorOnly(ctx, 'unfreeze a wallet');
+      return platform.unfreezeWallet(actor.actorId, ctx.params.tenantId as string, body<{ reason: string }>(ctx).reason);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/ai/unreconciled',
+    readOnly: true,
+    description: 'AI executions whose provider outcome is unknown — the call timed out after it left — with their holds still reserved, waiting for the operator’s evidence (platform operator only)',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read unreconciled AI executions');
+      const names = new Map(platform.tenants().map((tenant) => [tenant.id, tenant.legalName]));
+      return {
+        executions: platform.orchestrator.unresolved().map((execution) => ({
+          id: execution.id,
+          provider: execution.provider,
+          modelClass: execution.modelClass,
+          heldMinor: execution.acuHeld,
+          tenantId: execution.unresolved?.tenantId ?? null,
+          legalName: names.get(execution.unresolved?.tenantId ?? '') ?? execution.unresolved?.tenantId ?? '—',
+          reason: execution.unresolved?.reason ?? '',
+          since: execution.unresolved?.since ?? execution.startedAt,
+          ageSeconds: Math.floor((Date.now() - Date.parse(execution.unresolved?.since ?? execution.startedAt)) / 1000),
+        })),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/ai/executions/:executionId/reconcile',
+    description: 'Resolve an unreconciled AI execution with the provider’s evidence: charge what the call cost, or release the hold (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['outcome', 'note'],
+      properties: {
+        outcome: { type: 'string', enum: ['CHARGE', 'RELEASE'] },
+        rawCostMinor: { type: 'integer', minimum: 1 },
+        note: { type: 'string', minLength: 5, maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      operatorOnly(ctx, 'reconcile an AI execution');
+      const input = body<{ outcome: 'CHARGE' | 'RELEASE'; rawCostMinor?: number; note: string }>(ctx);
+      if (input.outcome === 'CHARGE' && !input.rawCostMinor) throw new ValidationError('A charge needs the provider’s cost', [{ field: 'rawCostMinor', message: 'required for CHARGE' }]);
+      return platform.orchestrator.reconcile(
+        ctx.params.executionId as string,
+        input.outcome === 'CHARGE' ? { kind: 'CHARGE', actualRawCostMinor: input.rawCostMinor! } : { kind: 'RELEASE' },
+        { note: input.note, by: actor.actorId },
+      );
+    },
+  },
   {
     method: 'GET',
     pattern: '/v1/admin/tenants/:tenantId/closure',
@@ -6583,6 +6705,38 @@ export const ROUTES: Route[] = [
     },
   },
   {
+    method: 'POST',
+    pattern: '/v1/admin/groups/:groupId/credit',
+    description: 'Record a payment by the group that funds its companies’ AI wallets: one reference, explicit allocations totalling exactly the amount, each credited to its company (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['amountMinor', 'method', 'reference', 'allocations'],
+      properties: {
+        amountMinor: { type: 'integer', minimum: 1 },
+        method: { type: 'string', enum: ['BANK_TRANSFER', 'CARD', 'INVOICE_SETTLEMENT', 'CREDIT_NOTE', 'MANUAL_ADJUSTMENT'] },
+        reference: { type: 'string', minLength: 4, maxLength: 200 },
+        allocations: {
+          type: 'array',
+          minItems: 1,
+          maxItems: GROUP_LICENCE.maxCompanies,
+          items: { type: 'object', required: ['tenantId', 'amountMinor'], properties: { tenantId: stringField, amountMinor: { type: 'integer', minimum: 1 } }, additionalProperties: false },
+        },
+        note: { type: 'string', maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      operatorOnly(ctx, 'record a group purchase');
+      const input = body<{ amountMinor: number; method: PaymentMethod; reference: string; allocations: Array<{ tenantId: string; amountMinor: number }>; note?: string }>(ctx);
+      const result = platform.recordGroupPurchase({ groupId: ctx.params.groupId as string, ...input, recordedBy: actor.actorId });
+      return {
+        ...result,
+        wallets: result.purchase.allocations.map((allocation) => ({ tenantId: allocation.tenantId, code: allocation.code, availableMinor: platform.wallet(allocation.tenantId).snapshot().availableMinor })),
+      };
+    },
+  },
+  {
     method: 'PUT',
     pattern: '/v1/admin/groups/:groupId/billing',
     description: "The group's billing account: invoice mode, terms, payment customer reference (platform operator only)",
@@ -6910,17 +7064,20 @@ export const ROUTES: Route[] = [
     description: 'Add somebody who already exists in another company of the group to this company, as the same person with the roles named',
     schema: {
       type: 'object',
-      required: ['email', 'roles'],
+      required: ['email'],
+      // Least privilege by default (GN-SPEC-TENANCY-001 §6): a membership with
+      // no roles named is a viewer, and holds nothing else until an
+      // administrator says so.
       properties: { email: stringField, roles: { type: 'array', items: { type: 'string' }, minItems: 1 } },
       additionalProperties: false,
     },
     handler: (platform, ctx) => {
       const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'C');
-      const input = body<{ email: string; roles: string[] }>(ctx);
-      for (const role of input.roles) {
+      const input = body<{ email: string; roles?: string[] }>(ctx);
+      for (const role of input.roles ?? []) {
         if (!(TENANT_GRANTABLE_ROLES as readonly string[]).includes(role)) throw new ValidationError(`${role} is not a role this company can grant`, [{ field: 'roles', message: `${role} is not grantable` }]);
       }
-      return addMembership(platform, actor, { email: input.email, roles: input.roles as (typeof TENANT_GRANTABLE_ROLES)[number][] });
+      return addMembership(platform, actor, { email: input.email, ...(input.roles ? { roles: input.roles as (typeof TENANT_GRANTABLE_ROLES)[number][] } : {}) });
     },
   },
 
@@ -7077,6 +7234,20 @@ export const ROUTES: Route[] = [
         cadence: { type: 'string', enum: [...BILLING_CADENCES] },
         effectiveFrom: { type: 'string' },
         pricingPolicyVersion: { type: 'string', maxLength: 60 },
+        // The approved pricing per rate card (GN-SPEC-TENANCY-001 §9.4): a
+        // discount off the platform's list price for the companies charged on
+        // that card. Zero everywhere unless the terms say otherwise; the
+        // group approves the version that carries it.
+        rateCards: {
+          type: 'object',
+          properties: Object.fromEntries(
+            RATE_CARDS.map((card) => [
+              card,
+              { type: 'object', required: ['discountPercent'], properties: { discountPercent: { type: 'integer', minimum: 0, maximum: 100 } }, additionalProperties: false },
+            ]),
+          ),
+          additionalProperties: false,
+        },
         note: { type: 'string', maxLength: 1000 },
       },
       additionalProperties: false,
@@ -7084,7 +7255,12 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => {
       const actor = auth(ctx);
       if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator sets agreement terms', 'PLATFORM_ADMIN_REQUIRED');
-      return setAgreement(platform, actor, ctx.params.groupId as string, body<{ mode: AgreementMode; seller: AgreementParty; payer: AgreementParty; currency?: string; cadence?: BillingCadence; effectiveFrom?: string; note?: string; pricingPolicyVersion?: string }>(ctx));
+      return setAgreement(
+        platform,
+        actor,
+        ctx.params.groupId as string,
+        body<{ mode: AgreementMode; seller: AgreementParty; payer: AgreementParty; currency?: string; cadence?: BillingCadence; effectiveFrom?: string; note?: string; pricingPolicyVersion?: string; rateCards?: Partial<RateCardTerms> }>(ctx),
+      );
     },
   },
   {
@@ -20154,6 +20330,10 @@ export const ROUTES: Route[] = [
           }))
           .reverse(),
         outstandingMinor: due.reduce((sum, charge) => sum + charge.amountMinor, 0),
+        // past_due (Enterprise / Group v1.0 §9.3): a period whose due date has
+        // passed while its grace period runs. The tenancy is still open; the
+        // date it stops is named so nobody is surprised by the suspension.
+        pastDue: collection.pastDue(charges),
         // The rails this deployment can take the payment on. Card when Stripe
         // is configured; a transfer always, recorded by the operator against
         // the reference above.
@@ -20415,6 +20595,41 @@ export const ROUTES: Route[] = [
       // signature the entire defence. Unverified, this is a URL that credits
       // wallets to anybody who finds it.
       const event = stripe.verifyWebhook(ctx.rawBody ?? Buffer.alloc(0), ctx.webhookSignature);
+
+      // Money going back (§10.2, AT-25): an explicit reversal against the
+      // receipt the payment intent identifies. A reference this platform never
+      // recorded is acknowledged and not acted on — refunding it here would be
+      // inventing a debit against a wallet the money never reached.
+      const reversed = stripe.reversedPayment(event);
+      if (reversed) {
+        try {
+          const result = platform.reversePayment({
+            reference: reversed.reference,
+            amountMinor: reversed.amountMinor,
+            kind: reversed.kind,
+            eventId: reversed.eventId,
+            recordedBy: 'stripe',
+            source: 'PROVIDER',
+            note: `Stripe ${event.type}`,
+            // Stripe reports the running total refunded on the charge.
+            cumulative: reversed.kind === 'REFUND',
+          });
+          return {
+            received: true,
+            acted: true,
+            kind: reversed.kind,
+            reversedMinor: result.reversal.reversedMinor,
+            shortfallMinor: result.reversal.shortfallMinor,
+            exceptionId: result.exception?.id ?? null,
+            frozen: result.frozen,
+            alreadyRecorded: result.alreadyRecorded,
+          };
+        } catch (error) {
+          if (error instanceof NotFoundError) return { received: true, acted: false, type: event.type, reason: 'PAYMENT_UNKNOWN' };
+          throw error;
+        }
+      }
+
       const payment = stripe.settledPayment(event);
 
       // Acknowledged, not acted on. Stripe sends dozens of event types and

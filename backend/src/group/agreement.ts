@@ -4,7 +4,7 @@ import { PACKAGES } from '../billing/seats.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import { MODULES } from '../identity/modules.ts';
 import type { Platform } from '../platform.ts';
-import { groupOf, type ChargeMode, type Group } from './directory.ts';
+import { groupOf, groupOfTenant, type ChargeMode, type Group, type RateCard } from './directory.ts';
 
 /**
  * The agreement under a group, and what each company's subscription holds
@@ -42,9 +42,23 @@ export type BillingCadence = (typeof BILLING_CADENCES)[number];
 /** A named legal entity on the agreement; one of the group's own companies where it is one. */
 export type AgreementParty = { legalName: string; tenantId: string | null };
 
+/**
+ * The approved pricing per rate card (GN-SPEC-TENANCY-001 §9.4): what the
+ * companies charged on each card pay against the platform's list price.
+ * `group_internal` is the group's own companies at real rates, optionally
+ * discounted so venture P&Ls and transfer pricing stay clean; `enterprise_group`
+ * an external group; `retail` the public price. A discount is a term of the
+ * agreement the group approved, never a setting somebody toggled.
+ */
+export type RateCardTerms = Record<RateCard, { discountPercent: number }>;
+export const RATE_CARDS: readonly RateCard[] = ['GROUP_INTERNAL', 'ENTERPRISE_GROUP', 'RETAIL'];
+export const NO_DISCOUNT: RateCardTerms = { GROUP_INTERNAL: { discountPercent: 0 }, ENTERPRISE_GROUP: { discountPercent: 0 }, RETAIL: { discountPercent: 0 } };
+
 export type AgreementVersion = {
   version: number;
   mode: AgreementMode;
+  /** Absent on versions written before pricing was a term of the agreement: no discount anywhere. */
+  rateCards?: RateCardTerms;
   seller: AgreementParty;
   payer: AgreementParty;
   currency: string;
@@ -125,9 +139,28 @@ export function setAgreement(
   platform: Platform,
   actor: AuthContext,
   groupId: string,
-  input: { mode: AgreementMode; seller: AgreementParty; payer: AgreementParty; currency?: string; cadence?: BillingCadence; effectiveFrom?: string; note?: string; pricingPolicyVersion?: string },
+  input: {
+    mode: AgreementMode;
+    seller: AgreementParty;
+    payer: AgreementParty;
+    currency?: string;
+    cadence?: BillingCadence;
+    effectiveFrom?: string;
+    note?: string;
+    pricingPolicyVersion?: string;
+    rateCards?: Partial<RateCardTerms>;
+  },
 ): Agreement {
   const group = groupOf(platform, groupId);
+  const rateCards: RateCardTerms = { ...NO_DISCOUNT };
+  for (const card of RATE_CARDS) {
+    const terms = input.rateCards?.[card];
+    if (!terms) continue;
+    if (!Number.isInteger(terms.discountPercent) || terms.discountPercent < 0 || terms.discountPercent > 100) {
+      throw new DomainError('RATE_CARD_DISCOUNT_INVALID', `The ${card} discount is a whole percentage between 0 and 100`);
+    }
+    rateCards[card] = { discountPercent: terms.discountPercent };
+  }
   if (!AGREEMENT_MODES.includes(input.mode)) throw new DomainError('AGREEMENT_MODE_UNKNOWN', `${input.mode} is not an agreement mode. One of: ${AGREEMENT_MODES.join(', ')}`);
   const cadence = input.cadence ?? 'MONTHLY';
   if (!BILLING_CADENCES.includes(cadence)) throw new DomainError('CADENCE_UNKNOWN', `${cadence} is not a billing cadence`);
@@ -146,6 +179,7 @@ export function setAgreement(
   const version: AgreementVersion = {
     version: (existing?.versions.length ?? 0) + 1,
     mode: input.mode,
+    rateCards,
     seller,
     payer,
     currency,
@@ -336,5 +370,30 @@ export function groupBilling(platform: Platform, groupId: string): {
     subscriptions,
     seats: { used, distinctPeople: addresses.size },
     invoicing: invoiceGrouping(platform, group, inForce),
+  };
+}
+
+/**
+ * What a company pays for its subscription against the list price: the
+ * agreement in force for its group, read through the rate card on its cost
+ * centre. A company in no group, or in a group with no approved agreement, or
+ * on a card the agreement leaves undiscounted, pays the list price. Rounded
+ * down to the minor unit; the discount is a term the group approved.
+ */
+export function subscriptionPriceMinor(
+  platform: Platform,
+  tenantId: string,
+  listMinor: number,
+): { amountMinor: number; listMinor: number; discountPercent: number; rateCard: RateCard | null } {
+  const group = groupOfTenant(platform, tenantId);
+  const centre = group?.costCentres.find((entry) => entry.tenantId === tenantId);
+  if (!group || !centre) return { amountMinor: listMinor, listMinor, discountPercent: 0, rateCard: null };
+  const inForce = agreementInForce(agreementOf(platform, group.id));
+  const discountPercent = inForce?.rateCards?.[centre.rateCard]?.discountPercent ?? 0;
+  return {
+    amountMinor: Math.floor((listMinor * (100 - discountPercent)) / 100),
+    listMinor,
+    discountPercent,
+    rateCard: centre.rateCard,
   };
 }

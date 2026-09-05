@@ -189,6 +189,11 @@ def('subscription.cancelled', 'Subscription cancelled', 'Your subscription was c
 def('subscription.reactivated', 'Subscription reactivated', 'Your subscription is reactivated', 'SUCCESS', [E, I]);
 def('payment.pending', 'Payment pending', 'Payment is processing', 'INFO', [I]);
 def('payment.successful', 'Payment successful', 'Payment received — {{amount}}', 'SUCCESS', [E, I]);
+// GN-SPEC-TENANCY-001 §9.3 / §11 usage.threshold and usage.limit_reached: the
+// company's administrators and the group's finance are told when AI spend
+// crosses a threshold of the monthly limit, and when the limit stops it.
+def('acu.threshold', 'AI budget threshold', 'AI spend at {{enterprise}} has reached {{percent}}% of the monthly limit', 'WARNING', [E, I]);
+def('acu.limit_reached', 'AI budget limit reached', 'AI is paused at {{enterprise}} — the {{scope}} limit is reached', 'CRITICAL', [E, I]);
 def('payment.failed', 'Payment failed', 'Your payment failed', 'WARNING', [E, I, S], MANDATORY);
 def('payment.retry', 'Payment retry', 'We’ll retry your payment', 'INFO', [E, I]);
 def('payment.card_expiring', 'Card expiring', 'Your card expires soon', 'WARNING', [E, I]);

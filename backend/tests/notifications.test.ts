@@ -60,8 +60,8 @@ before(async () => {
 });
 
 describe('the catalogue', () => {
-  it('holds 182 events across 15 categories', () => {
-    assert.equal(NOTIFICATION_EVENTS.length, 182);
+  it('holds 184 events across 15 categories', () => {
+    assert.equal(NOTIFICATION_EVENTS.length, 184);
     assert.equal(CATEGORIES.length, 15);
     assert.equal(new Set(CATEGORIES.map((c) => CATEGORY_TITLES[c])).size, 15, 'two categories share a title');
   });
@@ -112,7 +112,7 @@ describe('the catalogue', () => {
     assert.deepEqual(unreachable, NO_INAPP_RECIPIENT, 'an event skips in-app without being named here');
 
     assert.equal(coverage.INAPP, NOTIFICATION_EVENTS.length - NO_INAPP_RECIPIENT.length);
-    assert.equal(coverage.EMAIL, 135);
+    assert.equal(coverage.EMAIL, 137);
     assert.equal(coverage.SMS, 18);
     assert.equal(coverage.PUSH, 28);
   });

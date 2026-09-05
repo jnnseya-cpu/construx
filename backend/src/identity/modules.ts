@@ -115,6 +115,14 @@ export type ModuleGrant = {
   tenantId: string;
   /** ACTIVE or REVOKED. Revocation is a new state on the same record, never a delete. */
   status: 'ACTIVE' | 'REVOKED';
+  /**
+   * The entitlement's own dates (Enterprise / Group v1.0 §7: scheduled →
+   * active → expired). Absent means from the grant, for ever. A grant is
+   * `SCHEDULED` before `validFrom`, `EXPIRED` from `validTo`, and holds
+   * nothing in either state; the gate reads these on every request.
+   */
+  validFrom?: string;
+  validTo?: string;
   grantedBy: string;
   grantedAt: string;
   /** Why, in the operator's own words. Mandatory: a grant with no stated reason is unreviewable. */
@@ -123,6 +131,16 @@ export type ModuleGrant = {
   revokedAt?: string;
   revokedReason?: string;
 };
+
+/** Where a grant is in its life, read against the clock rather than stored. */
+export type GrantLifecycle = 'SCHEDULED' | 'ACTIVE' | 'EXPIRED' | 'REVOKED';
+
+export function grantLifecycle(grant: ModuleGrant, now = new Date().toISOString()): GrantLifecycle {
+  if (grant.status === 'REVOKED') return 'REVOKED';
+  if (grant.validFrom && grant.validFrom > now) return 'SCHEDULED';
+  if (grant.validTo && grant.validTo <= now) return 'EXPIRED';
+  return 'ACTIVE';
+}
 
 /** The refId a grant is stored under. One per tenancy per module, by construction. */
 export function grantRef(moduleId: ModuleId, tenantId: string): string {

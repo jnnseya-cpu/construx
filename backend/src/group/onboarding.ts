@@ -1,6 +1,7 @@
 import { DomainError, ValidationError } from '../core/errors.ts';
 import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
 import { GROUP_LICENCE, PACKAGES, type PackageTier } from '../billing/seats.ts';
+import { raiseOpeningCharge } from '../billing/collection.ts';
 import type { SubscriptionTier } from '../billing/subscription.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import type { Platform, PlatformUser } from '../platform.ts';
@@ -318,11 +319,15 @@ export function addCompany(platform: Platform, actor: AuthContext, groupId: stri
     enterpriseName: displayName,
     trialGrant: false,
     opensOn: 'FIRST_PAYMENT',
+    // Priced once it is a company of the group: the agreement's rate card
+    // applies to the first month like every month after it.
+    deferOpeningCharge: true,
   });
   const tenantId = created.tenant.id;
   const agreement = agreementOf(platform, group.id);
   const mode = agreementInForce(agreement)?.mode ?? agreement?.versions[agreement.versions.length - 1]?.mode;
   group = attachCompany(platform, actor, group.id, { tenantId, code, chargeMode: mode ? chargeModeFor(mode) : 'INTERNAL' });
+  const opening = raiseOpeningCharge(platform, tenantId)?.charge;
 
   const invited: PlatformUser[] = [];
   const administrators = input.administrators.map((person) => placeAdministrator(platform, group, tenantId, person, invited));
@@ -331,9 +336,7 @@ export function addCompany(platform: Platform, actor: AuthContext, groupId: stri
     group,
     company: { tenantId, name: displayName, code: centre.code, slug: centre.slug },
     administrators,
-    openingCharge: created.openingCharge
-      ? { id: created.openingCharge.id, amountMinor: created.openingCharge.amountMinor, paymentReference: paymentReferenceOf(created.openingCharge.id) }
-      : null,
+    openingCharge: opening ? { id: opening.id, amountMinor: opening.amountMinor, paymentReference: paymentReferenceOf(opening.id) } : null,
     invited,
   };
 }
