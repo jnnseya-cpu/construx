@@ -600,6 +600,70 @@ export async function design(root) {
             : ''
         }
 
+        ${
+          b.Model.length > 0
+            ? html`<div class="card pad0">
+                <div style="padding:15px 17px 0">
+                  <h2>Models held</h2>
+                  <p class="metric-sub" style="margin-bottom:12px">
+                    What each model was declared to be at ingestion, and what its file says once the platform has read it. An
+                    IFC is read from its own bytes — schema, storeys, unit, elements by class and a geometry hash per element —
+                    with no model in the loop. Two read revisions can be compared element by element, by GlobalId.
+                  </p>
+                </div>
+                ${table({
+                  headers: ['Model', 'Format · LOD', 'Elements', 'What the file says', ''],
+                  rows: b.Model.filter((m) => m.status !== 'AS_BUILT').map((m) => {
+                    const held = (evidence?.entries ?? []).some((entry) => entry.hash === m.fileHash && entry.held);
+                    const read = m.read;
+                    const others = b.Model.filter((other) => other._refId !== m._refId && other.read && other.format === 'IFC');
+                    return [
+                      html`${m.discipline ?? '—'}<br /><span class="metric-sub">${m.classification ?? ''} ${m.status ? badge(String(m.status).toLowerCase(), 'info') : ''}</span>`,
+                      `${m.format ?? '—'} · LOD ${m.lod ?? '—'}`,
+                      read
+                        ? html`${Number(m.elementCount ?? 0).toLocaleString()} read${
+                            m.declaredElementCount !== undefined
+                              ? html`<br /><span class="metric-sub">${Number(m.declaredElementCount).toLocaleString()} were declared</span>`
+                              : ''
+                          }`
+                        : html`${Number(m.elementCount ?? 0).toLocaleString()}<br /><span class="metric-sub">as declared, not read</span>`,
+                      read
+                        ? html`${read.schema}${read.viewDefinition ? ` · ${read.viewDefinition}` : ''}${read.lengthUnit ? ` · ${read.lengthUnit}` : ''}${
+                            read.authoringApplication ? ` · ${read.authoringApplication}` : ''
+                          }<br /><span class="metric-sub">${(read.storeys ?? []).length} storey(s) · ${read.spaces ?? 0} space(s) · ${
+                            read.elementsWithGeometry ?? 0
+                          } with geometry · ${Object.entries(read.elementsByType ?? {})
+                            .sort((a, b) => b[1] - a[1])
+                            .slice(0, 4)
+                            .map(([type, count]) => `${count} ${type.replace(/^IFC/, '').toLowerCase()}`)
+                            .join(', ')}${(read.warnings ?? []).length > 0 ? ` · ${read.warnings.join(' ')}` : ''}</span>`
+                        : m.format !== 'IFC'
+                          ? html`<span class="metric-sub">${m.format} is a proprietary binary; nothing here reads it. Export an IFC to have it read.</span>`
+                          : held
+                            ? html`<span class="metric-sub">The file is held and has not been read yet.</span>`
+                            : html`<span class="metric-sub">The platform holds the hash and not the file. Supply the file to have it read.</span>`,
+                      html`${
+                        m.format === 'IFC' && held && !read && can('BIM_TWIN', 'I')
+                          ? html`<button class="btn sm" data-read-model="${m._refId}">Read the model</button>`
+                          : ''
+                      }
+                      ${
+                        read && others.length > 0
+                          ? html`<select data-compare="${m._refId}" class="sm">
+                              <option value="">Compare with…</option>
+                              ${others.map((other) => html`<option value="${other._refId}">${other.discipline ?? 'Model'} · LOD ${other.lod ?? '—'} · ${Number(other.elementCount ?? 0).toLocaleString()} elements</option>`)}
+                            </select>`
+                          : ''
+                      }`,
+                    ];
+                  }),
+                  empty: 'No model ingested.',
+                })}
+                <div data-model-diff style="padding:0 17px 15px"></div>
+              </div>`
+            : ''
+        }
+
         <div class="card pad0">
           <h2 style="padding:15px 17px 0">Material and technical submittals</h2>
           <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
@@ -1318,7 +1382,68 @@ export async function design(root) {
     },
   };
 
+  root.addEventListener('change', async (event) => {
+    const compare = event.target.closest('[data-compare]');
+    if (!compare || !compare.value) return;
+    const panel = root.querySelector('[data-model-diff]');
+    panel.innerHTML = '<div class="metric-sub">Comparing…</div>';
+    try {
+      // The chosen model is the earlier revision; the row's model is what was done to it.
+      const result = await api.get(`/v1/projects/${projectId}/bim/models/${compare.dataset.compare}/diff/${compare.value}`);
+      const { diff } = result;
+      const row = (entry) => [entry.type.replace(/^IFC/, ''), entry.name ?? '—', entry.storey ?? '—', entry.globalId];
+      panel.innerHTML = resolveHtml(html`
+        <h2 style="margin-top:14px">Against the earlier revision</h2>
+        <div class="metric-sub" style="margin-bottom:10px">
+          ${diff.summary} Base ${result.base.discipline}, ${result.base.elementCount.toLocaleString()} elements; this revision ${result.model.elementCount.toLocaleString()}.
+          ${diff.sameGeometry ? 'The geometry hashes match.' : 'The geometry hashes differ.'}
+        </div>
+        ${[
+          ['Added', diff.added],
+          ['Removed', diff.removed],
+          ['Moved or reshaped', diff.changed],
+        ]
+          .filter(([, entries]) => entries.length > 0)
+          .map(
+            ([label, entries]) => html`<h2 style="margin-top:10px">${label} · ${entries.length}</h2>
+              ${table({ headers: ['Class', 'Name', 'Storey', 'GlobalId'], rows: entries.slice(0, 40).map(row) })}
+              ${entries.length > 40 ? html`<div class="metric-sub">${entries.length - 40} more not shown.</div>` : ''}`,
+          )}
+        ${
+          diff.renamed.length > 0
+            ? html`<h2 style="margin-top:10px">Renamed · ${diff.renamed.length}</h2>
+                ${table({ headers: ['Class', 'From', 'To', 'GlobalId'], rows: diff.renamed.slice(0, 40).map((entry) => [entry.type.replace(/^IFC/, ''), entry.from ?? '—', entry.to ?? '—', entry.globalId]) })}`
+            : ''
+        }
+      `);
+    } catch (error) {
+      panel.innerHTML = resolveHtml(html`<div class="notice err" style="margin-top:12px">${error.message}</div>`);
+    }
+  });
+
   root.addEventListener('click', async (event) => {
+    const readModel = event.target.closest('[data-read-model]');
+    if (readModel) {
+      readModel.disabled = true;
+      readModel.textContent = 'Reading…';
+      try {
+        const result = await api.post(`/v1/projects/${projectId}/bim/models/${readModel.dataset.readModel}/read`, {});
+        toast(
+          'Model read',
+          `${result.reading.schema}: ${result.reading.elementCount.toLocaleString()} elements on ${result.reading.storeys.length} storey(s)${
+            result.declaredElementCount !== undefined ? ` — ${result.declaredElementCount.toLocaleString()} were declared` : ''
+          }.`,
+          result.declaredElementCount !== undefined ? 'warn' : 'ok',
+        );
+        await draw();
+      } catch (error) {
+        toast('Not read', error.message, 'err');
+        readModel.disabled = false;
+        readModel.textContent = 'Read the model';
+      }
+      return;
+    }
+
     const read = event.target.closest('[data-read]');
     if (read) {
       // Written out rather than interpolated. One route per task is what makes

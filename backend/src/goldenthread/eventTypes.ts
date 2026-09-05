@@ -1204,6 +1204,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
 
   // --- BIM & digital twin ---------------------------------------------------
   def('MODEL_INGESTED', 'Model', 'IMPORT', 'BIM_TWIN', { aiAllowed: true, requiresEvidence: true }),
+  // The held IFC file parsed: schema, spatial structure, unit, every element
+  // and a geometry hash per element. Deterministic, no model in the loop —
+  // what the file says, against what was declared at ingestion.
+  def('MODEL_READ', 'Model', 'UPDATE', 'BIM_TWIN', { requiresEvidence: true }),
   def('CLASH_DETECTED', 'Clash', 'AI_EXECUTE', 'BIM_TWIN', { aiAllowed: true, requiresEvidence: true }),
   def('CLASH_RESOLVED', 'Clash', 'APPROVE', 'BIM_TWIN', { requiresEvidence: true }),
   // D-WF-04. An immutable set of exact model revisions. Never updated: a set

@@ -43,10 +43,12 @@ import type { EntityRecord } from '../goldenthread/ledger.ts';
  * **What blocks a run rather than being reported by it.** Two models on
  * different coordinate systems, or in different units, produce thousands of
  * clashes that are all the same error. Reporting them as findings would bury
- * the real ones, so the federation refuses to form. The platform does not parse
- * IFC — that is a declared gap — so the units and the coordinate system are
- * **declared** when a model is federated, by the person federating it, and the
- * refusal names what disagrees with what.
+ * the real ones, so the federation refuses to form. The units and the
+ * coordinate system are **declared** when a model is federated, by the person
+ * federating it, and the refusal names what disagrees with what. Where the
+ * model's IFC has been read (`bim.readModel`), the declared unit is also held
+ * to the one the file carries; the coordinate system is not in the file and
+ * stays a declaration.
  */
 
 export const UNITS = ['METRES', 'MILLIMETRES', 'FEET'] as const;
@@ -60,11 +62,9 @@ export type FederatedModel = {
   /** Content hash, so the set commits to the bytes and not to a label. */
   fileHash: string;
   /**
-   * Declared, not parsed.
-   *
-   * The platform holds a model's hash and its element count; it does not read
-   * its geometry. Somebody says what the model is in, and the platform holds
-   * them to it across the set.
+   * Declared by the person federating, and held across the set. Where the
+   * model's IFC has been read, the declaration is also checked against the
+   * length unit the file carries.
    */
   units: Units;
   coordinateSystem: string;
@@ -206,6 +206,25 @@ export function createFederationSet(
   // The refusal that saves the register. Two models in different units produce
   // thousands of clashes that are all one error, and reporting them as findings
   // buries the real ones.
+  // Where a model's file has been read, the declaration is checked against what
+  // the file says. The declaration used to be all there was; a person could
+  // federate a millimetre model as metres and the platform held them to the
+  // wrong thing consistently.
+  const READ_UNIT: Record<string, Units> = { m: 'METRES', mm: 'MILLIMETRES', ft: 'FEET' };
+  const UNIT_WORD: Record<Units, string> = { METRES: 'metres', MILLIMETRES: 'millimetres', FEET: 'feet' };
+  for (const model of input.models) {
+    const record = ctx.ledger.get({ refType: 'Model', refId: model.modelId });
+    const read = record?.state.read as { lengthUnit?: string } | undefined;
+    const fileUnit = read?.lengthUnit ? READ_UNIT[read.lengthUnit] : undefined;
+    if (fileUnit && fileUnit !== model.units) {
+      throw new DomainError(
+        'UNIT_DECLARATION_MISMATCH',
+        `The ${model.discipline} model is declared in ${UNIT_WORD[model.units]} and its file says ${UNIT_WORD[fileUnit]}. The ` +
+          'platform has read the file; the declaration is the one that is wrong.',
+      );
+    }
+  }
+
   const units = [...new Set(input.models.map((model) => model.units))];
   if (units.length > 1) {
     throw new DomainError(

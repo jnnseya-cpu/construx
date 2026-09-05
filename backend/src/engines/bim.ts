@@ -3,6 +3,9 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
+import { findByHash } from '../evidence/registry.ts';
+import type { EvidenceStore } from '../evidence/store.ts';
+import { diffIfc, IfcParseError, parseIfc, type IfcDiff, type IfcSummary } from './ifc.ts';
 import { networkFloat } from './planning.ts';
 import {
   assessCoverage,
@@ -326,6 +329,120 @@ export async function ingestModel(
   });
 
   return { modelId, acuConsumed: result.acuConsumed };
+}
+
+/** What a read of the held file records on the model: the summary, without the per-element list. */
+export type ModelReading = Omit<IfcSummary, 'elements'> & { readAt: string; readBy: string };
+
+async function heldIfc(
+  ctx: EngineContext,
+  store: EvidenceStore,
+  modelId: string,
+): Promise<{ record: ReturnType<EngineContext['ledger']['require']>; parsed: IfcSummary }> {
+  const record = ctx.ledger.get({ refType: 'Model', refId: modelId });
+  if (!record || record.state.projectId !== ctx.projectId) {
+    throw new DomainError('MODEL_NOT_FOUND', `No model ${modelId} on this project`, 404);
+  }
+  if (record.state.format !== 'IFC') {
+    throw new DomainError(
+      'MODEL_FORMAT_OPAQUE',
+      `${String(record.state.format)} is a proprietary binary format; nothing here reads it. Export the model as IFC — every ` +
+        'authoring tool can — and register that.',
+      415,
+    );
+  }
+  const hash = String(record.state.fileHash);
+  if (!(await store.holds(ctx.tenantId, hash))) {
+    throw new DomainError(
+      'MODEL_FILE_NOT_HELD',
+      'The platform holds the hash of this model and not the file. Supply the file behind the evidence hash first; the ' +
+        'element count on the record is what was declared, not what was read.',
+      409,
+    );
+  }
+  const { bytes } = await store.fetch(ctx.tenantId, hash);
+  try {
+    return { record, parsed: parseIfc(bytes) };
+  } catch (error) {
+    if (error instanceof IfcParseError) throw new DomainError(error.code, error.message, 422);
+    throw error;
+  }
+}
+
+/**
+ * Read the held IFC and put what it says on the model record.
+ *
+ * `ingestModel` records what the person said the model was: its format, its
+ * discipline, the LOD claimed and an element count typed in. The file itself
+ * cannot be read at that moment — the evidence record has to exist before the
+ * store will take the bytes — so this is the second step, once the file is
+ * held: parse it, and record the schema, the view definition, the authoring
+ * application, the spatial structure, the length unit, the element count by
+ * class, and a geometry hash per element so a later revision can be compared.
+ *
+ * Where the count read disagrees with the count declared, both are kept: the
+ * declared figure is what the model was accepted on, and the read figure is
+ * what it is. Deterministic — no model in the loop and nothing charged.
+ */
+export async function readModel(
+  ctx: EngineContext,
+  store: EvidenceStore,
+  input: { modelId: string },
+): Promise<{ modelId: string; reading: ModelReading; declaredElementCount?: number }> {
+  authorise(ctx, 'BIM_TWIN', 'I', { lifecyclePhase: currentPhase(ctx) });
+  const { record, parsed } = await heldIfc(ctx, store, input.modelId);
+  const { elements: _elements, ...summary } = parsed;
+  const reading: ModelReading = { ...summary, readAt: new Date().toISOString(), readBy: ctx.auth.actorId };
+  const declared = Number(record.state.elementCount);
+  const disagrees = Number.isFinite(declared) && declared !== parsed.elementCount;
+
+  const evidence = findByHash(ctx.ledger, ctx.tenantId, String(record.state.fileHash));
+  write(ctx, {
+    eventType: 'MODEL_READ',
+    entity: { refType: 'Model', refId: input.modelId },
+    nextState: {
+      ...record.state,
+      elementCount: parsed.elementCount,
+      ...(disagrees ? { declaredElementCount: declared } : {}),
+      read: reading,
+    },
+    evidenceRefs: evidence ? [{ refType: 'EvidenceItem', refId: evidence.refId }] : [],
+  });
+
+  return { modelId: input.modelId, reading, ...(disagrees ? { declaredElementCount: declared } : {}) };
+}
+
+/**
+ * What changed between two revisions of a model, element by element.
+ *
+ * Both files are parsed from the store when asked, rather than a per-element
+ * index being kept on the ledger: a fifty-thousand-element model would put
+ * megabytes of hashes into an append-only record on every read, and the
+ * comparison is a question somebody asks occasionally of files the platform
+ * already holds. `base` is the earlier revision; the diff reads as what the
+ * later one did to it.
+ */
+export async function compareModels(
+  ctx: EngineContext,
+  store: EvidenceStore,
+  input: { modelId: string; baseModelId: string },
+): Promise<{
+  base: { modelId: string; discipline: string; elementCount: number; geometryHash: string };
+  model: { modelId: string; discipline: string; elementCount: number; geometryHash: string };
+  diff: IfcDiff;
+}> {
+  authorise(ctx, 'BIM_TWIN', 'R', { lifecyclePhase: currentPhase(ctx) });
+  if (input.modelId === input.baseModelId) {
+    throw new DomainError('MODEL_SAME', 'A model compared with itself is unchanged by construction. Name the earlier revision.');
+  }
+  const [base, model] = await Promise.all([heldIfc(ctx, store, input.baseModelId), heldIfc(ctx, store, input.modelId)]);
+  const brief = (entry: { record: { refId: string; state: Record<string, unknown> }; parsed: IfcSummary }) => ({
+    modelId: entry.record.refId,
+    discipline: String(entry.record.state.discipline ?? ''),
+    elementCount: entry.parsed.elementCount,
+    geometryHash: entry.parsed.geometryHash,
+  });
+  return { base: brief(base), model: brief(model), diff: diffIfc(base.parsed, model.parsed) };
 }
 
 export type ClashInput = {

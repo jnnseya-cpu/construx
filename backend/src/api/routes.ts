@@ -16075,6 +16075,24 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/bim/models/:modelId/read',
+    description: 'Read the held IFC: schema, spatial structure, unit, element count by class and a geometry hash per element',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => bim.readModel(projectContext(platform, ctx), platform.evidence, { modelId: ctx.params.modelId as string }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/bim/models/:modelId/diff/:baseModelId',
+    readOnly: true,
+    description: 'What a model revision did to an earlier one: elements added, removed, moved or reshaped, renamed — by GlobalId',
+    handler: (platform, ctx) =>
+      bim.compareModels(projectContext(platform, ctx), platform.evidence, {
+        modelId: ctx.params.modelId as string,
+        baseModelId: ctx.params.baseModelId as string,
+      }),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/specifications',
     ai: { engine: 'BIM_TWIN', taskType: 'specification_reading', capability: 'REASONING' },
     description: 'Engine E — read a specification section for what it requires, from supplied text',

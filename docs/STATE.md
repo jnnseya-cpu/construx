@@ -5235,9 +5235,12 @@ whatever happens to the set afterwards.
 **A run that measures the misalignment rather than the design.** Two models in
 different units, or on different coordinate systems, clash everywhere. Reporting
 that as findings would bury the real ones, so the federation refuses to form and
-the refusal names what disagrees with what. The platform does not parse IFC —
-that is a declared gap — so units and coordinate system are **declared** by the
-person federating, and the platform holds them to it across the set.
+the refusal names what disagrees with what. Units and coordinate system are
+**declared** by the person federating, and the platform holds them to it across
+the set; where a model's IFC has since been read, the declared unit is also
+checked against the one the file carries (`UNIT_DECLARATION_MISMATCH`) — see
+*Reading an IFC* below. The coordinate system is not in the file and stays a
+declaration.
 
 **Four thousand rows that are forty problems.** Raw clashes are grouped by
 location and by the unordered pair of systems, because that is what a fix
@@ -8637,6 +8640,42 @@ the Documents screen and the row says *Read · 2 pages*; a scan says what was
 seen and, on this deployment with no provider that can see, why no
 transcription is offered.
 
+## Reading an IFC, and telling two revisions apart
+
+A model's element count had been whatever the person ingesting it typed in,
+and the federation's unit check held people to a declaration the platform
+could not test. `engines/ifc.ts` reads an IFC in STEP physical file form from
+its own bytes, with no dependency: the header (schema, view definition,
+authoring application, timestamp), the project and its spatial structure
+(site, building, storeys with elevations), the length unit, every physical
+element — walls, slabs, pipes, terminals; not spaces, openings, types or
+relationships — with its GlobalId, class, name and storey, and a **geometry
+hash per element**: a Merkle hash of the element's placement and
+representation subgraph with instance numbers removed, so the same model
+exported again with every instance renumbered reads as the same geometry, and
+an element that moved or changed shape reads as changed while one that was
+only renamed does not. The model's own hash is the hash of its elements'
+hashes in GlobalId order.
+
+`readModel` is the second step after ingestion, because the evidence record
+has to exist before the store will take the bytes: once the file is held, the
+door *Read the model* on the Design screen parses it and writes `MODEL_READ`
+onto the model — the read element count replaces the declared one, and where
+they disagree the declared figure is kept beside it, because that is what the
+model was accepted on. `compareModels` parses two held revisions from the
+store when asked, rather than keeping a per-element index on the ledger, and
+reports what the later did to the earlier: added, removed, moved or reshaped,
+renamed, by GlobalId, with a summary sentence; the Design screen offers it
+against any other read model. A federation set now refuses where a read
+model's declared unit is not the one its file carries. Refused by name: a
+proprietary binary (`MODEL_FORMAT_OPAQUE` — export an IFC), a file the
+platform does not hold, an ifcXML or anything not beginning `ISO-10303-21`.
+What this does not do: no geometry is evaluated — no volumes, bounding boxes
+or intersections — so a hash says whether an element's geometry changed and
+not by how much, and clash detection still needs an engine that computes.
+`ifc.test.ts` covers the parser, the hash's invariance under renumbering, the
+diff, and the platform path through ingest, read, compare and federate.
+
 ## Forecast accuracy against the final account
 
 §17's tenth metric had been declared not measurable, correctly: the live
@@ -8765,7 +8804,7 @@ named so it is not mistaken for finished.
 |---|---|---|
 | Take-off | Governs, evidences and prices measured items, traced to sheet and revision. Quantities can be read off a held drawing by a multimodal provider and confirmed before they become BoQ items | No provider call has been made from this environment. The **wire contract** is now proven against the response shapes the three configured vendors actually send (`tests/modeloutput.test.ts`); what remains unproven is the **reading** — whether a real model measures this drawing correctly |
 | Drawing register | Title-block reading from the held drawing itself or from supplied text, supersession, markup→RFI carrying the activity it blocks | Same: the wire contract is proven against real vendor response shapes; the quality of the reading is not |
-| Model ingestion | Records the model, hash, discipline, LOD, element count as a governed event | IFC parsing, geometry hash, model diffing |
+| Model ingestion | Records the model, hash, discipline, LOD and the declared element count as a governed event; once the IFC is held, `readModel` parses it (`engines/ifc.ts`) and records the schema, view definition, authoring application, spatial structure, length unit, element count by class and a geometry hash per element, keeping the declared count beside the read one where they disagree; two read revisions are compared element by element by GlobalId; a federation is held to the unit the file carries | Geometry is fingerprinted, not evaluated: no volumes, bounding boxes or intersections, so clash detection still needs an engine that computes them; RVT, NWD and DWG are proprietary binaries and are not read; ifcXML and ifcZIP are not read |
 | Digital twin | Reconciles observed against expected element status | Observations are structured input, not derived from imagery |
 | Evidence capture | Real SHA-256 over the real file, recorded against the event, the file itself held in a tenant-scoped content-addressed store, and every ingested file sent to a signature scanner where one is configured (see *Signature scanning* below) | A deletion policy, deliberately: evidence under the golden thread is retained, and `evidence/registry.ts` reports what the record names against what the volume holds rather than deciding what is old enough to remove |
 | File ingestion | Structural inspection, rules classification with its signals, native text and table extraction — a PDF's own text layer included, page by page, through its fonts — and a lexical index over what was read. A scan reports `NEEDS_OCR` with what was seen (pages, image-only pages) and is transcribed by a model through `DOCUMENT_TEXT`, confirmed by a person, into the same record. A file that is not what it claims to be is quarantined with the finding on the record | A photograph or a scan on a deployment with no multimodal provider stays unread and says so; the transcription path is proven against a stub, not a real model; the index is lexical, so it finds a near-duplicate and not a paraphrase |
