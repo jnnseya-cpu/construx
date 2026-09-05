@@ -1,7 +1,29 @@
 import { api } from '../lib/api.js';
+import { lineChart } from '../lib/charts.js';
 import { command } from '../lib/command.js';
 import { gb, head, refusal } from '../lib/estate.js';
 import { badge, date, html, money, raw, render, table, time, toast, track } from '../lib/ui.js';
+
+const BAND_TONE = { STRONG: 'ok', WORKABLE: 'warn', WEAK: 'bad' };
+const PRIORITY_TONE = { HIGH: 'bad', MEDIUM: 'warn', LOW: 'info' };
+
+/**
+ * A recommendation's door is the row control of the same name. Clicking it runs
+ * the handler the operator would have reached by hand, so there is one command
+ * per act on this screen and the engine adds none of its own — except
+ * `settle-charge`, which has no row control here and records a subscription
+ * payment against the charge the engine named.
+ */
+const ROW_DOORS = {
+  status: 'data-status',
+  close: 'data-close',
+  delete: 'data-delete',
+  unfreeze: 'data-unfreeze',
+  package: 'data-package',
+  people: 'data-people',
+  'resolve-exception': 'data-resolve-exception',
+  settle: 'data-settle',
+};
 
 /**
  * Tenants and users.
@@ -19,7 +41,7 @@ import { badge, date, html, money, raw, render, table, time, toast, track } from
  */
 
 export async function tenants(root) {
-  const [estate, vocab, register, refunds, groupsHeld, transfers, exceptions] = await Promise.all([
+  const [estate, vocab, register, refunds, groupsHeld, transfers, exceptions, engine] = await Promise.all([
     api.get('/v1/admin/tenants').catch((error) => ({ error })),
     api.get('/v1/signup/account-types').catch(() => null),
     api.get('/v1/admin/modules').catch(() => null),
@@ -27,6 +49,7 @@ export async function tenants(root) {
     api.get('/v1/admin/groups').catch(() => null),
     api.get('/v1/admin/transfer-cases').catch(() => null),
     api.get('/v1/admin/payments/exceptions').catch(() => null),
+    api.get('/v1/admin/tenants/position').catch((error) => ({ error })),
   ]);
 
   if (estate.error) {
@@ -37,6 +60,9 @@ export async function tenants(root) {
   const rows = estate.tenants ?? [];
   const byId = new Map(rows.map((tenant) => [tenant.id, tenant]));
   const unreachable = rows.filter((tenant) => tenant.administrators === 0);
+  const eng = engine && !engine.error ? engine : null;
+  const attention = new Map((eng?.attention ?? []).map((entry) => [entry.tenantId, entry.flags]));
+  const totals = eng?.results.totals;
 
   render(
     root,
@@ -53,6 +79,114 @@ export async function tenants(root) {
           '<button class="btn quiet" data-command="onboard-group">Onboard a group</button>' +
           '<button class="btn quiet" data-command="support">Support access</button>',
       })}
+
+      ${engine?.error ? refusal('The estate position', engine.error) : ''}
+
+      ${eng
+        ? html`<section class="grid g4" style="margin-bottom:14px">
+            <div class="card">
+              <h2>Estate health</h2>
+              <div class="metric ${raw(eng.health.band === 'STRONG' ? 'good' : eng.health.band === 'WORKABLE' ? 'warn' : 'bad')}">${eng.health.score}</div>
+              <div class="metric-sub">${eng.health.passing} of ${eng.health.total} checks passing · ${eng.health.band.toLowerCase()}</div>
+            </div>
+            <div class="card">
+              <h2>Customers</h2>
+              <div class="metric">${totals.tenancies.open}</div>
+              <div class="metric-sub">
+                ${totals.tenancies.active} active · ${totals.tenancies.awaitingPayment} awaiting a first payment ·
+                ${totals.tenancies.suspended + totals.tenancies.cancelled} switched off · ${totals.tenancies.closed} closed
+              </div>
+            </div>
+            <div class="card">
+              <h2>People who can sign in</h2>
+              <div class="metric">${totals.people.active}</div>
+              <div class="metric-sub">
+                ${totals.people.administrators} administrator${totals.people.administrators === 1 ? '' : 's'} · ${totals.people.deactivated} deactivated ·
+                ${totals.people.pendingErasure} awaiting erasure
+              </div>
+            </div>
+            <div class="card ${raw(totals.money.outstandingMinor + totals.money.refundsDueMinor > 0 ? 'warn' : '')}">
+              <h2>Money in motion</h2>
+              <div class="metric ${raw(totals.money.outstandingMinor > 0 ? 'warn' : '')}">${money(totals.money.outstandingMinor)}</div>
+              <div class="metric-sub">
+                subscription owed to the platform · ${money(totals.money.refundsDueMinor)} owed back ·
+                ${totals.money.openExceptions} open exception${totals.money.openExceptions === 1 ? '' : 's'} · ${totals.money.frozenWallets} frozen
+              </div>
+            </div>
+          </section>`
+        : ''}
+
+      ${eng && eng.recommendations.length > 0
+        ? html`<div class="card" style="margin-bottom:14px" data-recommendations>
+            <h2>What the agent recommends</h2>
+            <div class="metric-sub" style="margin:8px 0 12px">
+              Derived from the subscriptions, the charges, the receipts, the identities and the wallets — no model, no
+              invented figure. Each names what is wrong and opens the same door the row already carries. It proposes; you
+              press.
+            </div>
+            <div class="split-list">
+              ${eng.recommendations.map(
+                (item) => html`<div class="row" style="align-items:flex-start;gap:14px">
+                  <span class="lbl" style="flex:1 1 0;min-width:0">
+                    ${badge(item.priority.toLowerCase(), PRIORITY_TONE[item.priority] ?? 'info')} <b>${item.title}</b><br />
+                    <span class="metric-sub">${item.detail}</span>
+                  </span>
+                  ${item.action
+                    ? html`<span class="val"><button class="btn quiet sm" data-act="${item.action.command}" data-tenant="${item.action.tenantId ?? ''}" data-charge="${item.action.chargeId ?? ''}" data-ref="${item.action.refundId ?? item.action.exceptionId ?? ''}">${item.action.label}</button></span>`
+                    : ''}
+                </div>`,
+              )}
+            </div>
+          </div>`
+        : ''}
+
+      ${eng
+        ? html`<div class="card" style="margin-bottom:14px" data-sweep>
+            <h2>Estate sweep ${badge(`${eng.health.score} / 100`, BAND_TONE[eng.health.band] ?? 'neutral')}</h2>
+            <div class="metric-sub" style="margin:8px 0 12px">
+              ${eng.health.summary} Every check reads the record — subscriptions, charges, receipts, identities, wallets,
+              the storage meter — never a setting that says it is fine. Customers only; the demonstration and the
+              platform’s own tenancy are counted by none of it. The score decides nothing.
+            </div>
+            ${raw(
+              table({
+                headers: ['Check', 'Verdict', 'Weight', 'Detail'],
+                align: ['', '', 'num', ''],
+                rows: eng.sweep.map((finding) => [html`<b>${finding.check}</b>`, finding.ok ? badge('ok', 'ok') : badge('fix', 'bad'), String(finding.weight), finding.detail]),
+              }),
+            )}
+          </div>`
+        : ''}
+
+      ${eng && eng.results.series.length > 0
+        ? html`<div class="grid g2" style="margin-bottom:14px">
+            <div class="card chart-card">
+              <h2>Tenancies by month</h2>
+              <div class="metric-sub" style="margin-bottom:12px">Customer tenancies that joined and that were closed, by the month it happened.</div>
+              ${lineChart({
+                title: 'Joined and closed, by month',
+                data: eng.results.series.map((entry) => ({ label: entry.month, joined: entry.joined, closed: entry.closed })),
+                series: [
+                  { key: 'joined', label: 'Joined' },
+                  { key: 'closed', label: 'Closed' },
+                ],
+                format: (value) => String(Math.round(value)),
+                empty: 'No tenancy yet.',
+              })}
+            </div>
+            <div class="card chart-card">
+              <h2>Receipts by month</h2>
+              <div class="metric-sub" style="margin-bottom:12px">Settled receipts from customers, by the month the money arrived. Demonstration credit is not revenue.</div>
+              ${lineChart({
+                title: 'Revenue received, by month',
+                data: eng.results.series.map((entry) => ({ label: entry.month, revenue: entry.revenueMinor / 100 })),
+                series: [{ key: 'revenue', label: 'Received' }],
+                format: (value) => money(Math.round(value * 100)),
+                empty: 'No receipt yet.',
+              })}
+            </div>
+          </div>`
+        : ''}
 
       <section class="grid g4" style="margin-bottom:14px">
         <div class="card">
@@ -121,6 +255,10 @@ export async function tenants(root) {
                 // inspects it; marked because its credit, seats and renewal are
                 // counted in none of the figures on the screens around this one.
                 tenant.demonstration ? badge('demonstration', 'info') : ''
+              }${
+                // What the estate sweep found wrong with this tenancy, on the
+                // row, so the register and the engine tell one story.
+                (attention.get(tenant.id) ?? []).map((flag) => badge(flag, flag === 'ready to delete' ? 'neutral' : 'bad'))
               }<div class="metric-sub">${tenant.jurisdiction} · ${
               tenant.isolatedTenancy ? 'dedicated tenancy' : 'shared tenancy'
             }${tenant.referralCode ? ` · referred by ${tenant.referralCode}` : ''}</div>
@@ -167,6 +305,15 @@ export async function tenants(root) {
           empty: 'No tenancy on the estate yet.',
         })}
       </div>
+
+      ${eng
+        ? html`<div class="card" style="margin-top:14px">
+            <h2>What this engine does not do</h2>
+            <ul class="metric-sub" style="margin:8px 0 0 18px;line-height:1.6">
+              ${eng.limits.map((limit) => html`<li>${limit}</li>`)}
+            </ul>
+          </div>`
+        : ''}
 
       ${refunds
         ? html`<div class="card" style="margin-top:14px" data-refunds>
@@ -337,6 +484,63 @@ export async function tenants(root) {
   );
 
   const again = () => tenants(root);
+
+  // The engine's doors. Every command but one clicks the row control of the
+  // same name, so the act is the one the operator would have pressed by hand.
+  for (const button of root.querySelectorAll('[data-act]')) {
+    button.addEventListener('click', async () => {
+      const act = button.getAttribute('data-act');
+      const tenantId = button.getAttribute('data-tenant');
+      const ref = button.getAttribute('data-ref');
+      if (act === 'onboard') {
+        root.querySelector('.cmd-bar [data-command="onboard"]')?.click();
+        return;
+      }
+      if (act === 'settle-charge') {
+        const chargeId = button.getAttribute('data-charge');
+        const tenant = byId.get(tenantId);
+        const charge = (tenant?.charges ?? []).find((entry) => entry.id === chargeId);
+        const result = await command({
+          title: `Record a subscription payment — ${tenant?.legalName ?? 'tenancy'}`,
+          intent:
+            `${charge ? money(charge.amountMinor) : 'The amount'} for the period from ${charge ? date(charge.periodStart) : 'the charge named'} was received outside the platform. ` +
+            'Recording it settles the charge; a tenancy waiting for its first month opens and its AI allowance is credited. The reference is the bank’s or provider’s own, and is spent once.',
+          path: `/v1/admin/tenants/${tenantId}/charges/${chargeId}/settle`,
+          submitLabel: 'Record payment',
+          fields: [
+            { name: 'reference', label: 'Payment reference', hint: 'From the bank statement or the card provider. Unique for ever.' },
+            {
+              name: 'method',
+              label: 'How it arrived',
+              type: 'select',
+              options: [
+                { value: 'BANK_TRANSFER', label: 'Bank transfer' },
+                { value: 'CARD', label: 'Card, taken outside the platform' },
+                { value: 'INVOICE_SETTLEMENT', label: 'Invoice settlement' },
+                { value: 'CREDIT_NOTE', label: 'Credit note' },
+                { value: 'MANUAL_ADJUSTMENT', label: 'Manual adjustment' },
+              ],
+            },
+            { name: 'note', label: 'Note', required: false },
+          ],
+          transform: (values) => ({ reference: values.reference, method: values.method, ...(values.note ? { note: values.note } : {}) }),
+        });
+        if (result) {
+          toast(result.alreadyRecorded ? 'Already recorded' : 'Payment recorded', `${tenant?.legalName ?? 'Tenancy'} · ${result.status.toLowerCase().replace('_', ' ')}`, result.alreadyRecorded ? 'warn' : 'ok');
+          await again();
+        }
+        return;
+      }
+      const attribute = ROW_DOORS[act];
+      const target = attribute ? root.querySelector('[' + attribute + '="' + (act === 'settle' || act === 'resolve-exception' ? ref : tenantId) + '"]') : null;
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.click();
+      } else {
+        toast('No door for that here', 'The row this recommendation points at is not on the register any more. Reload the screen.', 'warn');
+      }
+    });
+  }
 
   /**
    * Break-glass support access: one company at a time, from a select, so the

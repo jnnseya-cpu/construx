@@ -172,6 +172,7 @@ import { createReportingGrant, grantsGiven, groupReports, readGroupReport, REPOR
 import { approveTransferCase, cancelTransferCase, executeTransferCase, openTransferCase, reviewTransferCase, scheduleTransferCase, transferCases, transferCasesFor } from '../group/transfer.ts';
 import { addCompany, appointAdministrator, foundGroup, GROUP_COMPANY_PACKAGES, onboardGroup, readinessOf, type AddCompanyInput, type OnboardingInput } from '../group/onboarding.ts';
 import * as growthEngine from '../growth/engine.ts';
+import * as estateEngine from '../billing/estateengine.ts';
 import { accountRequests, advanceAccountRequest, declineAccountRequest, deleteAccountRequest, provisionAccountRequest, receiveAccountRequest, recordProvisionNotice, REQUEST_STATUSES } from '../identity/requests.ts';
 import * as bim from '../engines/bim.ts';
 import * as claims from '../engines/claims.ts';
@@ -645,20 +646,10 @@ const PERCEPTION_PATHS: Record<perception.PerceptionTask, string> = {
 
 /**
  * A tenancy's storage position: what the package allows plus what was bought,
- * against what the volume actually holds.
- *
- * Assembled here rather than inside the billing module because it needs three
- * things that live in three places — the subscription, the ledger and the
- * object store — and the billing module should not have to know how to reach
- * any of them.
+ * against what the volume actually holds. One function, shared with the estate
+ * engine, which reads the same meter for every tenancy at once.
  */
-function storagePositionFor(platform: Platform, tenantId: string): storage.StoragePosition {
-  return storage.storagePosition({
-    tier: platform.subscription(tenantId).package,
-    usedBytes: platform.evidence.usage(tenantId),
-    purchasedBlocks: storage.purchasedBlocks(platform.ledger, tenantId),
-  });
-}
+const storagePositionFor = estateEngine.storagePositionFor;
 
 const stringField = { type: 'string', minLength: 1 } as const;
 
@@ -2240,6 +2231,16 @@ export const ROUTES: Route[] = [
           };
         })(),
       };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/tenants/position',
+    readOnly: true,
+    description: 'The estate read as a whole: the sweep and its health score, results by month, which tenancies need attention and what to do next (platform operator only)',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read the estate position');
+      return estateEngine.estatePosition(platform);
     },
   },
   {

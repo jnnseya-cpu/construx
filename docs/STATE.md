@@ -15,10 +15,10 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,967 passing, 0 failing, 0 skipped, across 266 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 5,977 passing, 0 failing, 0 skipped, across 267 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 303 TypeScript files, 197,800 lines |
-| Application | 77 ES modules, 45,200 lines (including a service worker) |
+| Backend | 304 TypeScript files, 198,400 lines |
+| Application | 77 ES modules, 45,450 lines (including a service worker) |
 | API routes | 1,090 — 737 writes, 353 reads (49 public across both) |
 | Event types | 726 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 335, all classified for access |
@@ -11630,6 +11630,66 @@ two administrators straight after, a distinct slug for a twin name, and the
 person's own read carrying GROUP_ADMIN through the gateway. Driven in Chromium
 as a seeded enterprise administrator: no Group in the menu, the door on Team &
 Access, Group in the menu after, 1 of 5 companies with *Add a company*.
+
+### The estate engine: whether every customer can run their tenancy, whether what is owed is arriving, and whether the register says what is live
+
+Asked for as "the tenants & users screen, the same way". `GET /v1/admin/tenants`
+lists tenancies one row at a time and the screen around it carries every
+operator act — credit, package, status, close, delete, settle a refund, resolve
+an exception, unfreeze a wallet. `billing/estateengine.ts` stands back from
+the rows and reads the estate whole, over customers only: the platform's own
+tenancy and a demonstration stay on the register, marked, and are counted by
+none of it.
+
+**The sweep reads the subscriptions, the charges, the receipts, the identities,
+the wallets and the storage meter.** Eleven checks weighted to a hundred: every
+open tenancy has an active administrator; no paid signup has waited more than
+fourteen days past its first due date; no running subscription is past due —
+inside its grace (the day it stops is on the record) or past it and still
+running (the hourly run should have suspended it, and the estate says so rather
+than falling silent); no open tenancy is suspended or cancelled without being
+closed; no customer wallet is frozen; no finance exception is open; no refund
+has been owed more than fourteen days; no closed tenancy sits on the register
+with every identity erased or its grace over; nobody is over their seat
+allowance; nobody is out of storage (warning is named, full fails); no erasure
+has fallen due and not been carried out. `GET /v1/admin/tenants/position`,
+operator only. The one storage helper the estate route and the tenancy's own
+storage routes used is now exported from the engine and read from one place.
+
+**Results by month** come from the tenancies and the receipts: who joined, who
+was closed, how many receipts and how much money by the month it arrived — two
+lines the screen draws. **Totals**: open, active, awaiting a first payment,
+switched off, closed; people who can sign in, administrators, deactivated,
+awaiting erasure; subscription owed to the platform, owed back, open exceptions,
+frozen wallets. **Attention** is per tenancy — *no administrator*, *3 days past
+due*, *first payment overdue*, *wallet frozen*, *ready to delete* — and the
+register row carries the same flags as badges, so the engine and the register
+tell one story.
+
+**Recommendations propose; the operator presses the door the row already
+has.** Every command but one clicks the row control of the same name — Status,
+Close, Delete, Unfreeze, Package, People, Resolve, Record payment — so the act is
+the one the operator would have pressed by hand and the engine adds no second
+way to do anything. The one addition is *Record the payment* against a named
+subscription charge (the route the Onboarding Queue already used), because a
+past-due period had no door on this screen. `tests/estateengine.test.ts`: an
+empty estate weighs to a hundred and offers to onboard; three tenancies with
+the one nobody can run; the first month going stale and the running period
+falling past due with a door per unpaid charge, and the past-grace wording;
+settlement clearing the finding; a disputed payment freezing the wallet and the
+unfreeze door once nothing is open; a closure raising the refund, then the
+register and erasure findings after the grace; a suspension as a switched-off
+finding with the status door; the route's 200 and 403. Driven in Chromium as
+the operator: the empty estate at 100 with *Onboard a tenancy*, a paid tenancy
+onboarded through that door and flagged past due within the second, its charge
+settled through the engine's door and the finding gone, a suspension surfacing
+the status door and that door opening the row's own command.
+
+**Not built, and said on the screen:** an operator act that appoints an
+administrator inside a customer's tenancy — a tenancy with none is named and
+the door offered is closure; a seat or storage fault produced on purpose (the
+seat cap refuses the over-assignment, so the check is asserted passing rather
+than driven failing); any read of what a tenancy is building.
 
 ---
 
