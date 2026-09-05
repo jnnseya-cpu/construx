@@ -629,6 +629,7 @@ const PERCEPTION_PATHS: Record<perception.PerceptionTask, string> = {
   DEFECT_DETECTION: 'defects',
   GROUND_MATERIAL: 'ground-material',
   SITE_SERVICES_BRIEF: 'site-services-brief',
+  DOCUMENT_TEXT: 'document-text',
 };
 
 /**

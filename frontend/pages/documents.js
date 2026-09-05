@@ -57,10 +57,14 @@ const CATEGORIES = [
 export async function documents(root) {
   const projectId = state.session.projectId;
 
-  const [catalogue, ingestion, evidence, cdmDocuments, branding] = await Promise.all([
+  const [catalogue, ingestion, evidence, perception, cdmDocuments, branding] = await Promise.all([
     api.get(`/v1/projects/${projectId}/documents`).catch(() => ({ documents: [], summary: '' })),
     api.get(`/v1/projects/${projectId}/ingestion`).catch(() => null),
     api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
+    // Whether this deployment has a model that can see, for the scans
+    // ingestion could not read. Null, not a refusal: the ingestion card stands
+    // on its own without it.
+    api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
     // What CDM demands and what identity these documents will carry. Both had
     // engines with no screen — a generated document goes to a client under
     // somebody's brand, and nobody could see whose until it arrived.
@@ -76,6 +80,10 @@ export async function documents(root) {
   const ingested = new Set((ingestion?.files ?? []).map((file) => file.hash));
   const unread = (evidence?.entries ?? []).filter((entry) => entry.held && !ingested.has(entry.hash));
   const quarantine = ingestion?.position?.quarantine ?? [];
+  // Transcriptions a model produced that nobody has confirmed or rejected yet.
+  // Only this task's: the drawing and site readings belong on their own screens.
+  const transcriptions = (perception?.drafts ?? []).filter((draft) => draft.task === 'DOCUMENT_TEXT' && draft.status === 'DRAFT');
+  const canTranscribe = Boolean(perception?.capability?.available);
 
   // Where a type cannot be generated, the records it is waiting on. Deduplicated
   // across types, because five documents blocked on the same missing register is
@@ -223,8 +231,12 @@ export async function documents(root) {
                   <h2>Read</h2>
                   <div class="metric">${ingestion.position.read}</div>
                   <div class="metric-sub">
-                    text extracted and indexed${ingestion.position.awaitingOcr > 0
-                      ? ` · ${ingestion.position.awaitingOcr} need a model that can see`
+                    text extracted and indexed${ingestion.position.readByModel > 0
+                      ? ` · ${ingestion.position.readByModel} transcribed by a model and confirmed`
+                      : ''}${ingestion.position.awaitingOcr > 0
+                      ? ` · ${ingestion.position.awaitingOcr} need a model that can see${
+                          canTranscribe ? '' : perception ? ' — none is configured here' : ''
+                        }`
                       : ''}
                   </div>
                 </div>
@@ -278,19 +290,66 @@ export async function documents(root) {
                             ${Math.round(file.classification.confidence * 100)}% — ${file.classification.signals.join('; ')}
                           </span>`,
                     file.extraction.method === 'NATIVE'
-                      ? 'Read'
-                      : file.extraction.method === 'NEEDS_OCR'
-                        ? 'Needs a model that can see'
-                        : '—',
-                    file.lexicalVector
-                      ? html`<button class="btn quiet sm" data-similar="${file.ingestionId}">Find duplicates</button>`
-                      : '',
+                      ? html`Read${file.extraction.pages ? ` · ${file.extraction.pages} page${file.extraction.pages === 1 ? '' : 's'}` : ''}${
+                          file.extraction.note ? html`<br /><span class="metric-sub">${file.extraction.note}</span>` : ''
+                        }`
+                      : file.extraction.method === 'OCR'
+                        ? html`Transcribed by a model, confirmed${file.extraction.pages ? ` · ${file.extraction.pages} page${file.extraction.pages === 1 ? '' : 's'}` : ''}`
+                        : file.extraction.method === 'NEEDS_OCR'
+                          ? html`Needs a model that can see${file.extraction.reason ? html`<br /><span class="metric-sub">${file.extraction.reason}</span>` : ''}`
+                          : file.extraction.reason
+                            ? html`<span class="metric-sub">${file.extraction.reason}</span>`
+                            : '—',
+                    html`${
+                      file.status === 'INGESTED' &&
+                      (file.extraction.method === 'NEEDS_OCR' || (file.extraction.method === 'NATIVE' && file.extraction.note)) &&
+                      /^(image\/|application\/pdf)/.test(file.inspection.actualType ?? '')
+                        ? canTranscribe
+                          ? transcriptions.some((draft) => draft.evidenceHash === file.hash)
+                            ? html`<span class="metric-sub">Transcription awaiting confirmation below</span>`
+                            : html`<button class="btn sm" data-read="DOCUMENT_TEXT" data-hash="${file.hash}">Transcribe with a model</button>`
+                          : perception
+                            ? html`<span class="metric-sub" title="${perception.capability.reason ?? ''}">No model here can see it</span>`
+                            : ''
+                        : ''
+                    }
+                    ${file.lexicalVector ? html`<button class="btn quiet sm" data-similar="${file.ingestionId}">Find duplicates</button>` : ''}`,
                   ]),
                 ],
                 empty: evidence?.storeConfigured
                   ? 'No files are held on this project yet. A hash on its own cannot be read.'
                   : 'This deployment holds no evidence files, so there is nothing to read.',
               }))}
+
+              ${
+                transcriptions.length > 0
+                  ? html`<div style="margin-top:14px">
+                      <h2>Transcriptions awaiting confirmation</h2>
+                      <p class="metric-sub">
+                        What a model read off a scan. Nothing is indexed until somebody confirms it, and confirming files the
+                        text through the same event a native read writes — with the provider and the confirmer on the record.
+                      </p>
+                      ${raw(table({
+                        headers: ['File', 'Pages', 'Opening words', 'Confidence', ''],
+                        rows: transcriptions.map((draft) => {
+                          const pages = Array.isArray(draft.extraction?.pages) ? draft.extraction.pages : [];
+                          const opening = pages
+                            .map((page) => String(page?.text ?? '').trim())
+                            .find((text) => text !== '') ?? '';
+                          const file = (ingestion.files ?? []).find((entry) => entry.hash === draft.evidenceHash);
+                          return [
+                            file?.filename ?? draft.evidenceHash.slice(0, 18),
+                            String(pages.length),
+                            html`<span class="metric-sub">${opening.slice(0, 140)}${opening.length > 140 ? '…' : ''}</span>`,
+                            draft.confidence !== undefined && draft.confidence !== null ? `${Math.round(draft.confidence * 100)}%` : '—',
+                            html`<button class="btn sm" data-confirm="${draft.id}">Confirm</button>
+                              <button class="btn quiet sm" data-discard="${draft.id}">Reject</button>`,
+                          ];
+                        }),
+                      }))}
+                    </div>`
+                  : ''
+              }
 
               ${
                 quarantine.length > 0
@@ -575,6 +634,57 @@ export async function documents(root) {
         result.status === 'QUARANTINED' ? 'bad' : 'ok',
       );
       await draw();
+      return;
+    }
+
+    const read = event.target.closest('[data-read]');
+    if (read) {
+      // Written out, as on the design screen: one route per task is what makes
+      // each one quotable and checkable against the route table.
+      read.disabled = true;
+      read.textContent = 'Transcribing…';
+      try {
+        await api.post(`/v1/projects/${projectId}/perception/document-text`, { hash: read.dataset.hash });
+        toast('Transcribed', 'Read the opening words below and confirm or reject it. Nothing is indexed until you do.', 'ok');
+        await draw();
+      } catch (error) {
+        // A refusal here is usually a true statement about the file or the
+        // deployment, so it is shown as it was given rather than retitled.
+        toast('Not transcribed', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
+        read.disabled = false;
+        read.textContent = 'Transcribe with a model';
+      }
+      return;
+    }
+
+    const confirmDraft = event.target.closest('[data-confirm]');
+    if (confirmDraft) {
+      confirmDraft.disabled = true;
+      try {
+        const result = await api.post(`/v1/projects/${projectId}/perception/${confirmDraft.dataset.confirm}/confirm`, {});
+        toast(
+          'Transcription confirmed',
+          `${result.result?.pages ?? ''} page(s), ${result.result?.characters ?? ''} characters indexed. Read as ${humanise(result.result?.kind ?? 'unknown').toLowerCase()}.`,
+          'ok',
+        );
+        await draw();
+      } catch (error) {
+        toast('Not confirmed', error.message, 'err');
+        confirmDraft.disabled = false;
+      }
+      return;
+    }
+
+    const discardDraft = event.target.closest('[data-discard]');
+    if (discardDraft) {
+      const reason = window.prompt('Why is this transcription wrong? It stays in the record either way.');
+      if (!reason) return;
+      try {
+        await api.post(`/v1/projects/${projectId}/perception/${discardDraft.dataset.discard}/discard`, { reason });
+        await draw();
+      } catch (error) {
+        toast('Not rejected', error.message, 'err');
+      }
       return;
     }
 

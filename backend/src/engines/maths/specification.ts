@@ -15,8 +15,10 @@
  * stage against it is work that will be built and argued about later.
  *
  * **What this is and is not.** It reads supplied text, on the same terms as
- * contract clause extraction: OCR and table extraction are not built, and a
- * specification arriving as a scanned PDF cannot be read here. What it does do
+ * contract clause extraction: table extraction is not built, and a
+ * specification arriving as a file is read into text first — by ingestion where
+ * the PDF carries a text layer, by a confirmed model transcription where it is
+ * a scan — and the text is what arrives here. What it does do
  * is deterministic — the classification below comes from the words the clause
  * uses, not from a model's opinion — so the same document produces the same
  * clauses twice and anybody can check why a clause was classified as it was.

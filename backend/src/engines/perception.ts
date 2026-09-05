@@ -17,6 +17,7 @@ import { analyseITT, type CommercialTerms, type ITTRequirement } from '../domain
 import { BRIEF_ITEMS, recordFact } from '../domain/etablix/brief.ts';
 import { requireModule } from '../identity/modules.ts';
 import { extractRequirements, type SubmissionChannel } from '../domain/tenderintake.ts';
+import { recordModelReading } from '../evidence/pipeline.ts';
 
 /**
  * Perception ingestion: reading a file the platform holds.
@@ -102,7 +103,8 @@ export type PerceptionTask =
   | 'EQUIPMENT_RECOGNITION'
   | 'DEFECT_DETECTION'
   | 'GROUND_MATERIAL'
-  | 'SITE_SERVICES_BRIEF';
+  | 'SITE_SERVICES_BRIEF'
+  | 'DOCUMENT_TEXT';
 
 type TaskDefinition = {
   engine: Engine;
@@ -686,6 +688,59 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       Array.isArray(extraction.facts) &&
       extraction.facts.some((fact) => BRIEF_ITEMS.some((item) => item.id === String((fact as Record<string, unknown>).itemId))),
   },
+
+  /**
+   * Optical character recognition, as the perception pipeline's plainest task.
+   *
+   * Ingestion reads a PDF's own text layer without a model; a scan has none,
+   * and a photograph of a page never did. For those the ingestion record says
+   * `NEEDS_OCR` and stops — until this task, that was the end of the road on
+   * every deployment, and with a multimodal provider it was still a road with
+   * no door. The model transcribes; a person confirms; confirming writes the
+   * same `FILE_EXTRACTED` event a native read writes, so the text is indexed
+   * and searchable exactly as if the bytes had carried it.
+   *
+   * The board reporter's engine, because a document can arrive in any phase
+   * and that is the one in contract in every phase. Transcription belongs to
+   * no discipline.
+   */
+  DOCUMENT_TEXT: {
+    engine: 'EXECUTIVE',
+    taskType: 'document_text_transcription',
+    area: 'EVIDENCE_AUDIT',
+    // What `recordModelReading` requires — the same authority as ingestion.
+    code: 'I',
+    label: 'Transcribe a scanned document',
+    accepts: IMAGE_OR_PDF,
+    acceptsLabel: 'a scanned PDF or a photograph of a page',
+    prompt:
+      'Transcribe every legible word on this document, page by page, in reading order, preserving line breaks and ' +
+      'the wording exactly as printed — including reference numbers, dates, units and figures. Mark a word or ' +
+      'passage you cannot read as [illegible] rather than guessing at it. Do not summarise, correct, translate or ' +
+      'complete anything. Report the language the document is written in.',
+    responseSchema: {
+      type: 'object',
+      properties: {
+        pages: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              page: { type: 'number' },
+              text: { type: 'string' },
+            },
+            required: ['page', 'text'],
+          },
+        },
+        language: { type: ['string', 'null'] },
+        illegiblePassages: { type: ['number', 'null'] },
+      },
+      required: ['pages'],
+    },
+    usable: (extraction) =>
+      Array.isArray(extraction.pages) &&
+      extraction.pages.some((page) => String((page as Record<string, unknown>).text ?? '').trim() !== ''),
+  },
 };
 
 export type PerceptionDraft = {
@@ -1260,6 +1315,29 @@ export async function confirm(
       facts: recorded,
       recorded: recorded.length,
       omitted: Array.isArray(extraction.omitted) ? (extraction.omitted as unknown[]).map(String) : [],
+    };
+  } else if (draft.task === 'DOCUMENT_TEXT') {
+    const pages = ((extraction.pages as Array<Record<string, unknown>> | undefined) ?? [])
+      .map((page, index) => ({ page: Number(page.page ?? index + 1), text: String(page.text ?? '') }))
+      .filter((page) => page.text.trim() !== '');
+    if (pages.length === 0) {
+      throw new DomainError('PERCEPTION_NOTHING_TO_RECORD', 'The corrected draft carries no text on any page, so there is nothing to record.');
+    }
+    // The same event a native read writes, against the ingestion record, with
+    // the provider and the confirmer on it. Refused by that command where the
+    // file was never ingested, is quarantined, or already has its text.
+    const recorded = recordModelReading(ctx, {
+      hash: draft.evidenceHash,
+      pages,
+      readBy: draft.aiProvenance?.provider ?? 'the perception provider',
+      draftId: draft.id,
+    });
+    result = {
+      ingestionId: recorded.ingestionId,
+      pages: recorded.pages,
+      characters: recorded.characters,
+      kind: recorded.kind,
+      ...(extraction.language ? { language: String(extraction.language) } : {}),
     };
   } else {
     const defects = (extraction.defects as Array<Record<string, unknown>> | undefined) ?? [];

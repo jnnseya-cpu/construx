@@ -325,9 +325,18 @@ export function command({ title, intent, path, fields, submitLabel = 'Submit', t
       <div class="body">
         <div class="cmd-error" hidden></div>
         ${fields
-          .filter((f) => f.type !== 'hidden')
-          .map(
-            (f) => `<div class="field" data-field="${esc(f.name)}">
+          .map((f) =>
+            // A hidden field is a value the door already knows — the hash a
+            // row was clicked on, the record a panel is open against. It is
+            // rendered as the input it is, with no label, so `collect` finds
+            // it by name like every other field. It used to be filtered out
+            // of the form entirely, which meant it was never sent: every door
+            // that relied on one failed schema validation on a required field
+            // the person could not see, or worked only because a `transform`
+            // put the value back.
+            f.type === 'hidden'
+              ? control(f)
+              : `<div class="field" data-field="${esc(f.name)}">
               <label for="cmd-${esc(f.name)}">${esc(f.label)}${f.required === false ? ' <span class="opt">optional</span>' : ''}</label>
               ${control(f)}
               ${f.hint ? `<div class="metric-sub">${esc(f.hint)}</div>` : ''}

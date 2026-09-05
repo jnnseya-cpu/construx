@@ -1078,9 +1078,11 @@ export function rfiPosition(
  * can see why a clause was classified as it was. The model characterises the
  * section; it does not decide what any clause requires.
  *
- * **This reads supplied text.** OCR and table extraction are not built, and a
- * specification arriving as a scanned PDF cannot be read here — the same terms
- * contract clause extraction already works on, stated rather than implied.
+ * **This reads supplied text.** Table extraction is not built. A specification
+ * arriving as a PDF is read into text by ingestion where it carries a text
+ * layer, and by a confirmed model transcription (`DOCUMENT_TEXT`) where it is a
+ * scan; either way the text is supplied here rather than the file — the same
+ * terms contract clause extraction already works on, stated rather than implied.
  */
 export async function ingestSpecification(
   ctx: EngineContext,
@@ -1106,7 +1108,9 @@ export async function ingestSpecification(
   if (input.specificationText.trim().length < 100) {
     throw new DomainError(
       'SPECIFICATION_TOO_SHORT',
-      'There is not enough text here to be a specification section. Scanned documents cannot be read — OCR is not built.',
+      'There is not enough text here to be a specification section. A scanned specification is transcribed first on the ' +
+        'Documents screen — a PDF with a text layer is read from its bytes, a scan by a model that can see, confirmed by a ' +
+        'person — and the text supplied here.',
     );
   }
 

@@ -11,6 +11,7 @@ import type {
   ProviderRequest,
   ProviderResponse,
 } from '../src/ai/providers/types.ts';
+import { ingestFile, ingestedFiles, ingestionPosition } from '../src/evidence/pipeline.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import * as perception from '../src/engines/perception.ts';
 import { registerDrawing } from '../src/engines/bim.ts';
@@ -436,6 +437,112 @@ describe('the provider request carries media in each vendor’s own form', () =>
       adapter.estimateCostMinor(large) > adapter.estimateCostMinor(small),
       'a large file is quoted at the same price as a small one — the media is not being counted',
     );
+  });
+});
+
+/**
+ * A one-page PDF that is nothing but an image: what a scan looks like.
+ * Ingestion's own parser finds no text layer in it and says so.
+ */
+function scanPdf(marker: string): Buffer {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /XObject << /Im1 5 0 R >> >> /ID (${marker}) >>`,
+    '<< /Length 30 >>\nstream\nq 500 0 0 700 50 50 cm /Im1 Do Q\nendstream',
+    '<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 1 >>\nstream\n\x00\nendstream',
+  ];
+  let out = '%PDF-1.5\n';
+  const offsets: number[] = [];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(out, 'latin1'));
+    out += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(out, 'latin1');
+  out +=
+    `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n` +
+    offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('') +
+    `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
+describe('a scan is transcribed by a model and confirmed into the ingestion record', () => {
+  const SCAN = scanPdf('letter');
+  const SCAN_HASH = hashBytes(SCAN);
+  const STRAY = scanPdf('never-ingested');
+  const STRAY_HASH = hashBytes(STRAY);
+  const TRANSCRIPT = {
+    pages: [{ page: 1, text: 'CLAUSE 12 — PAYMENT\nThe final date for payment is 28 days after the due date.\nRef WTW/PAY/0412' }],
+    language: 'en',
+    illegiblePassages: 0,
+  };
+  let draftId = '';
+
+  before(async () => {
+    await buildFixture(multimodalStub(TRANSCRIPT));
+    const ctx = ctxFor('pm');
+    for (const [hash, bytes] of [
+      [SCAN_HASH, SCAN],
+      [STRAY_HASH, STRAY],
+    ] as Array<[string, Buffer]>) {
+      registerEvidenceFor(ctx, hash, 'CORRESPONDENCE');
+      store.put(seed.tenantId, hash, bytes, 'application/pdf');
+    }
+  });
+
+  it('ingestion reads the PDF itself, finds no text layer, and says a model that can see is needed', async () => {
+    const result = await ingestFile(ctxFor('pm'), store, { hash: SCAN_HASH, filename: 'payment-letter-scan.pdf' });
+    assert.equal(result.status, 'INGESTED');
+    const file = ingestedFiles(ctxFor('pm')).find((entry) => entry.hash === SCAN_HASH)!;
+    assert.equal(file.extraction.method, 'NEEDS_OCR');
+    assert.match(file.extraction.reason ?? '', /1 page and no text layer to read — 1 carries only images/);
+    const position = await ingestionPosition(ctxFor('pm'), store);
+    assert.equal(position.awaitingOcr, 1);
+    assert.equal(position.read, 0);
+  });
+
+  it('the model transcribes it into a draft, and nothing is indexed until somebody confirms', async () => {
+    const produced = await perception.extract(ctxFor('pm'), store, { hash: SCAN_HASH, task: 'DOCUMENT_TEXT' });
+    draftId = produced.draftId;
+    assert.equal(produced.task, 'DOCUMENT_TEXT');
+    assert.equal(lastRequest?.media?.contentType, 'application/pdf', 'the file went to the provider as media');
+    const file = ingestedFiles(ctxFor('pm')).find((entry) => entry.hash === SCAN_HASH)!;
+    assert.equal(file.extraction.method, 'NEEDS_OCR', 'a draft changes nothing on the ingestion record');
+    assert.equal(file.lexicalVector, undefined);
+  });
+
+  it('confirming writes the same FILE_EXTRACTED a native read writes, with the provider and the confirmer on it', async () => {
+    const confirmed = await perception.confirm(ctxFor('pm'), { draftId });
+    assert.equal(confirmed.result.pages, 1);
+    assert.equal(confirmed.result.language, 'en');
+
+    const file = ingestedFiles(ctxFor('pm')).find((entry) => entry.hash === SCAN_HASH)!;
+    assert.equal(file.extraction.method, 'OCR');
+    assert.match(file.extraction.text ?? '', /28 days after the due date/);
+    assert.match(file.extraction.note ?? '', /Transcribed by GEMINI and confirmed by /);
+    assert.ok(file.lexicalVector && file.lexicalVector.length > 0, 'the transcription is indexed like native text');
+
+    const position = await ingestionPosition(ctxFor('pm'), store);
+    assert.equal(position.read, 1);
+    assert.equal(position.readByModel, 1);
+    assert.equal(position.awaitingOcr, 0);
+
+    const events = platform.ledger.list(projectId, 'IngestedFile');
+    assert.equal(events.length, 1, 'one ingestion record, not a second one for the transcription');
+  });
+
+  it('refuses a second transcription of a file that already has its text', async () => {
+    const again = await perception.extract(ctxFor('pm'), store, { hash: SCAN_HASH, task: 'DOCUMENT_TEXT' });
+    await rejectsCode(() => perception.confirm(ctxFor('pm'), { draftId: again.draftId }), 'ALREADY_READ');
+  });
+
+  it('refuses to file a transcription against a file ingestion has never looked at', async () => {
+    const stray = await perception.extract(ctxFor('pm'), store, { hash: STRAY_HASH, task: 'DOCUMENT_TEXT' });
+    await rejectsCode(() => perception.confirm(ctxFor('pm'), { draftId: stray.draftId }), 'NOT_INGESTED');
+  });
+
+  it('takes the authority ingestion takes, so a reader cannot ask a model to write the record', async () => {
+    await rejectsCode(() => perception.extract(ctxFor('designer'), store, { hash: STRAY_HASH, task: 'DOCUMENT_TEXT' }), 'ACCESS_DENIED');
   });
 });
 

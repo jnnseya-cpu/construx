@@ -1415,9 +1415,11 @@ clause number only matches where the criterion names no other section —
 specifications number 3.4 in every section they have, and matching on the number
 alone reported a dozen sections as covered by one plan.
 
-Reads supplied text, on the same terms as contract clause extraction. OCR is not
-built and a scanned specification cannot be read here; the record says
-`source: 'SUPPLIED_TEXT'` so nobody relying on it has to guess.
+Reads supplied text, on the same terms as contract clause extraction. A
+specification arriving as a file is read into text first — on the Documents
+screen, from the PDF's own text layer or by a confirmed model transcription of a
+scan — and the text supplied here; the record says `source: 'SUPPLIED_TEXT'` so
+nobody relying on it has to guess.
 
 **Master pricing — tender stage six.** Both routes converge and the sum that
 goes out is assembled. `assignScheduleRoute` had said "both routes converge
@@ -8584,6 +8586,57 @@ signs in, sees their firm and not the competitor, is refused the
 competitor's portal and the procurement read, and the buyer sees the same
 payment state. `etablix.portal.test.ts`.
 
+## Reading a PDF, and transcribing a scan
+
+Every PDF had been routed to a model that can see, and on a deployment
+without one that meant every PDF was unread — a specification that was
+already text sat beside a letter in `.txt` that was searchable. A PDF is not a
+picture of a document unless it was scanned. `evidence/pdftext.ts` reads the
+text a PDF carries from its own bytes, with no dependency: the page tree
+walked in order (or every page object where the tree is broken), objects
+packed in object streams, Flate content streams (Node's own `zlib`), the
+text-showing operators with line breaks where the positioning operators put
+them, every string decoded through the font it is set in — a `ToUnicode` map
+where the font carries one, WinAnsi, MacRoman or Standard encoding with a
+`Differences` array otherwise — and form XObjects followed. What it refuses it
+counts and names: an encrypted file (`UNSUPPORTED`, nothing can read it
+without the password), a composite font with no `ToUnicode` (glyph indices,
+not characters), a stream under a filter it does not decode, and a page that
+draws images and no text, which is what a scan looks like. The ingestion
+record now carries the page count and, on a partial read, a note saying what
+was left out; a scan carries the reason with what was seen. Proven against
+the platform's own renderer and a hand-built file carrying what a word
+processor's output carries (`pdftext.test.ts`).
+
+The other half is the `DOCUMENT_TEXT` perception task: a scan or a
+photograph of a page is shown to a multimodal provider, which transcribes it
+page by page and marks what it cannot read; a person confirms the draft, and
+confirming runs `recordModelReading`, which writes the same `FILE_EXTRACTED`
+event a native read writes — `method: 'OCR'`, the provider, the confirmer and
+the draft on the record, the classification re-run over the text, the text
+indexed. It is refused where the file was never ingested, is quarantined, or
+already has its text. The board reporter's engine carries it because a
+document can arrive in any phase. The door is *Transcribe with a model* on the
+Documents screen against each file that needs it, with the transcriptions
+awaiting confirmation beneath; on a deployment with no provider that can see,
+the screen says so at the control. `perception.test.ts` runs the flow against
+a stubbed provider. **No provider call has been made from this environment**,
+so a real model reading a real page remains unverified here, as every other
+perception task's reading does.
+
+Driving the screen found a defect older than either half: the *Read it* door
+on Documents had never worked. `command()` filtered `hidden` fields out of
+the form it rendered, so a value the door already knew — the hash the row was
+clicked on — was never in the body, and the route refused it on a required
+field the person could not see. Every door with a hidden field was in the
+same position, and the ones that worked worked because a `transform` put
+the value back. Fixed at the root in `frontend/lib/command.js`: a hidden
+field renders as the input it is and is collected by name like every other.
+Verified in Chromium: the project manager reads a platform-rendered PDF from
+the Documents screen and the row says *Read · 2 pages*; a scan says what was
+seen and, on this deployment with no provider that can see, why no
+transcription is offered.
+
 ## Forecast accuracy against the final account
 
 §17's tenth metric had been declared not measurable, correctly: the live
@@ -8715,11 +8768,11 @@ named so it is not mistaken for finished.
 | Model ingestion | Records the model, hash, discipline, LOD, element count as a governed event | IFC parsing, geometry hash, model diffing |
 | Digital twin | Reconciles observed against expected element status | Observations are structured input, not derived from imagery |
 | Evidence capture | Real SHA-256 over the real file, recorded against the event, the file itself held in a tenant-scoped content-addressed store, and every ingested file sent to a signature scanner where one is configured (see *Signature scanning* below) | A deletion policy, deliberately: evidence under the golden thread is retained, and `evidence/registry.ts` reports what the record names against what the volume holds rather than deciding what is old enough to remove |
-| File ingestion | Structural inspection, rules classification with its signals, native text and table extraction, and a lexical index over what was read. A file that is not what it claims to be is quarantined with the finding on the record | A PDF or a photograph reports `NEEDS_OCR` rather than being read; the index is lexical, so it finds a near-duplicate and not a paraphrase |
+| File ingestion | Structural inspection, rules classification with its signals, native text and table extraction — a PDF's own text layer included, page by page, through its fonts — and a lexical index over what was read. A scan reports `NEEDS_OCR` with what was seen (pages, image-only pages) and is transcribed by a model through `DOCUMENT_TEXT`, confirmed by a person, into the same record. A file that is not what it claims to be is quarantined with the finding on the record | A photograph or a scan on a deployment with no multimodal provider stays unread and says so; the transcription path is proven against a stub, not a real model; the index is lexical, so it finds a near-duplicate and not a paraphrase |
 | Signature scanning | `evidence/scanner.ts` speaks clamd's INSTREAM protocol over a socket. Every ingested file is sent to it where one is configured, and the record names the daemon and its signature database. Unset means unscanned and every record and every read says so; configured-and-unreachable refuses the ingestion rather than recording an unscanned file as checked | The platform holds no signatures itself and never will. Verified against a daemon of the suite's own speaking the real protocol, not against ClamAV — no ClamAV exists in this environment |
 | Vision tasks | Progress, PPE, plant and defects read from a held photograph, each as a draft a person confirms into the ordinary domain command | The wire contract is proven against real vendor response shapes, including fenced, prefaced, truncated, empty and non-object replies. What no test here can establish is whether a model reads a photograph correctly |
 | Commitment extraction | Reads a held letter for what it promises and what it demands, drops anything not quoted verbatim from the letter, and registers a confirmed one in the obligation calendar that already exists | Needs a provider that reads prose; a local deployment is refused rather than given an invented undertaking. The wire contract is proven against real vendor response shapes; the reading is not |
-| Clause extraction | From supplied text | OCR and table extraction from a PDF |
+| Clause extraction | From supplied text; a PDF is read into text first by ingestion (its text layer) or by a confirmed model transcription (a scan), and the text supplied | Table extraction from a PDF; reading the file into the clause register in one step |
 | 4D scheduling | Twin states link to task ids | No visualisation |
 | Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded, a permanent refusal (5xx) suppressing the address until an operator lifts it from the Newsletter screen, a transient one retried on the next issue | Asynchronous bounces — a message accepted by the relay and bounced later arrives at a mailbox this platform does not read; DKIM belongs at the relay, where the key should live |
 
@@ -8740,11 +8793,17 @@ parsing work, not wiring.
   onwards. What remains genuinely absent inside the module is listed under
   **What ETABLIX does not do** below, and each gap is reported on the screen
   that would otherwise imply it
-- **OCR, and any semantic embedding** — the ingestion pipeline reports
-  `NEEDS_OCR` for a PDF or a photograph and routes to the perception pipeline,
-  which refuses where no multimodal provider is configured. The document index is
-  feature hashing over words and word pairs, and the field is named
-  `lexicalVector` because it finds a near-duplicate revision, not a paraphrase
+- ~~**OCR**~~ — built in two halves; see *Reading a PDF, and transcribing a
+  scan* below. A PDF's own text layer is read from the bytes with no model
+  (`evidence/pdftext.ts`); a scan or a photograph is transcribed by a multimodal
+  provider through the `DOCUMENT_TEXT` perception task and confirmed by a
+  person into the same `FILE_EXTRACTED` record. What remains true: on a
+  deployment with no multimodal provider the scan is still refused, and no
+  provider call has been made from this environment, so the transcription path
+  is proven against a stub and not against a real model reading a real page
+- **Any semantic embedding** — the document index is feature hashing over words
+  and word pairs, and the field is named `lexicalVector` because it finds a
+  near-duplicate revision, not a paraphrase
 - **A plant register** — plant recognised in a photograph is filed as a site
   observation naming what was seen and whether it was standing. There is no
   register of plant on hire, and utilisation is not derived

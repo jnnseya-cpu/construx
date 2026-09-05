@@ -223,6 +223,82 @@ export async function ingestFile(
   };
 }
 
+/**
+ * Record what a model read from a file the bytes could not be read from.
+ *
+ * The other half of `NEEDS_OCR`. Ingestion says a scan has no text layer; the
+ * perception pipeline shows the file to a provider that can see and writes a
+ * draft; a person confirms the draft; and *this* is what confirming runs — the
+ * same `FILE_EXTRACTED` event a native read writes, so everything downstream
+ * that indexes or searches text finds it in one place, with `method: 'OCR'`
+ * and the provider, the confirmer and the draft on the record. The
+ * classification is re-run over the text, because the one made at ingestion
+ * had only a filename to go on.
+ *
+ * Refused where the file was never ingested (the scan has not been looked at
+ * for what it is), is quarantined, or was already read — a second reading of
+ * bytes that already have text would replace a finding somebody may have used.
+ */
+export function recordModelReading(
+  ctx: EngineContext,
+  input: { hash: string; pages: Array<{ page: number; text: string }>; readBy: string; draftId: string },
+): { ingestionId: string; pages: number; characters: number; kind: string } {
+  authorise(ctx, 'EVIDENCE_AUDIT', 'I');
+
+  const file = filesOf(ctx).find((entry) => entry.hash === input.hash);
+  if (!file) {
+    throw new DomainError(
+      'NOT_INGESTED',
+      'This file has not been through ingestion, so nothing has said what it is. Read it there first; the model’s ' +
+        'transcription is filed against that record.',
+      409,
+    );
+  }
+  if (file.status === 'QUARANTINED') {
+    throw new DomainError('FILE_QUARANTINED', 'The file is quarantined. Nothing downstream reads it, and that includes a transcription of it.', 409);
+  }
+  if (file.extraction.method === 'OCR' || (file.extraction.method === 'NATIVE' && !file.extraction.note)) {
+    throw new DomainError(
+      'ALREADY_READ',
+      file.extraction.method === 'OCR'
+        ? 'A confirmed transcription is already on this record. A second one would replace text somebody may have searched.'
+        : 'Its text layer was read from the bytes themselves; a model has nothing to add to it.',
+      409,
+    );
+  }
+
+  const pages = [...input.pages].sort((a, b) => a.page - b.page).filter((page) => page.text.trim() !== '');
+  const text = pages.map((page) => page.text.trim()).join('\n\n');
+  if (text === '') {
+    throw new DomainError('NOTHING_READ', 'The transcription carries no text, so there is nothing to record.');
+  }
+
+  const extraction: Extraction = {
+    method: 'OCR',
+    text,
+    pages: pages.length,
+    note: `Transcribed by ${input.readBy} and confirmed by ${ctx.auth.actorId} from draft ${input.draftId}.`,
+  };
+  const classification = classify({
+    ...(file.filename ? { filename: file.filename } : {}),
+    actualType: file.inspection.actualType,
+    text,
+  });
+
+  write(ctx, {
+    eventType: 'FILE_EXTRACTED',
+    entity: { refType: 'IngestedFile', refId: file.ingestionId },
+    nextState: {
+      ...file,
+      extraction,
+      classification,
+      lexicalVector: lexicalVector(text),
+    } as unknown as Record<string, unknown>,
+  });
+
+  return { ingestionId: file.ingestionId, pages: pages.length, characters: text.length, kind: classification.kind };
+}
+
 /** Every ingested file on the project, newest first. */
 export function ingestedFiles(ctx: EngineContext): IngestedFileState[] {
   authorise(ctx, 'EVIDENCE_AUDIT', 'R');
@@ -283,8 +359,10 @@ export type IngestionPosition = {
   quarantined: number;
   /** Held but never looked at — the queue this pipeline exists to empty. */
   notIngested: number;
-  /** Read natively, so their text is searchable and indexed. */
+  /** Read — natively or by a confirmed model transcription — so their text is searchable and indexed. */
   read: number;
+  /** Of those, transcribed by a model and confirmed by a person rather than read from the bytes. */
+  readByModel: number;
   /** Needing a model that can see. Zero where no multimodal provider is set. */
   awaitingOcr: number;
   byKind: Record<string, number>;
@@ -353,7 +431,8 @@ export async function ingestionPosition(ctx: EngineContext, store: EvidenceStore
     total: files.length,
     quarantined: files.filter((file) => file.status === 'QUARANTINED').length,
     notIngested: held.filter((hash) => !ingested.has(hash)).length,
-    read: files.filter((file) => file.extraction.method === 'NATIVE').length,
+    read: files.filter((file) => file.extraction.method === 'NATIVE' || file.extraction.method === 'OCR').length,
+    readByModel: files.filter((file) => file.extraction.method === 'OCR').length,
     awaitingOcr: files.filter((file) => file.extraction.method === 'NEEDS_OCR').length,
     byKind,
     quarantine: files

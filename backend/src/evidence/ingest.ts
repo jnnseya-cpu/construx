@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readPdfText } from './pdftext.ts';
 
 /**
  * The file ingestion pipeline: what happens to a file between arriving and
@@ -502,22 +503,36 @@ export function classify(input: {
 // --- Stage 3: extraction ----------------------------------------------------
 
 export type Extraction = {
-  /** The text, where the bytes are the text. */
+  /** The text, where the bytes are the text — or, under `OCR`, what a model transcribed and a person confirmed. */
   text?: string;
   /** Rows, where the file is delimited. Never inferred from prose. */
   tables?: string[][];
-  method: 'NATIVE' | 'NEEDS_OCR' | 'UNSUPPORTED';
+  /**
+   * `NATIVE`: read from the bytes themselves. `OCR`: transcribed by a
+   * multimodal provider through the perception pipeline and confirmed by a
+   * person. `NEEDS_OCR`: nothing readable in the bytes, a model is needed.
+   * `UNSUPPORTED`: nothing here reads this format.
+   */
+  method: 'NATIVE' | 'OCR' | 'NEEDS_OCR' | 'UNSUPPORTED';
+  /** Pages, where the format has them. */
+  pages?: number;
   /** Why nothing was extracted, where nothing was. Never blank on a refusal. */
   reason?: string;
+  /** What a successful read left out or how it was made, where either is worth saying. */
+  note?: string;
 };
+
+/** Below this many characters a PDF's text layer is a title on a scan, not a document. */
+const PDF_TEXT_FLOOR = 20;
 
 /**
  * Get the text out, or say honestly why not.
  *
- * Native where the bytes *are* the text. A PDF or a photograph needs a model
- * that can see, so this reports `NEEDS_OCR` and the caller routes to the
- * perception pipeline, which refuses when no multimodal provider is configured.
- * Nothing here guesses at the contents of a scan.
+ * Native where the bytes *are* the text: a text file, or a PDF that carries its
+ * words in its content streams, which `pdftext.ts` reads. A scanned PDF or a
+ * photograph needs a model that can see, so this reports `NEEDS_OCR` and the
+ * caller routes to the perception pipeline, which refuses when no multimodal
+ * provider is configured. Nothing here guesses at the contents of a scan.
  */
 export function extractText(bytes: Buffer, actualType: string | undefined): Extraction {
   if (actualType === 'text/plain') {
@@ -527,11 +542,50 @@ export function extractText(bytes: Buffer, actualType: string | undefined): Extr
   }
 
   if (actualType === 'application/pdf') {
+    const read = readPdfText(bytes);
+    if (read.encrypted) {
+      return {
+        method: 'UNSUPPORTED',
+        reason:
+          'This PDF is encrypted. Nothing can read it without its password — not this parser, and not a model that ' +
+          'can see, which would be shown the same ciphertext. Ask for an unlocked copy.',
+      };
+    }
+    const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`;
+    if (read.pages > 0 && read.text.replace(/\s+/g, '').length >= PDF_TEXT_FLOOR) {
+      const notes: string[] = [];
+      if (read.imageOnlyPages > 0) {
+        notes.push(
+          `${read.imageOnlyPages} of ${plural(read.pages, 'page')} carr${read.imageOnlyPages === 1 ? 'ies' : 'y'} only images and no text ` +
+            'layer — what a scan looks like — and would need a model that can see',
+        );
+      }
+      if (read.undecodableStrings > 0) {
+        notes.push(`${plural(read.undecodableStrings, 'text run')} set in a font with no readable encoding were skipped rather than guessed at`);
+      }
+      if (read.unreadableStreams > 0) {
+        notes.push(`${plural(read.unreadableStreams, 'stream')} under a compression this reader does not decode were skipped`);
+      }
+      return { text: read.text, method: 'NATIVE', pages: read.pages, ...(notes.length > 0 ? { note: `${notes.join('; ')}.` } : {}) };
+    }
+    if (read.pages === 0) {
+      return {
+        method: 'NEEDS_OCR',
+        reason:
+          'No page tree could be found in this PDF, so whatever text layer it has could not be reached. Reading it needs ' +
+          'a model that can see the page — the perception pipeline, which refuses when no multimodal provider is ' +
+          'configured rather than inventing a reading.',
+      };
+    }
     return {
       method: 'NEEDS_OCR',
+      pages: read.pages,
       reason:
-        'A PDF’s text is inside compressed content streams, and a scanned one has no text at all. Reading it ' +
-        'needs a model that can see the page — the perception pipeline, which refuses when no multimodal ' +
+        `${plural(read.pages, 'page')} and no text layer to read` +
+        (read.imageOnlyPages > 0 ? ` — ${read.imageOnlyPages} carr${read.imageOnlyPages === 1 ? 'ies' : 'y'} only images, which is what a scan looks like` : '') +
+        (read.undecodableStrings > 0 ? `; ${plural(read.undecodableStrings, 'text run')} set in a font with no readable encoding` : '') +
+        (read.unreadableStreams > 0 ? `; ${plural(read.unreadableStreams, 'stream')} under a compression this reader does not decode` : '') +
+        '. Reading it needs a model that can see the page — the perception pipeline, which refuses when no multimodal ' +
         'provider is configured rather than inventing a reading.',
     };
   }
