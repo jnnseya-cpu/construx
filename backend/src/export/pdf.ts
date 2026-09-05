@@ -737,16 +737,41 @@ function renderTable(sheet: Sheet, block: Extract<DocumentBlock, { kind: 'TABLE'
   const columns = block.headers.length;
   if (columns === 0) return;
 
-  // Column widths from the widest cell in each, then scaled to the page. A
-  // fixed even split wastes half a page on a date column and cuts a narrative
-  // one to ribbons.
+  // Column widths from the widest cell in each. A fixed even split wastes half
+  // a page on a date column and cuts a narrative one to ribbons.
+  //
+  // When the table is wider than the page, only the columns that can wrap
+  // give up width. Every column keeps at least its longest single word — a
+  // figure, a unit, a reference — because a word has nowhere to break, and
+  // scaling every column alike used to set "7,770.00" as "7,770.0" over "0"
+  // and cut the heading "Quantity" to "Quanti". The narrative column wraps
+  // onto more lines instead, which is what a narrative column is for.
+  const PADDING = 12;
+  const longestWord = (text: string, font: FontName): number =>
+    Math.max(0, ...text.split(/\s+/).map((word) => widthOf(word, font, 9)));
   const natural = block.headers.map((header, index) => {
     const cells = block.rows.map((row) => row[index] ?? '');
-    return Math.max(widthOf(header, 'Helvetica-Bold', 9), ...cells.map((c) => widthOf(c, 'Helvetica', 9)), 30);
+    return Math.max(widthOf(header, 'Helvetica-Bold', 9), ...cells.map((c) => widthOf(c, 'Helvetica', 9)), 30) + PADDING;
   });
-  const total = natural.reduce((sum, w) => sum + w, 0) + columns * 12;
-  const scale = CONTENT_WIDTH / total;
-  const widths = natural.map((w) => (w + 12) * scale);
+  const minimum = block.headers.map((header, index) => {
+    const cells = block.rows.map((row) => row[index] ?? '');
+    return Math.max(longestWord(header, 'Helvetica-Bold'), ...cells.map((c) => longestWord(c, 'Helvetica')), 30) + PADDING;
+  });
+  const total = natural.reduce((sum, w) => sum + w, 0);
+  const floor = minimum.reduce((sum, w) => sum + w, 0);
+  let widths: number[];
+  if (total <= CONTENT_WIDTH || floor > CONTENT_WIDTH) {
+    // Room to spare is shared out in proportion. So is a shortfall no wrapping
+    // can absorb — the words themselves are wider than the page — where the
+    // cut inside a word is the honest last resort rather than an overflow.
+    const scale = CONTENT_WIDTH / total;
+    widths = natural.map((w) => w * scale);
+  } else {
+    const need = natural.map((w, index) => w - minimum[index]!);
+    const slack = CONTENT_WIDTH - floor;
+    const demand = need.reduce((sum, w) => sum + w, 0);
+    widths = minimum.map((w, index) => w + (demand > 0 ? (slack * need[index]!) / demand : 0));
+  }
 
   if (block.caption) {
     sheet.reserve(16);
@@ -754,22 +779,29 @@ function renderTable(sheet: Sheet, block: Extract<DocumentBlock, { kind: 'TABLE'
     sheet.advance(16);
   }
 
+  // Every line of every heading, not the first only: a two-word heading in a
+  // narrow column used to lose its second word.
+  const headerLines = block.headers.map((header, index) => wrap(header, 'Helvetica-Bold', 9, widths[index]! - PADDING));
+  const headerHeight = Math.max(...headerLines.map((lines) => lines.length)) * 12 + 8;
   const drawHeader = (): void => {
-    sheet.reserve(20);
-    sheet.fill(MARGIN.left, sheet.y - 5, CONTENT_WIDTH, 18, [0.95, 0.95, 0.96]);
+    sheet.reserve(headerHeight);
+    sheet.fill(MARGIN.left, sheet.y - 5, CONTENT_WIDTH, headerHeight - 2, [0.95, 0.95, 0.96]);
     let x = MARGIN.left + 6;
-    block.headers.forEach((header, index) => {
-      const [line] = wrap(header, 'Helvetica-Bold', 9, widths[index]! - 12);
-      sheet.text(line ?? '', { font: 'Helvetica-Bold', size: 9, x, colour: [0.25, 0.25, 0.28] });
+    headerLines.forEach((lines, index) => {
+      lines.forEach((line, lineIndex) => {
+        sheet.advance(lineIndex === 0 ? 0 : 12);
+        sheet.text(line, { font: 'Helvetica-Bold', size: 9, x, colour: [0.25, 0.25, 0.28] });
+      });
+      sheet.advance(-(lines.length - 1) * 12);
       x += widths[index]!;
     });
-    sheet.advance(20);
+    sheet.advance(headerHeight);
   };
 
   drawHeader();
 
   for (const row of block.rows) {
-    const cellLines = row.map((cell, index) => wrap(cell ?? '', 'Helvetica', 9, (widths[index] ?? CONTENT_WIDTH) - 12));
+    const cellLines = row.map((cell, index) => wrap(cell ?? '', 'Helvetica', 9, (widths[index] ?? CONTENT_WIDTH) - PADDING));
     const height = Math.max(...cellLines.map((lines) => lines.length)) * 12 + 5;
 
     const before = sheet.y;

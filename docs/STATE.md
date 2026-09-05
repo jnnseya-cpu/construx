@@ -9890,10 +9890,14 @@ hand-built bill in Courier (right-aligned figures, a blank quantity, a kerned
 item, a wrapped description, a paragraph after), justified prose, two
 newspaper columns, a heading beside a date, a table inside a form XObject
 placed by its matrix, and the platform's own rendered bill. `pdftext.test.ts`.
-Found on the way and left for the renderer, not this reader: `export/pdf.ts`
-wraps a cell mid-token when a table is wider than the page ("7,770.00" set as
-"7,770.0" over "0"), and a heading column too narrow for its word is cut to
-"Quanti". The reader reports what is on the page.
+Found on the way and then fixed in the renderer: `export/pdf.ts` scaled every
+column alike when a table was wider than the page, so a figure column gave up
+width it could not spare and "7,770.00" was set as "7,770.0" over "0", the
+heading "Quantity" cut to "Quanti", and a two-word heading lost its second
+word. Every column now keeps at least its longest single word and only the
+columns that can wrap give up width; a heading is drawn on every line it
+wraps to. `pdf.test.ts` ("keeps every figure and heading whole when the table
+is wider than the page"). The reader reports what is on the page either way.
 
 ---
 

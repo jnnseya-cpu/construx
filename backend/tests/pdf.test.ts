@@ -201,6 +201,54 @@ describe('running out of page', () => {
     const pages = [...text.matchAll(/\/Type \/Page /g)].length;
     assert.equal([...text.matchAll(/Content hash sha256:/g)].length, pages);
   });
+
+  it('keeps every figure and heading whole when the table is wider than the page', () => {
+    // A bill whose description column alone is wider than the page. Scaling
+    // every column alike used to set "7,770.00" as "7,770.0" over "0" and cut
+    // the heading "Quantity" to "Quanti": the figure columns had given up
+    // width they could not spare. Now only the columns that can wrap do.
+    const wide = sampleDocument({
+      blocks: [
+        {
+          kind: 'TABLE',
+          headers: ['Item', 'Description', 'Unit', 'Quantity', 'Rate', 'Total'],
+          rows: [
+            ['2.1', 'Excavation to reduce levels, not exceeding 2m deep, in material other than rock, including disposal', 'm3', '420', '18.50', '7,770.00'],
+            ['2.2', 'Blinding concrete C16/20, 50mm thick', 'm2', '180', '12.00', '2,160.00'],
+            ['2.4', 'Reinforced concrete C32/40 in foundations including formwork and reinforcement', 'm3', '96', '185.00', '17,760.00'],
+          ],
+        },
+      ],
+    });
+    const text = latin1(renderPdf(wide));
+    for (const whole of ['7,770.00', '2,160.00', '17,760.00', 'Quantity', 'Description', '18.50', '185.00']) {
+      assert.ok(text.includes(`(${whole}) Tj`), `${whole} was cut`);
+    }
+    // The narrative wrapped instead: more than one line of it.
+    assert.ok(text.includes('(Excavation to reduce levels,') && !text.includes('(Excavation to reduce levels, not exceeding 2m deep, in material other than rock, including disposal) Tj'));
+  });
+
+  it('draws every word of a heading that wraps in a narrow column', () => {
+    const text = latin1(
+      renderPdf(
+        sampleDocument({
+          blocks: [
+            {
+              kind: 'TABLE',
+              headers: ['Ref', 'Narrative of the works carried out in the period and the reasons for any departure from the programme', 'Unit rate'],
+              rows: [
+                ['1', 'Trench excavation and backfill along the eastern boundary, including temporary works and dewatering to the base', '18.50'],
+                ['2', 'Reinstatement of the carriageway to the highway authority specification after the diversion was complete', '12.00'],
+                ['3', 'Service connections to the new main under the road crossing, with the road plates and the traffic management', '185.00'],
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    assert.ok(text.includes('(Unit) Tj') || text.includes('(Unit rate) Tj'), 'the heading lost its first word');
+    assert.ok(text.includes('(rate) Tj') || text.includes('(Unit rate) Tj'), 'the heading lost its second word');
+  });
 });
 
 describe('through the platform', () => {
