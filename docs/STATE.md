@@ -15,18 +15,18 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,742 passing, 0 failing, 0 skipped, across 250 files · plus 18 against a live Postgres 16 |
+| Tests | 5,795 passing, 0 failing, 0 skipped, across 254 files · plus 18 against a live Postgres 16 |
 | Typecheck | clean |
-| Backend | 292 TypeScript files, 187,800 lines |
-| Application | 76 ES modules, 43,100 lines (including a service worker) |
-| API routes | 1,052 — 722 writes, 330 reads (48 of them public) |
-| Event types | 710 Golden Thread (closed) · the communication catalogue is separate and closed |
-| Entity types | 328, all classified for access |
+| Backend | 295 TypeScript files, 190,000 lines |
+| Application | 77 ES modules, 43,500 lines (including a service worker) |
+| API routes | 1,058 — 725 writes, 333 reads (48 of them public) |
+| Event types | 712 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Entity types | 329, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
-Counted from the tree on 4 September 2026 (`npm test`, `wc`, and the
+Counted from the tree on 5 September 2026 (`npm test`, `wc`, and the
 `ROUTES`, `EVENT_TYPES`, `ENTITY_ACCESS` and `AGENTS` tables at import). The
 figures drift as the work below lands; the Blueprint screen counts the same
 tables from the running process and is the live figure.
