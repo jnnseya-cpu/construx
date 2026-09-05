@@ -363,6 +363,22 @@ ${figure('command-centre')}
           team asking who wrote the safety case gets a name, not a shrug.
         </p>
       </article>
+      <article>
+        <h3>It will not call prose a table</h3>
+        <p>
+          A bill's rows come off the PDF as rows, blanks kept blank and a wrapped description joined. Two columns of
+          prose that happen to line up, or a heading beside a date, are refused as tables rather than read into a
+          schedule as quantities nobody measured.
+        </p>
+      </article>
+      <article>
+        <h3>A standby will not extend the record</h3>
+        <p>
+          A second process following the record from Postgres answers every read and refuses every write by name —
+          sign-in included — so two processes can never each hold a different truth. Promotion is a restart, and the
+          database refuses a second writer rather than forking.
+        </p>
+      </article>
     </div>
   </div>
 </section>

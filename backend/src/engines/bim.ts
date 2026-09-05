@@ -1210,6 +1210,13 @@ export async function ingestSpecification(
     revision: string;
     specificationText: string;
     documentHash: string;
+    /**
+     * Where the text came from. Supplied by a person by default; `INGESTED_FILE`
+     * when ingestion read it out of the document the hash names, which is what
+     * `evidence/pipeline.ts` passes. Anyone relying on the record needs to know
+     * which, so it is written on the specification rather than inferred.
+     */
+    source?: 'SUPPLIED_TEXT' | 'INGESTED_FILE';
   },
 ): Promise<{
   specificationId: string;
@@ -1251,7 +1258,10 @@ export async function ingestSpecification(
 
   const result = await runAI(ctx, {
     engine: 'BIM_TWIN',
-    taskType: 'specification_reading',
+    // The task carries where the text came from, because a quote is keyed by
+    // engine and task and a route may declare one task only: the file route
+    // quotes what the file route has cost, and the text route the text route.
+    taskType: input.source === 'INGESTED_FILE' ? 'specification_reading_from_file' : 'specification_reading',
     capability: 'REASONING',
     inputRefs: [evidence],
     request: {
@@ -1279,9 +1289,9 @@ export async function ingestSpecification(
             requiringVerification,
             narrative: String(output.narrative ?? ''),
             ingestedAt: new Date().toISOString(),
-            // The source is text somebody supplied, not a document the platform
-            // read. Anyone relying on this needs to know which.
-            source: 'SUPPLIED_TEXT',
+            // Text somebody supplied, or text ingestion read out of the document
+            // the hash names. Anyone relying on this needs to know which.
+            source: input.source ?? 'SUPPLIED_TEXT',
           },
           evidenceRefs: [evidence],
         },

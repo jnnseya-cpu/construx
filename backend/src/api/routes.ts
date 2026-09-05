@@ -20471,6 +20471,46 @@ export const ROUTES: Route[] = [
       ),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/ingestion/:ingestionId/specification',
+    ai: { engine: 'BIM_TWIN', taskType: 'specification_reading_from_file', capability: 'REASONING' },
+    description: 'Engine E — read an ingested file as a specification section, straight from the text ingestion read out of it',
+    schema: {
+      type: 'object',
+      required: ['sectionRef', 'title', 'revision'],
+      properties: { sectionRef: stringField, title: stringField, revision: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      ingestion.specificationFromFile(projectContext(platform, ctx), {
+        ingestionId: ctx.params.ingestionId as string,
+        ...body<{ sectionRef: string; title: string; revision: string }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/ingestion/:ingestionId/tables/:table/measure',
+    description: 'Record a table recovered from an ingested bill as measured items on an open measurement schedule, each sourced to the document and page',
+    schema: {
+      type: 'object',
+      required: ['scheduleId'],
+      properties: {
+        scheduleId: stringField,
+        basis: { type: 'string', enum: ['MEASURED', 'PROVISIONAL', 'APPROXIMATE'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const table = Number(ctx.params.table);
+      if (!Number.isInteger(table) || table < 1) throw new NotFoundError('A table is numbered from 1');
+      return ingestion.measureFromTable(projectContext(platform, ctx), {
+        ingestionId: ctx.params.ingestionId as string,
+        table,
+        ...body<{ scheduleId: string; basis?: 'MEASURED' | 'PROVISIONAL' | 'APPROXIMATE' }>(ctx),
+      });
+    },
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/ingestion/:ingestionId/similar',
     readOnly: true,

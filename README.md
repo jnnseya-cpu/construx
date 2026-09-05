@@ -69,6 +69,13 @@ together or not at all.
 - **Replay.** `POST /v1/projects/:id/audit/replay` reconstructs state from the
   log, verifies every event independently, and returns a project state root
   hash — one attestation value any party holding the log can reproduce.
+- **Durable, and off the box.** Every event is flushed to an append-only
+  journal on the volume before it is acknowledged (`LEDGER_JOURNAL_PATH`). With
+  `LEDGER_POSTGRES_MODE` set, the same events are shipped to Postgres in commit
+  order through the database's own chain trigger: `mirror` beside the journal,
+  `primary` to boot a new host from the database, `follower` for a warm standby
+  that applies what the primary ships, answers every read and refuses every
+  write. See `docs/RUNBOOK.md`, "The ledger store".
 
 ### Seven AI engines
 
@@ -146,7 +153,7 @@ rather than logic.
 backend/                 the service — one Node process, no dependencies
   src/
     core/                canonical hashing, constrained JSON Patch, ULID, validation, errors
-    goldenthread/        event catalogue, ledger, journal, replay and verification
+    goldenthread/        event catalogue, ledger, journal, the Postgres store, replay and verification
     identity/            roles, permission matrix, RBAC/ABAC/scopes, tokens and MFA
     billing/             ACU wallet, subscription tiers, invoicing
     ai/                  orchestrator, provider adapters, conversational copilot

@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
 import { rateLimiter } from '../src/api/middleware.ts';
 import { ROUTES } from '../src/api/routes.ts';
+import { PostgresLedgerStore, type StoreClient } from '../src/goldenthread/pgstore.ts';
 import { POST_PAGES, SITE_PAGES } from '../src/site/index.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
@@ -268,6 +269,29 @@ describe('the error contract', () => {
   it('rejects a body that is not JSON rather than guessing', async () => {
     const reply = await call('POST', '/v1/auth/login', { raw: '{not json', contentType: 'application/json' });
     assert.equal(reply.status, 400);
+  });
+});
+
+describe('a follower answers reads and refuses every command at the edge', () => {
+  it('returns 503 LEDGER_FOLLOWER on a write, sign-in included, and 200 on a read', async () => {
+    // The store's client is never reached: the gateway reads the mode alone.
+    const idle: StoreClient = {
+      query: async () => ({ rows: [], rowCount: 0 }),
+      asTenant: async (_tenantId, work) => work({ query: async () => ({ rows: [], rowCount: 0 }) }),
+    };
+    platform.ledgerStore = new PostgresLedgerStore(idle, 'follower', { log: () => undefined });
+    try {
+      const write = await call('POST', '/v1/me/newsletter', { token: tokenFor('qs'), body: { subscribed: false } });
+      assert.equal(write.status, 503);
+      assert.equal(write.body.title, 'LEDGER_FOLLOWER');
+      assert.match(String(write.body.detail), /send commands, sign-ins included, to the primary/);
+      const signIn = await call('POST', '/v1/auth/login', { body: { email: 'qs@meridian.example' } });
+      assert.equal(signIn.status, 503, 'a sign-in records the device it came from, so a follower refuses it too');
+      const read = await call('GET', '/v1/me/newsletter', { token: tokenFor('qs') });
+      assert.equal(read.status, 200);
+    } finally {
+      platform.ledgerStore = undefined;
+    }
   });
 });
 

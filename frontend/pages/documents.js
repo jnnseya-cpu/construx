@@ -318,6 +318,14 @@ export async function documents(root) {
                             : ''
                         : ''
                     }
+                    ${
+                      // Text on the record can be read as a specification in one
+                      // step: the same reading the Design screen runs on pasted
+                      // text, with the file's own hash as the document.
+                      file.status === 'INGESTED' && (file.extraction.method === 'NATIVE' || file.extraction.method === 'OCR')
+                        ? html`<button class="btn quiet sm" data-specify="${file.ingestionId}" data-name="${file.filename ?? file.hash.slice(0, 18)}">Read as specification</button>`
+                        : ''
+                    }
                     ${file.lexicalVector ? html`<button class="btn quiet sm" data-similar="${file.ingestionId}">Find duplicates</button>` : ''}`,
                   ]),
                 ],
@@ -336,9 +344,14 @@ export async function documents(root) {
                     </p>
                     ${file.extraction.pageTables.map(
                       (found, index) => html`<div style="margin-top:8px">
-                        <div class="metric-sub" style="margin-bottom:4px">
-                          Table ${index + 1} · page ${found.page} · ${found.rows.length - 1} row${found.rows.length === 2 ? '' : 's'} under
-                          ${found.rows[0].length} columns
+                        <div class="metric-sub" style="margin-bottom:4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                          <span>
+                            Table ${index + 1} · page ${found.page} · ${found.rows.length - 1} row${found.rows.length === 2 ? '' : 's'} under
+                            ${found.rows[0].length} columns
+                          </span>
+                          <button class="btn quiet sm" data-measure="${file.ingestionId}" data-table="${index + 1}" data-name="${file.filename ?? file.hash.slice(0, 18)}">
+                            Into a measurement schedule
+                          </button>
                         </div>
                         ${raw(table({ headers: found.rows[0], rows: found.rows.slice(1), empty: 'A header row and nothing under it' }))}
                       </div>`,
@@ -710,6 +723,76 @@ export async function documents(root) {
       } catch (error) {
         toast('Not rejected', error.message, 'err');
       }
+      return;
+    }
+
+    const specify = event.target.closest('[data-specify]');
+    if (specify) {
+      const result = await command({
+        title: `Read ${specify.dataset.name} as a specification`,
+        intent:
+          'The text ingestion read out of this file goes to the specification reading as it stands, with the file’s own hash as ' +
+          'the document. Every clause that states a requirement becomes a clause record; a contents page or a covering letter is refused.',
+        path: `/v1/projects/${projectId}/ingestion/${specify.dataset.specify}/specification`,
+        submitLabel: 'Read the clauses',
+        aiCost: true,
+        fields: [
+          { name: 'sectionRef', label: 'Work section', type: 'text', placeholder: 'E10', hint: 'As the specification numbers it — E10, A12, Section 5.' },
+          { name: 'title', label: 'Section title', type: 'text', placeholder: 'In situ concrete' },
+          { name: 'revision', label: 'Revision', type: 'text', placeholder: 'C2' },
+        ],
+      });
+      if (!result) return;
+      toast(
+        'Specification read',
+        `${result.clauses} clause${result.clauses === 1 ? '' : 's'} recorded from ${specify.dataset.name}. See them on Design & BIM.`,
+        'ok',
+      );
+      return;
+    }
+
+    const measure = event.target.closest('[data-measure]');
+    if (measure) {
+      // The open schedules, so the chooser can only name one the platform has.
+      const position = await api.get(`/v1/projects/${projectId}/measurement`).catch(() => ({ schedules: [] }));
+      const open = (position.schedules ?? []).filter((schedule) => schedule.status === 'OPEN');
+      const result = await command({
+        title: `Table ${measure.dataset.table} of ${measure.dataset.name} into a schedule`,
+        intent:
+          'Every row with a description, a unit and a figure for its quantity becomes a measured item, sourced to this document and ' +
+          'page. Headings and notes are skipped and named. Nothing is priced — a rate typed in is exactly what the estimate refuses.',
+        path: `/v1/projects/${projectId}/ingestion/${measure.dataset.measure}/tables/${measure.dataset.table}/measure`,
+        submitLabel: 'Record the items',
+        fields: [
+          {
+            name: 'scheduleId',
+            label: 'Measurement schedule',
+            type: 'select',
+            options: open.map((schedule) => ({ value: schedule.scheduleId, label: `${schedule.reference} — ${schedule.title} (${schedule.items} items)` })),
+            hint: open.length === 0 ? 'No schedule is open. Open one on Tender & Procurement first.' : undefined,
+          },
+          {
+            name: 'basis',
+            label: 'Quantity basis',
+            type: 'select',
+            value: 'MEASURED',
+            options: [
+              { value: 'MEASURED', label: 'Measured — the bill’s figures stand' },
+              { value: 'PROVISIONAL', label: 'Provisional — to be remeasured on site' },
+              { value: 'APPROXIMATE', label: 'Approximate — off information not yet trusted' },
+            ],
+          },
+        ],
+      });
+      if (!result) return;
+      toast(
+        `${result.recorded} item${result.recorded === 1 ? '' : 's'} recorded`,
+        `${result.total} on the schedule now${result.skipped.length > 0 ? ` · ${result.skipped.length} row${result.skipped.length === 1 ? '' : 's'} skipped: ${result.skipped
+          .slice(0, 3)
+          .map((entry) => `row ${entry.row}, ${entry.reason}`)
+          .join('; ')}` : ''}${result.findings.length > 0 ? ` · ${result.findings.length} finding${result.findings.length === 1 ? '' : 's'} on the schedule` : ''}`,
+        result.findings.some((finding) => finding.severity === 'CRITICAL') ? 'warn' : 'ok',
+      );
       return;
     }
 

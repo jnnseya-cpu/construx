@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readPdfText, SENTENCE_END, type PdfTable } from './pdftext.ts';
+import { zipEntries as readZipEntries } from './zip.ts';
 
 /**
  * The file ingestion pipeline: what happens to a file between arriving and
@@ -183,29 +184,18 @@ export function sniffType(bytes: Buffer): string | undefined {
 /**
  * Read the entry names an archive declares, without decompressing anything.
  *
- * Local file headers only: `PK\x03\x04`, then a fixed offset to the name
- * length and the name. Enough to see that a spreadsheet is carrying an
- * executable, and it never expands a byte — which is the whole point when the
- * file might be a bomb.
+ * Enough to see that a spreadsheet is carrying an executable, and it never
+ * expands a byte — which is the whole point when the file might be a bomb.
+ * The reading itself lives in `zip.ts`, shared with the IFC reader, which
+ * prefers the central directory and falls back to the local headers this used
+ * to walk on its own.
  */
 function zipEntries(bytes: Buffer): { names: string[]; declaredUncompressed: number } {
-  const names: string[] = [];
-  let declaredUncompressed = 0;
-  let at = 0;
-  // Bounded: a legitimate xlsx has tens of entries, and a file with thousands
-  // is telling you something on its own.
-  while (at >= 0 && names.length < 512) {
-    const found = bytes.indexOf('PK\u0003\u0004', at, 'latin1');
-    if (found < 0 || found + 30 > bytes.length) break;
-    const uncompressed = bytes.readUInt32LE(found + 22);
-    const nameLength = bytes.readUInt16LE(found + 26);
-    const extraLength = bytes.readUInt16LE(found + 28);
-    if (found + 30 + nameLength > bytes.length) break;
-    names.push(bytes.subarray(found + 30, found + 30 + nameLength).toString('utf8'));
-    declaredUncompressed += uncompressed;
-    at = found + 30 + nameLength + extraLength;
-  }
-  return { names, declaredUncompressed };
+  const entries = readZipEntries(bytes);
+  return {
+    names: entries.map((entry) => entry.name),
+    declaredUncompressed: entries.reduce((sum, entry) => sum + entry.uncompressedSize, 0),
+  };
 }
 
 /**

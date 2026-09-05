@@ -95,7 +95,7 @@ export const FEATURES: Feature[] = [
     id: 'field',
     title: 'Site records that survive no signal',
     blurb:
-      'Daily records, weather, labour, plant and progress captured offline and reconciled on reconnection — device timestamps preserved, duplicates refused by operation id, conflicts resolved the same way every time.',
+      'Daily records, weather, labour, plant and progress captured offline and reconciled on reconnection — device timestamps preserved, duplicates refused by operation id, conflicts resolved the same way every time. A register of plant on hire, with utilisation and standing cost derived from the diary rather than entered twice.',
     path: '/app/field',
     cta: 'Open field execution',
     roles: ['SUPERVISOR', 'PM', 'QAQC', 'SAFETY'],
@@ -104,7 +104,7 @@ export const FEATURES: Feature[] = [
     id: 'design',
     title: 'Drawings, revisions and the RFI that came from a markup',
     blurb:
-      'A drawing register with supersession, markups that become RFIs, and model records carrying hash, discipline and LOD. Quantities are governed and priced against the sheet and revision they came from.',
+      'A drawing register with supersession, markups that become RFIs, and model records carrying hash, discipline and LOD — an IFC read for its structure and a geometry fingerprint per element, revisions compared by GlobalId. Quantities are governed and priced against the sheet, revision or bill they came from, and a bill’s rows come off the PDF as rows.',
     path: '/app/design',
     cta: 'Open design and BIM',
     roles: ['DESIGNER', 'BIM', 'PM', 'QAQC'],
@@ -122,7 +122,7 @@ export const FEATURES: Feature[] = [
     id: 'audit',
     title: 'A Golden Thread that detects its own tampering',
     blurb:
-      'Every state change is an append-only hash-chained event. Replay reconstructs the project from its own history and reports a root hash — so "has this record been altered" has an answer, not an opinion.',
+      'Every state change is an append-only hash-chained event, journalled before it is acknowledged and shipped to Postgres behind that, where a standby can follow it live. Replay reconstructs the project from its own history and reports a root hash — so "has this record been altered" has an answer, not an opinion.',
     path: '/app/audit',
     cta: 'Open the Golden Thread',
     roles: ['REGULATOR', 'OWNER', 'QAQC', 'PM'],

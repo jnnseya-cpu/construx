@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.ts';
-import { ForbiddenError, NotFoundError, ValidationError } from '../core/errors.ts';
+import { DomainError, ForbiddenError, NotFoundError, ValidationError } from '../core/errors.ts';
 import type { Platform } from '../platform.ts';
 import {
   applyRateLimit,
@@ -404,6 +404,21 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
       throw new ForbiddenError(
         'Platform operators are barred from customer delivery data',
         'ACCOUNT_LAYER_SEPARATION',
+      );
+    }
+
+    // A follower answers reads and extends nothing. Refused here, before the
+    // body is read, on every command — sign-in included, since a sign-in
+    // records the device it came from — and named as the process's role rather
+    // than as a failure, so a client can send the command to the primary. The
+    // ledger itself refuses too (`LEDGER_READ_ONLY`); this is the same rule
+    // said earlier and more usefully.
+    if (platform.ledgerStore?.mode === 'follower' && ctx.method !== 'GET' && !matched.route.readOnly) {
+      throw new DomainError(
+        'LEDGER_FOLLOWER',
+        'This process follows the record from Postgres and does not extend it. Every read is answered here; send commands, ' +
+          'sign-ins included, to the primary.',
+        503,
       );
     }
 

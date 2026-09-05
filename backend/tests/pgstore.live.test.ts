@@ -133,6 +133,37 @@ describe('the whole demonstration record goes into Postgres and comes back', { s
     second.close();
   });
 
+  it('a follower comes up from the database and applies a commit the primary ships after it', async () => {
+    const replica = new GoldenThreadLedger();
+    const follower = new PostgresLedgerStore(pool, 'follower', { log: () => undefined });
+    await follower.probe();
+    replica.restore(await follower.load());
+    assert.equal(replica.size, platform.ledger.size);
+    const handle = follower.follow(replica, { intervalMs: 60_000 });
+    assert.equal(await handle.poll(), 0);
+
+    const { tenantId, project } = tenancyWithProjects();
+    const current = platform.ledger.require({ refType: 'Project', refId: project.refId });
+    platform.ledger.commit({
+      tenantId,
+      projectId: project.projectId,
+      actor: { refType: 'User', refId: 'live-check' },
+      source: 'WEB',
+      correlationId: 'live-check-follower',
+      eventType: 'PROJECT_PHASE_TRANSITIONED',
+      entity: { refType: 'Project', refId: project.refId },
+      nextState: { ...current.state, phase: current.state.phase === 'CONCEPT' ? 'DESIGN' : 'CONCEPT' },
+      evidenceRefs: [{ refType: 'EvidenceItem', refId: 'ev-live-check-2' }],
+    });
+    assert.equal(await store.flush(10_000), 0);
+    assert.equal(await handle.poll(), 1);
+    assert.equal(replica.size, platform.ledger.size);
+    assert.equal(replica.chainHead(project.projectId), platform.ledger.chainHead(project.projectId));
+    assert.equal(follower.position().following?.behind, 0);
+    handle.stop();
+    follower.close();
+  });
+
   it('row-level security shows a tenancy only its own events, as the application role', async () => {
     const tenants = platform.tenants().filter((tenant) => platform.ledger.events({ tenantId: tenant.id }).length > 0);
     assert.ok(tenants.length >= 2, 'the seed writes for more than one tenancy');

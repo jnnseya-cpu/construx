@@ -54,7 +54,7 @@ if (config.ledger.postgresMode !== 'off') {
     process.stderr.write(`\n[ledger-store] LEDGER_POSTGRES_MODE is "${config.ledger.postgresMode}" and POSTGRES_HOST is not set. Nothing to ship to.\n\n`);
     process.exit(1);
   }
-  if (config.ledger.journalPath === '') {
+  if (config.ledger.journalPath === '' && config.ledger.postgresMode !== 'follower') {
     process.stderr.write(
       '\n[ledger-store] LEDGER_POSTGRES_MODE needs LEDGER_JOURNAL_PATH. The journal is the write-ahead log the store ships ' +
         'from; without it a commit would be acknowledged with no durable copy anywhere until the ship completed.\n\n',
@@ -91,7 +91,61 @@ if (config.ledger.postgresMode !== 'off') {
   }
 }
 
-if (config.ledger.journalPath !== '') {
+/**
+ * A follower's boot never ends.
+ *
+ * The record comes from the database and keeps coming: every poll applies what
+ * the primary shipped since the last one, and the maps the platform derives
+ * from the record — the identities, the API keys, the branding — are rebuilt
+ * behind each batch, because they were filled once at boot and a follower's
+ * boot is continuous. The journal on this host, if there is one, is neither
+ * read nor written: the database is the copy a follower comes up from, and the
+ * copy a promotion comes up from too.
+ */
+const follower = ledgerStore !== undefined && config.ledger.postgresMode === 'follower';
+let following: { stop: () => void } | undefined;
+if (follower && ledgerStore) {
+  let stored: Awaited<ReturnType<PostgresLedgerStore['load']>>;
+  try {
+    stored = await ledgerStore.load();
+  } catch (error) {
+    process.stderr.write(`\n[ledger-store] ${(error as Error).message}\n\n`);
+    process.exit(1);
+  }
+  const { restored, entities, discrepancies } = platform.ledger.restore(stored);
+  for (const found of discrepancies) {
+    process.stderr.write(
+      `[ledger-store] event ${found.index} (${found.eventId}, ${found.eventType} on ${found.entity.refType} ${found.entity.refId}) ` +
+        `records state hash ${found.recorded} but its patch produces ${found.computed}. The chain hash verifies. See docs/RUNBOOK.md, "State-hash discrepancies".\n`,
+    );
+  }
+  const rebuild = (): { users: number; tenants: number } => {
+    platform.exports.rehydrateBranding();
+    const identity = platform.rehydrate();
+    rehydrateKeys(platform.ledger);
+    return identity;
+  };
+  const identity = rebuild();
+  // Refused at the ledger, so no caller — a route, a scheduler, a repair —
+  // can extend the chain from here. The gateway says the same thing earlier
+  // and more usefully (503 LEDGER_FOLLOWER); this is what makes it true.
+  platform.ledger.markReadOnly(
+    'This process follows the record from Postgres and does not extend it. Send commands to the primary; promote this ' +
+      'process by restarting it with LEDGER_POSTGRES_MODE=primary once the primary has stopped.',
+  );
+  platform.ledgerStore = ledgerStore;
+  following = ledgerStore.follow(platform.ledger, {
+    intervalMs: config.ledger.followIntervalMs,
+    onApplied: () => {
+      rebuild();
+    },
+  });
+  durability =
+    `FOLLOWER — ${restored} event${restored === 1 ? '' : 's'} replayed from Postgres into ${entities} entities, ` +
+    `${identity.users} users across ${identity.tenants} tenancies; polling every ${config.ledger.followIntervalMs}ms; every write is ` +
+    'refused (503 LEDGER_FOLLOWER); the ACU wallets are not in Postgres and read as empty here';
+  if (discrepancies.length > 0) durability += ` — ${discrepancies.length} STATE-HASH DISCREPANC${discrepancies.length === 1 ? 'Y' : 'IES'} (see stderr)`;
+} else if (config.ledger.journalPath !== '') {
   // Claimed before the file is read, let alone appended to.
   //
   // Two containers on one volume interleave their appends, and every event
@@ -350,7 +404,12 @@ const server = await startGateway(platform, config.port);
 // Anything a previous process queued and died before sending. This is the
 // whole reason the outbox exists, and boot is when it matters: on a restored
 // journal these are notices the platform decided to send and never did.
-const owed = outboxPosition(platform).due;
+// Every timer below that writes — the outbox, the chain verifier, the sweep,
+// the repair, billing, erasure, the newsletter — belongs to the primary. A
+// follower that ran them would either fail on every tick against its read-only
+// ledger or, worse, send a notice the primary is also sending. Read-only
+// timers (the counter watch, telemetry egress) run on both.
+const owed = follower ? 0 : outboxPosition(platform).due;
 if (owed > 0) {
   process.stdout.write(`[outbox] ${owed} notice${owed === 1 ? '' : 's'} queued by a previous process — delivering\n`);
   void drain(platform).then((report) => {
@@ -359,7 +418,7 @@ if (owed > 0) {
     );
   });
 }
-const outboxTimer = startOutboxDrain(platform);
+const outboxTimer = follower ? (): void => undefined : startOutboxDrain(platform);
 
 // The platform watching its own counters. Nothing read them before this; a
 // counter nobody reads is one that will be wrong for a week before anybody
@@ -375,18 +434,18 @@ const egressTimer = startEgress();
 // Verifying the chain before somebody has to rely on it. Without this the first
 // moment a divergence could be discovered is during a dispute, by the person
 // least able to do anything about it.
-const assuranceTimer = startAssurance(platform);
+const assuranceTimer = follower ? undefined : startAssurance(platform);
 
 // The commercial chain, escalated on a timer rather than only when somebody
 // opens the position: a break on a project nobody has open is otherwise found
 // the next time somebody looks, which on a quiet project is never.
-startConsistencySweep(platform);
+if (!follower) startConsistencySweep(platform);
 
 // Auto-repair, bounded to restart and reroute. Handed a function rather than a
 // timer handle, so it can re-arm the real drain rather than clear one it could
 // not replace.
-armRepair(() => startOutboxDrain(platform));
-const repairTimer = startRepair(platform);
+if (!follower) armRepair(() => startOutboxDrain(platform));
+const repairTimer = follower ? undefined : startRepair(platform);
 
 /**
  * The subscription collection cycle.
@@ -395,30 +454,36 @@ const repairTimer = startRepair(platform);
  * staging box restored from a production journal, raises charges against real
  * tenancies — so arming it is a deliberate act on a deployment.
  */
-const collection = startCollectionSchedule(platform, (report) => {
-  process.stdout.write(
-    `[billing] ${report.raised} charge(s) raised, ${report.settled} settled, ${report.failed} unpaid, ` +
-      `${report.suspended} tenancy(ies) suspended\n`,
-  );
-  for (const stopped of report.suspendedTenants) {
-    process.stdout.write(`[billing] suspended ${stopped.tenantId}: ${stopped.because}\n`);
-  }
-});
+const collection = follower
+  ? { stop: (): void => undefined }
+  : startCollectionSchedule(platform, (report) => {
+      process.stdout.write(
+        `[billing] ${report.raised} charge(s) raised, ${report.settled} settled, ${report.failed} unpaid, ` +
+          `${report.suspended} tenancy(ies) suspended\n`,
+      );
+      for (const stopped of report.suspendedTenants) {
+        process.stdout.write(`[billing] suspended ${stopped.tenantId}: ${stopped.because}\n`);
+      }
+    });
 
 /**
  * Erasures whose grace period has run out. Always on: an erasure that was
  * requested and never carried out is a promise to a data subject the platform
  * is breaking every hour it waits.
  */
-const erasures = startErasureSchedule(platform, (report) => {
-  process.stdout.write(`[privacy] ${report.erased} identit${report.erased === 1 ? 'y' : 'ies'} erased on schedule\n`);
-});
+const erasures = follower
+  ? { stop: (): void => undefined }
+  : startErasureSchedule(platform, (report) => {
+      process.stdout.write(`[privacy] ${report.erased} identit${report.erased === 1 ? 'y' : 'ies'} erased on schedule\n`);
+    });
 
-const newsletter = startNewsletterSchedule(platform, (report) => {
-  process.stdout.write(
-    `[newsletter] ${report.campaign.week} issued — ${report.sent} sent, ${report.recorded} recorded, ${report.failed} failed\n`,
-  );
-});
+const newsletter = follower
+  ? { stop: (): void => undefined }
+  : startNewsletterSchedule(platform, (report) => {
+      process.stdout.write(
+        `[newsletter] ${report.campaign.week} issued — ${report.sent} sent, ${report.recorded} recorded, ${report.failed} failed\n`,
+      );
+    });
 
 process.stdout.write(
   [
@@ -492,8 +557,9 @@ const shutdown = (signal: string): void => {
       // Whatever is still queued for Postgres gets a bounded chance to land.
       // Not a condition of a clean stop: every one of those events is in the
       // journal, and the next boot ships them. Said out loud where any remain.
+      following?.stop();
       if (ledgerStore) {
-        const pending = await ledgerStore.flush(5_000);
+        const pending = follower ? 0 : await ledgerStore.flush(5_000);
         ledgerStore.close();
         if (pending > 0) {
           process.stderr.write(`[ledger-store] stopping with ${pending} event${pending === 1 ? '' : 's'} not yet in Postgres; they are in the journal and ship on the next boot.\n`);

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { ZipError, zipEntries, zipEntryBytes } from '../evidence/zip.ts';
 
 /**
  * Reading an IFC file: what it contains, and a geometry fingerprint per element.
@@ -30,6 +31,11 @@ import { createHash } from 'node:crypto';
  * engine that does. A hash says *whether* an element's geometry changed, not by
  * how much. Property sets are counted, not interpreted. Zero dependencies, as
  * settled: the file is text and this is a scanner.
+ *
+ * An `.ifczip` is the same text inside a ZIP container, and is read by
+ * expanding the one `.ifc` entry under a size cap (`evidence/zip.ts`). An
+ * `.ifcxml` is a different encoding of the same schema and is not read here;
+ * the refusal says so by name.
  */
 
 export type IfcElement = {
@@ -45,6 +51,10 @@ export type IfcStorey = { globalId: string; name: string; elevation?: number; el
 
 export type IfcSummary = {
   schema: string;
+  /** How the file arrived: a STEP physical file as it is, or one inside a ZIP container. */
+  container: 'STEP' | 'IFCZIP';
+  /** For a container: the entry that was read. */
+  containerEntry?: string;
   viewDefinition?: string;
   authoringApplication?: string;
   timestamp?: string;
@@ -230,11 +240,39 @@ function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
-/** Read an IFC-SPF file. Throws `IfcParseError` where the bytes are not one. */
+/** An expanded IFC may not exceed this. A model of this size has left the realm of anything this scanner should hold in memory. */
+const MAX_IFC_BYTES = 512 * 1024 * 1024;
+
+/** Read an IFC-SPF file, as it is or inside an `.ifczip`. Throws `IfcParseError` where the bytes are neither. */
 export function parseIfc(bytes: Buffer): IfcSummary {
+  let container: IfcSummary['container'] = 'STEP';
+  let containerEntry: string | undefined;
+  // A container begins with a local header, or — holding nothing — with the
+  // end record alone. Both are the container's, neither is STEP.
+  if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && ((bytes[2] === 0x03 && bytes[3] === 0x04) || (bytes[2] === 0x05 && bytes[3] === 0x06))) {
+    const entries = zipEntries(bytes);
+    const entry = entries.find((candidate) => /\.ifc$/i.test(candidate.name)) ?? entries.find((candidate) => !candidate.name.endsWith('/'));
+    if (!entry) throw new IfcParseError('IFC_ZIP_EMPTY', 'The ZIP container holds no entry to read.');
+    if (entries.some((candidate) => /\.ifcxml$/i.test(candidate.name)) && !/\.ifc$/i.test(entry.name)) {
+      throw new IfcParseError('IFC_XML_NOT_READ', `${entry.name} is ifcXML, a different encoding of the schema, and is not read here. Export the model as IFC-SPF.`);
+    }
+    try {
+      bytes = zipEntryBytes(bytes, entry, MAX_IFC_BYTES);
+    } catch (error) {
+      if (error instanceof ZipError) throw new IfcParseError(error.code, error.message);
+      throw error;
+    }
+    container = 'IFCZIP';
+    containerEntry = entry.name;
+  }
   const text = bytes.toString('latin1').replace(/^﻿/, '').replace(/^ï»¿/, '');
   if (!/^\s*ISO-10303-21;/.test(text)) {
-    throw new IfcParseError('IFC_NOT_STEP', 'The file does not begin with ISO-10303-21, so it is not an IFC in STEP physical file form. An .ifcXML or .ifcZIP is not read here.');
+    throw new IfcParseError(
+      /^\s*<\?xml/i.test(text) ? 'IFC_XML_NOT_READ' : 'IFC_NOT_STEP',
+      /^\s*<\?xml/i.test(text)
+        ? 'The file is ifcXML, a different encoding of the schema, and is not read here. Export the model as IFC-SPF, plain or zipped.'
+        : `The ${container === 'IFCZIP' ? `entry ${containerEntry} ` : 'file '}does not begin with ISO-10303-21, so it is not an IFC in STEP physical file form. An .ifcXML is not read here.`,
+    );
   }
   const warnings: string[] = [];
 
@@ -395,6 +433,8 @@ export function parseIfc(bytes: Buffer): IfcSummary {
 
   return {
     schema,
+    container,
+    ...(containerEntry ? { containerEntry } : {}),
     ...(viewDefinition ? { viewDefinition } : {}),
     ...(authoringApplication ? { authoringApplication } : {}),
     ...(timestamp ? { timestamp } : {}),

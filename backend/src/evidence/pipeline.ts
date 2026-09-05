@@ -1,5 +1,7 @@
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
+import { QUANTITY_BASIS, recordItems, type MeasuredItem, type QuantityBasis } from '../domain/measurement.ts';
+import { ingestSpecification } from '../engines/bim.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
 import { findByHash } from './registry.ts';
 import { ping, scan, scannerAddress, scannerConfigured } from './scanner.ts';
@@ -303,6 +305,184 @@ export function recordModelReading(
 export function ingestedFiles(ctx: EngineContext): IngestedFileState[] {
   authorise(ctx, 'EVIDENCE_AUDIT', 'R');
   return filesOf(ctx);
+}
+
+// --- What was read, put to use ----------------------------------------------
+
+/** An ingested file whose text is on the record, or the reason it is not. */
+function readFile(ctx: EngineContext, ingestionId: string): IngestedFileState & { extraction: Extraction & { text: string } } {
+  const file = filesOf(ctx).find((entry) => entry.ingestionId === ingestionId);
+  if (!file) throw new DomainError('INGESTION_NOT_FOUND', `No ingested file ${ingestionId} on this project`, 404);
+  if (file.status === 'QUARANTINED') {
+    throw new DomainError('FILE_QUARANTINED', `${file.filename ?? file.hash} was quarantined; nothing downstream reads it.`, 409);
+  }
+  if (file.extraction.text === undefined) {
+    throw new DomainError(
+      'FILE_NOT_READ',
+      file.extraction.method === 'NEEDS_OCR'
+        ? `${file.filename ?? file.hash} has no text layer. Transcribe it with a model on the Documents screen and confirm the transcription first.`
+        : `${file.filename ?? file.hash} was not read as text: ${file.extraction.reason ?? file.extraction.method}.`,
+      409,
+    );
+  }
+  return file as IngestedFileState & { extraction: Extraction & { text: string } };
+}
+
+/**
+ * Read a specification section straight from the file it arrived in.
+ *
+ * The clause register was fed by pasting text: ingestion read the PDF, a person
+ * copied the words out and supplied them back with the file's hash typed in.
+ * This is that in one step — the text is the ingestion record's, the document
+ * hash is the file's, and what runs is the same reading (`ingestSpecification`)
+ * with the same refusals, the same charge and the same clause records.
+ */
+export async function specificationFromFile(
+  ctx: EngineContext,
+  input: { ingestionId: string; sectionRef: string; title: string; revision: string },
+): Promise<Awaited<ReturnType<typeof ingestSpecification>> & { ingestionId: string; documentHash: string }> {
+  const file = readFile(ctx, input.ingestionId);
+  const result = await ingestSpecification(ctx, {
+    sectionRef: input.sectionRef,
+    title: input.title,
+    revision: input.revision,
+    specificationText: file.extraction.text,
+    documentHash: file.hash,
+    source: 'INGESTED_FILE',
+  });
+  return { ...result, ingestionId: file.ingestionId, documentHash: file.hash };
+}
+
+export type BillImport = {
+  scheduleId: string;
+  /** Items written to the schedule from this table. */
+  recorded: number;
+  /** Rows that were not items, with the reason: a section heading, a blank quantity, a figure that is not one. */
+  skipped: Array<{ row: number; reason: string }>;
+  /** Which recovered column stood for which field. */
+  columns: { reference?: string; description: string; unit: string; quantity: string };
+  /** The schedule after the import. */
+  total: number;
+  findings: ReturnType<typeof recordItems>['findings'];
+};
+
+const REFERENCE_HEADING = /^(item|item\s*(no|ref|reference)\.?|ref\.?|reference|no\.?|number|code|clause)$/i;
+const DESCRIPTION_HEADING = /descr|particular|work|scope/i;
+const UNIT_HEADING = /^unit/i;
+const QUANTITY_HEADING = /^(qty|quant)/i;
+
+/**
+ * A recovered table's rows as measured items on a schedule.
+ *
+ * The columns are found by their headings, not their positions: a bill puts
+ * the item reference first and the quantity fourth, a schedule of rates the
+ * other way about, and both are read. Description, unit and quantity are
+ * required — without them the rows are not a bill — and a reference column is
+ * used where there is one, else the row number stands in. A row with no
+ * quantity, or a quantity that is not a figure, is a heading or a note and is
+ * skipped with the reason rather than recorded as zero. Nothing is priced:
+ * a rate column, where the bill carries one, is left where it is, because a
+ * rate typed in is exactly what `priceItem` refuses.
+ *
+ * Every item's source is the document: the file's hash, the page and the
+ * table, so a line can be checked against the bill it came from.
+ */
+export function measureFromTable(
+  ctx: EngineContext,
+  input: { ingestionId: string; table: number; scheduleId: string; basis?: QuantityBasis },
+): BillImport {
+  const file = readFile(ctx, input.ingestionId);
+  const tables = file.extraction.pageTables ?? (file.extraction.tables ? [{ page: 1, rows: file.extraction.tables }] : []);
+  const found = tables[input.table - 1];
+  if (!found) {
+    throw new DomainError(
+      'TABLE_NOT_FOUND',
+      tables.length === 0
+        ? `${file.filename ?? file.hash} has no table recovered from it.`
+        : `${file.filename ?? file.hash} has ${tables.length} table${tables.length === 1 ? '' : 's'}; there is no table ${input.table}.`,
+      404,
+    );
+  }
+  const basis = input.basis ?? 'MEASURED';
+  if (!QUANTITY_BASIS.includes(basis)) {
+    throw new DomainError('BASIS_INVALID', `A quantity's basis is one of ${QUANTITY_BASIS.join(', ')}.`);
+  }
+  if (basis === 'ALLOWANCE') {
+    throw new DomainError('BASIS_INVALID', 'A bill row is a measured quantity somebody wrote down, not an allowance. Record an allowance on the schedule itself, with who authorised it.');
+  }
+
+  const [header = [], ...body] = found.rows;
+  const headings = header.map((cell) => cell.trim());
+  const indexOf = (pattern: RegExp, taken: number[]): number => headings.findIndex((cell, index) => !taken.includes(index) && pattern.test(cell));
+  const description = indexOf(DESCRIPTION_HEADING, []);
+  const reference = indexOf(REFERENCE_HEADING, [description]);
+  const unit = indexOf(UNIT_HEADING, [description, reference]);
+  const quantity = indexOf(QUANTITY_HEADING, [description, reference, unit]);
+  if (description < 0 || unit < 0 || quantity < 0) {
+    const missing = [description < 0 ? 'a description' : '', unit < 0 ? 'a unit' : '', quantity < 0 ? 'a quantity' : ''].filter(Boolean);
+    throw new DomainError(
+      'TABLE_NOT_A_BILL',
+      `Table ${input.table} on page ${found.page} is headed ${headings.map((cell) => `"${cell}"`).join(', ')}; no column reads as ${missing.join(', ')}. ` +
+        'A bill has a description, a unit and a quantity per row.',
+      422,
+    );
+  }
+
+  const items: MeasuredItem[] = [];
+  const skipped: BillImport['skipped'] = [];
+  body.forEach((row, index) => {
+    const rowNumber = index + 2;
+    const text = (at: number): string => (row[at] ?? '').trim();
+    const rawQuantity = text(quantity).replace(/,/g, '').replace(/\s+/g, '');
+    if (text(description) === '' && rawQuantity === '') {
+      skipped.push({ row: rowNumber, reason: 'blank row' });
+      return;
+    }
+    if (rawQuantity === '') {
+      skipped.push({ row: rowNumber, reason: `no quantity — a heading or a note: "${text(description).slice(0, 60)}"` });
+      return;
+    }
+    const figure = Number(rawQuantity);
+    if (!Number.isFinite(figure)) {
+      skipped.push({ row: rowNumber, reason: `"${text(quantity)}" is not a figure` });
+      return;
+    }
+    if (text(description) === '') {
+      skipped.push({ row: rowNumber, reason: 'a quantity with no description' });
+      return;
+    }
+    const ref = reference >= 0 ? text(reference) : '';
+    items.push({
+      reference: ref !== '' ? ref : `R${rowNumber}`,
+      description: text(description),
+      unit: text(unit) || '—',
+      quantity: figure,
+      basis,
+      source: { document: file.hash, page: found.page, sheet: `Table ${input.table}` },
+    });
+  });
+  if (items.length === 0) {
+    throw new DomainError(
+      'TABLE_HAS_NO_ITEMS',
+      `Table ${input.table} on page ${found.page} has ${body.length} row${body.length === 1 ? '' : 's'} and none with a description and a figure for a quantity.`,
+      422,
+    );
+  }
+
+  const written = recordItems(ctx, input.scheduleId, items);
+  return {
+    scheduleId: input.scheduleId,
+    recorded: items.length,
+    skipped,
+    columns: {
+      ...(reference >= 0 ? { reference: headings[reference]! } : {}),
+      description: headings[description]!,
+      unit: headings[unit]!,
+      quantity: headings[quantity]!,
+    },
+    total: written.total,
+    findings: written.findings,
+  };
 }
 
 export type SimilarFile = {

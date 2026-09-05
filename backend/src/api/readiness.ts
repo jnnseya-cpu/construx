@@ -135,7 +135,9 @@ export function readiness(now = new Date()): Readiness {
             ? `LEDGER_POSTGRES_MODE is "${config.ledger.postgresMode}" and POSTGRES_HOST is not set, so the store cannot be reached and the process will not have started.`
             : config.ledger.postgresMode === 'primary'
               ? `Every event is shipped to Postgres at ${config.postgres.host}, in order, and a new host replays from there. The journal is the local write-ahead log.`
-              : `Every event is shipped to Postgres at ${config.postgres.host} beside the journal, which is still what a restart replays. Switch to "primary" once the two agree.`,
+              : config.ledger.postgresMode === 'follower'
+                ? `This process follows Postgres at ${config.postgres.host}: it replayed the record at boot, polls every ${config.ledger.followIntervalMs}ms for what the primary ships, answers reads and refuses every write (503 LEDGER_FOLLOWER). Promote it by restarting with LEDGER_POSTGRES_MODE=primary once the primary has stopped.`
+                : `Every event is shipped to Postgres at ${config.postgres.host} beside the journal, which is still what a restart replays. Switch to "primary" once the two agree.`,
       env: ['LEDGER_POSTGRES_MODE', 'POSTGRES_HOST', 'POSTGRES_PASSWORD'],
     },
     {

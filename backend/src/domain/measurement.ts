@@ -74,6 +74,13 @@ export type QuantitySource = {
   sheet?: string;
   /** A named set of model objects, where the measurement came off a model. */
   modelObjectSet?: string;
+  /**
+   * The document the quantity was read from — a client's bill of quantities
+   * or a schedule, by its evidence hash — and the page it sits on. A tenderer
+   * pricing the client's bill measures nothing; the bill is the source.
+   */
+  document?: string;
+  page?: number;
   /** For an allowance: what it is based on. */
   allowanceBasis?: string;
   /** For an allowance: who agreed it. An allowance nobody authorised is a guess. */
@@ -239,11 +246,11 @@ export function validateItems(items: MeasuredItem[]): MeasurementFinding[] {
             'that will be defended by somebody who was not there.',
         });
       }
-    } else if (!item.source.drawing?.trim() && !item.source.modelObjectSet?.trim()) {
+    } else if (!item.source.drawing?.trim() && !item.source.modelObjectSet?.trim() && !item.source.document?.trim()) {
       findings.push({
         severity: 'CRITICAL',
         reference: item.reference,
-        subject: `${item.reference} names no drawing or model it was measured from`,
+        subject: `${item.reference} names no drawing, model or document it was measured from`,
         detail:
           'A measured quantity comes off something. Without it the line cannot be checked, and a reissued drawing cannot say ' +
           'whether this line moved.',

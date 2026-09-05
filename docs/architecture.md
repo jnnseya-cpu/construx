@@ -222,7 +222,7 @@ computed one — is how a forecast-driven system loses the trust it needs.
 | A new engine | A module using `runAI()` | ACU enforcement and attribution are automatic |
 | A new role | Add to `PERMISSION_MATRIX` | Scopes derive from the matrix |
 | A new export | An `ExportService` method | Branding, hashing and recording are applied |
-| Persistence | Back `GoldenThreadLedger` with a store | Its interface is already append-only |
+| Persistence | Done: `goldenthread/journal.ts` is the write-ahead log on the volume and `goldenthread/pgstore.ts` ships every commit to Postgres behind it (`LEDGER_POSTGRES_MODE=mirror` beside the journal, `primary` to boot from the database, `follower` for a read-only standby that applies what the primary ships) | The ledger's interface was already append-only; nothing in the domain layer changed |
 
 ## Deployment shape this is written for
 

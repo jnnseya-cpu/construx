@@ -98,7 +98,7 @@ describe('measurement · what the bill says has to be true', () => {
   it('refuses a measured quantity that names no drawing or model', () => {
     const findings = measurement.validateItems([measured({ source: {} })]);
     assert.equal(findings[0]?.severity, 'CRITICAL');
-    assert.match(findings[0]!.subject, /names no drawing or model/);
+    assert.match(findings[0]!.subject, /names no drawing, model or document/);
   });
 
   it('refuses a drawing named without its revision', () => {

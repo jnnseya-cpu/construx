@@ -133,6 +133,12 @@ export class GoldenThreadLedger {
    * is correct for a test and is data loss on restart anywhere else.
    */
   #journal: Journal | undefined;
+  /**
+   * Set on a process that follows the record rather than extending it. Every
+   * commit is then refused with this reason, from whichever caller — a route,
+   * a scheduler, a repair — so a follower cannot fork the chain by accident.
+   */
+  #readOnly: string | undefined;
 
   /**
    * Attach a journal. Every subsequent commit is written and flushed to it
@@ -140,6 +146,15 @@ export class GoldenThreadLedger {
    */
   attachJournal(journal: Journal): void {
     this.#journal = journal;
+  }
+
+  /** Refuse every commit from now on. A follower's ledger; nothing lifts it but a restart. */
+  markReadOnly(reason: string): void {
+    this.#readOnly = reason;
+  }
+
+  get readOnly(): string | undefined {
+    return this.#readOnly;
   }
 
   get journal(): Journal | undefined {
@@ -155,6 +170,7 @@ export class GoldenThreadLedger {
    * neither does: validation happens before anything is stored.
    */
   commit(input: CommitInput): { event: GoldenThreadEvent; record: EntityRecord } {
+    if (this.#readOnly !== undefined) throw new DomainError('LEDGER_READ_ONLY', this.#readOnly, 503);
     const definition = lookupEventType(input.eventType);
     if (!definition) {
       throw new DomainError('EVENT_TYPE_UNKNOWN', `Event type "${input.eventType}" is not in the catalogue`);

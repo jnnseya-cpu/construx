@@ -371,6 +371,25 @@ describe('tables recovered from where the text sits', () => {
   it('a word processor’s letter has no table in it', () => {
     assert.deepEqual(readPdfText(wordProcessorPdf()).tables, []);
   });
+
+  it('keeps a column that is empty below its heading, as an unpriced bill’s Rate column is', () => {
+    // Every row has a blank rate: the tenderer prices it. The column is real
+    // and the table is real; the rule that every column carried text below
+    // its heading used to lose the whole bill for it.
+    const unpriced =
+      'BT /F1 10 Tf 72 700 Td (Item) Tj 200 0 Td (Unit) Tj 100 0 Td (Qty) Tj 60 0 Td (Rate) Tj ET ' +
+      'BT /F1 10 Tf 72 686 Td (Excavation) Tj 200 0 Td (m3) Tj 110 0 Td (420) Tj ET ' +
+      'BT /F1 10 Tf 72 672 Td (Blinding) Tj 200 0 Td (m2) Tj 98 0 Td (1,250) Tj ET ' +
+      'BT /F1 10 Tf 72 658 Td (Disposal) Tj 200 0 Td (m3) Tj 116 0 Td (96) Tj ET';
+    assert.deepEqual(readPdfText(courierPage(unpriced)).tables.map((t) => t.rows), [
+      [
+        ['Item', 'Unit', 'Qty', 'Rate'],
+        ['Excavation', 'm3', '420', ''],
+        ['Blinding', 'm2', '1,250', ''],
+        ['Disposal', 'm3', '96', ''],
+      ],
+    ]);
+  });
 });
 
 describe('ingestion’s extraction stage, now that a PDF can be read', () => {

@@ -86,15 +86,33 @@ export async function eventstore(root) {
                   <div class="metric ${raw(position.store.agrees ? 'good' : position.store.halted ? 'bad' : 'warn')}">${position.store.stored.toLocaleString('en-GB')}</div>
                   <div class="metric-sub">of ${position.store.ledgerEvents.toLocaleString('en-GB')} in the ledger · mode ${badge(position.store.mode, position.store.mode === 'primary' ? 'ok' : 'info')}</div>
                 </div>
-                <div>
-                  <h2>Waiting to ship</h2>
-                  <div class="metric ${raw(position.store.pending === 0 ? 'good' : 'warn')}">${position.store.pending.toLocaleString('en-GB')}</div>
-                  <div class="metric-sub">${position.store.shippedThisProcess.toLocaleString('en-GB')} shipped since this process started</div>
-                </div>
-                <div>
-                  <h2>Last shipped</h2>
-                  <div class="metric-sub" style="margin-top:8px">${position.store.lastShippedAt ? time(position.store.lastShippedAt) : 'nothing yet this process'}</div>
-                </div>
+                ${position.store.mode === 'follower'
+                  ? html`<div>
+                        <h2>Behind the database</h2>
+                        <div class="metric ${raw((position.store.following?.behind ?? 0) === 0 ? 'good' : 'warn')}">
+                          ${(position.store.following?.behind ?? 0).toLocaleString('en-GB')}
+                        </div>
+                        <div class="metric-sub">
+                          ${(position.store.following?.applied ?? 0).toLocaleString('en-GB')} applied here · polling every
+                          ${position.store.following?.intervalMs ?? 0}ms
+                        </div>
+                      </div>
+                      <div>
+                        <h2>Last applied</h2>
+                        <div class="metric-sub" style="margin-top:8px">
+                          ${position.store.following?.lastAppliedAt ? time(position.store.following.lastAppliedAt) : 'nothing yet this process'}
+                          ${position.store.following?.lastPolledAt ? html`<br />polled ${time(position.store.following.lastPolledAt)}` : ''}
+                        </div>
+                      </div>`
+                  : html`<div>
+                        <h2>Waiting to ship</h2>
+                        <div class="metric ${raw(position.store.pending === 0 ? 'good' : 'warn')}">${position.store.pending.toLocaleString('en-GB')}</div>
+                        <div class="metric-sub">${position.store.shippedThisProcess.toLocaleString('en-GB')} shipped since this process started</div>
+                      </div>
+                      <div>
+                        <h2>Last shipped</h2>
+                        <div class="metric-sub" style="margin-top:8px">${position.store.lastShippedAt ? time(position.store.lastShippedAt) : 'nothing yet this process'}</div>
+                      </div>`}
                 <div>
                   <h2>Came up from</h2>
                   <div class="metric-sub" style="margin-top:8px">${humanise(position.store.restoredFrom ?? 'NOTHING').toLowerCase()}</div>

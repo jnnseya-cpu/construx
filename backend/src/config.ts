@@ -230,12 +230,17 @@ export const config = {
      * replays the journal — the mode a deployment runs in until the two are
      * seen to agree. `primary`: a boot replays Postgres and ships the journal's
      * unshipped tail; a new host with an empty volume comes up with the record.
-     * Anything else is treated as `off` and said so at boot.
+     * `follower`: a boot replays Postgres, polls it for what the primary ships
+     * afterwards, answers reads and refuses every write — a warm standby that
+     * is promoted by restarting it in primary mode once the primary has
+     * stopped. Anything else is treated as `off` and said so at boot.
      */
-    postgresMode: ((): 'off' | 'mirror' | 'primary' => {
+    postgresMode: ((): 'off' | 'mirror' | 'primary' | 'follower' => {
       const value = str('LEDGER_POSTGRES_MODE', 'off').trim().toLowerCase();
-      return value === 'mirror' || value === 'primary' ? value : 'off';
+      return value === 'mirror' || value === 'primary' || value === 'follower' ? value : 'off';
     })(),
+    /** How often a follower asks the database for what the primary has shipped. */
+    followIntervalMs: Math.max(250, num('LEDGER_FOLLOW_INTERVAL_MS', 2_000)),
   },
 
   /**
@@ -1434,8 +1439,8 @@ export function assertProductionSafety(): string[] {
     }
     {
       const raw = (process.env.LEDGER_POSTGRES_MODE ?? '').trim().toLowerCase();
-      if (raw !== '' && raw !== 'off' && raw !== 'mirror' && raw !== 'primary') {
-        warnings.push(`LEDGER_POSTGRES_MODE is "${raw}", which is not off, mirror or primary — the ledger store is off`);
+      if (raw !== '' && raw !== 'off' && raw !== 'mirror' && raw !== 'primary' && raw !== 'follower') {
+        warnings.push(`LEDGER_POSTGRES_MODE is "${raw}", which is not off, mirror, primary or follower — the ledger store is off`);
       }
     }
     if (config.ai.mode !== 'production') {

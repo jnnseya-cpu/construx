@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,828 passing, 0 failing, 0 skipped, across 257 files · plus 24 against a live Postgres 16 (the client and the ledger store), now also run in CI |
+| Tests | 5,843 passing, 0 failing, 0 skipped, across 257 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 297 TypeScript files, 191,700 lines |
-| Application | 77 ES modules, 43,800 lines (including a service worker) |
-| API routes | 1,062 — 728 writes, 334 reads (48 public across both) |
+| Backend | 298 TypeScript files, 192,500 lines |
+| Application | 77 ES modules, 43,900 lines (including a service worker) |
+| API routes | 1,064 — 730 writes, 334 reads (48 public across both) |
 | Event types | 715 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 330, all classified for access |
 | Agents | 81 across the divisions the registry declares |
@@ -8929,14 +8929,14 @@ named so it is not mistaken for finished.
 |---|---|---|
 | Take-off | Governs, evidences and prices measured items, traced to sheet and revision. Quantities can be read off a held drawing by a multimodal provider and confirmed before they become BoQ items | No provider call has been made from this environment. The **wire contract** is now proven against the response shapes the three configured vendors actually send (`tests/modeloutput.test.ts`); what remains unproven is the **reading** — whether a real model measures this drawing correctly |
 | Drawing register | Title-block reading from the held drawing itself or from supplied text, supersession, markup→RFI carrying the activity it blocks | Same: the wire contract is proven against real vendor response shapes; the quality of the reading is not |
-| Model ingestion | Records the model, hash, discipline, LOD and the declared element count as a governed event; once the IFC is held, `readModel` parses it (`engines/ifc.ts`) and records the schema, view definition, authoring application, spatial structure, length unit, element count by class and a geometry hash per element, keeping the declared count beside the read one where they disagree; two read revisions are compared element by element by GlobalId; a federation is held to the unit the file carries | Geometry is fingerprinted, not evaluated: no volumes, bounding boxes or intersections, so clash detection still needs an engine that computes them; RVT, NWD and DWG are proprietary binaries and are not read; ifcXML and ifcZIP are not read |
+| Model ingestion | Records the model, hash, discipline, LOD and the declared element count as a governed event; once the IFC is held, `readModel` parses it (`engines/ifc.ts`) and records the schema, view definition, authoring application, spatial structure, length unit, element count by class and a geometry hash per element, keeping the declared count beside the read one where they disagree; two read revisions are compared element by element by GlobalId; a federation is held to the unit the file carries; an `.ifczip` is read by expanding the one `.ifc` entry inside its container under a size cap, with the container and the entry on the reading | Geometry is fingerprinted, not evaluated: no volumes, bounding boxes or intersections, so clash detection still needs an engine that computes them; RVT, NWD and DWG are proprietary binaries and are not read; ifcXML is a different encoding of the schema and is refused by name rather than read |
 | Digital twin | Reconciles observed against expected element status | Observations are structured input, not derived from imagery |
 | Evidence capture | Real SHA-256 over the real file, recorded against the event, the file itself held in a tenant-scoped content-addressed store, and every ingested file sent to a signature scanner where one is configured (see *Signature scanning* below) | A deletion policy, deliberately: evidence under the golden thread is retained, and `evidence/registry.ts` reports what the record names against what the volume holds rather than deciding what is old enough to remove |
 | File ingestion | Structural inspection, rules classification with its signals, native text and table extraction — a PDF's own text layer included, page by page, through its fonts, and its tables recovered as rows from where the text sits (the text matrix, the transformation and each font's own glyph widths), shown as rows on the Documents screen — and a lexical index over what was read. A scan reports `NEEDS_OCR` with what was seen (pages, image-only pages) and is transcribed by a model through `DOCUMENT_TEXT`, confirmed by a person, into the same record. A file that is not what it claims to be is quarantined with the finding on the record | A photograph or a scan on a deployment with no multimodal provider stays unread and says so; the transcription path is proven against a stub, not a real model; the index is lexical, so it finds a near-duplicate and not a paraphrase |
 | Signature scanning | `evidence/scanner.ts` speaks clamd's INSTREAM protocol over a socket. Every ingested file is sent to it where one is configured, and the record names the daemon and its signature database. Unset means unscanned and every record and every read says so; configured-and-unreachable refuses the ingestion rather than recording an unscanned file as checked | The platform holds no signatures itself and never will. Verified against a daemon of the suite's own speaking the real protocol, not against ClamAV — no ClamAV exists in this environment |
 | Vision tasks | Progress, PPE, plant and defects read from a held photograph, each as a draft a person confirms into the ordinary domain command | The wire contract is proven against real vendor response shapes, including fenced, prefaced, truncated, empty and non-object replies. What no test here can establish is whether a model reads a photograph correctly |
 | Commitment extraction | Reads a held letter for what it promises and what it demands, drops anything not quoted verbatim from the letter, and registers a confirmed one in the obligation calendar that already exists | Needs a provider that reads prose; a local deployment is refused rather than given an invented undertaking. The wire contract is proven against real vendor response shapes; the reading is not |
-| Clause extraction | From supplied text; a PDF is read into text first by ingestion (its text layer, and its tables as rows) or by a confirmed model transcription (a scan), and the text supplied | Reading the file into the clause register in one step; a recovered table is rows on the ingestion record, not yet BoQ items or clauses |
+| Clause extraction | From supplied text, or in one step from an ingested file: "Read as specification" on the Documents screen runs the same reading over the text ingestion read out of the file, with the file's own hash as the document and `INGESTED_FILE` as the source on the record. A table recovered from an ingested bill goes onto an open measurement schedule as measured items in one step too ("Into a measurement schedule"), each sourced to the document, page and table | A scan still has to be transcribed by a model and confirmed before either step; the clause reading needs a provider that reads prose, as before |
 | 4D scheduling | Twin states link to task ids | No visualisation |
 | Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded, a permanent refusal (5xx) suppressing the address until an operator lifts it from the Newsletter screen, a transient one retried on the next issue. A bounce that arrives after the relay accepted the message is recorded against the delivery it concerns (`POST /v1/newsletter/bounces`, the "Record a bounce" door and a per-recipient button on the Newsletter screen): the delivery becomes `FAILED` with the diagnostic verbatim, a permanent bounce suppresses the address exactly as a synchronous refusal does, a transient one is retried by a forced re-issue | The platform still reads no mailbox: the bounce reaches the record when an operator reads the bounce message and records it, or a relay posts it to the endpoint with an operator credential. No relay is integrated for that; DKIM belongs at the relay, where the key should live |
 
@@ -8985,17 +8985,21 @@ parsing work, not wiring.
 - **Horizontal scale in production** — every piece now exists and none of it has
   been run at scale. The **schema** is verified against a real Postgres 16
   (`deploy/postgres/verify.sh`, 19 checks) and the **client** is verified against
-  one too (`deploy/postgres/client-check.sh`, 18 checks): a zero-dependency
-  wire-protocol implementation doing SCRAM-SHA-256, parameterised statements,
+  one too (`deploy/postgres/client-check.sh`): a zero-dependency wire-protocol
+  implementation doing SCRAM-SHA-256, parameterised statements,
   transaction-scoped tenancy under RLS, and the two-concurrent-writer race the
-  chain trigger exists to settle. The **ledger store** now ships the record to
+  chain trigger exists to settle. The **ledger store** ships the record to
   Postgres and replays it from there — see *The ledger in Postgres* below — so
   recovery is the ship lag rather than the backup interval and a new host comes
-  up from the database. What is **not** done is a second writer:
+  up from the database. A **follower** is now a warm standby that is already up:
+  it replays the database at boot, applies what the primary ships as it ships
+  it, answers every read and refuses every write, and is promoted by a restart
+  in primary mode once the primary has stopped — see *A follower: the record
+  on a second host, live*. What is **not** done is a second writer:
   `goldenthread/ledger.ts` still answers every read from memory and one process
   extends the chain at a time, so the writer lock is still load-bearing, the
-  database's chain trigger is what catches its failure, and failover is a boot
-  somebody starts rather than one that happens
+  database's chain trigger is what catches its failure, and promotion is a
+  restart somebody starts rather than an election
 - **A metrics store and dashboards** — the *egress* is built. `ops/otlp.ts`
   ships counters, the latency histogram and the security stream to any OTLP
   collector over HTTP with the JSON encoding, on an interval, from a bounded
@@ -9880,8 +9884,9 @@ the same instinct — a table with the wrong columns is read as a bill by
 somebody who did not build it: three or more consecutive lines of two or more
 cells; a header row with a cell in every column and no sentence in it; no line
 with two cells in one column; at least one column of short cells, so two
-columns of wrapped prose are not a table; every column used on at least two
-lines. A line one line-height under a row with cells only where that row has
+columns of wrapped prose are not a table; at least two columns carry text below the heading,
+while a column may stand empty under its heading, as a bill's Rate column does
+until it is priced. A line one line-height under a row with cells only where that row has
 text is the rest of a wrapped cell and is joined to it; a blank on the page is
 a blank in the row. `Extraction.tables` carries the first table as it always
 carried a delimited file's rows; `pageTables` carries every table with its
@@ -9898,6 +9903,78 @@ word. Every column now keeps at least its longest single word and only the
 columns that can wrap give up width; a heading is drawn on every line it
 wraps to. `pdf.test.ts` ("keeps every figure and heading whole when the table
 is wider than the page"). The reader reports what is on the page either way.
+
+**A follower: the record on a second host, live.** `LEDGER_POSTGRES_MODE=follower`
+is the third stage of the ledger's move onto Postgres. A follower boots from the
+database, as a primary does, and then never stops booting: `follow` polls the
+database's position every `LEDGER_FOLLOW_INTERVAL_MS` (default 2000, floor 250),
+loads every event beyond what it holds (`loadAfter`, refusing a gap or a
+bodiless row as `load` does) and applies the batch through `ledger.restore`, so
+every hash is verified exactly as at boot; behind each batch the identities,
+API keys and branding are rebuilt from the record, because those maps are
+filled once at boot and a follower's boot is continuous. It answers every read
+— a token minted by the primary works on it — and refuses every command at the
+gateway with `503 LEDGER_FOLLOWER` naming the primary, sign-ins included since a
+sign-in records the device it came from; the ledger itself is marked read-only
+(`LEDGER_READ_ONLY`), so no scheduler, sweep or repair on the standby can extend
+the chain, and none of the writing timers is started there. A poll that fails on
+the connection is recorded and retried; a batch that does not chain from what
+the follower holds halts following for good and says so, because applying
+around it would be a second record wearing the first's name. Readiness, the
+banner and the Event Store screen report the role, how far behind the database
+the process is, when it last polled and applied, and the last failure.
+Promotion is a restart in primary mode once the primary has stopped, which
+takes the time a boot takes and not the time a replay takes. Not done: an
+election, and the ACU wallets, which are not in Postgres and read as empty on a
+follower. Proven against the stand-in (`pgstore.test.ts`: boot from the
+database, apply two events shipped afterwards, heads agree, a dropped
+connection retried, a local fork halted) and against a live Postgres 16
+(`pgstore.live.test.ts`, run by `client-check.sh` and in CI); the gateway's
+refusal in `api.test.ts`; the runbook carries the failover procedure.
+
+**What was read, put to use.** Ingestion read the text and recovered the
+tables, and the clause register and the measurement schedule still wanted the
+words pasted and the figures typed. Two one-step paths close that, both in
+`evidence/pipeline.ts` and both on the Documents screen. `specificationFromFile`
+takes an ingested file's text to the same specification reading the Design
+screen runs on pasted text (`bim.ingestSpecification`) with the file's own hash
+as the document and `INGESTED_FILE` written as the source, so a reader of the
+clause record knows the text was read rather than supplied; it refuses a file
+that is not there, one that was quarantined, and one whose bytes carry no text
+— a scan — with the instruction to transcribe it first (`POST
+/v1/projects/:projectId/ingestion/:ingestionId/specification`, quoted and
+charged as the text route is). `measureFromTable` takes one recovered table
+onto an open measurement schedule as measured items: the columns are found by
+their headings — description, unit and quantity required, a reference column
+used where there is one and the row number otherwise — and every row with a
+description and a figure becomes an item sourced to the document, the page and
+the table; a heading row, a blank quantity or a figure that is not one is
+skipped with the reason rather than recorded as zero; nothing is priced, since a
+rate typed in is what `priceItem` refuses. A document is now a source the
+measurement rules accept beside a drawing and a model object set — a tenderer
+pricing the client's bill measures nothing, the bill is where the quantity came
+from — so a line from a bill carries no "names no drawing" finding (`POST
+/v1/projects/:projectId/ingestion/:ingestionId/tables/:table/measure`, under the
+take-off authority: a planner may read the file and not measure from it). Both
+driven in Chromium as the BIM manager and the QS on the tender project.
+`ingestion.test.ts` ("what ingestion read, put to use in one step").
+
+**An `.ifczip` is the same file in a container.** `evidence/zip.ts` reads a ZIP
+container once for both callers: ingestion's archive check, which needs the
+entry names and declared sizes without expanding a byte, and the IFC reader,
+which expands exactly one entry — the `.ifc` — under a 512MB cap. The central
+directory is read where the file has one, because a streamed archive writes
+zero sizes into its local headers and states them only there; a file with no
+directory falls back to the local-header walk the archive check always did.
+`parseIfc` records the container and the entry it read; an empty container, an
+entry compressed by a method other than stored or deflate, and ifcXML — inside
+a container or on its own — are refused by name, so the person knows which
+export to ask for. Proven against containers written by hand: deflate, stored,
+sizes deferred to a data descriptor, a readme packed beside the model, and the
+same model hashing the same zipped and plain. `ifc.test.ts`. Also found and
+fixed on the way: a table recovered from a PDF lost the whole bill when a
+column was empty below its heading, which an unpriced bill's Rate column always
+is; the rule now asks for text below the heading in at least two columns.
 
 ---
 

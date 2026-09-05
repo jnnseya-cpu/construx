@@ -16,8 +16,11 @@ import {
   sniffType,
   VECTOR_DIMENSIONS,
 } from '../src/evidence/ingest.ts';
-import { ingestFile, ingestedFiles, ingestionPosition, similarFiles } from '../src/evidence/pipeline.ts';
+import { ingestFile, ingestedFiles, ingestionPosition, measureFromTable, similarFiles, specificationFromFile } from '../src/evidence/pipeline.ts';
+import * as measurement from '../src/domain/measurement.ts';
+import * as structure from '../src/domain/structure.ts';
 import { registerEvidence, type EngineContext } from '../src/engines/context.ts';
+import { renderPdf } from '../src/export/pdf.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
@@ -598,5 +601,146 @@ describe('with a signature scanner beside it', () => {
     assert.equal(position.antivirusReachable, true);
     assert.match(String(position.antivirusScanner), /ClamAV/);
     assert.equal(position.ingestedUnscanned, 0);
+  });
+});
+
+/**
+ * What was read, put to use.
+ *
+ * Ingestion read the text and recovered the tables; the clause register and
+ * the measurement schedule still wanted the words pasted in and the figures
+ * typed. These are the one-step paths: the same reading and the same items,
+ * with the document the file actually is as the source.
+ */
+describe('what ingestion read, put to use in one step', () => {
+  const SPEC = [
+    'E10 IN SITU CONCRETE',
+    '',
+    '3.1  Concrete shall comply with BS EN 206 and BS 8500-2, and shall be supplied by a plant holding current',
+    '     third party product conformity certification.',
+    '3.2  Submit the concrete mix design to the Engineer for approval not less than 20 working days before the',
+    '     first pour is scheduled to take place.',
+    '3.3  A trial panel of the fair faced finish shall be constructed and approved before any permanent fair faced',
+    '     concrete is placed on the works.',
+    '3.4  Reinforcement shall not be covered until it has been inspected and released by the Engineer. This is a hold point.',
+  ].join('\n');
+
+  let billHash = '';
+  let billIngestionId = '';
+  let billTable = 0;
+  let scheduleId = '';
+
+  before(async () => {
+    directory = mkdtempSync(join(tmpdir(), 'construx-ingestion-use-'));
+    store = new EvidenceStore(directory);
+    platform = new Platform(undefined, store);
+    seed = await seedDemoProject(platform);
+    // BOQ_TAKEOFF writes are gated to CONCEPT, DESIGN and TENDER; the seed's
+    // main project finishes in OPERATIONS.
+    structure.transitionPhase(platform.context(seed.users.owner!.auth, seed.projectId, { source: 'WEB' }), {
+      to: 'TENDER',
+      justification: 'Reopened to price the client’s bill from the document it arrived in',
+    });
+    const bill = Buffer.from(
+      renderPdf({
+        id: 'doc-bill',
+        reference: 'MIGL-00042',
+        title: 'Bill of quantities — Section 2',
+        branding: { clientName: 'Meridian Infrastructure Group Ltd', primaryColour: '#e2571e', legalFooter: 'Meridian', documentReferencePrefix: 'MIGL' },
+        audience: 'ADJUDICATOR',
+        format: 'PDF',
+        generatedAt: '2026-08-21T05:28:00.000Z',
+        generatedBy: 'user-1',
+        projectId: seed.projectId,
+        contentHash: `sha256:${'c'.repeat(64)}`,
+        verification: 'CXV1:t-1:unchecked',
+        blocks: [
+          { kind: 'HEADING', level: 1, text: 'Bill of quantities' },
+          {
+            kind: 'TABLE',
+            headers: ['Item', 'Description', 'Unit', 'Qty', 'Rate'],
+            rows: [
+              ['2', 'SUBSTRUCTURE', '', '', ''],
+              ['2.1', 'Excavation to reduce levels, not exceeding 2m deep', 'm3', '420', ''],
+              ['2.2', 'Blinding concrete C16/20, 50mm thick', 'm2', '1,250', ''],
+              ['2.3', 'Disposal of excavated material off site', 'm3', 'TBC', ''],
+              ['2.4', 'Reinforced concrete C32/40 in foundations', 'm3', '96', ''],
+            ],
+          },
+        ],
+      }),
+    );
+    billHash = hold(bill, 'application/pdf', 'Client bill, section 2');
+    const ingested = await ingestFile(ctxFor('qs'), store, { hash: billHash, filename: 'BoQ-section-2.pdf' });
+    billIngestionId = ingested.ingestionId;
+    const file = ingestedFiles(ctxFor('qs')).find((entry) => entry.ingestionId === billIngestionId)!;
+    billTable = (file.extraction.pageTables ?? []).findIndex((table) => table.rows[0]?.[0] === 'Item') + 1;
+    assert.ok(billTable > 0, 'the bill table was recovered from the PDF');
+    scheduleId = measurement.openSchedule(ctxFor('qs'), { packageReference: 'PKG-SUB', title: 'Substructure — from the client’s bill' }).scheduleId;
+  });
+
+  after(() => {
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('reads a specification straight from the ingested file, with the file as the document and said so', async () => {
+    const hash = hold(Buffer.from(SPEC), 'text/plain', 'E10 specification');
+    const ingested = await ingestFile(ctxFor('bim'), store, { hash, filename: 'E10.txt' });
+    const result = await specificationFromFile(ctxFor('bim'), { ingestionId: ingested.ingestionId, sectionRef: 'E10', title: 'In situ concrete', revision: 'C2' });
+    assert.equal(result.clauses, 4);
+    assert.equal(result.documentHash, hash);
+    assert.equal(result.ingestionId, ingested.ingestionId);
+    const record = platform.ledger.require({ refType: 'Specification', refId: result.specificationId });
+    assert.equal(record.state.documentHash, hash, 'the document is the file, not a hash somebody typed');
+    assert.equal(record.state.source, 'INGESTED_FILE', 'and the record says the text was read, not supplied');
+  });
+
+  it('refuses a file it has not read, and says what to do about it', async () => {
+    await rejectsCode(() => specificationFromFile(ctxFor('bim'), { ingestionId: 'no-such-file', sectionRef: 'E10', title: 'x', revision: 'A' }), 'INGESTION_NOT_FOUND');
+    // A photograph: bytes with no text in them, routed to a model that can see.
+    const photo = hold(Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('a jpeg of a specification page')]), 'image/jpeg', 'Photographed page');
+    const ingested = await ingestFile(ctxFor('bim'), store, { hash: photo, filename: 'page.jpg' });
+    const error = await rejectsCode(
+      () => specificationFromFile(ctxFor('bim'), { ingestionId: ingested.ingestionId, sectionRef: 'E10', title: 'x', revision: 'A' }),
+      'FILE_NOT_READ',
+    );
+    assert.match(String(error.message), /Transcribe it with a model/);
+  });
+
+  it('records the bill’s rows as measured items sourced to the document and page, skipping headings and non-figures by name', () => {
+    const result = measureFromTable(ctxFor('qs'), { ingestionId: billIngestionId, table: billTable, scheduleId });
+    assert.equal(result.recorded, 3);
+    assert.deepEqual(result.columns, { reference: 'Item', description: 'Description', unit: 'Unit', quantity: 'Qty' });
+    assert.deepEqual(
+      result.skipped.map((entry) => entry.reason.split(':')[0]),
+      ['no quantity — a heading or a note', '"TBC" is not a figure'],
+    );
+    assert.equal(result.total, 3);
+
+    const totals = measurement.scheduleTotals(ctxFor('qs'), scheduleId);
+    const blinding = totals.items.find((line) => line.reference === '2.2')!;
+    assert.equal(blinding.quantity, 1250, 'the thousands separator is read, not refused');
+    assert.equal(blinding.unit, 'm2');
+    const items = (platform.ledger.require({ refType: 'MeasurementSchedule', refId: scheduleId }).state as { items: measurement.MeasuredItem[] }).items;
+    assert.deepEqual(items.find((item) => item.reference === '2.1')!.source, { document: billHash, page: 2, sheet: `Table ${billTable}` });
+    assert.equal(items.every((item) => item.basis === 'MEASURED'), true);
+    // The document is a source: nothing is flagged for naming no drawing.
+    assert.equal(result.findings.filter((finding) => /names no drawing/.test(finding.subject)).length, 0);
+  });
+
+  it('refuses a table that is not a bill, a table that is not there, and an allowance as a basis', () => {
+    // The cover page's reference block is a two-column table and not a bill.
+    const cover = (ingestedFiles(ctxFor('qs')).find((entry) => entry.ingestionId === billIngestionId)!.extraction.pageTables ?? []).findIndex(
+      (table) => table.rows[0]?.[0] === 'Reference',
+    ) + 1;
+    assert.ok(cover > 0);
+    const error = throwsCode(() => measureFromTable(ctxFor('qs'), { ingestionId: billIngestionId, table: cover, scheduleId }), 'TABLE_NOT_A_BILL');
+    assert.match(String(error.message), /no column reads as a description, a unit, a quantity/);
+    throwsCode(() => measureFromTable(ctxFor('qs'), { ingestionId: billIngestionId, table: 9, scheduleId }), 'TABLE_NOT_FOUND');
+    throwsCode(() => measureFromTable(ctxFor('qs'), { ingestionId: billIngestionId, table: billTable, scheduleId, basis: 'ALLOWANCE' }), 'BASIS_INVALID');
+  });
+
+  it('is the take-off authority, not the reader’s: a planner may read the file and not measure from it', () => {
+    throwsCode(() => measureFromTable(ctxFor('planner'), { ingestionId: billIngestionId, table: billTable, scheduleId }), 'ACCESS_DENIED');
   });
 });

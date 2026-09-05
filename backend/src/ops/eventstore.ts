@@ -161,7 +161,17 @@ export function eventStorePosition(platform: Platform, windowDays = DEFAULT_WIND
           ledgerEvents: platform.ledger.size,
           agrees: shipping.stored === platform.ledger.size && shipping.pending === 0 && !shipping.halted,
           note: shipping.halted
-            ? `Shipping to Postgres has stopped: ${shipping.halted}`
+            ? shipping.mode === 'follower'
+              ? `Following has stopped: ${shipping.halted}`
+              : `Shipping to Postgres has stopped: ${shipping.halted}`
+            : shipping.mode === 'follower'
+              ? `This process follows Postgres and extends nothing: ${
+                  shipping.following?.behind === 0
+                    ? 'it holds every event the database holds'
+                    : `it is ${shipping.following?.behind ?? 0} event${shipping.following?.behind === 1 ? '' : 's'} behind the database`
+                }, polling every ${shipping.following?.intervalMs ?? 0}ms${
+                  shipping.following?.lastError ? ` — the last poll failed: ${shipping.following.lastError}` : ''
+                }. Every write here is refused; the primary takes them. Promote this process by restarting it in primary mode once the primary has stopped.`
             : shipping.pending > 0
               ? `${shipping.pending} event${shipping.pending === 1 ? '' : 's'} committed here and not yet in Postgres${
                   shipping.lastError ? ` — the last attempt failed: ${shipping.lastError}` : ' — shipping is in progress'

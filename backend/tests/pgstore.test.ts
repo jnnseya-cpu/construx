@@ -78,6 +78,14 @@ class FakePostgres implements StoreClient {
       const rows = [...this.tenancy.entries()].sort((a, b) => a[1] - b[1]).map(([tenant_id]) => ({ tenant_id }));
       return { rows: rows as R[], rowCount: rows.length };
     }
+    if (text.startsWith('SELECT sequence, body FROM event WHERE sequence > $1')) {
+      const after = Number(params[0]);
+      const rows = [...this.events.values()]
+        .filter((entry) => entry.tenantId === tenantId && Number(entry.row[23]) > after)
+        .map((entry) => ({ sequence: String(entry.row[23]), body: entry.row[24] as string }))
+        .sort((a, b) => Number(a.sequence) - Number(b.sequence));
+      return { rows: rows as R[], rowCount: rows.length };
+    }
     if (text.startsWith('SELECT sequence, body FROM event WHERE sequence IS NOT NULL')) {
       const rows = [...this.events.values()]
         .filter((entry) => entry.tenantId === tenantId)
@@ -262,6 +270,99 @@ describe('shipping a ledger to the store', () => {
     assert.match(position.halted ?? '', /Another process has extended this chain/);
     assert.equal(position.pending, 2, 'nothing after the refused event is shipped onto the fork');
     assert.equal(position.stored, 1);
+  });
+});
+
+describe('a follower keeps a second process in step with the store', () => {
+  it('replays the database at boot, applies what the primary ships afterwards, and never writes', async () => {
+    const db = new FakePostgres();
+    const primaryLedger = new GoldenThreadLedger();
+    commitProject(primaryLedger, 't1', 'p1', 'Ashworth');
+    renameProject(primaryLedger, 't1', 'p1', 'Ashworth Phase 2');
+    const primary = new PostgresLedgerStore(db, 'primary', { log: quiet, retryMs: 5 });
+    await primary.probe();
+    primary.attach(primaryLedger, primaryLedger.events(), 'JOURNAL');
+    assert.equal(await primary.flush(5_000), 0);
+
+    // The standby comes up from the database, not from a journal.
+    const follower = new PostgresLedgerStore(db, 'follower', { log: quiet });
+    await follower.probe();
+    const replica = new GoldenThreadLedger();
+    replica.restore(await follower.load());
+    assert.equal(replica.size, 2);
+    assert.equal(follower.position().restoredFrom, 'POSTGRES');
+
+    const batches: number[] = [];
+    const handle = follower.follow(replica, { intervalMs: 60_000, onApplied: (events) => batches.push(events.length) });
+    assert.equal(await handle.poll(), 0, 'nothing new: nothing applied');
+
+    // The primary carries on — a second tenancy, a second event on the first
+    // chain — and the follower picks both up on the next poll, in order.
+    commitProject(primaryLedger, 't2', 'p2', 'Calderdale');
+    renameProject(primaryLedger, 't1', 'p1', 'Ashworth Phase 3');
+    assert.equal(await primary.flush(5_000), 0);
+    assert.equal(await handle.poll(), 2);
+    assert.equal(replica.size, 4);
+    assert.deepEqual(batches, [2]);
+    for (const projectId of ['p1', 'p2']) assert.equal(replica.chainHead(projectId), primaryLedger.chainHead(projectId), `head of ${projectId}`);
+    assert.equal(replica.require({ refType: 'Project', refId: 'p1' }).state.name, 'Ashworth Phase 3');
+
+    const position = follower.position();
+    assert.equal(position.mode, 'follower');
+    assert.equal(position.stored, 4);
+    assert.equal(position.following?.applied, 4);
+    assert.equal(position.following?.behind, 0);
+    assert.ok(position.following?.lastAppliedAt);
+
+    // A follower ships nothing, and its ledger takes nothing once marked.
+    assert.throws(() => follower.attach(replica, replica.events()), (error: unknown) => (error as { code?: string }).code === 'LEDGER_STORE_FOLLOWER');
+    replica.markReadOnly('this process follows the record');
+    assert.throws(() => commitProject(replica, 't3', 'p3', 'Rossendale'), (error: unknown) => (error as { code?: string }).code === 'LEDGER_READ_ONLY');
+    assert.equal(replica.size, 4);
+
+    handle.stop();
+    follower.close();
+    primary.close();
+  });
+
+  it('records a database it cannot reach and tries again, and halts for good on a record that no longer follows its own', async () => {
+    const db = new FakePostgres();
+    const primaryLedger = new GoldenThreadLedger();
+    commitProject(primaryLedger, 't1', 'p1', 'Ashworth');
+    const primary = new PostgresLedgerStore(db, 'primary', { log: quiet, retryMs: 5 });
+    await primary.probe();
+    primary.attach(primaryLedger, primaryLedger.events(), 'JOURNAL');
+    assert.equal(await primary.flush(5_000), 0);
+
+    const follower = new PostgresLedgerStore(db, 'follower', { log: quiet });
+    await follower.probe();
+    const replica = new GoldenThreadLedger();
+    replica.restore(await follower.load());
+    const handle = follower.follow(replica, { intervalMs: 60_000 });
+
+    // The connection drops on one poll: recorded, not fatal.
+    db.failNext = 1;
+    assert.equal(await handle.poll(), 0);
+    assert.match(follower.position().following?.lastError ?? '', /closed the connection/);
+    assert.equal(follower.position().halted, undefined);
+    renameProject(primaryLedger, 't1', 'p1', 'Ashworth Phase 2');
+    assert.equal(await primary.flush(5_000), 0);
+    assert.equal(await handle.poll(), 1);
+    assert.equal(follower.position().following?.lastError, undefined, 'a poll that succeeds clears the failure');
+
+    // Somebody extended the replica's chain locally, so the next event the
+    // database holds no longer follows what this process holds. Applying it
+    // would be a second record; the follower stops instead and says so.
+    renameProject(replica, 't1', 'p1', 'A local fork');
+    renameProject(primaryLedger, 't1', 'p1', 'Ashworth Phase 3');
+    assert.equal(await primary.flush(5_000), 0);
+    assert.equal(await handle.poll(), 0);
+    assert.match(follower.position().halted ?? '', /no longer follows this process's/);
+    assert.equal(await handle.poll(), 0, 'halted stays halted');
+
+    handle.stop();
+    follower.close();
+    primary.close();
   });
 });
 

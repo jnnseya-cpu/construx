@@ -1145,7 +1145,8 @@ function shortCell(text: string): boolean {
  *    columns and the body five is a paragraph beside a list, not a table.
  * 4. At least one column is short cells — a unit, a quantity, a clause number.
  *    Two columns of wrapped prose line up perfectly and are not a table.
- * 5. Every column carries text on at least two lines.
+ * 5. At least two columns carry text below the heading. A column may be empty
+ *    under its heading — a bill's Rate column is, until it is priced.
  *
  * A line set one line-height beneath a row, with cells only where that row
  * already has text, is the rest of those cells — a wrapped description — and
@@ -1188,7 +1189,10 @@ function tableOf(block: Line[]): string[][] | undefined {
   const header = rows[0]!;
   if (!header.every(headingLike)) return undefined;
   if (!columns.some((_column, index) => rows.slice(1).every((row) => row[index] === '' || shortCell(row[index]!)))) return undefined;
-  if (!columns.every((_column, index) => rows.filter((row) => row[index] !== '').length >= 2)) return undefined;
+  // A column may be empty below its heading: a bill's Rate column is exactly
+  // that until the tenderer prices it. What a table needs is body text in
+  // more than one column, or it is a list with a heading over it.
+  if (columns.filter((_column, index) => rows.slice(1).some((row) => row[index] !== '')).length < 2) return undefined;
   return rows.slice(0, MAX_TABLE_ROWS);
 }
 

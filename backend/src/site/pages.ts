@@ -191,7 +191,8 @@ export function about(): string {
       Zero runtime dependencies. ${f.routes} API endpoints, ${f.publicRoutes} of which are reachable without a
       credential and each one listed in a test that fails if that number changes by accident. Tenant isolation applied
       on every read. Money in minor units everywhere, because a floating-point pound is a rounding error waiting to
-      reach an invoice.
+      reach an invoice. The record is journalled to the volume before it is acknowledged and shipped to Postgres behind
+      that, where a standby can follow it live — so recovery is a boot, not a restore from a backup.
     </p>
   </div>
 </section>
@@ -271,6 +272,29 @@ export function howItWorks(): string {
       enforcement point there is. A regulator's copy carries no forecast margin, and it says the commercial detail was
       withheld rather than showing an empty section — a silent redaction is indistinguishable from a project with no
       commercial data.
+    </p>
+
+    <h2>6 · What arrives as a file becomes a record, or says why it cannot</h2>
+    <p>
+      A file is looked at before anything reads it: its real type from its bytes, an executable or an archive carrying
+      one refused, a decompression bomb refused on what it declares. A PDF's own text is read page by page through its
+      fonts, and the tables in a bill or a specification are recovered as rows from where the text sits on the page —
+      left-, right- and centre-aligned columns alike, a wrapped description joined, a blank cell kept blank. A bill's rows
+      go onto a measurement schedule as items sourced to the document and page; a specification's clauses go into the
+      register straight from the file. An IFC model is read for its structure and a geometry fingerprint per element, in
+      a plain file or an <code>.ifczip</code>. A scan or a photograph has no text to read, and the platform says so and
+      routes it to a model that can see, whose transcription a person confirms before it is indexed. Prose set in two
+      columns is not called a table, and a table with the wrong columns is refused rather than guessed at.
+    </p>
+
+    <h2>7 · The record is durable, and off the box</h2>
+    <p>
+      Every event is flushed to an append-only journal on the volume before it is acknowledged. Where a Postgres is
+      configured the same events are shipped to it in commit order, one transaction each, through the database's own
+      chain trigger — so the record there cannot silently fork — and a new host comes up from the database rather than
+      from a backup of a file. A second process can follow that database as a warm standby: it holds the whole record,
+      answers every read, refuses every write by name, and is promoted by a restart. The lag between the ledger and the
+      database is on the operator's screen, never hidden.
     </p>
   </div>
 </section>
@@ -556,6 +580,22 @@ export function developers(): string {
       ${f.commsEvents} notification events across ${f.commsCategories} categories, fanning out over email, in-app, SMS,
       push and WhatsApp. ${f.mandatoryNotices} of them are mandatory and override a recipient's preferences, because a
       person is entitled to be told their account was locked whatever they have muted.
+    </p>
+
+    <h2>Files in, records out</h2>
+    <p>
+      A file is stored behind the hash the record already names, then read: its type from its bytes, a PDF's text and
+      tables, an IFC's structure and geometry fingerprints. What was read is on the ingestion record and can be put to
+      use in one call — a bill's table onto a measurement schedule, a specification's text into the clause register —
+      each item sourced to the document, the page and the table it came from. A scan is reported as needing a model
+      that can see; nothing is invented for it.
+    </p>
+
+    <h2>Read replicas</h2>
+    <p>
+      A process started in follower mode holds the whole record from Postgres and answers every read with a token the
+      primary issued. It refuses every command with <code>503 LEDGER_FOLLOWER</code> so a client knows to send commands
+      to the primary rather than retry; sign-in is a command, since it records the device it came from.
     </p>
 
     <h2>What the API will not do</h2>

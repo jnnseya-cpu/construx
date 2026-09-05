@@ -269,6 +269,40 @@ paid for), and the blog view counts. Stop the old process first; two processes
 extending the chain is the one thing this does not make safe, and the database
 will refuse the second's events rather than fork.
 
+**A warm standby: follower mode.** A second process on another host with the
+same `POSTGRES_*`, `LEDGER_POSTGRES_MODE=follower` and no journal. It replays
+the whole record from the database at boot, then polls the database every
+`LEDGER_FOLLOW_INTERVAL_MS` (default 2000) for what the primary has shipped and
+applies each batch — verifying every hash exactly as a boot does — and rebuilds
+the identities, API keys and branding behind it. It answers every read; a
+token minted by the primary works on it because the two share `AUTH_JWT_SECRET`.
+It refuses every command with `503 LEDGER_FOLLOWER`, sign-ins included (a
+sign-in records the device it came from), and the ledger itself refuses too, so
+no scheduler on the standby can extend the chain. Its banner says `FOLLOWER`;
+the Event Store screen shows how far behind the database it is and when it
+last applied; `/readyz` says the same under `ledger.store`. The ACU wallets are
+not in Postgres and read as empty on a follower — it cannot quote or run an AI
+action, which it could not do anyway, being unable to write.
+
+**Failover with a follower.** Stop the primary — the database refuses a second
+writer's events rather than forking, but stopping it first is what keeps the
+last unshipped events from being lost; check the primary's Event Store screen
+says `Postgres holds every event the ledger holds` before it goes, or accept
+that its unshipped tail stays in its journal for later. Then restart the
+follower with `LEDGER_POSTGRES_MODE=primary` and a `LEDGER_JOURNAL_PATH` on its
+volume. It replays the database (already loaded, so the boot is a boot and not
+a migration), writes itself a journal, and takes the writes. Copy
+`LEDGER_JOURNAL_PATH.acu` and the view counts from the old host as for any
+failover. Point traffic at it.
+
+**A follower halted.** The screen says *Following has stopped* and the position
+carries `halted`. The database's record no longer follows what the follower
+holds — a gap in the sequence, an event with no body, or a chain that does not
+verify from where the follower stands, which happens when something wrote to
+the follower's ledger locally (it should not be able to) or the database was
+edited. Nothing is wrong on the primary. Restart the follower; it replays the
+database afresh.
+
 **The ledger store halted.** The screen says *Shipping to Postgres has stopped*
 and the position carries `halted`. The database refused an event for a reason a
 retry cannot change — SQLSTATE 23xxx is the chain trigger or a unique index

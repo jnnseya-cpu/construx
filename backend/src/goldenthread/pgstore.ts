@@ -32,12 +32,19 @@ import type { GoldenThreadEvent } from './types.ts';
  *
  * **What this does and does not change.** Recovery no longer depends on the
  * backup interval of one file: the record is off the box within the ship lag,
- * which is reported. Failover is a boot on another host. What it does not
- * change is the writer: there is still one process extending the chain at a
- * time, because two processes would each hold a different in-memory record. The
- * writer lock is therefore still load-bearing, and the chain trigger is the
- * database catching the case where it failed — a refused event halts shipping
- * and says so, rather than being retried into a fork.
+ * which is reported. Failover is a boot on another host — or, in `follower`
+ * mode, a host that is already up: a follower replays the database at boot,
+ * polls it for what the primary ships afterwards and applies each batch to its
+ * own in-memory record, answers every read, and refuses every write with the
+ * primary's address in the refusal. Promotion is a restart in primary mode
+ * once the primary has stopped, which takes the time a boot takes and not the
+ * time a replay takes, because the record is already loaded and the database
+ * is the copy it loads from. What none of this changes is the writer: there
+ * is still one process extending the chain at a time, because two processes
+ * would each hold a different in-memory record. The writer lock is therefore
+ * still load-bearing, and the chain trigger is the database catching the case
+ * where it failed — a refused event halts shipping and says so, rather than
+ * being retried into a fork.
  *
  * **Ordering.** Events are stored with the platform's commit ordinal
  * (`sequence`) and replayed in that order. The ledger's read order is
@@ -52,7 +59,7 @@ import type { GoldenThreadEvent } from './types.ts';
  * the chain hash is over those bytes.
  */
 
-export type LedgerStoreMode = 'off' | 'mirror' | 'primary';
+export type LedgerStoreMode = 'off' | 'mirror' | 'primary' | 'follower';
 
 type Row = Record<string, unknown>;
 type Result<R = Row> = { rows: R[]; rowCount: number };
@@ -86,6 +93,18 @@ export type StorePosition = {
   halted?: string;
   /** Where this process's record came from at boot. */
   restoredFrom?: 'POSTGRES' | 'JOURNAL' | 'NOTHING';
+  /** In follower mode: how the poll is going and how far behind the database this process is. */
+  following?: {
+    intervalMs: number;
+    /** Events this process holds, all of them from the database. */
+    applied: number;
+    /** Events the database holds that this process has not yet applied. */
+    behind: number;
+    lastPolledAt?: string;
+    lastAppliedAt?: string;
+    /** The last poll that failed, kept until one succeeds. */
+    lastError?: string;
+  };
 };
 
 const INSERT_EVENT = `
@@ -168,6 +187,7 @@ export class PostgresLedgerStore {
   #lastError: string | undefined;
   #halted: string | undefined;
   #restoredFrom: StorePosition['restoredFrom'];
+  #following: { intervalMs: number; applied: number; lastPolledAt?: string; lastAppliedAt?: string; lastError?: string } | undefined;
   #draining = false;
   #retryDelay: number;
   #timer: NodeJS.Timeout | undefined;
@@ -283,11 +303,133 @@ export class PostgresLedgerStore {
   }
 
   /**
+   * Every event beyond `sequence`, in commit order: what a follower applies
+   * on each poll. Refused where the run is not contiguous from `sequence + 1`,
+   * for the reason `load` refuses a gap — a chain applied around a missing
+   * event verifies against nothing.
+   */
+  async loadAfter(sequence: number): Promise<GoldenThreadEvent[]> {
+    const tenancies = await this.#client.query<{ tenant_id: string }>('SELECT tenant_id FROM tenancy ORDER BY first_sequence');
+    const loaded: Array<{ sequence: number; event: GoldenThreadEvent }> = [];
+    for (const { tenant_id } of tenancies.rows) {
+      const rows = await this.#client.asTenant(tenant_id, (connection) =>
+        connection.query<{ sequence: unknown; body: string | null }>('SELECT sequence, body FROM event WHERE sequence > $1 ORDER BY sequence', [sequence]),
+      );
+      for (const row of rows.rows) {
+        if (row.body === null) {
+          throw new DomainError(
+            'LEDGER_STORE_UNREPLAYABLE',
+            `Event at sequence ${String(row.sequence)} in tenancy ${tenant_id} has no body and cannot be applied. It was written ` +
+              'by something other than this store.',
+          );
+        }
+        loaded.push({ sequence: Number(row.sequence), event: JSON.parse(row.body) as GoldenThreadEvent });
+      }
+    }
+    loaded.sort((a, b) => a.sequence - b.sequence);
+    for (const [index, entry] of loaded.entries()) {
+      if (entry.sequence !== sequence + index + 1) {
+        throw new DomainError(
+          'LEDGER_STORE_GAP',
+          `The database holds event ${entry.sequence} where ${sequence + index + 1} was expected. A gap in the record cannot be applied; ` +
+            'the follower refused rather than applied around it.',
+        );
+      }
+    }
+    return loaded.map((entry) => entry.event);
+  }
+
+  /**
+   * Keep a ledger in step with the database: the follower's loop.
+   *
+   * Each poll reads the database's position; where it is ahead of what this
+   * process holds, the events beyond are loaded and applied through
+   * `ledger.restore`, which verifies every hash exactly as a boot does. A poll
+   * that fails on the connection is recorded and tried again on the next tick.
+   * A batch that does not chain from what this process holds halts the follower
+   * for good: the database and this process disagree about the record, and
+   * applying around that would be a second record wearing the first's name.
+   *
+   * `onApplied` is where the process rebuilds whatever it derives from the
+   * record — the identities, the API keys, the branding — because those maps
+   * are filled at boot from the ledger and a follower's boot never ends.
+   */
+  follow(
+    ledger: GoldenThreadLedger,
+    options: { intervalMs: number; onApplied?: (events: GoldenThreadEvent[]) => void },
+  ): { poll: () => Promise<number>; stop: () => void } {
+    if (this.#mode !== 'follower') {
+      throw new DomainError('LEDGER_STORE_NOT_FOLLOWER', `The store is in ${this.#mode} mode; only a follower polls the database.`);
+    }
+    const state: { intervalMs: number; applied: number; polling: boolean; lastPolledAt?: string; lastAppliedAt?: string; lastError?: string } = {
+      intervalMs: options.intervalMs,
+      applied: ledger.size,
+      polling: false,
+    };
+    this.#following = state;
+    let timer: NodeJS.Timeout | undefined;
+    const stop = (): void => {
+      if (timer) clearInterval(timer);
+      timer = undefined;
+    };
+    const poll = async (): Promise<number> => {
+      if (state.polling || this.#closed || this.#halted) return 0;
+      state.polling = true;
+      try {
+        const position = await this.#client.query<{ sequence: unknown }>('SELECT sequence FROM ledger_position WHERE id = 1');
+        const stored = Number(position.rows[0]?.sequence ?? 0);
+        this.#stored = stored;
+        state.lastPolledAt = new Date().toISOString();
+        if (stored <= state.applied) {
+          state.lastError = undefined;
+          return 0;
+        }
+        const events = await this.loadAfter(state.applied);
+        if (events.length === 0) return 0;
+        ledger.restore(events);
+        state.applied += events.length;
+        state.lastAppliedAt = new Date().toISOString();
+        state.lastError = undefined;
+        options.onApplied?.(events);
+        return events.length;
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        if (code === 'JOURNAL_CHAIN_BROKEN' || code === 'LEDGER_STORE_GAP' || code === 'LEDGER_STORE_UNREPLAYABLE') {
+          this.#halted =
+            `the database's record no longer follows this process's: ${(error as Error).message} Following has stopped at ${state.applied} ` +
+            'events; this process answers reads from what it holds and applies nothing further. Restart it to replay the database afresh. ' +
+            'See docs/RUNBOOK.md, "A follower halted".';
+          this.#log(`[ledger-store] ${this.#halted}`);
+          stop();
+          return 0;
+        }
+        if (!state.lastError?.endsWith((error as Error).message)) {
+          this.#log(`[ledger-store] the follower could not poll the database and will try again: ${(error as Error).message}`);
+        }
+        state.lastError = `${new Date().toISOString()} ${(error as Error).message}`;
+        return 0;
+      } finally {
+        state.polling = false;
+      }
+    };
+    timer = setInterval(() => void poll(), options.intervalMs);
+    // Never hold the process open on account of the poll.
+    timer.unref();
+    return { poll, stop };
+  }
+
+  /**
    * Follow a ledger. `history` is what the ledger holds now, in commit order —
    * the journal's contents — and everything beyond the database's position is
    * queued first, so a crash between a commit and its ship loses nothing.
    */
   attach(ledger: GoldenThreadLedger, history: readonly GoldenThreadEvent[], restoredFrom?: StorePosition['restoredFrom']): { queued: number } {
+    if (this.#mode === 'follower') {
+      throw new DomainError(
+        'LEDGER_STORE_FOLLOWER',
+        'A follower reads the database and never ships to it. Two processes shipping to one record is the fork the chain trigger exists to refuse.',
+      );
+    }
     if (restoredFrom) this.#restoredFrom = restoredFrom;
     if (history.length < this.#stored) {
       throw new DomainError(
@@ -342,6 +484,18 @@ export class PostgresLedgerStore {
       ...(this.#lastError ? { lastError: this.#lastError } : {}),
       ...(this.#halted ? { halted: this.#halted } : {}),
       ...(this.#restoredFrom ? { restoredFrom: this.#restoredFrom } : {}),
+      ...(this.#following
+        ? {
+            following: {
+              intervalMs: this.#following.intervalMs,
+              applied: this.#following.applied,
+              behind: Math.max(0, this.#stored - this.#following.applied),
+              ...(this.#following.lastPolledAt ? { lastPolledAt: this.#following.lastPolledAt } : {}),
+              ...(this.#following.lastAppliedAt ? { lastAppliedAt: this.#following.lastAppliedAt } : {}),
+              ...(this.#following.lastError ? { lastError: this.#following.lastError } : {}),
+            },
+          }
+        : {}),
     };
   }
 
